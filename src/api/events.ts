@@ -61,6 +61,13 @@ export interface EventPayloads {
    * while running both end up in `store/app`'s `fileOpened`.
    */
   'file:opened': { path: string }
+  /**
+   * A browser extension asks to be let in. `key` is its identification public
+   * key, base64, for the consent dialog to show a fingerprint of; `id` names
+   * this ask, and the answer goes back through `browser_respond` under it, so
+   * a dialog left up past its ask cannot answer the next. Desktop only.
+   */
+  'browser:associate': { id: string; key: string }
 }
 
 export type EventName = keyof EventPayloads
@@ -85,7 +92,8 @@ export const EVENTS: { [K in EventName as Camel<K>]: K } = {
   workspacesRemote: 'workspaces:remote',
   workspacesAdded: 'workspaces:added',
   workspacesRenamed: 'workspaces:renamed',
-  fileOpened: 'file:opened'
+  fileOpened: 'file:opened',
+  browserAssociate: 'browser:associate'
 }
 
 // Typed wrapper over Tauri's `listen`.

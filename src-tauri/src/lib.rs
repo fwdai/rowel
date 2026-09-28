@@ -4,6 +4,11 @@ mod appkey;
 mod auth;
 mod autolock;
 mod biometrics;
+// The browser extension host: the KeePassXC-Browser protocol over a local
+// socket, and the proxy mode the browser launches this binary in. `pub` so the
+// proxy integration test can reach the socket name and framing.
+#[cfg(desktop)]
+pub mod browser;
 mod cards;
 mod commands;
 pub mod crypto;
@@ -53,6 +58,13 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // A browser launched this binary as its native messaging host: relay its
+    // stdio to the running app and never build a window (see `browser::proxy`).
+    #[cfg(desktop)]
+    if browser::proxy::launched_by_browser(std::env::args().skip(1)) {
+        std::process::exit(browser::proxy::run());
+    }
+
     // Before anything else: on mobile Tauri builds a reqwest client while
     // launching, and with `rustls-no-provider` that aborts the process unless
     // a provider is already installed (see `sync::install_crypto_provider`).
@@ -140,6 +152,18 @@ pub fn run() {
             // either — the registry below is the first thing that does.
             let root = storage::root_dir(app.handle())?;
             workspace::recover_interrupted_delete(&root);
+            // The extension host, when it was left on: the browsers' manifests
+            // are put right — an update moved the executable, a browser
+            // arrived since, a manifest went missing — and the listener is up
+            // from launch, so a browser that starts before the vault is
+            // unlocked finds the app and can ask for the unlock. Writing the
+            // manifests again is idempotent, and one another host owns is
+            // left alone (`manifest::install`).
+            #[cfg(desktop)]
+            if settings::current(app.handle()).browser.enabled {
+                browser::manifest::install(&root);
+                browser::server::start(app.handle());
+            }
             // Which workspace was open last. Read before the window exists, so
             // the lock screen the user lands on is that workspace's.
             let registry = workspace::Registry::load(&root);

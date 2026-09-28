@@ -60,6 +60,16 @@ impl Default for GeneratorDefaults {
     }
 }
 
+/// The browser extension host: whether it listens at all. Off until the user
+/// turns it on in Settings, which is also what writes the native messaging
+/// manifests a browser finds the app by. Which extensions may talk to it is
+/// not a preference: that list lives inside each vault (`browser::clients`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BrowserSettings {
+    pub enabled: bool,
+}
+
 /// Every preference the app has, with the defaults a fresh install starts from.
 ///
 /// The enum-ish fields are plain strings: the frontend's union types narrow
@@ -83,6 +93,7 @@ pub struct Settings {
     pub locale: Option<String>,
     pub breach_check: bool,
     pub generator: GeneratorDefaults,
+    pub browser: BrowserSettings,
 }
 
 impl Default for Settings {
@@ -97,6 +108,7 @@ impl Default for Settings {
             locale: None,
             breach_check: false,
             generator: GeneratorDefaults::default(),
+            browser: BrowserSettings::default(),
         }
     }
 }
@@ -226,6 +238,7 @@ mod tests {
         assert!(!settings.breach_check);
         assert_eq!(settings.generator, GeneratorDefaults::default());
         assert_eq!(settings.generator.length, 20);
+        assert!(!settings.browser.enabled);
     }
 
     #[test]

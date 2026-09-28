@@ -58,6 +58,9 @@ allow = [
   "Unicode-3.0",
   "CC0-1.0",
   "BSL-1.0",
+  # Zero-clause BSD: public-domain-equivalent (`recvmsg`, `doctest-file`,
+  # transitive via `interprocess`).
+  "0BSD",
 ]
 
 # The rowel crate itself is a private application, never published to

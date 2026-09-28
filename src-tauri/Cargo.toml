@@ -100,6 +100,17 @@ tauri-plugin-webdriver = "0.2"
 # Only the legacy-Electron vault migration needs it, and that only ever ran on
 # desktop (see `storage::ensure_migrated`).
 dirs = "7"
+# The browser extension host (`browser`). `crypto_box` is NaCl's box — X25519
+# plus XSalsa20-Poly1305 — which is what the KeePassXC-Browser protocol seals
+# every message with (the extension uses tweetnacl); `interprocess` is the one
+# API over the Unix socket and the Windows named pipe the extension's proxy
+# process reaches the app through; `public-suffix` is the Mozilla list that
+# keeps a parent-domain match from reaching past a registrable domain
+# (`actions::is_public_suffix`; MIT OR Apache-2.0, already in the locked
+# graph under passkey-client).
+crypto_box = "0.9"
+interprocess = "2"
+public-suffix = "0.1"
 
 # Frameworks that exist on both macOS and iOS: Foundation, LocalAuthentication,
 # Vision and the Keychain.
@@ -174,6 +185,9 @@ windows = { version = "0.62", features = ["Security_Credentials", "Security_Cred
 # Credential Manager storage. It holds only the Hello-wrapped blob — Credential
 # Manager itself has no biometric gate (see `secure_store::GateMode::HelloKey`).
 keyring = { version = "3", features = ["windows-native"] }
+# Where a browser looks for a native messaging host on Windows is a registry
+# key, not a file (`browser::manifest`).
+windows-registry = "0.5"
 
 [dev-dependencies]
 # A real WebAuthn client drives the authenticator through a full ceremony in the
