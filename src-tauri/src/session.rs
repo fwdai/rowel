@@ -251,10 +251,13 @@ pub fn lock(app: &AppHandle) -> bool {
 /// What follows every clear of a session, however it was ended — here, or by
 /// a workspace switch that clears and repoints in one step. A secret copied
 /// out of the vault does not outlive the vault being open, and the idle timer
-/// armed for this session must not come due inside the next one.
+/// armed for this session must not come due inside the next one. And a
+/// browser extension that was filling from it is told it has gone.
 pub fn sealed(app: &AppHandle) {
     crate::commands::clipboard::clear_on_lock(app);
     crate::autolock::disarm(app);
+    #[cfg(desktop)]
+    crate::browser::server::notify_locked();
 }
 
 pub fn store_err(e: StoreError) -> Error {

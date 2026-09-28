@@ -168,9 +168,12 @@ pub async fn workspace_select(
         }
         session.set(key, store, sync_configured);
     }
-    // As after any unlock: the session arms its own idle clock, and a vault
-    // named before names lived inside it takes the registry's label.
+    // As after any unlock: the session arms its own idle clock, a connected
+    // browser extension hears of it (and, re-checking the hash, of the switch),
+    // and a vault named before names lived inside it takes the registry's label.
     crate::autolock::touch(&app);
+    #[cfg(desktop)]
+    crate::browser::server::notify_unlocked();
     super::auth::seed_vault_name(&app, &state);
     Ok(Some(UnlockResult {
         entries,
@@ -375,6 +378,8 @@ pub async fn workspace_create(
     // put it on the idle clock from here rather than from whenever the webview
     // next reports activity.
     crate::autolock::touch(&app);
+    #[cfg(desktop)]
+    crate::browser::server::notify_unlocked();
     // And open at the app level: sealed under the app key, which the check
     // above proved is in the ring.
     appkey::adopt(&app, &id, &material);
@@ -726,6 +731,8 @@ async fn restore_workspace(
     // starts here — and it is open at the app level, sealed under the app key
     // when the ring holds one.
     crate::autolock::touch(app);
+    #[cfg(desktop)]
+    crate::browser::server::notify_unlocked();
     appkey::adopt(app, &id, &material);
     super::autojoin::with_password(app, join);
     Ok(UnlockResult {

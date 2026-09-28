@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::io::Cursor;
 use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use crypto_box::{aead::Aead, Nonce, PublicKey, SalsaBox, SecretKey};
@@ -9,7 +10,10 @@ use serde_json::{json, Map, Value};
 use super::actions::{host_matches, site_host, Client, Connection, Host, Login};
 use super::manifest::{self, Family, HOST_NAME};
 use super::protocol::{increment, str_of, Code, NONCE_LEN, VERSION};
-use super::{frame, proxy, server, socket_name, Pending, IDENTIFIER};
+use super::{frame, proxy, save_login_in, server, socket_name, Pending, IDENTIFIER};
+use crate::crypto::{PayloadCipher, VaultKey};
+use crate::models::Entry;
+use crate::store::{migrate, SqliteStore, VaultStore};
 
 // --- a vault to talk to ------------------------------------------------------
 
@@ -25,7 +29,13 @@ struct Mock {
     totp: Option<String>,
     locks: Cell<u32>,
     raises: Cell<u32>,
+    /// Every `save_login`: id, url, host, username, password.
+    saves: RefCell<Vec<Save>>,
+    /// Whether a save fails as a write, not as an unknown id.
+    read_only: bool,
 }
+
+type Save = (Option<String>, String, String, String, String);
 
 impl Mock {
     fn unlocked() -> Self {
@@ -39,6 +49,8 @@ impl Mock {
             totp: Some("654321".into()),
             locks: Cell::new(0),
             raises: Cell::new(0),
+            saves: RefCell::new(Vec::new()),
+            read_only: false,
         }
     }
 
@@ -134,6 +146,29 @@ impl Host for Mock {
     }
     fn generate_password(&self) -> Option<String> {
         Some("generated".into())
+    }
+    fn save_login(
+        &self,
+        id: Option<&str>,
+        url: &str,
+        host: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<(), Code> {
+        if id.is_some_and(|id| id != "gh") {
+            return Err(Code::NoValidUuidProvided);
+        }
+        if self.read_only {
+            return Err(Code::ActionCancelledOrDenied);
+        }
+        self.saves.borrow_mut().push((
+            id.map(String::from),
+            url.into(),
+            host.into(),
+            username.into(),
+            password.into(),
+        ));
+        Ok(())
     }
     fn lock(&self) {
         self.locks.set(self.locks.get() + 1);
@@ -575,6 +610,359 @@ fn get_totp_answers_with_the_current_code() {
 }
 
 #[test]
+fn set_login_without_a_uuid_saves_a_new_login_for_the_site() {
+    let (extension, mut connection) = associated();
+    let response = extension.send(
+        &mut connection,
+        "set-login",
+        json!({
+            "url": "https://Example.com/signup",
+            "submitUrl": "https://example.com/session",
+            "login": "me",
+            "password": "s3cret",
+            "group": "",
+            "groupUuid": "",
+            "downloadFavicon": "true",
+        }),
+    );
+    assert_eq!(response["error"], "success");
+    assert_eq!(response["hash"], "abc123");
+    assert!(response["count"].is_null() && response["entries"].is_null());
+    assert_eq!(
+        connection.host().saves.borrow().as_slice(),
+        &[(
+            None,
+            "https://Example.com/signup".into(),
+            "example.com".into(),
+            "me".into(),
+            "s3cret".into()
+        )]
+    );
+}
+
+#[test]
+fn set_login_with_a_uuid_updates_that_login() {
+    let (extension, mut connection) = associated();
+    let response = extension.send(
+        &mut connection,
+        "set-login",
+        json!({ "url": "https://github.com/login", "uuid": "gh", "login": "octocat", "password": "new" }),
+    );
+    assert_eq!(response["error"], "success");
+    let saves = connection.host().saves.borrow();
+    assert_eq!(saves.len(), 1);
+    assert_eq!(saves[0].0.as_deref(), Some("gh"));
+    assert_eq!(saves[0].4, "new");
+}
+
+#[test]
+fn set_login_for_an_unknown_uuid_is_refused() {
+    let (extension, mut connection) = associated();
+    let response = extension.send(
+        &mut connection,
+        "set-login",
+        json!({ "url": "https://github.com", "uuid": "nope", "login": "a", "password": "b" }),
+    );
+    assert_eq!(error_code(&response), Code::NoValidUuidProvided as u8);
+    assert!(connection.host().saves.borrow().is_empty());
+}
+
+#[test]
+fn set_login_needs_an_association() {
+    let (extension, mut connection) = ready();
+    let response = extension.send(
+        &mut connection,
+        "set-login",
+        json!({ "url": "https://github.com", "login": "a", "password": "b" }),
+    );
+    assert_eq!(error_code(&response), Code::AssociationFailed as u8);
+    assert!(connection.host().saves.borrow().is_empty());
+}
+
+#[test]
+fn a_set_login_that_fails_to_write_says_so_inside_the_reply() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        read_only: true,
+        ..Mock::unlocked().known("Chrome", "id-key")
+    });
+    extension.exchange(&mut connection);
+    let response = extension.send(
+        &mut connection,
+        "set-login",
+        json!({ "url": "https://github.com", "login": "a", "password": "b", "keys": [{ "id": "Chrome", "key": "id-key" }] }),
+    );
+    assert_eq!(response["error"], "error");
+    assert_eq!(response["hash"], "abc123");
+}
+
+// --- the save itself, against a store --------------------------------------------
+
+fn vault() -> (tempfile::TempDir, SqliteStore, PayloadCipher) {
+    let dir = tempfile::tempdir().unwrap();
+    let key = VaultKey::legacy_from_password("pw");
+    let store =
+        SqliteStore::open(&dir.path().join("vault.db"), key.sqlcipher_key().as_slice()).unwrap();
+    (dir, store, key.payload_cipher())
+}
+
+fn stored(store: &SqliteStore, cipher: &PayloadCipher, id: &str) -> Entry {
+    let record = store.get(id).unwrap().unwrap();
+    cipher.unseal(&record.id, &record.payload).unwrap()
+}
+
+fn seed(store: &SqliteStore, cipher: &PayloadCipher, entry: &Entry) {
+    let payload = cipher.seal(entry).unwrap();
+    store
+        .upsert(&migrate::build_record(entry, payload).unwrap())
+        .unwrap();
+}
+
+const THEN: &str = "2026-01-01T00:00:00.000Z";
+const NOW: &str = "2026-09-26T12:00:00.000Z";
+
+#[test]
+fn a_save_without_an_id_creates_a_login_for_the_site() {
+    let (_dir, store, cipher) = vault();
+    save_login_in(
+        &store,
+        &cipher,
+        None,
+        "https://github.com/signup",
+        "github.com",
+        "octocat",
+        "hunter2",
+        NOW,
+    )
+    .unwrap();
+
+    let metas = store.list().unwrap();
+    assert_eq!(metas.len(), 1);
+    assert_eq!(metas[0].kind, "login");
+    assert_eq!(metas[0].url_host, "github.com");
+    let entry = stored(&store, &cipher, &metas[0].id);
+    assert_eq!(entry.title, "github.com");
+    assert_eq!(entry.website.as_deref(), Some("https://github.com/signup"));
+    assert_eq!(entry.username.as_deref(), Some("octocat"));
+    assert_eq!(entry.password.as_deref(), Some("hunter2"));
+    assert_eq!(entry.created_at.as_deref(), Some(NOW));
+    assert_eq!(entry.updated_at.as_deref(), Some(NOW));
+    assert_eq!(entry.password_updated_at.as_deref(), Some(NOW));
+}
+
+// A login kept by its email is served to the extension under that email
+// (`logins_for`), so what comes back goes to the same field: the row must not
+// grow a username beside the email it already had.
+#[test]
+fn a_save_over_an_email_login_writes_back_to_its_email() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &Entry {
+            id: "gh".into(),
+            kind: "login".into(),
+            title: "GitHub".into(),
+            website: Some("https://github.com".into()),
+            email: Some("octocat@example.com".into()),
+            password: Some("old".into()),
+            ..Entry::default()
+        },
+    );
+
+    save_login_in(
+        &store,
+        &cipher,
+        Some("gh"),
+        "https://github.com/login",
+        "github.com",
+        "octo@example.com",
+        "new",
+        NOW,
+    )
+    .unwrap();
+
+    let entry = stored(&store, &cipher, "gh");
+    assert_eq!(entry.email.as_deref(), Some("octo@example.com"));
+    assert_eq!(entry.username, None, "no second name beside the email");
+    assert_eq!(entry.password.as_deref(), Some("new"));
+
+    // A name that is not an email cannot go in the email field: it becomes
+    // the username, and the email is left as it was.
+    save_login_in(
+        &store,
+        &cipher,
+        Some("gh"),
+        "https://github.com/login",
+        "github.com",
+        "octocat",
+        "new",
+        NOW,
+    )
+    .unwrap();
+    let entry = stored(&store, &cipher, "gh");
+    assert_eq!(entry.username.as_deref(), Some("octocat"));
+    assert_eq!(entry.email.as_deref(), Some("octo@example.com"));
+
+    // With a username of its own, that is the field — the email stays what
+    // it was, whatever the page called the user.
+    seed(
+        &store,
+        &cipher,
+        &Entry {
+            id: "both".into(),
+            kind: "login".into(),
+            title: "GitHub".into(),
+            website: Some("https://github.com".into()),
+            username: Some("octocat".into()),
+            email: Some("octocat@example.com".into()),
+            password: Some("old".into()),
+            ..Entry::default()
+        },
+    );
+    save_login_in(
+        &store,
+        &cipher,
+        Some("both"),
+        "https://github.com/login",
+        "github.com",
+        "octocat2",
+        "new",
+        NOW,
+    )
+    .unwrap();
+    let entry = stored(&store, &cipher, "both");
+    assert_eq!(entry.username.as_deref(), Some("octocat2"));
+    assert_eq!(entry.email.as_deref(), Some("octocat@example.com"));
+}
+
+#[test]
+fn a_save_over_a_login_changes_only_what_the_page_sent() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &Entry {
+            id: "gh".into(),
+            kind: "login".into(),
+            title: "GitHub (work)".into(),
+            website: Some("https://github.com".into()),
+            username: Some("octocat".into()),
+            password: Some("old".into()),
+            otp: Some("JBSWY3DPEHPK3PXP".into()),
+            tags: Some(vec!["work".into()]),
+            created_at: Some(THEN.into()),
+            updated_at: Some(THEN.into()),
+            password_updated_at: Some(THEN.into()),
+            ..Entry::default()
+        },
+    );
+
+    save_login_in(
+        &store,
+        &cipher,
+        Some("gh"),
+        "https://github.com/settings",
+        "github.com",
+        "octocat",
+        "new",
+        NOW,
+    )
+    .unwrap();
+
+    let entry = stored(&store, &cipher, "gh");
+    assert_eq!(entry.password.as_deref(), Some("new"));
+    assert_eq!(entry.password_updated_at.as_deref(), Some(NOW), "rotated");
+    assert_eq!(entry.updated_at.as_deref(), Some(NOW));
+    // Untouched: the row is the user's, the page only knows two fields of it.
+    assert_eq!(entry.title, "GitHub (work)");
+    assert_eq!(entry.website.as_deref(), Some("https://github.com"));
+    assert_eq!(entry.otp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+    assert_eq!(entry.tags, Some(vec!["work".to_string()]));
+    assert_eq!(entry.created_at.as_deref(), Some(THEN));
+    assert_eq!(
+        store.list().unwrap().len(),
+        1,
+        "an update, not a second row"
+    );
+}
+
+#[test]
+fn a_save_with_the_same_password_does_not_count_as_a_rotation() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &Entry {
+            id: "gh".into(),
+            kind: "login".into(),
+            title: "GitHub".into(),
+            username: Some("old-name".into()),
+            password: Some("same".into()),
+            password_updated_at: Some(THEN.into()),
+            ..Entry::default()
+        },
+    );
+    save_login_in(
+        &store,
+        &cipher,
+        Some("gh"),
+        "https://github.com",
+        "github.com",
+        "new-name",
+        "same",
+        NOW,
+    )
+    .unwrap();
+    let entry = stored(&store, &cipher, "gh");
+    assert_eq!(entry.username.as_deref(), Some("new-name"));
+    assert_eq!(entry.password_updated_at.as_deref(), Some(THEN));
+    assert_eq!(entry.updated_at.as_deref(), Some(NOW));
+}
+
+#[test]
+fn a_save_over_something_that_is_not_a_login_is_refused() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &Entry {
+            id: "note".into(),
+            kind: "note".into(),
+            title: "Not a login".into(),
+            note: Some("keep".into()),
+            ..Entry::default()
+        },
+    );
+    let missing = save_login_in(
+        &store,
+        &cipher,
+        Some("nope"),
+        "https://x.com",
+        "x.com",
+        "a",
+        "b",
+        NOW,
+    );
+    assert_eq!(missing, Err(Code::NoValidUuidProvided));
+    let wrong_kind = save_login_in(
+        &store,
+        &cipher,
+        Some("note"),
+        "https://x.com",
+        "x.com",
+        "a",
+        "b",
+        NOW,
+    );
+    assert_eq!(wrong_kind, Err(Code::NoValidUuidProvided));
+    assert_eq!(
+        stored(&store, &cipher, "note").note.as_deref(),
+        Some("keep")
+    );
+}
+
+#[test]
 fn generate_password_needs_no_association() {
     let (extension, mut connection) = ready();
     let response = extension.send(
@@ -790,6 +1178,92 @@ fn serve_answers_frames_on_a_stream_until_it_closes() {
 
     drop(stream);
     served.join().unwrap();
+}
+
+// The signal registry is one per process, so the tests that register with it
+// run one at a time: with both up at once, one's broadcasts would land on the
+// other's connection, ahead of the frames it is counting.
+static SIGNAL_TESTS: Mutex<()> = Mutex::new(());
+
+#[test]
+fn a_lock_signal_reaches_every_connection_and_drops_the_gone_ones() {
+    let _one_at_a_time = SIGNAL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut extension = TcpStream::connect(address).unwrap();
+    let (open, _) = listener.accept().unwrap();
+    let _gone_peer = TcpStream::connect(address).unwrap();
+    let (gone, _) = listener.accept().unwrap();
+    gone.shutdown(std::net::Shutdown::Write).unwrap();
+
+    let open = Arc::new(Mutex::new(open));
+    let gone = Arc::new(Mutex::new(gone));
+    let open_id = server::register(open.clone());
+    server::register(gone.clone());
+    server::notify_locked();
+    server::notify_unlocked();
+
+    // In order, on the connection that reads.
+    let signal: Value =
+        serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
+    assert_eq!(signal, json!({ "action": "database-locked" }));
+    let signal: Value =
+        serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
+    assert_eq!(signal, json!({ "action": "database-unlocked" }));
+
+    // The gone one's write failed on its own thread, which let the writer go.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while Arc::strong_count(&gone) > 1 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        Arc::strong_count(&gone),
+        1,
+        "a failed write drops the writer"
+    );
+    assert_eq!(Arc::strong_count(&open), 2, "a live one stays registered");
+
+    // The connection ending lets its writer go too.
+    server::forget(open_id);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while Arc::strong_count(&open) > 1 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(Arc::strong_count(&open), 1, "a forgotten one is let go");
+}
+
+#[test]
+fn a_peer_that_stops_reading_stalls_no_one_else() {
+    let _one_at_a_time = SIGNAL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    // A peer that never reads: its socket buffer fills, then writes block.
+    let _stalled_peer = TcpStream::connect(address).unwrap();
+    let (stalled, _) = listener.accept().unwrap();
+    let mut extension = TcpStream::connect(address).unwrap();
+    let (open, _) = listener.accept().unwrap();
+
+    let stalled_id = server::register(Arc::new(Mutex::new(stalled)));
+    let open_id = server::register(Arc::new(Mutex::new(open)));
+    // Far more than a socket buffer holds; every one of these would block a
+    // shared thread on the stalled peer.
+    for _ in 0..4096 {
+        server::notify_locked();
+    }
+    server::notify_unlocked();
+
+    // The reading peer still gets every signal, in order.
+    for _ in 0..4096 {
+        let signal: Value =
+            serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
+        assert_eq!(signal, json!({ "action": "database-locked" }));
+    }
+    let signal: Value =
+        serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
+    assert_eq!(signal, json!({ "action": "database-unlocked" }));
+
+    server::forget(stalled_id);
+    server::forget(open_id);
 }
 
 #[test]
