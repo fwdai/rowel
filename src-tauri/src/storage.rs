@@ -1217,6 +1217,13 @@ mod tests {
         // Entries can leave `from` (a rename writes `from` and `to`), but
         // `from` itself cannot go: that writes its parent.
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+        // Unless the process is one directory modes do not bind (root), in
+        // which case the removal cannot be made to fail and there is nothing
+        // here to test.
+        if fs::create_dir(locked.join("probe")).is_ok() {
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
 
         let chosen = settle_data_dir(from.clone(), to.clone());
 
