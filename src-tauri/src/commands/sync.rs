@@ -649,6 +649,7 @@ fn report(app: &AppHandle, result: Result<sync::engine::SyncOutcome>) {
         Ok(outcome) => {
             if outcome.merged > 0 {
                 events::vault_merged(app, entry_metas(app));
+                crate::credential_identities::publish(app);
             }
             finished(app, None);
         }

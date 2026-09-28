@@ -420,12 +420,7 @@ impl Host for AppHost {
                 log::warn!("browser host: entry {} does not open", meta.id);
                 continue;
             };
-            let username = entry
-                .username
-                .clone()
-                .filter(|u| !u.is_empty())
-                .or(entry.email.clone())
-                .unwrap_or_default();
+            let username = entry.login_name().unwrap_or_default().to_string();
             let totp = entry
                 .otp
                 .as_deref()

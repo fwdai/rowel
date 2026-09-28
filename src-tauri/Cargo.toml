@@ -175,6 +175,19 @@ objc2-ui-kit = { version = "0.3", default-features = false, features = [
   "std",
   "UIPasteboard",
 ] }
+# ASCredentialIdentityStore: the logins and passkeys QuickType suggests for the
+# AutoFill extension (see `credential_identities`). Only the store, its state
+# and the two identity kinds; `block2` gates the completion handlers.
+objc2-authentication-services = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "ASCredentialIdentity",
+  "ASCredentialIdentityStore",
+  "ASCredentialIdentityStoreState",
+  "ASCredentialServiceIdentifier",
+  "ASPasswordCredentialIdentity",
+  "ASPasskeyCredentialIdentity",
+] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # `Media_Ocr` + the imaging/storage stack it needs are for the image scanner:

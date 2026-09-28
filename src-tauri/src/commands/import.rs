@@ -190,6 +190,7 @@ pub async fn import_entries(
     // timestamps verbatim, which is what we want — `build_record` already
     // stamped every row when it was sealed above.
     store.import(&fresh).map_err(store_err)?;
+    crate::credential_identities::publish(&app);
 
     Ok(ImportReport {
         total: parsed.total,

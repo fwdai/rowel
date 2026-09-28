@@ -238,6 +238,35 @@ fn enroll(
     }
 }
 
+// The read policy for the iOS App Group's keychain access group, apart from
+// the keychain so it can be tested without one. The item under the group
+// (`shared`) is the answer whenever there is one. Only a clean miss there asks
+// for the item an older install wrote outside the group (`legacy`) — a
+// cancelled Face ID sheet or any other failure is the answer too, and must not
+// put up a second sheet. Found there, it is moved into the group (`adopt`); a
+// move that fails is logged and the key still returned, since the unlock the
+// user asked for does not depend on it, and the next one tries again.
+#[cfg(any(target_os = "ios", test))]
+fn read_through_group(
+    shared: impl FnOnce() -> Result<Zeroizing<Vec<u8>>>,
+    legacy: impl FnOnce() -> Result<Zeroizing<Vec<u8>>>,
+    adopt: impl FnOnce(&[u8]) -> Result<()>,
+) -> Result<Zeroizing<Vec<u8>>> {
+    match shared() {
+        Err(Error::NotFound) => {
+            let key = legacy()?;
+            match adopt(&key) {
+                Ok(()) => log::info!("moved the biometric key into the App Group's keychain group"),
+                Err(e) => log::warn!(
+                    "could not move the biometric key into the App Group's keychain group: {e}"
+                ),
+            }
+            Ok(key)
+        }
+        found => found,
+    }
+}
+
 #[cfg(target_vendor = "apple")]
 mod imp {
     use super::*;
@@ -266,9 +295,20 @@ mod imp {
     // in does not exist.
     fn protected_options() -> PasswordOptions {
         #[allow(unused_mut)]
-        let mut opts = PasswordOptions::new_generic_password(SERVICE, ACCOUNT);
+        let mut opts = shared(ACCOUNT);
         #[cfg(target_os = "macos")]
         opts.use_protected_keychain();
+        opts
+    }
+
+    // The item for `account`. On iOS it is in the App Group's access group, so
+    // the AutoFill extension can read the key the app enrolled; every write
+    // names the group, and so does every read, which then finds nothing else.
+    fn shared(account: &str) -> PasswordOptions {
+        #[allow(unused_mut)]
+        let mut opts = PasswordOptions::new_generic_password(SERVICE, account);
+        #[cfg(target_os = "ios")]
+        opts.set_access_group(rowel_core::app::APP_GROUP);
         opts
     }
 
@@ -300,7 +340,21 @@ mod imp {
     // Ordinary keychain item: no access control, no entitlement, no OS gate.
     // The biometric check happens in `retrieve` before we ever read this.
     fn prompt_options() -> PasswordOptions {
-        PasswordOptions::new_generic_password(SERVICE, ACCOUNT_PROMPT)
+        shared(ACCOUNT_PROMPT)
+    }
+
+    // The protected item, written. Adding never prompts; reading it back does.
+    fn add_protected(key: &[u8]) -> std::result::Result<(), ProtectedOutcome> {
+        let mut opts = protected_options();
+        opts.set_access_control(access_control().map_err(ProtectedOutcome::Failed)?);
+        set_generic_password_options(key, opts).map_err(|e| match e.code() {
+            ERR_MISSING_ENTITLEMENT => ProtectedOutcome::NoEntitlement,
+            _ => ProtectedOutcome::Failed(map_err(e)),
+        })
+    }
+
+    fn add_prompt(key: &[u8]) -> Result<()> {
+        set_generic_password_options(key, prompt_options()).map_err(map_err)
     }
 
     pub fn store(key: &[u8]) -> Result<GateMode> {
@@ -309,45 +363,98 @@ mod imp {
         // mode we don't end up using would outlive the enrollment it belongs to.
         let _ = delete();
         enroll(
-            || {
-                let mut opts = protected_options();
-                match access_control() {
-                    Ok(control) => opts.set_access_control(control),
-                    Err(e) => return ProtectedOutcome::Failed(e),
-                }
-                match set_generic_password_options(key, opts) {
-                    Ok(()) => ProtectedOutcome::Stored,
-                    Err(e) if e.code() == ERR_MISSING_ENTITLEMENT => {
-                        ProtectedOutcome::NoEntitlement
-                    }
-                    Err(e) => ProtectedOutcome::Failed(map_err(e)),
-                }
+            || match add_protected(key) {
+                Ok(()) => ProtectedOutcome::Stored,
+                Err(outcome) => outcome,
             },
-            || set_generic_password_options(key, prompt_options()).map_err(map_err),
+            || add_prompt(key),
         )
     }
 
     pub fn retrieve(mode: GateMode) -> Result<Zeroizing<Vec<u8>>> {
-        let bytes = match mode {
+        match mode {
             // Requesting the data triggers the OS Touch ID prompt via the stored
             // SecAccessControl (OS-enforced-on-read).
-            GateMode::Protected => generic_password(protected_options()).map_err(map_err)?,
+            GateMode::Protected => read(protected_options, ACCOUNT, |key| {
+                add_protected(key).map_err(|outcome| match outcome {
+                    ProtectedOutcome::Failed(e) => e,
+                    _ => Error::Other("the protected keychain item cannot be written".into()),
+                })
+            }),
             // Verify-then-read: the gate is ours, so it must run first.
             GateMode::Prompt => {
                 biometrics::authenticate()?;
-                generic_password(prompt_options()).map_err(map_err)?
+                read(prompt_options, ACCOUNT_PROMPT, add_prompt)
             }
             // A Windows-only mode: no Apple build ever enrolls it, and reading
             // an enrollment under a gate it was not stored behind is exactly
             // what this module refuses to do.
-            GateMode::HelloKey => return Err(Error::NotFound),
-        };
-        Ok(Zeroizing::new(bytes))
+            GateMode::HelloKey => Err(Error::NotFound),
+        }
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    fn read(
+        options: fn() -> PasswordOptions,
+        _account: &str,
+        _add: impl FnOnce(&[u8]) -> Result<()>,
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        read_item(options())
+    }
+
+    // An install enrolled before the App Group has its item in the app's own
+    // access group, where a query naming the shared one does not look. So a
+    // miss there asks once more without the group, and an item found that way
+    // is written again under the group (`add`) and then removed from where it
+    // was — found in the same place from the next unlock on, and readable by
+    // the extension.
+    #[cfg(target_os = "ios")]
+    fn read(
+        options: fn() -> PasswordOptions,
+        account: &str,
+        add: impl FnOnce(&[u8]) -> Result<()>,
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        read_through_group(
+            || read_item(options()),
+            || read_item(PasswordOptions::new_generic_password(SERVICE, account)),
+            |key| {
+                add(key)?;
+                delete_one(legacy(account))
+            },
+        )
+    }
+
+    // The item as an install before the App Group wrote it: no group named,
+    // so iOS put it in the first group the app is entitled to — its
+    // application identifier, team prefix and bundle id (the `developmentTeam`
+    // in `tauri.conf.json`). Named exactly, so the delete that follows a move
+    // cannot take the item just written under the shared group with it, which
+    // a query without any group would.
+    #[cfg(target_os = "ios")]
+    fn legacy(account: &str) -> PasswordOptions {
+        let mut opts = PasswordOptions::new_generic_password(SERVICE, account);
+        opts.set_access_group(LEGACY_ACCESS_GROUP);
+        opts
+    }
+
+    #[cfg(target_os = "ios")]
+    const LEGACY_ACCESS_GROUP: &str = "UFBL3F444A.app.rowel.mobile";
+
+    fn read_item(opts: PasswordOptions) -> Result<Zeroizing<Vec<u8>>> {
+        generic_password(opts).map(Zeroizing::new).map_err(map_err)
     }
 
     pub fn delete() -> Result<()> {
         delete_one(protected_options())?;
-        delete_one(prompt_options())
+        delete_one(prompt_options())?;
+        // An item never moved — enrolled before the App Group, and not read
+        // since — goes too, or disabling biometric unlock would leave it.
+        #[cfg(target_os = "ios")]
+        {
+            delete_one(legacy(ACCOUNT))?;
+            delete_one(legacy(ACCOUNT_PROMPT))?;
+        }
+        Ok(())
     }
 
     fn delete_one(opts: PasswordOptions) -> Result<()> {
@@ -768,6 +875,97 @@ mod tests {
         );
         assert!(matches!(result, Err(Error::Other(m)) if m == "keychain is on fire"));
         assert!(!fallback_ran.get(), "only NoEntitlement falls back");
+    }
+
+    // --- the App Group keychain group (iOS) ------------------------------------
+
+    fn key(bytes: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        Ok(Zeroizing::new(bytes.to_vec()))
+    }
+
+    // Enrolled since the group: found there, and the old place never asked.
+    #[test]
+    fn a_key_in_the_group_is_read_there_and_nothing_moves() {
+        let asked_legacy = Cell::new(false);
+        let adopted = Cell::new(false);
+        let got = read_through_group(
+            || key(b"k"),
+            || {
+                asked_legacy.set(true);
+                key(b"old")
+            },
+            |_| {
+                adopted.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(&*got, b"k");
+        assert!(!asked_legacy.get() && !adopted.get());
+    }
+
+    // Enrolled before the group: read from the old place and moved, with the
+    // very bytes that were read.
+    #[test]
+    fn a_key_outside_the_group_is_read_and_moved_into_it() {
+        let moved = RefCell::new(None);
+        let got = read_through_group(
+            || Err(Error::NotFound),
+            || key(b"old"),
+            |k| {
+                *moved.borrow_mut() = Some(k.to_vec());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(&*got, b"old");
+        assert_eq!(moved.borrow().as_deref(), Some(&b"old"[..]));
+    }
+
+    // The unlock does not depend on the move: a key that will not move is
+    // still the key, and the next unlock tries the move again.
+    #[test]
+    fn a_move_that_fails_still_returns_the_key() {
+        let got = read_through_group(
+            || Err(Error::NotFound),
+            || key(b"old"),
+            |_| Err(Error::Other("keychain is on fire".into())),
+        )
+        .unwrap();
+        assert_eq!(&*got, b"old");
+    }
+
+    // Enrolled nowhere: the miss is the answer, and nothing is written.
+    #[test]
+    fn no_key_anywhere_is_not_found() {
+        let adopted = Cell::new(false);
+        let result = read_through_group(
+            || Err(Error::NotFound),
+            || Err(Error::NotFound),
+            |_| {
+                adopted.set(true);
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Err(Error::NotFound)));
+        assert!(!adopted.get());
+    }
+
+    // A dismissed Face ID sheet on the group's item is the user's answer: the
+    // old place is not asked, which would put a second sheet up.
+    #[test]
+    fn a_cancelled_read_in_the_group_is_not_retried_outside_it() {
+        let asked_legacy = Cell::new(false);
+        let result = read_through_group(
+            || Err(Error::Cancelled),
+            || {
+                asked_legacy.set(true);
+                key(b"old")
+            },
+            |_| Ok(()),
+        );
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert!(!asked_legacy.get());
     }
 
     #[test]

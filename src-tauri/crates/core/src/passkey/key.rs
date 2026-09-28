@@ -47,7 +47,7 @@ pub fn to_passkey_types(passkey: &models::Passkey) -> Result<passkey_types::Pass
         rp_id: passkey.rp_id.clone(),
         // Ours are always discoverable: the vault is the credential list, so a
         // sign-in with no allowCredentials must still find them.
-        user_handle: Some(decode(&passkey.user_handle, "user handle")?.into()),
+        user_handle: Some(decode_user_handle(&passkey.user_handle)?.into()),
         // Carried so the authenticator can name the account in a UI hint; the
         // relying party never sees either (see `get_assertion`'s response).
         username: Some(passkey.user_name.clone()),
@@ -95,6 +95,12 @@ pub fn decode_credential_id(id: &str) -> Result<Vec<u8>> {
             .map_err(|_| Error::Crypto("passkey credential id is not a valid GUID".into()));
     }
     decode(id, "credential id")
+}
+
+// A user handle is always base64url: the GUID form above is Bitwarden's for
+// credential ids only.
+pub fn decode_user_handle(handle: &str) -> Result<Vec<u8>> {
+    decode(handle, "user handle")
 }
 
 fn is_guid(s: &str) -> bool {

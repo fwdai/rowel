@@ -12,7 +12,7 @@ webview never sees the master key; it talks to the core through a fixed,
 enumerated list of commands (`src-tauri/src/lib.rs`) and receives non-secret
 entry metadata for the list plus one decrypted entry at a time on reveal. The
 vault is a locally stored, encrypted SQLite database under the OS app-data
-directory. There is no account server and no backend that holds user secrets. The
+directory (on iOS, the App Group container; see "iOS AutoFill"). There is no account server and no backend that holds user secrets. The
 webview is locked down by a strict CSP (`default-src 'self'`, `connect-src
 'self'`, `object-src 'none'`, `frame-src 'none'`, `base-uri 'none'`, and no
 `'unsafe-inline'` anywhere: the two `<style>` blocks in `index.html` run under
@@ -575,6 +575,23 @@ exposed process than the webview, and it is not ours.
   KeePassXC installed as well, a manifest that is not Rowel's is never
   overwritten or removed; Settings reports that browser as a conflict, and it
   stays KeePassXC's until the extension is forked under a name of Rowel's own.
+
+## iOS AutoFill
+
+On iOS the app hands the system the names of its accounts so QuickType can
+suggest them (`credential_identities`): for each login with a site and a
+username (or, lacking one, its email) the domain and that name, and for each
+passkey its rpId, user name, credential id and user handle — no password, no
+private key, nothing sealed. They stay with iOS while the vault is locked, as
+they do for other password managers, since a lock changes no account, and a
+suggestion tapped is what makes the AutoFill extension ask for the unlock. So
+that the extension, a separate process with a sandbox of its own, can open the
+same vault, the data directory lives in the App Group container
+(`group.app.rowel.mobile`) rather than the app's own sandbox — moved there
+once, entry by entry, from where older installs kept it — and the
+biometric-gated key is stored under that group's keychain access group, which
+only the app and its extension are entitled to read; the key's biometric
+access control is unchanged.
 
 ## What Rowel explicitly does NOT defend against
 

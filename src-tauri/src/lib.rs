@@ -17,6 +17,9 @@ mod biometrics;
 #[cfg(desktop)]
 pub mod browser;
 mod commands;
+// What iOS suggests above the keyboard for the AutoFill extension. Empty on
+// every other platform.
+mod credential_identities;
 mod events;
 mod favicon;
 mod grants;
