@@ -6,7 +6,7 @@ use crate::models::{Entry, EntryMetaDto, VaultData};
 use crate::session::{derive_key, list_deleted_metas, list_metas, meta_dto_of, store_err};
 use crate::state::AppState;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
-use crate::{crypto, save, storage, sync};
+use crate::{credential_identities, crypto, save, storage, sync};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
@@ -32,7 +32,11 @@ pub fn reveal_entry(id: String, state: State<'_, AppState>) -> Result<Entry> {
 // Persist one entry: seal it into a fresh payload and upsert a single row
 // (metadata + payload), stamping updated_at. No whole-vault rewrite.
 #[tauri::command]
-pub fn save_entry(mut entry: Entry, state: State<'_, AppState>) -> Result<EntryMetaDto> {
+pub fn save_entry(
+    mut entry: Entry,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<EntryMetaDto> {
     let session = state.session.lock().unwrap();
     let cipher = session.payload_cipher()?;
     let store = session.store()?;
@@ -41,6 +45,8 @@ pub fn save_entry(mut entry: Entry, state: State<'_, AppState>) -> Result<EntryM
     let payload = cipher.seal(&entry)?;
     let record = migrate::build_record(&entry, payload)?;
     store.upsert(&record).map_err(store_err)?;
+    // Off this thread, so it reads the vault once this lock is let go.
+    credential_identities::publish(&app);
 
     meta_dto_of(store, &record.id)
 }
@@ -81,9 +87,11 @@ fn restore_passkey_keys(
 
 // Tombstone one entry (retained for sync); it drops out of the list.
 #[tauri::command]
-pub fn delete_entry(id: String, state: State<'_, AppState>) -> Result<()> {
+pub fn delete_entry(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<()> {
     let session = state.session.lock().unwrap();
-    session.store()?.delete(&id).map_err(store_err)
+    session.store()?.delete(&id).map_err(store_err)?;
+    credential_identities::publish(&app);
+    Ok(())
 }
 
 // The Trash: tombstoned entries' metadata, newest deletion first.
@@ -96,19 +104,26 @@ pub fn list_deleted(state: State<'_, AppState>) -> Result<Vec<EntryMetaDto>> {
 // Bring a tombstoned entry back; returns its refreshed metadata so the list can
 // take it back without a re-read.
 #[tauri::command]
-pub fn restore_entry(id: String, state: State<'_, AppState>) -> Result<EntryMetaDto> {
+pub fn restore_entry(
+    id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<EntryMetaDto> {
     let session = state.session.lock().unwrap();
     let store = session.store()?;
     store.restore(&id).map_err(store_err)?;
+    credential_identities::publish(&app);
     meta_dto_of(store, &id)
 }
 
 // Discard a tombstoned entry's contents for good. See `SqliteStore::purge` for
 // why this empties the row rather than deleting it.
 #[tauri::command]
-pub fn purge_entry(id: String, state: State<'_, AppState>) -> Result<()> {
+pub fn purge_entry(id: String, app: AppHandle, state: State<'_, AppState>) -> Result<()> {
     let session = state.session.lock().unwrap();
-    session.store()?.purge(&id).map_err(store_err)
+    session.store()?.purge(&id).map_err(store_err)?;
+    credential_identities::publish(&app);
+    Ok(())
 }
 
 // Star or unstar one entry. A metadata-only write: no payload is unsealed or
@@ -191,6 +206,7 @@ pub async fn import_swftx(
     for record in &records {
         store.upsert(record).map_err(store_err)?;
     }
+    credential_identities::publish(&app);
     Ok(SwftxReport {
         count: records.len(),
         entries: list_metas(store)?,

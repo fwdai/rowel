@@ -189,6 +189,17 @@ impl Entry {
         }
     }
 
+    /// The name a login signs in with: its username, or its email when the
+    /// username is blank — plenty of sites take the address, and an imported
+    /// login often carries only that. What the browser extension fills and
+    /// what iOS suggests, so the two name an account alike.
+    pub fn login_name(&self) -> Option<&str> {
+        self.username
+            .as_deref()
+            .filter(|u| !u.is_empty())
+            .or(self.email.as_deref())
+    }
+
     /// Whether this entry carries any passkey at all, and so needs the stored
     /// row to complete it. Every passkey that comes in from the webview is
     /// blank — a save that carries a private key is refused before the merge
@@ -474,6 +485,21 @@ mod tests {
             passkeys: Some(passkeys),
             ..Entry::default()
         }
+    }
+
+    // The username when there is one, the email when the username is blank.
+    #[test]
+    fn a_login_signs_in_with_its_username_or_else_its_email() {
+        let mut entry = Entry {
+            username: Some("alice".into()),
+            email: Some("alice@acme.test".into()),
+            ..Entry::default()
+        };
+        assert_eq!(entry.login_name(), Some("alice"));
+        entry.username = Some(String::new());
+        assert_eq!(entry.login_name(), Some("alice@acme.test"));
+        entry.email = None;
+        assert_eq!(entry.login_name(), None);
     }
 
     // What a reveal hands the webview: the credential, without the one part of

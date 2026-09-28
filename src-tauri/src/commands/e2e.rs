@@ -100,6 +100,8 @@ pub fn e2e_reset(
     // suite whose spec ran against an unlocked app sees the same `vault:locked`
     // a real lock emits rather than a webview left pointing at a gone vault.
     crate::session::lock(&app);
+    // The vault the published identities named is about to go.
+    crate::credential_identities::clear();
 
     wipe_dir(&dir)?;
     // The preferences file went with it, so the copy held in memory has to

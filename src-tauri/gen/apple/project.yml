@@ -59,6 +59,15 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 1.0.0
         CFBundleVersion: "1.0.0.1"
+    # Hand-maintained: Tauri (2.11) has no config key for iOS entitlements.
+    # It holds the App Group (group.app.rowel.mobile) the vault's container
+    # and the biometric key's keychain group are shared through with the
+    # AutoFill extension; the App ID needs the same group in the developer
+    # portal. The one thing that touches the file is the deep-link plugin's
+    # build script, which adds or drops only associated-domains and rewrites
+    # the plist through the `plist` crate — so keep the file in that crate's
+    # exact output (tabs, no comments, no trailing newline), or the rewrite
+    # lands mid-build and a release build refuses it.
     entitlements:
       path: rowel_iOS/rowel_iOS.entitlements
     scheme:

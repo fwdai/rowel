@@ -89,6 +89,8 @@ pub async fn unlock(
             crate::autolock::touch(&app);
             #[cfg(desktop)]
             crate::browser::server::notify_unlocked();
+            // And iOS suggests this vault's logins from here on.
+            crate::credential_identities::publish(&app);
             seed_vault_name(&app, &state);
             // The app-level unlock: the primary's key opens every workspace
             // sealed under it; another workspace's key joins the ring, and is
@@ -282,11 +284,12 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
         .unwrap()
         .set(key, store, sync_configured);
     // As in `unlock`: the session arms its own idle clock, a connected browser
-    // extension hears of it, and a vault named before names lived inside it
-    // takes the registry's label.
+    // extension hears of it, iOS is handed its logins, and a vault named before
+    // names lived inside it takes the registry's label.
     crate::autolock::touch(&app);
     #[cfg(desktop)]
     crate::browser::server::notify_unlocked();
+    crate::credential_identities::publish(&app);
     seed_vault_name(&app, &state);
     // The app key opens the app: every workspace sealed under it joins the ring.
     appkey::open_all(&app, &app_material);

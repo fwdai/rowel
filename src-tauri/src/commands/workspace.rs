@@ -170,10 +170,12 @@ pub async fn workspace_select(
     }
     // As after any unlock: the session arms its own idle clock, a connected
     // browser extension hears of it (and, re-checking the hash, of the switch),
-    // and a vault named before names lived inside it takes the registry's label.
+    // iOS is handed this vault's logins in place of the last one's, and a vault
+    // named before names lived inside it takes the registry's label.
     crate::autolock::touch(&app);
     #[cfg(desktop)]
     crate::browser::server::notify_unlocked();
+    crate::credential_identities::publish(&app);
     super::auth::seed_vault_name(&app, &state);
     Ok(Some(UnlockResult {
         entries,
@@ -380,6 +382,8 @@ pub async fn workspace_create(
     crate::autolock::touch(&app);
     #[cfg(desktop)]
     crate::browser::server::notify_unlocked();
+    // An empty vault: what iOS suggests is emptied with it.
+    crate::credential_identities::publish(&app);
     // And open at the app level: sealed under the app key, which the check
     // above proved is in the ring.
     appkey::adopt(&app, &id, &material);
@@ -733,6 +737,7 @@ async fn restore_workspace(
     crate::autolock::touch(app);
     #[cfg(desktop)]
     crate::browser::server::notify_unlocked();
+    crate::credential_identities::publish(app);
     appkey::adopt(app, &id, &material);
     super::autojoin::with_password(app, join);
     Ok(UnlockResult {
@@ -1022,6 +1027,17 @@ pub async fn workspace_delete(
     // enrollment.
     if was_primary && applied.is_ok() {
         let _ = blocking(|| crate::secure_store::Platform.delete()).await;
+    }
+
+    // What iOS suggests may name the vault just deleted — or, after a
+    // promotion, rows by a workspace id that has moved. Replaced whole by the
+    // vault still open, or removed when none is.
+    if applied.is_ok() {
+        if state.session.lock().unwrap().is_unlocked() {
+            crate::credential_identities::publish(&app);
+        } else {
+            crate::credential_identities::clear();
+        }
     }
 
     // Said exactly as `workspace_select` says it, and in the same order: the

@@ -1,5 +1,5 @@
-//! On-disk vault storage under the Tauri app-data dir: ensure-file, utf8 read,
-//! overwrite write, `.swftx` export copy.
+//! On-disk vault storage under the Tauri app-data dir (on iOS, the App Group
+//! container): ensure-file, utf8 read, overwrite write, `.swftx` export copy.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -91,17 +91,164 @@ pub fn root_dir(app: &AppHandle) -> Result<PathBuf> {
         }
     }
 
+    let dir = app_data_root(app)?;
+    #[cfg(target_os = "ios")]
+    let dir = ios::shared_root(dir);
+    Ok(dir)
+}
+
+// Where the data dir has always been: the app's own data directory.
+fn app_data_root(app: &AppHandle) -> Result<PathBuf> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| Error::Other(e.to_string()))?;
-    // Dev builds share the prod identifier, so isolate their data in a subdir
-    // to avoid mutating the real vault while iterating.
-    Ok(if cfg!(debug_assertions) {
+    Ok(dev_subdir(dir))
+}
+
+// Dev builds share the prod identifier, so isolate their data in a subdir
+// to avoid mutating the real vault while iterating.
+fn dev_subdir(dir: PathBuf) -> PathBuf {
+    if cfg!(debug_assertions) {
         dir.join("dev")
     } else {
         dir
-    })
+    }
+}
+
+// On iOS the data dir is in the App Group container rather than the app's own
+// sandbox, so the AutoFill extension — a separate process with a sandbox of its
+// own — can open the same vault (`rowel_core::app::APP_GROUP`).
+#[cfg(target_os = "ios")]
+mod ios {
+    use std::path::PathBuf;
+    use std::sync::OnceLock;
+
+    use objc2_foundation::{NSFileManager, NSString};
+    use rowel_core::app::{APP_GROUP, APP_GROUP_DATA_DIR};
+
+    // Resolved, and the old directory moved into it, once per process: every
+    // path in the app goes through `root_dir`, and the move must have finished
+    // before the first of them is read. `get_or_init` holds any other caller
+    // until it has.
+    //
+    // A container iOS will not hand over — the App ID was never given the App
+    // Group, or the entitlement is missing from the build — leaves the vault
+    // where it was: the app keeps working, and only the extension cannot see
+    // it. The next launch that does get a container moves it then.
+    pub(super) fn shared_root(app_data: PathBuf) -> PathBuf {
+        static ROOT: OnceLock<PathBuf> = OnceLock::new();
+        ROOT.get_or_init(|| {
+            let Some(container) = container() else {
+                log::warn!("no App Group container for {APP_GROUP}; the vault stays in the app's own data dir");
+                return app_data;
+            };
+            let shared = super::dev_subdir(container.join(APP_GROUP_DATA_DIR));
+            super::settle_data_dir(app_data, shared)
+        })
+        .clone()
+    }
+
+    fn container() -> Option<PathBuf> {
+        NSFileManager::defaultManager()
+            .containerURLForSecurityApplicationGroupIdentifier(&NSString::from_str(APP_GROUP))?
+            .to_file_path()
+    }
+}
+
+/// The directory the app runs from: `shared` once the data dir is in it, and
+/// `app_data` — where it has always been — when the move could not be made.
+/// Never a half of either. `move_data_dir` undoes a move it cannot finish, so
+/// the vault is whole in one of the two, and that one is answered: an app
+/// opening a half would take a missing registry for a fresh install, or open
+/// a registry whose workspaces are gone, and start a second vault beside the
+/// first — which the next launch's move would then refuse, for good.
+#[cfg(any(target_os = "ios", test))]
+fn settle_data_dir(app_data: PathBuf, shared: PathBuf) -> PathBuf {
+    match move_data_dir(&app_data, &shared) {
+        Ok(moved) if moved.is_empty() => shared,
+        Ok(moved) => {
+            log::info!(
+                "moved the data dir into the App Group container: {}",
+                moved.join(", ")
+            );
+            shared
+        }
+        Err(e) => {
+            log::warn!(
+                "could not move the data dir into the App Group container, staying in the app's own: {e}"
+            );
+            app_data
+        }
+    }
+}
+
+/// Move everything in the data directory `from` into `to`, one top-level entry
+/// at a time — the workspace registry, the preferences, every workspace — then
+/// remove `from`. Returns the names it moved.
+///
+/// Each entry is one rename, so a crash leaves every entry wholly in one
+/// directory or the other, never torn. The next run finds `from` still there
+/// with what is left and finishes the move: an entry already in `to` is one it
+/// moved itself, and the rest have nowhere else to be.
+///
+/// A rename that fails is undone: the entries moved before it go back, so an
+/// error leaves `from` whole and the caller with somewhere to run from. (An
+/// undo that fails too leaves that entry in `to`, logged, for the next run to
+/// carry on from, as after a crash.) Removing the emptied `from` at the end is
+/// not part of the move: with every entry in `to`, a removal that fails is
+/// logged and the move has succeeded — the next run removes it — where an
+/// error would send the caller back to a directory with nothing in it.
+///
+/// It never overwrites. An entry about to move that is already in `to` means
+/// both directories hold a vault of their own — a half-finished move cannot
+/// produce one, since an entry is in one place or the other — and pairing one's
+/// database with the other's sidecars would open neither. So every name is
+/// checked before the first moves, and on a collision nothing does.
+#[cfg(any(target_os = "ios", test))]
+fn move_data_dir(from: &Path, to: &Path) -> Result<Vec<String>> {
+    let entries = match fs::read_dir(from) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let names = entries
+        .map(|entry| entry.map(|e| e.file_name()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    if let Some(taken) = names.iter().find(|name| to.join(name).exists()) {
+        return Err(Error::Other(format!(
+            "{} is in both {} and {}",
+            taken.to_string_lossy(),
+            from.display(),
+            to.display()
+        )));
+    }
+    let mut moved: Vec<&std::ffi::OsString> = Vec::with_capacity(names.len());
+    for name in &names {
+        if let Err(e) = move_one(&from.join(name), &to.join(name)) {
+            for name in moved {
+                if let Err(undo) = fs::rename(to.join(name), from.join(name)) {
+                    log::error!(
+                        "could not move {} back out of {}: {undo}",
+                        name.to_string_lossy(),
+                        to.display()
+                    );
+                }
+            }
+            return Err(e);
+        }
+        moved.push(name);
+    }
+    if let Err(e) = fs::remove_dir(from) {
+        log::warn!(
+            "could not remove the emptied data dir {}: {e}",
+            from.display()
+        );
+    }
+    Ok(names
+        .iter()
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect())
 }
 
 // The active workspace's own directory — which, for the primary, IS the root
@@ -629,10 +776,11 @@ pub fn sync_configured_in(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        atomic_replace_with, atomic_write_file, move_vault_files, move_workspace_files,
-        read_backup, read_regular_file_capped, remove_if_present, Error, BIOMETRIC_FILE, DB_FILE,
-        DB_REKEY_BACKUP_FILE, GDRIVE_FILE, KDF_SIDECAR_FILE, KDF_SIDECAR_REKEY_BACKUP_FILE,
-        LOCKOUT_SIDECAR_FILE, SYNC_SCRATCH_DIR, WRAPPED_KEY_FILE,
+        atomic_replace_with, atomic_write_file, move_data_dir, move_vault_files,
+        move_workspace_files, read_backup, read_regular_file_capped, remove_if_present,
+        settle_data_dir, Error, BIOMETRIC_FILE, DB_FILE, DB_REKEY_BACKUP_FILE, GDRIVE_FILE,
+        KDF_SIDECAR_FILE, KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, SYNC_SCRATCH_DIR,
+        WRAPPED_KEY_FILE,
     };
     use std::fs;
     use std::io::{self, Write};
@@ -909,6 +1057,184 @@ mod tests {
     // The delete behind a Drive disconnect: gone is the goal, so already-gone is
     // success — but a delete that actually failed must not read as one, or a
     // caller would report a disconnect over a token file that is still there.
+    // An install from before the App Group: the whole data dir, registry and
+    // preferences and every workspace, lands in the container as it was laid
+    // out, and the old directory is gone.
+    #[test]
+    fn the_data_dir_moves_whole_into_an_empty_container() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let (from, to) = (root.join("app-data"), root.join("group/app.rowel.mobile"));
+        fs::create_dir_all(from.join("workspaces/w1")).unwrap();
+        fs::write(from.join(DB_FILE), "db").unwrap();
+        fs::write(from.join("workspaces.json"), "{}").unwrap();
+        fs::write(from.join("settings.json"), "{}").unwrap();
+        fs::write(from.join("workspaces/w1").join(DB_FILE), "w1").unwrap();
+
+        let mut moved = move_data_dir(&from, &to).unwrap();
+        moved.sort();
+
+        assert_eq!(
+            moved,
+            ["settings.json", DB_FILE, "workspaces", "workspaces.json"]
+        );
+        assert!(!from.exists());
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
+        assert_eq!(
+            fs::read_to_string(to.join("workspaces/w1").join(DB_FILE)).unwrap(),
+            "w1"
+        );
+    }
+
+    // A crash between two renames: some entries are in the container already,
+    // the rest still in the old directory. The next launch finishes the move
+    // rather than taking the container for a vault of its own.
+    #[test]
+    fn a_half_moved_data_dir_is_finished_on_the_next_run() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let (from, to) = (root.join("app-data"), root.join("group"));
+        fs::create_dir_all(&from).unwrap();
+        fs::create_dir_all(&to).unwrap();
+        fs::write(to.join(DB_FILE), "db").unwrap();
+        fs::write(from.join(KDF_SIDECAR_FILE), "kdf").unwrap();
+
+        assert_eq!(move_data_dir(&from, &to).unwrap(), [KDF_SIDECAR_FILE]);
+        assert!(!from.exists());
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
+        assert_eq!(
+            fs::read_to_string(to.join(KDF_SIDECAR_FILE)).unwrap(),
+            "kdf"
+        );
+    }
+
+    // The crash after the last rename, before the old directory went: an empty
+    // directory is all that is left, and it goes.
+    #[test]
+    fn an_emptied_data_dir_is_removed() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let (from, to) = (root.join("app-data"), root.join("group"));
+        fs::create_dir_all(&from).unwrap();
+
+        assert!(move_data_dir(&from, &to).unwrap().is_empty());
+        assert!(!from.exists());
+    }
+
+    // Already moved, or a fresh install: nothing to do.
+    #[test]
+    fn no_old_data_dir_moves_nothing() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let (from, to) = (root.join("app-data"), root.join("group"));
+
+        assert!(move_data_dir(&from, &to).unwrap().is_empty());
+        assert!(!to.exists());
+    }
+
+    // Two vaults, one in each place: nothing moves — not even the entries that
+    // do not collide, which would pair one vault's sidecars with the other's
+    // database — and both stay as they were.
+    #[test]
+    fn a_container_with_a_vault_of_its_own_is_never_written_over() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let (from, to) = (root.join("app-data"), root.join("group"));
+        fs::create_dir_all(&from).unwrap();
+        fs::create_dir_all(&to).unwrap();
+        fs::write(from.join(DB_FILE), "ours").unwrap();
+        fs::write(from.join(KDF_SIDECAR_FILE), "our kdf").unwrap();
+        fs::write(to.join(DB_FILE), "theirs").unwrap();
+
+        let err = move_data_dir(&from, &to).unwrap_err();
+
+        assert!(matches!(err, Error::Other(_)), "{err}");
+        assert_eq!(fs::read_to_string(from.join(DB_FILE)).unwrap(), "ours");
+        assert!(from.join(KDF_SIDECAR_FILE).exists());
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "theirs");
+        assert!(!to.join(KDF_SIDECAR_FILE).exists());
+        // And the app runs from its own vault, not the container's.
+        assert_eq!(settle_data_dir(from.clone(), to), from);
+    }
+
+    // The app runs from the container once the data dir is in it — on the
+    // launch that moved it, and on every launch after, with nothing to move.
+    #[test]
+    fn the_app_runs_from_the_container_once_the_data_dir_is_in_it() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let (from, to) = (root.join("app-data"), root.join("group"));
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join(DB_FILE), "db").unwrap();
+
+        assert_eq!(settle_data_dir(from.clone(), to.clone()), to);
+        assert!(!from.exists());
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
+        assert_eq!(settle_data_dir(from, to.clone()), to);
+    }
+
+    // A rename that fails partway — here on a target a directory cannot be
+    // renamed onto — is undone: the old directory is whole again, nothing of
+    // it is left in the container, and the app runs from the old directory.
+    // A half in each place would read as a fresh install, or as a registry
+    // whose workspaces are gone, whichever half the app opened.
+    #[cfg(unix)]
+    #[test]
+    fn a_move_that_fails_partway_is_undone_and_the_app_stays_put() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let (from, to) = (root.join("app-data"), root.join("group"));
+        fs::create_dir_all(from.join("workspaces/w1")).unwrap();
+        fs::write(from.join("workspaces.json"), "{}").unwrap();
+        fs::write(from.join("settings.json"), "{}").unwrap();
+        fs::create_dir_all(&to).unwrap();
+        // Dangling, so the check before the first rename does not see it; a
+        // directory cannot be renamed onto a symlink, so `workspaces` fails.
+        std::os::unix::fs::symlink(root.join("nowhere"), to.join("workspaces")).unwrap();
+
+        assert_eq!(settle_data_dir(from.clone(), to.clone()), from);
+
+        assert!(from.join("workspaces/w1").is_dir());
+        assert_eq!(
+            fs::read_to_string(from.join("workspaces.json")).unwrap(),
+            "{}"
+        );
+        assert_eq!(
+            fs::read_to_string(from.join("settings.json")).unwrap(),
+            "{}"
+        );
+        assert!(!to.join("workspaces.json").exists());
+        assert!(!to.join("settings.json").exists());
+    }
+
+    // The last step, removing the emptied old directory, failing is not the
+    // move failing: every entry is in the container, and that is where the app
+    // runs from. Answering the old directory would open an empty one, which
+    // reads as a fresh install. The next launch removes it.
+    #[cfg(unix)]
+    #[test]
+    fn an_emptied_dir_that_cannot_be_removed_still_puts_the_app_in_the_container() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let locked = root.join("locked");
+        let (from, to) = (locked.join("app-data"), root.join("group"));
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join(DB_FILE), "db").unwrap();
+        fs::write(from.join("workspaces.json"), "{}").unwrap();
+        // Entries can leave `from` (a rename writes `from` and `to`), but
+        // `from` itself cannot go: that writes its parent.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+        // Unless the process is one directory modes do not bind (root), in
+        // which case the removal cannot be made to fail and there is nothing
+        // here to test.
+        if fs::create_dir(locked.join("probe")).is_ok() {
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+
+        let chosen = settle_data_dir(from.clone(), to.clone());
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(chosen, to);
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
+        assert!(fs::read_dir(&from).unwrap().next().is_none());
+        assert_eq!(settle_data_dir(from.clone(), to.clone()), to);
+        assert!(!from.exists());
+    }
+
     #[test]
     fn removing_an_absent_file_succeeds_and_a_present_one_goes() {
         let path = tmp_sidecar().with_file_name("gdrive.swftx");
