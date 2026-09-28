@@ -1,5 +1,6 @@
 import type { BackendError } from '@/api/errors'
 import type { AppStatus, Settings } from '@/api/app'
+import type { BrowserStatus } from '@/api/browser'
 import { EVENTS } from '@/api/events'
 import { emitEventSoon } from './events'
 
@@ -86,6 +87,14 @@ export const appStatusDefault = (): AppStatus => ({
   workspaces: [{ id: 'default', name: null }],
   activeWorkspace: 'default'
 })
+
+const BROWSER_OFF: BrowserStatus = {
+  enabled: false,
+  browsers: [
+    { id: 'chrome', label: 'Google Chrome', detected: true, installed: false, conflict: false }
+  ],
+  clients: []
+}
 
 const DEFAULTS: Record<string, Handler> = {
   app_status: appStatusDefault,
@@ -208,7 +217,14 @@ const DEFAULTS: Record<string, Handler> = {
     otp: ''
   }),
   share_revoke: () => undefined,
-  share_list: () => []
+  share_list: () => [],
+
+  // The extension host, off, with nothing let in. Every change answers with
+  // the status as Rust would then have it.
+  browser_status: () => BROWSER_OFF,
+  browser_set_enabled: ({ enabled }) => ({ ...BROWSER_OFF, enabled: enabled as boolean }),
+  browser_respond: () => undefined,
+  browser_forget_client: () => BROWSER_OFF
 }
 
 const overrides = new Map<string, Handler>()

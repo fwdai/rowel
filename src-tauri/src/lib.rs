@@ -250,6 +250,15 @@ pub fn run() {
             commands::workspace::workspace_rename,
             commands::workspace::workspace_set_color,
             commands::workspace::workspace_delete,
+            // The browser extension host is desktop only, like its module.
+            #[cfg(desktop)]
+            commands::browser::browser_status,
+            #[cfg(desktop)]
+            commands::browser::browser_set_enabled,
+            #[cfg(desktop)]
+            commands::browser::browser_respond,
+            #[cfg(desktop)]
+            commands::browser::browser_forget_client,
             // E2E-only vault reset. `generate_handler!` honours per-command
             // attributes, so in a release build the match arm — and with it the
             // only reference to the (also cfg'd-out) module — simply is not

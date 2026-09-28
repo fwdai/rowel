@@ -46,6 +46,7 @@ import {
   Palette,
   Pencil,
   Plus,
+  Puzzle,
   RefreshCw,
   ScanLine,
   Search,
@@ -189,6 +190,8 @@ export const LayersGlyph = glyph(Layers, 16)
 export const GeneralGlyph = glyph(Settings2, 16)
 // Settings › Import & export: secrets travelling in both directions.
 export const TransferGlyph = glyph(ArrowDownUp, 16)
+// Settings › Browser extension: the puzzle piece browsers badge extensions with.
+export const ExtensionGlyph = glyph(Puzzle, 16)
 // The iOS disclosure mark: a row that pushes a screen rather than doing a thing.
 export const ChevronRightGlyph = glyph(ChevronRight, 16)
 // Settings row marks: the accent, the date pattern, the clipboard wipe.

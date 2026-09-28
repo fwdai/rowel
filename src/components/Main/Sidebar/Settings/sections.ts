@@ -1,13 +1,15 @@
 import { t } from '@/i18n'
 import type { TKey } from '@/i18n'
 import type { Section } from '@/store'
+import { isMobile } from '@/lib/platform'
 import {
   GeneralGlyph,
   ShieldGlyph,
   ActivityGlyph,
   LayersGlyph,
   CloudGlyph,
-  TransferGlyph
+  TransferGlyph,
+  ExtensionGlyph
 } from '../../icons'
 
 type Glyph = (props: { size?: number }) => React.ReactElement
@@ -23,12 +25,14 @@ export const GROUPS: { key: Group; label: TKey }[] = [
 
 // The nav order, and the single source of each section's title and the line
 // under it. Flat, and already in group order, so a flat list reads the same.
-export const SECTIONS: {
+const ALL: {
   key: Section
   group: Group
   label: TKey
   description: TKey
   Glyph: Glyph
+  /** Left off a phone, where the platform has nothing for it to set up. */
+  desktop?: boolean
 }[] = [
   {
     key: 'language',
@@ -36,6 +40,15 @@ export const SECTIONS: {
     label: 'General',
     description: 'Appearance, language and how dates are shown.',
     Glyph: GeneralGlyph
+  },
+  // A phone's browser has no native messaging host to reach.
+  {
+    key: 'browser',
+    group: 'app',
+    label: 'Browser extension',
+    description: 'Fill logins in your browser from this vault.',
+    Glyph: ExtensionGlyph,
+    desktop: true
   },
   {
     key: 'security',
@@ -73,6 +86,8 @@ export const SECTIONS: {
     Glyph: TransferGlyph
   }
 ]
+
+export const SECTIONS = ALL.filter(section => !(isMobile && section.desktop))
 
 const find = (section: Section) => SECTIONS.find(item => item.key === section)
 

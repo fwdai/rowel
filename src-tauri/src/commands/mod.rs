@@ -3,12 +3,9 @@ pub mod audit;
 pub mod auth;
 // Adding the account's other vaults with the password that just opened one.
 pub mod autojoin;
-// The browser extension host's switches. Declared only: the Settings section
-// and the consent dialog that reach them are a later PR, and a command the
-// webview never invokes is refused by the frontend's contract test, so the
-// registration in lib.rs waits for them too.
+// The browser extension host's switches, for Settings and the consent dialog.
+// Desktop only, like the host; the registration in lib.rs carries the same cfg.
 #[cfg(desktop)]
-#[allow(dead_code)]
 pub mod browser;
 pub mod clipboard;
 // E2E-only reset seam. Compiled out of release builds entirely (see e2e.rs for
