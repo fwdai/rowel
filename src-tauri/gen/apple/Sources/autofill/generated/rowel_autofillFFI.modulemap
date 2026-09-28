@@ -1,0 +1,7 @@
+module rowel_autofillFFI {
+    header "rowel_autofillFFI.h"
+    export *
+    use "Darwin"
+    use "_Builtin_stdbool"
+    use "_Builtin_stdint"
+}

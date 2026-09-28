@@ -237,3 +237,20 @@ fn wrong_secret_fails() {
     let case = &f["encrypt"][0];
     assert!(bad.decrypt(case["hex"].as_str().unwrap()).is_err());
 }
+
+// A workspace key sealed under the app key opens under that key and that
+// workspace's id, and under nothing else: not another app key (the sidecar a
+// deleted primary left), and not another workspace's directory.
+#[test]
+fn a_workspace_key_opens_only_under_its_app_key_and_its_own_id() {
+    let sealed = seal_workspace_key(&[1u8; 32], "w1", b"material").unwrap();
+    assert_eq!(
+        open_workspace_key(&[1u8; 32], "w1", &sealed)
+            .unwrap()
+            .as_slice(),
+        b"material"
+    );
+    assert!(open_workspace_key(&[2u8; 32], "w1", &sealed).is_err());
+    assert!(open_workspace_key(&[1u8; 32], "w2", &sealed).is_err());
+    assert!(open_workspace_key(&[1u8; 32], "w1", "not base64!").is_err());
+}

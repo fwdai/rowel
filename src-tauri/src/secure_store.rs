@@ -39,63 +39,15 @@
 use crate::error::{Error, Result};
 use zeroize::Zeroizing;
 
-// Used only by the Apple/Windows key-store impls; absent on the unsupported
-// fallback (Linux), so gate them to avoid a dead_code error there.
-#[cfg(any(target_vendor = "apple", target_os = "windows"))]
-const SERVICE: &str = "app.rowel.desktop.vault";
-#[cfg(any(target_vendor = "apple", target_os = "windows"))]
-const ACCOUNT: &str = "master-key";
-// Separate account for the verify-then-read item on Apple platforms. The two
-// modes carry different access control, so they must never be able to resolve
-// each other's item: a distinct account makes a cross-mode read a clean
-// `NotFound` rather than an item read under the wrong gate.
+// The item's names and the gate marker are in the core: the iOS AutoFill
+// extension reads the same item. Used only by the Apple/Windows key-store
+// impls; absent on the unsupported fallback (Linux), so gated to avoid an
+// unused-import error there.
+pub use rowel_core::keychain::GateMode;
 #[cfg(target_vendor = "apple")]
-const ACCOUNT_PROMPT: &str = "master-key-prompt";
-
-/// How an enrolled key is gated. Recorded at enrollment; never re-derived.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GateMode {
-    /// OS-enforced on read (macOS data-protection keychain + `SecAccessControl`).
-    Protected,
-    /// App-enforced: explicit biometric prompt, then a plain credential-store read.
-    Prompt,
-    /// Windows: sealed under a Windows Hello key-credential signature, so the
-    /// stored blob cannot be opened without passing the Hello prompt.
-    HelloKey,
-}
-
-impl GateMode {
-    /// The marker value persisted next to the enrollment flag. Stable on disk —
-    /// changing these strings orphans existing enrollments.
-    pub fn as_marker(self) -> &'static str {
-        match self {
-            Self::Protected => "protected",
-            Self::Prompt => "prompt",
-            Self::HelloKey => "hello-key",
-        }
-    }
-
-    /// Read a persisted marker. Anything unrecognised — including the legacy
-    /// `"1"` marker written before modes existed — reads as the mode that build
-    /// would have used, so an old enrollment keeps working (or fails loudly)
-    /// rather than being reinterpreted under a gate it was never stored behind.
-    pub fn from_marker(marker: &str) -> Self {
-        match marker.trim() {
-            "prompt" => Self::Prompt,
-            "protected" => Self::Protected,
-            "hello-key" => Self::HelloKey,
-            _ => Self::LEGACY,
-        }
-    }
-
-    // Pre-mode enrollments: macOS only ever wrote the protected item, every
-    // other platform only ever wrote the verify-then-read one. iOS had no
-    // pre-mode build at all, but shares macOS' enrollment path.
-    #[cfg(target_vendor = "apple")]
-    const LEGACY: Self = Self::Protected;
-    #[cfg(not(target_vendor = "apple"))]
-    const LEGACY: Self = Self::Prompt;
-}
+use rowel_core::keychain::ACCOUNT_PROMPT;
+#[cfg(any(target_vendor = "apple", target_os = "windows"))]
+use rowel_core::keychain::{ACCOUNT, SERVICE};
 
 /// Abstraction over the platform key store so the non-interactive unlock logic
 /// is unit-testable with an in-memory mock (biometric prompts can't run headlessly).
@@ -966,16 +918,6 @@ mod tests {
         );
         assert!(matches!(result, Err(Error::Cancelled)));
         assert!(!asked_legacy.get());
-    }
-
-    #[test]
-    fn gate_mode_markers_round_trip() {
-        for mode in [GateMode::Protected, GateMode::Prompt, GateMode::HelloKey] {
-            assert_eq!(GateMode::from_marker(mode.as_marker()), mode);
-        }
-        // A pre-mode marker reads as whatever that build actually wrote.
-        assert_eq!(GateMode::from_marker("1"), GateMode::LEGACY);
-        assert_eq!(GateMode::from_marker(""), GateMode::LEGACY);
     }
 
     // --- Windows Hello wrapping (platform-independent halves) ----------------

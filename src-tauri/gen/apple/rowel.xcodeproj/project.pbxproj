@@ -7,30 +7,66 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0086091711CA23C8CCD4F119 /* rowel_autofill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76190D7DD6C394DC59CDB882 /* rowel_autofill.swift */; };
 		06E1EB574B0F6FE6FE202133 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 54D46FDEFA7336CAC562D086 /* Security.framework */; };
+		2FE26264469D9705C542EF30 /* librowel_autofill.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A976DEC4037D1CCD9F7E46B9 /* librowel_autofill.a */; };
 		3719980FFD6EFBF0D014B7C0 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BDAC995C811C4627C5834192 /* QuartzCore.framework */; };
 		3B5DC2683F37A55BC632AAB3 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E5AEF83F7E75D2C42FE4D49D /* CoreGraphics.framework */; };
 		513C9AF622CD7433E9B0AFC1 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D948F63D62242E02F86ABA95 /* Metal.framework */; };
 		54029DF713EBD0C93618A031 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 2BAAA92C0949C5E191FD8E27 /* PrivacyInfo.xcprivacy */; };
+		5CDE20D1007323EF789189C8 /* CredentialList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0923D946727C84858133C70E /* CredentialList.swift */; };
 		63D856621820EFC198C8E3B8 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F2867CE78BFBAA5D977BEB30 /* libapp.a */; };
+		7400FB2439700051703A0964 /* rowel_autofill.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A7D3CC5BE58482F56886B606 /* rowel_autofill.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		753F593B2E5FF161D2BAF35D /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0F4E584678C1CD18565E9156 /* MetalKit.framework */; };
+		8696464081EAFA811AC55B3D /* CredentialProviderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E207F541B0C329D0BDE1F256 /* CredentialProviderViewController.swift */; };
+		9090179CE7082F0602CA9E02 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 54D46FDEFA7336CAC562D086 /* Security.framework */; };
+		9E61E9F83C2D04A1737197C3 /* Unlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF78BC9AE68001C82E277A1B /* Unlock.swift */; };
 		BAAE254D2339BFCEA0C692C2 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 6647F7ADF78A32F48D519D9D /* LaunchScreen.storyboard */; };
 		BF0A76B8E6F7ACCAEC4E7E90 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 318CF822B4E685B317B920E5 /* main.mm */; };
 		BFDDFB742CCDA0C7FD2B4A73 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 91570566E86B52F6F36F5B3B /* Assets.xcassets */; };
+		D5718EB75A3E89204B945C81 /* LocalAuthentication.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 034C79AA96D3A5EE42A40E60 /* LocalAuthentication.framework */; };
+		D6357E220ED39FC7BC8D45F5 /* AuthenticationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 71AD19608DC287D12887856C /* AuthenticationServices.framework */; };
 		D83E67965A4C3F371CFA7AC9 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 68FF340A2F362E81D0C5E391 /* WebKit.framework */; };
 		D9CCB8524963CB7C78D08FAF /* assets in Resources */ = {isa = PBXBuildFile; fileRef = C3C4D8F3580CF0D075DBB7DB /* assets */; };
 		E689C9767B059E047345E057 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E26236A4DE73C3DB9E7DFA0A /* UIKit.framework */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		B3AD7811487CA4D2A9B3AB77 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4B116F4584CFA20D89691925 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1D6ED92CA4DF47C541D4B72F;
+			remoteInfo = rowel_autofill;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		556D1FD247BEFA56DC75C9BA /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				7400FB2439700051703A0964 /* rowel_autofill.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		0157500C6B4870BEF4013C5A /* mrz.rs */ = {isa = PBXFileReference; path = mrz.rs; sourceTree = "<group>"; };
+		034C79AA96D3A5EE42A40E60 /* LocalAuthentication.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = LocalAuthentication.framework; path = System/Library/Frameworks/LocalAuthentication.framework; sourceTree = SDKROOT; };
 		04BFC83C5BE9BF83E4082DF2 /* bitwarden.rs */ = {isa = PBXFileReference; path = bitwarden.rs; sourceTree = "<group>"; };
+		0923D946727C84858133C70E /* CredentialList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialList.swift; sourceTree = "<group>"; };
 		0E2B8DDC520FA742C902FC47 /* hibp.rs */ = {isa = PBXFileReference; path = hibp.rs; sourceTree = "<group>"; };
 		0F4E584678C1CD18565E9156 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		113C0601CA903502A3E29E4B /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		280B266DF6CB99EC4B5B0CE0 /* error.rs */ = {isa = PBXFileReference; path = error.rs; sourceTree = "<group>"; };
 		2BAAA92C0949C5E191FD8E27 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		318CF822B4E685B317B920E5 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		33F4F705160C2BC01E1E860C /* rowel_autofillFFI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = rowel_autofillFFI.h; sourceTree = "<group>"; };
 		34C03E3A13EBC6D56DC86432 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
 		369A7B386AD08EF0BA349562 /* generator.rs */ = {isa = PBXFileReference; path = generator.rs; sourceTree = "<group>"; };
 		36C5E8507E221E0592740085 /* hash.rs */ = {isa = PBXFileReference; path = hash.rs; sourceTree = "<group>"; };
@@ -49,8 +85,10 @@
 		6647F7ADF78A32F48D519D9D /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		66E6D98F71BB26A6629E357C /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
 		68FF340A2F362E81D0C5E391 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		71AD19608DC287D12887856C /* AuthenticationServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AuthenticationServices.framework; path = System/Library/Frameworks/AuthenticationServices.framework; sourceTree = SDKROOT; };
 		74C319D3775A24573DA0B533 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		753BE25B1B1324C3765A34CF /* import.rs */ = {isa = PBXFileReference; path = import.rs; sourceTree = "<group>"; };
+		76190D7DD6C394DC59CDB882 /* rowel_autofill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rowel_autofill.swift; sourceTree = "<group>"; };
 		777132545FAF7996B0B8045F /* biometrics.rs */ = {isa = PBXFileReference; path = biometrics.rs; sourceTree = "<group>"; };
 		781455E71C1AD49C86F0BCBD /* state.rs */ = {isa = PBXFileReference; path = state.rs; sourceTree = "<group>"; };
 		788FD0D86FC19FCF4C2CD807 /* tests.rs */ = {isa = PBXFileReference; path = tests.rs; sourceTree = "<group>"; };
@@ -65,11 +103,14 @@
 		A3843B3303D56B9907B08571 /* auth.rs */ = {isa = PBXFileReference; path = auth.rs; sourceTree = "<group>"; };
 		A6677818C1E3A304B0F344EA /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		A6D66D10FE6A29052DB9338D /* store.rs */ = {isa = PBXFileReference; path = store.rs; sourceTree = "<group>"; };
+		A7D3CC5BE58482F56886B606 /* rowel_autofill.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = rowel_autofill.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7DB2A7CCE9DE5F9FFA773DF /* e2e.rs */ = {isa = PBXFileReference; path = e2e.rs; sourceTree = "<group>"; };
+		A976DEC4037D1CCD9F7E46B9 /* librowel_autofill.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = librowel_autofill.a; sourceTree = "<group>"; };
 		AEF222DEE64D5F7A59F5C150 /* ocr_apple.rs */ = {isa = PBXFileReference; path = ocr_apple.rs; sourceTree = "<group>"; };
 		B29A76205BBD887820FDC5F4 /* sync.rs */ = {isa = PBXFileReference; path = sync.rs; sourceTree = "<group>"; };
 		B3F1636CBC614B9404F1295E /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		B4ACDC36A3B25CD75F2AF77F /* tests.rs */ = {isa = PBXFileReference; path = tests.rs; sourceTree = "<group>"; };
+		B84F5B463C4F990208B28F10 /* rowel_autofillFFI.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = rowel_autofillFFI.modulemap; sourceTree = "<group>"; };
 		BDAC995C811C4627C5834192 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		BDDFB5B13E9F0AF00CCCC2DD /* migrate.rs */ = {isa = PBXFileReference; path = migrate.rs; sourceTree = "<group>"; };
 		BEAC209C99EC7B52C3E17BB2 /* pack.rs */ = {isa = PBXFileReference; path = pack.rs; sourceTree = "<group>"; };
@@ -81,6 +122,7 @@
 		CA09D6C6878D37D99AE4C020 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
 		CD8041F7C16E1206CBDFE19F /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		CF75DFC97BD51569166E3648 /* favicon.rs */ = {isa = PBXFileReference; path = favicon.rs; sourceTree = "<group>"; };
+		CF78BC9AE68001C82E277A1B /* Unlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Unlock.swift; sourceTree = "<group>"; };
 		D0968005A451DBC79A73D5B5 /* ocr_windows.rs */ = {isa = PBXFileReference; path = ocr_windows.rs; sourceTree = "<group>"; };
 		D2AFDA4791125346DFE65392 /* save.rs */ = {isa = PBXFileReference; path = save.rs; sourceTree = "<group>"; };
 		D6CE18C1DF25FC4B364BC424 /* kdf.rs */ = {isa = PBXFileReference; path = kdf.rs; sourceTree = "<group>"; };
@@ -88,6 +130,7 @@
 		DB401C52B369CA7A8DE9ED44 /* autolock.rs */ = {isa = PBXFileReference; path = autolock.rs; sourceTree = "<group>"; };
 		DC8758C6B7EF0E269E5F920E /* models.rs */ = {isa = PBXFileReference; path = models.rs; sourceTree = "<group>"; };
 		DEEBBD19766C7E11F3EA9A3B /* clipboard.rs */ = {isa = PBXFileReference; path = clipboard.rs; sourceTree = "<group>"; };
+		E207F541B0C329D0BDE1F256 /* CredentialProviderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialProviderViewController.swift; sourceTree = "<group>"; };
 		E26236A4DE73C3DB9E7DFA0A /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		E5AEF83F7E75D2C42FE4D49D /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		E6C86F02279B1BAEED55214F /* window.rs */ = {isa = PBXFileReference; path = window.rs; sourceTree = "<group>"; };
@@ -101,6 +144,17 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		81E2772F89A6C92CD0511DAF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2FE26264469D9705C542EF30 /* librowel_autofill.a in Frameworks */,
+				D6357E220ED39FC7BC8D45F5 /* AuthenticationServices.framework in Frameworks */,
+				D5718EB75A3E89204B945C81 /* LocalAuthentication.framework in Frameworks */,
+				9090179CE7082F0602CA9E02 /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		82808C72970AE58E51B4BF65 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -122,6 +176,7 @@
 		1EC582C3F2BF65EFEDC08E5D /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				A7D3CC5BE58482F56886B606 /* rowel_autofill.appex */,
 				59235512296808FC82DAE5BD /* rowel_iOS.app */,
 			);
 			name = Products;
@@ -138,6 +193,16 @@
 				4F7C113E4F1AFC68232D1EEA /* tests.rs */,
 			);
 			path = scan;
+			sourceTree = "<group>";
+		};
+		3650FFDD53CC13A995F576CD /* generated */ = {
+			isa = PBXGroup;
+			children = (
+				76190D7DD6C394DC59CDB882 /* rowel_autofill.swift */,
+				33F4F705160C2BC01E1E860C /* rowel_autofillFFI.h */,
+				B84F5B463C4F990208B28F10 /* rowel_autofillFFI.modulemap */,
+			);
+			path = generated;
 			sourceTree = "<group>";
 		};
 		3FB85259DD808466969DF476 /* Sources */ = {
@@ -167,6 +232,7 @@
 				C3C4D8F3580CF0D075DBB7DB /* assets */,
 				91570566E86B52F6F36F5B3B /* Assets.xcassets */,
 				6647F7ADF78A32F48D519D9D /* LaunchScreen.storyboard */,
+				95171E80B5CD1E2E7FF6C234 /* autofill */,
 				6559F2EB56CAB009F74FE98A /* Externals */,
 				3FB85259DD808466969DF476 /* Sources */,
 				DEDD965618C6F34E917A7C12 /* src */,
@@ -227,6 +293,18 @@
 			path = rowel_iOS;
 			sourceTree = "<group>";
 		};
+		95171E80B5CD1E2E7FF6C234 /* autofill */ = {
+			isa = PBXGroup;
+			children = (
+				0923D946727C84858133C70E /* CredentialList.swift */,
+				E207F541B0C329D0BDE1F256 /* CredentialProviderViewController.swift */,
+				CF78BC9AE68001C82E277A1B /* Unlock.swift */,
+				3650FFDD53CC13A995F576CD /* generated */,
+			);
+			name = autofill;
+			path = Sources/autofill;
+			sourceTree = "<group>";
+		};
 		9DCC963F1AC0DBFA411A30D9 /* rowel */ = {
 			isa = PBXGroup;
 			children = (
@@ -264,8 +342,11 @@
 		B402EC2E891F579F316CA62E /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				71AD19608DC287D12887856C /* AuthenticationServices.framework */,
 				E5AEF83F7E75D2C42FE4D49D /* CoreGraphics.framework */,
 				F2867CE78BFBAA5D977BEB30 /* libapp.a */,
+				A976DEC4037D1CCD9F7E46B9 /* librowel_autofill.a */,
+				034C79AA96D3A5EE42A40E60 /* LocalAuthentication.framework */,
 				D948F63D62242E02F86ABA95 /* Metal.framework */,
 				0F4E584678C1CD18565E9156 /* MetalKit.framework */,
 				BDAC995C811C4627C5834192 /* QuartzCore.framework */,
@@ -333,6 +414,25 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		1D6ED92CA4DF47C541D4B72F /* rowel_autofill */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8FD5F330EB3F1A2365597590 /* Build configuration list for PBXNativeTarget "rowel_autofill" */;
+			buildPhases = (
+				07B3F7FCF55DE990F3B8ED47 /* Build Rust Code */,
+				3149FEFEE32449BE106FBD2C /* Sources */,
+				81E2772F89A6C92CD0511DAF /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = rowel_autofill;
+			packageProductDependencies = (
+			);
+			productName = rowel_autofill;
+			productReference = A7D3CC5BE58482F56886B606 /* rowel_autofill.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		1FC9409741F10A76599A2114 /* rowel_iOS */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 3EDD7ABD186E156CA5314096 /* Build configuration list for PBXNativeTarget "rowel_iOS" */;
@@ -341,10 +441,12 @@
 				3FD288CCF34097D8A29B6A50 /* Sources */,
 				3B77C241CB94B8D46D6B9BD0 /* Resources */,
 				82808C72970AE58E51B4BF65 /* Frameworks */,
+				556D1FD247BEFA56DC75C9BA /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				49F09DF919F0D8676000E04B /* PBXTargetDependency */,
 			);
 			name = rowel_iOS;
 			packageProductDependencies = (
@@ -362,6 +464,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					1D6ED92CA4DF47C541D4B72F = {
+						DevelopmentTeam = UFBL3F444A;
+					};
 					1FC9409741F10A76599A2114 = {
 						DevelopmentTeam = UFBL3F444A;
 					};
@@ -382,6 +487,7 @@
 			projectRoot = "";
 			targets = (
 				1FC9409741F10A76599A2114 /* rowel_iOS */,
+				1D6ED92CA4DF47C541D4B72F /* rowel_autofill */,
 			);
 		};
 /* End PBXProject section */
@@ -401,6 +507,27 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		07B3F7FCF55DE990F3B8ED47 /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/autofill/x86_64/${CONFIGURATION}/librowel_autofill.a",
+				"$(SRCROOT)/Externals/autofill/arm64/${CONFIGURATION}/librowel_autofill.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nexport PATH=\"$HOME/.cargo/bin:$PATH\"\ncd \"$SRCROOT/../..\"\nif [ \"$CONFIGURATION\" = release ]; then profile=release; else profile=debug; fi\nfor arch in $ARCHS; do\n  case \"$PLATFORM_NAME/$arch\" in\n    iphoneos/arm64) triple=aarch64-apple-ios ;;\n    iphonesimulator/arm64) triple=aarch64-apple-ios-sim ;;\n    iphonesimulator/x86_64) triple=x86_64-apple-ios ;;\n    *) echo \"error: no Rust target for $PLATFORM_NAME/$arch\"; exit 1 ;;\n  esac\n  if [ \"$profile\" = release ]; then\n    cargo build -p rowel-autofill --lib --release --target \"$triple\"\n  else\n    cargo build -p rowel-autofill --lib --target \"$triple\"\n  fi\n  out=\"$SRCROOT/Externals/autofill/$arch/$CONFIGURATION\"\n  mkdir -p \"$out\"\n  cp \"${CARGO_TARGET_DIR:-target}/$triple/$profile/librowel_autofill.a\" \"$out/\"\ndone\n";
+		};
 		7792C32789E22DAD0FC06240 /* Build Rust Code */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -425,6 +552,17 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		3149FEFEE32449BE106FBD2C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5CDE20D1007323EF789189C8 /* CredentialList.swift in Sources */,
+				8696464081EAFA811AC55B3D /* CredentialProviderViewController.swift in Sources */,
+				9E61E9F83C2D04A1737197C3 /* Unlock.swift in Sources */,
+				0086091711CA23C8CCD4F119 /* rowel_autofill.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3FD288CCF34097D8A29B6A50 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -435,7 +573,45 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		49F09DF919F0D8676000E04B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1D6ED92CA4DF47C541D4B72F /* rowel_autofill */;
+			targetProxy = B3AD7811487CA4D2A9B3AB77 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		1B31E39253D0B7DA179ADADE /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = (
+					arm64,
+				);
+				CODE_SIGN_ENTITLEMENTS = rowel_autofill/rowel_autofill.entitlements;
+				DEVELOPMENT_TEAM = UFBL3F444A;
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = rowel_autofill/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/autofill/arm64/$(CONFIGURATION)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/autofill/x86_64/$(CONFIGURATION)";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(PROJECT_DIR)/Sources/autofill/generated/rowel_autofillFFI.modulemap";
+				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.mobile.autofill;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = release;
+		};
 		5C52D24B00FA05885AF4511A /* release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -467,6 +643,36 @@
 				VALID_ARCHS = arm64;
 			};
 			name = release;
+		};
+		90B40D954C9493AF6865163E /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = (
+					arm64,
+				);
+				CODE_SIGN_ENTITLEMENTS = rowel_autofill/rowel_autofill.entitlements;
+				DEVELOPMENT_TEAM = UFBL3F444A;
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = rowel_autofill/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/autofill/arm64/$(CONFIGURATION)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/autofill/x86_64/$(CONFIGURATION)";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(PROJECT_DIR)/Sources/autofill/generated/rowel_autofillFFI.modulemap";
+				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.mobile.autofill;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = debug;
 		};
 		9146B247DA4E7B02703F8C81 /* debug */ = {
 			isa = XCBuildConfiguration;
@@ -637,6 +843,15 @@
 			buildConfigurations = (
 				B5AC70C6E04566F4634D190A /* debug */,
 				9F03E9D2E604318570D4FBBB /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		8FD5F330EB3F1A2365597590 /* Build configuration list for PBXNativeTarget "rowel_autofill" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				90B40D954C9493AF6865163E /* debug */,
+				1B31E39253D0B7DA179ADADE /* release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = debug;

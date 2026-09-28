@@ -12,12 +12,13 @@ rust-version = "1.92"
 # Desktop application, never published to crates.io.
 publish = false
 
-# The app and the Tauri-free vault core it is built on (`crates/core`), which
-# the iOS AutoFill extension links on its own. Both are default members, so a
-# bare `cargo test` or `cargo clippy` from here covers the core as well.
+# The app, the Tauri-free vault core it is built on (`crates/core`), and the
+# library the iOS AutoFill extension links in its place (`crates/autofill`).
+# All are default members, so a bare `cargo test` or `cargo clippy` from here
+# covers every one.
 [workspace]
-members = ["crates/core"]
-default-members = [".", "crates/core"]
+members = ["crates/core", "crates/autofill"]
+default-members = [".", "crates/core", "crates/autofill"]
 
 [lib]
 name = "rowel_lib"
@@ -104,13 +105,9 @@ dirs = "7"
 # plus XSalsa20-Poly1305 — which is what the KeePassXC-Browser protocol seals
 # every message with (the extension uses tweetnacl); `interprocess` is the one
 # API over the Unix socket and the Windows named pipe the extension's proxy
-# process reaches the app through; `public-suffix` is the Mozilla list that
-# keeps a parent-domain match from reaching past a registrable domain
-# (`actions::is_public_suffix`; MIT OR Apache-2.0, already in the locked
-# graph under passkey-client).
+# process reaches the app through.
 crypto_box = "0.9"
 interprocess = "2"
-public-suffix = "0.1"
 
 # Passkeys through the extension (`browser::passkeys`), where the host is the
 # WebAuthn client: tokio's current-thread runtime drives the authenticator's

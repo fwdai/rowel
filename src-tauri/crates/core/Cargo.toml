@@ -36,6 +36,10 @@ base64 = "0.23"
 log = "0.4.34"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 url = "2"
+# The Mozilla public suffix list, which keeps a parent-domain match from
+# reaching past a registrable domain (`host::is_public_suffix`; MIT OR
+# Apache-2.0, already in the locked graph under passkey-client).
+public-suffix = "0.1"
 zeroize = { version = "1.8.2", features = ["serde"] }
 argon2 = "0.6"
 # WebAuthn authenticator core (1Password's passkey-rs, MIT OR Apache-2.0). Kept

@@ -1,0 +1,38 @@
+[package]
+name = "rowel-autofill"
+# Internal to the workspace and never released on its own, like the core.
+version = "0.1.0"
+description = "The vault as the iOS AutoFill extension reads it, over UniFFI"
+authors = ["Alex Chaplinsky"]
+edition = "2021"
+rust-version = "1.92"
+publish = false
+
+[lib]
+name = "rowel_autofill"
+# Linked by Xcode into the extension (`gen/apple/project.yml`), never by
+# another crate.
+crate-type = ["staticlib"]
+
+# UniFFI's documented way to generate bindings: a bindgen binary in the
+# workspace, so the generator is always the version of the runtime it writes
+# for (`bindgen.sh`). Behind a feature so the extension's own builds do not
+# compile the generator's dependencies for iOS.
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+rowel-core = { path = "../core" }
+uniffi = "0.29"
+thiserror = "2"
+log = "0.4.34"
+zeroize = "1.8.2"
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"

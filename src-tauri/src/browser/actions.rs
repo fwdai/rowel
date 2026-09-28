@@ -312,50 +312,6 @@ fn params(value: Value) -> Map<String, Value> {
     }
 }
 
-/// The host a page URL names, lowercase, or `None` for anything that is not a
-/// URL with one.
-pub fn site_host(url: &str) -> Option<String> {
-    url::Url::parse(url)
-        .ok()?
-        .host_str()
-        .map(str::to_ascii_lowercase)
-}
-
-/// Whether a login stored for `entry` (its `url_host` column) belongs to the
-/// page at `site`: the same host, or a subdomain of it, with a leading `www.`
-/// on either side not counting. `accounts.example.com` gets the login saved
-/// for `example.com`; `example.com` does not get one saved for
-/// `accounts.example.com`, and `notexample.com` gets neither. A login stored
-/// under a public suffix — `com`, `co.uk`, whether typed or imported — is
-/// served to no site beneath it: that is not a parent, it is everyone.
-///
-/// The column is the website field cut after its scheme and before its first
-/// `/` — so a port, a query or a user name typed there stays in it — where
-/// `site` is a browser's host and never carries any of those. Read back as a
-/// URL, the column comes out as a bare host the way `site` does, by the one
-/// parser, rather than by stripping each of those by hand.
-pub fn host_matches(site: &str, entry: &str) -> bool {
-    let Some(entry) = entry_host(entry) else {
-        return false;
-    };
-    let site = site.trim_start_matches("www.");
-    let entry = entry.trim_start_matches("www.");
-    site == entry || (site.ends_with(&format!(".{entry}")) && !is_public_suffix(entry))
-}
-
-/// The host in a `url_host` column, or `None` when what was typed there does
-/// not read as one.
-fn entry_host(entry: &str) -> Option<String> {
-    let entry = entry.trim();
-    if entry.is_empty() || entry.contains("://") {
-        return None;
-    }
-    site_host(&format!("https://{entry}"))
-}
-
-/// Whether `host` is a public suffix — `com`, `co.uk` — under which anyone's
-/// site could live. What keeps a parent-domain match honest, here and for the
-/// rpId a passkey may claim.
-pub fn is_public_suffix(host: &str) -> bool {
-    public_suffix::DEFAULT_PROVIDER.is_effective_tld(host)
-}
+// Which logins belong to a site is the core's rule, so the iOS AutoFill
+// extension serves a site exactly what this host does.
+pub use rowel_core::host::{host_matches, is_public_suffix, site_host};

@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use crypto_box::{aead::Aead, Nonce, PublicKey, SalsaBox, SecretKey};
 use serde_json::{json, Map, Value};
 
-use super::actions::{host_matches, site_host, Client, Connection, Host, Login};
+use super::actions::{Client, Connection, Host, Login};
 use super::manifest::{self, Family, HOST_NAME};
 use super::passkeys::{self, Assertion, Registration};
 use super::protocol::{increment, str_of, Code, NONCE_LEN, VERSION};
@@ -1117,57 +1117,6 @@ fn groups_and_unknown_actions_are_refused_in_the_protocols_words() {
     let entries = extension.send(&mut connection, "get-database-entries", json!({}));
     assert_eq!(error_code(&entries), Code::IncorrectAction as u8);
     assert_eq!(entries["error"], Code::IncorrectAction.message());
-}
-
-// --- matching ----------------------------------------------------------------
-
-#[test]
-fn site_host_is_the_lowercase_host_of_a_url() {
-    assert_eq!(
-        site_host("https://Accounts.Google.com/signin?x=1").as_deref(),
-        Some("accounts.google.com")
-    );
-    assert_eq!(
-        site_host("http://192.168.1.1/").as_deref(),
-        Some("192.168.1.1")
-    );
-    assert_eq!(site_host("github.com"), None);
-    assert_eq!(site_host(""), None);
-}
-
-#[test]
-fn a_login_matches_its_host_and_subdomains_but_not_its_lookalikes() {
-    assert!(host_matches("github.com", "github.com"));
-    assert!(host_matches("github.com", "GitHub.com"));
-    assert!(host_matches("www.github.com", "github.com"));
-    assert!(host_matches("github.com", "www.github.com"));
-    assert!(host_matches("accounts.google.com", "google.com"));
-    assert!(!host_matches("google.com", "accounts.google.com"));
-    assert!(!host_matches("notgithub.com", "github.com"));
-    assert!(!host_matches("github.com", ""));
-    assert!(!host_matches("github.com", "  "));
-    // A public suffix is not a parent: a login stored under one — a malformed
-    // website, an import — is served to no site beneath it.
-    assert!(!host_matches("github.com", "com"));
-    assert!(!host_matches("bank.co.uk", "co.uk"));
-    assert!(
-        host_matches("co.uk", "co.uk"),
-        "the suffix itself, as a site, still is"
-    );
-    assert!(host_matches("online.bank.co.uk", "bank.co.uk"));
-}
-
-#[test]
-fn a_login_matches_whatever_else_its_website_field_carried() {
-    // The column is the website cut before its first `/`, so all of these
-    // are what a typed URL leaves in it.
-    assert!(host_matches("example.com", "example.com:8443"));
-    assert!(host_matches("example.com", "user@example.com"));
-    assert!(host_matches("example.com", "user:pw@example.com:8443"));
-    assert!(host_matches("example.com", "example.com?next=1"));
-    assert!(host_matches("example.com", "example.com#top"));
-    assert!(!host_matches("example.com", "example.com:notaport"));
-    assert!(host_matches("192.168.1.1", "192.168.1.1:8080"));
 }
 
 // --- framing and the wire ----------------------------------------------------
