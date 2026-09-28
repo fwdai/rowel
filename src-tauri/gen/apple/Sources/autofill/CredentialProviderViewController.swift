@@ -109,9 +109,11 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
 
     // Unseals the one row chosen, for the sites being filled, and hands iOS
-    // its name and password.
+    // its name and password. One answer at a time: the sheet is busy from
+    // here until iOS has it, and a tap that was already queued finds it so.
     private func fill(_ record: String) {
-        guard let vault else { return }
+        guard let vault, !model.state.isAnswering else { return }
+        model.state = .answering
         let sites = serviceIdentifiers
         Task { [weak self] in
             do {

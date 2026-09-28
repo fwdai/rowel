@@ -226,11 +226,13 @@ pub struct Vault {
 #[uniffi::export]
 impl Vault {
     /// The logins for the sites iOS names — each identifier a domain or a
-    /// URL, admitted by [`Sites`] — that have a password to fill. Each row is
-    /// unsealed for the same two things the fill needs: the name it signs in
-    /// with (`Entry::login_name`, the name the app publishes to QuickType for
-    /// the same row) and whether there is a password at all; the list carries
-    /// the name, and nothing else of the payload.
+    /// URL, admitted by [`Sites`] — that have a password to fill
+    /// ([`fills_password`]). The listing is read for all of them; a row is
+    /// unsealed only when the listing cannot vouch for it, and then for the
+    /// same two things the fill needs — the name it signs in with
+    /// (`Entry::login_name`, the name the app publishes to QuickType for the
+    /// same row) and whether there is a password at all. The list carries the
+    /// name, and nothing else of the payload.
     pub fn credentials_for(
         &self,
         service_identifiers: Vec<String>,
@@ -241,17 +243,22 @@ impl Vault {
             if meta.kind != "login" || !sites.admit(&meta.url_host) {
                 continue;
             }
-            // A row that will not unseal is left off rather than failing the
-            // list: the key opened the database, so it is that row's alone.
-            let Ok(Some(entry)) = self.entry(&meta.id) else {
-                continue;
+            let username = meta.username.as_deref().filter(|u| !u.is_empty());
+            let user = match username {
+                Some(user) if listing_vouches(meta.has_passkey, username) => user.to_string(),
+                // A row that will not unseal is left off rather than failing
+                // the list: the key opened the database, so it is that row's
+                // alone — and it could not be filled either.
+                _ => match self.entry(&meta.id) {
+                    Ok(Some(entry)) if fills_password(meta.has_passkey, username, &entry) => {
+                        entry.login_name().unwrap_or_default().to_string()
+                    }
+                    _ => continue,
+                },
             };
-            if !entry.has_password() {
-                continue;
-            }
             credentials.push(Credential {
                 record: format!("{}/{}", self.workspace, meta.id),
-                user: entry.login_name().unwrap_or_default().to_string(),
+                user,
                 title: meta.title,
                 host: meta.url_host,
             });
@@ -282,7 +289,7 @@ impl Vault {
             return Err(AutofillError::NotFound);
         }
         let entry = self.cipher.unseal(&row.id, &row.payload)?;
-        if !entry.has_password() {
+        if !fills_password(row.has_passkey, row.username.as_deref(), &entry) {
             return Err(AutofillError::NotFound);
         }
         Ok(Password {
@@ -300,6 +307,24 @@ impl Vault {
         };
         Ok(Some(self.cipher.unseal(&row.id, &row.payload)?))
     }
+}
+
+/// Whether a login's listing — its `has_passkey` and `username` columns —
+/// vouches for it having a password to fill: a login with a username and no
+/// passkey does, as far as the app's QuickType identities are concerned
+/// (`credential_identities::needs_entry` in the app unseals exactly the rest).
+/// A row with no username column, or a passkey on it — the passkey-only kind
+/// an import brings has no password — the listing cannot vouch for.
+fn listing_vouches(has_passkey: bool, username: Option<&str>) -> bool {
+    !has_passkey && username.is_some_and(|u| !u.is_empty())
+}
+
+/// Whether a login has a password to fill: the one rule for the list and the
+/// fill, so nothing is offered that will not fill and nothing refused that
+/// was offered. The listing's word where it vouches ([`listing_vouches`]),
+/// the payload's otherwise.
+fn fills_password(has_passkey: bool, username: Option<&str>, entry: &Entry) -> bool {
+    listing_vouches(has_passkey, username) || entry.has_password()
 }
 
 // The host a service identifier names: iOS passes a URL for a web page and a

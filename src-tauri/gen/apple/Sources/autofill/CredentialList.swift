@@ -6,6 +6,15 @@ enum SheetState {
     case unlocking
     case locked(String)
     case credentials([Credential])
+    /// A row was picked and the vault is answering for it: nothing to tap,
+    /// and no Cancel, until it has — a second tap would answer twice, and a
+    /// cancel would not stop what is already under way.
+    case answering
+
+    var isAnswering: Bool {
+        if case .answering = self { return true }
+        return false
+    }
 }
 
 final class SheetModel: ObservableObject {
@@ -29,6 +38,7 @@ struct CredentialList: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel", action: cancel)
+                            .disabled(model.state.isAnswering)
                     }
                 }
         }
@@ -36,7 +46,7 @@ struct CredentialList: View {
 
     @ViewBuilder private var content: some View {
         switch model.state {
-        case .unlocking:
+        case .unlocking, .answering:
             ProgressView()
         case let .locked(message):
             VStack(spacing: 16) {

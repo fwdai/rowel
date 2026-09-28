@@ -388,28 +388,57 @@ fn a_record_fills_only_for_a_site_its_login_is_for() {
     assert_eq!(fill(&[]).unwrap().password, "pw2");
 }
 
-// A login without a password — the passkey-only kind an import brings — is
-// not a password to offer, in the list or at the fill, as the app's QuickType
-// identities leave it out too.
+// A login with a passkey on it, as the app names it for the site.
+fn with_passkey(id: &str, website: &str, username: &str, password: &str) -> Entry {
+    let mut entry = login(id, website, username, password);
+    entry.passkeys = Some(vec![serde_json::from_value(serde_json::json!({
+        "credentialId": "Y3JlZA", "rpId": website, "userHandle": "dXNlcg",
+        "userName": username, "userDisplayName": "Alice Example"
+    }))
+    .unwrap()]);
+    entry
+}
+
+// A login without a password is not a password to offer, in the list or at
+// the fill, by the rule the app's QuickType identities go by: a passkey on
+// the row, or no username, and the payload decides — the passkey-only kind an
+// import brings, and an email login with nothing to fill, are left out. A
+// login with a username and no passkey the listing vouches for, as the app
+// does, so it is offered, and fills what it has.
 #[test]
 fn a_login_with_no_password_is_not_offered_as_one() {
     let (container, root) = container();
+    let email_only: Entry = serde_json::from_value(serde_json::json!({
+        "id": "mail", "type": "login", "title": "mail", "website": "acme.test",
+        "email": "alice@acme.test"
+    }))
+    .unwrap();
     vault_at(
         &root,
         &APP_KEY,
         &[
-            login("keyed", "acme.test", "alice", ""),
+            with_passkey("keyed", "acme.test", "alice", ""),
+            with_passkey("both", "acme.test", "alice", "pw0"),
+            email_only,
+            login("bare", "acme.test", "carol", ""),
             login("filled", "acme.test", "bob", "pw"),
         ],
     );
 
     let vault = open_primary(&container);
-    assert_eq!(records(&vault, &["acme.test"]), ["default/filled"]);
-    assert_eq!(records(&vault, &[]), ["default/filled"]);
+    assert_eq!(
+        records(&vault, &["acme.test"]),
+        ["default/bare", "default/both", "default/filled"]
+    );
+    assert_eq!(records(&vault, &[]), records(&vault, &["acme.test"]));
+    let fill = |record: &str| vault.password(record.into(), vec!["acme.test".into()]);
     assert!(matches!(
-        vault.password("default/keyed".into(), vec!["acme.test".into()]),
+        fill("default/keyed"),
         Err(AutofillError::NotFound)
     ));
+    assert!(matches!(fill("default/mail"), Err(AutofillError::NotFound)));
+    assert_eq!(fill("default/both").unwrap().password, "pw0");
+    assert_eq!(fill("default/bare").unwrap().password, "");
 }
 
 // A login in the trash is gone as far as filling goes, whatever iOS still
