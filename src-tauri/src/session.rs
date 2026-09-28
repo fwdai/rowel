@@ -260,9 +260,9 @@ pub fn sealed(app: &AppHandle) {
     crate::browser::server::notify_locked();
 }
 
-pub fn store_err(e: StoreError) -> Error {
-    Error::Other(e.to_string())
-}
+// Defined in the core, where the passkey store needs it too; the commands
+// reach it here.
+pub use crate::error::store_err;
 
 // Resolve the vault key for `password`: Argon2id when the KDF sidecar is present
 // (the current scheme), or the legacy deterministic key when a DB exists without

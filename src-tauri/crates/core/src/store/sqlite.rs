@@ -210,8 +210,8 @@ impl SqliteStore {
     }
 
     /// Test seam: stamp the DB as if a future build had migrated it further.
-    #[cfg(test)]
-    pub(crate) fn set_user_version(&self, version: i64) -> Result<()> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_user_version(&self, version: i64) -> Result<()> {
         self.lock()
             .execute_batch(&format!("PRAGMA user_version = {version}"))?;
         Ok(())

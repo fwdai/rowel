@@ -12,6 +12,13 @@ rust-version = "1.92"
 # Desktop application, never published to crates.io.
 publish = false
 
+# The app and the Tauri-free vault core it is built on (`crates/core`), which
+# the iOS AutoFill extension links on its own. Both are default members, so a
+# bare `cargo test` or `cargo clippy` from here covers the core as well.
+[workspace]
+members = ["crates/core"]
+default-members = [".", "crates/core"]
+
 [lib]
 name = "rowel_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -20,6 +27,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+rowel-core = { path = "crates/core" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
@@ -27,11 +35,7 @@ tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-csv = "1"
 thiserror = "2"
-rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
-rusqlite_migration = "1"
-aes-gcm = "0.11"
 ring = "0.17"
 sha2 = "0.11"
 subtle = "2"
@@ -60,7 +64,6 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # `Zeroizing<String>` at the command boundary and scrubbed when it drops.
 zeroize = { version = "1.8.2", features = ["serde"] }
 tempfile = "3"
-argon2 = "0.6"
 sys-locale = "0.3"
 # WebAuthn authenticator core (1Password's passkey-rs, MIT OR Apache-2.0). Kept
 # in lockstep across passkey-types/-authenticator/-client: the traits pass the
@@ -79,9 +82,6 @@ ssh-key = { version = "0.6.7", default-features = false, features = [
   "rand_core",
   "std",
 ] }
-# `CredentialStore` and `UserValidationMethod` are async traits; implementing
-# them needs the same attribute macro passkey-authenticator declares them with.
-async-trait = "0.1"
 
 # Only for `O_NONBLOCK`, the flag that keeps opening a user-chosen path from
 # parking on a FIFO with no writer (`storage::read_regular_file_capped`). Every
@@ -185,7 +185,7 @@ objc2-ui-kit = { version = "0.3", default-features = false, features = [
 # the enrollment signature is the deterministic PKCS#1 v1.5 the wrap relies on.
 # `Win32_Security*` + `Win32_System_Threading` build the owner-only DACL for
 # plaintext exports, and `Win32_Storage_FileSystem` is the `CreateFileW` that
-# takes it at creation (`owner_only.rs`).
+# takes it at creation (`crates/core/src/owner_only.rs`).
 windows = { version = "0.62", features = ["Security_Credentials", "Security_Credentials_UI", "Security_Cryptography_Core", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Threading", "Media_Ocr", "Graphics_Imaging", "Storage", "Storage_Streams"] }
 # Credential Manager storage. It holds only the Hello-wrapped blob — Credential
 # Manager itself has no biometric gate (see `secure_store::GateMode::HelloKey`).
@@ -195,11 +195,8 @@ keyring = { version = "3", features = ["windows-native"] }
 windows-registry = "0.5"
 
 [dev-dependencies]
-# A real WebAuthn client drives the authenticator through a full ceremony in the
-# passkey tests (origin checks, clientDataJSON, attestation) instead of us
-# hand-rolling CTAP2 requests. Test-only: the extension host plays the client
-# itself, for the reasons `browser::passkeys` gives.
-passkey-client = "0.5"
+# The core's test seams (`MemoryVault`, `set_user_version`) for the app's tests.
+rowel-core = { path = "crates/core", features = ["test-support"] }
 # The CredentialStore/UserValidationMethod traits are async, so the tests need
 # a runtime; `rt` (current-thread) + `macros` is the whole of it.
 tokio = { version = "1", features = ["rt", "macros"] }

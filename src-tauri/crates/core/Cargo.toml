@@ -1,0 +1,70 @@
+[package]
+name = "rowel-core"
+# Internal to the workspace and never released on its own, so it does not
+# follow the app's version.
+version = "0.1.0"
+description = "Rowel's vault core, free of Tauri and the webview"
+authors = ["Alex Chaplinsky"]
+edition = "2021"
+# Same floor as the app: the RustCrypto 0.11 crates (1.85) and passkey-rs 0.5
+# (1.85.1) are below it, and one toolchain builds the whole workspace.
+rust-version = "1.92"
+publish = false
+
+[lib]
+name = "rowel_core"
+
+[features]
+# Test seams the app's own tests reach across the crate boundary for — an
+# in-memory passkey vault, a schema stamp from the future. `cfg(test)` alone
+# only reaches this crate's tests.
+test-support = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+csv = "1"
+thiserror = "2"
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
+rusqlite_migration = "1"
+aes-gcm = "0.11"
+ring = "0.17"
+sha2 = "0.11"
+rand = "0.8"
+hex = "0.4"
+base64 = "0.23"
+log = "0.4.34"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+url = "2"
+zeroize = { version = "1.8.2", features = ["serde"] }
+argon2 = "0.6"
+# WebAuthn authenticator core (1Password's passkey-rs, MIT OR Apache-2.0). Kept
+# in lockstep across passkey-types/-authenticator/-client: the traits pass the
+# crates' own types, so a mixed set does not compile.
+passkey-types = "0.5"
+passkey-authenticator = "0.5"
+# P-256 keys (PKCS#8 <-> COSE) and the COSE key type passkey-types speaks.
+# Both pinned to what passkey-authenticator itself depends on, so exactly one
+# copy of each is linked.
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+coset = "0.4"
+# `CredentialStore` and `UserValidationMethod` are async traits; implementing
+# them needs the same attribute macro passkey-authenticator declares them with.
+async-trait = "0.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# `Win32_Security*` + `Win32_System_Threading` build the owner-only DACL for
+# plaintext exports, and `Win32_Storage_FileSystem` is the `CreateFileW` that
+# takes it at creation (`owner_only.rs`).
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
+[dev-dependencies]
+# A real WebAuthn client drives the authenticator through a full ceremony in the
+# passkey tests (origin checks, clientDataJSON, attestation) instead of us
+# hand-rolling CTAP2 requests. Test-only: the extension host plays the client
+# itself, for the reasons `browser::passkeys` gives.
+passkey-client = "0.5"
+# The CredentialStore/UserValidationMethod traits are async, so the tests need
+# a runtime; `rt` (current-thread) + `macros` is the whole of it.
+tokio = { version = "1", features = ["rt", "macros"] }
+tempfile = "3"

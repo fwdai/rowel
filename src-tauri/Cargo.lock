@@ -4447,15 +4447,11 @@ dependencies = [
 name = "rowel"
 version = "1.0.0-alpha.7"
 dependencies = [
- "aes-gcm",
- "argon2",
- "async-trait",
  "base64 0.23.1",
  "block2",
  "chrono",
  "coset",
  "crypto_box",
- "csv",
  "dirs 7.0.0",
  "futures-util",
  "hex",
@@ -4471,14 +4467,12 @@ dependencies = [
  "objc2-vision",
  "p256",
  "passkey-authenticator",
- "passkey-client",
  "passkey-types",
  "public-suffix",
  "rand",
  "reqwest",
  "ring",
- "rusqlite",
- "rusqlite_migration",
+ "rowel-core",
  "rustls",
  "security-framework",
  "serde",
@@ -4507,6 +4501,38 @@ dependencies = [
  "windows-registry",
  "zeroize",
  "zxcvbn",
+]
+
+[[package]]
+name = "rowel-core"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "argon2",
+ "async-trait",
+ "base64 0.23.1",
+ "chrono",
+ "coset",
+ "csv",
+ "hex",
+ "log",
+ "p256",
+ "passkey-authenticator",
+ "passkey-client",
+ "passkey-types",
+ "rand",
+ "ring",
+ "rusqlite",
+ "rusqlite_migration",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+ "windows 0.62.2",
+ "zeroize",
 ]
 
 [[package]]

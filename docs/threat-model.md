@@ -40,7 +40,7 @@ already chose, not the authorization; the grant is.
 ## What sits on disk
 
 The vault is a **SQLite database sealed with SQLCipher** (`vault.db`,
-`src-tauri/src/store/`, `rusqlite` with `bundled-sqlcipher`). SQLCipher encrypts
+`src-tauri/crates/core/src/store/`, `rusqlite` with `bundled-sqlcipher`). SQLCipher encrypts
 the **entire database file at rest** — page contents, the schema, free pages, and
 the write-ahead log — with AES-256 and per-page authentication. On disk, nothing
 is readable without the database key.
@@ -53,7 +53,7 @@ Inside the decrypted database:
   protected at rest by SQLCipher, but they are *not* additionally app-encrypted:
   anyone holding the database key sees them in the clear.
 - Each row also carries an opaque `payload` BLOB. The storage layer never
-  inspects or encrypts it (`src-tauri/src/store/sqlite.rs` documents the payload
+  inspects or encrypts it (`src-tauri/crates/core/src/store/sqlite.rs` documents the payload
   as caller-owned); the application applies its **own AEAD** on top. The whole
   entry is serialized to JSON and sealed as AES-256-GCM (base64-wrapped), and
   each individually sensitive field (login password, OTP secret, secure-note
@@ -192,7 +192,7 @@ private key gets exactly the protection an entry's password gets: SQLCipher at
 rest, the app AEAD on top, unsealed only for the operation that needs it. Sync
 carries them as part of the opaque payload and never sees them.
 
-- **The private key never leaves the core.** `src-tauri/src/passkey/` unseals a
+- **The private key never leaves the core.** `src-tauri/crates/core/src/passkey/` unseals a
   login, converts the stored PKCS#8 key to a COSE key in memory, signs, and drops
   it. No command returns a private key to the webview: `reveal_entry` hands out
   `Entry::redacted`, which blanks every passkey's `private_key` (blank is omitted

@@ -1,5 +1,5 @@
 // Card network detection from the leading digits (IIN/BIN ranges).
-// TypeScript mirror of `src-tauri/src/cards.rs` — the backend derives and
+// TypeScript mirror of `src-tauri/crates/core/src/cards.rs` — the backend derives and
 // stores the slug at save time for list metadata; this mirror serves views
 // that already hold the revealed number. Keep the two in sync.
 

@@ -32,9 +32,6 @@
 //! with a non-zero counter keeps counting, since its previous owner already
 //! taught the relying party to expect that.
 
-// The one caller is the browser-extension host, which is desktop only.
-#![cfg_attr(not(desktop), allow(dead_code))]
-
 pub mod key;
 pub mod store;
 

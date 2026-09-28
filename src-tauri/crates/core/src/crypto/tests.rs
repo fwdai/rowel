@@ -6,7 +6,7 @@ use super::*;
 use crate::models::VaultData;
 use serde_json::Value;
 
-const FIXTURES: &str = include_str!("../../tests/fixtures/fixtures.json");
+const FIXTURES: &str = include_str!("../../../../tests/fixtures/fixtures.json");
 
 fn fixtures() -> Value {
     serde_json::from_str(FIXTURES).unwrap()

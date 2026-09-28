@@ -1,5 +1,7 @@
 use serde::{Serialize, Serializer};
 
+use crate::store::StoreError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("invalid master password")]
@@ -71,14 +73,14 @@ pub enum Error {
     /// A share published by a different vault than the one asking to delete it.
     /// One Drive account holds every vault's shares in one folder, and the file
     /// id in a revoke is whatever the caller sent, so ownership is read back off
-    /// Drive rather than assumed — see [`crate::share::revoke`].
+    /// Drive rather than assumed — see the app's `share::revoke`.
     #[error("this share was published by another vault")]
     ShareNotOwned,
 
     /// Sharing asked for by a vault that has no id yet. The id is written by the
     /// first successful sync, and every share is stamped with it, so a link
     /// published before that run would be one no vault could later name as its
-    /// own — see [`crate::commands::share`].
+    /// own — see the app's `commands::share`.
     #[error("sync this vault once before sharing from it")]
     ShareNeedsSync,
 
@@ -123,7 +125,7 @@ pub enum Error {
     /// A sync connect on a vault the account does not hold, while it holds
     /// others. The account is the source of truth for which vaults exist, so
     /// this vault is not added beside them: the user restores one of the
-    /// account's vaults instead — see [`crate::commands::sync::sync_adopt_pending`].
+    /// account's vaults instead — see the app's `commands::sync::sync_adopt_pending`.
     #[error("this Google account holds other vaults")]
     VaultNotInAccount,
 
@@ -155,12 +157,18 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+// The store keeps its own error type (see `store`); this is where it becomes
+// the app's.
+pub fn store_err(e: StoreError) -> Error {
+    Error::Other(e.to_string())
+}
+
 impl Error {
-    // The discriminant the frontend switches on. Crate-visible because sync
-    // reports a failed run as status rather than as a rejection, and carries
-    // the kind alongside the message so a screen can recognise one failure
-    // without matching on English prose (see `state::SyncFailure`).
-    pub(crate) fn kind(&self) -> &'static str {
+    // The discriminant the frontend switches on. Public because sync reports
+    // a failed run as status rather than as a rejection, and carries the kind
+    // alongside the message so a screen can recognise one failure without
+    // matching on English prose (see `state::SyncFailure` in the app).
+    pub fn kind(&self) -> &'static str {
         match self {
             Error::InvalidPassword => "invalidPassword",
             Error::VaultTooNew => "vaultTooNew",

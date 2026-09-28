@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { cardBrandOf } from './cardBrand'
 
-// Mirror of the Rust tests in src-tauri/src/cards.rs — the two detectors must
+// Mirror of the Rust tests in src-tauri/crates/core/src/cards.rs — the two detectors must
 // agree (backend stores the slug at save time; this serves revealed views).
 describe('cardBrandOf', () => {
   it('detects the major networks', () => {

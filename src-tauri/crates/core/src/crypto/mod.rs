@@ -33,7 +33,7 @@ const SALT_LEN: usize = 64;
 const IV_LEN: usize = 16;
 const TAG_LEN: usize = 16;
 const ITERATIONS: u32 = 100_000;
-pub(crate) const KEY_LEN: usize = 32;
+pub const KEY_LEN: usize = 32;
 
 /// Sixteen random bytes — the width of every id the app mints for itself
 /// (entries, workspaces, share files, export rows). One source so they all
@@ -80,7 +80,7 @@ pub fn sqlcipher_key(secret: &str) -> [u8; KEY_LEN] {
 /// `info` label via HKDF-SHA256. One master yields the SQLCipher key and the
 /// payload key as independent subkeys (distinct `info`), so a single KDF pass
 /// covers both without either revealing the other.
-pub(crate) fn hkdf_subkey(ikm: &[u8], info: &[u8]) -> [u8; KEY_LEN] {
+pub fn hkdf_subkey(ikm: &[u8], info: &[u8]) -> [u8; KEY_LEN] {
     const SALT: &[u8] = b"rowel-kdf-hkdf-v1";
     let prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, SALT).extract(ikm);
     let info = [info];
@@ -99,7 +99,7 @@ pub(crate) fn hkdf_subkey(ikm: &[u8], info: &[u8]) -> [u8; KEY_LEN] {
 /// `aad` is authenticated but not stored: the caller has to present the same
 /// bytes to [`unseal_aead`], which is what binds a ciphertext to its context
 /// (a vault payload to its row id). Empty when there is nothing to bind to.
-pub(crate) fn seal_aead(key: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
+pub fn seal_aead(key: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
     let cipher = Aes256Gcm16::new_from_slice(key).map_err(err)?;
     let mut nonce = [0u8; IV_LEN];
     rand::thread_rng().fill_bytes(&mut nonce);
@@ -120,7 +120,7 @@ pub(crate) fn seal_aead(key: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec<
 
 /// Reverse of [`seal_aead`]: split off the 16-byte nonce and decrypt the rest,
 /// under the same `aad` it was sealed with.
-pub(crate) fn unseal_aead(key: &[u8], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>> {
+pub fn unseal_aead(key: &[u8], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>> {
     if blob.len() < IV_LEN + TAG_LEN {
         return Err(Error::Crypto("payload too short".into()));
     }
