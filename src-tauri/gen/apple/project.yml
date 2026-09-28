@@ -136,9 +136,11 @@ targets:
           NSExtensionPointIdentifier: com.apple.authentication-services.credential-provider-ui
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
           NSExtensionAttributes:
-            # Read by iOS 17 and later; 16 assumes passwords.
+            # Read by iOS 17 and later; 16 assumes passwords, and has no
+            # passkey provider API.
             ASCredentialProviderExtensionCapabilities:
               ProvidesPasswords: true
+              ProvidesPasskeys: true
     # The AutoFill credential provider entitlement, and the App Group the
     # vault's container and the key's keychain group are shared through.
     # Written from here by xcodegen, so a regeneration keeps them.

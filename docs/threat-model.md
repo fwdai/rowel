@@ -603,17 +603,28 @@ keychain item. It opens nothing before the user passes Face ID or Touch ID —
 the item's access control demands it — and then opens the vault with the same
 app key the app's own biometric unlock uses, so a workspace that opens only
 with its own password stays closed to it, and a device with biometric unlock
-turned off gives it nothing. It never creates or writes a vault, and while a
-password change the app was interrupted in awaits its rollback — the recovery
-snapshot beside the database says so — it opens nothing at all. The list it
-shows holds names only — title, user name, site — and only for logins that
-have a password to fill; a password is unsealed for the one row the user
-picks, handed to iOS to fill, and not kept. What iOS holds is a name, never a
-grant: every fill names the sites iOS is filling for, and the vault decides
-by the same rule the list does, so a suggestion iOS still shows for a site
-its login has since been moved off, or a login since deleted, is refused
-rather than filled. Passkeys are published to QuickType but not yet served:
-the extension declares passwords only.
+turned off gives it nothing. It never creates a vault, and writes to one only
+to keep a passkey it registered; while a password change the app was
+interrupted in awaits its rollback — the recovery snapshot beside the database
+says so — it opens nothing at all. The list it shows holds names only — title,
+user name, site — and, as passwords, only logins that have one to fill; a
+password is unsealed for the one row the user picks, handed to iOS to fill,
+and not kept. What iOS holds is a name, never a grant: every fill names the
+sites iOS is filling for, and the vault decides by the same rule the list
+does, so a suggestion iOS still shows for a site its login has since been
+moved off, or a login since deleted, is refused rather than filled.
+
+Passkeys are served on iOS 17 and later, by the same authenticator the desktop
+browser host drives (`rowel_core::passkey`). iOS is the WebAuthn client: it
+checks the relying party against the calling app or page, writes the client
+data, and hands the extension only its hash, so the extension signs exactly
+what the OS hands it and has no origin of its own to get wrong. The Face ID
+unlock is the user verification the relying party is told of, and the sheet is
+the user's say: the account tapped in the list (or the QuickType suggestion,
+which names one passkey) for a sign-in, an explicit "Save Passkey" naming the
+site and the account for a registration. A passkey registered in the extension
+is kept in the vault at once, but reaches QuickType only the next time the app
+runs and publishes its identities; until then the sheet's list offers it.
 
 ## What Rowel explicitly does NOT defend against
 

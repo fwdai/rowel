@@ -1,10 +1,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use p256::ecdsa::signature::Verifier;
+use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
+use p256::pkcs8::{DecodePublicKey, EncodePrivateKey};
+use passkey_types::ctap2::{AuthenticatorData, Flags};
+use passkey_types::encoding::base64url;
 use rowel_core::crypto::{seal_workspace_key, VaultKey};
-use rowel_core::models::Entry;
+use rowel_core::models::{Entry, Passkey};
 use rowel_core::store::{migrate, SqliteStore, VaultStore};
 use rowel_core::workspace::{Registry, Workspace};
+use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use super::*;
@@ -422,7 +428,7 @@ fn a_record_fills_only_for_a_site_its_login_is_for() {
 }
 
 // A login with a passkey on it, as the app names it for the site.
-fn with_passkey(id: &str, website: &str, username: &str, password: &str) -> Entry {
+fn login_with_a_passkey(id: &str, website: &str, username: &str, password: &str) -> Entry {
     let mut entry = login(id, website, username, password);
     entry.passkeys = Some(vec![serde_json::from_value(serde_json::json!({
         "credentialId": "Y3JlZA", "rpId": website, "userHandle": "dXNlcg",
@@ -450,8 +456,8 @@ fn a_login_with_no_password_is_not_offered_as_one() {
         &root,
         &APP_KEY,
         &[
-            with_passkey("keyed", "acme.test", "alice", ""),
-            with_passkey("both", "acme.test", "alice", "pw0"),
+            login_with_a_passkey("keyed", "acme.test", "alice", ""),
+            login_with_a_passkey("both", "acme.test", "alice", "pw0"),
             email_only,
             login("bare", "acme.test", "carol", ""),
             login("filled", "acme.test", "bob", "pw"),
@@ -488,4 +494,334 @@ fn a_deleted_login_is_not_filled() {
         vault.password("default/old".into(), vec!["acme.test".into()]),
         Err(AutofillError::NotFound)
     ));
+}
+
+// --- passkeys -------------------------------------------------------------
+//
+// Checked the way a relying party checks what iOS passes on to it, as the
+// desktop host's ceremony tests check theirs (`browser/tests/ceremonies.rs` in
+// the app). The two verifiers below are a few lines each and duplicated
+// rather than shared: those tests read the browser's JSON, these the bytes iOS
+// hands over, and the crates share no test code.
+
+const RP_ID: &str = "example.com";
+
+// iOS hashes the clientDataJSON it wrote; any 32 bytes stand in for it.
+fn client_data_hash(what: &str) -> Vec<u8> {
+    Sha256::digest(what).to_vec()
+}
+
+fn registration(user: &str, exclude: &[Vec<u8>]) -> PasskeyRegistration {
+    PasskeyRegistration {
+        rp_id: RP_ID.into(),
+        rp_name: Some("Example Inc".into()),
+        user_name: user.into(),
+        user_display_name: None,
+        user_handle: format!("handle-{user}").into_bytes(),
+        client_data_hash: client_data_hash("webauthn.create"),
+        excluded_credential_ids: exclude.to_vec(),
+        supported_algorithms: vec![-8, -7, -257],
+    }
+}
+
+fn assertion(hash: &[u8], allow: &[Vec<u8>], record: Option<&str>) -> PasskeyAssertion {
+    PasskeyAssertion {
+        rp_id: RP_ID.into(),
+        client_data_hash: hash.to_vec(),
+        allowed_credential_ids: allow.to_vec(),
+        record: record.map(str::to_string),
+    }
+}
+
+/// What a relying party checks of an attestation; the public key it keeps.
+fn verify_registration(registered: &RegisteredPasskey) -> VerifyingKey {
+    let attestation: coset::cbor::value::Value =
+        coset::cbor::de::from_reader(registered.attestation_object.as_slice()).unwrap();
+    let fields = attestation
+        .as_map()
+        .expect("the attestation object is a map");
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_text() == Some(name))
+            .map(|(_, value)| value)
+            .unwrap_or_else(|| panic!("no {name}"))
+    };
+    assert_eq!(field("fmt").as_text(), Some("none"));
+    let parsed = AuthenticatorData::from_slice(field("authData").as_bytes().unwrap()).unwrap();
+    assert_eq!(parsed.rp_id_hash(), Sha256::digest(RP_ID).as_slice());
+    assert!(parsed.flags.contains(Flags::UP | Flags::UV | Flags::AT));
+    let attested = parsed.attested_credential_data.unwrap();
+    assert_eq!(
+        attested.credential_id(),
+        registered.credential_id.as_slice()
+    );
+    let spki = passkey_authenticator::public_key_der_from_cose_key(&attested.key).unwrap();
+    VerifyingKey::from(p256::PublicKey::from_public_key_der(&spki).unwrap())
+}
+
+/// What a relying party checks of an assertion: its own rpId, a verified user,
+/// the zero counter of a synced passkey, and a signature under `key` over the
+/// authenticator data and the hash iOS gave.
+fn verify_assertion(key: &VerifyingKey, asserted: &AssertedPasskey, hash: &[u8]) {
+    let parsed = AuthenticatorData::from_slice(&asserted.authenticator_data).unwrap();
+    assert_eq!(parsed.rp_id_hash(), Sha256::digest(RP_ID).as_slice());
+    assert!(parsed.flags.contains(Flags::UP | Flags::UV));
+    assert_eq!(parsed.counter, Some(0));
+    let mut signed = asserted.authenticator_data.clone();
+    signed.extend(hash);
+    let signature = Signature::from_der(&asserted.signature).unwrap();
+    key.verify(&signed, &signature)
+        .expect("the assertion verifies under the key the site was given");
+}
+
+fn empty_vault() -> (tempfile::TempDir, Arc<Vault>) {
+    let (container, root) = container();
+    vault_at(&root, &APP_KEY, &[]);
+    let vault = open_primary(&container);
+    (container, vault)
+}
+
+#[test]
+fn a_passkey_registered_in_the_extension_signs_in_with_it() {
+    let (_container, vault) = empty_vault();
+
+    let registered = vault.register_passkey(registration("alice", &[])).unwrap();
+    let key = verify_registration(&registered);
+
+    // Kept on a new login for the site, named after the relying party.
+    let accounts = vault.passkeys_for(RP_ID.into(), vec![]).unwrap();
+    assert_eq!(accounts.len(), 1);
+    let account = &accounts[0];
+    assert_eq!(account.credential_id, registered.credential_id);
+    assert_eq!(account.user_name, "alice");
+    assert!(account.created_at.is_some());
+    let (_, id) = account.record.split_once('/').unwrap();
+    assert_eq!(vault.store.get(id).unwrap().unwrap().title, "Example Inc");
+    // A login with no password is not one the password list offers.
+    assert!(vault
+        .credentials_for(vec![RP_ID.into()])
+        .unwrap()
+        .is_empty());
+
+    // Named in the allow list, discovered without one, and named by its
+    // QuickType identity's record.
+    let id = registered.credential_id.clone();
+    for (allow, record) in [
+        (vec![id.clone()], None),
+        (vec![], None),
+        (vec![id.clone()], Some(account.record.as_str())),
+    ] {
+        let hash = client_data_hash(&format!("webauthn.get {allow:?} {record:?}"));
+        let asserted = vault
+            .assert_passkey(assertion(&hash, &allow, record))
+            .unwrap();
+        verify_assertion(&key, &asserted, &hash);
+        assert_eq!(asserted.credential_id, id);
+        assert_eq!(asserted.user_handle, b"handle-alice");
+    }
+}
+
+#[test]
+fn a_passkey_for_an_account_the_vault_already_has_is_refused() {
+    let (_container, vault) = empty_vault();
+    let first = vault.register_passkey(registration("alice", &[])).unwrap();
+
+    assert!(matches!(
+        vault.register_passkey(registration("alice", &[first.credential_id])),
+        Err(AutofillError::Excluded)
+    ));
+    assert_eq!(vault.passkeys_for(RP_ID.into(), vec![]).unwrap().len(), 1);
+
+    // An exclude list naming someone else's credential is no bar.
+    vault
+        .register_passkey(registration("alice", &[b"not ours".to_vec()]))
+        .unwrap();
+    assert_eq!(vault.passkeys_for(RP_ID.into(), vec![]).unwrap().len(), 2);
+}
+
+#[test]
+fn a_site_that_takes_no_es256_key_gets_no_passkey() {
+    let (_container, vault) = empty_vault();
+
+    let rsa_only = PasskeyRegistration {
+        supported_algorithms: vec![-8, -257],
+        ..registration("alice", &[])
+    };
+    assert!(matches!(
+        vault.register_passkey(rsa_only),
+        Err(AutofillError::Unsupported)
+    ));
+    assert!(vault.passkeys_for(RP_ID.into(), vec![]).unwrap().is_empty());
+
+    // No list is any algorithm.
+    let any = PasskeyRegistration {
+        supported_algorithms: vec![],
+        ..registration("alice", &[])
+    };
+    verify_registration(&vault.register_passkey(any).unwrap());
+}
+
+// A passkey as an import leaves it, for `user` at `rp_id`, made at
+// `created_at`, with the key `seed` makes: and that key's public half.
+fn imported(user: &str, rp_id: &str, created_at: &str, seed: u8) -> (Passkey, VerifyingKey) {
+    let secret = p256::SecretKey::from_slice(&[seed; 32]).unwrap();
+    let passkey = Passkey {
+        credential_id: base64url(format!("cred-{user}").as_bytes()),
+        rp_id: rp_id.into(),
+        rp_name: None,
+        user_handle: base64url(user.as_bytes()),
+        user_name: user.into(),
+        user_display_name: format!("{user} Example"),
+        private_key: base64url(secret.to_pkcs8_der().unwrap().as_bytes()),
+        counter: 0,
+        created_at: Some(created_at.into()),
+    };
+    (passkey, VerifyingKey::from(SigningKey::from(secret)))
+}
+
+fn with_passkey(id: &str, website: &str, passkey: Passkey) -> Entry {
+    let mut entry = login(id, website, "", "pw");
+    entry.passkeys = Some(vec![passkey]);
+    entry
+}
+
+// Two accounts at the site, each on its own login, and one at another site.
+fn two_accounts() -> (tempfile::TempDir, Arc<Vault>, VerifyingKey) {
+    let (alice, alice_key) = imported("alice", RP_ID, "2024-01-01T00:00:00Z", 1);
+    let (bob, _) = imported("bob", RP_ID, "2025-01-01T00:00:00Z", 2);
+    let (carol, _) = imported("carol", "other.test", "2025-06-01T00:00:00Z", 3);
+    let (container, root) = container();
+    vault_at(
+        &root,
+        &APP_KEY,
+        &[
+            with_passkey("alice-login", "https://example.com", alice),
+            with_passkey("bob-login", "https://example.com", bob),
+            with_passkey("carol-login", "https://other.test", carol),
+        ],
+    );
+    let vault = open_primary(&container);
+    (container, vault, alice_key)
+}
+
+#[test]
+fn a_site_lists_its_own_passkeys_newest_first() {
+    let (_container, vault, _) = two_accounts();
+
+    let accounts = vault.passkeys_for(RP_ID.into(), vec![]).unwrap();
+    assert_eq!(
+        accounts,
+        [
+            PasskeyAccount {
+                record: "default/bob-login".into(),
+                credential_id: b"cred-bob".to_vec(),
+                user_name: "bob".into(),
+                user_display_name: "bob Example".into(),
+                created_at: Some("2025-01-01T00:00:00Z".into()),
+            },
+            PasskeyAccount {
+                record: "default/alice-login".into(),
+                credential_id: b"cred-alice".to_vec(),
+                user_name: "alice".into(),
+                user_display_name: "alice Example".into(),
+                created_at: Some("2024-01-01T00:00:00Z".into()),
+            },
+        ]
+    );
+    // A passkey is its rpId's alone: not a subdomain's, not another site's.
+    assert!(vault
+        .passkeys_for("login.example.com".into(), vec![])
+        .unwrap()
+        .is_empty());
+    let other = vault.passkeys_for("other.test".into(), vec![]).unwrap();
+    assert_eq!(other.len(), 1);
+    assert_eq!(other[0].user_name, "carol");
+}
+
+#[test]
+fn the_allow_list_decides_what_is_offered_and_what_signs() {
+    let (_container, vault, alice_key) = two_accounts();
+    let alice = b"cred-alice".to_vec();
+    let unknown = b"someone else's".to_vec();
+
+    let offered = vault
+        .passkeys_for(RP_ID.into(), vec![alice.clone()])
+        .unwrap();
+    assert_eq!(offered.len(), 1);
+    assert_eq!(offered[0].user_name, "alice");
+    assert!(vault
+        .passkeys_for(RP_ID.into(), vec![unknown.clone()])
+        .unwrap()
+        .is_empty());
+
+    // One account left, so nothing to pick.
+    let hash = client_data_hash("alice");
+    let asserted = vault
+        .assert_passkey(assertion(&hash, &[alice], None))
+        .unwrap();
+    verify_assertion(&alice_key, &asserted, &hash);
+    assert_eq!(asserted.user_handle, b"alice");
+
+    assert!(matches!(
+        vault.assert_passkey(assertion(&hash, &[unknown], None)),
+        Err(AutofillError::NotFound)
+    ));
+}
+
+#[test]
+fn with_two_accounts_the_record_picks_which_signs() {
+    let (_container, vault, alice_key) = two_accounts();
+
+    // The older account: not the one the library would have taken.
+    let hash = client_data_hash("pick");
+    let asserted = vault
+        .assert_passkey(assertion(&hash, &[], Some("default/alice-login")))
+        .unwrap();
+    assert_eq!(asserted.credential_id, b"cred-alice");
+    assert_eq!(asserted.user_handle, b"alice");
+    verify_assertion(&alice_key, &asserted, &hash);
+
+    // Two accounts and no pick is not a guess.
+    assert!(matches!(
+        vault.assert_passkey(assertion(&hash, &[], None)),
+        Err(AutofillError::Denied)
+    ));
+    // A record with no passkey for the site, or of another workspace.
+    for record in ["default/carol-login", "default/gone", "w2/alice-login"] {
+        assert!(
+            matches!(
+                vault.assert_passkey(assertion(&hash, &[], Some(record))),
+                Err(AutofillError::NotFound)
+            ),
+            "{record}"
+        );
+    }
+}
+
+// A second passkey for the site lands on the login it already has, so one
+// record names both; the credential id in the allow list names the passkey.
+#[test]
+fn one_login_with_two_passkeys_signs_with_the_one_named() {
+    let (_container, vault) = empty_vault();
+    let first = vault.register_passkey(registration("alice", &[])).unwrap();
+    let first_key = verify_registration(&first);
+    vault.register_passkey(registration("bob", &[])).unwrap();
+
+    let accounts = vault.passkeys_for(RP_ID.into(), vec![]).unwrap();
+    assert_eq!(accounts.len(), 2);
+    assert_eq!(accounts[0].record, accounts[1].record);
+    assert_eq!(accounts[1].user_name, "alice", "newest first");
+
+    let hash = client_data_hash("first");
+    let asserted = vault
+        .assert_passkey(assertion(
+            &hash,
+            std::slice::from_ref(&first.credential_id),
+            Some(&accounts[1].record),
+        ))
+        .unwrap();
+    assert_eq!(asserted.credential_id, first.credential_id);
+    assert_eq!(asserted.user_handle, b"handle-alice");
+    verify_assertion(&first_key, &asserted, &hash);
 }

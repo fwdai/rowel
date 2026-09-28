@@ -4658,11 +4658,17 @@ dependencies = [
 name = "rowel-autofill"
 version = "0.1.0"
 dependencies = [
+ "coset",
  "log",
+ "p256",
+ "passkey-authenticator",
+ "passkey-types",
  "rowel-core",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
  "uniffi",
  "zeroize",
 ]
