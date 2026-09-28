@@ -588,7 +588,9 @@ suggestion tapped is what makes the AutoFill extension ask for the unlock. So
 that the extension, a separate process with a sandbox of its own, can open the
 same vault, the data directory lives in the App Group container
 (`group.app.rowel.mobile`) rather than the app's own sandbox — moved there
-once, entry by entry, from where older installs kept it — and the
+once, entry by entry, from where older installs kept it; a move that cannot
+finish is undone, and the app runs from the old directory, whole, until a
+launch that can — and the
 biometric-gated key is stored under that group's keychain access group, which
 only the app and its extension are entitled to read; the key's biometric
 access control is unchanged.
