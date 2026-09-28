@@ -32,7 +32,9 @@ pub fn read(from: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
 }
 
 /// One frame, flushed: the reader on the other side waits on the whole of it.
-pub fn write(to: &mut impl Write, body: &[u8]) -> io::Result<()> {
+/// Written in one `write_all`, so a writer shared between threads
+/// (`server::Connected`) can hold its lock across a whole frame.
+pub fn write(to: &mut (impl Write + ?Sized), body: &[u8]) -> io::Result<()> {
     if body.len() > MAX_FRAME {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -42,7 +44,9 @@ pub fn write(to: &mut impl Write, body: &[u8]) -> io::Result<()> {
             ),
         ));
     }
-    to.write_all(&(body.len() as u32).to_ne_bytes())?;
-    to.write_all(body)?;
+    let mut frame = Vec::with_capacity(4 + body.len());
+    frame.extend_from_slice(&(body.len() as u32).to_ne_bytes());
+    frame.extend_from_slice(body);
+    to.write_all(&frame)?;
     to.flush()
 }

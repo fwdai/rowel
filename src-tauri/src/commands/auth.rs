@@ -87,6 +87,8 @@ pub async fn unlock(
             // whose bundle failed, a page left untouched) would otherwise leave
             // the vault open for good.
             crate::autolock::touch(&app);
+            #[cfg(desktop)]
+            crate::browser::server::notify_unlocked();
             seed_vault_name(&app, &state);
             // The app-level unlock: the primary's key opens every workspace
             // sealed under it; another workspace's key joins the ring, and is
@@ -279,9 +281,12 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
         .lock()
         .unwrap()
         .set(key, store, sync_configured);
-    // As in `unlock`: the session arms its own idle clock, and a vault named
-    // before names lived inside it takes the registry's label.
+    // As in `unlock`: the session arms its own idle clock, a connected browser
+    // extension hears of it, and a vault named before names lived inside it
+    // takes the registry's label.
     crate::autolock::touch(&app);
+    #[cfg(desktop)]
+    crate::browser::server::notify_unlocked();
     seed_vault_name(&app, &state);
     // The app key opens the app: every workspace sealed under it joins the ring.
     appkey::open_all(&app, &app_material);

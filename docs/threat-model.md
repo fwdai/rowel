@@ -479,6 +479,69 @@ fresh random 256-bit AES-GCM key and uploaded to the sender's own Drive as an
   is revoked; revoking stops future downloads but cannot retract a credential
   already imported or erase a downloaded copy.
 
+## The browser extension
+
+Desktop only, and off until the user turns it on in Settings. Rowel speaks the
+KeePassXC-Browser protocol (`src-tauri/src/browser/`), so the stock
+KeePassXC-Browser extension fills from it; there is no extension code of ours.
+This is a trust boundary of its own: the browser is a far larger and more
+exposed process than the webview, and it is not ours.
+
+- **What the extension can reach** is what the user could copy out of the app
+  for the site in front of them: the logins whose website is the page's host or
+  a parent of it (`accounts.example.com` gets `example.com`'s, not the other
+  way round, and `notexample.com` gets neither), the current TOTP code of one
+  of those, a password generated to the Settings defaults, and the lock. It
+  can also save a login: a new one for the page, or a new username and
+  password over a login it was handed. Every one of these but a generated
+  password needs an association, the lock included, so a stranger on the
+  socket cannot end the user's session. It gets no list of the vault, no other kind of
+  entry, and no passkey. **Nothing while locked:** every request but the key
+  exchange is refused before it is even opened, and the one thing a locked
+  vault does for the extension is bring the app forward to be unlocked. Lock
+  and unlock are pushed to every connected extension, so it stops offering
+  fills the moment the vault seals.
+- **How it is admitted.** An extension asks once per vault. The app comes
+  forward with a dialog, one ask at a time and refused after a minute
+  unanswered, and the extension gets in only if the user gives it a name.
+  What is remembered is that name and the extension's identification key, as
+  a row inside the vault it was let into (`browser::clients`), sealed with the
+  rest of it: the key is the whole credential — the protocol never has the
+  extension sign with the private half — so on disk it is as unreadable as
+  what it opens. An association is to that vault alone; another workspace on
+  the device does not answer to it. Every later request presents the key
+  inside the sealed channel, and a connection's key is checked against the
+  open vault's list on every request, so forgetting an extension in Settings ›
+  Browser extension, or switching workspace, ends its access at its next
+  request rather than its next reconnect. Switching the host off ends the
+  connections that are up as well.
+- **Transport.** The app listens on a local socket beside the vault, created
+  owner-only (`browser.sock`, mode `0600`); on Windows it is a named pipe
+  whose name carries a digest of the data directory. The browser reaches it
+  through a native messaging manifest that names this same binary: launched by
+  the browser, it only relays frames between the browser's stdio and the
+  socket, holds no key and reads nothing. Every message after the key exchange
+  is a NaCl box (X25519, XSalsa20-Poly1305) under keys the extension makes per
+  browser session, with a fresh nonce per request and the reply sealed under
+  that nonce plus one. What travels in the clear is the key exchange, a
+  refusal's error code, and the bare lock and unlock signals.
+- **What it does not defend against.** A compromised browser profile, or a
+  malicious extension holding an association key, can pull every login it
+  asks for by URL — and ask for URL after URL — and overwrite the password of
+  any login it was handed. This is the same position as KeePassXC's; the
+  guard is what the user lets in, and taking it back. A local process running
+  as the same user can connect to the socket and ask to associate, which gets
+  it nothing unless the user approves the dialog.
+- **Residuals.** The extension keeps its copy of the identification key in the
+  browser profile, in the clear: a process running as the same user can lift
+  it from there and present it, which is the compromised-OS case below. There
+  are no per-site prompts, by design — a fill asks nothing, and URL matching
+  is the guard. And the host registers under KeePassXC's own native messaging
+  name, since that is the name the extension looks for: on a machine with
+  KeePassXC installed as well, a manifest that is not Rowel's is never
+  overwritten or removed; Settings reports that browser as a conflict, and it
+  stays KeePassXC's until the extension is forked under a name of Rowel's own.
+
 ## What Rowel explicitly does NOT defend against
 
 - **A compromised operating system.** Code running as the user — malware, a

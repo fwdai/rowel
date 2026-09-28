@@ -57,6 +57,18 @@ pub trait Host {
     /// The current code for the login `id`, if it has a seed.
     fn totp(&self, id: &str) -> Option<String>;
     fn generate_password(&self) -> Option<String>;
+    /// Save what the user typed into a page: over the login `id`'s username
+    /// and password, or as a new login for `url` titled `host`. An `id` the
+    /// vault holds no login under is [`Code::NoValidUuidProvided`]; any other
+    /// error is a write that failed.
+    fn save_login(
+        &self,
+        id: Option<&str>,
+        url: &str,
+        host: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<(), Code>;
     fn lock(&self);
     /// The extension wants the vault open: bring the app forward.
     fn unlock_requested(&self);
@@ -193,6 +205,29 @@ impl<H: Host> Connection<H> {
                 }
                 let code = self.host.totp(id).ok_or(Code::NoValidUuidProvided)?;
                 Ok(params(json!({ "totp": code })))
+            }
+            "set-login" => {
+                self.require_association(message)?;
+                let url = str_of(message, "url");
+                let host = site_host(url).ok_or(Code::NoUrlProvided)?;
+                let id = Some(str_of(message, "uuid")).filter(|id| !id.is_empty());
+                let saved = self.host.save_login(
+                    id,
+                    url,
+                    &host,
+                    str_of(message, "login"),
+                    str_of(message, "password"),
+                );
+                // KeePassXC answers a save with its outcome inside a sealed
+                // reply, not with a refusal; the extension reads `error`.
+                let error = match saved {
+                    Ok(()) => "success",
+                    Err(Code::NoValidUuidProvided) => return Err(Code::NoValidUuidProvided),
+                    Err(_) => "error",
+                };
+                Ok(params(
+                    json!({ "count": null, "entries": null, "error": error, "hash": hash }),
+                ))
             }
             "generate-password" => {
                 let password = self

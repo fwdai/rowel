@@ -23,6 +23,7 @@
 - One-click Strong Password Generation
 - Time-based One Time Passwords support (TOTP)
 - Google Drive Sync (optional)
+- Browser autofill through the KeePassXC-Browser extension (see below)
 - No data is leaving your computer:
   - Your vault is a locally stored, encrypted SQLite database (SQLCipher); each
     entry's secrets are sealed in an extra application-level AEAD layer
@@ -30,6 +31,24 @@
     or copy them
   - Ability to migrate from one computer to another using backup file or GDrive sync
 - There's more to come...
+
+### Browser extension
+
+Rowel speaks the KeePassXC-Browser protocol, so the stock KeePassXC-Browser
+extension fills logins from your vault:
+
+1. Install KeePassXC-Browser from the
+   [Chrome Web Store](https://chromewebstore.google.com/detail/keepassxc-browser/oboonakemofpalcgghocfoadofidjkkk),
+   [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/keepassxc-browser/)
+   or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/keepassxcbrowser/pdffhmdngciaglkoonimfcmckehcpafo).
+2. In Rowel, open **Settings › Browser extension** and turn it on.
+3. Click the extension's icon and **Connect**, then approve the dialog in
+   Rowel and give the browser a name.
+
+Because the extension looks for KeePassXC's host, a real KeePassXC install on
+the same machine contends for the same browser manifest. Rowel leaves
+KeePassXC's in place and Settings shows that browser as a conflict; use one or
+the other.
 
 ## Screenshots
 
@@ -123,9 +142,10 @@ the variable and always uses the OS app-data directory.
 
 ### Google Drive sync (optional)
 
-Drive sync uses **your own** Google OAuth client — no credentials are bundled
-with the app. Desktop and iOS need one client each, because Google will not let
-a Desktop client redirect to a mobile app.
+Release builds ship with a working Google OAuth client, so sync works out of
+the box. This section only applies when building from source, where you supply
+a client of your own. Desktop and iOS need one client each, because Google will
+not let a Desktop client redirect to a mobile app.
 
 #### Desktop
 

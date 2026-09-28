@@ -9,10 +9,11 @@
 //! through the manifests `manifest` writes when the user turns this on.
 //!
 //! What the extension can reach is what the user could copy: the logins for
-//! the site it is on, a TOTP code, a generated password, and the lock. An
-//! extension gets in once per vault, by the user naming it in a dialog; after
-//! that its identification key, kept inside that vault, is what it proves
-//! itself with — to that vault, and to no other workspace on the device.
+//! the site it is on, a TOTP code, a generated password, and the lock — and
+//! it can save the login the user just typed into a page. An extension gets
+//! in once per vault, by the user naming it in a dialog; after that its
+//! identification key, kept inside that vault, is what it proves itself with
+//! — to that vault, and to no other workspace on the device.
 
 pub mod actions;
 pub mod frame;
@@ -37,11 +38,12 @@ use tauri::{AppHandle, Manager};
 pub use self::actions::Client;
 use self::actions::{Host, Login};
 use self::protocol::Code;
+use crate::crypto::PayloadCipher;
 use crate::error::Result;
-use crate::models::GeneratorOptions;
+use crate::models::{Entry, GeneratorOptions};
 use crate::settings;
 use crate::state::AppState;
-use crate::store::{SqliteStore, VaultStore};
+use crate::store::{migrate, SqliteStore, VaultStore};
 use crate::{commands, events, session, window};
 
 /// The bundle identifier, which is the app-data directory's name on every
@@ -371,6 +373,43 @@ impl Host for AppHost {
         .ok()
     }
 
+    fn save_login(
+        &self,
+        id: Option<&str>,
+        url: &str,
+        host: &str,
+        username: &str,
+        password: &str,
+    ) -> std::result::Result<(), Code> {
+        let state = self.0.state::<AppState>();
+        let (epoch, entries) = {
+            let session = state.session.lock().unwrap();
+            let cipher = session.payload_cipher().map_err(save_failed)?;
+            let store = session.store().map_err(save_failed)?;
+            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            save_login_in(store, &cipher, id, url, host, username, password, &now)?;
+            // The row is in. A list that will not read back is not a save
+            // that failed: the extension is told the truth about the write,
+            // and the frontend goes without this one refresh.
+            let entries = session::list_metas(store)
+                .map_err(|e| log::warn!("browser host: {e}"))
+                .ok();
+            (session.epoch(), entries)
+        };
+        // The list the frontend shows, refreshed the way a sync merge refreshes
+        // it — for the session that wrote it. A lock or a workspace switch that
+        // landed since would otherwise be shown this vault's rows over its own.
+        if let Some(entries) = entries {
+            if commands::same_session(&state, epoch).is_ok() {
+                events::vault_merged(&self.0, entries);
+            }
+        }
+        // And the change on its way to the user's other devices, as a save
+        // from the editor schedules it.
+        commands::sync::request_run_if_ready(&self.0, &state);
+        Ok(())
+    }
+
     fn lock(&self) {
         session::lock(&self.0);
     }
@@ -378,4 +417,76 @@ impl Host for AppHost {
     fn unlock_requested(&self) {
         window::raise(&self.0);
     }
+}
+
+fn save_failed(e: crate::error::Error) -> Code {
+    log::warn!("browser host: could not save a login: {e}");
+    Code::ActionCancelledOrDenied
+}
+
+/// One row sealed and upserted, as `commands::vault::save_entry` writes one:
+/// over the login `id` — its username and password, the rest of the entry
+/// kept — or as a new login for `url` titled `host`. The stamps are the
+/// editor's: `updatedAt` on every save, and the rotation stamp only when the
+/// password actually changed. `now` is passed in so a test can pin it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn save_login_in(
+    store: &SqliteStore,
+    cipher: &PayloadCipher,
+    id: Option<&str>,
+    url: &str,
+    host: &str,
+    username: &str,
+    password: &str,
+    now: &str,
+) -> std::result::Result<(), Code> {
+    let entry = match id {
+        Some(id) => {
+            let record = store
+                .get(id)
+                .map_err(|e| save_failed(session::store_err(e)))?
+                .ok_or(Code::NoValidUuidProvided)?;
+            let mut entry = cipher
+                .unseal(&record.id, &record.payload)
+                .map_err(save_failed)?;
+            if entry.kind != "login" {
+                return Err(Code::NoValidUuidProvided);
+            }
+            if entry.password.as_deref().unwrap_or_default() != password {
+                entry.password_updated_at = Some(now.to_string());
+            }
+            // Written back to the field it was served from: `logins_for` fills
+            // the extension's username from `username`, or from `email` when
+            // that is blank, so a login kept by its email must not grow a
+            // second name beside it — unless what the page sent is not an
+            // email at all, which the email field would only reject; that
+            // goes to `username`, and the email stays what it was.
+            let blank = |field: &Option<String>| field.as_deref().unwrap_or_default().is_empty();
+            if blank(&entry.username) && !blank(&entry.email) && username.contains('@') {
+                entry.email = Some(username.to_string());
+            } else {
+                entry.username = Some(username.to_string());
+            }
+            entry.password = Some(password.to_string());
+            entry.updated_at = Some(now.to_string());
+            entry
+        }
+        None => Entry {
+            id: migrate::new_entry_id(),
+            kind: "login".into(),
+            title: host.to_string(),
+            website: Some(url.to_string()),
+            username: Some(username.to_string()),
+            password: Some(password.to_string()),
+            password_updated_at: (!password.is_empty()).then(|| now.to_string()),
+            created_at: Some(now.to_string()),
+            updated_at: Some(now.to_string()),
+            ..Default::default()
+        },
+    };
+    let payload = cipher.seal(&entry).map_err(save_failed)?;
+    let record = migrate::build_record(&entry, payload).map_err(save_failed)?;
+    store
+        .upsert(&record)
+        .map_err(|e| save_failed(session::store_err(e)))
 }
