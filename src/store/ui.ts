@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { EntryType } from '@/api/types'
 import type { SshKeyPair } from '@/api/tools'
+import type { AssociateAsk } from '@/api/browser'
 import { loadArchive, setNoEntry, useVault, selectCurrent } from './vault'
 
 /**
@@ -16,7 +17,14 @@ import { loadArchive, setNoEntry, useVault, selectCurrent } from './vault'
 export type View = 'items' | 'favorites' | 'health' | 'archive' | 'tags'
 
 // The Settings sections, in nav order.
-export type Section = 'sync' | 'security' | 'audit' | 'import' | 'language' | 'workspaces'
+export type Section =
+  | 'sync'
+  | 'security'
+  | 'audit'
+  | 'import'
+  | 'language'
+  | 'browser'
+  | 'workspaces'
 
 /** Why a scan produced no fields. The copy for each lives in `Scan/Status`. */
 export type ScanError = 'unreadable' | 'unsupported' | 'failed'
@@ -86,6 +94,19 @@ export interface UiState {
    * `NoticeToast` for a few seconds, then gone; `null` between notices.
    */
   notice: string | null
+  /**
+   * A browser extension asking to connect, while its consent dialog is up. A
+   * second ask replaces the first: Rust holds one at a time and gives up on
+   * it by itself after a minute.
+   */
+  browserAsk: AssociateAsk | null
+  /**
+   * How many times the open vault's list of let-in extensions has changed
+   * behind the frontend's back — a consent dialog answered while Settings ›
+   * Browser extension is open. That section re-reads its status when this
+   * moves; nothing renders the number itself.
+   */
+  browserClientsSeq: number
 }
 
 const GENERATOR_CLOSED: Generator = { open: false, apply: null, ssh: null }
@@ -117,7 +138,9 @@ export const initialUi: UiState = {
   scanBusy: false,
   scanError: null,
   copied: false,
-  notice: null
+  notice: null,
+  browserAsk: null,
+  browserClientsSeq: 0
 }
 
 export const useUi = create<UiState>()(() => initialUi)
@@ -264,6 +287,13 @@ export const queueOrphan = (fileId: string) =>
   }))
 export const dropOrphan = (fileId: string) =>
   useUi.setState(state => ({ orphans: state.orphans.filter(id => id !== fileId) }))
+
+// --- browser extension -------------------------------------------------------------
+
+export const askBrowser = (ask: AssociateAsk) => useUi.setState({ browserAsk: ask })
+export const closeBrowserAsk = () => useUi.setState({ browserAsk: null })
+export const browserClientsChanged = () =>
+  useUi.setState(state => ({ browserClientsSeq: state.browserClientsSeq + 1 }))
 
 // --- scanning ---------------------------------------------------------------------
 

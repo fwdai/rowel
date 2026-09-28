@@ -27,6 +27,8 @@ pub const FILE_OPENED: &str = "file:opened";
 // Desktop only, like the extension host that raises it (`crate::browser`).
 #[cfg(desktop)]
 pub const BROWSER_ASSOCIATE: &str = "browser:associate";
+#[cfg(desktop)]
+pub const BROWSER_CLIENTS: &str = "browser:clients";
 
 #[derive(Serialize, Clone)]
 struct Entries {
@@ -138,4 +140,12 @@ struct Associate<'a> {
 #[cfg(desktop)]
 pub fn browser_associate(app: &AppHandle, id: &str, key: &str) {
     let _ = app.emit(BROWSER_ASSOCIATE, Associate { id, key });
+}
+
+/// An extension was let into the open vault by the consent dialog. No
+/// payload: Settings › Browser extension re-reads `browser_status`, which is
+/// the one answer its list is drawn from.
+#[cfg(desktop)]
+pub fn browser_clients(app: &AppHandle) {
+    let _ = app.emit(BROWSER_CLIENTS, ());
 }

@@ -83,6 +83,7 @@ describe('Settings shell', () => {
     )
     expect(order).toEqual([
       'settings-nav-language',
+      'settings-nav-browser',
       'settings-nav-security',
       'settings-nav-audit',
       'settings-nav-workspaces',
