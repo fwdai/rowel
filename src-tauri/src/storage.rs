@@ -2,20 +2,19 @@
 //! container): ensure-file, utf8 read, overwrite write, `.swftx` export copy.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 use crate::error::{Error, Result};
+// The atomic writers, and the names another process has to agree on to open
+// the same vault (the iOS AutoFill extension), are in the core.
+pub use rowel_core::atomic::{atomic_write_file, atomic_write_private};
+pub use rowel_core::layout::{BIOMETRIC_FILE, DB_FILE, KDF_SIDECAR_FILE, WRAPPED_KEY_FILE};
 
-pub const DB_FILE: &str = "vault.db";
 // Pre-change recovery snapshot of the encrypted DB, written next to it before the
 // destructive change-master-password sequence (see `change_master_password`).
 pub const DB_REKEY_BACKUP_FILE: &str = "vault.db.rekey-backup";
-// Plaintext KDF descriptor stored next to the DB. It holds the Argon2id params +
-// salt (public by design) and is read *before* deriving the key — the salt/params
-// cannot live inside the encrypted DB, since deriving the key is what opens it.
-pub const KDF_SIDECAR_FILE: &str = "vault.kdf.json";
 // Pre-change recovery snapshot of the KDF sidecar, taken alongside the DB one.
 // Rolling the DB back to its old key is only half a rollback: the descriptor that
 // says how to derive that key has to roll back with it, or nothing opens.
@@ -29,16 +28,6 @@ pub const LOCKOUT_SIDECAR_FILE: &str = "vault.lock.json";
 // locked by design: the shell has to know what to draw before the vault opens.
 pub const SETTINGS_FILE: &str = "settings.json";
 pub const GDRIVE_FILE: &str = "auth/gdrive.swftx";
-// Marker for "biometric unlock is enabled". The key itself lives in the OS
-// secure store; this flag lets us report availability without a biometric prompt.
-// Its contents name the gate the key was enrolled behind (`secure_store::GateMode`)
-// — not a secret: it says *how* the key is gated, never anything about the key.
-pub const BIOMETRIC_FILE: &str = "biometric.enabled";
-// A non-primary workspace's own vault key, sealed under the primary's (the app
-// key) so that one unlock opens every workspace on the device — see
-// `crate::appkey`. Ciphertext, but held to `0600` all the same; the primary
-// has none, since its key *is* the app key.
-pub const WRAPPED_KEY_FILE: &str = "vault.key.sealed";
 // Working space for the sync engine, inside the workspace's own directory (see
 // `sync_scratch_dir`).
 const SYNC_SCRATCH_DIR: &str = "sync-scratch";
@@ -103,17 +92,7 @@ fn app_data_root(app: &AppHandle) -> Result<PathBuf> {
         .path()
         .app_data_dir()
         .map_err(|e| Error::Other(e.to_string()))?;
-    Ok(dev_subdir(dir))
-}
-
-// Dev builds share the prod identifier, so isolate their data in a subdir
-// to avoid mutating the real vault while iterating.
-fn dev_subdir(dir: PathBuf) -> PathBuf {
-    if cfg!(debug_assertions) {
-        dir.join("dev")
-    } else {
-        dir
-    }
+    Ok(rowel_core::layout::dev_subdir(dir))
 }
 
 // On iOS the data dir is in the App Group container rather than the app's own
@@ -125,7 +104,7 @@ mod ios {
     use std::sync::OnceLock;
 
     use objc2_foundation::{NSFileManager, NSString};
-    use rowel_core::app::{APP_GROUP, APP_GROUP_DATA_DIR};
+    use rowel_core::app::APP_GROUP;
 
     // Resolved, and the old directory moved into it, once per process: every
     // path in the app goes through `root_dir`, and the move must have finished
@@ -143,7 +122,7 @@ mod ios {
                 log::warn!("no App Group container for {APP_GROUP}; the vault stays in the app's own data dir");
                 return app_data;
             };
-            let shared = super::dev_subdir(container.join(APP_GROUP_DATA_DIR));
+            let shared = rowel_core::layout::app_group_root(&container);
             super::settle_data_dir(app_data, shared)
         })
         .clone()
@@ -474,139 +453,6 @@ pub fn write_lockout_sidecar(app: &AppHandle, json: &str) -> Result<()> {
     write_lockout_sidecar_in(&workspace_dir(app)?, json)
 }
 
-// Durably replace `path`: create a uniquely named temp sibling, fsync it,
-// atomically rename it over the target, then fsync the directory. The target
-// ends up as either the complete old bytes or the complete new bytes — never a
-// truncated/empty file. `write` is injected so failure after a partial temp
-// write is testable; the partial sibling is removed on every failure.
-//
-// `private` makes the temp sibling owner-readable from the instant it exists
-// (`owner_only::create_new`: `0600` on Unix, a protected DACL supplied at
-// creation on Windows), so there is no moment at which the umask or the
-// folder's inherited permissions govern it — a handle opened in such a moment
-// would keep its access after the permissions changed — and the replaced file
-// keeps that restriction whatever an existing file at `path` allowed.
-fn atomic_replace_with<F>(path: &Path, private: bool, write: F) -> Result<()>
-where
-    F: FnOnce(&mut fs::File) -> std::io::Result<()>,
-{
-    let parent = path
-        .parent()
-        .ok_or_else(|| Error::Other("destination has no parent directory".into()))?;
-    fs::create_dir_all(parent)?;
-
-    let mut staged = Staged::from(create_temp_sibling(path, private)?);
-    write(staged.file())?;
-    staged.file().sync_all()?;
-    staged.close();
-    fs::rename(&staged.path, path)?;
-    staged.keep();
-
-    // Persist the directory entry for the rename where the platform supports it
-    // (opening a directory as a file fails on Windows — best-effort there).
-    if let Ok(dir) = fs::File::open(parent) {
-        let _ = dir.sync_all();
-    }
-    Ok(())
-}
-
-// A temp sibling that is removed unless the replacement it was staged for goes
-// through. In `Drop` so every early exit — a failed write, sync or rename —
-// takes it with it. It owns the open handle too, and closes it *before* the
-// removal: on Windows the private writer opens the file with no delete
-// sharing, so a removal attempted while the handle is still open would fail
-// and leave the partial plaintext behind. Two separate locals would drop in
-// the wrong order for that (last declared, first dropped).
-struct Staged {
-    path: PathBuf,
-    file: Option<fs::File>,
-    remove: bool,
-}
-
-impl From<(PathBuf, fs::File)> for Staged {
-    fn from((path, file): (PathBuf, fs::File)) -> Self {
-        Self {
-            path,
-            file: Some(file),
-            remove: true,
-        }
-    }
-}
-
-impl Staged {
-    fn file(&mut self) -> &mut fs::File {
-        self.file
-            .as_mut()
-            .expect("closed only once, before the rename")
-    }
-
-    // Release the handle so the file can be renamed (and, on failure, removed).
-    fn close(&mut self) {
-        self.file.take();
-    }
-
-    fn keep(mut self) {
-        self.remove = false;
-    }
-}
-
-impl Drop for Staged {
-    fn drop(&mut self) {
-        self.close();
-        if self.remove {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-}
-
-// A fresh sibling of `path` — `<name>.<random>.tmp` beside it — created for
-// writing, and never over an existing file. Owner-only from creation when
-// `private`; otherwise a plain file that keeps the `0600` these temp files
-// have always had on Unix.
-fn create_temp_sibling(path: &Path, private: bool) -> Result<(PathBuf, fs::File)> {
-    let name = path
-        .file_name()
-        .ok_or_else(|| Error::Other("destination has no file name".into()))?;
-    for _ in 0..8 {
-        let mut candidate = name.to_os_string();
-        candidate.push(format!(".{:016x}.tmp", rand::random::<u64>()));
-        let candidate = path.with_file_name(candidate);
-        let created = if private {
-            crate::owner_only::create_new(&candidate)
-        } else {
-            let mut options = fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            options.open(&candidate)
-        };
-        match created {
-            Ok(file) => return Ok((candidate, file)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Err(Error::Other(
-        "could not find a free name for a temporary sibling".into(),
-    ))
-}
-
-/// Atomically write the UTF-8 sidecars that gate vault opening and lockout.
-pub fn atomic_write_file(path: &Path, data: &str) -> Result<()> {
-    atomic_replace_with(path, false, |file| file.write_all(data.as_bytes()))
-}
-
-/// Atomically replace a secret with one only its owner can read: `0600` on
-/// Unix, an owner-and-SYSTEM protected DACL on Windows — regardless of the
-/// umask, of the folder's inheritable permissions, or of how an existing file
-/// at `path` was permissioned.
-pub fn atomic_write_private(path: &Path, data: &[u8]) -> Result<()> {
-    atomic_replace_with(path, true, |file| file.write_all(data))
-}
-
 // Read a file as utf8, returning "" when it doesn't exist (legacy ensure-file).
 pub(crate) fn read_file(path: &Path) -> Result<String> {
     if !path.exists() {
@@ -776,14 +622,12 @@ pub fn sync_configured_in(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        atomic_replace_with, atomic_write_file, move_data_dir, move_vault_files,
-        move_workspace_files, read_backup, read_regular_file_capped, remove_if_present,
-        settle_data_dir, Error, BIOMETRIC_FILE, DB_FILE, DB_REKEY_BACKUP_FILE, GDRIVE_FILE,
-        KDF_SIDECAR_FILE, KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, SYNC_SCRATCH_DIR,
-        WRAPPED_KEY_FILE,
+        move_data_dir, move_vault_files, move_workspace_files, read_backup,
+        read_regular_file_capped, remove_if_present, settle_data_dir, Error, BIOMETRIC_FILE,
+        DB_FILE, DB_REKEY_BACKUP_FILE, GDRIVE_FILE, KDF_SIDECAR_FILE,
+        KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, SYNC_SCRATCH_DIR, WRAPPED_KEY_FILE,
     };
     use std::fs;
-    use std::io::{self, Write};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -799,12 +643,6 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir.join("vault.kdf.json")
-    }
-
-    fn tmp_sibling(path: &Path) -> PathBuf {
-        let mut tmp = path.to_path_buf().into_os_string();
-        tmp.push(".tmp");
-        PathBuf::from(tmp)
     }
 
     #[test]
@@ -857,59 +695,6 @@ mod tests {
         let path = tmp_sidecar().with_file_name("small.swftx");
         fs::write(&path, "deadbeef").unwrap();
         assert_eq!(read_backup(path.to_str().unwrap()).unwrap(), "deadbeef");
-    }
-
-    #[test]
-    fn atomic_write_round_trips_and_overwrites() {
-        let path = tmp_sidecar();
-        atomic_write_file(&path, "{\"algo\":\"argon2id\"}").unwrap();
-        assert_eq!(
-            fs::read_to_string(&path).unwrap(),
-            "{\"algo\":\"argon2id\"}"
-        );
-
-        // Overwrite in place with shorter content — the target is fully replaced.
-        atomic_write_file(&path, "{}").unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{}");
-
-        // A completed write leaves no temp file behind.
-        assert!(!tmp_sibling(&path).exists());
-    }
-
-    #[test]
-    fn lockout_sidecar_round_trips_through_the_atomic_writer() {
-        // Same primitive as the KDF sidecar, exercised with the lockout shape.
-        let path = tmp_sidecar().with_file_name("vault.lock.json");
-        let json = "{\"failed_attempts\":4,\"locked_until_ms\":1700000002000}";
-        atomic_write_file(&path, json).unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), json);
-    }
-
-    #[test]
-    fn leftover_temp_file_does_not_affect_the_target() {
-        let path = tmp_sidecar();
-        atomic_write_file(&path, "real").unwrap();
-
-        // Simulate a crash before a prior rename: a stale, partial temp sibling.
-        fs::write(tmp_sibling(&path), "garbage-partial").unwrap();
-
-        // Reading the sidecar (the target path) is unaffected by the temp file.
-        assert_eq!(fs::read_to_string(&path).unwrap(), "real");
-    }
-
-    #[test]
-    fn a_failed_replacement_keeps_the_complete_old_file() {
-        let path = tmp_sidecar();
-        fs::write(&path, "complete old bytes").unwrap();
-
-        let result = atomic_replace_with(&path, true, |temp| {
-            temp.write_all(b"partial new bytes")?;
-            Err(io::Error::new(io::ErrorKind::StorageFull, "disk full"))
-        });
-
-        assert!(result.is_err());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "complete old bytes");
-        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
     }
 
     // Every file of the set, laid out as a workspace holds them.

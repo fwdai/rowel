@@ -144,6 +144,17 @@ into its unlock screen. Nothing here ever deletes a data directory; to start
 that one over, remove it yourself. Debug builds only: a release build ignores
 the variable and always uses the OS app-data directory.
 
+### Building the iOS AutoFill extension
+
+The iOS app embeds an AutoFill credential provider, the `rowel_autofill`
+target in `src-tauri/gen/apple/project.yml`. Its Swift is in
+`src-tauri/gen/apple/Sources/autofill`; the vault it reads is the
+`rowel-autofill` crate (`src-tauri/crates/autofill`), which Xcode builds for
+the SDK being targeted in a pre-build step, like the app's own Rust. Swift
+reaches the crate through UniFFI bindings committed under
+`Sources/autofill/generated`: after changing anything the crate exports, run
+`src-tauri/crates/autofill/bindgen.sh` and commit what it writes.
+
 ## Configuration
 
 ### Google Drive sync (optional)

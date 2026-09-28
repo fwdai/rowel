@@ -24,13 +24,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use base64::{engine::general_purpose::STANDARD, Engine};
 use subtle::ConstantTimeEq;
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
 
 use crate::crypto::{self, VaultKey};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::state::AppState;
 use crate::storage;
 use crate::workspace::{self, Registry, PRIMARY_ID};
@@ -100,14 +99,6 @@ impl Keyring {
 
 // --- the sidecar ---------------------------------------------------------------
 
-// A subkey of the app key, so the bytes that seal the sidecars are never the
-// bytes that open the primary's database or its payloads.
-const INFO_WRAP: &[u8] = b"workspace-key-wrap";
-
-fn wrapping_key(app_key: &[u8]) -> Zeroizing<[u8; crypto::KEY_LEN]> {
-    Zeroizing::new(crypto::hkdf_subkey(app_key, INFO_WRAP))
-}
-
 fn sidecar(root: &Path, id: &str) -> std::path::PathBuf {
     workspace::dir_of(root, id).join(storage::WRAPPED_KEY_FILE)
 }
@@ -118,12 +109,11 @@ pub fn is_wrapped(root: &Path, id: &str) -> bool {
     id != PRIMARY_ID && sidecar(root, id).exists()
 }
 
-/// Seal workspace `id`'s key under the app key, beside its database. Bound to
-/// the workspace id, so a sidecar copied under another workspace's directory
-/// does not open there.
+/// Seal workspace `id`'s key under the app key, beside its database. The seal
+/// itself is the core's, so the iOS AutoFill extension opens the same file.
 fn wrap(root: &Path, id: &str, app_key: &[u8], material: &[u8]) -> Result<()> {
-    let sealed = crypto::seal_aead(&*wrapping_key(app_key), id.as_bytes(), material)?;
-    storage::atomic_write_private(&sidecar(root, id), STANDARD.encode(sealed).as_bytes())
+    let sealed = crypto::seal_workspace_key(app_key, id, material)?;
+    storage::atomic_write_private(&sidecar(root, id), sealed.as_bytes())
 }
 
 /// The key sealed for workspace `id`, if it has a sidecar the app key opens.
@@ -143,12 +133,8 @@ fn unwrap(root: &Path, id: &str, app_key: &[u8]) -> Result<Option<Zeroizing<Vec<
     // will never open: the probe offers a biometric unlock on the strength of
     // the file being there, so that one must not stay there.
     let text = fs::read_to_string(&path)?;
-    let opened = STANDARD
-        .decode(text.trim())
-        .map_err(|e| Error::Crypto(e.to_string()))
-        .and_then(|sealed| crypto::unseal_aead(&*wrapping_key(app_key), id.as_bytes(), &sealed));
-    match opened {
-        Ok(material) => Ok(Some(Zeroizing::new(material))),
+    match crypto::open_workspace_key(app_key, id, &text) {
+        Ok(material) => Ok(Some(material)),
         Err(e) => {
             log::warn!("workspace {id}'s sealed key does not open under the app key; removing it");
             let _ = fs::remove_file(&path);

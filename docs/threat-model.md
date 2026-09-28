@@ -595,6 +595,19 @@ biometric-gated key is stored under that group's keychain access group, which
 only the app and its extension are entitled to read; the key's biometric
 access control is unchanged.
 
+The extension (`app.rowel.mobile.autofill`: Swift for the sheet, and the
+`rowel-autofill` crate over `rowel_core` for the vault) reaches exactly those
+two things: the active workspace's vault in the shared container, and that
+keychain item. It opens nothing before the user passes Face ID or Touch ID —
+the item's access control demands it — and then opens the vault with the same
+app key the app's own biometric unlock uses, so a workspace that opens only
+with its own password stays closed to it, and a device with biometric unlock
+turned off gives it nothing. It never creates or writes a vault. The list it
+shows holds names only — title, user name, site; a password is unsealed for
+the one row the user picks, handed to iOS to fill, and not kept. Passkeys are
+published to QuickType but not yet served: the extension declares passwords
+only.
+
 ## What Rowel explicitly does NOT defend against
 
 - **A compromised operating system.** Code running as the user — malware, a

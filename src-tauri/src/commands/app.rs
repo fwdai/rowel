@@ -124,7 +124,7 @@ pub fn snapshot(app: &AppHandle) -> Result<AppStatus> {
             kind: gate.kind,
             mode: marker.map(|m| GateMode::from_marker(&m).as_marker().to_string()),
         },
-        workspaces: registry.statuses(&root),
+        workspaces: crate::workspace::statuses(&registry, &root),
         active_workspace,
     })
 }

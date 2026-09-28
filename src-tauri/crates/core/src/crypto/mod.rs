@@ -131,6 +131,28 @@ pub fn unseal_aead(key: &[u8], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>> {
         .map_err(err)
 }
 
+// A subkey of the app key, so the bytes that seal the workspace keys are never
+// the bytes that open the primary's database or its payloads.
+const INFO_WORKSPACE_WRAP: &[u8] = b"workspace-key-wrap";
+
+/// Seal workspace `id`'s key material under the app key — the primary
+/// workspace's — as the text its `vault.key.sealed` sidecar holds
+/// ([`crate::layout::WRAPPED_KEY_FILE`]). Bound to the workspace id, so a
+/// sidecar copied under another workspace's directory does not open there.
+pub fn seal_workspace_key(app_key: &[u8], id: &str, material: &[u8]) -> Result<String> {
+    let key = Zeroizing::new(hkdf_subkey(app_key, INFO_WORKSPACE_WRAP));
+    Ok(STANDARD.encode(seal_aead(&*key, id.as_bytes(), material)?))
+}
+
+/// Reverse of [`seal_workspace_key`]. Fails on a sidecar that will not decode,
+/// and on one sealed under an app key other than `app_key` — which is what a
+/// sidecar left behind by a deleted primary is.
+pub fn open_workspace_key(app_key: &[u8], id: &str, sealed: &str) -> Result<Zeroizing<Vec<u8>>> {
+    let key = Zeroizing::new(hkdf_subkey(app_key, INFO_WORKSPACE_WRAP));
+    let blob = STANDARD.decode(sealed.trim()).map_err(err)?;
+    unseal_aead(&*key, id.as_bytes(), &blob).map(Zeroizing::new)
+}
+
 fn err<E: std::fmt::Display>(e: E) -> Error {
     Error::Crypto(e.to_string())
 }

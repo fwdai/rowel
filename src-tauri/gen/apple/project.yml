@@ -29,7 +29,9 @@ targets:
     type: application
     platform: iOS
     sources:
+      # The AutoFill extension's Swift is its own target's (rowel_autofill).
       - path: Sources
+        excludes: [autofill]
       - path: Assets.xcassets
       - path: Externals
       - path: rowel_iOS
@@ -92,6 +94,8 @@ targets:
           CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: true
       groups: [app]
     dependencies:
+      - target: rowel_autofill
+        embed: true
       - framework: libapp.a
         embed: false
       - sdk: CoreGraphics.framework
@@ -108,3 +112,90 @@ targets:
         outputFiles:
           - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
           - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+  # The AutoFill credential provider (Settings › General › AutoFill &
+  # Passwords). Swift for the sheet, Face ID and the keychain read; the vault
+  # itself is Rust, the rowel-autofill crate (src-tauri/crates/autofill), whose
+  # generated bindings are in Sources/autofill/generated (bindgen.sh there).
+  rowel_autofill:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/autofill
+    info:
+      path: rowel_autofill/Info.plist
+      properties:
+        CFBundleDisplayName: Rowel
+        # Kept equal to the app's: an extension whose version differs from
+        # its containing app's is refused by App Store Connect.
+        CFBundleShortVersionString: 1.0.0
+        CFBundleVersion: "1.0.0.1"
+        # The extension runs its own Face ID check, so it carries its own
+        # usage string.
+        NSFaceIDUsageDescription: Rowel uses Face ID to unlock your vault for AutoFill.
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.authentication-services.credential-provider-ui
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
+          NSExtensionAttributes:
+            # Read by iOS 17 and later; 16 assumes passwords.
+            ASCredentialProviderExtensionCapabilities:
+              ProvidesPasswords: true
+    # The AutoFill credential provider entitlement, and the App Group the
+    # vault's container and the key's keychain group are shared through.
+    # Written from here by xcodegen, so a regeneration keeps them.
+    entitlements:
+      path: rowel_autofill/rowel_autofill.entitlements
+      properties:
+        com.apple.developer.authentication-services.autofill-credential-provider: true
+        com.apple.security.application-groups: [group.app.rowel.mobile]
+    settings:
+      base:
+        PRODUCT_NAME: $(TARGET_NAME)
+        PRODUCT_BUNDLE_IDENTIFIER: app.rowel.mobile.autofill
+        ENABLE_BITCODE: false
+        ARCHS: [arm64]
+        EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+        # The UniFFI module the generated Swift imports: the C declarations
+        # it calls the Rust library through.
+        OTHER_SWIFT_FLAGS: $(inherited) -Xcc -fmodule-map-file=$(PROJECT_DIR)/Sources/autofill/generated/rowel_autofillFFI.modulemap
+        LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/autofill/x86_64/$(CONFIGURATION)
+        LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/autofill/arm64/$(CONFIGURATION)
+      # For DEVELOPMENT_TEAM; the name and bundle id are the extension's own.
+      groups: [app]
+    dependencies:
+      - framework: librowel_autofill.a
+        embed: false
+      - sdk: AuthenticationServices.framework
+      - sdk: LocalAuthentication.framework
+      - sdk: Security.framework
+    preBuildScripts:
+      # The Rust library, for the SDK and architectures being built. The
+      # profile follows the configuration, as the app's does: debug_assertions
+      # is what puts a debug build's vault in the `dev` subdir, so a debug
+      # extension reads the debug app's vault and a release one the release
+      # app's.
+      - script: |
+          set -eu
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cd "$SRCROOT/../.."
+          if [ "$CONFIGURATION" = release ]; then profile=release; else profile=debug; fi
+          for arch in $ARCHS; do
+            case "$PLATFORM_NAME/$arch" in
+              iphoneos/arm64) triple=aarch64-apple-ios ;;
+              iphonesimulator/arm64) triple=aarch64-apple-ios-sim ;;
+              iphonesimulator/x86_64) triple=x86_64-apple-ios ;;
+              *) echo "error: no Rust target for $PLATFORM_NAME/$arch"; exit 1 ;;
+            esac
+            if [ "$profile" = release ]; then
+              cargo build -p rowel-autofill --lib --release --target "$triple"
+            else
+              cargo build -p rowel-autofill --lib --target "$triple"
+            fi
+            out="$SRCROOT/Externals/autofill/$arch/$CONFIGURATION"
+            mkdir -p "$out"
+            cp "${CARGO_TARGET_DIR:-target}/$triple/$profile/librowel_autofill.a" "$out/"
+          done
+        name: Build Rust Code
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/Externals/autofill/x86_64/${CONFIGURATION}/librowel_autofill.a
+          - $(SRCROOT)/Externals/autofill/arm64/${CONFIGURATION}/librowel_autofill.a

@@ -1,6 +1,6 @@
 // The vault core, in its own crate so the iOS AutoFill extension can link it
 // without Tauri. Re-exported under the paths it had when it lived here.
-use rowel_core::{app, cards, error, import, models, otp, owner_only};
+use rowel_core::{app, cards, error, import, models, otp};
 pub use rowel_core::{crypto, store};
 // The browser extension host is the one caller, and it is desktop only.
 #[cfg_attr(not(desktop), allow(unused_imports))]
