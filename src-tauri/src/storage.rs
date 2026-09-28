@@ -10,15 +10,10 @@ use crate::error::{Error, Result};
 // The atomic writers, and the names another process has to agree on to open
 // the same vault (the iOS AutoFill extension), are in the core.
 pub use rowel_core::atomic::{atomic_write_file, atomic_write_private};
-pub use rowel_core::layout::{BIOMETRIC_FILE, DB_FILE, KDF_SIDECAR_FILE, WRAPPED_KEY_FILE};
-
-// Pre-change recovery snapshot of the encrypted DB, written next to it before the
-// destructive change-master-password sequence (see `change_master_password`).
-pub const DB_REKEY_BACKUP_FILE: &str = "vault.db.rekey-backup";
-// Pre-change recovery snapshot of the KDF sidecar, taken alongside the DB one.
-// Rolling the DB back to its old key is only half a rollback: the descriptor that
-// says how to derive that key has to roll back with it, or nothing opens.
-pub const KDF_SIDECAR_REKEY_BACKUP_FILE: &str = "vault.kdf.json.rekey-backup";
+pub use rowel_core::layout::{
+    BIOMETRIC_FILE, DB_FILE, DB_REKEY_BACKUP_FILE, KDF_SIDECAR_FILE, KDF_SIDECAR_REKEY_BACKUP_FILE,
+    WRAPPED_KEY_FILE,
+};
 // Plaintext failed-unlock backoff state (T-AUTH-3), stored next to the DB for the
 // same reason as the KDF sidecar: a wrong password never opens the encrypted DB,
 // so the attempt counter cannot live in the `meta` table. Public by design —

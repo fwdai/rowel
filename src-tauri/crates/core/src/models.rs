@@ -200,6 +200,14 @@ impl Entry {
             .or(self.email.as_deref())
     }
 
+    /// Whether this login has a password to fill. The passkey-only kind an
+    /// import brings has none, and a suggestion that fills an empty password
+    /// is not one: neither the app's QuickType identities nor the AutoFill
+    /// extension's list offer it as a password.
+    pub fn has_password(&self) -> bool {
+        self.password.as_deref().is_some_and(|p| !p.is_empty())
+    }
+
     /// Whether this entry carries any passkey at all, and so needs the stored
     /// row to complete it. Every passkey that comes in from the webview is
     /// blank — a save that carries a private key is refused before the merge

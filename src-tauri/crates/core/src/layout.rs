@@ -23,6 +23,18 @@ pub const BIOMETRIC_FILE: &str = "biometric.enabled";
 // the primary has none, since its key *is* the app key.
 pub const WRAPPED_KEY_FILE: &str = "vault.key.sealed";
 
+/// Pre-change recovery snapshot of the encrypted DB, written next to it before
+/// the destructive change-master-password sequence. Its presence is the marker
+/// that a change is in flight: the app's next unlock rolls the vault back to
+/// it, and another process (the iOS AutoFill extension) must not open the
+/// vault while it is there — the database and the sealed payloads may be on
+/// different keys until the app has.
+pub const DB_REKEY_BACKUP_FILE: &str = "vault.db.rekey-backup";
+/// Pre-change recovery snapshot of the KDF sidecar, taken alongside the DB one.
+/// Rolling the DB back to its old key is only half a rollback: the descriptor
+/// that says how to derive that key has to roll back with it, or nothing opens.
+pub const KDF_SIDECAR_REKEY_BACKUP_FILE: &str = "vault.kdf.json.rekey-backup";
+
 /// Dev builds share the prod identifier, so isolate their data in a subdir
 /// to avoid mutating the real vault while iterating.
 pub fn dev_subdir(dir: PathBuf) -> PathBuf {

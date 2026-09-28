@@ -80,6 +80,8 @@ enum Unlock {
             "Turn on unlock with Face ID or Touch ID in Rowel to fill passwords here."
         case AutofillError.WrongKey:
             "Rowel's Face ID key no longer opens this vault. Unlock Rowel with your password and turn Face ID on again."
+        case AutofillError.Recovering:
+            "Rowel is finishing a password change. Open Rowel, then try again."
         case let AutofillError.Io(message):
             message
         case let error as LAError where error.code == .userCancel || error.code == .systemCancel:

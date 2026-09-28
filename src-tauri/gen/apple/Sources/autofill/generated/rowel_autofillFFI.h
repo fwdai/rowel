@@ -268,7 +268,7 @@ RustBuffer uniffi_rowel_autofill_fn_method_vault_credentials_for(void*_Nonnull p
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_PASSWORD
 #define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_PASSWORD
-RustBuffer uniffi_rowel_autofill_fn_method_vault_password(void*_Nonnull ptr, RustBuffer record, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_rowel_autofill_fn_method_vault_password(void*_Nonnull ptr, RustBuffer record, RustBuffer service_identifiers, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_FUNC_APP_GROUP

@@ -189,6 +189,33 @@ fn an_empty_container_has_no_vault_and_is_left_empty() {
     assert!(!root.join(DB_FILE).exists());
 }
 
+// A master-password change the app was stopped in the middle of: the app
+// rolls the vault back at its next unlock, and until then the extension keeps
+// out — before it asks for Face ID, and at the open.
+#[test]
+fn a_password_change_in_flight_keeps_the_vault_closed() {
+    let (container, root) = container();
+    vault_at(
+        &root,
+        &APP_KEY,
+        &[login("github", "github.com", "alice", "pw")],
+    );
+    let location = vault_location(container_path(&container)).unwrap();
+    fs::write(root.join(DB_REKEY_BACKUP_FILE), "snapshot").unwrap();
+
+    assert!(matches!(
+        vault_location(container_path(&container)),
+        Err(AutofillError::Recovering)
+    ));
+    assert!(matches!(
+        open_vault(location.clone(), APP_KEY.to_vec()),
+        Err(AutofillError::Recovering)
+    ));
+
+    fs::remove_file(root.join(DB_REKEY_BACKUP_FILE)).unwrap();
+    assert!(open_vault(location, APP_KEY.to_vec()).is_ok());
+}
+
 #[test]
 fn a_key_that_does_not_open_the_vault_is_the_wrong_key() {
     let (container, root) = container();
@@ -281,7 +308,9 @@ fn a_login_with_no_username_is_listed_by_its_email() {
     let listed = vault.credentials_for(vec!["acme.test".into()]).unwrap();
     assert_eq!(listed[0].user, "alice@acme.test");
     assert_eq!(
-        vault.password("default/e1".into()).unwrap(),
+        vault
+            .password("default/e1".into(), vec!["acme.test".into()])
+            .unwrap(),
         Password {
             user: "alice@acme.test".into(),
             password: "pw".into(),
@@ -296,7 +325,12 @@ fn a_record_fills_its_own_name_and_password() {
     let (_container, vault) = matching_vault();
 
     assert_eq!(
-        vault.password("default/bank".into()).unwrap(),
+        vault
+            .password(
+                "default/bank".into(),
+                vec!["https://bank.co.uk/login".into()]
+            )
+            .unwrap(),
         Password {
             user: "bob".into(),
             password: "pw3".into(),
@@ -311,8 +345,85 @@ fn a_record_that_is_not_here_is_not_found() {
 
     for record in ["default/gone", "w2/bank", "bank", ""] {
         assert!(
-            matches!(vault.password(record.into()), Err(AutofillError::NotFound)),
+            matches!(
+                vault.password(record.into(), vec![]),
+                Err(AutofillError::NotFound)
+            ),
             "{record}"
         );
     }
+}
+
+// The site iOS is filling for is checked against the vault at the fill, not
+// taken from the suggestion: the record of a login moved to another site
+// since the app published it is refused for the old one — and admitted for
+// the new one, its parents, or when iOS names no site at all.
+#[test]
+fn a_record_fills_only_for_a_site_its_login_is_for() {
+    let (_container, vault) = matching_vault();
+    let fill = |sites: &[&str]| {
+        vault.password(
+            "default/gist".into(),
+            sites.iter().map(|s| s.to_string()).collect(),
+        )
+    };
+
+    assert!(matches!(
+        fill(&["notgithub.com"]),
+        Err(AutofillError::NotFound)
+    ));
+    assert!(matches!(
+        fill(&["github.com"]),
+        Err(AutofillError::NotFound)
+    ));
+    assert_eq!(fill(&["gist.github.com"]).unwrap().password, "pw2");
+    assert_eq!(
+        fill(&["https://gist.github.com/alice"]).unwrap().password,
+        "pw2"
+    );
+    assert_eq!(
+        fill(&["example.com", "gist.github.com"]).unwrap().password,
+        "pw2"
+    );
+    assert_eq!(fill(&[]).unwrap().password, "pw2");
+}
+
+// A login without a password — the passkey-only kind an import brings — is
+// not a password to offer, in the list or at the fill, as the app's QuickType
+// identities leave it out too.
+#[test]
+fn a_login_with_no_password_is_not_offered_as_one() {
+    let (container, root) = container();
+    vault_at(
+        &root,
+        &APP_KEY,
+        &[
+            login("keyed", "acme.test", "alice", ""),
+            login("filled", "acme.test", "bob", "pw"),
+        ],
+    );
+
+    let vault = open_primary(&container);
+    assert_eq!(records(&vault, &["acme.test"]), ["default/filled"]);
+    assert_eq!(records(&vault, &[]), ["default/filled"]);
+    assert!(matches!(
+        vault.password("default/keyed".into(), vec!["acme.test".into()]),
+        Err(AutofillError::NotFound)
+    ));
+}
+
+// A login in the trash is gone as far as filling goes, whatever iOS still
+// holds for it.
+#[test]
+fn a_deleted_login_is_not_filled() {
+    let (container, root) = container();
+    vault_at(&root, &APP_KEY, &[login("old", "acme.test", "alice", "pw")]);
+    let vault = open_primary(&container);
+    vault.store.delete("old").unwrap();
+
+    assert!(records(&vault, &["acme.test"]).is_empty());
+    assert!(matches!(
+        vault.password("default/old".into(), vec!["acme.test".into()]),
+        Err(AutofillError::NotFound)
+    ));
 }

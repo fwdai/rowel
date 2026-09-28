@@ -73,6 +73,7 @@ fn identities(
     workspace: &str,
     logins: &[(crate::models::EntryMetaDto, Option<crate::models::Entry>)],
 ) -> Vec<Identity> {
+    use crate::models::Entry;
     use rowel_core::passkey::key::{decode_credential_id, decode_user_handle};
 
     let mut out = Vec::new();
@@ -84,9 +85,7 @@ fn identities(
             .or(meta.username.as_deref())
             .map(str::trim)
             .filter(|u| !u.is_empty());
-        let has_password = entry
-            .as_ref()
-            .is_none_or(|e| e.password.as_deref().is_some_and(|p| !p.is_empty()));
+        let has_password = entry.as_ref().is_none_or(Entry::has_password);
         if let Some(user) = user.filter(|_| !meta.url_host.is_empty() && has_password) {
             out.push(Identity::Password {
                 record: record.clone(),

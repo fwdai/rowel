@@ -17,8 +17,11 @@ use std::sync::Arc;
 use rowel_core::crypto::{self, PayloadCipher, VaultKey};
 use rowel_core::host::{host_matches, site_host};
 use rowel_core::keychain::{self, GateMode};
-use rowel_core::layout::{self, BIOMETRIC_FILE, DB_FILE, KDF_SIDECAR_FILE, WRAPPED_KEY_FILE};
-use rowel_core::store::{EntryMeta, SqliteStore, StoreError, VaultStore};
+use rowel_core::layout::{
+    self, BIOMETRIC_FILE, DB_FILE, DB_REKEY_BACKUP_FILE, KDF_SIDECAR_FILE, WRAPPED_KEY_FILE,
+};
+use rowel_core::models::Entry;
+use rowel_core::store::{SqliteStore, StoreError, VaultStore};
 use rowel_core::workspace::{dir_of, Registry, PRIMARY_ID};
 use zeroize::Zeroizing;
 
@@ -39,7 +42,13 @@ pub enum AutofillError {
     /// The key read from the keychain does not open the vault.
     #[error("the Face ID key does not open this vault")]
     WrongKey,
-    /// No login under that record: deleted, or of another workspace.
+    /// A master-password change was interrupted. The app rolls the vault back
+    /// at its next unlock; until then the database and the sealed payloads
+    /// may be on different keys, and nothing here writes.
+    #[error("Rowel is finishing a password change")]
+    Recovering,
+    /// Nothing to fill under that record for that site: the login is gone,
+    /// another workspace's, moved to another site, or has no password.
     #[error("no such login")]
     NotFound,
     #[error("{message}")]
@@ -113,9 +122,7 @@ pub fn vault_location(container: String) -> Result<VaultLocation, AutofillError>
     let root = layout::app_group_root(Path::new(&container));
     let workspace = Registry::load(&root).active;
     let dir = dir_of(&root, &workspace);
-    if !has_database(&dir) {
-        return Err(AutofillError::NoVault);
-    }
+    ready(&dir)?;
     // The marker names the gate the key went in behind, and so the item's
     // account. No marker, no key.
     let marker =
@@ -143,11 +150,7 @@ pub fn vault_location(container: String) -> Result<VaultLocation, AutofillError>
 #[uniffi::export]
 pub fn open_vault(location: VaultLocation, key: Vec<u8>) -> Result<Arc<Vault>, AutofillError> {
     let dir = dir_of(&PathBuf::from(&location.root), &location.workspace);
-    // `SqliteStore::open` makes a database where there is none; the extension
-    // must never be what creates a vault.
-    if !has_database(&dir) {
-        return Err(AutofillError::NoVault);
-    }
+    ready(&dir)?;
     let app_key = Zeroizing::new(key);
     let material = if location.workspace == PRIMARY_ID {
         app_key
@@ -173,8 +176,43 @@ pub fn open_vault(location: VaultLocation, key: Vec<u8>) -> Result<Arc<Vault>, A
     }))
 }
 
-fn has_database(dir: &Path) -> bool {
-    fs::metadata(dir.join(DB_FILE)).is_ok_and(|m| m.len() > 0)
+// Whether the vault at `dir` is one to open: there, and not in the middle of
+// a password change. Checked before the key is asked for and again before the
+// open — `SqliteStore::open` makes a database where there is none, and the
+// extension must never be what creates a vault.
+fn ready(dir: &Path) -> Result<(), AutofillError> {
+    if !fs::metadata(dir.join(DB_FILE)).is_ok_and(|m| m.len() > 0) {
+        return Err(AutofillError::NoVault);
+    }
+    if dir.join(DB_REKEY_BACKUP_FILE).exists() {
+        return Err(AutofillError::Recovering);
+    }
+    Ok(())
+}
+
+/// The sites iOS is filling for, as hosts. `None` is no site to go by — iOS
+/// named none — and every login is admitted; otherwise a login is admitted by
+/// the rule the browser extension fills by (`host_matches`): the site itself
+/// or a parent of it, never across a public suffix. The list and the fill
+/// both go through here, so a record iOS still holds for a site its login has
+/// since been moved off is refused the same way it would be left off the list.
+struct Sites(Option<Vec<String>>);
+
+impl Sites {
+    fn named(identifiers: &[String]) -> Self {
+        Self((!identifiers.is_empty()).then(|| {
+            identifiers
+                .iter()
+                .filter_map(|id| service_host(id))
+                .collect()
+        }))
+    }
+
+    fn admit(&self, host: &str) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(|sites| sites.iter().any(|site| host_matches(site, host)))
+    }
 }
 
 /// An open vault. Lives as long as the extension's sheet.
@@ -187,52 +225,66 @@ pub struct Vault {
 
 #[uniffi::export]
 impl Vault {
-    /// The logins for the sites iOS names: each identifier a domain or a URL,
-    /// matched by the rule the browser extension fills by (`host_matches`) —
-    /// the site itself or a parent of it, never across a public suffix. No
-    /// identifiers is no site to go by, and every login is offered.
-    ///
-    /// Nothing is unsealed but the name a login signs in with, and that only
-    /// for the rows whose listing does not carry one.
+    /// The logins for the sites iOS names — each identifier a domain or a
+    /// URL, admitted by [`Sites`] — that have a password to fill. Each row is
+    /// unsealed for the same two things the fill needs: the name it signs in
+    /// with (`Entry::login_name`, the name the app publishes to QuickType for
+    /// the same row) and whether there is a password at all; the list carries
+    /// the name, and nothing else of the payload.
     pub fn credentials_for(
         &self,
         service_identifiers: Vec<String>,
     ) -> Result<Vec<Credential>, AutofillError> {
-        let sites: Vec<String> = service_identifiers
-            .iter()
-            .filter_map(|id| service_host(id))
-            .collect();
-        let offered = |meta: &EntryMeta| {
-            meta.kind == "login"
-                && (service_identifiers.is_empty()
-                    || sites.iter().any(|site| host_matches(site, &meta.url_host)))
-        };
-        Ok(self
-            .store
-            .list()?
-            .into_iter()
-            .filter(offered)
-            .map(|meta| Credential {
+        let sites = Sites::named(&service_identifiers);
+        let mut credentials = Vec::new();
+        for meta in self.store.list()? {
+            if meta.kind != "login" || !sites.admit(&meta.url_host) {
+                continue;
+            }
+            // A row that will not unseal is left off rather than failing the
+            // list: the key opened the database, so it is that row's alone.
+            let Ok(Some(entry)) = self.entry(&meta.id) else {
+                continue;
+            };
+            if !entry.has_password() {
+                continue;
+            }
+            credentials.push(Credential {
                 record: format!("{}/{}", self.workspace, meta.id),
-                user: self.user_of(&meta),
+                user: entry.login_name().unwrap_or_default().to_string(),
                 title: meta.title,
                 host: meta.url_host,
-            })
-            .collect())
+            });
+        }
+        Ok(credentials)
     }
 
-    /// The name and password `record` fills, unsealing that row alone.
-    pub fn password(&self, record: String) -> Result<Password, AutofillError> {
+    /// The name and password `record` fills, unsealing that row alone — for
+    /// the sites iOS is filling for, which it names as it does for the list.
+    /// The row is admitted by the rule the list is, checked here again against
+    /// the vault rather than trusted from what iOS holds: a QuickType
+    /// suggestion the app published before the login was moved to another
+    /// site, or deleted, is `NotFound`, not the login's current password
+    /// filled into its former site.
+    pub fn password(
+        &self,
+        record: String,
+        service_identifiers: Vec<String>,
+    ) -> Result<Password, AutofillError> {
         let id = record
             .split_once('/')
             .filter(|(workspace, _)| *workspace == self.workspace)
             .map(|(_, id)| id)
             .ok_or(AutofillError::NotFound)?;
+        // `get` answers nothing for a row in the trash.
         let row = self.store.get(id)?.ok_or(AutofillError::NotFound)?;
-        if row.kind != "login" {
+        if row.kind != "login" || !Sites::named(&service_identifiers).admit(&row.url_host) {
             return Err(AutofillError::NotFound);
         }
         let entry = self.cipher.unseal(&row.id, &row.payload)?;
+        if !entry.has_password() {
+            return Err(AutofillError::NotFound);
+        }
         Ok(Password {
             user: entry.login_name().unwrap_or_default().to_string(),
             password: entry.password.clone().unwrap_or_default(),
@@ -241,21 +293,12 @@ impl Vault {
 }
 
 impl Vault {
-    // The name a login signs in with: the listing's username column, or —
-    // when it has none, as a login that signs in with an email does not —
-    // the payload's (`Entry::login_name`), the name the app publishes to
-    // QuickType for the same row.
-    fn user_of(&self, meta: &EntryMeta) -> String {
-        if let Some(user) = meta.username.as_deref().filter(|u| !u.is_empty()) {
-            return user.to_string();
-        }
-        self.store
-            .get(&meta.id)
-            .ok()
-            .flatten()
-            .and_then(|row| self.cipher.unseal(&row.id, &row.payload).ok())
-            .and_then(|entry| entry.login_name().map(str::to_string))
-            .unwrap_or_default()
+    // The row `id` unsealed, or `None` when there is no such row.
+    fn entry(&self, id: &str) -> Result<Option<Entry>, AutofillError> {
+        let Some(row) = self.store.get(id)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.cipher.unseal(&row.id, &row.payload)?))
     }
 }
 

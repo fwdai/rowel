@@ -465,20 +465,25 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 public protocol VaultProtocol: AnyObject, Sendable {
     
     /**
-     * The logins for the sites iOS names: each identifier a domain or a URL,
-     * matched by the rule the browser extension fills by (`host_matches`) —
-     * the site itself or a parent of it, never across a public suffix. No
-     * identifiers is no site to go by, and every login is offered.
-     *
-     * Nothing is unsealed but the name a login signs in with, and that only
-     * for the rows whose listing does not carry one.
+     * The logins for the sites iOS names — each identifier a domain or a
+     * URL, admitted by [`Sites`] — that have a password to fill. Each row is
+     * unsealed for the same two things the fill needs: the name it signs in
+     * with (`Entry::login_name`, the name the app publishes to QuickType for
+     * the same row) and whether there is a password at all; the list carries
+     * the name, and nothing else of the payload.
      */
     func credentialsFor(serviceIdentifiers: [String]) throws  -> [Credential]
     
     /**
-     * The name and password `record` fills, unsealing that row alone.
+     * The name and password `record` fills, unsealing that row alone — for
+     * the sites iOS is filling for, which it names as it does for the list.
+     * The row is admitted by the rule the list is, checked here again against
+     * the vault rather than trusted from what iOS holds: a QuickType
+     * suggestion the app published before the login was moved to another
+     * site, or deleted, is `NotFound`, not the login's current password
+     * filled into its former site.
      */
-    func password(record: String) throws  -> Password
+    func password(record: String, serviceIdentifiers: [String]) throws  -> Password
     
 }
 /**
@@ -537,13 +542,12 @@ open class Vault: VaultProtocol, @unchecked Sendable {
 
     
     /**
-     * The logins for the sites iOS names: each identifier a domain or a URL,
-     * matched by the rule the browser extension fills by (`host_matches`) —
-     * the site itself or a parent of it, never across a public suffix. No
-     * identifiers is no site to go by, and every login is offered.
-     *
-     * Nothing is unsealed but the name a login signs in with, and that only
-     * for the rows whose listing does not carry one.
+     * The logins for the sites iOS names — each identifier a domain or a
+     * URL, admitted by [`Sites`] — that have a password to fill. Each row is
+     * unsealed for the same two things the fill needs: the name it signs in
+     * with (`Entry::login_name`, the name the app publishes to QuickType for
+     * the same row) and whether there is a password at all; the list carries
+     * the name, and nothing else of the payload.
      */
 open func credentialsFor(serviceIdentifiers: [String])throws  -> [Credential]  {
     return try  FfiConverterSequenceTypeCredential.lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
@@ -554,12 +558,19 @@ open func credentialsFor(serviceIdentifiers: [String])throws  -> [Credential]  {
 }
     
     /**
-     * The name and password `record` fills, unsealing that row alone.
+     * The name and password `record` fills, unsealing that row alone — for
+     * the sites iOS is filling for, which it names as it does for the list.
+     * The row is admitted by the rule the list is, checked here again against
+     * the vault rather than trusted from what iOS holds: a QuickType
+     * suggestion the app published before the login was moved to another
+     * site, or deleted, is `NotFound`, not the login's current password
+     * filled into its former site.
      */
-open func password(record: String)throws  -> Password  {
+open func password(record: String, serviceIdentifiers: [String])throws  -> Password  {
     return try  FfiConverterTypePassword_lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
     uniffi_rowel_autofill_fn_method_vault_password(self.uniffiClonePointer(),
-        FfiConverterString.lower(record),$0
+        FfiConverterString.lower(record),
+        FfiConverterSequenceString.lower(serviceIdentifiers),$0
     )
 })
 }
@@ -921,7 +932,14 @@ public enum AutofillError: Swift.Error {
      */
     case WrongKey
     /**
-     * No login under that record: deleted, or of another workspace.
+     * A master-password change was interrupted. The app rolls the vault back
+     * at its next unlock; until then the database and the sealed payloads
+     * may be on different keys, and nothing here writes.
+     */
+    case Recovering
+    /**
+     * Nothing to fill under that record for that site: the login is gone,
+     * another workspace's, moved to another site, or has no password.
      */
     case NotFound
     case Io(message: String
@@ -945,8 +963,9 @@ public struct FfiConverterTypeAutofillError: FfiConverterRustBuffer {
         case 1: return .NoVault
         case 2: return .Locked
         case 3: return .WrongKey
-        case 4: return .NotFound
-        case 5: return .Io(
+        case 4: return .Recovering
+        case 5: return .NotFound
+        case 6: return .Io(
             message: try FfiConverterString.read(from: &buf)
             )
 
@@ -973,12 +992,16 @@ public struct FfiConverterTypeAutofillError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
         
         
-        case .NotFound:
+        case .Recovering:
             writeInt(&buf, Int32(4))
         
         
-        case let .Io(message):
+        case .NotFound:
             writeInt(&buf, Int32(5))
+        
+        
+        case let .Io(message):
+            writeInt(&buf, Int32(6))
             FfiConverterString.write(message, into: &buf)
             
         }
@@ -1121,10 +1144,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_rowel_autofill_checksum_func_vault_location() != 38345) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_method_vault_credentials_for() != 29304) {
+    if (uniffi_rowel_autofill_checksum_method_vault_credentials_for() != 39403) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_method_vault_password() != 15307) {
+    if (uniffi_rowel_autofill_checksum_method_vault_password() != 27197) {
         return InitializationResult.apiChecksumMismatch
     }
 

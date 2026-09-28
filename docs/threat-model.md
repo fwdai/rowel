@@ -579,8 +579,9 @@ exposed process than the webview, and it is not ours.
 ## iOS AutoFill
 
 On iOS the app hands the system the names of its accounts so QuickType can
-suggest them (`credential_identities`): for each login with a site and a
-username (or, lacking one, its email) the domain and that name, and for each
+suggest them (`credential_identities`): for each login with a site, a
+username (or, lacking one, its email) and a password, the domain and that
+name, and for each
 passkey its rpId, user name, credential id and user handle — no password, no
 private key, nothing sealed. They stay with iOS while the vault is locked, as
 they do for other password managers, since a lock changes no account, and a
@@ -602,11 +603,17 @@ keychain item. It opens nothing before the user passes Face ID or Touch ID —
 the item's access control demands it — and then opens the vault with the same
 app key the app's own biometric unlock uses, so a workspace that opens only
 with its own password stays closed to it, and a device with biometric unlock
-turned off gives it nothing. It never creates or writes a vault. The list it
-shows holds names only — title, user name, site; a password is unsealed for
-the one row the user picks, handed to iOS to fill, and not kept. Passkeys are
-published to QuickType but not yet served: the extension declares passwords
-only.
+turned off gives it nothing. It never creates or writes a vault, and while a
+password change the app was interrupted in awaits its rollback — the recovery
+snapshot beside the database says so — it opens nothing at all. The list it
+shows holds names only — title, user name, site — and only for logins that
+have a password to fill; a password is unsealed for the one row the user
+picks, handed to iOS to fill, and not kept. What iOS holds is a name, never a
+grant: every fill names the sites iOS is filling for, and the vault decides
+by the same rule the list does, so a suggestion iOS still shows for a site
+its login has since been moved off, or a login since deleted, is refused
+rather than filled. Passkeys are published to QuickType but not yet served:
+the extension declares passwords only.
 
 ## What Rowel explicitly does NOT defend against
 
