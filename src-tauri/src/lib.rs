@@ -1,4 +1,11 @@
-mod app;
+// The vault core, in its own crate so the iOS AutoFill extension can link it
+// without Tauri. Re-exported under the paths it had when it lived here.
+use rowel_core::{app, cards, error, import, models, otp, owner_only};
+pub use rowel_core::{crypto, store};
+// The browser extension host is the one caller, and it is desktop only.
+#[cfg_attr(not(desktop), allow(unused_imports))]
+use rowel_core::passkey;
+
 mod appkey;
 // The master-password domain: the failed-unlock backoff and the rekey saga.
 mod auth;
@@ -9,27 +16,14 @@ mod biometrics;
 // proxy integration test can reach the socket name and framing.
 #[cfg(desktop)]
 pub mod browser;
-mod cards;
 mod commands;
-pub mod crypto;
-mod error;
 mod events;
 mod favicon;
 mod grants;
 mod hibp;
-mod import;
 mod locale;
-mod models;
 // Backups the OS asks the app to open (the `.rowel`/`.swftx` file associations).
 mod opened;
-// How a stored `otp` value is spelled — read by the generator, the importers
-// and the exporters alike, so it sits below all three.
-mod otp;
-// Owner-only file permissions, on Unix and Windows alike.
-mod owner_only;
-// The WebAuthn authenticator core. Declared only: its caller is the browser
-// extension host a later PR adds, so no command is registered below yet.
-mod passkey;
 mod save;
 // Local image scanning (card / identity document). `pub` so `examples/scan.rs`
 // can drive the OCR backend without the app around it.
@@ -40,7 +34,6 @@ mod settings;
 mod share;
 mod state;
 mod storage;
-pub mod store;
 mod sync;
 mod timer;
 // `tauri::tray` and `tauri::menu` are desktop-only.

@@ -13,9 +13,8 @@ use passkey_types::ctap2::{Ctap2Error, StatusCode, U2FError};
 use passkey_types::webauthn::PublicKeyCredentialDescriptor;
 
 use crate::crypto::PayloadCipher;
-use crate::error::{Error, Result};
+use crate::error::{store_err, Error, Result};
 use crate::models::{Entry, Passkey};
-use crate::session::store_err;
 use crate::store::{migrate, VaultStore};
 
 use super::key;
@@ -341,13 +340,13 @@ fn vault_err(e: Error) -> StatusCode {
 }
 
 /// An in-memory [`PasskeyVault`] for tests: one bucket of passkeys per entry id.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Default)]
 pub struct MemoryVault {
     entries: std::sync::Mutex<Vec<Stored>>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryVault {
     pub fn new() -> Self {
         Self::default()
@@ -366,7 +365,7 @@ impl MemoryVault {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl PasskeyVault for MemoryVault {
     fn find(&self, rp_id: &str) -> Result<Vec<Stored>> {
         let mut found: Vec<_> = self
