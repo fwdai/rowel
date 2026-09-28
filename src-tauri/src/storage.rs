@@ -195,7 +195,10 @@ fn settle_data_dir(app_data: PathBuf, shared: PathBuf) -> PathBuf {
 /// A rename that fails is undone: the entries moved before it go back, so an
 /// error leaves `from` whole and the caller with somewhere to run from. (An
 /// undo that fails too leaves that entry in `to`, logged, for the next run to
-/// carry on from, as after a crash.)
+/// carry on from, as after a crash.) Removing the emptied `from` at the end is
+/// not part of the move: with every entry in `to`, a removal that fails is
+/// logged and the move has succeeded — the next run removes it — where an
+/// error would send the caller back to a directory with nothing in it.
 ///
 /// It never overwrites. An entry about to move that is already in `to` means
 /// both directories hold a vault of their own — a half-finished move cannot
@@ -236,7 +239,12 @@ fn move_data_dir(from: &Path, to: &Path) -> Result<Vec<String>> {
         }
         moved.push(name);
     }
-    fs::remove_dir(from)?;
+    if let Err(e) = fs::remove_dir(from) {
+        log::warn!(
+            "could not remove the emptied data dir {}: {e}",
+            from.display()
+        );
+    }
     Ok(names
         .iter()
         .map(|name| name.to_string_lossy().into_owned())
@@ -1190,6 +1198,34 @@ mod tests {
         );
         assert!(!to.join("workspaces.json").exists());
         assert!(!to.join("settings.json").exists());
+    }
+
+    // The last step, removing the emptied old directory, failing is not the
+    // move failing: every entry is in the container, and that is where the app
+    // runs from. Answering the old directory would open an empty one, which
+    // reads as a fresh install. The next launch removes it.
+    #[cfg(unix)]
+    #[test]
+    fn an_emptied_dir_that_cannot_be_removed_still_puts_the_app_in_the_container() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let locked = root.join("locked");
+        let (from, to) = (locked.join("app-data"), root.join("group"));
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join(DB_FILE), "db").unwrap();
+        fs::write(from.join("workspaces.json"), "{}").unwrap();
+        // Entries can leave `from` (a rename writes `from` and `to`), but
+        // `from` itself cannot go: that writes its parent.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let chosen = settle_data_dir(from.clone(), to.clone());
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(chosen, to);
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
+        assert!(fs::read_dir(&from).unwrap().next().is_none());
+        assert_eq!(settle_data_dir(from.clone(), to.clone()), to);
+        assert!(!from.exists());
     }
 
     #[test]
