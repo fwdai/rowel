@@ -400,6 +400,22 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
+    typealias FfiType = Int64
+    typealias SwiftType = Int64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int64, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -465,6 +481,14 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 public protocol VaultProtocol: AnyObject, Sendable {
     
     /**
+     * Sign iOS's client data hash with the passkey picked. The account is
+     * resolved here, from the same list [`Self::passkeys_for`] gives, and
+     * the core is told the pick through its consent — so the core's own
+     * narrowing to that record is what signs.
+     */
+    func assertPasskey(request: PasskeyAssertion) throws  -> AssertedPasskey
+    
+    /**
      * The logins for the sites iOS names — each identifier a domain or a
      * URL, admitted by [`Sites`] — that have a password to fill. Each row is
      * unsealed for the same two things the fill needs: the name it signs in
@@ -473,6 +497,13 @@ public protocol VaultProtocol: AnyObject, Sendable {
      * the name, and nothing else of the payload.
      */
     func credentialsFor(serviceIdentifiers: [String]) throws  -> [Credential]
+    
+    /**
+     * The passkeys for `rp_id` that `allowed_credential_ids` admits (none is
+     * all of them), newest first: the list the authenticator itself picks
+     * from, so what the sheet offers is what can sign.
+     */
+    func passkeysFor(rpId: String, allowedCredentialIds: [Data]) throws  -> [PasskeyAccount]
     
     /**
      * The name and password `record` fills, unsealing that row alone — for
@@ -484,6 +515,16 @@ public protocol VaultProtocol: AnyObject, Sendable {
      * filled into its former site.
      */
     func password(record: String, serviceIdentifiers: [String]) throws  -> Password
+    
+    /**
+     * Make a passkey for the site and keep it: on the site's one login when
+     * it has exactly one, on a new login otherwise, as on the desktop. The
+     * user said yes on the sheet before this is called.
+     *
+     * iOS only learns of the passkey for QuickType when the app next runs and
+     * publishes its identities; until then the sheet's list offers it.
+     */
+    func registerPasskey(request: PasskeyRegistration) throws  -> RegisteredPasskey
     
 }
 /**
@@ -542,6 +583,20 @@ open class Vault: VaultProtocol, @unchecked Sendable {
 
     
     /**
+     * Sign iOS's client data hash with the passkey picked. The account is
+     * resolved here, from the same list [`Self::passkeys_for`] gives, and
+     * the core is told the pick through its consent — so the core's own
+     * narrowing to that record is what signs.
+     */
+open func assertPasskey(request: PasskeyAssertion)throws  -> AssertedPasskey  {
+    return try  FfiConverterTypeAssertedPasskey_lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
+    uniffi_rowel_autofill_fn_method_vault_assert_passkey(self.uniffiClonePointer(),
+        FfiConverterTypePasskeyAssertion_lower(request),$0
+    )
+})
+}
+    
+    /**
      * The logins for the sites iOS names — each identifier a domain or a
      * URL, admitted by [`Sites`] — that have a password to fill. Each row is
      * unsealed for the same two things the fill needs: the name it signs in
@@ -553,6 +608,20 @@ open func credentialsFor(serviceIdentifiers: [String])throws  -> [Credential]  {
     return try  FfiConverterSequenceTypeCredential.lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
     uniffi_rowel_autofill_fn_method_vault_credentials_for(self.uniffiClonePointer(),
         FfiConverterSequenceString.lower(serviceIdentifiers),$0
+    )
+})
+}
+    
+    /**
+     * The passkeys for `rp_id` that `allowed_credential_ids` admits (none is
+     * all of them), newest first: the list the authenticator itself picks
+     * from, so what the sheet offers is what can sign.
+     */
+open func passkeysFor(rpId: String, allowedCredentialIds: [Data])throws  -> [PasskeyAccount]  {
+    return try  FfiConverterSequenceTypePasskeyAccount.lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
+    uniffi_rowel_autofill_fn_method_vault_passkeys_for(self.uniffiClonePointer(),
+        FfiConverterString.lower(rpId),
+        FfiConverterSequenceData.lower(allowedCredentialIds),$0
     )
 })
 }
@@ -571,6 +640,22 @@ open func password(record: String, serviceIdentifiers: [String])throws  -> Passw
     uniffi_rowel_autofill_fn_method_vault_password(self.uniffiClonePointer(),
         FfiConverterString.lower(record),
         FfiConverterSequenceString.lower(serviceIdentifiers),$0
+    )
+})
+}
+    
+    /**
+     * Make a passkey for the site and keep it: on the site's one login when
+     * it has exactly one, on a new login otherwise, as on the desktop. The
+     * user said yes on the sheet before this is called.
+     *
+     * iOS only learns of the passkey for QuickType when the app next runs and
+     * publishes its identities; until then the sheet's list offers it.
+     */
+open func registerPasskey(request: PasskeyRegistration)throws  -> RegisteredPasskey  {
+    return try  FfiConverterTypeRegisteredPasskey_lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
+    uniffi_rowel_autofill_fn_method_vault_register_passkey(self.uniffiClonePointer(),
+        FfiConverterTypePasskeyRegistration_lower(request),$0
     )
 })
 }
@@ -629,6 +714,101 @@ public func FfiConverterTypeVault_lower(_ value: Vault) -> UnsafeMutableRawPoint
 }
 
 
+
+
+/**
+ * What `ASPasskeyAssertionCredential` carries back besides what iOS sent.
+ */
+public struct AssertedPasskey {
+    public var credentialId: Data
+    public var userHandle: Data
+    public var authenticatorData: Data
+    /**
+     * DER-encoded ECDSA over `authenticator_data || client_data_hash`.
+     */
+    public var signature: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(credentialId: Data, userHandle: Data, authenticatorData: Data, 
+        /**
+         * DER-encoded ECDSA over `authenticator_data || client_data_hash`.
+         */signature: Data) {
+        self.credentialId = credentialId
+        self.userHandle = userHandle
+        self.authenticatorData = authenticatorData
+        self.signature = signature
+    }
+}
+
+#if compiler(>=6)
+extension AssertedPasskey: Sendable {}
+#endif
+
+
+extension AssertedPasskey: Equatable, Hashable {
+    public static func ==(lhs: AssertedPasskey, rhs: AssertedPasskey) -> Bool {
+        if lhs.credentialId != rhs.credentialId {
+            return false
+        }
+        if lhs.userHandle != rhs.userHandle {
+            return false
+        }
+        if lhs.authenticatorData != rhs.authenticatorData {
+            return false
+        }
+        if lhs.signature != rhs.signature {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(credentialId)
+        hasher.combine(userHandle)
+        hasher.combine(authenticatorData)
+        hasher.combine(signature)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssertedPasskey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssertedPasskey {
+        return
+            try AssertedPasskey(
+                credentialId: FfiConverterData.read(from: &buf), 
+                userHandle: FfiConverterData.read(from: &buf), 
+                authenticatorData: FfiConverterData.read(from: &buf), 
+                signature: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssertedPasskey, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.credentialId, into: &buf)
+        FfiConverterData.write(value.userHandle, into: &buf)
+        FfiConverterData.write(value.authenticatorData, into: &buf)
+        FfiConverterData.write(value.signature, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssertedPasskey_lift(_ buf: RustBuffer) throws -> AssertedPasskey {
+    return try FfiConverterTypeAssertedPasskey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssertedPasskey_lower(_ value: AssertedPasskey) -> RustBuffer {
+    return FfiConverterTypeAssertedPasskey.lower(value)
+}
 
 
 /**
@@ -723,6 +903,363 @@ public func FfiConverterTypeCredential_lower(_ value: Credential) -> RustBuffer 
 
 
 /**
+ * A passkey the vault holds for a relying party, named the way the site named
+ * it at registration; nothing that signs. `record` is the login it is on, in
+ * the form the app publishes it to iOS as an `ASPasskeyCredentialIdentity`'s
+ * `recordIdentifier` — one login can carry several passkeys, so the
+ * credential id is what names the passkey itself.
+ */
+public struct PasskeyAccount {
+    public var record: String
+    public var credentialId: Data
+    public var userName: String
+    public var userDisplayName: String
+    /**
+     * RFC 3339, when the vault has it: what tells two same-named passkeys
+     * apart.
+     */
+    public var createdAt: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(record: String, credentialId: Data, userName: String, userDisplayName: String, 
+        /**
+         * RFC 3339, when the vault has it: what tells two same-named passkeys
+         * apart.
+         */createdAt: String?) {
+        self.record = record
+        self.credentialId = credentialId
+        self.userName = userName
+        self.userDisplayName = userDisplayName
+        self.createdAt = createdAt
+    }
+}
+
+#if compiler(>=6)
+extension PasskeyAccount: Sendable {}
+#endif
+
+
+extension PasskeyAccount: Equatable, Hashable {
+    public static func ==(lhs: PasskeyAccount, rhs: PasskeyAccount) -> Bool {
+        if lhs.record != rhs.record {
+            return false
+        }
+        if lhs.credentialId != rhs.credentialId {
+            return false
+        }
+        if lhs.userName != rhs.userName {
+            return false
+        }
+        if lhs.userDisplayName != rhs.userDisplayName {
+            return false
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(record)
+        hasher.combine(credentialId)
+        hasher.combine(userName)
+        hasher.combine(userDisplayName)
+        hasher.combine(createdAt)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePasskeyAccount: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PasskeyAccount {
+        return
+            try PasskeyAccount(
+                record: FfiConverterString.read(from: &buf), 
+                credentialId: FfiConverterData.read(from: &buf), 
+                userName: FfiConverterString.read(from: &buf), 
+                userDisplayName: FfiConverterString.read(from: &buf), 
+                createdAt: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PasskeyAccount, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.record, into: &buf)
+        FfiConverterData.write(value.credentialId, into: &buf)
+        FfiConverterString.write(value.userName, into: &buf)
+        FfiConverterString.write(value.userDisplayName, into: &buf)
+        FfiConverterOptionString.write(value.createdAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePasskeyAccount_lift(_ buf: RustBuffer) throws -> PasskeyAccount {
+    return try FfiConverterTypePasskeyAccount.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePasskeyAccount_lower(_ value: PasskeyAccount) -> RustBuffer {
+    return FfiConverterTypePasskeyAccount.lower(value)
+}
+
+
+/**
+ * A sign-in, as iOS hands it over (`ASPasskeyCredentialRequestParameters` for
+ * the list, `ASPasskeyCredentialRequest` for a QuickType identity), and the
+ * account the user picked.
+ */
+public struct PasskeyAssertion {
+    public var rpId: String
+    /**
+     * The SHA-256 of the `clientDataJSON` iOS wrote.
+     */
+    public var clientDataHash: Data
+    /**
+     * The ids the relying party allows; empty is any of the site's.
+     */
+    public var allowedCredentialIds: [Data]
+    /**
+     * The login picked: a [`PasskeyAccount`]'s record, or a QuickType
+     * identity's `recordIdentifier`. With it, name the passkey itself by
+     * narrowing `allowed_credential_ids` to the one picked, since one login
+     * can carry several. With none, the site must leave exactly one account.
+     */
+    public var record: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(rpId: String, 
+        /**
+         * The SHA-256 of the `clientDataJSON` iOS wrote.
+         */clientDataHash: Data, 
+        /**
+         * The ids the relying party allows; empty is any of the site's.
+         */allowedCredentialIds: [Data], 
+        /**
+         * The login picked: a [`PasskeyAccount`]'s record, or a QuickType
+         * identity's `recordIdentifier`. With it, name the passkey itself by
+         * narrowing `allowed_credential_ids` to the one picked, since one login
+         * can carry several. With none, the site must leave exactly one account.
+         */record: String?) {
+        self.rpId = rpId
+        self.clientDataHash = clientDataHash
+        self.allowedCredentialIds = allowedCredentialIds
+        self.record = record
+    }
+}
+
+#if compiler(>=6)
+extension PasskeyAssertion: Sendable {}
+#endif
+
+
+extension PasskeyAssertion: Equatable, Hashable {
+    public static func ==(lhs: PasskeyAssertion, rhs: PasskeyAssertion) -> Bool {
+        if lhs.rpId != rhs.rpId {
+            return false
+        }
+        if lhs.clientDataHash != rhs.clientDataHash {
+            return false
+        }
+        if lhs.allowedCredentialIds != rhs.allowedCredentialIds {
+            return false
+        }
+        if lhs.record != rhs.record {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(rpId)
+        hasher.combine(clientDataHash)
+        hasher.combine(allowedCredentialIds)
+        hasher.combine(record)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePasskeyAssertion: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PasskeyAssertion {
+        return
+            try PasskeyAssertion(
+                rpId: FfiConverterString.read(from: &buf), 
+                clientDataHash: FfiConverterData.read(from: &buf), 
+                allowedCredentialIds: FfiConverterSequenceData.read(from: &buf), 
+                record: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PasskeyAssertion, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.rpId, into: &buf)
+        FfiConverterData.write(value.clientDataHash, into: &buf)
+        FfiConverterSequenceData.write(value.allowedCredentialIds, into: &buf)
+        FfiConverterOptionString.write(value.record, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePasskeyAssertion_lift(_ buf: RustBuffer) throws -> PasskeyAssertion {
+    return try FfiConverterTypePasskeyAssertion.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePasskeyAssertion_lower(_ value: PasskeyAssertion) -> RustBuffer {
+    return FfiConverterTypePasskeyAssertion.lower(value)
+}
+
+
+/**
+ * A registration, as iOS hands it over (`ASPasskeyCredentialRequest`).
+ */
+public struct PasskeyRegistration {
+    public var rpId: String
+    public var rpName: String?
+    public var userName: String
+    public var userDisplayName: String?
+    public var userHandle: Data
+    /**
+     * The SHA-256 of the `clientDataJSON` iOS wrote.
+     */
+    public var clientDataHash: Data
+    public var excludedCredentialIds: [Data]
+    /**
+     * COSE algorithm identifiers the relying party takes; empty is any.
+     */
+    public var supportedAlgorithms: [Int64]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(rpId: String, rpName: String?, userName: String, userDisplayName: String?, userHandle: Data, 
+        /**
+         * The SHA-256 of the `clientDataJSON` iOS wrote.
+         */clientDataHash: Data, excludedCredentialIds: [Data], 
+        /**
+         * COSE algorithm identifiers the relying party takes; empty is any.
+         */supportedAlgorithms: [Int64]) {
+        self.rpId = rpId
+        self.rpName = rpName
+        self.userName = userName
+        self.userDisplayName = userDisplayName
+        self.userHandle = userHandle
+        self.clientDataHash = clientDataHash
+        self.excludedCredentialIds = excludedCredentialIds
+        self.supportedAlgorithms = supportedAlgorithms
+    }
+}
+
+#if compiler(>=6)
+extension PasskeyRegistration: Sendable {}
+#endif
+
+
+extension PasskeyRegistration: Equatable, Hashable {
+    public static func ==(lhs: PasskeyRegistration, rhs: PasskeyRegistration) -> Bool {
+        if lhs.rpId != rhs.rpId {
+            return false
+        }
+        if lhs.rpName != rhs.rpName {
+            return false
+        }
+        if lhs.userName != rhs.userName {
+            return false
+        }
+        if lhs.userDisplayName != rhs.userDisplayName {
+            return false
+        }
+        if lhs.userHandle != rhs.userHandle {
+            return false
+        }
+        if lhs.clientDataHash != rhs.clientDataHash {
+            return false
+        }
+        if lhs.excludedCredentialIds != rhs.excludedCredentialIds {
+            return false
+        }
+        if lhs.supportedAlgorithms != rhs.supportedAlgorithms {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(rpId)
+        hasher.combine(rpName)
+        hasher.combine(userName)
+        hasher.combine(userDisplayName)
+        hasher.combine(userHandle)
+        hasher.combine(clientDataHash)
+        hasher.combine(excludedCredentialIds)
+        hasher.combine(supportedAlgorithms)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePasskeyRegistration: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PasskeyRegistration {
+        return
+            try PasskeyRegistration(
+                rpId: FfiConverterString.read(from: &buf), 
+                rpName: FfiConverterOptionString.read(from: &buf), 
+                userName: FfiConverterString.read(from: &buf), 
+                userDisplayName: FfiConverterOptionString.read(from: &buf), 
+                userHandle: FfiConverterData.read(from: &buf), 
+                clientDataHash: FfiConverterData.read(from: &buf), 
+                excludedCredentialIds: FfiConverterSequenceData.read(from: &buf), 
+                supportedAlgorithms: FfiConverterSequenceInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PasskeyRegistration, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.rpId, into: &buf)
+        FfiConverterOptionString.write(value.rpName, into: &buf)
+        FfiConverterString.write(value.userName, into: &buf)
+        FfiConverterOptionString.write(value.userDisplayName, into: &buf)
+        FfiConverterData.write(value.userHandle, into: &buf)
+        FfiConverterData.write(value.clientDataHash, into: &buf)
+        FfiConverterSequenceData.write(value.excludedCredentialIds, into: &buf)
+        FfiConverterSequenceInt64.write(value.supportedAlgorithms, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePasskeyRegistration_lift(_ buf: RustBuffer) throws -> PasskeyRegistration {
+    return try FfiConverterTypePasskeyRegistration.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePasskeyRegistration_lower(_ value: PasskeyRegistration) -> RustBuffer {
+    return FfiConverterTypePasskeyRegistration.lower(value)
+}
+
+
+/**
  * What a chosen login fills.
  */
 public struct Password {
@@ -792,6 +1329,85 @@ public func FfiConverterTypePassword_lift(_ buf: RustBuffer) throws -> Password 
 #endif
 public func FfiConverterTypePassword_lower(_ value: Password) -> RustBuffer {
     return FfiConverterTypePassword.lower(value)
+}
+
+
+/**
+ * What `ASPasskeyRegistrationCredential` carries back besides what iOS sent.
+ */
+public struct RegisteredPasskey {
+    public var credentialId: Data
+    /**
+     * CBOR, "none" attestation.
+     */
+    public var attestationObject: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(credentialId: Data, 
+        /**
+         * CBOR, "none" attestation.
+         */attestationObject: Data) {
+        self.credentialId = credentialId
+        self.attestationObject = attestationObject
+    }
+}
+
+#if compiler(>=6)
+extension RegisteredPasskey: Sendable {}
+#endif
+
+
+extension RegisteredPasskey: Equatable, Hashable {
+    public static func ==(lhs: RegisteredPasskey, rhs: RegisteredPasskey) -> Bool {
+        if lhs.credentialId != rhs.credentialId {
+            return false
+        }
+        if lhs.attestationObject != rhs.attestationObject {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(credentialId)
+        hasher.combine(attestationObject)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRegisteredPasskey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RegisteredPasskey {
+        return
+            try RegisteredPasskey(
+                credentialId: FfiConverterData.read(from: &buf), 
+                attestationObject: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RegisteredPasskey, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.credentialId, into: &buf)
+        FfiConverterData.write(value.attestationObject, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRegisteredPasskey_lift(_ buf: RustBuffer) throws -> RegisteredPasskey {
+    return try FfiConverterTypeRegisteredPasskey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRegisteredPasskey_lower(_ value: RegisteredPasskey) -> RustBuffer {
+    return FfiConverterTypeRegisteredPasskey.lower(value)
 }
 
 
@@ -934,14 +1550,30 @@ public enum AutofillError: Swift.Error {
     /**
      * A master-password change was interrupted. The app rolls the vault back
      * at its next unlock; until then the database and the sealed payloads
-     * may be on different keys, and nothing here writes.
+     * may be on different keys, and nothing here writes but a passkey.
      */
     case Recovering
     /**
      * Nothing to fill under that record for that site: the login is gone,
-     * another workspace's, moved to another site, or has no password.
+     * another workspace's, moved to another site, or has no password. For a
+     * passkey sign-in, no passkey for the site that the request admits (and
+     * the record names, when it names one): iOS's `credentialIdentityNotFound`.
      */
     case NotFound
+    /**
+     * A passkey sign-in with several accounts to be and none picked: the
+     * sheet lists them rather than asking with no record.
+     */
+    case Denied
+    /**
+     * The registration's exclude list names a passkey this vault holds: the
+     * account already has one here, and a second is not made.
+     */
+    case Excluded
+    /**
+     * The relying party takes no ES256 key, the one kind the vault makes.
+     */
+    case Unsupported
     case Io(message: String
     )
 }
@@ -965,7 +1597,10 @@ public struct FfiConverterTypeAutofillError: FfiConverterRustBuffer {
         case 3: return .WrongKey
         case 4: return .Recovering
         case 5: return .NotFound
-        case 6: return .Io(
+        case 6: return .Denied
+        case 7: return .Excluded
+        case 8: return .Unsupported
+        case 9: return .Io(
             message: try FfiConverterString.read(from: &buf)
             )
 
@@ -1000,8 +1635,20 @@ public struct FfiConverterTypeAutofillError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(5))
         
         
-        case let .Io(message):
+        case .Denied:
             writeInt(&buf, Int32(6))
+        
+        
+        case .Excluded:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .Unsupported:
+            writeInt(&buf, Int32(8))
+        
+        
+        case let .Io(message):
+            writeInt(&buf, Int32(9))
             FfiConverterString.write(message, into: &buf)
             
         }
@@ -1041,6 +1688,55 @@ extension AutofillError: Foundation.LocalizedError {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceInt64: FfiConverterRustBuffer {
+    typealias SwiftType = [Int64]
+
+    public static func write(_ value: [Int64], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterInt64.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Int64] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Int64]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterInt64.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1066,6 +1762,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
+    typealias SwiftType = [Data]
+
+    public static func write(_ value: [Data], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterData.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Data] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Data]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterData.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeCredential: FfiConverterRustBuffer {
     typealias SwiftType = [Credential]
 
@@ -1083,6 +1804,31 @@ fileprivate struct FfiConverterSequenceTypeCredential: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeCredential.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePasskeyAccount: FfiConverterRustBuffer {
+    typealias SwiftType = [PasskeyAccount]
+
+    public static func write(_ value: [PasskeyAccount], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePasskeyAccount.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PasskeyAccount] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PasskeyAccount]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePasskeyAccount.read(from: &buf))
         }
         return seq
     }
@@ -1144,10 +1890,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_rowel_autofill_checksum_func_vault_location() != 38345) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_rowel_autofill_checksum_method_vault_assert_passkey() != 27995) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_rowel_autofill_checksum_method_vault_credentials_for() != 39403) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_rowel_autofill_checksum_method_vault_passkeys_for() != 46537) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_rowel_autofill_checksum_method_vault_password() != 27197) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rowel_autofill_checksum_method_vault_register_passkey() != 13741) {
         return InitializationResult.apiChecksumMismatch
     }
 

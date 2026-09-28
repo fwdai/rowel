@@ -27,9 +27,11 @@ enum Unlock {
         }
     }
 
-    /// The open vault, after a biometric prompt. Not isolated to the main
-    /// actor, so the keychain read and the database open run off it.
-    static func vault() async throws -> Vault {
+    /// The open vault, after a biometric prompt giving `reason`. Not isolated
+    /// to the main actor, so the keychain read and the database open run off
+    /// it. For a passkey this prompt is the user verification the relying
+    /// party is told of; nothing asks a second time.
+    static func vault(reason: String) async throws -> Vault {
         let group = appGroup()
         guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
         else { throw Failure.noContainer }
@@ -44,7 +46,7 @@ enum Unlock {
         let context = LAContext()
         try await context.evaluatePolicy(
             .deviceOwnerAuthenticationWithBiometrics,
-            localizedReason: "Unlock Rowel to fill a password."
+            localizedReason: reason
         )
         let key = try readKey(location, group: group, context: context)
         return try openVault(location: location, key: key)
@@ -71,9 +73,14 @@ enum Unlock {
         }
     }
 
-    /// What the sheet says when the vault did not open.
+    /// What the sheet says when the vault did not open, or a passkey could
+    /// not be made or used.
     static func message(for error: Error) -> String {
         switch error {
+        case AutofillError.Excluded:
+            "Rowel already has a passkey for this account."
+        case AutofillError.Unsupported:
+            "This site does not accept the kind of passkey Rowel makes."
         case AutofillError.NoVault:
             "There is no Rowel vault on this device yet."
         case AutofillError.Locked:

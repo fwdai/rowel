@@ -261,14 +261,29 @@ void*_Nonnull uniffi_rowel_autofill_fn_clone_vault(void*_Nonnull ptr, RustCallSt
 void uniffi_rowel_autofill_fn_free_vault(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_ASSERT_PASSKEY
+#define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_ASSERT_PASSKEY
+RustBuffer uniffi_rowel_autofill_fn_method_vault_assert_passkey(void*_Nonnull ptr, RustBuffer request, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_CREDENTIALS_FOR
 #define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_CREDENTIALS_FOR
 RustBuffer uniffi_rowel_autofill_fn_method_vault_credentials_for(void*_Nonnull ptr, RustBuffer service_identifiers, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_PASSKEYS_FOR
+#define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_PASSKEYS_FOR
+RustBuffer uniffi_rowel_autofill_fn_method_vault_passkeys_for(void*_Nonnull ptr, RustBuffer rp_id, RustBuffer allowed_credential_ids, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_PASSWORD
 #define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_PASSWORD
 RustBuffer uniffi_rowel_autofill_fn_method_vault_password(void*_Nonnull ptr, RustBuffer record, RustBuffer service_identifiers, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_REGISTER_PASSKEY
+#define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_METHOD_VAULT_REGISTER_PASSKEY
+RustBuffer uniffi_rowel_autofill_fn_method_vault_register_passkey(void*_Nonnull ptr, RustBuffer request, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_FN_FUNC_APP_GROUP
@@ -585,15 +600,33 @@ uint16_t uniffi_rowel_autofill_checksum_func_vault_location(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_ASSERT_PASSKEY
+#define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_ASSERT_PASSKEY
+uint16_t uniffi_rowel_autofill_checksum_method_vault_assert_passkey(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_CREDENTIALS_FOR
 #define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_CREDENTIALS_FOR
 uint16_t uniffi_rowel_autofill_checksum_method_vault_credentials_for(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_PASSKEYS_FOR
+#define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_PASSKEYS_FOR
+uint16_t uniffi_rowel_autofill_checksum_method_vault_passkeys_for(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_PASSWORD
 #define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_PASSWORD
 uint16_t uniffi_rowel_autofill_checksum_method_vault_password(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_REGISTER_PASSKEY
+#define UNIFFI_FFIDEF_UNIFFI_ROWEL_AUTOFILL_CHECKSUM_METHOD_VAULT_REGISTER_PASSKEY
+uint16_t uniffi_rowel_autofill_checksum_method_vault_register_passkey(void
     
 );
 #endif
