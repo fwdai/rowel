@@ -251,7 +251,7 @@ impl Vault {
                 // alone — and it could not be filled either.
                 _ => match self.entry(&meta.id) {
                     Ok(Some(entry)) if fills_password(meta.has_passkey, username, &entry) => {
-                        entry.login_name().unwrap_or_default().to_string()
+                        sign_in_name(&entry)
                     }
                     _ => continue,
                 },
@@ -293,7 +293,7 @@ impl Vault {
             return Err(AutofillError::NotFound);
         }
         Ok(Password {
-            user: entry.login_name().unwrap_or_default().to_string(),
+            user: sign_in_name(&entry),
             password: entry.password.clone().unwrap_or_default(),
         })
     }
@@ -307,6 +307,14 @@ impl Vault {
         };
         Ok(Some(self.cipher.unseal(&row.id, &row.payload)?))
     }
+}
+
+/// The name a login signs in with, as the list shows it and the fill sends
+/// it: `Entry::login_name`, trimmed — the listing's `username` column is the
+/// trimmed one (`store::migrate::derived_username`), and the app trims it for
+/// QuickType too, so the three name an account alike.
+fn sign_in_name(entry: &Entry) -> String {
+    entry.login_name().unwrap_or_default().trim().to_string()
 }
 
 /// Whether a login's listing — its `has_passkey` and `username` columns —

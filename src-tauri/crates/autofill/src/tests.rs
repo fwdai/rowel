@@ -318,6 +318,38 @@ fn a_login_with_no_username_is_listed_by_its_email() {
     );
 }
 
+// The name a login signs in with is shown and sent alike: trimmed, as the
+// listing's column and the app's QuickType identities have it, whether it is
+// read from the column or from the payload.
+#[test]
+fn a_name_with_spaces_around_it_is_listed_and_filled_the_same() {
+    let (container, root) = container();
+    let by_email: Entry = serde_json::from_value(serde_json::json!({
+        "id": "mail", "type": "login", "title": "mail", "website": "acme.test",
+        "email": " alice@acme.test ", "password": "pw"
+    }))
+    .unwrap();
+    vault_at(
+        &root,
+        &APP_KEY,
+        &[login("padded", "acme.test", "  bob ", "pw"), by_email],
+    );
+
+    let vault = open_primary(&container);
+    let listed = vault.credentials_for(vec!["acme.test".into()]).unwrap();
+    let names: Vec<&str> = listed.iter().map(|c| c.user.as_str()).collect();
+    assert_eq!(names, ["alice@acme.test", "bob"]);
+    for (record, name) in [
+        ("default/padded", "bob"),
+        ("default/mail", "alice@acme.test"),
+    ] {
+        let filled = vault
+            .password(record.into(), vec!["acme.test".into()])
+            .unwrap();
+        assert_eq!(filled.user, name, "{record}");
+    }
+}
+
 // --- filling --------------------------------------------------------------
 
 #[test]
