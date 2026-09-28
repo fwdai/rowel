@@ -15,12 +15,12 @@ use super::store::{MemoryVault, PasskeyVault, SessionVault};
 use super::{key, Authenticator, Ceremony, UserConsent};
 
 // The consent every ceremony test grants, standing in for the confirm prompt
-// the transport will supply.
+// the transport will supply: yes, and the first account offered.
 struct Approve;
 
 impl UserConsent for Approve {
-    fn approve(&self, _: Ceremony<'_>) -> bool {
-        true
+    fn approve(&self, _: Ceremony<'_>) -> Option<usize> {
+        Some(0)
     }
 }
 
@@ -28,8 +28,8 @@ impl UserConsent for Approve {
 struct Refuse;
 
 impl UserConsent for Refuse {
-    fn approve(&self, _: Ceremony<'_>) -> bool {
-        false
+    fn approve(&self, _: Ceremony<'_>) -> Option<usize> {
+        None
     }
 }
 
@@ -37,9 +37,18 @@ impl UserConsent for Refuse {
 struct Recording(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
 
 impl UserConsent for Recording {
-    fn approve(&self, ceremony: Ceremony<'_>) -> bool {
+    fn approve(&self, ceremony: Ceremony<'_>) -> Option<usize> {
         self.0.lock().unwrap().push(format!("{ceremony:?}"));
-        true
+        Some(0)
+    }
+}
+
+// Picks the account at a given place in the list offered.
+struct Pick(usize);
+
+impl UserConsent for Pick {
+    fn approve(&self, _: Ceremony<'_>) -> Option<usize> {
+        Some(self.0)
     }
 }
 use crate::crypto::{PayloadCipher, VaultKey};
@@ -254,26 +263,36 @@ async fn registers_and_signs_in_with_a_new_credential() {
         "the id the relying party saw is the id we stored"
     );
 
-    let asserted = client
-        .authenticate(
-            &origin,
-            request_options(created.raw_id.clone()),
-            DefaultClientData,
-        )
+    // The sign-in goes through the authenticator's own front door, where the
+    // account is picked; a client driving the bare CTAP2 half is refused.
+    assert!(
+        client
+            .authenticate(
+                &origin,
+                request_options(created.raw_id.clone()),
+                DefaultClientData,
+            )
+            .await
+            .is_err(),
+        "a sign-in nobody was asked about must not be signed"
+    );
+    let client_data_json = b"{\"type\":\"webauthn.get\"}";
+    let asserted = Authenticator::new(&vault, Approve)
+        .get_assertion(assertion_request(
+            &Sha256::digest(client_data_json),
+            Some(vec![created.raw_id.clone()]),
+        ))
         .await
         .expect("sign-in should succeed");
 
     assert_signature_verifies(
         &passkey.private_key,
-        &asserted.response.authenticator_data,
-        &asserted.response.client_data_json,
-        &asserted.response.signature,
+        &asserted.auth_data.to_vec(),
+        client_data_json,
+        &asserted.signature,
     );
     assert_eq!(
-        asserted
-            .response
-            .user_handle
-            .map(|h| encoding::base64url(&h)),
+        asserted.user.map(|user| encoding::base64url(&user.id)),
         Some(passkey.user_handle.clone()),
         "the credential is discoverable, so the user handle comes back"
     );
@@ -398,6 +417,32 @@ async fn an_allow_list_matches_a_credential_id_stored_with_padding() {
     );
 }
 
+// A Bitwarden import keeps the GUID it mints as the credential id. The
+// sign-in narrows every request to the account picked, by id, so that form
+// has to match itself — with an allow list from the site and without one.
+#[tokio::test]
+async fn a_guid_credential_id_signs_in_with_and_without_an_allow_list() {
+    let vault = MemoryVault::new();
+    let guid = "8f2b41d7-6c93-4e1a-a50d-37e8b16429c5";
+    vault.seed(
+        "entry-1",
+        Passkey {
+            credential_id: guid.into(),
+            ..imported_passkey(RP_ID)
+        },
+    );
+    let raw = hex::decode(guid.replace('-', "")).unwrap();
+
+    let mut authenticator = Authenticator::new(&vault, Approve);
+    for allow in [None, Some(vec![Bytes::from(raw.clone())])] {
+        let signed = authenticator
+            .get_assertion(assertion_request(&random_vec(32), allow))
+            .await
+            .expect("a GUID credential id is usable");
+        assert_eq!(signed.credential.unwrap().id.to_vec(), raw);
+    }
+}
+
 // --- consent -----------------------------------------------------------------
 
 // The user's refusal is the end of it: no key is minted, no signature made.
@@ -441,18 +486,192 @@ async fn the_user_is_asked_about_the_site_and_account() {
         .await
         .expect("registration")
         .raw_id;
-    client
-        .authenticate(&origin, request_options(created), DefaultClientData)
+    Authenticator::new(&vault, Recording(asked.clone()))
+        .get_assertion(assertion_request(&random_vec(32), None))
         .await
         .expect("sign-in");
 
+    let id = encoding::base64url(&created);
+    let made = vault.all()[0].passkey.created_at.clone();
     let asked = asked.lock().unwrap();
     assert_eq!(
         asked.as_slice(),
         [
-            "Register { rp_id: \"example.com\", user_name: Some(\"alice\") }",
-            "SignIn { rp_id: \"example.com\" }",
+            "Register { rp_id: \"example.com\", user_name: Some(\"alice\"), user_display_name: Some(\"Alice Example\") }".to_string(),
+            format!("SignIn {{ rp_id: \"example.com\", accounts: [Account {{ credential_id: {id:?}, user_name: \"alice\", user_display_name: \"Alice Example\", created_at: {made:?} }}] }}"),
         ]
+    );
+}
+
+// A site that names no credential expects the user to pick the account. Every
+// passkey for the site is offered, newest first, and the pick is what signs;
+// a pick past the end of the list is a no.
+#[tokio::test]
+async fn a_sign_in_is_as_the_account_the_user_picks() {
+    let vault = MemoryVault::new();
+    let older = Passkey {
+        credential_id: encoding::base64url(b"older"),
+        user_name: "alice".into(),
+        created_at: Some("2024-01-01T00:00:00+00:00".into()),
+        ..imported_passkey(RP_ID)
+    };
+    let newer = Passkey {
+        credential_id: encoding::base64url(b"newer"),
+        user_name: "bob".into(),
+        ..imported_passkey(RP_ID)
+    };
+    vault.seed("entry-1", older.clone());
+    vault.seed("entry-2", newer.clone());
+
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let newest = Authenticator::new(&vault, Recording(asked.clone()))
+        .get_assertion(assertion_request(&random_vec(32), None))
+        .await
+        .expect("sign-in");
+    assert_eq!(newest.credential.unwrap().id.to_vec(), b"newer");
+    let offered = asked.lock().unwrap()[0].clone();
+    assert!(
+        offered.contains("credential_id: \"bmV3ZXI\", user_name: \"bob\"")
+            && offered.contains("credential_id: \"b2xkZXI\", user_name: \"alice\"")
+            && offered.find("bob") < offered.find("alice"),
+        "both accounts offered, newest first: {offered}"
+    );
+
+    let picked = Authenticator::new(&vault, Pick(1))
+        .get_assertion(assertion_request(&random_vec(32), None))
+        .await
+        .expect("sign-in");
+    assert_eq!(picked.credential.unwrap().id.to_vec(), b"older");
+
+    assert!(
+        Authenticator::new(&vault, Pick(2))
+            .get_assertion(assertion_request(&random_vec(32), None))
+            .await
+            .is_err(),
+        "an account that was not offered cannot be picked"
+    );
+}
+
+// An import can leave two records under one credential id. A yes to one of
+// them is not a yes to the other: the record picked is the one that signs,
+// not whichever the vault lists first under that id.
+#[tokio::test]
+async fn a_pick_is_the_record_itself_not_every_record_under_its_id() {
+    let vault = MemoryVault::new();
+    let shared = encoding::base64url(b"twice");
+    let alice = Passkey {
+        credential_id: shared.clone(),
+        user_handle: encoding::base64url(b"alice"),
+        user_name: "alice".into(),
+        ..imported_passkey(RP_ID)
+    };
+    let bob = Passkey {
+        credential_id: shared,
+        user_handle: encoding::base64url(b"bob"),
+        user_name: "bob".into(),
+        private_key: generated_key().1,
+        ..imported_passkey(RP_ID)
+    };
+    vault.seed("entry-1", alice);
+    vault.seed("entry-2", bob);
+
+    for (pick, handle) in [(0, b"alice" as &[u8]), (1, b"bob")] {
+        let signed = Authenticator::new(&vault, Pick(pick))
+            .get_assertion(assertion_request(&random_vec(32), None))
+            .await
+            .expect("sign-in");
+        assert_eq!(
+            signed.user.map(|user| user.id.to_vec()),
+            Some(handle.to_vec()),
+            "the record picked is the one that signs"
+        );
+    }
+}
+
+// And the counter that moves after that sign-in is the picked record's, not
+// the first the vault lists under the id.
+#[tokio::test]
+async fn a_counter_update_lands_on_the_record_picked() {
+    let vault = MemoryVault::new();
+    let shared = encoding::base64url(b"twice");
+    vault.seed(
+        "entry-1",
+        Passkey {
+            credential_id: shared.clone(),
+            counter: 5,
+            ..imported_passkey(RP_ID)
+        },
+    );
+    vault.seed(
+        "entry-2",
+        Passkey {
+            credential_id: shared,
+            user_handle: encoding::base64url(b"bob"),
+            user_name: "bob".into(),
+            private_key: generated_key().1,
+            counter: 9,
+            ..imported_passkey(RP_ID)
+        },
+    );
+
+    Authenticator::new(&vault, Pick(1))
+        .get_assertion(assertion_request(&random_vec(32), None))
+        .await
+        .expect("sign-in");
+
+    let all = vault.all();
+    let counter = |id: &str| {
+        all.iter()
+            .find(|s| s.entry_id == id)
+            .unwrap()
+            .passkey
+            .counter
+    };
+    assert_eq!(counter("entry-2"), 10, "the picked record counted");
+    assert_eq!(
+        counter("entry-1"),
+        5,
+        "the other record under that id did not"
+    );
+}
+
+// Approves, and moves the vault on under the ask — as a sync landing while
+// the user decides would.
+struct Bump(std::sync::Arc<MemoryVault>);
+
+impl UserConsent for Bump {
+    fn approve(&self, _: Ceremony<'_>) -> Option<usize> {
+        let stored = self.0.all().into_iter().next().unwrap();
+        let bumped = Passkey {
+            counter: stored.passkey.counter + 1,
+            ..stored.passkey
+        };
+        self.0.update(&stored.entry_id, &bumped).unwrap();
+        Some(0)
+    }
+}
+
+// The pick is the record — the entry it is on and its id — not what the
+// record held when the user was asked.
+#[tokio::test]
+async fn a_record_that_changed_while_the_user_decided_still_signs() {
+    let vault = std::sync::Arc::new(MemoryVault::new());
+    vault.seed(
+        "entry-1",
+        Passkey {
+            counter: 3,
+            ..imported_passkey(RP_ID)
+        },
+    );
+
+    Authenticator::new(&*vault, Bump(vault.clone()))
+        .get_assertion(assertion_request(&random_vec(32), None))
+        .await
+        .expect("the approved sign-in must not come back as no credentials");
+    assert_eq!(
+        vault.all()[0].passkey.counter,
+        5,
+        "bumped under the ask, then by the sign-in"
     );
 }
 

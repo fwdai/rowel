@@ -224,6 +224,7 @@ const DEFAULTS: Record<string, Handler> = {
   browser_status: () => BROWSER_OFF,
   browser_set_enabled: ({ enabled }) => ({ ...BROWSER_OFF, enabled: enabled as boolean }),
   browser_respond: () => undefined,
+  browser_passkey_respond: () => undefined,
   browser_forget_client: () => BROWSER_OFF
 }
 

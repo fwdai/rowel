@@ -710,5 +710,11 @@
   "Allow it only if you just connected KeePassXC-Browser yourself. It will be able to fill your logins.": "Разрешайте, только если вы сами только что подключили KeePassXC-Browser. Оно сможет заполнять ваши логины.",
   "Key": "Ключ",
   "Allow": "Разрешить",
-  "Deny": "Отклонить"
+  "Deny": "Отклонить",
+  "{{site}} wants to create a passkey for {{account}}": "{{site}} хочет создать ключ доступа для {{account}}",
+  "{{site}} wants to create a passkey": "{{site}} хочет создать ключ доступа",
+  "{{site}} wants to sign in with your passkey": "{{site}} хочет выполнить вход с вашим ключом доступа",
+  "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} хочет выполнить вход с вашим ключом доступа для {{account}}",
+  "Account": "Аккаунт",
+  "Asked by {{origin}} through the browser extension.": "Запрос от {{origin}} через расширение браузера."
 }

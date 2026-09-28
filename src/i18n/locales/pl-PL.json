@@ -710,5 +710,11 @@
   "Allow it only if you just connected KeePassXC-Browser yourself. It will be able to fill your logins.": "Zezwól tylko wtedy, gdy przed chwilą sam łączyłeś KeePassXC-Browser. Będzie mogło wypełniać Twoje dane logowania.",
   "Key": "Klucz",
   "Allow": "Zezwól",
-  "Deny": "Odmów"
+  "Deny": "Odmów",
+  "{{site}} wants to create a passkey for {{account}}": "{{site}} chce utworzyć klucz dostępu dla {{account}}",
+  "{{site}} wants to create a passkey": "{{site}} chce utworzyć klucz dostępu",
+  "{{site}} wants to sign in with your passkey": "{{site}} chce Cię zalogować Twoim kluczem dostępu",
+  "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} chce Cię zalogować kluczem dostępu dla {{account}}",
+  "Account": "Konto",
+  "Asked by {{origin}} through the browser extension.": "Prośba od {{origin}} przez rozszerzenie przeglądarki."
 }

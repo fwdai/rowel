@@ -690,5 +690,11 @@
   "Allow it only if you just connected KeePassXC-Browser yourself. It will be able to fill your logins.": "Yalnızca KeePassXC-Browser'ı az önce kendiniz bağladıysanız izin verin. Girişlerinizi doldurabilecek.",
   "Key": "Anahtar",
   "Allow": "İzin ver",
-  "Deny": "Reddet"
+  "Deny": "Reddet",
+  "{{site}} wants to create a passkey for {{account}}": "{{site}}, {{account}} için bir geçiş anahtarı oluşturmak istiyor",
+  "{{site}} wants to create a passkey": "{{site}} bir geçiş anahtarı oluşturmak istiyor",
+  "{{site}} wants to sign in with your passkey": "{{site}} geçiş anahtarınızla oturum açmak istiyor",
+  "{{site}} wants to sign in with your passkey for {{account}}": "{{site}}, {{account}} için geçiş anahtarınızla oturum açmak istiyor",
+  "Account": "Hesap",
+  "Asked by {{origin}} through the browser extension.": "{{origin}} tarafından tarayıcı uzantısı üzerinden istendi."
 }

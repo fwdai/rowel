@@ -12,7 +12,7 @@ import {
   fileOpened
 } from './app'
 import { setEntries, loadArchive, runAudit } from './vault'
-import { useUi, showNotice, askBrowser, browserClientsChanged } from './ui'
+import { useUi, showNotice, askBrowser, askPasskey, browserClientsChanged } from './ui'
 import { t } from '@/i18n'
 
 // A merge can add or drop tombstones as readily as live entries, but the Archive
@@ -69,6 +69,8 @@ export const subscribeToEvents = (): (() => void) => {
     on(EVENTS.fileOpened, payload => fileOpened(payload.path)),
     // An extension asking to be let in; the dialog in `Main` answers it.
     on(EVENTS.browserAssociate, askBrowser),
+    // A page's passkey ceremony, through that extension; `Main` answers it too.
+    on(EVENTS.browserPasskey, askPasskey),
     // One let in: Settings › Browser extension re-reads its list.
     on(EVENTS.browserClients, () => browserClientsChanged())
   ]

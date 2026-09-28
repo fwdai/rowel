@@ -29,7 +29,7 @@ use serde_json::{json, Map, Value};
 ///
 /// The highest row this host has every action for, and no higher: raise it in
 /// the change that adds the next row's actions, and hold it there with a test.
-pub const VERSION: &str = "2.7.6";
+pub const VERSION: &str = "2.7.7";
 
 pub const NONCE_LEN: usize = 24;
 
@@ -50,11 +50,33 @@ pub enum Code {
     NoLoginsFound = 15,
     NoGroupsFound = 16,
     NoValidUuidProvided = 18,
+    // The passkey ceremonies'. These travel inside a sealed reply, as
+    // `response: { errorCode }` (see `passkeys`), not as a refusal.
+    PasskeyCredentialExcluded = 21,
+    PasskeyRequestCanceled = 22,
+    PasskeyEmptyPublicKey = 24,
+    PasskeyInvalidUrl = 25,
+    PasskeyDomainNotValid = 27,
+    PasskeyRpIdMismatch = 28,
+    PasskeyNoSupportedAlgorithms = 29,
+    PasskeyUnknownError = 31,
+    PasskeyInvalidChallenge = 32,
+    PasskeyInvalidUserId = 33,
 }
 
 impl Code {
     pub fn message(self) -> &'static str {
         match self {
+            Code::PasskeyCredentialExcluded => "Credential is excluded",
+            Code::PasskeyRequestCanceled => "Passkey request canceled",
+            Code::PasskeyEmptyPublicKey => "Empty public key",
+            Code::PasskeyInvalidUrl => "Invalid URL provided",
+            Code::PasskeyDomainNotValid => "Effective domain is not a valid domain",
+            Code::PasskeyRpIdMismatch => "Origin and RP ID do not match",
+            Code::PasskeyNoSupportedAlgorithms => "No supported algorithms were provided",
+            Code::PasskeyUnknownError => "Unknown passkeys error",
+            Code::PasskeyInvalidChallenge => "Challenge is shorter than required minimum length",
+            Code::PasskeyInvalidUserId => "user.id does not match the required length",
             Code::DatabaseNotOpened => "Database not opened",
             Code::ClientPublicKeyNotReceived => "Client public key not received",
             Code::CannotDecryptMessage => "Cannot decrypt message",

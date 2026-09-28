@@ -680,5 +680,11 @@
   "Allow it only if you just connected KeePassXC-Browser yourself. It will be able to fill your logins.": "仅当你刚刚亲自连接了 KeePassXC-Browser 时才允许。它将能够填充你的登录信息。",
   "Key": "密钥",
   "Allow": "允许",
-  "Deny": "拒绝"
+  "Deny": "拒绝",
+  "{{site}} wants to create a passkey for {{account}}": "{{site}} 想为 {{account}} 创建通行密钥",
+  "{{site}} wants to create a passkey": "{{site}} 想创建通行密钥",
+  "{{site}} wants to sign in with your passkey": "{{site}} 想使用你的通行密钥登录",
+  "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} 想使用你的 {{account}} 通行密钥登录",
+  "Account": "账户",
+  "Asked by {{origin}} through the browser extension.": "由 {{origin}} 通过浏览器扩展请求。"
 }

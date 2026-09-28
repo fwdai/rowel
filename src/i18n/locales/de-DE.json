@@ -696,5 +696,11 @@
   "Allow it only if you just connected KeePassXC-Browser yourself. It will be able to fill your logins.": "Erlaube das nur, wenn du KeePassXC-Browser gerade selbst verbunden hast. Sie kann dann deine Zugangsdaten ausfüllen.",
   "Key": "Schlüssel",
   "Allow": "Erlauben",
-  "Deny": "Ablehnen"
+  "Deny": "Ablehnen",
+  "{{site}} wants to create a passkey for {{account}}": "{{site}} möchte einen Passkey für {{account}} erstellen",
+  "{{site}} wants to create a passkey": "{{site}} möchte einen Passkey erstellen",
+  "{{site}} wants to sign in with your passkey": "{{site}} möchte dich mit deinem Passkey anmelden",
+  "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} möchte dich mit deinem Passkey für {{account}} anmelden",
+  "Account": "Konto",
+  "Asked by {{origin}} through the browser extension.": "Angefragt von {{origin}} über die Browsererweiterung."
 }

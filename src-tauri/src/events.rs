@@ -28,6 +28,8 @@ pub const FILE_OPENED: &str = "file:opened";
 #[cfg(desktop)]
 pub const BROWSER_ASSOCIATE: &str = "browser:associate";
 #[cfg(desktop)]
+pub const BROWSER_PASSKEY: &str = "browser:passkey";
+#[cfg(desktop)]
 pub const BROWSER_CLIENTS: &str = "browser:clients";
 
 #[derive(Serialize, Clone)]
@@ -140,6 +142,83 @@ struct Associate<'a> {
 #[cfg(desktop)]
 pub fn browser_associate(app: &AppHandle, id: &str, key: &str) {
     let _ = app.emit(BROWSER_ASSOCIATE, Associate { id, key });
+}
+
+#[cfg(desktop)]
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PasskeyAsk<'a> {
+    id: &'a str,
+    kind: &'static str,
+    rp_id: &'a str,
+    origin: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_display_name: Option<&'a str>,
+    /// A sign-in's accounts, as the vault names them; the answer picks one by
+    /// its place here. Not sent for a registration.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    accounts: Vec<PasskeyAccount<'a>>,
+}
+
+#[cfg(desktop)]
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PasskeyAccount<'a> {
+    user_name: &'a str,
+    user_display_name: &'a str,
+    /// RFC3339, when known: what tells two passkeys named alike apart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_at: Option<&'a str>,
+}
+
+/// The page at `origin` asks, through the extension, to create a passkey
+/// (`register`) or to sign in with one (`get`). The site it is for is
+/// `rpId`; the account, on a registration, is the one the site names, and on
+/// a sign-in the `accounts` are the ones the vault could sign in as. The
+/// answer comes back through `commands::browser::browser_passkey_respond`,
+/// naming `id`, so a dialog left up past this ask cannot answer the next.
+#[cfg(desktop)]
+pub fn browser_passkey(
+    app: &AppHandle,
+    id: &str,
+    origin: &str,
+    ceremony: crate::passkey::Ceremony<'_>,
+) {
+    use crate::passkey::Ceremony;
+    let ask = match ceremony {
+        Ceremony::Register {
+            rp_id,
+            user_name,
+            user_display_name,
+        } => PasskeyAsk {
+            id,
+            kind: "register",
+            rp_id,
+            origin,
+            user_name,
+            user_display_name,
+            accounts: Vec::new(),
+        },
+        Ceremony::SignIn { rp_id, accounts } => PasskeyAsk {
+            id,
+            kind: "get",
+            rp_id,
+            origin,
+            user_name: None,
+            user_display_name: None,
+            accounts: accounts
+                .iter()
+                .map(|account| PasskeyAccount {
+                    user_name: &account.user_name,
+                    user_display_name: &account.user_display_name,
+                    created_at: account.created_at.as_deref(),
+                })
+                .collect(),
+        },
+    };
+    let _ = app.emit(BROWSER_PASSKEY, ask);
 }
 
 /// An extension was let into the open vault by the consent dialog. No

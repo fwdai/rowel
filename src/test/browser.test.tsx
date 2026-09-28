@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { EVENTS } from '@/api/events'
 import { ASSOCIATE_TIMEOUT_MS, type BrowserStatus } from '@/api/browser'
 import Settings from '@/components/Main/Sidebar/Settings'
-import BrowserAssociate from '@/components/Main/BrowserAssociate'
+import BrowserConsent from '@/components/Main/BrowserConsent'
 import { openSettings, useUi } from '@/store'
 import { subscribeToEvents } from '@/store/events'
 import { calls, mockCommand } from './ipc'
@@ -128,7 +128,7 @@ describe('Settings › Browser extension', () => {
 describe('the browser consent dialog', () => {
   const ask = async (key = KEY, id = 'ask-1') => {
     subscribeToEvents()
-    render(<BrowserAssociate />)
+    render(<BrowserConsent />)
     act(() => emitEvent(EVENTS.browserAssociate, { id, key }))
     return screen.findByTestId('browser-associate-modal')
   }
@@ -145,7 +145,7 @@ describe('the browser consent dialog', () => {
 
     expect(calls('browser_respond')).toEqual([{ id: 'ask-1', name: 'Work laptop' }])
     expect(screen.queryByTestId('browser-associate-modal')).not.toBeInTheDocument()
-    expect(useUi.getState().browserAsk).toBeNull()
+    expect(useUi.getState().consentAsk).toBeNull()
   })
 
   it('sends null on Deny', async () => {
