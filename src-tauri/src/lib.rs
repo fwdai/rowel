@@ -258,6 +258,8 @@ pub fn run() {
             #[cfg(desktop)]
             commands::browser::browser_respond,
             #[cfg(desktop)]
+            commands::browser::browser_passkey_respond,
+            #[cfg(desktop)]
             commands::browser::browser_forget_client,
             // E2E-only vault reset. `generate_handler!` honours per-command
             // attributes, so in a release build the match arm — and with it the

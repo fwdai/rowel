@@ -9,11 +9,17 @@ use serde_json::{json, Map, Value};
 
 use super::actions::{host_matches, site_host, Client, Connection, Host, Login};
 use super::manifest::{self, Family, HOST_NAME};
+use super::passkeys::{self, Assertion, Registration};
 use super::protocol::{increment, str_of, Code, NONCE_LEN, VERSION};
 use super::{frame, proxy, save_login_in, server, socket_name, Pending, IDENTIFIER};
 use crate::crypto::{PayloadCipher, VaultKey};
 use crate::models::Entry;
+use crate::passkey::store::MemoryVault;
+use crate::passkey::{Ceremony, UserConsent};
 use crate::store::{migrate, SqliteStore, VaultStore};
+
+// Passkeys through the extension, end to end.
+mod ceremonies;
 
 // --- a vault to talk to ------------------------------------------------------
 
@@ -33,9 +39,30 @@ struct Mock {
     saves: RefCell<Vec<Save>>,
     /// Whether a save fails as a write, not as an unknown id.
     read_only: bool,
+    /// The vault's passkeys, and what the user answers a passkey ask with:
+    /// whether at all, and which account when it is a sign-in.
+    passkeys: MemoryVault,
+    passkey_consent: bool,
+    passkey_choice: usize,
+    /// Every passkey ask the user was shown.
+    passkey_asks: Arc<Mutex<Vec<String>>>,
 }
 
 type Save = (Option<String>, String, String, String, String);
+
+/// The user's answer to a passkey ask, noting what they were asked.
+struct Answer {
+    allow: bool,
+    choice: usize,
+    asks: Arc<Mutex<Vec<String>>>,
+}
+
+impl UserConsent for Answer {
+    fn approve(&self, ceremony: Ceremony<'_>) -> Option<usize> {
+        self.asks.lock().unwrap().push(format!("{ceremony:?}"));
+        self.allow.then_some(self.choice)
+    }
+}
 
 impl Mock {
     fn unlocked() -> Self {
@@ -51,6 +78,18 @@ impl Mock {
             raises: Cell::new(0),
             saves: RefCell::new(Vec::new()),
             read_only: false,
+            passkeys: MemoryVault::new(),
+            passkey_consent: true,
+            passkey_choice: 0,
+            passkey_asks: Arc::default(),
+        }
+    }
+
+    fn answer(&self) -> Answer {
+        Answer {
+            allow: self.passkey_consent,
+            choice: self.passkey_choice,
+            asks: self.passkey_asks.clone(),
         }
     }
 
@@ -96,11 +135,12 @@ fn an_ask_that_was_answered_leaves_the_next_ask_its_slot() {
 // --- what the host claims to be --------------------------------------------------
 
 // The extension turns features on by the version alone (see `VERSION`): this
-// host answers every action through the 2.7.0 row of that table and none of
-// the passkey actions, so it claims the release just before those.
+// host answers the passkey actions, so it claims the release that turns them
+// on — and not the one after, whose default passkey *group* the vault has no
+// groups to honour.
 #[test]
 fn the_version_claimed_turns_on_nothing_this_host_lacks() {
-    assert_eq!(VERSION, "2.7.6");
+    assert_eq!(VERSION, "2.7.7");
 }
 
 fn login(id: &str, title: &str, username: &str, password: &str, totp: Option<&str>) -> Login {
@@ -169,6 +209,13 @@ impl Host for Mock {
             password.into(),
         ));
         Ok(())
+    }
+    // The real ceremonies, over an in-memory vault and a scripted user.
+    fn passkey_register(&self, registration: Registration) -> Result<Value, Code> {
+        passkeys::register(&self.passkeys, self.answer(), registration)
+    }
+    fn passkey_get(&self, assertion: Assertion) -> Result<Value, Code> {
+        passkeys::assert(&self.passkeys, self.answer(), assertion)
     }
     fn lock(&self) {
         self.locks.set(self.locks.get() + 1);

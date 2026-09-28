@@ -217,10 +217,12 @@ carries them as part of the opaque payload and never sees them.
   vault being unlocked is the identity half of WebAuthn's "user verified" bit;
   the intent half is asked for on every registration and sign-in through the
   `passkey::UserConsent` seam, which whatever feeds requests in must supply —
-  an `Authenticator` cannot be built without one, so the browser-extension PR
-  has to bring its confirm prompt rather than inherit a silent yes. A refusal
-  ends the ceremony as denied. Today nothing can reach the authenticator: the
-  module has no Tauri command and no transport.
+  an `Authenticator` cannot be built without one, so a transport has to bring
+  its confirm prompt rather than inherit a silent yes. A refusal ends the
+  ceremony as denied. The one transport is the browser extension host
+  (`browser::passkeys`, see "The browser extension" below): it plays the
+  WebAuthn client for the page and asks the user through the app's own dialog,
+  one ceremony at a time.
 - **Signature counters stay at zero.** Credentials sync across devices, so a
   per-device counter would look to a relying party like a cloned authenticator.
   New credentials are created with the constant zero the spec recommends for
@@ -495,12 +497,41 @@ exposed process than the webview, and it is not ours.
   can also save a login: a new one for the page, or a new username and
   password over a login it was handed. Every one of these but a generated
   password needs an association, the lock included, so a stranger on the
-  socket cannot end the user's session. It gets no list of the vault, no other kind of
-  entry, and no passkey. **Nothing while locked:** every request but the key
+  socket cannot end the user's session. It gets no list of the vault and no
+  other kind of entry. **Nothing while locked:** every request but the key
   exchange is refused before it is even opened, and the one thing a locked
   vault does for the extension is bring the app forward to be unlocked. Lock
   and unlock are pushed to every connected extension, so it stops offering
   fills the moment the vault seals.
+- **Passkeys.** A page's `navigator.credentials.create` or `.get` reaches the
+  host through the extension as the page's options plus the page's origin,
+  and the host plays the WebAuthn *client* (`browser::passkeys`): the origin
+  has to be `https://` (or `http://localhost`), the rpId the page claims has
+  to be the origin's host or a registrable suffix of it — `login.example.com`
+  may claim `example.com`, not `co.uk` and not `other.example.com` — and
+  `clientDataJSON` is written here, so the page never gets to choose what is
+  signed over. The CTAP2 half is the vault's own authenticator (the "Passkeys"
+  section above); the private key never leaves the core, and what goes back
+  is the attestation or assertion, inside the sealed reply. **Every ceremony
+  is asked for**, in a dialog that names the rpId the passkey is for and,
+  under it, the page that asked — so a subdomain asking for its parent's
+  passkey is in plain sight — and refused after a minute unanswered. It is
+  the same dialog slot an `associate` waits in: one security decision is on
+  screen at a time, whichever kind, and a second ask of either kind while
+  one is up is refused rather than queued. A sign-in names the account it
+  would be as, and when
+  the vault holds several passkeys for the site that the request admits (a
+  site asking for a discoverable credential names none), the dialog offers
+  the choice: the request is narrowed to the one picked before the
+  authenticator sees it, so a yes never signs as an account the user was
+  not shown. A registration whose `excludeCredentials` names a passkey the
+  vault holds is refused before the user is asked, and a sign-in the allow
+  list leaves nothing for is answered "no credentials" before they are
+  asked, as KeePassXC does. A new passkey is put on the one login for
+  that site, or on a new login when there is none or several (the same rule
+  `passkey::store` had). The write is pinned to the session the ceremony
+  began in: a lock or a workspace switch while the user decides fails it
+  rather than landing it in another vault.
 - **How it is admitted.** An extension asks once per vault. The app comes
   forward with a dialog, one ask at a time and refused after a minute
   unanswered, and the extension gets in only if the user gives it a name.
@@ -528,8 +559,11 @@ exposed process than the webview, and it is not ours.
 - **What it does not defend against.** A compromised browser profile, or a
   malicious extension holding an association key, can pull every login it
   asks for by URL — and ask for URL after URL — and overwrite the password of
-  any login it was handed. This is the same position as KeePassXC's; the
-  guard is what the user lets in, and taking it back. A local process running
+  any login it was handed. With passkeys it gets less: it can ask for a
+  registration or an assertion for any site, but each one costs a click in
+  the app's dialog, which names the site, and nothing it can ask for hands it
+  a private key. This is the same position as KeePassXC's; the guard is what
+  the user lets in, and taking it back. A local process running
   as the same user can connect to the socket and ask to associate, which gets
   it nothing unless the user approves the dialog.
 - **Residuals.** The extension keeps its copy of the identification key in the

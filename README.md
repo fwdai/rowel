@@ -45,6 +45,12 @@ extension fills logins from your vault:
 3. Click the extension's icon and **Connect**, then approve the dialog in
    Rowel and give the browser a name.
 
+Passkeys work through it too: a site's "create a passkey" or "sign in with a
+passkey" reaches Rowel, which asks you in a dialog naming the site — and, for
+a sign-in, the account, with a choice when you have several passkeys there —
+before it answers. That needs KeePassXC-Browser 1.9 or newer, with its
+passkeys option turned on in the extension's settings.
+
 Because the extension looks for KeePassXC's host, a real KeePassXC install on
 the same machine contends for the same browser manifest. Rowel leaves
 KeePassXC's in place and Settings shows that browser as a conflict; use one or

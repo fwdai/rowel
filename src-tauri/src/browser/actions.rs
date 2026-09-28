@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+use super::passkeys::{self, Assertion, Registration};
 use super::protocol::{self, str_of, Code, Session};
 
 /// A login the extension may fill: the one secret it needs and the identity
@@ -69,6 +70,12 @@ pub trait Host {
         username: &str,
         password: &str,
     ) -> Result<(), Code>;
+    /// Create a passkey in the open vault, asking the user first: the
+    /// credential for the page, or the ceremony's error code. The whole of it
+    /// is `passkeys::register` over this host's vault and prompt.
+    fn passkey_register(&self, registration: Registration) -> Result<Value, Code>;
+    /// Sign in with a passkey from the open vault, asking the user first.
+    fn passkey_get(&self, assertion: Assertion) -> Result<Value, Code>;
     fn lock(&self);
     /// The extension wants the vault open: bring the app forward.
     fn unlock_requested(&self);
@@ -235,6 +242,21 @@ impl<H: Host> Connection<H> {
                     .generate_password()
                     .ok_or(Code::ActionCancelledOrDenied)?;
                 Ok(params(json!({ "password": password })))
+            }
+            // Past the association check, a passkey ceremony answers inside a
+            // sealed reply whatever happens — the page reads its outcome from
+            // `response.errorCode`, and a refusal in the clear would reach it
+            // only as "cancelled".
+            "passkeys-register" => {
+                self.require_association(message)?;
+                let outcome =
+                    passkeys::registration(message).and_then(|r| self.host.passkey_register(r));
+                Ok(passkeys::reply(outcome))
+            }
+            "passkeys-get" => {
+                self.require_association(message)?;
+                let outcome = passkeys::assertion(message).and_then(|a| self.host.passkey_get(a));
+                Ok(passkeys::reply(outcome))
             }
             // Locking takes no secret, but it is the user's session to end:
             // an extension that was never let in does not get to end it.
