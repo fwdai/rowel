@@ -251,7 +251,7 @@ impl Vault {
                 // alone — and it could not be filled either.
                 _ => match self.entry(&meta.id) {
                     Ok(Some(entry)) if fills_password(meta.has_passkey, username, &entry) => {
-                        sign_in_name(&entry)
+                        listed_name(&entry)
                     }
                     _ => continue,
                 },
@@ -292,8 +292,10 @@ impl Vault {
         if !fills_password(row.has_passkey, row.username.as_deref(), &entry) {
             return Err(AutofillError::NotFound);
         }
+        // Sent as saved, spaces and all, as the browser host sends it: the
+        // name is the credential, and only its label is trimmed.
         Ok(Password {
-            user: sign_in_name(&entry),
+            user: entry.login_name().unwrap_or_default().to_string(),
             password: entry.password.clone().unwrap_or_default(),
         })
     }
@@ -309,11 +311,11 @@ impl Vault {
     }
 }
 
-/// The name a login signs in with, as the list shows it and the fill sends
-/// it: `Entry::login_name`, trimmed — the listing's `username` column is the
-/// trimmed one (`store::migrate::derived_username`), and the app trims it for
-/// QuickType too, so the three name an account alike.
-fn sign_in_name(entry: &Entry) -> String {
+/// The name a login is listed under: `Entry::login_name`, trimmed, as the
+/// listing's `username` column has it (`store::migrate::derived_username`)
+/// and as the app labels the QuickType identity. A label only: what is
+/// filled is the name as saved.
+fn listed_name(entry: &Entry) -> String {
     entry.login_name().unwrap_or_default().trim().to_string()
 }
 
