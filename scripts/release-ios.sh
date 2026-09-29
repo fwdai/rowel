@@ -162,6 +162,9 @@ IPA="$PWD/${ipas[0]}"
 # whole upload, and a missing one ships a build whose OAuth redirect cannot
 # come back. Check here, before the upload.
 scripts/check-ipa-url-schemes.sh "$IPA" "$SCHEME"
+# Likewise an app or AutoFill extension signed without the credential provider
+# entitlement (90729).
+scripts/check-ipa-entitlements.sh "$IPA"
 
 # altool ignores APPLE_API_KEY_PATH and only looks for AuthKey_<id>.p8 inside a
 # `private_keys` directory (cwd, $HOME, or API_PRIVATE_KEYS_DIR). Stage a copy

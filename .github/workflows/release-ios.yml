@@ -196,6 +196,11 @@ jobs:
       - name: Check the IPA's URL schemes
         run: scripts/check-ipa-url-schemes.sh "${{ steps.ipa.outputs.path }}" "$SCHEME"
 
+      # Likewise an app or AutoFill extension signed without the credential
+      # provider entitlement (90729).
+      - name: Check the IPA's entitlements
+        run: scripts/check-ipa-entitlements.sh "${{ steps.ipa.outputs.path }}"
+
       - name: Upload to App Store Connect (TestFlight)
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
