@@ -217,8 +217,22 @@ mod ios {
     fn replace(identities: &[Identity]) -> Result<(), String> {
         let store = unsafe { ASCredentialIdentityStore::sharedStore() };
         if !enabled(&store)? {
+            // Said, not just skipped: a suggestion that never appears looks
+            // the same as one that was refused, and this is the one place
+            // that knows which.
+            log::info!(
+                "credential identities: Rowel is not an enabled AutoFill provider in iOS Settings; {} not published",
+                identities.len()
+            );
             return Ok(());
         }
+        let (passwords, passkeys) =
+            identities
+                .iter()
+                .fold((0, 0), |(p, k), identity| match identity {
+                    Identity::Password { .. } => (p + 1, k),
+                    Identity::Passkey { .. } => (p, k + 1),
+                });
         let ios_17 = NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(
             NSOperatingSystemVersion {
                 majorVersion: 17,
@@ -227,6 +241,9 @@ mod ios {
             },
         );
         if ios_17 {
+            log::info!(
+                "credential identities: publishing {passwords} passwords and {passkeys} passkeys to iOS"
+            );
             let all: Vec<Retained<ProtocolObject<dyn ASCredentialIdentity>>> = identities
                 .iter()
                 .map(|identity| match identity {
@@ -255,6 +272,9 @@ mod ios {
                 store.replaceCredentialIdentityEntries_completion(&all, Some(done))
             })
         } else {
+            log::info!(
+                "credential identities: publishing {passwords} passwords to iOS ({passkeys} passkeys not sent: iOS 16 takes passwords only)"
+            );
             let passwords: Vec<_> = identities
                 .iter()
                 .filter_map(|identity| match identity {
