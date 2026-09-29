@@ -54,6 +54,10 @@ targets:
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1.0.0
         ENABLE_HARDENED_RUNTIME: true
+        # Xcode's debug builds otherwise split the code into a stub and a
+        # `__preview.dylib` for SwiftUI previews, which the codesign of the
+        # bundle then refuses as unsigned nested code.
+        ENABLE_DEBUG_DYLIB: false
         # Signed by the build script, not by Xcode: with the Developer ID
         # identity and a timestamp for a release, ad hoc otherwise.
         CODE_SIGN_STYLE: Manual
