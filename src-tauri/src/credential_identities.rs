@@ -217,8 +217,23 @@ mod ios {
     fn replace(identities: &[Identity]) -> Result<(), String> {
         let store = unsafe { ASCredentialIdentityStore::sharedStore() };
         if !enabled(&store)? {
+            // Said, not just skipped: a suggestion that never appears looks
+            // the same as one that was refused, and this is the one place
+            // that knows which.
+            log::info!(
+                "credential identities: Rowel is not an enabled AutoFill provider in iOS Settings; {} not published",
+                identities.len()
+            );
             return Ok(());
         }
+        let (passwords, passkeys) =
+            identities
+                .iter()
+                .fold((0, 0), |(p, k), identity| match identity {
+                    Identity::Password { .. } => (p + 1, k),
+                    Identity::Passkey { .. } => (p, k + 1),
+                });
+        log::info!("credential identities: publishing {passwords} passwords and {passkeys} passkeys to iOS");
         let ios_17 = NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(
             NSOperatingSystemVersion {
                 majorVersion: 17,
