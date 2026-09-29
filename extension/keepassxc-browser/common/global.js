@@ -1,0 +1,283 @@
+'use strict';
+
+const EXTENSION_NAME = 'KeePassXC-Browser';
+const DEFINED_CUSTOM_FIELDS = 'defined-custom-fields';
+
+// Site Preferences ignore options
+const IGNORE_NOTHING = 'ignoreNothing';
+const IGNORE_NORMAL = 'ignoreNormal';
+const IGNORE_AUTOSUBMIT = 'ignoreAutoSubmit';
+const IGNORE_PASSKEYS = 'ignorePasskeys';
+const IGNORE_FULL = 'ignoreFull';
+
+// Credential sorting options
+const SORT_BY_TITLE = 'sortByTitle';
+const SORT_BY_USERNAME = 'sortByUsername';
+const SORT_BY_GROUP_AND_TITLE = 'sortByGroupAndTitle';
+const SORT_BY_GROUP_AND_USERNAME = 'sortByGroupAndUsername';
+const SORT_BY_MATCHING_CREDENTIALS_SETTING = 'sortByMatchingCredentials';
+const SORT_BY_RELEVANT_ENTRY = 'sortByRelevantEntry';
+
+// Update check intervals
+const CHECK_UPDATE_NEVER = 0;
+const CHECK_UPDATE_THREE_DAYS = 3;
+const CHECK_UPDATE_ONE_WEEK = 7;
+const CHECK_UPDATE_ONE_MONTH = 30;
+
+const URL_WILDCARD = '1kpxcwc1';
+const schemeSegment = '(\\*|http|https|ws|wss|ftp)';
+const hostSegment = '(\\*|(?:\\*\\.)?(?:[^/*]+))?';
+
+const AssociatedAction = {
+    NOT_ASSOCIATED: 0,
+    ASSOCIATED: 1,
+    NEW_ASSOCIATION: 2,
+    CANCELED: 3
+};
+
+const BannerPosition = {
+    BOTTOM: 0,
+    TOP: 1
+};
+
+const CreationError = {
+    CANCELED: 'canceled',
+    CREATED: 'created',
+    GENERAL: 'error',
+    REFERENCES: 'references',
+    UPDATED: 'updated'
+};
+
+const ManualFill = {
+    NONE: 0,
+    PASSWORD: 1,
+    BOTH: 2
+};
+
+const SitePreferences = {
+    ALLOW_IFRAMES: 'allowIframes',
+    IMPROVED_FIELD_DETECTION: 'improvedFieldDetection',
+    USERNAME_ONLY: 'usernameOnly',
+};
+
+const isFirefox = function() {
+    return browser.runtime.getURL('')?.startsWith('moz-extension');
+};
+
+const isSafari = function() {
+    return browser.runtime.getURL('')?.startsWith('safari-web-extension');
+};
+
+const isEdge = function() {
+    return navigator.userAgent.indexOf('Edg') !== -1;
+};
+
+const getIconClass = function(className) {
+    if (isFirefox()) {
+        return className + '-moz';
+    } else if (isSafari()) {
+        return className + '-safari';
+    }
+    return className;
+};
+
+const showNotification = function(message) {
+    browser.notifications.create({
+        'type': 'basic',
+        'iconUrl': browser.runtime.getURL('icons/keepassxc_64x64.png'),
+        'title': 'KeePassXC-Browser',
+        'message': message
+    });
+};
+
+// Returns a string with 'px' for CSS styles
+const Pixels = function(value) {
+    return String(value) + 'px';
+};
+
+const compareVersion = function(minimum, current, canBeEqual = true) {
+    if (!minimum || !current || minimum?.indexOf('.') === -1 || current?.indexOf('.') === -1) {
+        return false;
+    }
+
+    // Handle beta/snapshot builds as stable version
+    const snapshot = '-snapshot';
+    const beta = '-beta';
+    if (current.endsWith(snapshot)) {
+        current = current.slice(0, -snapshot.length);
+    }
+
+    if (current.endsWith(beta)) {
+        current = current.slice(0, -beta.length);
+    }
+
+    const min = minimum.split('.', 3).map(s => s.padStart(4, '0')).join('.');
+    const cur = current.split('.', 3).map(s => s.padStart(4, '0')).join('.');
+    return (canBeEqual ? (min <= cur) : (min < cur));
+};
+
+// Checks if element's nodeName matches
+const matchesWithNodeName = function(elem, name) {
+    // Don't allow undefined element or 'name'
+    if (!elem || !name) {
+        return false;
+    }
+
+    return elem?.nodeName?.toUpperCase() === name?.toUpperCase();
+};
+
+// Match hostname or path with wildcards
+const matchWithRegex = function(firstUrlPart, secondUrlPart, hostnameUsed = false) {
+    if (firstUrlPart === secondUrlPart) {
+        return true;
+    }
+
+    // If there's no wildcard with hostname, just compare directly
+    if (hostnameUsed && !firstUrlPart.includes(URL_WILDCARD) && firstUrlPart !== secondUrlPart) {
+        return false;
+    }
+
+    // Escape illegal characters
+    let re = firstUrlPart.replaceAll(/[!\^$\+\-\(\)@<>]/g, '\\$&');
+    if (hostnameUsed) {
+        // Replace all host parts with wildcards so e.g. https://*.example.com is accepted with https://example.com
+        re = re.replaceAll(`${URL_WILDCARD}.`, '(.*?)');
+    }
+
+    // Replace any remaining wildcards for paths
+    re = re.replaceAll(URL_WILDCARD, '(.*?)');
+
+    return secondUrlPart.match(new RegExp(re));
+};
+
+// Matches URL in Site Preferences with the current URL
+const siteMatch = function(site, url) {
+    try {
+        site = site.replaceAll('*', URL_WILDCARD);
+        const siteUrl = new URL(site);
+        const currentUrl = new URL(url);
+
+        // Match scheme and port. If Site Preferences does not use a port, all ports are ignored.
+        if (siteUrl.protocol !== currentUrl.protocol || (siteUrl.port && siteUrl.port !== currentUrl.port)) {
+            return false;
+        }
+
+        // Match hostname and path
+        if (!matchWithRegex(siteUrl.hostname, currentUrl.hostname, true)
+            || !matchWithRegex(siteUrl.pathname, currentUrl.pathname)) {
+            return false;
+        }
+
+        return true;
+    } catch(e) {
+        logError(e);
+    }
+
+    return false;
+};
+
+const slashNeededForUrl = function(pattern) {
+    const matchPattern = new RegExp(`^${schemeSegment}://${hostSegment}$`);
+    return matchPattern.exec(pattern);
+};
+
+function tr(key, params) {
+    return browser.i18n.getMessage(key, params);
+}
+
+// Removes everything after '?' from URL
+const trimURL = function(url) {
+    return url.indexOf('?') !== -1 ? url.split('?')[0] : url;
+};
+
+const DYNAMIC_PLACEHOLDERS = [
+    'DT_',
+    'REF:',
+    'S:',
+    'T-CONV:',
+    'T-REPLACE-RX:',
+    'URL:'
+];
+
+const STATIC_PLACEHOLDERS = [
+    'DB_DIR',
+    'NOTES',
+    'PASSWORD',
+    'TITLE',
+    'TOTP',
+    'USERNAME',
+    'URL'
+];
+
+const containsPlaceholder = function(str) {
+    const placeholderRegex = new RegExp('{(.*?)}');
+
+    const placeholderFound = placeholderRegex.exec(str);
+    if (placeholderFound === null) {
+        return false;
+    }
+
+    let placeholder = placeholderFound[1];
+    if (placeholder.endsWith('\\')) {
+        // Remove escape if placeholder is used with \\{PLACEHOLDER\\}
+        placeholder = placeholder.slice(0, -1);
+    }
+
+    if (STATIC_PLACEHOLDERS.includes(placeholder)) {
+        return true;
+    }
+
+    if (DYNAMIC_PLACEHOLDERS.some((pl) => placeholder.startsWith(pl))) {
+        return true;
+    }
+
+    return false;
+};
+
+const debugLogMessage = function(message, extra) {
+    console.debug(`[Debug ${getFileAndLine()}] ${EXTENSION_NAME} - ${message}`);
+
+    if (extra) {
+        console.debug(extra);
+    }
+};
+
+const logError = function(message) {
+    console.log(`[Error ${getFileAndLine()}] ${EXTENSION_NAME} - ${message}`);
+};
+
+// Returns file name and line number from error stack
+const getFileAndLine = function() {
+    const err = new Error().stack.split('\n');
+    const line = err[4] ?? err.at(-1);
+    const result = line.substring(line.lastIndexOf('/') + 1, line.lastIndexOf(':'));
+
+    return result;
+};
+
+const getCurrentTab = async function() {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    return tabs?.length > 0 ? tabs[0] : undefined;
+};
+
+// Check if element b is inside a
+const isElementInside = (a, b) => (b.x >= a.x && b.right <= a.right) && (b.y >= a.y && b.bottom <= a.bottom);
+
+// Check if two elements overlap
+const elementsOverlap = function(rect1, rect2) {
+    const overlaps = (a, b) => !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+    return isElementInside(rect1, rect2) || overlaps(rect1, rect2);
+};
+
+// Exports for tests
+if (typeof module === 'object') {
+    module.exports = {
+        containsPlaceholder,
+        compareVersion,
+        elementsOverlap,
+        matchesWithNodeName,
+        siteMatch,
+        slashNeededForUrl,
+        trimURL,
+    };
+}
