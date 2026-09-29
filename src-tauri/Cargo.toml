@@ -11,6 +11,10 @@ edition = "2021"
 rust-version = "1.92"
 # Desktop application, never published to crates.io.
 publish = false
+# `crates/autofill` is a default member with its own `uniffi-bindgen` binary,
+# so a bare `cargo run` (which is what `tauri dev` issues) needs telling which
+# one is the app.
+default-run = "rowel"
 
 # The app, the Tauri-free vault core it is built on (`crates/core`), and the
 # library the iOS AutoFill extension links in its place (`crates/autofill`).
