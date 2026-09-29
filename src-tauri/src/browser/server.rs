@@ -1,4 +1,5 @@
-//! The listener the extension's proxy connects to, the loop that serves one
+//! The listeners the extension connects to — through the proxy for Chrome and
+//! Firefox, through the app extension for Safari — the loop that serves one
 //! connection, and the lock signals every connection is sent.
 
 use std::io::{self, Read, Write};
@@ -14,7 +15,8 @@ use super::actions::{Connection, Host};
 use super::{frame, socket_name, AppHost};
 use crate::{settings, storage};
 
-// One listener per process, for its whole life: once the host is on, turning
+// One set of listeners per process (the data-directory socket, and on macOS
+// the Safari one beside it), for its whole life: once the host is on, turning
 // it off in Settings only makes the accept loop refuse what arrives, and the
 // manifests are gone, so no browser launches a proxy to arrive anyway.
 static STARTED: AtomicBool = AtomicBool::new(false);
@@ -31,8 +33,16 @@ type Queue = (u64, Sender<&'static [u8]>);
 static CLIENTS: Mutex<Vec<Queue>> = Mutex::new(Vec::new());
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Start listening, once. A failure to bind is logged and leaves the host off;
-/// the next enable from Settings tries again.
+/// Start listening, once. A failure to bind the data-directory socket — the
+/// one Chrome and Firefox reach — is logged and leaves the host off; the next
+/// enable from Settings tries again.
+///
+/// On macOS a second socket, in the App Group container, serves the Safari
+/// extension (`safari_socket_dir`). It is bound best-effort after the first:
+/// failing there says only that the Safari extension is unavailable, and
+/// Chrome and Firefox are served all the same. The two listeners feed the
+/// same connections: each accepted stream is registered for the lock signals
+/// and served exactly alike.
 pub fn start(app: &AppHandle) {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -53,27 +63,9 @@ pub fn start(app: &AppHandle) {
                 }
             };
             log::info!("browser host: listening");
-            for incoming in listener.incoming() {
-                let stream = match incoming {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        log::warn!("browser host: a connection failed: {e}");
-                        continue;
-                    }
-                };
-                // Turned off since: the stream drops here, unanswered.
-                if !settings::current(&app).browser.enabled {
-                    continue;
-                }
-                let (reader, writer) = stream.split();
-                let writer: Writer = Arc::new(Mutex::new(writer));
-                let id = register(writer.clone());
-                let host = AppHost(app.clone());
-                std::thread::spawn(move || {
-                    serve(Connected { reader, writer }, host);
-                    forget(id);
-                });
-            }
+            #[cfg(target_os = "macos")]
+            start_safari(&app);
+            accept(listener, &app);
         });
     if let Err(e) = spawned {
         log::warn!("browser host: could not start: {e}");
@@ -81,16 +73,81 @@ pub fn start(app: &AppHandle) {
     }
 }
 
+// The Safari extension's listener, on a thread of its own.
+#[cfg(target_os = "macos")]
+fn start_safari(app: &AppHandle) {
+    let listener = super::safari_socket_dir()
+        .map_err(|e| e.to_string())
+        .and_then(|dir| bind(&dir).map_err(|e| e.to_string()));
+    let listener = match listener {
+        Ok(listener) => listener,
+        Err(e) => {
+            log::warn!("browser host: Safari extension unavailable: {e}");
+            return;
+        }
+    };
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("browser-host-safari".into())
+        .spawn(move || {
+            log::info!("browser host: listening for Safari");
+            accept(listener, &app);
+        });
+    if let Err(e) = spawned {
+        log::warn!("browser host: Safari extension unavailable: {e}");
+    }
+}
+
+// Serve every connection `listener` accepts, for the life of the process.
+fn accept(listener: Listener, app: &AppHandle) {
+    for incoming in listener.incoming() {
+        let stream = match incoming {
+            Ok(stream) => stream,
+            Err(e) => {
+                log::warn!("browser host: a connection failed: {e}");
+                continue;
+            }
+        };
+        // Turned off since: the stream drops here, unanswered.
+        if !settings::current(app).browser.enabled {
+            continue;
+        }
+        let (reader, writer) = stream.split();
+        let writer: Writer = Arc::new(Mutex::new(writer));
+        let id = register(writer.clone());
+        let host = AppHost(app.clone());
+        std::thread::spawn(move || {
+            serve(Connected { reader, writer }, host);
+            forget(id);
+        });
+    }
+}
+
 /// The listener at `root`'s socket. A socket file a crashed process left
 /// behind is replaced rather than refused; the single-instance guard is what
 /// keeps two live apps from contending for one.
 ///
+/// `root` is made if it is missing: the Safari extension's is in the App
+/// Group container (`safari_socket_dir`), which nothing may have created
+/// yet — the system makes it when a signed, entitled process first asks for
+/// it, and an unsigned `tauri dev` build never does. A plain directory made
+/// there serves the same, for the app and for the extension alike.
+///
 /// The socket file is made owner-only after the bind rather than through the
 /// listener's `mode` option, which macOS does not support (the crate answers
 /// `Unsupported`, and that is what "could not listen" was). The moment
-/// between the two is covered by the data directory, which is `0700` from
-/// its creation, so nothing else could reach the file in it anyway.
+/// between the two is covered by the directory, which is `0700` from its
+/// creation — the data directory, or the group container (the system makes
+/// it `0700` as well) — so nothing else could reach the file in it anyway.
 pub fn bind(root: &Path) -> io::Result<Listener> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(root)?;
+    }
     let listener = ListenerOptions::new()
         .name(socket_name(root)?)
         .try_overwrite(true)

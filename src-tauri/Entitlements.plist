@@ -33,10 +33,30 @@
   `codesign` verbatim and expands nothing, so the variable ships as a literal
   group name. Use the team id, UFBL3F444A. The group must also be one the
   profile grants; a Developer ID profile typically grants `UFBL3F444A.*`.
+
+  com.apple.security.application-groups puts the app in the App Group it shares
+  with the Safari web extension (src-tauri/gen/safari): the browser host's
+  socket for Safari is in that group's container, ~/Library/Group Containers/
+  UFBL3F444A.app.rowel.desktop/browser.sock, the one place the sandboxed
+  extension can connect to (Chrome and Firefox use the one in the data
+  directory). The id is rowel_core::app::DESKTOP_APP_GROUP.
+
+  Unlike keychain-access-groups this one is NOT profile-gated, and the profile
+  does not grant it — but only because the id is macOS-style: the team id, a
+  dot, a name. macOS grants such a group on the signature's team id alone
+  (Apple DTS, developer forums thread 721701). An iOS-style `group.` id is
+  checked against the provisioning profile on macOS 15 and later, and without
+  a profile granting it the process is refused exactly as above. Never write a
+  `group.` id here. check-macos-entitlements.mjs accepts a group under the
+  team id without a profile and refuses any other.
 -->
 <plist version="1.0">
   <dict>
     <key>keychain-access-groups</key>
+    <array>
+      <string>UFBL3F444A.app.rowel.desktop</string>
+    </array>
+    <key>com.apple.security.application-groups</key>
     <array>
       <string>UFBL3F444A.app.rowel.desktop</string>
     </array>

@@ -17,6 +17,21 @@ pub const APP_NAME: &str = "Rowel";
 /// `com.apple.security.application-groups` entitlement on both targets.
 pub const APP_GROUP: &str = "group.app.rowel.mobile";
 
+/// The macOS App Group the desktop app shares with its Safari web extension
+/// (`app.rowel.desktop.safari`, a sandboxed app extension). Its container,
+/// `~/Library/Group Containers/<this>`, is the one directory both can reach,
+/// so the browser host's socket for Safari lives there
+/// (`browser::safari_socket_dir`); Chrome and Firefox keep theirs in the data
+/// directory.
+///
+/// Not [`APP_GROUP`]: a `group.`-prefixed id is iOS-style, and on macOS 15+
+/// it is gated by a provisioning profile, which the Developer ID profile does
+/// not carry. A macOS-style id — the team id, a dot, then any name — is
+/// granted by the signature's team id alone. Granted by the
+/// `com.apple.security.application-groups` entitlement on both
+/// (`src-tauri/Entitlements.plist`, `src-tauri/gen/safari/project.yml`).
+pub const DESKTOP_APP_GROUP: &str = "UFBL3F444A.app.rowel.desktop";
+
 /// The vault's directory inside the App Group container: the app data dir's
 /// own name, so the layout under it is the one the app always had.
 pub const APP_GROUP_DATA_DIR: &str = "app.rowel.mobile";

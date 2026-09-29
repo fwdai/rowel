@@ -13,7 +13,9 @@ form detection and content scripts exactly as upstream has them. It changes:
 - KeePassXC-only surfaces: the KeePassXC update check and links to KeePassXC's
   docs, downloads and store listings.
 
-This covers Chrome, Chromium, Edge and Firefox. Safari comes later.
+This covers Chrome, Chromium, Edge and Firefox. Safari on macOS runs the same
+extension from a Safari build that ships inside Rowel.app, with no native
+messaging host: see [safari-extension.md](safari-extension.md).
 
 ## Fixed identifiers
 
@@ -55,8 +57,8 @@ root ESLint, TypeScript, Vitest and Tailwind configs don't look inside
 | --- | --- |
 | `bun run extension:install` | `npm ci` in `extension/` |
 | `bun run extension:lint` | checks the strings are rebranded, then runs upstream's ESLint |
-| `bun run extension:test` | upstream's Playwright tests, in Chromium and Firefox. Run `npx playwright install chromium firefox` in `extension/` once first |
-| `bun run extension:build` | writes `extension/build/` (below), then checks its IDs and host name |
+| `bun run extension:test` | the Safari port's `node --test` suite, then upstream's Playwright tests, in Chromium and Firefox. Run `npx playwright install chromium firefox` in `extension/` once first |
+| `bun run extension:build` | writes `extension/build/` (below), Safari included, then checks its IDs and host name |
 | `bun run extension:strings` | re-applies the Rowel copy to every `_locales/*/messages.json` |
 | `bun run extension:icons` | regenerates every icon from Rowel's artwork |
 
@@ -71,7 +73,14 @@ extension/build/
   firefox/                     unpacked
   rowel_0.1.0_chromium.zip     Chrome Web Store / Edge Add-ons (no key)
   rowel_0.1.0_firefox.zip      addons.mozilla.org
+  safari/                      unpacked, for the Safari app extension
 ```
+
+`safari/` comes from `extension/safari/build.mjs` (`npm run build:safari`),
+which runs after `rowel-build.js` because that one clears `build/`. The Safari
+manifest is derived from the Firefox one; the Safari app extension that
+packages it is built by `scripts/build-safari-extension.sh`
+([safari-extension.md](safari-extension.md)).
 
 ## Developing against a debug Rowel
 

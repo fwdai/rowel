@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBundleCommand": "bash scripts/build-safari-extension.sh"
+  },
+  "bundle": {
+    "macOS": {
+      "files": {
+        "PlugIns/Rowel Safari Extension.appex": "./gen/safari/build/Rowel Safari Extension.appex"
+      }
+    }
+  }
+}

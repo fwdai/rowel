@@ -1,0 +1,473 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0D269717A15A9674AA29E66F /* Frame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63FAF131618DC0FBF9D18594 /* Frame.swift */; };
+		2B5B6D6DA88D97C657888D23 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11CEE02F31FDFE3AA20A6833 /* SafariWebExtensionHandler.swift */; };
+		317F14FFC2AA88E978220768 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11CEE02F31FDFE3AA20A6833 /* SafariWebExtensionHandler.swift */; };
+		5090840C33A39996CBCA496C /* SafariServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EB55C03FF1FCE7E3C1DDD822 /* SafariServices.framework */; };
+		51E3773251E104E4131A5432 /* HostConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBCD16F97758BC73BC1DDB1F /* HostConnectionTests.swift */; };
+		8B96A11C4578A9298585FD8F /* SafariServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EB55C03FF1FCE7E3C1DDD822 /* SafariServices.framework */; };
+		A8A24C25AE4CCAE6CF73B6FE /* HostConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289BFFBFF3B4888A94AEA9 /* HostConnection.swift */; };
+		C901D727EB351337C87A0080 /* Frame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63FAF131618DC0FBF9D18594 /* Frame.swift */; };
+		DB2D0851B455A7D172CA127B /* FakeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 844961FD7CE1C711C635AF85 /* FakeApp.swift */; };
+		E15BFFDADEB158D065F44862 /* HostConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289BFFBFF3B4888A94AEA9 /* HostConnection.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		11CEE02F31FDFE3AA20A6833 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		1F289BFFBFF3B4888A94AEA9 /* HostConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostConnection.swift; sourceTree = "<group>"; };
+		5142602F5AEF5141080D9242 /* rowel_safari_tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = rowel_safari_tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		63FAF131618DC0FBF9D18594 /* Frame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Frame.swift; sourceTree = "<group>"; };
+		844961FD7CE1C711C635AF85 /* FakeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakeApp.swift; sourceTree = "<group>"; };
+		BF070B87182EE8C4AD65564E /* rowel_safari.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = rowel_safari.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		DBCD16F97758BC73BC1DDB1F /* HostConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostConnectionTests.swift; sourceTree = "<group>"; };
+		EB55C03FF1FCE7E3C1DDD822 /* SafariServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SafariServices.framework; path = System/Library/Frameworks/SafariServices.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E52C86114C85127FA981B42D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5090840C33A39996CBCA496C /* SafariServices.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FAF86B9BC7EE1ED7DAEA2A8F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8B96A11C4578A9298585FD8F /* SafariServices.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		862B84FFAA741F0860EC64DD /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				EB55C03FF1FCE7E3C1DDD822 /* SafariServices.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		8D08A00DBCC5D0F0F1A4BE03 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				63FAF131618DC0FBF9D18594 /* Frame.swift */,
+				1F289BFFBFF3B4888A94AEA9 /* HostConnection.swift */,
+				11CEE02F31FDFE3AA20A6833 /* SafariWebExtensionHandler.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		A042CE01E6EEB191CA995CDE /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5142602F5AEF5141080D9242 /* rowel_safari_tests.xctest */,
+				BF070B87182EE8C4AD65564E /* rowel_safari.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A07BC6627062B200EFA2383E /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				844961FD7CE1C711C635AF85 /* FakeApp.swift */,
+				DBCD16F97758BC73BC1DDB1F /* HostConnectionTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		CCB6119F0C2A4029D125CE0A = {
+			isa = PBXGroup;
+			children = (
+				8D08A00DBCC5D0F0F1A4BE03 /* Sources */,
+				A07BC6627062B200EFA2383E /* Tests */,
+				862B84FFAA741F0860EC64DD /* Frameworks */,
+				A042CE01E6EEB191CA995CDE /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7DE534A38E15ECF3D8165B55 /* rowel_safari */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A954829C022EB9E4596FB181 /* Build configuration list for PBXNativeTarget "rowel_safari" */;
+			buildPhases = (
+				8629121C59D23F360910C2DF /* Sources */,
+				924780978C65E0EF4E32B1E5 /* Copy Web Extension */,
+				E52C86114C85127FA981B42D /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = rowel_safari;
+			packageProductDependencies = (
+			);
+			productName = rowel_safari;
+			productReference = BF070B87182EE8C4AD65564E /* rowel_safari.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		EBC458FD39A99969183FF6C5 /* rowel_safari_tests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2409AD97F76A247D56BEF84A /* Build configuration list for PBXNativeTarget "rowel_safari_tests" */;
+			buildPhases = (
+				FCCAC655503AD830D3E8B454 /* Sources */,
+				FAF86B9BC7EE1ED7DAEA2A8F /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = rowel_safari_tests;
+			packageProductDependencies = (
+			);
+			productName = rowel_safari_tests;
+			productReference = 5142602F5AEF5141080D9242 /* rowel_safari_tests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F3042B9FF9E77F4CDCC85343 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					7DE534A38E15ECF3D8165B55 = {
+						DevelopmentTeam = UFBL3F444A;
+						ProvisioningStyle = Manual;
+					};
+					EBC458FD39A99969183FF6C5 = {
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = D128471D30188FFFDE934BE7 /* Build configuration list for PBXProject "rowel_safari" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = CCB6119F0C2A4029D125CE0A;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A042CE01E6EEB191CA995CDE /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7DE534A38E15ECF3D8165B55 /* rowel_safari */,
+				EBC458FD39A99969183FF6C5 /* rowel_safari_tests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		924780978C65E0EF4E32B1E5 /* Copy Web Extension */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Web Extension";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nif [ ! -f \"$WEB_EXTENSION_DIR/manifest.json\" ]; then\n  echo \"error: no web extension at $WEB_EXTENSION_DIR (build it with scripts/build-safari-extension.sh)\"\n  exit 1\nfi\ndest=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\nmkdir -p \"$dest\"\nrsync -a --delete \"$WEB_EXTENSION_DIR/\" \"$dest/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8629121C59D23F360910C2DF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0D269717A15A9674AA29E66F /* Frame.swift in Sources */,
+				E15BFFDADEB158D065F44862 /* HostConnection.swift in Sources */,
+				317F14FFC2AA88E978220768 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FCCAC655503AD830D3E8B454 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DB2D0851B455A7D172CA127B /* FakeApp.swift in Sources */,
+				C901D727EB351337C87A0080 /* Frame.swift in Sources */,
+				A8A24C25AE4CCAE6CF73B6FE /* HostConnection.swift in Sources */,
+				51E3773251E104E4131A5432 /* HostConnectionTests.swift in Sources */,
+				2B5B6D6DA88D97C657888D23 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		69B18B71C6B249ADFA51AE9C /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_DEBUG_DYLIB = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.desktop.safari.tests;
+				PRODUCT_MODULE_NAME = RowelSafariTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+		804BF6AA74E6C8808B878BF8 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = rowel_safari/rowel_safari.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1.0.0;
+				DEVELOPMENT_TEAM = UFBL3F444A;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = rowel_safari/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.desktop.safari;
+				PRODUCT_MODULE_NAME = RowelSafari;
+				PRODUCT_NAME = "Rowel Safari Extension";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				WEB_EXTENSION_DIR = "$(SRCROOT)/../../../extension/build/safari";
+			};
+			name = debug;
+		};
+		AC67597D75D9D19B514FFAF9 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_DEBUG_DYLIB = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.desktop.safari.tests;
+				PRODUCT_MODULE_NAME = RowelSafariTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		C1CE71A1EA302F7BBDCF2A59 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = rowel_safari/rowel_safari.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1.0.0;
+				DEVELOPMENT_TEAM = UFBL3F444A;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = rowel_safari/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.desktop.safari;
+				PRODUCT_MODULE_NAME = RowelSafari;
+				PRODUCT_NAME = "Rowel Safari Extension";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				WEB_EXTENSION_DIR = "$(SRCROOT)/../../../extension/build/safari";
+			};
+			name = release;
+		};
+		C4F30E7951FB529B93A0AFAC /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		CAFE5F47E9BF19246ED195AE /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2409AD97F76A247D56BEF84A /* Build configuration list for PBXNativeTarget "rowel_safari_tests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC67597D75D9D19B514FFAF9 /* debug */,
+				69B18B71C6B249ADFA51AE9C /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		A954829C022EB9E4596FB181 /* Build configuration list for PBXNativeTarget "rowel_safari" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				804BF6AA74E6C8808B878BF8 /* debug */,
+				C1CE71A1EA302F7BBDCF2A59 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		D128471D30188FFFDE934BE7 /* Build configuration list for PBXProject "rowel_safari" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C4F30E7951FB529B93A0AFAC /* debug */,
+				CAFE5F47E9BF19246ED195AE /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = F3042B9FF9E77F4CDCC85343 /* Project object */;
+}

@@ -27,6 +27,23 @@ set +a
 # Same npm/crate agreement check the release build enforces, but fails fast.
 bun scripts/check-tauri-versions.mjs
 
+# And the entitlements check it runs: the app's against the provisioning
+# profile, the Safari extension's against none.
+bun scripts/check-macos-entitlements.mjs
+
+# The Safari extension is built and signed by scripts/build-safari-extension.sh,
+# which `tauri build` runs before bundling (tauri.macos.conf.json). It signs
+# with APPLE_SIGNING_IDENTITY from .env, as Tauri signs the app; without one
+# it signs ad hoc, and the release would not notarize.
+if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+  echo "error: APPLE_SIGNING_IDENTITY is not set in .env." >&2
+  exit 1
+fi
+if ! command -v xcodegen >/dev/null 2>&1; then
+  echo "warning: xcodegen not found (brew install xcodegen); the Safari extension" >&2
+  echo "         builds from the committed Xcode project as is." >&2
+fi
+
 # Ensure both arch targets exist for the universal lipo.
 rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null 2>&1 || true
 

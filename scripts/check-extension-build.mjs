@@ -40,7 +40,20 @@ check(
 check(!store.key, 'Chromium store zip has no manifest key')
 check(firefox.browser_specific_settings?.gecko?.id === FIREFOX_ID, `Firefox build has add-on ID ${FIREFOX_ID}`)
 check(firefoxZip.browser_specific_settings?.gecko?.id === FIREFOX_ID, `Firefox zip has add-on ID ${FIREFOX_ID}`)
-for (const browser of ['chromium', 'firefox']) {
+// The Safari flavour (extension/safari/build.mjs, docs/safari-extension.md):
+// Safari ignores the host name, but the build should still be the one the
+// others are, plus the native port shim loaded before anything connects.
+const safari = readJson(join(BUILD, 'safari', 'manifest.json'))
+const scripts = safari.background?.scripts ?? []
+check(safari.version === firefox.version, `Safari build is version ${firefox.version}`)
+check(!safari.key && !safari.browser_specific_settings, 'Safari build has no Chromium key or Gecko settings')
+check(safari.background?.persistent === true, 'Safari build has a persistent background page')
+check(
+  scripts.indexOf('background/safari-native.js') === scripts.indexOf('common/browser-polyfill.min.js') + 1 &&
+    scripts.indexOf('background/safari-native.js') < scripts.indexOf('background/client.js'),
+  'Safari build loads the native port shim after the polyfill, before client.js'
+)
+for (const browser of ['chromium', 'firefox', 'safari']) {
   const client = readFileSync(join(BUILD, browser, 'background', 'client.js'), 'utf8')
   check(client.includes(`nativeHostName = '${HOST}'`), `${browser} build talks to native host ${HOST}`)
 }

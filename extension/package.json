@@ -15,10 +15,12 @@
   },
   "scripts": {
     "build": "node rowel-build.js",
+    "build:safari": "node safari/build.mjs",
     "debug:chromium": "cp dist/manifest_chromium.json keepassxc-browser/manifest.json",
     "debug:firefox": "cp dist/manifest_firefox.json keepassxc-browser/manifest.json",
-    "lint": "npx eslint --no-warn-ignored keepassxc-browser/**/*.js",
-    "tests": "npx playwright test"
+    "lint": "npx eslint --no-warn-ignored keepassxc-browser/**/*.js safari/*.js",
+    "tests": "npx playwright test",
+    "test:safari": "node --test safari/safari-native.test.mjs"
   },
   "repository": {
     "type": "git",

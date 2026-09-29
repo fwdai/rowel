@@ -11,12 +11,16 @@ use super::actions::{Client, Connection, Host, Login};
 use super::manifest::{self, Family, KEEPASSXC, ROWEL};
 use super::passkeys::{self, Assertion, Registration};
 use super::protocol::{increment, str_of, Code, NONCE_LEN, VERSION};
-use super::{frame, proxy, save_login_in, server, socket_name, Pending, IDENTIFIER};
+use super::{
+    frame, group_container, group_socket_dir, proxy, root_dir, save_login_in, server, socket_name,
+    Pending, SafariSocketError, IDENTIFIER, SUN_PATH_MAX,
+};
 use crate::crypto::{PayloadCipher, VaultKey};
 use crate::models::Entry;
 use crate::passkey::store::MemoryVault;
 use crate::passkey::{Ceremony, UserConsent};
 use crate::store::{migrate, SqliteStore, VaultStore};
+use rowel_core::app::DESKTOP_APP_GROUP;
 
 // Passkeys through the extension, end to end.
 mod ceremonies;
@@ -1290,6 +1294,112 @@ fn bind_listens_at_the_root_and_takes_over_a_socket_left_behind() {
     std::mem::forget(listener);
     let again = server::bind(dir.path()).expect("a listener over a stale socket file");
     drop(again);
+}
+
+#[test]
+fn bind_makes_a_missing_socket_directory_owner_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir
+        .path()
+        .join("Group Containers")
+        .join("group")
+        .join("dev");
+    let listener = server::bind(&root).expect("a listener in a directory not yet made");
+    assert!(root.join(super::SOCKET_FILE).exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for made in [&root, root.parent().unwrap()] {
+            let mode = std::fs::metadata(made).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "{} is owner-only", made.display());
+        }
+    }
+    drop(listener);
+}
+
+#[test]
+fn the_group_container_is_the_team_prefixed_one_under_the_home() {
+    assert_eq!(
+        group_container(std::path::Path::new("/Users/someone")),
+        std::path::Path::new(
+            "/Users/someone/Library/Group Containers/UFBL3F444A.app.rowel.desktop"
+        )
+    );
+    // The iOS group is `group.`-prefixed, which macOS gates behind a profile.
+    assert_ne!(DESKTOP_APP_GROUP, rowel_core::app::APP_GROUP);
+    assert!(!DESKTOP_APP_GROUP.starts_with("group."));
+}
+
+#[test]
+fn chrome_and_firefox_keep_the_data_directory_socket() {
+    // The debug override wins; a run that sets it has nothing to say about
+    // the platform default.
+    if std::env::var_os("ROWEL_DB_DIR").is_some() {
+        return;
+    }
+    // Where it always was, on every platform, macOS included: the app-data
+    // directory under the identifier, `dev` in a debug (`cargo test`) build.
+    assert_eq!(
+        root_dir(),
+        Some(dirs::data_dir().unwrap().join(IDENTIFIER).join("dev"))
+    );
+}
+
+#[test]
+fn the_safari_socket_is_in_the_group_container_while_its_path_fits() {
+    use std::path::Path;
+    let home = |len: usize| format!("/Users/{}", "a".repeat(len));
+    // `sun_path` is 104 bytes on macOS, the NUL included, and the group
+    // container's path is long: a short name of up to 29 characters fits a
+    // release build's socket, 25 a debug build's (`dev/`).
+    for (debug, fits) in [(false, 29), (true, 25)] {
+        let dir = group_socket_dir(Path::new(&home(fits)), debug).expect("the longest that fits");
+        let expected = group_container(Path::new(&home(fits)));
+        assert_eq!(
+            dir,
+            if debug {
+                expected.join("dev")
+            } else {
+                expected
+            }
+        );
+        assert_eq!(
+            dir.join(super::SOCKET_FILE).as_os_str().len() + 1,
+            SUN_PATH_MAX
+        );
+
+        let too_long = home(fits + 1);
+        match group_socket_dir(Path::new(&too_long), debug) {
+            Err(SafariSocketError::TooLong { path, bytes }) => {
+                assert_eq!(bytes, SUN_PATH_MAX + 1);
+                assert!(path.ends_with(super::SOCKET_FILE));
+                assert!(path.starts_with(&too_long));
+            }
+            other => panic!("a short name of {} characters: {other:?}", fits + 1),
+        }
+    }
+}
+
+#[test]
+fn the_app_group_is_the_one_the_app_is_entitled_to() {
+    let entitlements = include_str!("../../Entitlements.plist");
+    assert!(entitlements.contains("<key>com.apple.security.application-groups</key>"));
+    assert!(entitlements.contains(&format!("<string>{DESKTOP_APP_GROUP}</string>")));
+}
+
+// The Safari extension is Swift (src-tauri/gen/safari) and has to agree with
+// this side on where the socket is and how a frame is capped: held to the
+// constants here, since nothing else would notice the two drifting apart.
+#[test]
+fn the_safari_extension_agrees_on_the_group_the_socket_and_the_cap() {
+    let entitlements = include_str!("../../gen/safari/rowel_safari/rowel_safari.entitlements");
+    assert!(entitlements.contains(&format!("<string>{DESKTOP_APP_GROUP}</string>")));
+    let connection = include_str!("../../gen/safari/Sources/HostConnection.swift");
+    assert!(connection.contains(&format!("appGroup = \"{DESKTOP_APP_GROUP}\"")));
+    assert!(connection.contains(&format!("socketFile = \"{}\"", super::SOCKET_FILE)));
+    let framing = include_str!("../../gen/safari/Sources/Frame.swift");
+    assert_eq!(frame::MAX_FRAME, 1024 * 1024);
+    assert!(framing.contains("maxLength = 1024 * 1024"));
 }
 
 #[test]
