@@ -442,6 +442,7 @@
 				3B77C241CB94B8D46D6B9BD0 /* Resources */,
 				82808C72970AE58E51B4BF65 /* Frameworks */,
 				556D1FD247BEFA56DC75C9BA /* Embed Foundation Extensions */,
+				C4A1E07B9D2F36B85E0A71D3 /* Sign AutoFill Extension For Export */,
 			);
 			buildRules = (
 			);
@@ -548,6 +549,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "bun tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}";
+		};
+		C4A1E07B9D2F36B85E0A71D3 /* Sign AutoFill Extension For Export */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Sign AutoFill Extension For Export";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nif [ \"${CODE_SIGNING_ALLOWED:-YES}\" = NO ] && [ \"$PLATFORM_NAME\" = iphoneos ]; then\n  codesign --force --sign - --generate-entitlement-der \\\n    --entitlements \"$SRCROOT/rowel_autofill/rowel_autofill.entitlements\" \\\n    \"$TARGET_BUILD_DIR/$PLUGINS_FOLDER_PATH/rowel_autofill.appex\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

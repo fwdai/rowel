@@ -112,6 +112,24 @@ targets:
         outputFiles:
           - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
           - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+    # `tauri ios build` with an App Store Connect key archives unsigned
+    # (CODE_SIGNING_ALLOWED=NO), then re-signs only the app binary with a
+    # dummy certificate so the export keeps its entitlements. The embedded
+    # extension it leaves unsigned, so the export would sign it with none of
+    # its own, the credential provider entitlement included. This does for
+    # the extension what Tauri does for the app: an ad-hoc signature carrying
+    # its entitlements, which the export then replaces with the distribution
+    # one. Signed builds skip it.
+    postBuildScripts:
+      - script: |
+          set -eu
+          if [ "${CODE_SIGNING_ALLOWED:-YES}" = NO ] && [ "$PLATFORM_NAME" = iphoneos ]; then
+            codesign --force --sign - --generate-entitlement-der \
+              --entitlements "$SRCROOT/rowel_autofill/rowel_autofill.entitlements" \
+              "$TARGET_BUILD_DIR/$PLUGINS_FOLDER_PATH/rowel_autofill.appex"
+          fi
+        name: Sign AutoFill Extension For Export
+        basedOnDependencyAnalysis: false
   # The AutoFill credential provider (Settings › General › AutoFill &
   # Passwords). Swift for the sheet, Face ID and the keychain read; the vault
   # itself is Rust, the rowel-autofill crate (src-tauri/crates/autofill), whose
@@ -133,7 +151,9 @@ targets:
         # usage string.
         NSFaceIDUsageDescription: Rowel uses Face ID to unlock your vault for AutoFill.
         NSExtension:
-          NSExtensionPointIdentifier: com.apple.authentication-services.credential-provider-ui
+          # A hyphen before `credential`, not a dot (Xcode's AutoFill
+          # template); App Store Connect refuses the dotted form (90349).
+          NSExtensionPointIdentifier: com.apple.authentication-services-credential-provider-ui
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CredentialProviderViewController
           NSExtensionAttributes:
             # Read by iOS 17 and later; 16 assumes passwords, and has no
