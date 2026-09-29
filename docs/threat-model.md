@@ -547,10 +547,12 @@ exposed process than the webview, and it is not ours.
   request rather than its next reconnect. Switching the host off ends the
   connections that are up as well.
 - **Transport.** The app listens on a local socket beside the vault, created
-  owner-only (`browser.sock`, mode `0600`); on macOS it is in the App Group
-  container the app shares with its Safari extension instead
-  (`~/Library/Group Containers/UFBL3F444A.app.rowel.desktop`, `0700`), the one
-  place that sandboxed extension can connect to; on Windows it is a named pipe
+  owner-only (`browser.sock`, mode `0600`); on macOS a second one, served
+  exactly alike, is in the App Group container the app shares with its Safari
+  extension (`~/Library/Group Containers/UFBL3F444A.app.rowel.desktop`, `0700`),
+  the one place that sandboxed extension can connect to — any process of the
+  same user can reach it as it can the first, and gets no more from it; on
+  Windows it is a named pipe
   whose name carries a digest of the data directory. The browser reaches it
   through a native messaging manifest that names this same binary: launched by
   the browser, it only relays frames between the browser's stdio and the

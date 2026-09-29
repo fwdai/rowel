@@ -64,41 +64,95 @@ pub const SOCKET_FILE: &str = "browser.sock";
 /// before it is refused.
 pub const CONSENT_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The directory the app's socket is in: the one place the listener
-/// (`server::start`) and the proxy (`proxy::run`) both resolve it from, so
-/// the two cannot disagree. Resolved without Tauri, since the proxy has no
-/// `AppHandle`: the debug override first, then
-///
-/// - on macOS, the App Group container ([`group_container`]), where the Safari
-///   extension — sandboxed, and able to reach nothing else of the app's — can
-///   connect to it too;
-/// - elsewhere, the app's data directory, resolved the way `storage::root_dir`
-///   resolves it.
-///
-/// Either way with a `dev` subdirectory in debug builds, so a debug app and a
-/// release app never share a socket, as they never share a vault.
-pub fn socket_dir() -> Option<PathBuf> {
+/// The app's data directory, resolved the way `storage::root_dir` resolves it
+/// but without Tauri: the debug override, then the platform's app-data
+/// directory under the identifier, with a `dev` subdirectory in debug builds.
+/// Its socket is the one Chrome and Firefox reach, through the proxy.
+pub fn root_dir() -> Option<PathBuf> {
     if cfg!(debug_assertions) {
         if let Ok(dir) = std::env::var("ROWEL_DB_DIR") {
             return Some(PathBuf::from(dir));
         }
     }
-    let dir = if cfg!(target_os = "macos") {
-        group_container(&dirs::home_dir()?)
-    } else {
-        dirs::data_dir()?.join(IDENTIFIER)
-    };
+    let dir = dirs::data_dir()?.join(IDENTIFIER);
     Some(rowel_core::layout::dev_subdir(dir))
+}
+
+/// The most a Unix socket's path may be on macOS: `sun_path` is 104 bytes,
+/// the terminating NUL included.
+pub const SUN_PATH_MAX: usize = 104;
+
+/// Why the Safari extension's socket cannot be had. None of it touches the
+/// data-directory socket Chrome and Firefox use.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SafariSocketError {
+    /// A debug build pointed at another data directory (`ROWEL_DB_DIR`, for
+    /// tests and throwaway vaults): the group container is the real user's,
+    /// and a run like that has no business listening in it.
+    Overridden,
+    /// No home directory to find the group container under.
+    NoHome,
+    /// The socket's path does not fit a Unix socket address.
+    TooLong { path: PathBuf, bytes: usize },
+}
+
+impl std::fmt::Display for SafariSocketError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Overridden => write!(f, "ROWEL_DB_DIR is set"),
+            Self::NoHome => write!(f, "no home directory"),
+            Self::TooLong { path, bytes } => write!(
+                f,
+                "the socket path {} is {bytes} bytes, over the {SUN_PATH_MAX} a Unix socket allows",
+                path.display()
+            ),
+        }
+    }
+}
+
+/// The directory of the Safari extension's socket, macOS only: the App Group
+/// container ([`group_socket_dir`]), the one place the sandboxed extension can
+/// connect to. A second listener, beside the data-directory one
+/// (`server::start`), so that nothing about it can keep Chrome and Firefox
+/// from connecting.
+pub fn safari_socket_dir() -> std::result::Result<PathBuf, SafariSocketError> {
+    if cfg!(debug_assertions) && std::env::var_os("ROWEL_DB_DIR").is_some() {
+        return Err(SafariSocketError::Overridden);
+    }
+    let home = dirs::home_dir().ok_or(SafariSocketError::NoHome)?;
+    group_socket_dir(&home, cfg!(debug_assertions))
+}
+
+/// The Safari socket's directory for `home`'s user, `debug` or not: the group
+/// container, or its `dev` subdirectory for a debug build — where the
+/// extension looks for it (`HostConnection.socketPath`). Refused when the
+/// socket's path in it would not fit a Unix socket address: with the group
+/// id this long, a short name over 29 characters (25 for debug) is enough.
+pub fn group_socket_dir(
+    home: &Path,
+    debug: bool,
+) -> std::result::Result<PathBuf, SafariSocketError> {
+    let container = group_container(home);
+    let dir = if debug {
+        container.join("dev")
+    } else {
+        container
+    };
+    let path = dir.join(SOCKET_FILE);
+    let bytes = path.as_os_str().len() + 1;
+    if bytes > SUN_PATH_MAX {
+        return Err(SafariSocketError::TooLong { path, bytes });
+    }
+    Ok(dir)
 }
 
 /// The macOS App Group container for `home`'s user,
 /// `~/Library/Group Containers/<DESKTOP_APP_GROUP>`: where
 /// `containerURL(forSecurityApplicationGroupIdentifier:)` points the Safari
 /// extension. Spelled out rather than asked of Foundation because the app is
-/// not sandboxed and may run unsigned (`tauri dev`), and the proxy is launched
-/// by a browser: none of them holds the entitlement the API would look up,
-/// and none needs it to make and use the directory. The first to bind creates
-/// it (`server::bind`).
+/// not sandboxed and may run unsigned (`tauri dev`): it does not hold the
+/// entitlement the API would look up, and does not need it to make and use
+/// the directory. The app creates it when it binds (`server::bind`).
 pub fn group_container(home: &Path) -> PathBuf {
     home.join("Library")
         .join("Group Containers")

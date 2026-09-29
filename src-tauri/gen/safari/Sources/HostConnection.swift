@@ -10,7 +10,12 @@ import os.log
 ///
 /// The socket is `browser.sock` in the App Group container the app and this
 /// extension share (`rowel_core::app::DESKTOP_APP_GROUP`); a debug build's is
-/// in its `dev` subdirectory, as the app's is (`browser::socket_dir`).
+/// in its `dev` subdirectory, as the app's is (`browser::group_socket_dir`).
+/// It is the app's second listener, there for Safari alone: Chrome and
+/// Firefox reach the one in the app's data directory, which this sandboxed
+/// process cannot. The app binds this one best-effort, so an app that could
+/// not (a home path too long for a socket address, say) looks from here like
+/// an app that is not running.
 ///
 /// One request is on the wire at a time. A reader thread takes every frame
 /// the app sends: the lock signals it pushes unsolicited go to the extension
@@ -89,9 +94,10 @@ final class HostConnection: @unchecked Sendable {
     }
 
     /// The socket: in the group container, or its `dev` subdirectory in a
-    /// debug build. A debug build honours `ROWEL_DB_DIR` as the app's does
-    /// (`browser::socket_dir`) — Safari passes the extension no environment,
-    /// so that is for running this code outside Safari against a test app.
+    /// debug build. A debug build honours `ROWEL_DB_DIR` — as `<dir>/browser.sock`,
+    /// the socket a debug app run with it listens on (`browser::root_dir`) —
+    /// so this code can be run outside Safari against a test app; Safari passes
+    /// the extension no environment.
     static func socketPath() -> String? {
         #if DEBUG
         if let dir = ProcessInfo.processInfo.environment["ROWEL_DB_DIR"] {

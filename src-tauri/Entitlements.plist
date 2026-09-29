@@ -36,9 +36,10 @@
 
   com.apple.security.application-groups puts the app in the App Group it shares
   with the Safari web extension (src-tauri/gen/safari): the browser host's
-  socket is in that group's container, ~/Library/Group Containers/
+  socket for Safari is in that group's container, ~/Library/Group Containers/
   UFBL3F444A.app.rowel.desktop/browser.sock, the one place the sandboxed
-  extension can connect to. The id is rowel_core::app::DESKTOP_APP_GROUP.
+  extension can connect to (Chrome and Firefox use the one in the data
+  directory). The id is rowel_core::app::DESKTOP_APP_GROUP.
 
   Unlike keychain-access-groups this one is NOT profile-gated, and the profile
   does not grant it — but only because the id is macOS-style: the team id, a

@@ -26,15 +26,23 @@ safari-native.js ─────────────┴──▶ SafariWebEx
    └──────────────────────────────── { reply, after, signals }      (App Group container)
 ```
 
-- **The socket** is `browser.sock` in the App Group container the app and the
-  extension share, `~/Library/Group Containers/UFBL3F444A.app.rowel.desktop/`
-  (a debug build's is in its `dev/` subdirectory, as everywhere else). A
-  sandboxed process can reach no other part of the app's files. On macOS the
-  app's listener and the Chrome/Firefox proxy both use it, resolved in one
-  place (`browser::socket_dir`); Windows and Linux keep the socket in the data
-  directory. The app creates the directory (`0700`) if it is missing, which is
-  what an unsigned `tauri dev` build relies on: the system makes a group
-  container only for a signed, entitled process that asks for it.
+- **The sockets.** Chrome and Firefox reach the app through `browser.sock` in
+  its data directory, as they always have (`browser::root_dir`, what the proxy
+  resolves). A sandboxed process cannot reach that, so on macOS the app also
+  listens on a second `browser.sock`, for Safari alone, in the App Group
+  container the app and the extension share,
+  `~/Library/Group Containers/UFBL3F444A.app.rowel.desktop/` (a debug build's
+  is in its `dev/` subdirectory, as everywhere else; `browser::group_socket_dir`
+  decides the path). Both feed the same accept handling, lock signals
+  included (`browser::server::start`). The data-directory listener is bound
+  first and decides whether the host is on at all, as before; the Safari one
+  is bound best-effort after it, and a failure there — the path too long for a
+  socket address, the container not creatable — is logged as "Safari
+  extension unavailable: …" and affects nothing else. A debug build run with
+  `ROWEL_DB_DIR` does not bind it. The app creates the container directory
+  (`0700`) if it is missing, which is what an unsigned `tauri dev` build relies
+  on: the system makes a group container only for a signed, entitled process
+  that asks for it.
 - **The group** is `UFBL3F444A.app.rowel.desktop`
   (`rowel_core::app::DESKTOP_APP_GROUP`), in the macOS form: team id, dot,
   name. macOS grants that form on the signature's team id alone, with no
@@ -121,7 +129,8 @@ from `project.yml`; do not edit it by hand.
 ## Developing
 
 `tauri dev` does not bundle, so it has no extension; the app it runs does
-listen at the group container's `dev/browser.sock`. To try the extension:
+listen at the group container's `dev/browser.sock` (unless `ROWEL_DB_DIR` is
+set). To try the extension:
 
 ```sh
 # A debug app bundle, extension included (ad hoc signed without an identity).
@@ -188,8 +197,10 @@ it, which is why the entitlements check covers the extension's file too.
 
 - `sun_path` is 104 bytes on macOS and the group container path is long: a
   home directory under `/Users` with a short name of more than 29 characters
-  (25 for a debug build) leaves no room for the socket, and the host logs
-  "could not listen" (see the test in `browser/tests.rs`).
+  (25 for a debug build) leaves no room for the Safari socket. The app logs
+  "Safari extension unavailable" and Safari's extension shows as not
+  connected; Chrome and Firefox are unaffected (see the boundary test in
+  `browser/tests.rs`).
 - Signals arrive within the heartbeat (two seconds) unless the push from the
   handler turns out to work.
 - HTTP basic-auth filling is not available in Safari (upstream skips it; Safari

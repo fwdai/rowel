@@ -20,7 +20,9 @@ pub const APP_GROUP: &str = "group.app.rowel.mobile";
 /// The macOS App Group the desktop app shares with its Safari web extension
 /// (`app.rowel.desktop.safari`, a sandboxed app extension). Its container,
 /// `~/Library/Group Containers/<this>`, is the one directory both can reach,
-/// so the browser host's socket lives there (`browser::socket_dir`).
+/// so the browser host's socket for Safari lives there
+/// (`browser::safari_socket_dir`); Chrome and Firefox keep theirs in the data
+/// directory.
 ///
 /// Not [`APP_GROUP`]: a `group.`-prefixed id is iOS-style, and on macOS 15+
 /// it is gated by a provisioning profile, which the Developer ID profile does

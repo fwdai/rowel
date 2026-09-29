@@ -12,8 +12,8 @@ use super::manifest::{self, Family, KEEPASSXC, ROWEL};
 use super::passkeys::{self, Assertion, Registration};
 use super::protocol::{increment, str_of, Code, NONCE_LEN, VERSION};
 use super::{
-    frame, group_container, proxy, save_login_in, server, socket_dir, socket_name, Pending,
-    IDENTIFIER,
+    frame, group_container, group_socket_dir, proxy, root_dir, save_login_in, server, socket_name,
+    Pending, SafariSocketError, IDENTIFIER, SUN_PATH_MAX,
 };
 use crate::crypto::{PayloadCipher, VaultKey};
 use crate::models::Entry;
@@ -1331,37 +1331,53 @@ fn the_group_container_is_the_team_prefixed_one_under_the_home() {
 }
 
 #[test]
-fn the_socket_is_in_the_group_container_on_macos_and_the_data_dir_elsewhere() {
-    // The debug override wins over both; a run that sets it has nothing to
-    // say about the platform default.
+fn chrome_and_firefox_keep_the_data_directory_socket() {
+    // The debug override wins; a run that sets it has nothing to say about
+    // the platform default.
     if std::env::var_os("ROWEL_DB_DIR").is_some() {
         return;
     }
-    let expected = if cfg!(target_os = "macos") {
-        group_container(&dirs::home_dir().unwrap())
-    } else {
-        dirs::data_dir().unwrap().join(IDENTIFIER)
-    };
-    // `cargo test` builds with debug assertions: the `dev` subdirectory.
-    assert_eq!(socket_dir(), Some(expected.join("dev")));
+    // Where it always was, on every platform, macOS included: the app-data
+    // directory under the identifier, `dev` in a debug (`cargo test`) build.
+    assert_eq!(
+        root_dir(),
+        Some(dirs::data_dir().unwrap().join(IDENTIFIER).join("dev"))
+    );
 }
 
 #[test]
-fn the_group_socket_path_fits_a_unix_socket_address() {
-    // `sun_path` is 104 bytes on macOS, the terminating NUL included, and the
-    // group container's path is long: a home under /Users leaves a short name
-    // of up to 25 characters room in a debug build's `dev` subdirectory, 29 in
-    // a release build's. Past that the bind fails, and the host stays off with
-    // "could not listen" in the log (docs/safari-extension.md).
-    let home = format!("/Users/{}", "a".repeat(25));
-    let path = group_container(std::path::Path::new(&home))
-        .join("dev")
-        .join(super::SOCKET_FILE);
-    assert!(
-        path.as_os_str().len() < 104,
-        "{} is too long",
-        path.display()
-    );
+fn the_safari_socket_is_in_the_group_container_while_its_path_fits() {
+    use std::path::Path;
+    let home = |len: usize| format!("/Users/{}", "a".repeat(len));
+    // `sun_path` is 104 bytes on macOS, the NUL included, and the group
+    // container's path is long: a short name of up to 29 characters fits a
+    // release build's socket, 25 a debug build's (`dev/`).
+    for (debug, fits) in [(false, 29), (true, 25)] {
+        let dir = group_socket_dir(Path::new(&home(fits)), debug).expect("the longest that fits");
+        let expected = group_container(Path::new(&home(fits)));
+        assert_eq!(
+            dir,
+            if debug {
+                expected.join("dev")
+            } else {
+                expected
+            }
+        );
+        assert_eq!(
+            dir.join(super::SOCKET_FILE).as_os_str().len() + 1,
+            SUN_PATH_MAX
+        );
+
+        let too_long = home(fits + 1);
+        match group_socket_dir(Path::new(&too_long), debug) {
+            Err(SafariSocketError::TooLong { path, bytes }) => {
+                assert_eq!(bytes, SUN_PATH_MAX + 1);
+                assert!(path.ends_with(super::SOCKET_FILE));
+                assert!(path.starts_with(&too_long));
+            }
+            other => panic!("a short name of {} characters: {other:?}", fits + 1),
+        }
+    }
 }
 
 #[test]
