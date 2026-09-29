@@ -14,6 +14,7 @@
   },
   "scripts": {
     "build": "node build.js",
+    "build:safari": "node safari/build.mjs",
     "debug:chromium": "cp dist/manifest_chromium.json keepassxc-browser/manifest.json",
     "debug:firefox": "cp dist/manifest_firefox.json keepassxc-browser/manifest.json",
     "lint": "npx eslint --no-warn-ignored keepassxc-browser/**/*.js",

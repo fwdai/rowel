@@ -11,3 +11,5 @@
 .xz
 node_modules
 test-results
+# Rowel: unpacked builds (safari/build.mjs)
+build
