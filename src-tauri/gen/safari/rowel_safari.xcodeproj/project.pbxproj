@@ -8,16 +8,25 @@
 
 /* Begin PBXBuildFile section */
 		0D269717A15A9674AA29E66F /* Frame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63FAF131618DC0FBF9D18594 /* Frame.swift */; };
+		2B5B6D6DA88D97C657888D23 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11CEE02F31FDFE3AA20A6833 /* SafariWebExtensionHandler.swift */; };
 		317F14FFC2AA88E978220768 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11CEE02F31FDFE3AA20A6833 /* SafariWebExtensionHandler.swift */; };
 		5090840C33A39996CBCA496C /* SafariServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EB55C03FF1FCE7E3C1DDD822 /* SafariServices.framework */; };
+		51E3773251E104E4131A5432 /* HostConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBCD16F97758BC73BC1DDB1F /* HostConnectionTests.swift */; };
+		8B96A11C4578A9298585FD8F /* SafariServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EB55C03FF1FCE7E3C1DDD822 /* SafariServices.framework */; };
+		A8A24C25AE4CCAE6CF73B6FE /* HostConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289BFFBFF3B4888A94AEA9 /* HostConnection.swift */; };
+		C901D727EB351337C87A0080 /* Frame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63FAF131618DC0FBF9D18594 /* Frame.swift */; };
+		DB2D0851B455A7D172CA127B /* FakeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 844961FD7CE1C711C635AF85 /* FakeApp.swift */; };
 		E15BFFDADEB158D065F44862 /* HostConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289BFFBFF3B4888A94AEA9 /* HostConnection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		11CEE02F31FDFE3AA20A6833 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		1F289BFFBFF3B4888A94AEA9 /* HostConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostConnection.swift; sourceTree = "<group>"; };
+		5142602F5AEF5141080D9242 /* rowel_safari_tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = rowel_safari_tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		63FAF131618DC0FBF9D18594 /* Frame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Frame.swift; sourceTree = "<group>"; };
+		844961FD7CE1C711C635AF85 /* FakeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakeApp.swift; sourceTree = "<group>"; };
 		BF070B87182EE8C4AD65564E /* rowel_safari.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = rowel_safari.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		DBCD16F97758BC73BC1DDB1F /* HostConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostConnectionTests.swift; sourceTree = "<group>"; };
 		EB55C03FF1FCE7E3C1DDD822 /* SafariServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SafariServices.framework; path = System/Library/Frameworks/SafariServices.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -27,6 +36,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				5090840C33A39996CBCA496C /* SafariServices.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FAF86B9BC7EE1ED7DAEA2A8F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8B96A11C4578A9298585FD8F /* SafariServices.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -54,15 +71,26 @@
 		A042CE01E6EEB191CA995CDE /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				5142602F5AEF5141080D9242 /* rowel_safari_tests.xctest */,
 				BF070B87182EE8C4AD65564E /* rowel_safari.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A07BC6627062B200EFA2383E /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				844961FD7CE1C711C635AF85 /* FakeApp.swift */,
+				DBCD16F97758BC73BC1DDB1F /* HostConnectionTests.swift */,
+			);
+			path = Tests;
 			sourceTree = "<group>";
 		};
 		CCB6119F0C2A4029D125CE0A = {
 			isa = PBXGroup;
 			children = (
 				8D08A00DBCC5D0F0F1A4BE03 /* Sources */,
+				A07BC6627062B200EFA2383E /* Tests */,
 				862B84FFAA741F0860EC64DD /* Frameworks */,
 				A042CE01E6EEB191CA995CDE /* Products */,
 			);
@@ -90,6 +118,24 @@
 			productReference = BF070B87182EE8C4AD65564E /* rowel_safari.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		EBC458FD39A99969183FF6C5 /* rowel_safari_tests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2409AD97F76A247D56BEF84A /* Build configuration list for PBXNativeTarget "rowel_safari_tests" */;
+			buildPhases = (
+				FCCAC655503AD830D3E8B454 /* Sources */,
+				FAF86B9BC7EE1ED7DAEA2A8F /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = rowel_safari_tests;
+			packageProductDependencies = (
+			);
+			productName = rowel_safari_tests;
+			productReference = 5142602F5AEF5141080D9242 /* rowel_safari_tests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -101,6 +147,9 @@
 				TargetAttributes = {
 					7DE534A38E15ECF3D8165B55 = {
 						DevelopmentTeam = UFBL3F444A;
+						ProvisioningStyle = Manual;
+					};
+					EBC458FD39A99969183FF6C5 = {
 						ProvisioningStyle = Manual;
 					};
 				};
@@ -120,6 +169,7 @@
 			projectRoot = "";
 			targets = (
 				7DE534A38E15ECF3D8165B55 /* rowel_safari */,
+				EBC458FD39A99969183FF6C5 /* rowel_safari_tests */,
 			);
 		};
 /* End PBXProject section */
@@ -157,9 +207,42 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FCCAC655503AD830D3E8B454 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DB2D0851B455A7D172CA127B /* FakeApp.swift in Sources */,
+				C901D727EB351337C87A0080 /* Frame.swift in Sources */,
+				A8A24C25AE4CCAE6CF73B6FE /* HostConnection.swift in Sources */,
+				51E3773251E104E4131A5432 /* HostConnectionTests.swift in Sources */,
+				2B5B6D6DA88D97C657888D23 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		69B18B71C6B249ADFA51AE9C /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_DEBUG_DYLIB = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.desktop.safari.tests;
+				PRODUCT_MODULE_NAME = RowelSafariTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
 		804BF6AA74E6C8808B878BF8 /* debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -184,6 +267,27 @@
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
 				WEB_EXTENSION_DIR = "$(SRCROOT)/../../../extension/build/safari";
+			};
+			name = debug;
+		};
+		AC67597D75D9D19B514FFAF9 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_DEBUG_DYLIB = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.desktop.safari.tests;
+				PRODUCT_MODULE_NAME = RowelSafariTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
 			};
 			name = debug;
 		};
@@ -336,6 +440,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		2409AD97F76A247D56BEF84A /* Build configuration list for PBXNativeTarget "rowel_safari_tests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC67597D75D9D19B514FFAF9 /* debug */,
+				69B18B71C6B249ADFA51AE9C /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
 		A954829C022EB9E4596FB181 /* Build configuration list for PBXNativeTarget "rowel_safari" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

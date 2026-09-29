@@ -57,7 +57,7 @@ root ESLint, TypeScript, Vitest and Tailwind configs don't look inside
 | --- | --- |
 | `bun run extension:install` | `npm ci` in `extension/` |
 | `bun run extension:lint` | checks the strings are rebranded, then runs upstream's ESLint |
-| `bun run extension:test` | upstream's Playwright tests, in Chromium and Firefox. Run `npx playwright install chromium firefox` in `extension/` once first |
+| `bun run extension:test` | the Safari port's `node --test` suite, then upstream's Playwright tests, in Chromium and Firefox. Run `npx playwright install chromium firefox` in `extension/` once first |
 | `bun run extension:build` | writes `extension/build/` (below), Safari included, then checks its IDs and host name |
 | `bun run extension:strings` | re-applies the Rowel copy to every `_locales/*/messages.json` |
 | `bun run extension:icons` | regenerates every icon from Rowel's artwork |

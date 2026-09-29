@@ -32,6 +32,7 @@ jobs:
       e2e: ${{ steps.filter.outputs.e2e }}
       supply-chain: ${{ steps.filter.outputs.supply-chain }}
       extension: ${{ steps.filter.outputs.extension }}
+      safari: ${{ steps.filter.outputs.safari }}
     steps:
       - uses: dorny/paths-filter@v4
         id: filter
@@ -85,6 +86,9 @@ jobs:
               - 'extension/**'
               - 'scripts/extension-strings.mjs'
               - 'scripts/check-extension-build.mjs'
+            safari:
+              - *ci
+              - 'src-tauri/gen/safari/**'
 
   frontend:
     name: Frontend (build + lint)
@@ -232,6 +236,29 @@ jobs:
       - name: Validate the Xcode project
         run: xcodebuild -list -project src-tauri/gen/apple/rowel.xcodeproj
 
+  safari:
+    # The Safari extension's native relay (src-tauri/gen/safari): its XCTest
+    # target runs the real HostConnection against a fake app on a Unix socket.
+    # Ad-hoc signed; nothing here needs the web extension or a certificate.
+    name: Safari extension (relay tests)
+    runs-on: macos-latest
+    needs: changes
+    if: >-
+      !cancelled() && (
+        github.event_name != 'pull_request' ||
+        needs.changes.result != 'success' ||
+        needs.changes.outputs.safari == 'true'
+      )
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test the relay
+        run: >-
+          xcodebuild test
+          -project src-tauri/gen/safari/rowel_safari.xcodeproj
+          -scheme rowel_safari_tests
+          -destination 'platform=macOS'
+          CODE_SIGN_IDENTITY=-
+
   supply-chain:
     name: Supply chain (audit + cargo-deny)
     runs-on: ubuntu-latest
@@ -316,6 +343,10 @@ jobs:
 
       - run: npm ci
       - run: npm run lint
+
+      # The Safari native messaging port against a scripted runtime: order,
+      # heartbeat, disconnects (plain node --test, no browser).
+      - run: npm run test:safari
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox

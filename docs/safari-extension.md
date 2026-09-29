@@ -166,11 +166,33 @@ the unified log:
 log stream --predicate 'subsystem == "app.rowel.desktop.safari"' --level info
 ```
 
-The Swift relay can be exercised without Safari: a debug build honours
-`ROWEL_DB_DIR` for the socket, as the app does, so a small driver calling
-`SafariWebExtensionHandler.answer(_:)` can talk to a test app — this is how it
-was checked against a fake app (framing, signal ordering, the cap, EOF,
-reconnection).
+## Tests
+
+Both halves of the relay are tested without Safari, and CI runs both:
+
+- **The handler** — `rowel_safari_tests`, an XCTest target in
+  `src-tauri/gen/safari` (`Tests/`), runs the real `HostConnection`, `Frame`
+  and handler encoding against a fake app on a temporary Unix socket: no app,
+  the fresh-connection rule, a poll waiting for the request on the wire,
+  signals around a reply, no signal dropped, the queue limit, a frame over
+  the cap, reconnecting, the app quitting, a bad request. CI's "Safari
+  extension (relay tests)" job, on changes under `src-tauri/gen/safari/`.
+
+  ```sh
+  xcodebuild test -project src-tauri/gen/safari/rowel_safari.xcodeproj \
+    -scheme rowel_safari_tests -destination 'platform=macOS' CODE_SIGN_IDENTITY=-
+  ```
+
+- **The port** — `extension/safari/safari-native.test.mjs` (`npm run
+  test:safari` in `extension/`, part of `bun run extension:test`), plain
+  `node --test` against a scripted `sendNativeMessage`: one message
+  outstanding and issue order, the heartbeat held off while busy, signals
+  around a reply, duplicates, the `after` warning, every error mapping to
+  `onDisconnect`, reconnecting, and installing through the polyfill. CI's
+  extension job.
+
+A debug build of the handler also honours `ROWEL_DB_DIR` for its socket, so it
+can be pointed at a debug app run with it.
 
 ## Verifying a release build
 

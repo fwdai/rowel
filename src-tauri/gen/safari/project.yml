@@ -82,3 +82,32 @@ targets:
           rsync -a --delete "$WEB_EXTENSION_DIR/" "$dest/"
         name: Copy Web Extension
         basedOnDependencyAnalysis: false
+  # The relay's own tests: the extension's Swift compiled into a test bundle
+  # (an app extension cannot host one) and run against a fake app on a
+  # temporary Unix socket. `xcodebuild test -scheme rowel_safari_tests
+  # -destination 'platform=macOS'`; CI runs it (ci.yml, "Safari extension").
+  rowel_safari_tests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Sources
+      - path: Tests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.rowel.desktop.safari.tests
+        PRODUCT_MODULE_NAME: RowelSafariTests
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: true
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_DEBUG_DYLIB: false
+    dependencies:
+      - sdk: SafariServices.framework
+schemes:
+  rowel_safari_tests:
+    build:
+      targets:
+        rowel_safari_tests: [test]
+    test:
+      config: debug
+      targets: [rowel_safari_tests]

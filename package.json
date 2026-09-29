@@ -24,7 +24,7 @@
     "extension:install": "cd extension && npm ci",
     "extension:build": "cd extension && npm run build && npm run build:safari && cd .. && bun scripts/check-extension-build.mjs",
     "extension:lint": "bun scripts/extension-strings.mjs --check && cd extension && npm run lint",
-    "extension:test": "cd extension && npm run tests",
+    "extension:test": "cd extension && npm run test:safari && npm run tests",
     "extension:icons": "bun scripts/extension-icons.mjs",
     "extension:strings": "bun scripts/extension-strings.mjs",
     "tauri": "tauri",
