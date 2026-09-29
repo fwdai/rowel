@@ -1,8 +1,9 @@
 {
-  "name": "keepassxc-browser",
-  "version": "1.10.4",
-  "description": "KeePassXC-Browser",
-  "main": "build.js",
+  "name": "rowel-browser-extension",
+  "version": "0.1.0",
+  "description": "Rowel browser extension, a fork of KeePassXC-Browser",
+  "keepassxcBrowserVersion": "1.10.4",
+  "main": "rowel-build.js",
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.60.0",
@@ -13,7 +14,7 @@
     "@npmcli/fs": "^2.1.0"
   },
   "scripts": {
-    "build": "node build.js",
+    "build": "node rowel-build.js",
     "debug:chromium": "cp dist/manifest_chromium.json keepassxc-browser/manifest.json",
     "debug:firefox": "cp dist/manifest_firefox.json keepassxc-browser/manifest.json",
     "lint": "npx eslint --no-warn-ignored keepassxc-browser/**/*.js",
@@ -21,13 +22,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keepassxreboot/keepassxc-browser.git"
+    "url": "git+https://github.com/fwdai/rowel.git",
+    "directory": "extension"
   },
-  "author": "KeePassXC Team",
+  "author": "Rowel, based on KeePassXC-Browser by the KeePassXC Team",
   "license": "GPL-3.0",
   "private": true,
   "bugs": {
-    "url": "https://github.com/keepassxreboot/keepassxc-browser/issues"
+    "url": "https://github.com/fwdai/rowel/issues"
   },
-  "homepage": "https://github.com/keepassxreboot/keepassxc-browser#readme"
+  "homepage": "https://github.com/fwdai/rowel/blob/main/docs/browser-extension.md"
 }
