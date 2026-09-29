@@ -74,15 +74,32 @@ final class HostConnectionTests: XCTestCase {
         _ = request(host, "change-public-keys")
         let outcome = request(host, "get-logins")
         XCTAssertEqual(outcome.after, 1)
-        Thread.sleep(forTimeInterval: 0.2)
-        let rest = host.poll()
+        // The trailing signal is either already in the outcome, behind the
+        // reply, or still on its way: poll until it has been heard.
+        var rest: [HostConnection.Event] = []
+        let deadline = Date(timeIntervalSinceNow: 5)
+        while actions(outcome.events + rest).count < 3 && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+            rest += host.poll().events
+        }
         XCTAssertEqual(
-            actions(outcome.events + rest.events),
+            actions(outcome.events + rest),
             ["signal:database-locked#1", "reply:get-logins", "signal:database-unlocked#2"]
         )
+        // Within the outcome, the reply divides the signals: those the app
+        // sent before it ahead of it, any it sent after behind it.
+        var replied = false
         for event in outcome.events {
-            if case .signal(let signal) = event, let after = outcome.after {
-                XCTAssertLessThanOrEqual(signal.seq, after, "only signals sent before the reply precede it")
+            switch event {
+            case .reply:
+                replied = true
+            case .signal(let signal):
+                let after = outcome.after ?? 0
+                if replied {
+                    XCTAssertGreaterThan(signal.seq, after, "only signals sent after the reply follow it")
+                } else {
+                    XCTAssertLessThanOrEqual(signal.seq, after, "only signals sent before the reply precede it")
+                }
             }
         }
     }
