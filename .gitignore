@@ -8,6 +8,14 @@ dist
 dist-ssr
 *.local
 
+# Browser extension (extension/.gitignore covers zips and node_modules)
+extension/build/
+extension/keepassxc-browser/tests/
+extension/test-results/
+extension/playwright-report/
+# Upstream keeps its per-browser manifests in extension/dist/; not build output.
+!extension/dist/
+
 # Rust / Tauri
 src-tauri/target
 src-tauri/gen/schemas

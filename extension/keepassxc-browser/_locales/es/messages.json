@@ -1,6 +1,6 @@
 {
     "extensionDescription": {
-        "message": "Integración de KeePassXC para navegadores web modernos.",
+        "message": "Integración de Rowel para navegadores web modernos.",
         "description": "Name of the extension."
     },
     "addSitePreferenceButtonTitle": {
@@ -16,7 +16,7 @@
         "description": "Allow Cross-Origin iframes button title text."
     },
     "connectButtonTitle": {
-        "message": "Conectar la base de datos activa actual a KeePassXC-Browser.",
+        "message": "Conectar la base de datos activa actual a Rowel.",
         "description": "Connect button title text."
     },
     "copyDebugInfoButtonTitle": {
@@ -28,7 +28,7 @@
         "description": "Dismiss HTTP Auth button title text."
     },
     "reconnectButtonTitle": {
-        "message": "Re‑conectar la base de datos activa actual a KeePassXC-Browser.",
+        "message": "Re‑conectar la base de datos activa actual a Rowel.",
         "description": "Reconnect button title text."
     },
     "redetectButtonTitle": {
@@ -36,11 +36,11 @@
         "description": "Redetect login fields button title text."
     },
     "reloadButtonTitle": {
-        "message": "Recarga la extensión y re‑conecta a KeePassXC.",
+        "message": "Recarga la extensión y re‑conecta a Rowel.",
         "description": "Reload button title text."
     },
     "removeConnectedDatabaseButtonTitle": {
-        "message": "Eliminar base de datos conectados por KeePassXC-Browser",
+        "message": "Eliminar base de datos conectados por Rowel",
         "description": "Remove button title on Connected Databases tab."
     },
     "removeCustomLoginFieldsButtonTitle": {
@@ -116,7 +116,7 @@
         "description": "Cannot decrypt message."
     },
     "errorMessageTimeout": {
-        "message": "No se puede conectar a KeePassXC. Compruebe que la integración del navegador esté habilitada en la configuración de KeePassXC.",
+        "message": "No se puede conectar a Rowel. Compruebe que la integración del navegador esté habilitada en la configuración de Rowel.",
         "description": "Cannot connect to KeePassXC. Check that browser integration is enabled in KeePassXC settings."
     },
     "errorMessageCanceled": {
@@ -124,11 +124,11 @@
         "description": "Action canceled or denied."
     },
     "errorMessageEncrypt": {
-        "message": "El cifrado del mensaje falló. ¿Se está ejecutando KeePassXC?",
+        "message": "El cifrado del mensaje falló. ¿Se está ejecutando Rowel?",
         "description": "Message encryption failed. Is KeePassXC running?"
     },
     "errorMessageAssociate": {
-        "message": "Asociación de KeePassXC fallida, inténtelo de nuevo.",
+        "message": "Asociación de Rowel fallida, inténtelo de nuevo.",
         "description": "KeePassXC association failed, try again."
     },
     "errorMessageKeyExchange": {
@@ -256,7 +256,7 @@
         "description": "Username or password cannot contain references."
     },
     "errorNotConnected": {
-        "message": "No conectado a KeePassXC.",
+        "message": "No conectado a Rowel.",
         "description": "Error notification shown when not connected to KeePassXC."
     },
     "errorCurrentDatabaseNotConnected": {
@@ -280,10 +280,10 @@
         "description": "Password icon title text."
     },
     "passwordGeneratorNotSupported": {
-        "message": "Iniciar el generador de contraseñas no está soportado en esta versión de KeePassXC. Actualice a una nueva versión de KeePassXC."
+        "message": "Iniciar el generador de contraseñas no está soportado en esta versión de Rowel. Actualice a una nueva versión de Rowel."
     },
     "usernameFieldText": {
-        "message": "Rellenar credenciales desde KeePassXC.",
+        "message": "Rellenar credenciales desde Rowel.",
         "description": "Username field icon hover text."
     },
     "usernameFieldTextNoCredentials": {
@@ -295,7 +295,7 @@
         "description": "Username field icon hover text when database is locked."
     },
     "usernameDisconnectedFieldText": {
-        "message": "KeePassXC está desconectado.",
+        "message": "Rowel está desconectado.",
         "description": "Username field icon hover text when KeePassXC is disconnected."
     },
     "totp": {
@@ -303,7 +303,7 @@
         "description": "TOTP text."
     },
     "totpFieldText": {
-        "message": "Rellenar TOTP desde KeePassXC",
+        "message": "Rellenar TOTP desde Rowel",
         "description": "OTP field icon hover text."
     },
     "defineClose": {
@@ -403,11 +403,11 @@
         "description": "Alert message when filling credentials is blocked due to iframe restrictions."
     },
     "credentialsMultipleFound": {
-        "message": "¡Se encontró más de un inicio de sesión en KeePassXC!",
+        "message": "¡Se encontró más de un inicio de sesión en Rowel!",
         "description": "Alert message when trying to fill username and/or password when multiple credentials are found."
     },
     "credentialsMultipleFoundSecondLine": {
-        "message": "Haz clic en el icono KeePassXC-Browser para ver más opciones.",
+        "message": "Haz clic en el icono Rowel para ver más opciones.",
         "description": "Alert message when trying to fill username and/or password when multiple credentials are found."
     },
     "credentialsNoUsernameFound": {
@@ -443,7 +443,7 @@
         "description": "Message shown when trying to save credentials that haven't changed."
     },
     "popupTitle": {
-        "message": "KeePassXC - Emergente",
+        "message": "Rowel - Emergente",
         "description": "Popup window title."
     },
     "popupSettingsText": {
@@ -483,15 +483,15 @@
         "description": "Button text for allowing Cross-Origin iframes option."
     },
     "popupErrorEncountered": {
-        "message": "KeePassXC-Browser ha encontrado un error:",
+        "message": "Rowel ha encontrado un error:",
         "description": "A text shown above error message in the popup."
     },
     "popupUpdateAvailable": {
-        "message": "Está utilizando una versión antigua de KeePassXC.",
+        "message": "Está utilizando una versión antigua de Rowel.",
         "description": "Popup warning message about old version of KeePassXC."
     },
     "popupDownloadNewVersion": {
-        "message": "Descargue la última versión de keepassxc.org",
+        "message": "Descargue la última versión de github.com/fwdai/rowel/releases",
         "description": "Popup warning message link when KeePassXC version is not up-to-date."
     },
     "popupGettingStartedText": {
@@ -507,7 +507,7 @@
         "description": "Hide alert close button title."
     },
     "popupTroubleshootingText": {
-        "message": "¿No puede contarse a KeePassXC? Tal vez nuestra página de wiki pueda ayudarle.",
+        "message": "¿No puede contarse a Rowel? Tal vez nuestra página de wiki pueda ayudarle.",
         "description": "Popup information message about Troubleshooting Guide."
     },
     "popupTroubleshootingLinkText": {
@@ -519,11 +519,11 @@
         "description": "Checking status message in popup."
     },
     "popupNotConfigured": {
-        "message": "KeePassXC-Browser no ha sido configurado. Haga clic en el botón de conexión para emparejarse con KeePassXC.",
+        "message": "Rowel no ha sido configurado. Haga clic en el botón de conexión para emparejarse con Rowel.",
         "description": "A popup message shown when the extension has not been connected to KeePassXC."
     },
     "popupNeedReconfigure": {
-        "message": "KeePassXC-Browser se ha desconectado de KeePassXC.",
+        "message": "Rowel se ha desconectado de Rowel.",
         "description": "A popup message shown when the extension has been disconnected from KeePassXC."
     },
     "popupNeedReconfigureMessage": {
@@ -531,11 +531,11 @@
         "description": "A popup message shown when reconnect is needed."
     },
     "popupConfiguredNotAssociated": {
-        "message": "KeePassXC-Browser aún no se ha conectado a KeePassXC pero se ha configurado utilizando el identificador:$1",
+        "message": "Rowel aún no se ha conectado a Rowel pero se ha configurado utilizando el identificador:$1",
         "description": "A popup message shown when KeePassXC is not connected but configured."
     },
     "popupConfiguredAndAssociated": {
-        "message": "KeePassXC-Browser está conectado a KeePassXC y se ha configurado utilizando el siguiente identificador: $1",
+        "message": "Rowel está conectado a Rowel y se ha configurado utilizando el siguiente identificador: $1",
         "description": "A popup message when a connection to KeePassXC is successful."
     },
     "popupUsernameFieldDetected": {
@@ -667,11 +667,11 @@
         "description": "Default settings title for Getting Started page."
     },
     "optionsWelcomeTitle": {
-        "message": "KeePassXC-Browser",
+        "message": "Rowel",
         "description": "Main card title for Getting Started page."
     },
     "optionsTitle": {
-        "message": "Configuración | KeePassXC-Browser",
+        "message": "Configuración | Rowel",
         "description": "Options page title."
     },
     "optionsGeneralSettingsTab": {
@@ -815,7 +815,7 @@
         "description": "Automatically retrieve credentials checkbox text."
     },
     "optionsCheckboxAutomaticReconnect": {
-        "message": "Reconectar a KeePassXC automáticamente",
+        "message": "Reconectar a Rowel automáticamente",
         "description": "Auto-reconnect checkbox text."
     },
     "optionsAutomaticReconnectWarning": {
@@ -875,7 +875,7 @@
         "description": "Default password manager checkbox text."
     },
     "optionsDefaultPasswordManagerHelpText": {
-        "message": "Establecer KeePassXC-Browser como gestor de contraseñas predeterminado para el navegador.",
+        "message": "Establecer Rowel como gestor de contraseñas predeterminado para el navegador.",
         "description": "Default password manager help text."
     },
     "optionsRedirectAllowance": {
@@ -895,7 +895,7 @@
         "description": "Connection method selection text."
     },
     "optionsConnectionMethodHelpText": {
-        "message": "Si la mensajería nativa está bloqueada en su navegador, puede cambiar a una conexión WebSocket directa. Para que funcione, debe habilitar esta función desde KeePassXC. Es necesario reiniciar el navegador.",
+        "message": "Si la mensajería nativa está bloqueada en su navegador, puede cambiar a una conexión WebSocket directa. Para que funcione, debe habilitar esta función desde Rowel. Es necesario reiniciar el navegador.",
         "description": "Connection method help text."
     },
     "optionsConnectionMethodNativeMessaging": {
@@ -915,7 +915,7 @@
         "description": "Debug logging help text."
     },
     "optionsRadioText": {
-        "message": "Comprobar si hay actualizaciones de KeePassXC:",
+        "message": "Comprobar si hay actualizaciones de Rowel:",
         "description": "Text above radio buttons in the settings page."
     },
     "optionsRadioThreeDays": {
@@ -967,7 +967,7 @@
         "description": "Password Generator option help text."
     },
     "optionsUsePasswordGeneratorHelpTextSecond": {
-        "message": "KeePassXC genera las contraseñas utilizando su perfil de generación de contraseña.",
+        "message": "Rowel genera las contraseñas utilizando su perfil de generación de contraseña.",
         "description": "Password Generator option help text, second part."
     },
     "optionsPredefinedSiteList": {
@@ -995,15 +995,15 @@
         "description": "Hide icons alert text text."
     },
     "optionsAutoRetrieveCredentialsHelpText": {
-        "message": "KeePassXC-Browser recuperará inmediatamente las credenciales cuando se active una pestaña.",
+        "message": "Rowel recuperará inmediatamente las credenciales cuando se active una pestaña.",
         "description": "Auto-Retrive Credentials option help text."
     },
     "optionsAutomaticReconnectHelpText": {
-        "message": "Reconecta automáticamente a KeePassXC cuando es detectada",
+        "message": "Reconecta automáticamente a Rowel cuando es detectada",
         "description": "Auto-reconnect option help text."
     },
     "optionsAutoFillSingleEntryHelpText": {
-        "message": "Permitir que KeePassXC-Browser complete las credenciales automáticamente si recibe solo una entrada.",
+        "message": "Permitir que Rowel complete las credenciales automáticamente si recibe solo una entrada.",
         "description": "Auto-Fill Single Entry option help text."
     },
     "optionsAutoFillRelevantCredentialHelpText": {
@@ -1011,11 +1011,11 @@
         "description": "Auto-Fill Relevant Credential option help text."
     },
     "optionsAutoFillSingleEntryWarning": {
-        "message": "Advertencia! Usar el autorellenado no es seguro. Úseló bajo su propio riesgo. KeePassXC-Browser intenta detectar automáticamente los campos de inicio de sesión. Sin embargo, pueden ser detectados incorrectamente,  con la posibilidad de rellenar datos sensibles en capos de entrada inseguros.",
+        "message": "Advertencia! Usar el autorellenado no es seguro. Úseló bajo su propio riesgo. Rowel intenta detectar automáticamente los campos de inicio de sesión. Sin embargo, pueden ser detectados incorrectamente,  con la posibilidad de rellenar datos sensibles en capos de entrada inseguros.",
         "description": "Auto-Fill Single Entry warning text."
     },
     "optionsAutoFillSingleTotpHelpText": {
-        "message": "Permitir a KeePassXC-Browser rellenar los campos TOTP automáticamente en caso de recibir un solo apunte.",
+        "message": "Permitir a Rowel rellenar los campos TOTP automáticamente en caso de recibir un solo apunte.",
         "description": "Auto-Fill Single TOTP field option help text."
     },
     "optionsAutocompleteUsernamesHelpText": {
@@ -1055,7 +1055,7 @@
         "description": "Download favicon after save help text."
     },
     "optionsAutoFillAndSendHelpText": {
-        "message": "Si se encuentran credenciales para una página y el tipo de inicio de sesión es una solicitud de Autenticación Básica HTTP, KeePassXC-Browser intenta iniciar sesión con las primeras credenciales dadas.",
+        "message": "Si se encuentran credenciales para una página y el tipo de inicio de sesión es una solicitud de Autenticación Básica HTTP, Rowel intenta iniciar sesión con las primeras credenciales dadas.",
         "description": "Auto-Fill And Send option help text."
     },
     "optionsAutoFillAndSendHelpTextSecond": {
@@ -1071,7 +1071,7 @@
         "description": "Clear credentials timeout help text."
     },
     "optionsVersionInfoText": {
-        "message": "KeePassXC-Browser necesita KeePassXC para recuperar credenciales.",
+        "message": "Rowel necesita Rowel para recuperar credenciales.",
         "description": "Settings page version info text."
     },
     "optionsVersionDownload": {
@@ -1079,19 +1079,19 @@
         "description": "Settings page download link."
     },
     "optionsVersionRunning": {
-        "message": "Está ejecutando la versión KeePassXC: $1",
+        "message": "Está ejecutando la versión Rowel: $1",
         "description": "Settings page info text of user's KeePassXC version."
     },
     "optionsLatestVersion": {
-        "message": "Última versión disponible de KeePassXC: $1",
+        "message": "Última versión disponible de Rowel: $1",
         "description": "Settings page info text about the latest KeePassXC version."
     },
     "optionsKeePassXCVersionRequired": {
-        "message": "Requiere la versión de KeePassXC:  $1",
+        "message": "Requiere la versión de Rowel:  $1",
         "description": "KeePassXC version requirement text."
     },
     "optionsMinimumKeePassXCVersionRequired": {
-        "message": "La extensión requiere la versión de KeePassXC: $1. Las versiones anteriores pueden causar comportamiento indeseable.",
+        "message": "La extensión requiere la versión de Rowel: $1. Las versiones anteriores pueden causar comportamiento indeseable.",
         "description": "KeePassXC minimum version requirement text."
     },
     "optionsDefault": {
@@ -1135,7 +1135,7 @@
         "description": "Reset all settings dialog text."
     },
     "optionsConnectedDatabasesText": {
-        "message": "Las siguientes bases de datos KeePassXC están conectadas a KeePassXC-Browser.",
+        "message": "Las siguientes bases de datos Rowel están conectadas a Rowel.",
         "description": "Info text about connected databases."
     },
     "optionsConnectedDatabasesNotFound": {
@@ -1267,11 +1267,11 @@
         "description": "Table caption of Custom Login Fields page."
     },
     "optionsCustomFieldsTabHelpTextFirst": {
-        "message": "Si KeePassXC-Browser detecta los campos de inicio de sesión incorrectos, usted mismo puede especificar los campos correctos.",
+        "message": "Si Rowel detecta los campos de inicio de sesión incorrectos, usted mismo puede especificar los campos correctos.",
         "description": "Saved Custom Login Fields info text, first part."
     },
     "optionsCustomFieldsTabHelpTextSecond": {
-        "message": "Vaya a la página y haga clic en el icono de KeePassXC-Browser, luego seleccione",
+        "message": "Vaya a la página y haga clic en el icono de Rowel, luego seleccione",
         "description": "Saved Custom Login Fields info text, second part."
     },
     "optionsCustomFieldsTabHelpTextThird": {
@@ -1287,7 +1287,7 @@
         "description": "Confirmation text when removing saved Custom Login Fields."
     },
     "optionsCustomFieldsConfirmationHelpText": {
-        "message": "KeePassXC-Browser detectará automáticamente los campos de inicio de sesión la próxima vez que visite esta página.",
+        "message": "Rowel detectará automáticamente los campos de inicio de sesión la próxima vez que visite esta página.",
         "description": "Part of confirmation text when removing saved Custom Login Fields."
     },
     "optionsSitePreferencesNotFound": {
@@ -1311,7 +1311,7 @@
         "description": "Site Preferences info text, third part."
     },
     "optionsSitePreferencesTabHelpTextFourth": {
-        "message": "La detección solo-nombre de usuario permite que KeePassXC-Browser complete los detalles de inicio de sesión en los sitios web con páginas separadas para el nombre de usuario y la contraseña.",
+        "message": "La detección solo-nombre de usuario permite que Rowel complete los detalles de inicio de sesión en los sitios web con páginas separadas para el nombre de usuario y la contraseña.",
         "description": "Site Preferences info text, fourth part."
     },
     "optionsSitePreferencesImprovedInputFieldDetectionHelpText": {
@@ -1335,7 +1335,7 @@
         "description": "Confirmation text when removing site from Site Preferences."
     },
     "optionsSitePreferencesConfirmationHelpText": {
-        "message": "KeePassXC-Browser habilitará todas las funciones de este sitio y eliminará la detección solo-nombre de usuario.",
+        "message": "Rowel habilitará todas las funciones de este sitio y eliminará la detección solo-nombre de usuario.",
         "description": "Part of confirmation text when removing Site Preferences."
     },
     "optionsSitePreferencesTableCaption": {
@@ -1347,27 +1347,27 @@
         "description": "Title text of select element in Site Preferences."
     },
     "optionsAboutChrome": {
-        "message": "Visite KeePassXC-Browser en Chrome Web Store.",
+        "message": "Visite Rowel en Chrome Web Store.",
         "description": "About page link to Chrome Web Store."
     },
     "optionsAboutMozilla": {
-        "message": "Visite KeePassXC-Browser en el directorio de complementeos de Mozilla.",
+        "message": "Visite Rowel en el directorio de complementeos de Mozilla.",
         "description": "About page link to AMO."
     },
     "optionsAboutEdge": {
-        "message": "Visite KeePassXC-Browser en la página de complementos de Edge.",
+        "message": "Visite Rowel en la página de complementos de Edge.",
         "description": "About page link to Edge Add-ons page."
     },
     "optionsAboutGitHub": {
-        "message": "Visite KeePassXC-Browser en GitHub.",
+        "message": "Visite Rowel en GitHub.",
         "description": "About page link to GitHub."
     },
     "optionsAboutExtensionVersion": {
-        "message": "Versión de KeePassXC-Browser: $1",
+        "message": "Versión de Rowel: $1",
         "description": "About page text of extension version."
     },
     "optionsAboutKeePassXCVersion": {
-        "message": "Versión de KeePassXC: $1",
+        "message": "Versión de Rowel: $1",
         "description": "About page text of KeePassXC version."
     },
     "optionsAboutContributors": {
@@ -1447,7 +1447,7 @@
         "description": "Enabled passkeys fallback option text."
     },
     "optionsPasskeysEnableFallbackHelpText": {
-        "message": "Si está habilitada, una solicitud fallida o cancelada a KeePassXC activará la solicitud de claves de acceso interna del navegador. Si está deshabilitado, se requiere la conexión a KeePassXC y la solicitud cancelada fallará. Predeterminado: habilitado.",
+        "message": "Si está habilitada, una solicitud fallida o cancelada a Rowel activará la solicitud de claves de acceso interna del navegador. Si está deshabilitado, se requiere la conexión a Rowel y la solicitud cancelada fallará. Predeterminado: habilitado.",
         "description": "Passkeys fallback option help text."
     },
     "openNewTab": {
@@ -1467,7 +1467,7 @@
         "description": "Lock database button title text."
     },
     "welcomeText": {
-        "message": "¡Bienvenido a KeePassXC-Browser!",
+        "message": "¡Bienvenido a Rowel!",
         "description": "Main title of Getting Started page."
     },
     "documentationGettingStarted": {
@@ -1483,7 +1483,7 @@
         "description": "Troubleshooting Guide text."
     },
     "gettingStartedWelcomeText": {
-        "message": "Bienvenido a KeePassXC-Browser, la extensión oficial del navegador para KeePassXC.",
+        "message": "Bienvenido a Rowel, la extensión oficial del navegador para Rowel.",
         "description": "Welcome to KeePassXC-Browser, the official browser extension for KeePassXC."
     },
     "gettingStartedSecondWelcomeText": {

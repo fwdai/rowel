@@ -1,9 +1,10 @@
 {
     "manifest_version": 2,
-    "name": "KeePassXC-Browser",
-    "version": "1.10.4",
+    "name": "Rowel",
+    "version": "0.1.0",
     "description": "__MSG_extensionDescription__",
-    "author": "KeePassXC Team",
+    "author": "Rowel",
+    "homepage_url": "https://github.com/fwdai/rowel",
     "icons": {
         "16": "icons/keepassxc.svg",
         "32": "icons/keepassxc.svg",
@@ -22,7 +23,7 @@
             "38": "icons/keepassxc.svg",
             "64": "icons/keepassxc.svg"
         },
-        "default_title": "KeePassXC-Browser",
+        "default_title": "Rowel",
         "default_popup": "popups/popup.html"
     },
     "options_ui": {
@@ -181,16 +182,18 @@
         "webRequest",
         "webRequestBlocking",
         "https://*/*",
-        "http://*/*",
-        "https://api.github.com/"
+        "http://*/*"
     ],
     "optional_permissions": [
         "privacy"
     ],
-    "applications": {
+    "browser_specific_settings": {
         "gecko": {
-            "id": "keepassxc-browser@keepassxc.org",
-            "strict_min_version": "115.0"
+            "id": "browser@rowel.app",
+            "strict_min_version": "115.0",
+            "data_collection_permissions": {
+                "required": ["none"]
+            }
         }
     },
     "storage": {

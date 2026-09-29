@@ -31,6 +31,7 @@ jobs:
       crypto: ${{ steps.filter.outputs.crypto }}
       e2e: ${{ steps.filter.outputs.e2e }}
       supply-chain: ${{ steps.filter.outputs.supply-chain }}
+      extension: ${{ steps.filter.outputs.extension }}
     steps:
       - uses: dorny/paths-filter@v4
         id: filter
@@ -79,6 +80,11 @@ jobs:
               - 'src-tauri/Cargo.lock'
               - 'src-tauri/deny.toml'
               - 'scripts/check-tauri-versions.mjs'
+            extension:
+              - *ci
+              - 'extension/**'
+              - 'scripts/extension-strings.mjs'
+              - 'scripts/check-extension-build.mjs'
 
   frontend:
     name: Frontend (build + lint)
@@ -275,6 +281,51 @@ jobs:
           manifest-path: src-tauri/Cargo.toml
           arguments: ''
           command: check
+
+  extension:
+    # The browser extension is a KeePassXC-Browser subtree (see
+    # docs/browser-extension.md) that keeps upstream's npm lockfile and
+    # tooling, so this job runs npm inside extension/ rather than bun.
+    name: Browser extension (lint + test + build)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      !cancelled() && (
+        github.event_name != 'pull_request' ||
+        needs.changes.result != 'success' ||
+        needs.changes.outputs.extension == 'true'
+      )
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      # An upstream sync that brings new or changed strings without re-running
+      # `bun run extension:strings` fails here instead of shipping "KeePassXC".
+      - name: Strings are rebranded
+        working-directory: .
+        run: node scripts/extension-strings.mjs --check
+
+      - run: npm ci
+      - run: npm run lint
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox
+      - run: npm run tests
+
+      - run: npm run build
+
+      - name: Check the built packages' IDs and host name
+        working-directory: .
+        run: node scripts/check-extension-build.mjs
 
   crypto-compat:
     name: Crypto compatibility

@@ -27,7 +27,7 @@
             <span class="navbar-toggler-icon"></span>
           </button>
           <div class="collapse d-none d-md-block" id="sidebar">
-            <h1 class="text-uppercase text-white d-none d-md-flex px-3 pb-4 mt-4 mb-1">KeePassXC-Browser</h1>
+            <h1 class="text-uppercase text-white d-none d-md-flex px-3 pb-4 mt-4 mb-1">Rowel</h1>
             <ul class="nav flex-column mb-2 text-uppercase">
               <li class="active nav-item">
                 <a class="nav-link text-light rounded-sm" href="#general-settings">
@@ -62,7 +62,7 @@
             </ul>
           </div>
           <footer class="px-3 mt-4 mb-1 text-uppercase position-absolute small text-muted">
-            © 2017-2025 - KeePassXC Team
+            Based on KeePassXC-Browser © 2017-2025 - KeePassXC Team
           </footer>
         </nav>
 
@@ -418,8 +418,8 @@
                 </div>
               </div>
 
-              <!-- Updates -->
-              <div class="card my-4 shadow">
+              <!-- Updates (KeePassXC release checks; not used by Rowel) -->
+              <div class="card my-4 shadow" hidden>
                 <div class="card-header h6 rounded-0">
                   <i class="fa fa-clock-o" aria-hidden="true"></i>
                   <span data-i18n="optionsUpdatesTitle"></span>
@@ -930,19 +930,7 @@
                   </p>
                   <hr class="mt-0">
                   <p>
-                    <a target="_blank" href="https://chromewebstore.google.com/detail/keepassxc-browser/oboonakemofpalcgghocfoadofidjkkk" data-i18n="[title]openNewTab">
-                      <span data-i18n="optionsAboutChrome"></span>
-                    </a>
-                    <br>
-                    <a target="_blank" href="https://addons.mozilla.org/en-US/firefox/addon/keepassxc-browser/" data-i18n="[title]openNewTab">
-                      <span data-i18n="optionsAboutMozilla"></span>
-                    </a>
-                    <br>
-                    <a target="_blank" href="https://microsoftedge.microsoft.com/addons/detail/keepassxcbrowser/pdffhmdngciaglkoonimfcmckehcpafo" data-i18n="[title]openNewTab">
-                      <span data-i18n="optionsAboutEdge"></span>
-                    </a>
-                    <br>
-                    <a target="_blank" href="https://github.com/keepassxreboot/keepassxc-browser" data-i18n="[title]openNewTab">
+                    <a target="_blank" href="https://github.com/fwdai/rowel" data-i18n="[title]openNewTab">
                       <span data-i18n="optionsAboutGitHub"></span>
                     </a>
                   </p>
@@ -977,11 +965,11 @@
                 </div>
                 <div class="card-body">
                   <p>
-                    <a target="_blank" href="https://github.com/keepassxreboot/keepassxc-browser/issues/new"><span data-i18n="optionsAboutCreateNewIssue"></span></a>
+                    <a target="_blank" href="https://github.com/fwdai/rowel/issues/new"><span data-i18n="optionsAboutCreateNewIssue"></span></a>
                     <br><span data-i18n="optionsAboutDebugInfo"></span>:
                   </p>
-                  <p id="versionInfo" class="float-left">KeePassXC - <span class="kpxcVersion"></span>
-                    <br>KeePassXC-Browser - <span class="kpxcbrVersion"></span>
+                  <p id="versionInfo" class="float-left">Rowel (KeePassXC protocol) - <span class="kpxcVersion"></span>
+                    <br>Rowel extension - <span class="kpxcbrVersion"></span>
                     <br>Operating system: <span class="kpxcbrOS"></span>
                     <br>Browser: <span class="kpxcbrBrowser"></span>
                   </p>
