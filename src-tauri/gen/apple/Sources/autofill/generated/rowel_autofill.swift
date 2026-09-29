@@ -490,11 +490,13 @@ public protocol VaultProtocol: AnyObject, Sendable {
     
     /**
      * The logins for the sites iOS names — each identifier a domain or a
-     * URL, admitted by [`Sites`] — that have a password to fill. Each row is
-     * unsealed for the same two things the fill needs: the name it signs in
-     * with (`Entry::login_name`, the name the app publishes to QuickType for
-     * the same row) and whether there is a password at all; the list carries
-     * the name, and nothing else of the payload.
+     * URL, admitted by [`Sites`] — that have a password to fill
+     * ([`fills_password`]). The listing is read for all of them; a row is
+     * unsealed only when the listing cannot vouch for it, and then for the
+     * same two things the fill needs — the name it signs in with
+     * (`Entry::login_name`, the name the app publishes to QuickType for the
+     * same row) and whether there is a password at all. The list carries the
+     * name, and nothing else of the payload.
      */
     func credentialsFor(serviceIdentifiers: [String]) throws  -> [Credential]
     
@@ -598,11 +600,13 @@ open func assertPasskey(request: PasskeyAssertion)throws  -> AssertedPasskey  {
     
     /**
      * The logins for the sites iOS names — each identifier a domain or a
-     * URL, admitted by [`Sites`] — that have a password to fill. Each row is
-     * unsealed for the same two things the fill needs: the name it signs in
-     * with (`Entry::login_name`, the name the app publishes to QuickType for
-     * the same row) and whether there is a password at all; the list carries
-     * the name, and nothing else of the payload.
+     * URL, admitted by [`Sites`] — that have a password to fill
+     * ([`fills_password`]). The listing is read for all of them; a row is
+     * unsealed only when the listing cannot vouch for it, and then for the
+     * same two things the fill needs — the name it signs in with
+     * (`Entry::login_name`, the name the app publishes to QuickType for the
+     * same row) and whether there is a password at all. The list carries the
+     * name, and nothing else of the payload.
      */
 open func credentialsFor(serviceIdentifiers: [String])throws  -> [Credential]  {
     return try  FfiConverterSequenceTypeCredential.lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
@@ -1893,7 +1897,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_rowel_autofill_checksum_method_vault_assert_passkey() != 27995) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_method_vault_credentials_for() != 39403) {
+    if (uniffi_rowel_autofill_checksum_method_vault_credentials_for() != 14547) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rowel_autofill_checksum_method_vault_passkeys_for() != 46537) {
