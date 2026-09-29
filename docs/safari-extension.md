@@ -23,7 +23,7 @@ client.js ─ port.postMessage ─┐
                               │ sendNativeMessage
 safari-native.js ─────────────┴──▶ SafariWebExtensionHandler ─┐
    ▲  replies + signals              HostConnection (static) ──┴─ browser.sock ─▶ browser::server
-   └──────────────────────────────── { reply, after, signals }      (App Group container)
+   └──────────────────────────────── { events, after, connected }   (App Group container)
 ```
 
 - **The sockets.** Chrome and Firefox reach the app through `browser.sock` in
@@ -56,8 +56,8 @@ safari-native.js ─────────────┴──▶ SafariWebEx
   message, but the app keeps a key exchange per connection. Each message is
   written as one frame of the host's framing (a four-byte native-endian length,
   then JSON, 1 MiB at most — `browser/frame.rs`) and answered with the next
-  frame that is not a signal. One request is on the wire at a time. The
-  handler answers:
+  frame that is not a signal. One exchange — a request, or a heartbeat
+  poll — is served at a time. The handler answers:
   - `not-running` when nothing listens on the socket (the app is not running,
     or the browser integration is off);
   - `disconnected` when the connection ended (EOF, a frame over the cap, no
@@ -67,29 +67,37 @@ safari-native.js ─────────────┴──▶ SafariWebEx
 
   The connection is dropped on either, and made again by the next
   `change-public-keys`.
-- **Signals.** The app pushes `database-locked` and `database-unlocked` to
-  every connection unsolicited (`browser::server::signal`). A reader thread in
-  the handler takes them off the socket, numbers them, and queues them (the
-  last eight) for the next reply to carry, with the number of the last signal
-  sent before that reply so the extension hears them in the app's order. It
-  also tries `SFSafariApplication.dispatchMessage` to push each one to the
-  extension straight away. Apple documents that call for the containing app,
-  not for the extension process, so it is a shortcut when it works and nothing
-  depends on it.
+- **Signals, in order by construction.** The app pushes `database-locked` and
+  `database-unlocked` to every connection unsolicited
+  (`browser::server::signal`). A reader thread in the handler takes every
+  frame off the socket in arrival order: signals are numbered and queued,
+  anything else is the reply the request on the wire waits on (noting the
+  last signal before it). Each response is composed in one step: the reply,
+  with every queued signal before or after it as the app sent them, as one
+  ordered `events` list. Requests and polls go one at a time, so a poll cannot
+  take signals from around a reply. Nothing is dropped from the queue to make
+  room: 256 unfetched signals means nobody is listening, and the connection
+  is dropped instead (logged), which the extension hears as a disconnect. The
+  handler also tries `SFSafariApplication.dispatchMessage` for each signal.
+  Apple documents that call for the containing app, not for the extension
+  process, so the extension takes a push only as a cue to poll now.
 - **The extension's side** (`extension/safari/safari-native.js`, loaded only
   by the Safari build, right after the polyfill) replaces
   `runtime.connectNative` with a port that behaves as `background/client.js`
   expects of Chrome's: `postMessage` sends a request through
-  `sendNativeMessage`, replies and signals come back through `onMessage`
-  (deduplicated by number), and `onDisconnect` fires on any error — the "not
-  connected" state, from which upstream's automatic reconnect takes over, just
-  as when a Chrome proxy exits. While connected it polls the handler every two
-  seconds, because Safari never lets a handler speak first: that heartbeat is
-  what brings lock signals in when nothing else is being asked, and what
-  notices the app has quit. The Safari manifest is Manifest V2 with a
-  persistent background page, since Safari does not wake a suspended
-  background page for native messages; it is generated from the Firefox one
-  (`extension/safari/build.mjs`).
+  `sendNativeMessage`, replies and signals come back through `onMessage`, and
+  `onDisconnect` fires on any error — the "not connected" state, from which
+  upstream's automatic reconnect takes over, just as when a Chrome proxy
+  exits. Every native message goes through one promise chain: one is ever
+  outstanding, responses are handled in the order sent, and their events are
+  emitted as listed (a signal already heard is dropped by number; `after` is
+  only checked, with a console warning if it disagrees). While connected it
+  polls the handler every two seconds when nothing is outstanding, because
+  Safari never lets a handler speak first: that heartbeat brings lock signals
+  in when nothing else is being asked, and notices the app has quit. The
+  Safari manifest is Manifest V2 with a persistent background page, since
+  Safari does not wake a suspended background page for native messages; it is
+  generated from the Firefox one (`extension/safari/build.mjs`).
 
 ## Building
 
@@ -201,8 +209,9 @@ it, which is why the entitlements check covers the extension's file too.
   "Safari extension unavailable" and Safari's extension shows as not
   connected; Chrome and Firefox are unaffected (see the boundary test in
   `browser/tests.rs`).
-- Signals arrive within the heartbeat (two seconds) unless the push from the
-  handler turns out to work.
+- Signals arrive within the heartbeat (two seconds), or once a long request
+  (a consent dialog) is answered, unless the push from the handler turns out
+  to work.
 - HTTP basic-auth filling is not available in Safari (upstream skips it; Safari
   has no blocking `webRequest`).
 - Safari may end the extension process when idle; the connection goes with it,

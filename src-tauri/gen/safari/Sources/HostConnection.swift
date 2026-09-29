@@ -17,9 +17,15 @@ import os.log
 /// not (a home path too long for a socket address, say) looks from here like
 /// an app that is not running.
 ///
-/// One request is on the wire at a time. A reader thread takes every frame
-/// the app sends: the lock signals it pushes unsolicited go to the extension
-/// (`deliver`), anything else is the reply the request in flight waits on.
+/// Ordering holds by construction. A reader thread takes every frame the app
+/// sends and files it, under `state`, in the order it arrived: a lock signal
+/// the app pushes unsolicited is numbered and queued, anything else is the
+/// reply the request on the wire waits on. Requests and polls are served one
+/// at a time (`inFlight`), and each response is composed under `state` in one
+/// step — the reply, with every signal queued so far placed before or after it
+/// as the app sent them — so nothing another caller does can take a signal
+/// out from between them. The JS side (`safari-native.js`) keeps one message
+/// outstanding at a time, so it hears everything in that same order.
 final class HostConnection: @unchecked Sendable {
     static let shared = HostConnection()
 
@@ -29,13 +35,16 @@ final class HostConnection: @unchecked Sendable {
     /// so an `associate` or a passkey dialog is answered by the app, not by
     /// this giving up first.
     static let replyTimeout: TimeInterval = 90
-    /// The signals kept for a reply to carry. Only the latest few say
-    /// anything: the extension acts on the state they leave it in.
-    static let signalBacklog = 8
+    /// Signals are never dropped from the queue to make room: that would
+    /// change the sequence the extension hears. They are rare — one per lock
+    /// or unlock — so a queue this long means nobody is fetching them, and
+    /// the connection is dropped instead (logged), which the extension hears
+    /// as a disconnect and recovers from by reconnecting and asking afresh.
+    static let signalLimit = 256
 
     /// Why a request got no reply. The JS side (`safari-native.js`) maps
     /// every one of them to KeePassXC-Browser's "not connected" state.
-    enum Failure: Error {
+    enum Failure: Error, Equatable {
         /// Nothing is listening: the app is not running, or has the browser
         /// integration turned off.
         case notRunning(String)
@@ -59,22 +68,40 @@ final class HostConnection: @unchecked Sendable {
         }
     }
 
-    struct Signal {
+    struct Signal: Equatable {
         let seq: Int
         let message: String
     }
 
-    /// A reply, and the last signal the app sent before it (0 for none):
-    /// the extension hears the signals up to it before the reply, and the
-    /// rest after, in the order the app sent them.
-    struct Reply {
+    /// What the extension hears from one exchange, in the order the app sent
+    /// it.
+    enum Event: Equatable {
+        case signal(Signal)
+        case reply(Data)
+    }
+
+    /// One exchange's answer: its events, the last signal the app sent before
+    /// the reply (a consistency check for the JS side; nil without a reply),
+    /// whether the connection is up, and why there is no reply, if there is
+    /// none.
+    struct Outcome: Equatable {
+        var events: [Event]
+        var after: Int?
+        var connected: Bool
+        var failure: Failure?
+    }
+
+    private struct Reply {
+        let generation: Int
         let body: Data
         let after: Int
     }
 
     private let log = Logger(subsystem: "app.rowel.desktop.safari", category: "host")
+    private let resolveSocketPath: () -> String?
+    private let push: ((Signal) -> Void)?
 
-    // Held for a whole request: write, then wait for the reply.
+    // Held for a whole exchange, request or poll: one at a time.
     private let inFlight = NSLock()
     // Guards everything below; the reader thread signals it.
     private let state = NSCondition()
@@ -83,14 +110,16 @@ final class HostConnection: @unchecked Sendable {
     private var replies: [Reply] = []
     private var signals: [Signal] = []
     private var nextSeq = 1
-    // Whether pushing a signal from here reached Safari. Unknown until the
-    // first try; the signals are queued for the next reply either way.
-    private var dispatchFailed = false
 
-    var isConnected: Bool {
-        state.lock()
-        defer { state.unlock() }
-        return fd >= 0
+    /// `socketPath` says where the app listens; `push` is offered each
+    /// signal as it arrives (the extension's `dispatchMessage`), on top of its
+    /// being queued. Tests give both their own.
+    init(
+        socketPath: @escaping () -> String? = HostConnection.socketPath,
+        push: ((Signal) -> Void)? = HostConnection.dispatch
+    ) {
+        self.resolveSocketPath = socketPath
+        self.push = push
     }
 
     /// The socket: in the group container, or its `dev` subdirectory in a
@@ -115,24 +144,21 @@ final class HostConnection: @unchecked Sendable {
 
     /// Send one request and wait for its reply. `action` is the request's,
     /// read by the caller: it decides whether a fresh connection may be made.
-    func send(_ request: Data, action: String) -> Result<Reply, Failure> {
+    func request(_ body: Data, action: String) -> Outcome {
         inFlight.lock()
         defer { inFlight.unlock() }
 
         state.lock()
         if fd < 0 {
             guard action == "change-public-keys" else {
-                state.unlock()
-                return .failure(.disconnected("no connection to the app; exchange keys first"))
+                return finishLocked(failure: .disconnected("no connection to the app; exchange keys first"))
             }
             do {
                 try connect()
             } catch let failure as Failure {
-                state.unlock()
-                return .failure(failure)
+                return finishLocked(failure: failure)
             } catch {
-                state.unlock()
-                return .failure(.notRunning("\(error)"))
+                return finishLocked(failure: .notRunning("\(error)"))
             }
         }
         let socket = fd
@@ -141,43 +167,65 @@ final class HostConnection: @unchecked Sendable {
         state.unlock()
 
         do {
-            try Frame.write(request, to: socket)
+            try Frame.write(body, to: socket)
         } catch {
             drop(current, because: "write failed: \(error)")
-            return .failure(.disconnected("the app went away"))
+            state.lock()
+            return finishLocked(failure: .disconnected("the app went away"))
         }
 
         state.lock()
-        defer { state.unlock() }
         let deadline = Date(timeIntervalSinceNow: Self.replyTimeout)
-        while replies.isEmpty && generation == current && fd >= 0 {
+        // A reply that came in before the connection ended still counts: the
+        // app answered.
+        while !replies.contains(where: { $0.generation == current }) && generation == current {
             if !state.wait(until: deadline) { break }
         }
-        if !replies.isEmpty && generation == current {
-            return .success(replies.removeFirst())
+        if let index = replies.firstIndex(where: { $0.generation == current }) {
+            let reply = replies.remove(at: index)
+            return finishLocked(reply: reply)
         }
-        if generation == current && fd >= 0 {
+        if generation == current {
             // Timed out. The reply may still come, and would then be taken for
             // the next request's: the connection cannot be trusted any more.
             dropLocked(because: "no reply in \(Int(Self.replyTimeout)) s")
         }
-        return .failure(.disconnected("the connection to the app ended"))
+        return finishLocked(failure: .disconnected("the connection to the app ended"))
     }
 
-    /// The signals queued since the last call, oldest first.
-    func takeSignals() -> [Signal] {
+    /// The heartbeat: the signals queued so far, and whether the connection
+    /// is up. Waits its turn behind a request on the wire, so it can never
+    /// take the signals that belong around that request's reply.
+    func poll() -> Outcome {
+        inFlight.lock()
+        defer { inFlight.unlock() }
         state.lock()
+        return finishLocked()
+    }
+
+    // Compose an exchange's outcome from the queue, and release `state`
+    // (held on entry). Every queued signal goes in, the ones the app sent
+    // before the reply ahead of it; the queue is left empty.
+    private func finishLocked(reply: Reply? = nil, failure: Failure? = nil) -> Outcome {
         defer { state.unlock() }
-        let taken = signals
+        var events: [Event] = []
+        let queued = signals
         signals.removeAll()
-        return taken
+        if let reply {
+            events += queued.filter { $0.seq <= reply.after }.map(Event.signal)
+            events.append(.reply(reply.body))
+            events += queued.filter { $0.seq > reply.after }.map(Event.signal)
+        } else {
+            events = queued.map(Event.signal)
+        }
+        return Outcome(events: events, after: reply?.after, connected: fd >= 0, failure: failure)
     }
 
     // MARK: - The socket
 
     // Called with `state` held.
     private func connect() throws {
-        guard let path = Self.socketPath() else {
+        guard let path = resolveSocketPath() else {
             throw Failure.notRunning("no App Group container for \(Self.appGroup)")
         }
         var address = sockaddr_un()
@@ -237,7 +285,7 @@ final class HostConnection: @unchecked Sendable {
             } else {
                 state.lock()
                 if generation == reading {
-                    replies.append(Reply(body: body, after: nextSeq - 1))
+                    replies.append(Reply(generation: reading, body: body, after: nextSeq - 1))
                     state.broadcast()
                 }
                 state.unlock()
@@ -262,6 +310,8 @@ final class HostConnection: @unchecked Sendable {
         }
     }
 
+    // The queued signals stay: the app sent them before the connection ended,
+    // and the extension hears them before it hears that it did.
     private func dropLocked(because reason: String) {
         log.info("connection dropped: \(reason, privacy: .public)")
         // Shut down, not closed: the reader blocked in read() returns, and
@@ -271,19 +321,13 @@ final class HostConnection: @unchecked Sendable {
         shutdown(fd, SHUT_RDWR)
         fd = -1
         generation += 1
-        replies.removeAll()
         state.broadcast()
     }
 
     // MARK: - Signals
 
-    /// A signal from the app: queued for the next reply to carry, and pushed
-    /// to the extension's native port straight away. Whether the push works
-    /// from inside the extension process is undocumented — Apple documents
-    /// `dispatchMessage` for the containing app — so the queue is what the
-    /// extension relies on (with a heartbeat to fetch it, `safari-native.js`),
-    /// and the push is a shortcut when it lands. Both carry the sequence
-    /// number the JS side drops duplicates by.
+    /// A signal from the app: numbered and queued for the next exchange to
+    /// carry, and offered to `push`.
     private func deliver(_ body: Data, generation reading: Int) {
         let message = String(decoding: body, as: UTF8.self)
         state.lock()
@@ -291,26 +335,36 @@ final class HostConnection: @unchecked Sendable {
             state.unlock()
             return
         }
+        guard signals.count < Self.signalLimit else {
+            log.fault("\(Self.signalLimit) signals nobody fetched; dropping the connection rather than a signal")
+            signals.removeAll()
+            dropLocked(because: "signal queue full")
+            state.unlock()
+            return
+        }
         let signal = Signal(seq: nextSeq, message: message)
         nextSeq += 1
         signals.append(signal)
-        if signals.count > Self.signalBacklog {
-            signals.removeFirst(signals.count - Self.signalBacklog)
-        }
-        let tryPush = !dispatchFailed
         state.unlock()
+        push?(signal)
+    }
 
-        guard tryPush, let extensionID = Bundle.main.bundleIdentifier else { return }
+    /// Push a signal to the extension's native port. Whether this works from
+    /// inside the extension process is undocumented — Apple documents
+    /// `dispatchMessage` for the containing app — so the JS side takes it only
+    /// as a hint to poll now (`safari-native.js`); the signal itself always
+    /// comes through the queue, in order.
+    static func dispatch(_ signal: Signal) {
+        guard let extensionID = Bundle.main.bundleIdentifier else { return }
         SFSafariApplication.dispatchMessage(
             withName: "signal",
             toExtensionWithIdentifier: extensionID,
-            userInfo: ["seq": signal.seq, "message": signal.message]
-        ) { [weak self] error in
-            guard let self, let error else { return }
-            self.log.info("pushing a signal failed: \(error.localizedDescription, privacy: .public); signals ride on replies")
-            self.state.lock()
-            self.dispatchFailed = true
-            self.state.unlock()
+            userInfo: ["seq": signal.seq]
+        ) { error in
+            if let error {
+                Logger(subsystem: "app.rowel.desktop.safari", category: "host")
+                    .debug("pushing a signal failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 }

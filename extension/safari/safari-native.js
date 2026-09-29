@@ -17,12 +17,20 @@
 // proxy that exits does it. Nothing upstream is changed; this file is loaded
 // only by the Safari manifest, right after the polyfill (safari/build.mjs).
 //
-// Signals reach the port three ways, deduplicated by the sequence number the
-// handler gives each one: on a reply; on the heartbeat below, which asks the
-// handler for them while nothing else is being sent (Safari does not let the
-// handler speak first); and pushed to a real native port, if Safari delivers
-// what the handler dispatches from inside the extension process, which Apple
-// does not document.
+// Ordering holds by construction. Every native message goes through one
+// promise chain, so there is only ever one outstanding and responses are
+// handled in the order they were sent, whatever order Safari delivers them in.
+// The handler serves one at a time too and lists each response's events —
+// signals and the reply — in the order the app sent them, so they are emitted
+// as listed. `after` (the last signal before the reply) is only checked.
+//
+// Signals come in on replies and on a heartbeat: every two seconds, when
+// nothing is outstanding, the port polls the handler (Safari does not let the
+// handler speak first). A long request — a consent dialog can take a minute —
+// holds the heartbeat off rather than queueing polls behind it. The handler
+// also pushes each signal to a real native port when Safari lets it (Apple
+// does not document that from inside an extension); a push is taken only as
+// a cue to poll now, so it cannot reorder anything.
 
 (function() {
     const HEARTBEAT_MS = 2000;
@@ -65,17 +73,15 @@
             this.open = true;
             this.live = false; // a request has been answered by the app
             this.delivered = 0; // the last signal handed to onMessage
+            this.chain = Promise.resolve();
+            this.outstanding = 0; // messages queued or on the way
+            this.pollQueued = false;
             this.heartbeat = undefined;
             this.pushed = undefined;
 
             try {
                 this.pushed = connectNative(name);
-                this.pushed.onMessage.addListener((m) => {
-                    const signal = m?.userInfo ?? m;
-                    if (signal && typeof signal.seq === 'number') {
-                        this.signals([ signal ], Infinity);
-                    }
-                });
+                this.pushed.onMessage.addListener(() => this.poll());
                 this.pushed.onDisconnect.addListener(() => {
                     this.pushed = undefined;
                 });
@@ -88,7 +94,7 @@
             if (!this.open) {
                 throw new Error('Attempt to postMessage on disconnected port');
             }
-            this.ask({ request: JSON.stringify(request) });
+            this.enqueue({ request: JSON.stringify(request) });
         }
 
         disconnect() {
@@ -96,7 +102,34 @@
             this.close();
         }
 
-        async ask(envelope) {
+        // A poll, unless one is already waiting its turn.
+        poll() {
+            if (this.open && !this.pollQueued) {
+                this.pollQueued = true;
+                this.enqueue({ poll: true });
+            }
+        }
+
+        // One native message at a time, handled in the order sent.
+        enqueue(envelope) {
+            this.outstanding++;
+            const run = async () => {
+                if (envelope.poll) {
+                    this.pollQueued = false;
+                }
+                try {
+                    await this.exchange(envelope);
+                } finally {
+                    this.outstanding--;
+                }
+            };
+            this.chain = this.chain.then(run, run);
+        }
+
+        async exchange(envelope) {
+            if (!this.open) {
+                return;
+            }
             let response;
             try {
                 response = await sendNativeMessage(this.name, envelope);
@@ -111,49 +144,58 @@
                 this.fail('no response from the Rowel app extension');
                 return;
             }
+            this.handle(response);
+        }
 
-            const signals = Array.isArray(response.signals) ? response.signals : [];
-            if (typeof response.reply === 'string') {
-                const after = typeof response.after === 'number' ? response.after : 0;
-                this.signals(signals, after);
-                const reply = parse(response.reply);
-                if (reply) {
-                    this.live = true;
-                    this.startHeartbeat();
-                    this.onMessage.emit(reply, this);
+        handle(response) {
+            const events = Array.isArray(response.events) ? response.events : [];
+            const after = typeof response.after === 'number' ? response.after : undefined;
+            let replied = false;
+            for (const event of events) {
+                if (typeof event?.reply === 'string') {
+                    replied = true;
+                    const reply = parse(event.reply);
+                    if (reply) {
+                        this.live = true;
+                        this.startHeartbeat();
+                        this.onMessage.emit(reply, this);
+                    }
+                } else if (typeof event?.seq === 'number') {
+                    if (after !== undefined && (replied ? event.seq <= after : event.seq > after)) {
+                        console.warn(`Rowel: signal ${event.seq} is ${replied ? 'after' : 'before'} `
+                            + `the reply, but the app sent it ${replied ? 'before' : 'after'} (after=${after})`);
+                    }
+                    this.signal(event);
                 }
-                this.signals(signals, Infinity);
-                return;
             }
 
-            this.signals(signals, Infinity);
             if (response.error) {
                 this.fail(`${response.error}: ${response.detail ?? ''}`);
             } else if (this.live && response.connected === false) {
-                // A heartbeat that found the connection gone: the app quit,
-                // or switched the browser integration off.
+                // The connection is gone: the app quit, or switched the browser
+                // integration off.
                 this.fail('the Rowel app closed the connection');
             }
         }
 
-        // Hand onMessage the signals up to `upTo` not yet handed over, oldest
-        // first.
-        signals(list, upTo) {
-            for (const signal of [ ...list ].sort((a, b) => a.seq - b.seq)) {
-                if (signal.seq > upTo || signal.seq <= this.delivered) {
-                    continue;
-                }
-                this.delivered = signal.seq;
-                const message = typeof signal.message === 'string' ? parse(signal.message) : signal.message;
-                if (message) {
-                    this.onMessage.emit(message, this);
-                }
+        signal(event) {
+            if (event.seq <= this.delivered) {
+                return;
+            }
+            this.delivered = event.seq;
+            const message = parse(event.signal);
+            if (message) {
+                this.onMessage.emit(message, this);
             }
         }
 
         startHeartbeat() {
             if (this.heartbeat === undefined) {
-                this.heartbeat = setInterval(() => this.ask({ poll: true }), HEARTBEAT_MS);
+                this.heartbeat = setInterval(() => {
+                    if (this.outstanding === 0) {
+                        this.poll();
+                    }
+                }, HEARTBEAT_MS);
             }
         }
 

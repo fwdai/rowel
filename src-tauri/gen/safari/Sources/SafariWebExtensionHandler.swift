@@ -7,21 +7,24 @@ import os.log
 /// reply handed back. This is what the `rowel` proxy binary is for Chrome and
 /// Firefox — which Safari cannot launch — with one difference: Safari asks and
 /// waits for one reply at a time, so what the app pushes unsolicited rides on
-/// the replies as well.
+/// the replies, and on a heartbeat poll, instead.
 ///
 /// The exchange with the extension's JS (`background/safari-native.js`):
 ///
 ///     in:  { "request": "<the KeePassXC-Browser request, as JSON text>" }
-///          { "poll": true }                      the heartbeat: signals only
-///     out: { "reply": "<the app's reply, as JSON text>",
-///            "after": 1,      the last signal the app sent before the reply
-///            "signals": [{ "seq": 1, "message": "<JSON text>" }, …],
+///          { "poll": true }                   the heartbeat: signals only
+///     out: { "events": [ { "seq": 1, "signal": "<JSON text>" },
+///                        { "reply": "<JSON text>" }, … ],
+///            "after": 1,        the last signal the app sent before the reply
 ///            "connected": true }
-///          { "error": "not-running" | "disconnected" | "bad-request",
-///            "detail": "…", "signals": […], "connected": false }
+///          plus, when there is no reply,
+///            "error": "not-running" | "disconnected" | "bad-request",
+///            "detail": "…"
 ///
-/// Requests and replies travel as text so nothing is lost converting between
-/// JSON and property-list types (a JSON `null`, say, has no plist form).
+/// `events` is in the order the app sent them; the JS side emits them as
+/// they are, and only checks them against `after`. Requests and replies
+/// travel as text so nothing is lost converting between JSON and
+/// property-list types (a JSON `null`, say, has no plist form).
 final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     private static let log = Logger(subsystem: "app.rowel.desktop.safari", category: "handler")
 
@@ -38,48 +41,50 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         }
     }
 
-    static func answer(_ message: Any?) -> [String: Any] {
-        let host = HostConnection.shared
+    static func answer(_ message: Any?, host: HostConnection = .shared) -> [String: Any] {
         guard let envelope = message as? [String: Any] else {
-            return failure("bad-request", "not an object", host)
+            return badRequest("not an object")
         }
         if envelope["poll"] != nil {
-            return [
-                "signals": signals(host),
-                "connected": host.isConnected,
-            ]
+            return encode(host.poll())
         }
         guard let text = envelope["request"] as? String,
             let request = text.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: request) as? [String: Any]
         else {
-            return failure("bad-request", "no request in the message", host)
+            return badRequest("no request in the message")
         }
         let action = object["action"] as? String ?? ""
-        switch host.send(request, action: action) {
-        case .success(let reply):
-            return [
-                "reply": String(decoding: reply.body, as: UTF8.self),
-                "after": reply.after,
-                "signals": signals(host),
-                "connected": true,
-            ]
-        case .failure(let error):
-            log.info("\(action, privacy: .public): \(error.code, privacy: .public) (\(error.detail, privacy: .public))")
-            return failure(error.code, error.detail, host)
+        let outcome = host.request(request, action: action)
+        if let failure = outcome.failure {
+            log.info("\(action, privacy: .public): \(failure.code, privacy: .public) (\(failure.detail, privacy: .public))")
         }
+        return encode(outcome)
     }
 
-    private static func failure(_ code: String, _ detail: String, _ host: HostConnection) -> [String: Any] {
-        [
-            "error": code,
-            "detail": detail,
-            "signals": signals(host),
-            "connected": host.isConnected,
+    static func encode(_ outcome: HostConnection.Outcome) -> [String: Any] {
+        var response: [String: Any] = [
+            "events": outcome.events.map { event -> [String: Any] in
+                switch event {
+                case .signal(let signal): return ["seq": signal.seq, "signal": signal.message]
+                case .reply(let body): return ["reply": String(decoding: body, as: UTF8.self)]
+                }
+            },
+            "connected": outcome.connected,
         ]
+        if let after = outcome.after {
+            response["after"] = after
+        }
+        if let failure = outcome.failure {
+            response["error"] = failure.code
+            response["detail"] = failure.detail
+        }
+        return response
     }
 
-    private static func signals(_ host: HostConnection) -> [[String: Any]] {
-        host.takeSignals().map { ["seq": $0.seq, "message": $0.message] }
+    // Refused before it reaches the connection: no events, which stay queued
+    // for the next exchange.
+    private static func badRequest(_ detail: String) -> [String: Any] {
+        ["events": [], "connected": false, "error": "bad-request", "detail": detail]
     }
 }
