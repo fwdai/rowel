@@ -64,10 +64,24 @@ impl Default for GeneratorDefaults {
 /// turns it on in Settings, which is also what writes the native messaging
 /// manifests a browser finds the app by. Which extensions may talk to it is
 /// not a preference: that list lives inside each vault (`browser::clients`).
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+///
+/// `keepassxc_compat` also registers under KeePassXC's host name, for the
+/// stock KeePassXC-Browser extension (`browser::manifest::KEEPASSXC`). On by
+/// default while the Rowel extension is not in the stores yet.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BrowserSettings {
     pub enabled: bool,
+    pub keepassxc_compat: bool,
+}
+
+impl Default for BrowserSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            keepassxc_compat: true,
+        }
+    }
 }
 
 /// Every preference the app has, with the defaults a fresh install starts from.
@@ -239,6 +253,19 @@ mod tests {
         assert_eq!(settings.generator, GeneratorDefaults::default());
         assert_eq!(settings.generator.length, 20);
         assert!(!settings.browser.enabled);
+        assert!(settings.browser.keepassxc_compat);
+    }
+
+    // A file from before the compatibility setting existed keeps the stock
+    // extension working: the missing key reads as on.
+    #[test]
+    fn an_older_browser_group_reads_keepassxc_compat_as_on() {
+        let stored: Settings = serde_json::from_str(r#"{"browser":{"enabled":true}}"#).unwrap();
+        assert!(stored.browser.enabled);
+        assert!(stored.browser.keepassxc_compat);
+
+        let json = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(json.contains("\"keepassxcCompat\":true"));
     }
 
     #[test]

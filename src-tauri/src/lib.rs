@@ -154,11 +154,15 @@ pub fn run() {
             // from launch, so a browser that starts before the vault is
             // unlocked finds the app and can ask for the unlock. Writing the
             // manifests again is idempotent, and one another host owns is
-            // left alone (`manifest::install`).
+            // left alone (`manifest::install`). A manifest from before Rowel
+            // had a host name of its own is rewritten or taken back here too.
             #[cfg(desktop)]
-            if settings::current(app.handle()).browser.enabled {
-                browser::manifest::install(&root);
-                browser::server::start(app.handle());
+            {
+                let host = settings::current(app.handle()).browser;
+                if host.enabled {
+                    browser::manifest::install(&root, host.keepassxc_compat);
+                    browser::server::start(app.handle());
+                }
             }
             // Which workspace was open last. Read before the window exists, so
             // the lock screen the user lands on is that workspace's.
@@ -251,6 +255,8 @@ pub fn run() {
             commands::browser::browser_status,
             #[cfg(desktop)]
             commands::browser::browser_set_enabled,
+            #[cfg(desktop)]
+            commands::browser::browser_set_keepassxc_compat,
             #[cfg(desktop)]
             commands::browser::browser_respond,
             #[cfg(desktop)]
