@@ -90,6 +90,7 @@ export const appStatusDefault = (): AppStatus => ({
 
 const BROWSER_OFF: BrowserStatus = {
   enabled: false,
+  keepassxcCompat: true,
   browsers: [
     { id: 'chrome', label: 'Google Chrome', detected: true, installed: false, conflict: false }
   ],
@@ -223,6 +224,10 @@ const DEFAULTS: Record<string, Handler> = {
   // the status as Rust would then have it.
   browser_status: () => BROWSER_OFF,
   browser_set_enabled: ({ enabled }) => ({ ...BROWSER_OFF, enabled: enabled as boolean }),
+  browser_set_keepassxc_compat: ({ enabled }) => ({
+    ...BROWSER_OFF,
+    keepassxcCompat: enabled as boolean
+  }),
   browser_respond: () => undefined,
   browser_passkey_respond: () => undefined,
   browser_forget_client: () => BROWSER_OFF

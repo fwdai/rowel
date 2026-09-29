@@ -14,6 +14,7 @@ const KEY = 'AAAAbbbbCCCCddddEEEEffffGGGGhhhhIIIIjjjjKKK='
 
 const status = (overrides: Partial<BrowserStatus> = {}): BrowserStatus => ({
   enabled: false,
+  keepassxcCompat: true,
   browsers: [
     { id: 'chrome', label: 'Google Chrome', detected: true, installed: false, conflict: false },
     { id: 'edge', label: 'Microsoft Edge', detected: true, installed: false, conflict: true },
@@ -36,14 +37,15 @@ describe('Settings › Browser extension', () => {
       status({
         enabled: true,
         browsers: [
-          { id: 'chrome', label: 'Google Chrome', detected: true, installed: true, conflict: false }
+          { id: 'chrome', label: 'Google Chrome', detected: true, installed: true, conflict: false },
+          { id: 'edge', label: 'Microsoft Edge', detected: true, installed: true, conflict: true }
         ]
       })
     )
     const chrome = await openSection()
 
     expect(chrome).toHaveTextContent('Detected')
-    expect(screen.getByTestId('settings-browser-edge')).toHaveTextContent('Registered to KeePassXC')
+    expect(screen.getByTestId('settings-browser-edge')).toHaveTextContent('Detected')
     expect(screen.getByTestId('settings-browser-firefox')).toHaveTextContent('Not found')
     expect(screen.getByTestId('settings-browser-clients-empty')).toBeInTheDocument()
 
@@ -51,7 +53,40 @@ describe('Settings › Browser extension', () => {
 
     expect(calls('browser_set_enabled')).toEqual([{ enabled: true }])
     expect(screen.getByTestId('settings-browser-toggle')).toHaveAttribute('aria-checked', 'true')
-    expect(screen.getByTestId('settings-browser-chrome')).toHaveTextContent('Ready')
+    expect(screen.getByTestId('settings-browser-chrome')).toHaveTextContent(/^Google ChromeReady$/)
+    // Rowel's own extension works there; only KeePassXC-Browser goes to KeePassXC.
+    expect(screen.getByTestId('settings-browser-edge')).toHaveTextContent(
+      'Ready — KeePassXC-Browser here connects to KeePassXC'
+    )
+  })
+
+  it('offers the KeePassXC-Browser toggle only while the host is on', async () => {
+    mockCommand('browser_status', () => status())
+    await openSection()
+
+    const compat = screen.getByTestId('settings-browser-keepassxc-toggle')
+    expect(compat).toHaveAttribute('aria-checked', 'true')
+    expect(compat).toBeDisabled()
+  })
+
+  it('turns KeePassXC-Browser compatibility off', async () => {
+    mockCommand('browser_status', () => status({ enabled: true }))
+    mockCommand('browser_set_keepassxc_compat', ({ enabled }) =>
+      status({ enabled: true, keepassxcCompat: enabled as boolean })
+    )
+    await openSection()
+
+    const compat = screen.getByTestId('settings-browser-keepassxc-toggle')
+    expect(compat).toBeEnabled()
+    await userEvent.click(compat)
+
+    expect(calls('browser_set_keepassxc_compat')).toEqual([{ enabled: false }])
+    expect(screen.getByTestId('settings-browser-keepassxc-toggle')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+    // The host itself stays on.
+    expect(screen.getByTestId('settings-browser-toggle')).toHaveAttribute('aria-checked', 'true')
   })
 
   it('forgets a connected extension', async () => {
