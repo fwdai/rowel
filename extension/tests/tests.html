@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Tests</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="stylesheet" href="../css/colors.css">
+    <link rel="stylesheet" href="../bootstrap/bootstrap.min.css">
+    <link rel="stylesheet" href="../fonts/fork-awesome.min.css">
+    <link rel="stylesheet" href="../options/options.css">
+    <link rel="icon" type="image/png" href="../icons/keepassxc_32x32.png" sizes="32x32">
+    <link rel="icon" type="image/png" href="../icons/keepassxc_64x64.png" sizes="64x64">
+    <link rel="icon" type="image/png" href="../icons/keepassxc_96x96.png" sizes="96x96">
+    <script src="../common/browser-polyfill.min.js"></script>
+    <script defer src="../common/global.js"></script>
+    <script defer src="../common/sites.js"></script>
+    <script defer src="../content/ui.js"></script>
+    <script defer src="../content/pwgen.js"></script>
+    <script defer src="../content/autocomplete.js"></script>
+    <script defer src="../content/banner.js"></script>
+    <script defer src="../content/credential-autocomplete.js"></script>
+    <script defer src="../content/fields.js"></script>
+    <script defer src="../content/form.js"></script>
+    <script defer src="../content/fill.js"></script>
+    <script defer src="../content/keepassxc-browser.js"></script>
+    <script defer src="../content/observer-helper.js"></script>
+    <script defer src="../content/totp-autocomplete.js"></script>
+    <script defer src="../content/totp-field.js"></script>
+    <script defer src="../content/username-field.js"></script>
+    <script defer src="assert.js"></script>
+    <script defer src="tests.js"></script>
+    <style>
+      .hiddenOne {
+          visibility: hidden;
+      }
+    </style>
+  </head>
+  <body class="pt-3 pb-5">
+    <div class="container-fluid">
+      <div class="row">
+        <main class="col-md-9 col-lg-10 offset-md-3 offset-lg-2 px-4 mt-5 mt-md-0">
+          <div class="content">
+
+            <!-- Content script tests -->
+            <div class="tab">
+              <h2 class="pb-3 mt-0">Content script tests</h2>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> General (global.js)</div>
+                <div class="card-body" id="general-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Input field matching (keepassxc-browser.js)</div>
+                <div class="card-body" id="input-field-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Search fields (keepassxc-browser.js)</div>
+                <div class="card-body" id="search-field-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> TOTP fields (totp-field.js)</div>
+                <div class="card-body" id="totp-field-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Password change (keepassxc-browser.js)</div>
+                <div class="card-body" id="password-change-results"></div>
+              </div>
+
+            </div>
+
+            <!-- Test content -->
+            <!-- =================================== -->
+
+            <div id="basic1" style="display: none;">
+              <input placeholder="username" type="text" name="loginField">
+              <input placeholder="password" type="password" name="passwordField">
+            </div>
+
+            <div id="basic2" style="display: none;">
+              <input placeholder="username" type="text" name="loginField">
+            </div>
+
+            <div id="basic3" style="display: none;">
+              <input placeholder="password" type="password" name="passwordField">
+            </div>
+
+            <div id="basic4" style="display: none;">
+              <input placeholder="username" type="text" name="loginField">
+              <input placeholder="password" type="password" name="passwordField">
+              <input type="text" id="auth">
+            </div>
+
+            <div id="div1" style="display: none;">
+              <button id="toggle1">View login form</button>
+              <div id="loginForm1" style="display: none;">
+                  <input placeholder="username" type="text" name="loginField">
+                  <input placeholder="password" type="password" name="passwordField">
+              </div>
+            </div>
+
+            <div id="div2" style="display: none;">
+              <button id="toggle2">View login form</button>
+
+              <div id="dialog" style="position: relative; z-index: auto;">
+                  <div id="outer" style="overflow: hidden; height: 0px;">
+                      <div id="inner" style="margin: -197px auto auto;">
+                          <form method="post" class="signin" action="#">
+                              <input placeholder="username" type="text" name="loginField">
+                              <input placeholder="password" type="password" name="passwordField">
+                          </form>
+                      </div>
+                  </div>
+              </div>
+            </div>
+
+            <div id="div3" style="display: none;">
+              <button id="toggle3">View login form</button>
+            </div>
+
+            <div id="div4" style="display: none;">
+              <button id="toggle4">View login form</button>
+            </div>
+
+            <div id="hiddenFields1" style="display: none;">
+              <div style="position: absolute; margin-left: -500px;">
+                <input placeholder="outsideLeft" type="password" name="outsideLeft">
+              </div>
+
+              <div style="position: absolute; top: -500px;">
+                  <input placeholder="outsideTop" type="password" name="outsideTop">
+              </div>
+            </div>
+
+            <div id="hiddenFields2" style="display: none;">
+              <div>
+                <input placeholder="zeroSize" type="password" name="zeroSize" style="width: 0px; height: 0px;">
+                <input placeholder="oneSize" type="password" name="oneSize" style="width: 1px; height: 1px;">
+                <input placeholder="visibilityHidden" type="password" name="visibilityHidden" style="visibility: hidden;">
+                <input placeholder="visibilityCollapse" type="password" name="visibilityCollapse" style="visibility: collapse;">
+                <input placeholder="displayNone" type="password" name="displayNone" style="display: none;">
+                <input placeholder="hiddenOne" type="password" name="hiddenOne" class="hiddenOne">
+                <input placeholder="normal" type="password" name="normal">
+              </div>
+            </div>
+
+            <div id="passwordChange1" style="display: none;">
+              <br><input type="password" name="Old password" value="oldPassword">
+              <br><input type="password" name="New password" value="newPassword">
+              <br><input type="password" name="Repeat password" value="newPassword">
+            </div>
+
+            <div id="passwordChange2" style="display: none;">
+              <br><input type="password" name="New password" value="newPassword">
+              <br><input type="password" name="Repeat password" value="newPassword">
+              <br><input type="password" name="Old password" value="oldPassword">
+            </div>
+
+            <div id="passwordChange3" style="display: none;">
+              <form action="secondPage">
+                <br><input type="password" name="Old password" value="oldPassword">
+                <br><input type="password" name="New password" value="newPassword">
+                <br><input type="password" name="Repeat password" value="newPassword">
+                <br><input type="submit" value="Change password">
+              </form>
+            </div>
+
+            <div id="passwordChange4" style="display: none;">
+              <form action="secondPage">
+                <br><input type="password" name="New password" value="newPassword">
+                <br><input type="password" name="Repeat password" value="newPassword">
+                <br><input type="password" name="Old password" value="oldPassword">
+                <br><input type="submit" value="Change password">
+              </form>
+            </div>
+
+            <div id="passwordChange5" style="display: none;">
+              <form action="firstForm">
+                <br><input type="password" name="Old password" value="oldPassword">
+                </form>
+
+                <form action="secondForm">
+                <br><input type="password" name="New password" value="newPassword">
+                </form>
+
+                <form action="thirdForm">
+                <br><input type="password" name="Repeat password" value="newPassword">
+              </form>
+            </div>
+          </main>
+      </div>
+    </div>
+
+    <!-- These need to be loaded only after everything else -->
+    <script src="scripts/div1.js"></script>
+    <script src="scripts/div2.js"></script>
+    <script src="scripts/div3.js"></script>
+    <script src="scripts/div4.js"></script>
+  </body>
+</html>

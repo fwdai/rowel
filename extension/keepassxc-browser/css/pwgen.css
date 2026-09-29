@@ -1,0 +1,21 @@
+.kpxc-pwgen-icon {
+    border: 0;
+    cursor: pointer;
+    padding: 0 !important;
+    position: absolute;
+}
+
+.kpxc-pwgen-icon.key {
+    background: url('chrome-extension://__MSG_@@extension_id__/icons/key.svg') right no-repeat;
+    background-size: contain;
+}
+
+.kpxc-pwgen-icon.key-moz {
+    background: url('moz-extension://__MSG_@@extension_id__/icons/key.svg') right no-repeat;
+    background-size: contain;
+}
+
+.kpxc-pwgen-icon.key-safari {
+    background: url('safari-web-extension://__MSG_@@extension_id__/icons/key.svg') right no-repeat;
+    background-size: contain;
+}

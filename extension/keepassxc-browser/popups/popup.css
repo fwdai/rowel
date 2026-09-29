@@ -1,0 +1,216 @@
+body {
+    background-color: var(--kpxc-background-color) !important;
+    color: var(--kpxc-text-color) !important;
+    display: flex;
+    font-family: sans-serif;
+    font-size: 14px !important;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    width: 460px;
+}
+
+code {
+    color: var(--bs-danger) !important;
+    font-size: 14px !important;
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    max-width: 460px;
+}
+
+.loader {
+    animation: spin 2s linear infinite;
+    border: 4px solid #f3f3f3;
+    border-radius: 50%;
+    border-top: 4px solid #28a745;
+    float: left;
+    height: 1.4em;
+    margin-right: 1em;
+    width: 1.4em;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.list-group {
+    font-size: .9em !important;
+    margin-bottom: 1rem !important;
+}
+
+.list-group-item {
+    padding: 5px 10px !important;
+}
+
+.list-group-item+.list-group-item:first-child {
+    border-top-width: 1px !important;
+    border-top-left-radius: .25rem;
+    border-top-right-radius: .25rem;
+}
+
+.list-group-item:hover {
+    cursor: pointer
+}
+
+.settings {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid rgb(203, 207, 203, 0.25);
+    font-size: 90%;
+    text-align: left;
+}
+
+.settings label {
+    display: block;
+}
+
+.settings label input {
+    vertical-align: middle;
+}
+
+.settings .description {
+    margin-top: 3px;
+    font-size: 80%;
+    color: #787878;
+}
+
+.small {
+    margin-top: 3px;
+    margin-left: 12px;
+    font-size: 80%;
+    color: #787878;
+}
+
+.action-buttons-area {
+    display: flex;
+    justify-content: flex-start;
+    gap: 6px;
+}
+
+.lock-button-area {
+    display: flex;
+    justify-content: flex-end;
+}
+
+#list {
+    padding-left: 0px;
+}
+
+#login-list {
+    overflow-y: auto;
+    max-height: 380px;
+}
+
+#child {
+    border-top: 0px;
+}
+
+#popup-alerts {
+    margin-top: 10px;
+    text-align: start;
+}
+
+#filter-block,
+#not-configured,
+#need-reconfigure,
+#configured-not-associated,
+#configured-and-associated,
+#error-encountered,
+#database-not-opened,
+#username-field-detected,
+#update-available,
+#getting-started-guide,
+#troubleshooting-guide {
+    display: none;
+}
+
+#options-button {
+    height: 31px;
+    width: 2.5rem;
+}
+
+#choose-custom-login-fields-button {
+    background-image: url('chrome-extension://__MSG_@@extension_id__/icons/custom_login_fields.svg');
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 70%;
+    height: 31px;
+    width: 2.5rem;
+}
+
+#choose-custom-login-fields-button-moz {
+    background-image: url('moz-extension://__MSG_@@extension_id__/icons/custom_login_fields.svg');
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 70%;
+    height: 31px;
+    width: 2.5rem;
+}
+
+#choose-custom-login-fields-button-safari {
+    background-image: url('safari-web-extension://__MSG_@@extension_id__/icons/custom_login_fields.svg');
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 70%;
+    height: 31px;
+    width: 2.5rem;
+}
+
+#lock-database-button {
+    display: none;
+    width: 2.5rem;
+}
+
+#login-filter {
+    outline: none;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    margin-bottom: 5px;
+    padding: 2px 10px;
+    width: 100%;
+}
+
+.right-align {
+    text-align: right;
+}
+
+#left-margin {
+    margin-left: 1em;
+}
+
+@media (prefers-color-scheme: dark), (prefers-color-scheme: light) {
+    body {
+        background: var(--kpxc-background-color) !important;
+        color: var(--kpxc-text-color) !important;
+    }
+
+    input, input[type="checkbox"] {
+        background-color: var(--kpxc-input-background-color) !important;
+        border: var(--kpxc-input-border);
+        border-color: var(--kpxc-input-border-color);
+    }
+
+    .list-group-item {
+        background-color: var(--kpxc-input-background-color) !important;
+        color: var(--kpxc-text-color) !important;
+    }
+
+    .list-group-item:hover {
+        background-color: var(--kpxc-table-hover-color) !important;
+    }
+
+    span.bg-success {
+        background-color: var(--kpxc-table-hover-color) !important;
+        color: var(--kpxc-text-color) !important;
+    }
+
+    #login-filter {
+        color: var(--kpxc-text-color) !important;
+    }
+}

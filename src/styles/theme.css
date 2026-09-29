@@ -7,6 +7,9 @@
  * `base.sass` / `typography.sass` provided.
  */
 @import 'tailwindcss';
+/* The vendored browser extension's Bootstrap markup would otherwise add its
+   class names to the app's utilities. */
+@source not '../../extension';
 
 /*
  * Shared motion primitives for the redesign (from the Keyring lock prototype).
