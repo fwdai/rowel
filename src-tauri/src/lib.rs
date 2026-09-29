@@ -107,8 +107,9 @@ pub fn run() {
 
     // In-app W3C WebDriver server (port 4445) for the E2E smoke suite. Never
     // compiled into a release binary, and desktop-only — the suite drives the
-    // desktop app.
-    #[cfg(all(debug_assertions, desktop))]
+    // desktop app. Not on Windows for now: the plugin does not build against
+    // tauri 2.12's webview2-com there (see the dependency note in Cargo.toml).
+    #[cfg(all(debug_assertions, desktop, not(target_os = "windows")))]
     {
         builder = builder.plugin(tauri_plugin_webdriver::init());
     }

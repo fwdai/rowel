@@ -95,13 +95,23 @@ ssh-key = { version = "0.6.7", default-features = false, features = [
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Desktop-only, minus Windows. The in-app WebDriver server for the E2E smoke
+# suite (debug builds only, see `lib.rs`). tauri-plugin-webdriver 0.2.3 still
+# pins webview2-com 0.38 / windows 0.61 while wry 0.57 (tauri 2.12) moved to
+# webview2-com 0.39 / windows 0.62, so on Windows the ICoreWebView2 handle wry
+# hands the plugin is a different type from the one its bindings expect and the
+# crate fails to compile. CI only runs the E2E suite on Linux. Re-enable on
+# Windows once upstream releases against windows 0.62:
+# https://github.com/Choochmeque/tauri-plugin-webdriver
+[target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "windows")))'.dependencies]
+tauri-plugin-webdriver = "0.2"
+
 # Desktop-only (the `desktop` cfg alias tauri-build defines is this same
 # predicate). None of these support a mobile target.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
-tauri-plugin-webdriver = "0.2"
 # Only the legacy-Electron vault migration needs it, and that only ever ran on
 # desktop (see `storage::ensure_migrated`).
 dirs = "7"
