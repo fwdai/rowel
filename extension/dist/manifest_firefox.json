@@ -138,9 +138,6 @@
         "retrieve_credentials_forced": {
             "description": "__MSG_credentialsRetrieveButton__"
         },
-        "request_autotype": {
-            "description": "__MSG_contextMenuRequestGlobalAutoType__"
-        },
         "reopen_database": {
             "description": "__MSG_popupReopenButton__"
         },

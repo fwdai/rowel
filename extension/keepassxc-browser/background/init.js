@@ -6,8 +6,10 @@ const contextMenuItems = [
     { title: tr('contextMenuFillTOTP'), action: 'fill_totp' },
     { title: tr('contextMenuFillAttribute'), id: 'fill_attribute', visible: false },
     { title: tr('contextMenuShowPasswordGenerator'), action: 'show_password_generator' },
-    { title: tr('contextMenuSaveCredentials'), action: 'save_credentials' },
-    { title: tr('contextMenuRequestGlobalAutoType'), action: 'request_autotype' }
+    { title: tr('contextMenuSaveCredentials'), action: 'save_credentials' }
+    // Rowel: no "Request Global Auto-Type". The host has no auto-type and
+    // answers `request-autotype` with IncorrectAction (the command is out of
+    // the manifests too).
 ];
 
 const initListeners = async function() {
