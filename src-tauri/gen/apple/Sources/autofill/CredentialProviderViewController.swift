@@ -55,6 +55,36 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// What Cancel tells iOS: the user's choice, unless the request already
     /// failed for a reason of its own.
     private var failure = ASExtensionError.Code.userCanceled
+    /// The unlock waits for two things, in whichever order iOS delivers them:
+    /// the request, from one of the prepare callbacks, and the sheet being on
+    /// screen. iOS makes the prepare callback before it presents the sheet,
+    /// and a Face ID prompt asked for then has no visible UI to attach to —
+    /// LocalAuthentication refuses it with "User interaction is required",
+    /// and the first attempt fails before it begins. So the prompt goes up
+    /// from `viewDidAppear`, or from the callback when that comes second.
+    private var hasRequest = false
+    private var isOnScreen = false
+    private var started = false
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        isOnScreen = true
+        startWhenReady()
+    }
+
+    // What iOS asked for, from whichever entry point it called; the unlock
+    // starts once the sheet is showing.
+    private func take(_ request: Request) {
+        self.request = request
+        hasRequest = true
+        startWhenReady()
+    }
+
+    private func startWhenReady() {
+        guard hasRequest, isOnScreen, !started else { return }
+        started = true
+        unlock()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -79,8 +109,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     // MARK: - The list
 
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
-        request = .list(serviceIdentifiers: serviceIdentifiers.map(\.identifier), passkey: nil)
-        unlock()
+        take(.list(serviceIdentifiers: serviceIdentifiers.map(\.identifier), passkey: nil))
     }
 
     // A passkey sign-in: the site's passkeys the relying party allows, and
@@ -90,7 +119,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         for serviceIdentifiers: [ASCredentialServiceIdentifier],
         requestParameters: ASPasskeyCredentialRequestParameters
     ) {
-        request = .list(
+        take(.list(
             serviceIdentifiers: serviceIdentifiers.map(\.identifier),
             passkey: PasskeyAssertion(
                 rpId: requestParameters.relyingPartyIdentifier,
@@ -98,8 +127,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 allowedCredentialIds: requestParameters.allowedCredentials,
                 record: nil
             )
-        )
-        unlock()
+        ))
     }
 
     // MARK: - One identity from QuickType
@@ -154,8 +182,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
     private func provide(_ request: Request?) {
         guard let request else { return cancel(.credentialIdentityNotFound) }
-        self.request = request
-        unlock()
+        take(request)
     }
 
     // MARK: - A passkey registration
@@ -171,7 +198,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         if #available(iOS 18.0, *) {
             excluded = request.excludedCredentials?.map(\.credentialID) ?? []
         }
-        self.request = .registration(PasskeyRegistration(
+        take(.registration(PasskeyRegistration(
             rpId: identity.relyingPartyIdentifier,
             // Not in iOS's request: the new login is named after the rpId.
             rpName: nil,
@@ -181,8 +208,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             clientDataHash: request.clientDataHash,
             excludedCredentialIds: excluded,
             supportedAlgorithms: request.supportedAlgorithms.map { Int64($0.rawValue) }
-        ))
-        unlock()
+        )))
     }
 
     // MARK: - Unlocking and answering
