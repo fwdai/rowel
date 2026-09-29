@@ -323,9 +323,41 @@ pub fn status_in(places: &impl Places, exe: Option<&Path>, compat: bool) -> Vec<
         .collect()
 }
 
+fn remove_file(path: &Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+// Whether a registry value names `path`. Windows paths ignore case and take
+// either slash, and a value written by another tool may differ in both, or end
+// in a separator; reading such a value as another file would delete a
+// manifest KeePassXC-Browser still launches through.
+#[cfg(any(windows, test))]
+fn names(value: &str, path: &Path) -> bool {
+    let normal = |s: &str| {
+        s.trim_end_matches(['\\', '/'])
+            .replace('/', "\\")
+            .to_lowercase()
+    };
+    normal(value) == normal(&path.to_string_lossy())
+}
+
+/// Delete Windows' one manifest per browser from before Rowel had a name of
+/// its own, unless `named` — the value of KeePassXC's registry key — still
+/// points at it.
+#[cfg(any(windows, test))]
+pub fn remove_unless_named(legacy: &Path, named: Option<&str>) -> io::Result<()> {
+    if named.is_some_and(|value| names(value, legacy)) {
+        return Ok(());
+    }
+    remove_file(legacy)
+}
+
 #[cfg(not(windows))]
 mod platform {
-    use super::{Browser, Family, NativeHost};
+    use super::{remove_file, Browser, Family, NativeHost};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -393,10 +425,7 @@ mod platform {
         let Some(path) = manifest_path(host, browser) else {
             return Ok(());
         };
-        match fs::remove_file(path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            other => other,
-        }
+        remove_file(&path)
     }
 }
 
@@ -406,7 +435,7 @@ mod platform {
 // which is what `existing` reads.
 #[cfg(windows)]
 mod platform {
-    use super::{Browser, NativeHost, KEEPASSXC};
+    use super::{remove_file, Browser, NativeHost, KEEPASSXC};
     use std::fs;
     use std::path::{Path, PathBuf};
     use windows_registry::CURRENT_USER;
@@ -424,13 +453,6 @@ mod platform {
             .join(format!("{}.json", host.name))
     }
 
-    fn remove_file(path: &Path) -> std::io::Result<()> {
-        match fs::remove_file(path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            other => other,
-        }
-    }
-
     // The one manifest per browser from before Rowel had a name of its own,
     // registered under KeePassXC's. It goes once that key no longer points at
     // it: rewritten, removed, or taken by KeePassXC since.
@@ -440,10 +462,7 @@ mod platform {
             .open(key(&KEEPASSXC, browser))
             .and_then(|key| key.get_string(""))
             .ok();
-        if named.is_some_and(|path| Path::new(&path) == legacy) {
-            return Ok(());
-        }
-        remove_file(&legacy)
+        super::remove_unless_named(&legacy, named.as_deref())
     }
 
     pub fn detected(browser: &Browser) -> bool {

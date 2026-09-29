@@ -1589,6 +1589,46 @@ fn remove_takes_back_both_names_from_every_browser() {
     }
 }
 
+// Windows' flat manifest from before the rename, `<data>/browser/<id>.json`:
+// kept while KeePassXC's registry value names it — however that value spells
+// the path — and deleted once the value names anything else, or is gone.
+#[test]
+fn the_legacy_windows_manifest_goes_only_once_the_registry_stops_naming_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let legacy = dir.path().join("browser").join("chrome.json");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, "{}").unwrap();
+    let spelled = legacy.to_string_lossy().into_owned();
+
+    for named in [
+        spelled.clone(),
+        spelled.to_uppercase(),
+        spelled.replace('/', "\\"),
+        format!("{spelled}\\"),
+    ] {
+        manifest::remove_unless_named(&legacy, Some(&named)).unwrap();
+        assert!(
+            legacy.exists(),
+            "deleted while the registry named it as {named}"
+        );
+    }
+
+    let rewritten = dir
+        .path()
+        .join("browser")
+        .join("chrome")
+        .join(format!("{}.json", KEEPASSXC.name));
+    manifest::remove_unless_named(&legacy, Some(&rewritten.to_string_lossy())).unwrap();
+    assert!(!legacy.exists());
+
+    // Already gone, and no key left: nothing to do, and no error.
+    manifest::remove_unless_named(&legacy, None).unwrap();
+
+    std::fs::write(&legacy, "{}").unwrap();
+    manifest::remove_unless_named(&legacy, None).unwrap();
+    assert!(!legacy.exists());
+}
+
 #[test]
 fn every_browser_has_a_place_on_every_platform() {
     for browser in manifest::BROWSERS {
