@@ -3,7 +3,7 @@
 const keepassClient = {};
 keepassClient.keySize = 24;
 keepassClient.messageTimeout = 500; // Milliseconds
-keepassClient.nativeHostName = 'org.keepassxc.keepassxc_browser';
+keepassClient.nativeHostName = 'app.rowel.browser';
 keepassClient.nativePort = null;
 keepassClient.webSocket = null;
 

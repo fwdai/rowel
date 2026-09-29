@@ -1,6 +1,6 @@
 {
     "extensionDescription": {
-        "message": "KeePassXC 与现代 Web 浏览器的集成",
+        "message": "Rowel 与现代 Web 浏览器的集成",
         "description": "Name of the extension."
     },
     "addSitePreferenceButtonTitle": {
@@ -16,7 +16,7 @@
         "description": "Allow Cross-Origin iframes button title text."
     },
     "connectButtonTitle": {
-        "message": "将当前使用的数据库连接到 KeePassXC-Browser。",
+        "message": "将当前使用的数据库连接到 Rowel。",
         "description": "Connect button title text."
     },
     "copyDebugInfoButtonTitle": {
@@ -28,7 +28,7 @@
         "description": "Dismiss HTTP Auth button title text."
     },
     "reconnectButtonTitle": {
-        "message": "将当前使用的数据库重新连接到 KeePassXC-Browser。",
+        "message": "将当前使用的数据库重新连接到 Rowel。",
         "description": "Reconnect button title text."
     },
     "redetectButtonTitle": {
@@ -36,11 +36,11 @@
         "description": "Redetect login fields button title text."
     },
     "reloadButtonTitle": {
-        "message": "重新加载扩展程序并重新连接 KeePassXC。",
+        "message": "重新加载扩展程序并重新连接 Rowel。",
         "description": "Reload button title text."
     },
     "removeConnectedDatabaseButtonTitle": {
-        "message": "删除 KeePassXC-Browser 已连接的数据库。",
+        "message": "删除 Rowel 已连接的数据库。",
         "description": "Remove button title on Connected Databases tab."
     },
     "removeCustomLoginFieldsButtonTitle": {
@@ -116,7 +116,7 @@
         "description": "Cannot decrypt message."
     },
     "errorMessageTimeout": {
-        "message": "无法连接到 KeePassXC。请检查 KeePassXC 设置中是否启用了浏览器集成。",
+        "message": "无法连接到 Rowel。请检查 Rowel 设置中是否启用了浏览器集成。",
         "description": "Cannot connect to KeePassXC. Check that browser integration is enabled in KeePassXC settings."
     },
     "errorMessageCanceled": {
@@ -128,7 +128,7 @@
         "description": "Message encryption failed. Is KeePassXC running?"
     },
     "errorMessageAssociate": {
-        "message": "KeePassXC 关联失败，请重试。",
+        "message": "Rowel 关联失败，请重试。",
         "description": "KeePassXC association failed, try again."
     },
     "errorMessageKeyExchange": {
@@ -256,7 +256,7 @@
         "description": "Username or password cannot contain references."
     },
     "errorNotConnected": {
-        "message": "未连接到 KeePassXC。",
+        "message": "未连接到 Rowel。",
         "description": "Error notification shown when not connected to KeePassXC."
     },
     "errorCurrentDatabaseNotConnected": {
@@ -280,10 +280,10 @@
         "description": "Password icon title text."
     },
     "passwordGeneratorNotSupported": {
-        "message": "此版本 KeePassXC 不支持运行密码生成器。请将 KeePassXC 更新到新版本。"
+        "message": "此版本 Rowel 不支持运行密码生成器。请将 Rowel 更新到新版本。"
     },
     "usernameFieldText": {
-        "message": "从 KeePassXC 填充凭据。",
+        "message": "从 Rowel 填充凭据。",
         "description": "Username field icon hover text."
     },
     "usernameFieldTextNoCredentials": {
@@ -295,7 +295,7 @@
         "description": "Username field icon hover text when database is locked."
     },
     "usernameDisconnectedFieldText": {
-        "message": "KeePassXC 已断开连接。",
+        "message": "Rowel 已断开连接。",
         "description": "Username field icon hover text when KeePassXC is disconnected."
     },
     "totp": {
@@ -303,7 +303,7 @@
         "description": "TOTP text."
     },
     "totpFieldText": {
-        "message": "从 KeePassXC 填充 TOTP",
+        "message": "从 Rowel 填充 TOTP",
         "description": "OTP field icon hover text."
     },
     "defineClose": {
@@ -403,11 +403,11 @@
         "description": "Alert message when filling credentials is blocked due to iframe restrictions."
     },
     "credentialsMultipleFound": {
-        "message": "在 KeePassXC 中找到多条登录信息！",
+        "message": "在 Rowel 中找到多条登录信息！",
         "description": "Alert message when trying to fill username and/or password when multiple credentials are found."
     },
     "credentialsMultipleFoundSecondLine": {
-        "message": "点击 KeePassXC-Browser 图标展开更多选项。",
+        "message": "点击 Rowel 图标展开更多选项。",
         "description": "Alert message when trying to fill username and/or password when multiple credentials are found."
     },
     "credentialsNoUsernameFound": {
@@ -443,7 +443,7 @@
         "description": "Message shown when trying to save credentials that haven't changed."
     },
     "popupTitle": {
-        "message": "KeePassXC - 弹出窗口",
+        "message": "Rowel - 弹出窗口",
         "description": "Popup window title."
     },
     "popupSettingsText": {
@@ -483,15 +483,15 @@
         "description": "Button text for allowing Cross-Origin iframes option."
     },
     "popupErrorEncountered": {
-        "message": "KeePassXC-Browser 遇到错误：",
+        "message": "Rowel 遇到错误：",
         "description": "A text shown above error message in the popup."
     },
     "popupUpdateAvailable": {
-        "message": "您正在使用旧版本的 KeePassXC。",
+        "message": "您正在使用旧版本的 Rowel。",
         "description": "Popup warning message about old version of KeePassXC."
     },
     "popupDownloadNewVersion": {
-        "message": "请在 keepassxc.org 下载最新版本",
+        "message": "请在 github.com/fwdai/rowel/releases 下载最新版本",
         "description": "Popup warning message link when KeePassXC version is not up-to-date."
     },
     "popupGettingStartedText": {
@@ -507,7 +507,7 @@
         "description": "Hide alert close button title."
     },
     "popupTroubleshootingText": {
-        "message": "无法连接到 KeePassXC 吗？也许我们的 Wiki 页面会有帮助。",
+        "message": "无法连接到 Rowel 吗？也许我们的 Wiki 页面会有帮助。",
         "description": "Popup information message about Troubleshooting Guide."
     },
     "popupTroubleshootingLinkText": {
@@ -519,11 +519,11 @@
         "description": "Checking status message in popup."
     },
     "popupNotConfigured": {
-        "message": "KeePassXC-Browser 尚未设置。点击“连接”按钮与 KeePassXC 配对。",
+        "message": "Rowel 尚未设置。点击“连接”按钮与 Rowel 配对。",
         "description": "A popup message shown when the extension has not been connected to KeePassXC."
     },
     "popupNeedReconfigure": {
-        "message": "KeePassXC-Browser 已与 KeePassXC 断开连接。",
+        "message": "Rowel 已与 Rowel 断开连接。",
         "description": "A popup message shown when the extension has been disconnected from KeePassXC."
     },
     "popupNeedReconfigureMessage": {
@@ -531,11 +531,11 @@
         "description": "A popup message shown when reconnect is needed."
     },
     "popupConfiguredNotAssociated": {
-        "message": "KeePassXC-Browser 尚未连接到 KeePassXC，但已使用标识符进行了配置：$1",
+        "message": "Rowel 尚未连接到 Rowel，但已使用标识符进行了配置：$1",
         "description": "A popup message shown when KeePassXC is not connected but configured."
     },
     "popupConfiguredAndAssociated": {
-        "message": "KeePassXC-Browser 已连接到 KeePassXC，并且已使用以下标识符进行了配置：$1",
+        "message": "Rowel 已连接到 Rowel，并且已使用以下标识符进行了配置：$1",
         "description": "A popup message when a connection to KeePassXC is successful."
     },
     "popupUsernameFieldDetected": {
@@ -667,11 +667,11 @@
         "description": "Default settings title for Getting Started page."
     },
     "optionsWelcomeTitle": {
-        "message": "KeePassXC-Browser",
+        "message": "Rowel",
         "description": "Main card title for Getting Started page."
     },
     "optionsTitle": {
-        "message": "设置 | KeePassXC-Browser",
+        "message": "设置 | Rowel",
         "description": "Options page title."
     },
     "optionsGeneralSettingsTab": {
@@ -815,7 +815,7 @@
         "description": "Automatically retrieve credentials checkbox text."
     },
     "optionsCheckboxAutomaticReconnect": {
-        "message": "自动重新连接 KeePassXC",
+        "message": "自动重新连接 Rowel",
         "description": "Auto-reconnect checkbox text."
     },
     "optionsAutomaticReconnectWarning": {
@@ -875,7 +875,7 @@
         "description": "Default password manager checkbox text."
     },
     "optionsDefaultPasswordManagerHelpText": {
-        "message": "将 KeePassXC-Browser 设置为浏览器的默认密码管理器。",
+        "message": "将 Rowel 设置为浏览器的默认密码管理器。",
         "description": "Default password manager help text."
     },
     "optionsRedirectAllowance": {
@@ -895,7 +895,7 @@
         "description": "Connection method selection text."
     },
     "optionsConnectionMethodHelpText": {
-        "message": "如果浏览器中的原生消息传递被阻止，您可以切换到直接 WebSocket 连接。必须从 KeePassXC 端启用该功能才能工作。需要重启浏览器。",
+        "message": "如果浏览器中的原生消息传递被阻止，您可以切换到直接 WebSocket 连接。必须从 Rowel 端启用该功能才能工作。需要重启浏览器。",
         "description": "Connection method help text."
     },
     "optionsConnectionMethodNativeMessaging": {
@@ -915,7 +915,7 @@
         "description": "Debug logging help text."
     },
     "optionsRadioText": {
-        "message": "检查 KeePassXC 更新：",
+        "message": "检查 Rowel 更新：",
         "description": "Text above radio buttons in the settings page."
     },
     "optionsRadioThreeDays": {
@@ -967,7 +967,7 @@
         "description": "Password Generator option help text."
     },
     "optionsUsePasswordGeneratorHelpTextSecond": {
-        "message": "密码是由 KeePassXC 使用您的密码生成配置文件生成的。",
+        "message": "密码是由 Rowel 使用您的密码生成配置文件生成的。",
         "description": "Password Generator option help text, second part."
     },
     "optionsPredefinedSiteList": {
@@ -995,15 +995,15 @@
         "description": "Hide icons alert text text."
     },
     "optionsAutoRetrieveCredentialsHelpText": {
-        "message": "KeePassXC-Browser 将在标签页激活时立即获取凭据。",
+        "message": "Rowel 将在标签页激活时立即获取凭据。",
         "description": "Auto-Retrive Credentials option help text."
     },
     "optionsAutomaticReconnectHelpText": {
-        "message": "当检测到 KeePassXC 时自动与其重新连接。",
+        "message": "当检测到 Rowel 时自动与其重新连接。",
         "description": "Auto-reconnect option help text."
     },
     "optionsAutoFillSingleEntryHelpText": {
-        "message": "只接收到一条条目时，KeePassXC-Browser 将自动填充凭据。",
+        "message": "只接收到一条条目时，Rowel 将自动填充凭据。",
         "description": "Auto-Fill Single Entry option help text."
     },
     "optionsAutoFillRelevantCredentialHelpText": {
@@ -1011,11 +1011,11 @@
         "description": "Auto-Fill Relevant Credential option help text."
     },
     "optionsAutoFillSingleEntryWarning": {
-        "message": "警告！使用自动填充并不安全。您需要自担风险。KeePassXC-Browser 会尝试自动检测登录字段。但是，自动检测可能不准确，导致在不安全的输入字段内填写敏感信息。",
+        "message": "警告！使用自动填充并不安全。您需要自担风险。Rowel 会尝试自动检测登录字段。但是，自动检测可能不准确，导致在不安全的输入字段内填写敏感信息。",
         "description": "Auto-Fill Single Entry warning text."
     },
     "optionsAutoFillSingleTotpHelpText": {
-        "message": "只接收到一条条目时，KeePassXC-Browser 将自动填充 TOTP 字段。",
+        "message": "只接收到一条条目时，Rowel 将自动填充 TOTP 字段。",
         "description": "Auto-Fill Single TOTP field option help text."
     },
     "optionsAutocompleteUsernamesHelpText": {
@@ -1055,7 +1055,7 @@
         "description": "Download favicon after save help text."
     },
     "optionsAutoFillAndSendHelpText": {
-        "message": "如果发现页面有可用凭据，且登录类型为 HTTP Basic 认证请求，KeePassXC-Browser 将尝试使用首个接收到的凭据自动登录。若有多个凭据，您可以在弹出窗口中选择正确的凭据。即使此功能被启用，您仍然可以手动填写 HTTP Basic 认证登录。",
+        "message": "如果发现页面有可用凭据，且登录类型为 HTTP Basic 认证请求，Rowel 将尝试使用首个接收到的凭据自动登录。若有多个凭据，您可以在弹出窗口中选择正确的凭据。即使此功能被启用，您仍然可以手动填写 HTTP Basic 认证登录。",
         "description": "Auto-Fill And Send option help text."
     },
     "optionsAutoFillAndSendHelpTextSecond": {
@@ -1071,7 +1071,7 @@
         "description": "Clear credentials timeout help text."
     },
     "optionsVersionInfoText": {
-        "message": "KeePassXC-Browser 需要 KeePassXC 来检索凭据。",
+        "message": "Rowel 需要 Rowel 来检索凭据。",
         "description": "Settings page version info text."
     },
     "optionsVersionDownload": {
@@ -1079,19 +1079,19 @@
         "description": "Settings page download link."
     },
     "optionsVersionRunning": {
-        "message": "您正在运行 KeePassXC 版本：$1",
+        "message": "您正在运行 Rowel 版本：$1",
         "description": "Settings page info text of user's KeePassXC version."
     },
     "optionsLatestVersion": {
-        "message": "最新版本的 KeePassXC：$1",
+        "message": "最新版本的 Rowel：$1",
         "description": "Settings page info text about the latest KeePassXC version."
     },
     "optionsKeePassXCVersionRequired": {
-        "message": "需要 KeePassXC 版本：$1",
+        "message": "需要 Rowel 版本：$1",
         "description": "KeePassXC version requirement text."
     },
     "optionsMinimumKeePassXCVersionRequired": {
-        "message": "该扩展需要 KeePassXC 版本：$1。早期版本可能会导致意外行为。",
+        "message": "该扩展需要 Rowel 版本：$1。早期版本可能会导致意外行为。",
         "description": "KeePassXC minimum version requirement text."
     },
     "optionsDefault": {
@@ -1135,7 +1135,7 @@
         "description": "Reset all settings dialog text."
     },
     "optionsConnectedDatabasesText": {
-        "message": "已连接到 KeePassXC-Browser 的数据库。",
+        "message": "已连接到 Rowel 的数据库。",
         "description": "Info text about connected databases."
     },
     "optionsConnectedDatabasesNotFound": {
@@ -1267,11 +1267,11 @@
         "description": "Table caption of Custom Login Fields page."
     },
     "optionsCustomFieldsTabHelpTextFirst": {
-        "message": "如果 KeePassXC-Browser 检测到错误的登录字段，您可以自己指定正确的字段。",
+        "message": "如果 Rowel 检测到错误的登录字段，您可以自己指定正确的字段。",
         "description": "Saved Custom Login Fields info text, first part."
     },
     "optionsCustomFieldsTabHelpTextSecond": {
-        "message": "前往页面并点击 KeePassXC-Browser 图标，然后选择",
+        "message": "前往页面并点击 Rowel 图标，然后选择",
         "description": "Saved Custom Login Fields info text, second part."
     },
     "optionsCustomFieldsTabHelpTextThird": {
@@ -1287,7 +1287,7 @@
         "description": "Confirmation text when removing saved Custom Login Fields."
     },
     "optionsCustomFieldsConfirmationHelpText": {
-        "message": "KeePassXC-Browser 将在您下次访问此页面时自动检测登录字段。",
+        "message": "Rowel 将在您下次访问此页面时自动检测登录字段。",
         "description": "Part of confirmation text when removing saved Custom Login Fields."
     },
     "optionsSitePreferencesNotFound": {
@@ -1311,7 +1311,7 @@
         "description": "Site Preferences info text, third part."
     },
     "optionsSitePreferencesTabHelpTextFourth": {
-        "message": "“仅用户名”检测允许 KeePassXC-Browser 在访问用户名与密码不在同一页面的网站时，仍能填充登录信息。",
+        "message": "“仅用户名”检测允许 Rowel 在访问用户名与密码不在同一页面的网站时，仍能填充登录信息。",
         "description": "Site Preferences info text, fourth part."
     },
     "optionsSitePreferencesImprovedInputFieldDetectionHelpText": {
@@ -1335,7 +1335,7 @@
         "description": "Confirmation text when removing site from Site Preferences."
     },
     "optionsSitePreferencesConfirmationHelpText": {
-        "message": "KeePassXC-Browser 将在此网站启用所有功能并禁用“仅用户名”检测。",
+        "message": "Rowel 将在此网站启用所有功能并禁用“仅用户名”检测。",
         "description": "Part of confirmation text when removing Site Preferences."
     },
     "optionsSitePreferencesTableCaption": {
@@ -1347,27 +1347,27 @@
         "description": "Title text of select element in Site Preferences."
     },
     "optionsAboutChrome": {
-        "message": "访问 Chrome 网上应用店中的 KeePassXC-Browser。",
+        "message": "访问 Chrome 网上应用店中的 Rowel。",
         "description": "About page link to Chrome Web Store."
     },
     "optionsAboutMozilla": {
-        "message": "访问 Mozilla 附加组件目录中的 KeePassXC-Browser。",
+        "message": "访问 Mozilla 附加组件目录中的 Rowel。",
         "description": "About page link to AMO."
     },
     "optionsAboutEdge": {
-        "message": "访问 Edge 外接程序页面中的 KeePassXC-Browser。",
+        "message": "访问 Edge 外接程序页面中的 Rowel。",
         "description": "About page link to Edge Add-ons page."
     },
     "optionsAboutGitHub": {
-        "message": "访问 GitHub 上的 KeePassXC-Browser。",
+        "message": "访问 GitHub 上的 Rowel。",
         "description": "About page link to GitHub."
     },
     "optionsAboutExtensionVersion": {
-        "message": "KeePassXC-Browser 版本：$1",
+        "message": "Rowel 版本：$1",
         "description": "About page text of extension version."
     },
     "optionsAboutKeePassXCVersion": {
-        "message": "KeePassXC 版本：$1",
+        "message": "Rowel 版本：$1",
         "description": "About page text of KeePassXC version."
     },
     "optionsAboutContributors": {
@@ -1447,7 +1447,7 @@
         "description": "Enabled passkeys fallback option text."
     },
     "optionsPasskeysEnableFallbackHelpText": {
-        "message": "启用时，如果对 KeePassXC 的请求失败或被取消，将触发浏览器自身的内置通行密钥请求。如果禁用，则必须与 KeePassXC 建立连接，并且被取消的请求将视为失败。默认为启用。",
+        "message": "启用时，如果对 Rowel 的请求失败或被取消，将触发浏览器自身的内置通行密钥请求。如果禁用，则必须与 Rowel 建立连接，并且被取消的请求将视为失败。默认为启用。",
         "description": "Passkeys fallback option help text."
     },
     "openNewTab": {
@@ -1467,7 +1467,7 @@
         "description": "Lock database button title text."
     },
     "welcomeText": {
-        "message": "欢迎使用 KeePassXC-Browser！",
+        "message": "欢迎使用 Rowel！",
         "description": "Main title of Getting Started page."
     },
     "documentationGettingStarted": {
@@ -1483,7 +1483,7 @@
         "description": "Troubleshooting Guide text."
     },
     "gettingStartedWelcomeText": {
-        "message": "欢迎使用 KeePassXC-Browser，这是 KeePassXC 的官方浏览器扩展。",
+        "message": "欢迎使用 Rowel，这是 Rowel 的官方浏览器扩展。",
         "description": "Welcome to KeePassXC-Browser, the official browser extension for KeePassXC."
     },
     "gettingStartedSecondWelcomeText": {

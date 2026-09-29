@@ -1,6 +1,6 @@
 {
     "extensionDescription": {
-        "message": "ခေတ်မီ ဝက်ဘ်ဘရောက်ဇာများတွင် KeePassXC ပေါင်းစပ်ထည့်သွင်းခြင်း\n",
+        "message": "ခေတ်မီ ဝက်ဘ်ဘရောက်ဇာများတွင် Rowel ပေါင်းစပ်ထည့်သွင်းခြင်း\n",
         "description": "Name of the extension."
     },
     "addSitePreferenceButtonTitle": {
@@ -16,7 +16,7 @@
         "description": "Allow Cross-Origin iframes button title text."
     },
     "connectButtonTitle": {
-        "message": "Connect current active database to KeePassXC-Browser.",
+        "message": "Connect current active database to Rowel.",
         "description": "Connect button title text."
     },
     "copyDebugInfoButtonTitle": {
@@ -28,7 +28,7 @@
         "description": "Dismiss HTTP Auth button title text."
     },
     "reconnectButtonTitle": {
-        "message": "Reconnect current active database to KeePassXC-Browser.",
+        "message": "Reconnect current active database to Rowel.",
         "description": "Reconnect button title text."
     },
     "redetectButtonTitle": {
@@ -36,11 +36,11 @@
         "description": "Redetect login fields button title text."
     },
     "reloadButtonTitle": {
-        "message": "Reloads the extension and reconnects to KeePassXC.",
+        "message": "Reloads the extension and reconnects to Rowel.",
         "description": "Reload button title text."
     },
     "removeConnectedDatabaseButtonTitle": {
-        "message": "Remove connected database from KeePassXC-Browser.",
+        "message": "Remove connected database from Rowel.",
         "description": "Remove button title on Connected Databases tab."
     },
     "removeCustomLoginFieldsButtonTitle": {
@@ -116,7 +116,7 @@
         "description": "Cannot decrypt message."
     },
     "errorMessageTimeout": {
-        "message": "KeePassXC နှင့် ချိတ်ဆက်၍မရပါ။ ဘရောက်ဇာ ပေါင်းစပ်ထည့်သွင်းမှုကို KeePassXC ဆက်တင်များတွင် ဖွင့်ထားကြောင်း စစ်ဆေးပါ။",
+        "message": "Rowel နှင့် ချိတ်ဆက်၍မရပါ။ ဘရောက်ဇာ ပေါင်းစပ်ထည့်သွင်းမှုကို Rowel ဆက်တင်များတွင် ဖွင့်ထားကြောင်း စစ်ဆေးပါ။",
         "description": "Cannot connect to KeePassXC. Check that browser integration is enabled in KeePassXC settings."
     },
     "errorMessageCanceled": {
@@ -124,11 +124,11 @@
         "description": "Action canceled or denied."
     },
     "errorMessageEncrypt": {
-        "message": "မက်ဆေ့ချ်ကို ကုဒ်ဖြင့်ပြောင်းခြင်း မအောင်မြင်ပါ။ KeePassXC လည်ပတ်နေပါသလား။",
+        "message": "မက်ဆေ့ချ်ကို ကုဒ်ဖြင့်ပြောင်းခြင်း မအောင်မြင်ပါ။ Rowel လည်ပတ်နေပါသလား။",
         "description": "Message encryption failed. Is KeePassXC running?"
     },
     "errorMessageAssociate": {
-        "message": "KeePassXC နှင့် ဆက်စပ်ခြင်း မအောင်မြင်ပါ။ ထပ်မံကြိုးစားပါ။",
+        "message": "Rowel နှင့် ဆက်စပ်ခြင်း မအောင်မြင်ပါ။ ထပ်မံကြိုးစားပါ။",
         "description": "KeePassXC association failed, try again."
     },
     "errorMessageKeyExchange": {
@@ -240,7 +240,7 @@
         "description": "Context is not secure."
     },
     "errorNotConnected": {
-        "message": "KeePassXC နှင့် ချိတ်ဆက်မထားပါ။",
+        "message": "Rowel နှင့် ချိတ်ဆက်မထားပါ။",
         "description": "Error notification shown when not connected to KeePassXC."
     },
     "errorCurrentDatabaseNotConnected": {
@@ -264,10 +264,10 @@
         "description": "Password icon title text."
     },
     "passwordGeneratorNotSupported": {
-        "message": "Launching the password generator is not supported in this KeePassXC version. Please update KeePassXC to a newer version."
+        "message": "Launching the password generator is not supported in this Rowel version. Please update Rowel to a newer version."
     },
     "usernameFieldText": {
-        "message": "Fill credentials from KeePassXC.",
+        "message": "Fill credentials from Rowel.",
         "description": "Username field icon hover text."
     },
     "usernameFieldTextNoCredentials": {
@@ -279,7 +279,7 @@
         "description": "Username field icon hover text when database is locked."
     },
     "usernameDisconnectedFieldText": {
-        "message": "KeePassXC is disconnected.",
+        "message": "Rowel is disconnected.",
         "description": "Username field icon hover text when KeePassXC is disconnected."
     },
     "totp": {
@@ -287,7 +287,7 @@
         "description": "TOTP text."
     },
     "totpFieldText": {
-        "message": "KeePassXC မှ TOTP ကို ဖြည့်ပါ",
+        "message": "Rowel မှ TOTP ကို ဖြည့်ပါ",
         "description": "OTP field icon hover text."
     },
     "defineClose": {
@@ -371,11 +371,11 @@
         "description": "Shown when no credentials are found for the current page."
     },
     "credentialsMultipleFound": {
-        "message": "KeePassXC တွင် လော့ဂ်အင်ဝင်ရောက်မှု အနည်းဆုံးနှစ်ခု တွေ့ထားသည်။",
+        "message": "Rowel တွင် လော့ဂ်အင်ဝင်ရောက်မှု အနည်းဆုံးနှစ်ခု တွေ့ထားသည်။",
         "description": "Alert message when trying to fill username and/or password when multiple credentials are found."
     },
     "credentialsMultipleFoundSecondLine": {
-        "message": "Click the KeePassXC-Browser icon for more options.",
+        "message": "Click the Rowel icon for more options.",
         "description": "Alert message when trying to fill username and/or password when multiple credentials are found."
     },
     "credentialsNoUsernameFound": {
@@ -407,7 +407,7 @@
         "description": "Message shown when trying to save credentials that haven't changed."
     },
     "popupTitle": {
-        "message": "KeePassXC - အသိပေးချက်",
+        "message": "Rowel - အသိပေးချက်",
         "description": "Popup window title."
     },
     "popupSettingsText": {
@@ -447,15 +447,15 @@
         "description": "Button text for allowing Cross-Origin iframes option."
     },
     "popupErrorEncountered": {
-        "message": "KeePassXC-ဘရောက်ဇာတွင် ပြဿနာတစ်ခု တွေ့ရသည် -",
+        "message": "Rowelတွင် ပြဿနာတစ်ခု တွေ့ရသည် -",
         "description": "A text shown above error message in the popup."
     },
     "popupUpdateAvailable": {
-        "message": "သင်သည် KeePassXC ဗားရှင်းအဟောင်းကို အသုံးပြုနေသည်။",
+        "message": "သင်သည် Rowel ဗားရှင်းအဟောင်းကို အသုံးပြုနေသည်။",
         "description": "Popup warning message about old version of KeePassXC."
     },
     "popupDownloadNewVersion": {
-        "message": "ကျေးဇူးပြု၍ နောက်ဆုံးပေါ် ဗားရှင်းကို keepassxc.org မှ ဒေါင်းလုဒ်လုပ်ပါ",
+        "message": "ကျေးဇူးပြု၍ နောက်ဆုံးပေါ် ဗားရှင်းကို github.com/fwdai/rowel/releases မှ ဒေါင်းလုဒ်လုပ်ပါ",
         "description": "Popup warning message link when KeePassXC version is not up-to-date."
     },
     "popupGettingStartedText": {
@@ -471,7 +471,7 @@
         "description": "Hide alert close button title."
     },
     "popupTroubleshootingText": {
-        "message": "Cannot connect to KeePassXC? Maybe our wiki page could help.",
+        "message": "Cannot connect to Rowel? Maybe our wiki page could help.",
         "description": "Popup information message about Troubleshooting Guide."
     },
     "popupTroubleshootingLinkText": {
@@ -483,11 +483,11 @@
         "description": "Checking status message in popup."
     },
     "popupNotConfigured": {
-        "message": "KeePassXC-Browser has not been configured. Click the connect button to pair with KeePassXC.",
+        "message": "Rowel has not been configured. Click the connect button to pair with Rowel.",
         "description": "A popup message shown when the extension has not been connected to KeePassXC."
     },
     "popupNeedReconfigure": {
-        "message": "KeePassXC-ဘရောက်ဇာကို KeePassXC နှင့် ချိတ်ဆက်မှုဖျက်ထားသည်။",
+        "message": "Rowelကို Rowel နှင့် ချိတ်ဆက်မှုဖျက်ထားသည်။",
         "description": "A popup message shown when the extension has been disconnected from KeePassXC."
     },
     "popupNeedReconfigureMessage": {
@@ -495,11 +495,11 @@
         "description": "A popup message shown when reconnect is needed."
     },
     "popupConfiguredNotAssociated": {
-        "message": "KeePassXC-ဘရောက်ဇာကို KeePassXC နှင့် မချိတ်ဆက်ရသေးသော်လည်း ဤကိုယ်ပိုင်အမှတ်သင်္ကေတကို သုံး၍ ချိန်ညှိထားသည် - $1",
+        "message": "Rowelကို Rowel နှင့် မချိတ်ဆက်ရသေးသော်လည်း ဤကိုယ်ပိုင်အမှတ်သင်္ကေတကို သုံး၍ ချိန်ညှိထားသည် - $1",
         "description": "A popup message shown when KeePassXC is not connected but configured."
     },
     "popupConfiguredAndAssociated": {
-        "message": "KeePassXC-ဘရောက်ဇာကို KeePassXC နှင့် ချိတ်ဆက်ထားပြီး ဤကိုယ်ပိုင်အမှတ်သင်္ကေတကို သုံး၍ ချိန်ညှိထားသည် - $1",
+        "message": "Rowelကို Rowel နှင့် ချိတ်ဆက်ထားပြီး ဤကိုယ်ပိုင်အမှတ်သင်္ကေတကို သုံး၍ ချိန်ညှိထားသည် - $1",
         "description": "A popup message when a connection to KeePassXC is successful."
     },
     "popupUsernameFieldDetected": {
@@ -627,7 +627,7 @@
         "description": "Dismiss button text when in HTTP Authentication popup."
     },
     "optionsTitle": {
-        "message": "ဆက်တင်များ | KeePassXC-ဘရောက်ဇာ",
+        "message": "ဆက်တင်များ | Rowel",
         "description": "Options page title."
     },
     "optionsGeneralSettingsTab": {
@@ -763,7 +763,7 @@
         "description": "Automatically retrieve credentials checkbox text."
     },
     "optionsCheckboxAutomaticReconnect": {
-        "message": "Automatically reconnect to KeePassXC",
+        "message": "Automatically reconnect to Rowel",
         "description": "Auto-reconnect checkbox text."
     },
     "optionsAutomaticReconnectWarning": {
@@ -839,7 +839,7 @@
         "description": "Debug logging help text."
     },
     "optionsRadioText": {
-        "message": "KeePassXC အပ်ဒိတ်များကို စစ်ဆေးရန် -",
+        "message": "Rowel အပ်ဒိတ်များကို စစ်ဆေးရန် -",
         "description": "Text above radio buttons in the settings page."
     },
     "optionsRadioThreeDays": {
@@ -891,7 +891,7 @@
         "description": "Password Generator option help text."
     },
     "optionsUsePasswordGeneratorHelpTextSecond": {
-        "message": "KeePassXC က သင့်စကားဝှက် ထုတ်လုပ်မှု ပရိုဖိုင်ကို အသုံးပြု၍ စကားဝှက်များကို ထုတ်လုပ်သည်။",
+        "message": "Rowel က သင့်စကားဝှက် ထုတ်လုပ်မှု ပရိုဖိုင်ကို အသုံးပြု၍ စကားဝှက်များကို ထုတ်လုပ်သည်။",
         "description": "Password Generator option help text, second part."
     },
     "optionsPredefinedSiteList": {
@@ -919,15 +919,15 @@
         "description": "Hide icons alert text text."
     },
     "optionsAutoRetrieveCredentialsHelpText": {
-        "message": "တက်ဘ်တစ်ခုကို သက်ဝင်လုပ်ဆောင်ချိန်တွင် KeePassXC-ဘရောက်ဇာသည် အထောက်အထားများကို ချက်ချင်း ပြန်လည်ရယူပါမည်။",
+        "message": "တက်ဘ်တစ်ခုကို သက်ဝင်လုပ်ဆောင်ချိန်တွင် Rowelသည် အထောက်အထားများကို ချက်ချင်း ပြန်လည်ရယူပါမည်။",
         "description": "Auto-Retrive Credentials option help text."
     },
     "optionsAutomaticReconnectHelpText": {
-        "message": "၎င်းကို တွေ့ရှိသည့်အခါ KeePassXC နှင့် အလိုအလျောက် ပြန်လည်ချိတ်ဆက်သည်။",
+        "message": "၎င်းကို တွေ့ရှိသည့်အခါ Rowel နှင့် အလိုအလျောက် ပြန်လည်ချိတ်ဆက်သည်။",
         "description": "Auto-reconnect option help text."
     },
     "optionsAutoFillSingleEntryHelpText": {
-        "message": "ဖြည့်သွင်းရမည့်အရာ တစ်ခုတည်း လက်ခံရရှိပါက KeePassXC-ဘရောက်ဇာအား အထောက်အထားများကို အလိုအလျောက် ဖြည့်ခွင့်ပြုပါ။\n",
+        "message": "ဖြည့်သွင်းရမည့်အရာ တစ်ခုတည်း လက်ခံရရှိပါက Rowelအား အထောက်အထားများကို အလိုအလျောက် ဖြည့်ခွင့်ပြုပါ။\n",
         "description": "Auto-Fill Single Entry option help text."
     },
     "optionsAutoFillRelevantCredentialHelpText": {
@@ -935,11 +935,11 @@
         "description": "Auto-Fill Relevant Credential option help text."
     },
     "optionsAutoFillSingleEntryWarning": {
-        "message": "Warning! Using auto-fill is not safe. Use at your own risk. KeePassXC-Browser automatically tries to detect login fields. However, they may be detected incorrectly, possibly filling sensitive data to unsafe input fields.",
+        "message": "Warning! Using auto-fill is not safe. Use at your own risk. Rowel automatically tries to detect login fields. However, they may be detected incorrectly, possibly filling sensitive data to unsafe input fields.",
         "description": "Auto-Fill Single Entry warning text."
     },
     "optionsAutoFillSingleTotpHelpText": {
-        "message": "Let KeePassXC-Browser automatically fill in TOTP fields if it receives only a single entry.",
+        "message": "Let Rowel automatically fill in TOTP fields if it receives only a single entry.",
         "description": "Auto-Fill Single TOTP field option help text."
     },
     "optionsAutocompleteUsernamesHelpText": {
@@ -979,7 +979,7 @@
         "description": "Download favicon after save help text."
     },
     "optionsAutoFillAndSendHelpText": {
-        "message": "စာမျက်နှာတစ်ခုအတွက် အထောက်အထားများကို ရှာတွေ့ပြီး လော့ဂ်အင်ဝင်ရောက်မှုအမျိုးအစားသည် HTTP Basic Auth တောင်းဆိုမှု ဖြစ်ပါက KeePassXC-ဘရောက်ဇာသည် ပထမဆုံး ပေးထားသော အထောက်အထားများဖြင့် အလိုအလျောက် လော့ဂ်အင်ဝင်ရန် ကြိုးစားသည်။ အထောက်အထားများစွာ ရှိသည့်အခါ မှန်ကန်သည့်အထောက်အထားကို ရွေးရန် အဆက်အသိပေးချက်ကို အသုံးပြုနိုင်သည်။ ဤအပြင်အဆင်ကို ဖွင့်ထားသည့်တိုင်အောင် HTTP Basic Auth လော့ဂ်အင်ဝင်ရောက်မှုကို ကိုယ်တိုင် ရိုက်ထည့်နိုင်ပါသေးသည်။",
+        "message": "စာမျက်နှာတစ်ခုအတွက် အထောက်အထားများကို ရှာတွေ့ပြီး လော့ဂ်အင်ဝင်ရောက်မှုအမျိုးအစားသည် HTTP Basic Auth တောင်းဆိုမှု ဖြစ်ပါက Rowelသည် ပထမဆုံး ပေးထားသော အထောက်အထားများဖြင့် အလိုအလျောက် လော့ဂ်အင်ဝင်ရန် ကြိုးစားသည်။ အထောက်အထားများစွာ ရှိသည့်အခါ မှန်ကန်သည့်အထောက်အထားကို ရွေးရန် အဆက်အသိပေးချက်ကို အသုံးပြုနိုင်သည်။ ဤအပြင်အဆင်ကို ဖွင့်ထားသည့်တိုင်အောင် HTTP Basic Auth လော့ဂ်အင်ဝင်ရောက်မှုကို ကိုယ်တိုင် ရိုက်ထည့်နိုင်ပါသေးသည်။",
         "description": "Auto-Fill And Send option help text."
     },
     "optionsAutoFillAndSendHelpTextSecond": {
@@ -995,7 +995,7 @@
         "description": "Clear credentials timeout help text."
     },
     "optionsVersionInfoText": {
-        "message": "KeePassXC-ဘရောက်ဇာသည် အထောက်အထားများကို ပြန်လည်ရယူရန် KeePassXC လိုအပ်သည်။",
+        "message": "Rowelသည် အထောက်အထားများကို ပြန်လည်ရယူရန် Rowel လိုအပ်သည်။",
         "description": "Settings page version info text."
     },
     "optionsVersionDownload": {
@@ -1003,15 +1003,15 @@
         "description": "Settings page download link."
     },
     "optionsVersionRunning": {
-        "message": "သင်အသုံးပြုနေသော KeePassXC ဗားရှင်း - $1",
+        "message": "သင်အသုံးပြုနေသော Rowel ဗားရှင်း - $1",
         "description": "Settings page info text of user's KeePassXC version."
     },
     "optionsLatestVersion": {
-        "message": "ရရှိနိုင်သော နောက်ဆုံးပေါ် KeePassXC ဗားရှင်း - $1",
+        "message": "ရရှိနိုင်သော နောက်ဆုံးပေါ် Rowel ဗားရှင်း - $1",
         "description": "Settings page info text about the latest KeePassXC version."
     },
     "optionsKeePassXCVersionRequired": {
-        "message": "လိုအပ်သော KeePassXC ဗားရှင်း - $1",
+        "message": "လိုအပ်သော Rowel ဗားရှင်း - $1",
         "description": "KeePassXC version requirement text."
     },
     "optionsDefault": {
@@ -1051,7 +1051,7 @@
         "description": "Import settings confirmation dialog help text."
     },
     "optionsConnectedDatabasesText": {
-        "message": "ဒေတာဘေ့စ်များကို KeePassXC-ဘရောက်ဇာနှင့် ချိတ်ဆက်ထားသည်။",
+        "message": "ဒေတာဘေ့စ်များကို Rowelနှင့် ချိတ်ဆက်ထားသည်။",
         "description": "Info text about connected databases."
     },
     "optionsConnectedDatabasesNotFound": {
@@ -1179,11 +1179,11 @@
         "description": "Table caption of Custom Login Fields page."
     },
     "optionsCustomFieldsTabHelpTextFirst": {
-        "message": "KeePassXC-ဘရောက်ဇာက မှားယွင်းသော လော့ဂ်အင်ဝင်ရောက်မှုအကွက်များကို တွေ့ရှိပါက သင်သည် မှန်ကန်သော အကွက်များကို ကိုယ်တိုင် ခွဲခြားဖော်ပြနိုင်သည်။",
+        "message": "Rowelက မှားယွင်းသော လော့ဂ်အင်ဝင်ရောက်မှုအကွက်များကို တွေ့ရှိပါက သင်သည် မှန်ကန်သော အကွက်များကို ကိုယ်တိုင် ခွဲခြားဖော်ပြနိုင်သည်။",
         "description": "Saved Custom Login Fields info text, first part."
     },
     "optionsCustomFieldsTabHelpTextSecond": {
-        "message": "စာမျက်နှာသို့သွားပြီး KeePassXC-ဘရောက်ဇာ အိုင်ကွန်ကို နှိပ်ပါ၊ ပြီးလျှင် ရွေးချယ်ပါ",
+        "message": "စာမျက်နှာသို့သွားပြီး Rowel အိုင်ကွန်ကို နှိပ်ပါ၊ ပြီးလျှင် ရွေးချယ်ပါ",
         "description": "Saved Custom Login Fields info text, second part."
     },
     "optionsCustomFieldsTabHelpTextThird": {
@@ -1199,7 +1199,7 @@
         "description": "Confirmation text when removing saved Custom Login Fields."
     },
     "optionsCustomFieldsConfirmationHelpText": {
-        "message": "သင် ဤစာမျက်နှာကို နောက်တစ်ကြိမ် ဝင်ကြည့်သည့်အခါ KeePassXC-ဘရောက်ဇာသည် လော့ဂ်အင်ဝင်ရောက်မှုအကွက်များကို အလိုအလျောက် ရှာဖွေပါမည်။",
+        "message": "သင် ဤစာမျက်နှာကို နောက်တစ်ကြိမ် ဝင်ကြည့်သည့်အခါ Rowelသည် လော့ဂ်အင်ဝင်ရောက်မှုအကွက်များကို အလိုအလျောက် ရှာဖွေပါမည်။",
         "description": "Part of confirmation text when removing saved Custom Login Fields."
     },
     "optionsSitePreferencesNotFound": {
@@ -1223,7 +1223,7 @@
         "description": "Site Preferences info text, third part."
     },
     "optionsSitePreferencesTabHelpTextFourth": {
-        "message": "အသုံးပြုသူအမည်သီးသန့် ရှာဖွေခြင်းဖြင့် KeePassXC-ဘရောက်ဇာသည် အသုံးပြုသူအမည်နှင့် စကားဝှက်အတွက် သီးခြားစာမျက်နှာများပါသည့် ဝက်ဘ်ဆိုက်များတွင် လော့ဂ်အင်ဝင်ရောက်မှု အသေးစိတ်များကို ဖြည့်နိုင်သည်။",
+        "message": "အသုံးပြုသူအမည်သီးသန့် ရှာဖွေခြင်းဖြင့် Rowelသည် အသုံးပြုသူအမည်နှင့် စကားဝှက်အတွက် သီးခြားစာမျက်နှာများပါသည့် ဝက်ဘ်ဆိုက်များတွင် လော့ဂ်အင်ဝင်ရောက်မှု အသေးစိတ်များကို ဖြည့်နိုင်သည်။",
         "description": "Site Preferences info text, fourth part."
     },
     "optionsSitePreferencesImprovedInputFieldDetectionHelpText": {
@@ -1247,7 +1247,7 @@
         "description": "Confirmation text when removing site from Site Preferences."
     },
     "optionsSitePreferencesConfirmationHelpText": {
-        "message": "KeePassXC-ဘရောက်ဇာသည် ဤဝက်ဘ်ဆိုက်အတွက် အပြင်အဆင်အားလုံးကို ဖွင့်ပြီး အသုံးပြုသူအမည်သီးသန့် ရှာဖွေမှုကို ဖယ်ရှားပါမည်။",
+        "message": "Rowelသည် ဤဝက်ဘ်ဆိုက်အတွက် အပြင်အဆင်အားလုံးကို ဖွင့်ပြီး အသုံးပြုသူအမည်သီးသန့် ရှာဖွေမှုကို ဖယ်ရှားပါမည်။",
         "description": "Part of confirmation text when removing Site Preferences."
     },
     "optionsSitePreferencesTableCaption": {
@@ -1259,27 +1259,27 @@
         "description": "Title text of select element in Site Preferences."
     },
     "optionsAboutChrome": {
-        "message": "Chrome Web Store တွင် KeePassXC-ဘရောက်ဇာသို့ ဝင်ကြည့်ပါ။",
+        "message": "Chrome Web Store တွင် Rowelသို့ ဝင်ကြည့်ပါ။",
         "description": "About page link to Chrome Web Store."
     },
     "optionsAboutMozilla": {
-        "message": "Mozilla Add-ons လမ်းညွှန်တွင် KeePassXC-ဘရောက်ဇာကို ဝင်ကြည့်ပါ။",
+        "message": "Mozilla Add-ons လမ်းညွှန်တွင် Rowelကို ဝင်ကြည့်ပါ။",
         "description": "About page link to AMO."
     },
     "optionsAboutEdge": {
-        "message": "Visit KeePassXC-Browser in the Edge Add-ons page.",
+        "message": "Visit Rowel in the Edge Add-ons page.",
         "description": "About page link to Edge Add-ons page."
     },
     "optionsAboutGitHub": {
-        "message": "GitHub တွင် KeePassXC-ဘရောက်ဇာကို ဝင်ကြည့်ပါ။",
+        "message": "GitHub တွင် Rowelကို ဝင်ကြည့်ပါ။",
         "description": "About page link to GitHub."
     },
     "optionsAboutExtensionVersion": {
-        "message": "KeePassXC-ဘရောက်ဇာ ဗားရှင်း - $1",
+        "message": "Rowel ဗားရှင်း - $1",
         "description": "About page text of extension version."
     },
     "optionsAboutKeePassXCVersion": {
-        "message": "KeePassXC ဗားရှင်း - $1",
+        "message": "Rowel ဗားရှင်း - $1",
         "description": "About page text of KeePassXC version."
     },
     "optionsAboutContributors": {
@@ -1359,7 +1359,7 @@
         "description": "Enabled passkeys fallback option text."
     },
     "optionsPasskeysEnableFallbackHelpText": {
-        "message": "When enabled, a failed or canceled request to KeePassXC will trigger the browser's own internal passkeys request. If disabled, connection to KeePassXC is required and canceled request will fail. Default: enabled.",
+        "message": "When enabled, a failed or canceled request to Rowel will trigger the browser's own internal passkeys request. If disabled, connection to Rowel is required and canceled request will fail. Default: enabled.",
         "description": "Passkeys fallback option help text."
     },
     "openNewTab": {

@@ -1,6 +1,6 @@
 'use strict';
 
-const EXTENSION_NAME = 'KeePassXC-Browser';
+const EXTENSION_NAME = 'Rowel';
 const DEFINED_CUSTOM_FIELDS = 'defined-custom-fields';
 
 // Site Preferences ignore options
@@ -85,7 +85,7 @@ const showNotification = function(message) {
     browser.notifications.create({
         'type': 'basic',
         'iconUrl': browser.runtime.getURL('icons/keepassxc_64x64.png'),
-        'title': 'KeePassXC-Browser',
+        'title': 'Rowel',
         'message': message
     });
 };

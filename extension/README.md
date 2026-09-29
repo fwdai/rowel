@@ -1,3 +1,8 @@
+> **Rowel fork.** This directory is Rowel's browser extension, a git subtree
+> of KeePassXC-Browser with Rowel's branding, IDs and native messaging host.
+> See [docs/browser-extension.md](../docs/browser-extension.md) for building,
+> loading and syncing it. The upstream README follows unchanged.
+
 # KeePassXC-Browser
 
 Browser extension for [KeePassXC](https://keepassxc.org/) with [native messaging](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging).

@@ -1,11 +1,13 @@
 {
     "manifest_version": 3,
-    "name": "KeePassXC-Browser",
-    "version": "1.10.4",
-    "version_name": "1.10.4",
+    "name": "Rowel",
+    "version": "0.1.0",
+    "version_name": "0.1.0",
     "minimum_chrome_version": "124",
     "description": "__MSG_extensionDescription__",
-    "author": "KeePassXC Team",
+    "author": "Rowel",
+    "homepage_url": "https://github.com/fwdai/rowel",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApFScDLPjx3rTfa7Hgoj6woTK90ABGNO+Z18fqxEiTwAGj4lnJYE0ySOf7FTnmH/w6JIrai5r90RmWimDrW3nINnSCgjKntvzCIjGOPhWjYnvrFY44CWEIqDd45pZHcnPFlh+NoSgXwsz0s06IbhU0XyFesUZslhxBgDBi++pRc784rYxBwPmj69aAtAEw2ErLSLl6KWOAPwn3hZBZ3J2EZUg4g14dxYLf2Vu+Urjj/IhyG+izQUtb+IqcoIRMP/B0b6RvnQB2nbOXiPZbGMMtvdy30lImh1tX5xbsPgZ0ptI+Af03llzB+7RVm6n0KUnqQGyKHU0YYt9SxhVinolRwIDAQAB",
     "icons": {
         "16": "icons/keepassxc_16x16.png",
         "48": "icons/keepassxc_48x48.png",
@@ -23,7 +25,7 @@
             "38": "icons/keepassxc_38x38.png",
             "64": "icons/keepassxc_64x64.png"
         },
-        "default_title": "KeePassXC-Browser",
+        "default_title": "Rowel",
         "default_popup": "popups/popup.html"
     },
     "options_ui": {
