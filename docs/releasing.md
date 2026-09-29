@@ -134,6 +134,15 @@ which covers any group under the team prefix.
 Renewing is step 2 onwards — the App ID persists. If the team id ever changes,
 update the group in `Entitlements.plist` too.
 
+The profile does **not** grant `com.apple.security.application-groups`, and
+does not need to: the app and its Safari extension share
+`UFBL3F444A.app.rowel.desktop`, a macOS-style group (team id, dot, name) that
+macOS grants on the signature's team id alone. The check script accepts
+exactly that form without a profile grant, and refuses a `group.` id, which
+macOS 15+ gates behind a profile. The Safari extension's own entitlements
+(`src-tauri/gen/safari`) are checked too, against no profile at all. See
+[safari-extension.md](safari-extension.md).
+
 This can also be driven through the App Store Connect API
 (`POST /v1/bundleIds`, then `POST /v1/profiles` with
 `profileType: MAC_APP_DIRECT` and the Developer ID certificate ids), which is
@@ -177,6 +186,12 @@ cp .env.example .env   # then fill in the values
 Artifacts land in `src-tauri/target/universal-apple-darwin/release/bundle/`.
 The Developer ID certificate must be in your login keychain; the script signs
 with `APPLE_SIGNING_IDENTITY` from `.env` and does not need the `.p12`.
+
+Every macOS bundle carries the Safari extension in `Contents/PlugIns`, built
+and signed before bundling by `scripts/build-safari-extension.sh`
+(`beforeBundleCommand` in `tauri.macos.conf.json`). That needs Xcode, and
+`xcodegen` (`brew install xcodegen`) whenever `src-tauri/gen/safari/project.yml`
+changed; see [safari-extension.md](safari-extension.md).
 
 For an unsigned smoke build of just the app bundle (no DMG, no notarization),
 any minisign key satisfies the updater-artifact step:
