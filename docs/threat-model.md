@@ -593,10 +593,11 @@ once, entry by entry, from where older installs kept it; a move that cannot
 finish is undone, and the app runs from the old directory, whole, until a
 launch that can. A container found holding a vault of its own (one an
 earlier install left, while a build without the container ran from the
-sandbox) is not written over: that vault is set aside whole, in a
-`stale-<time>` directory beside the app's, never deleted, and the app's —
-the one it has been running from, and the one its biometric key opens —
-moves in — and the
+sandbox) is not written over: that data dir is set aside whole, renamed in
+one step to `<data dir>.stale-<time>` beside where it was, never deleted
+and put back if the move that follows fails, and the app's — the one it
+has been running from, and the one its biometric key opens — moves in —
+and the
 biometric-gated key is stored under that group's keychain access group, which
 only the app and its extension are entitled to read; the key's biometric
 access control is unchanged.

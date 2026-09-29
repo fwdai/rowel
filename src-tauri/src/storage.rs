@@ -179,9 +179,12 @@ fn settle_data_dir(app_data: PathBuf, shared: PathBuf) -> PathBuf {
 /// produce one, since an entry is in one place or the other. The app's is the
 /// one it has been running from: every launch that had no container ran from
 /// it, and so did every launch that found the container taken. So it is the
-/// one that moves in, and the container's goes aside first ([`set_aside`]),
-/// whole — pairing one's database with the other's sidecars would open
-/// neither. Nothing is deleted.
+/// one that moves in, and the container's goes aside first ([`set_aside`]):
+/// the whole directory, in one rename, so it stays a vault that could be
+/// opened — pairing one's database with the other's sidecars would open
+/// neither — and there is no moment at which it is half here and half there.
+/// A move that then fails puts it back ([`put_back`]) once its own entries
+/// are, so an error leaves both directories as they were. Nothing is deleted.
 #[cfg(any(target_os = "ios", test))]
 fn move_data_dir(from: &Path, to: &Path) -> Result<Vec<String>> {
     let entries = match fs::read_dir(from) {
@@ -192,25 +195,17 @@ fn move_data_dir(from: &Path, to: &Path) -> Result<Vec<String>> {
     let names = entries
         .map(|entry| entry.map(|e| e.file_name()))
         .collect::<std::io::Result<Vec<_>>>()?;
-    if names.iter().any(|name| to.join(name).exists()) {
+    let aside = if names.iter().any(|name| to.join(name).exists()) {
         let aside = set_aside(to)?;
         log::warn!(
-            "{} held a vault of its own; it is set aside whole in {} and the app's moves in",
+            "{} held a vault of its own; it is set aside whole as {} and the app's moves in",
             to.display(),
             aside.display()
         );
-    }
-    // A name still taken after that is one set aside earlier, which `from`
-    // cannot hold — but a collision is refused all the same, never resolved by
-    // writing over anything.
-    if let Some(taken) = names.iter().find(|name| to.join(name).exists()) {
-        return Err(Error::Other(format!(
-            "{} is in both {} and {}",
-            taken.to_string_lossy(),
-            from.display(),
-            to.display()
-        )));
-    }
+        Some(aside)
+    } else {
+        None
+    };
     let mut moved: Vec<&std::ffi::OsString> = Vec::with_capacity(names.len());
     for name in &names {
         if let Err(e) = move_one(&from.join(name), &to.join(name)) {
@@ -222,6 +217,9 @@ fn move_data_dir(from: &Path, to: &Path) -> Result<Vec<String>> {
                         to.display()
                     );
                 }
+            }
+            if let Some(aside) = &aside {
+                put_back(aside, to);
             }
             return Err(e);
         }
@@ -239,26 +237,29 @@ fn move_data_dir(from: &Path, to: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
-/// Where a vault the container held of its own is put when the app's moves in:
-/// a directory beside the app's, named for the moment, that nothing reads
-/// again — it is there for a recovery by hand, not for the app.
+/// What a vault the container held of its own is renamed to when the app's
+/// moves in: `<data dir>.stale-<time>`, beside the data dir in the container,
+/// where nothing reads it again — it is there for a recovery by hand, not for
+/// the app, which enumerates the data dir and never the container.
 #[cfg(any(target_os = "ios", test))]
-const STALE_DIR_PREFIX: &str = "stale-";
+const STALE_SUFFIX: &str = ".stale-";
 
-/// Move everything in `to` — except what earlier calls set aside — into a
-/// fresh `stale-<time>` directory under it, one rename per entry, and return
-/// that directory. The vault goes as a set: its database, its sidecars, its
-/// registry and workspaces together, so what is put aside is one that could
-/// still be opened. A rename that fails is undone the way [`move_data_dir`]
-/// undoes its own, so an error leaves `to` as it was.
+/// Rename the data dir `to` — the vault the container holds, whole — to a
+/// fresh `<to>.stale-<time>` beside it, and return where it went. One rename,
+/// so there is no moment at which the vault is half in each place: an
+/// interruption leaves it either where it was, to be set aside by the next
+/// launch, or set aside, for the next launch's move to find `to` empty.
 #[cfg(any(target_os = "ios", test))]
 fn set_aside(to: &Path) -> Result<PathBuf> {
-    let names: Vec<_> = fs::read_dir(to)?
-        .map(|entry| entry.map(|e| e.file_name()))
-        .collect::<std::io::Result<Vec<_>>>()?
-        .into_iter()
-        .filter(|name| !name.to_string_lossy().starts_with(STALE_DIR_PREFIX))
-        .collect();
+    let (parent, name) = match (to.parent(), to.file_name()) {
+        (Some(parent), Some(name)) => (parent, name.to_string_lossy()),
+        _ => {
+            return Err(Error::Other(format!(
+                "{} cannot be set aside: it has no parent to go in",
+                to.display()
+            )))
+        }
+    };
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -266,30 +267,38 @@ fn set_aside(to: &Path) -> Result<PathBuf> {
     // A name no earlier set-aside took — two in one second is a retry.
     let aside = (0..)
         .map(|n| match n {
-            0 => to.join(format!("{STALE_DIR_PREFIX}{secs}")),
-            n => to.join(format!("{STALE_DIR_PREFIX}{secs}-{n}")),
+            0 => parent.join(format!("{name}{STALE_SUFFIX}{secs}")),
+            n => parent.join(format!("{name}{STALE_SUFFIX}{secs}-{n}")),
         })
         .find(|dir| !dir.exists())
         .expect("an unbounded range has a free name");
-    crate::store::create_private_dir(&aside)?;
-    let mut moved: Vec<&std::ffi::OsString> = Vec::with_capacity(names.len());
-    for name in &names {
-        if let Err(e) = fs::rename(to.join(name), aside.join(name)) {
-            for name in moved {
-                if let Err(undo) = fs::rename(aside.join(name), to.join(name)) {
-                    log::error!(
-                        "could not move {} back out of {}: {undo}",
-                        name.to_string_lossy(),
-                        aside.display()
-                    );
-                }
-            }
-            let _ = fs::remove_dir(&aside);
-            return Err(e.into());
-        }
-        moved.push(name);
-    }
+    fs::rename(to, &aside)?;
     Ok(aside)
+}
+
+/// The reverse of [`set_aside`], for a move that failed after it: `to` was
+/// made again for the entries that came in and have since gone back, so it is
+/// empty and goes, and the vault set aside takes its place. Best effort, and
+/// said when it cannot be done: the vault is still whole where it was put.
+#[cfg(any(target_os = "ios", test))]
+fn put_back(aside: &Path, to: &Path) {
+    if to.exists() {
+        if let Err(e) = fs::remove_dir(to) {
+            log::error!(
+                "could not put {} back as {}: the emptied directory did not go: {e}",
+                aside.display(),
+                to.display()
+            );
+            return;
+        }
+    }
+    if let Err(e) = fs::rename(aside, to) {
+        log::error!(
+            "could not put {} back as {}: {e}",
+            aside.display(),
+            to.display()
+        );
+    }
 }
 
 // The active workspace's own directory — which, for the primary, IS the root
@@ -687,7 +696,7 @@ mod tests {
         move_data_dir, move_vault_files, move_workspace_files, read_backup,
         read_regular_file_capped, remove_if_present, settle_data_dir, Error, BIOMETRIC_FILE,
         DB_FILE, DB_REKEY_BACKUP_FILE, GDRIVE_FILE, KDF_SIDECAR_FILE,
-        KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, STALE_DIR_PREFIX, SYNC_SCRATCH_DIR,
+        KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, STALE_SUFFIX, SYNC_SCRATCH_DIR,
         WRAPPED_KEY_FILE,
     };
     use std::fs;
@@ -976,16 +985,20 @@ mod tests {
         assert!(!to.exists());
     }
 
-    // The `stale-*` directories under `to`, by name.
+    // The `<to>.stale-*` directories beside `to`, by name.
     fn set_aside_dirs(to: &Path) -> Vec<PathBuf> {
-        let mut dirs: Vec<_> = fs::read_dir(to)
+        let prefix = format!(
+            "{}{STALE_SUFFIX}",
+            to.file_name().unwrap().to_string_lossy()
+        );
+        let mut dirs: Vec<_> = fs::read_dir(to.parent().unwrap())
             .unwrap()
             .map(|e| e.unwrap().path())
             .filter(|p| {
                 p.file_name()
                     .unwrap()
                     .to_string_lossy()
-                    .starts_with(STALE_DIR_PREFIX)
+                    .starts_with(&prefix)
             })
             .collect();
         dirs.sort();
@@ -1073,33 +1086,76 @@ mod tests {
         assert!(!second.join(first[0].file_name().unwrap()).exists());
     }
 
-    // Setting aside that cannot even begin — here, a container that cannot be
-    // written — leaves both vaults exactly as they were, and the app runs from
-    // its own, as it did.
+    // Setting aside that cannot be done — here, a container the data dir
+    // cannot be renamed in — leaves both vaults exactly as they were, and the
+    // app runs from its own, as it did.
     #[cfg(unix)]
     #[test]
     fn a_vault_that_cannot_be_set_aside_leaves_both_and_the_app_stays_put() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let container = root.join("container");
+        let (from, to) = (root.join("app-data"), container.join("group"));
+        fs::create_dir_all(&from).unwrap();
+        fs::create_dir_all(&to).unwrap();
+        fs::write(from.join(DB_FILE), "ours").unwrap();
+        fs::write(to.join(DB_FILE), "theirs").unwrap();
+        // The rename writes the container, not the data dir.
+        fs::set_permissions(&container, fs::Permissions::from_mode(0o555)).unwrap();
+        // Unless the process is one directory modes do not bind (root).
+        if fs::create_dir(container.join("probe")).is_ok() {
+            fs::set_permissions(&container, fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+
+        let chosen = settle_data_dir(from.clone(), to.clone());
+
+        fs::set_permissions(&container, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(chosen, from);
+        assert_eq!(fs::read_to_string(from.join(DB_FILE)).unwrap(), "ours");
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "theirs");
+        assert!(set_aside_dirs(&to).is_empty());
+    }
+
+    // Set aside, and then the app's own move fails: the container's vault is
+    // put back where it was, so the extension finds what it found before and
+    // the next launch starts over from the same two vaults — never from a
+    // container with no vault at all.
+    #[cfg(unix)]
+    #[test]
+    fn a_move_that_fails_after_the_set_aside_puts_the_containers_vault_back() {
         use std::os::unix::fs::PermissionsExt;
         let root = tmp_sidecar().parent().unwrap().to_path_buf();
         let (from, to) = (root.join("app-data"), root.join("group"));
         fs::create_dir_all(&from).unwrap();
         fs::create_dir_all(&to).unwrap();
         fs::write(from.join(DB_FILE), "ours").unwrap();
+        fs::write(from.join(KDF_SIDECAR_FILE), "our kdf").unwrap();
         fs::write(to.join(DB_FILE), "theirs").unwrap();
-        fs::set_permissions(&to, fs::Permissions::from_mode(0o555)).unwrap();
-        // Unless the process is one directory modes do not bind (root).
-        if fs::create_dir(to.join("probe")).is_ok() {
-            fs::set_permissions(&to, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(to.join(KDF_SIDECAR_FILE), "their kdf").unwrap();
+        // Entries can be read but not renamed out: the move fails on its first.
+        fs::set_permissions(&from, fs::Permissions::from_mode(0o555)).unwrap();
+        if fs::create_dir(from.join("probe")).is_ok() {
+            fs::set_permissions(&from, fs::Permissions::from_mode(0o755)).unwrap();
             return;
         }
 
         let chosen = settle_data_dir(from.clone(), to.clone());
 
-        fs::set_permissions(&to, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&from, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(chosen, from);
         assert_eq!(fs::read_to_string(from.join(DB_FILE)).unwrap(), "ours");
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "theirs");
+        assert_eq!(
+            fs::read_to_string(to.join(KDF_SIDECAR_FILE)).unwrap(),
+            "their kdf"
+        );
         assert!(set_aside_dirs(&to).is_empty());
+        // And once the move can be made, it is, from the same two vaults.
+        assert_eq!(settle_data_dir(from.clone(), to.clone()), to);
+        assert!(!from.exists());
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "ours");
+        assert_eq!(set_aside_dirs(&to).len(), 1);
     }
 
     // The app runs from the container once the data dir is in it — on the
