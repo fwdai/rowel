@@ -56,6 +56,12 @@ the same machine contends for the same browser manifest. Rowel leaves
 KeePassXC's in place and Settings shows that browser as a conflict; use one or
 the other.
 
+Rowel also has its own extension for Chrome, Edge and Firefox, a fork of
+KeePassXC-Browser in [`extension/`](extension). It uses its own native
+messaging host, so it doesn't clash with KeePassXC. It isn't in the browser
+stores yet. To build it, load it unpacked, or sync it with upstream, see
+[docs/browser-extension.md](docs/browser-extension.md).
+
 ## Screenshots
 
 <img width="1012" alt="Rowel lock screen — vault sealed, master password prompt with Touch ID" src="docs/screenshots/lock-screen.png">
