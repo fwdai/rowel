@@ -65,7 +65,9 @@ targets:
     # It holds the App Group (group.app.rowel.mobile) the vault's container
     # and the biometric key's keychain group are shared through with the
     # AutoFill extension; the App ID needs the same group in the developer
-    # portal. The one thing that touches the file is the deep-link plugin's
+    # portal. And the AutoFill credential provider entitlement: App Store
+    # Connect wants it on the containing app as well as the extension (90729).
+    # The one thing that touches the file is the deep-link plugin's
     # build script, which adds or drops only associated-domains and rewrites
     # the plist through the `plist` crate — so keep the file in that crate's
     # exact output (tabs, no comments, no trailing newline), or the rewrite
