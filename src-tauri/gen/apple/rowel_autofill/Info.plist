@@ -33,7 +33,7 @@
 			</dict>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.authentication-services.credential-provider-ui</string>
+		<string>com.apple.authentication-services-credential-provider-ui</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).CredentialProviderViewController</string>
 	</dict>
