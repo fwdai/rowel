@@ -2,7 +2,9 @@
 // Rowel: the Safari flavour of the extension, unpacked into build/safari/ for
 // scripts/build-safari-extension.sh to put in the Safari app extension's
 // Resources. `npm run build:safari` (or `bun run build:safari`); no
-// dependencies, so it needs no install.
+// dependencies, so it needs no install. Run it after `npm run build`, which
+// clears build/ (rowel-build.js); `bun run extension:build` at the root runs
+// both.
 //
 // Safari takes the Firefox build nearly as it is — Manifest V2, a background
 // page, the `browser` namespace — so its manifest is derived from
@@ -13,8 +15,10 @@
 //     for lock signals (safari-native.js);
 //   - safari-native.js is loaded right after the polyfill, before anything
 //     that connects;
-//   - the Gecko id goes, and the blocking webRequest permission Safari does
-//     not support (upstream already skips HTTP auth under Safari);
+//   - the Gecko settings go (add-on id, data collection), as does any
+//     manifest `key` (Chromium's pinned id means nothing to Safari), and the
+//     blocking webRequest permission Safari does not support (upstream already
+//     skips HTTP auth under Safari);
 //   - the extension's icons are the PNG ones from the Chromium manifest.
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,6 +42,7 @@ const manifest = structuredClone(firefox);
 manifest.version = version;
 delete manifest.applications;
 delete manifest.browser_specific_settings;
+delete manifest.key;
 manifest.icons = chromium.icons;
 manifest.permissions = manifest.permissions.filter((p) => p !== 'webRequestBlocking');
 
@@ -51,7 +56,9 @@ manifest.background = { scripts, persistent: true };
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
-cpSync(source, out, { recursive: true });
+// Like rowel-build.js: not the tests Playwright copies in while it runs.
+const skip = join(source, 'tests');
+cpSync(source, out, { recursive: true, filter: (src) => src !== skip });
 cpSync(join(root, 'safari', 'safari-native.js'), join(out, SHIM));
 writeFileSync(join(out, 'manifest.json'), JSON.stringify(manifest, null, 4) + '\n');
 

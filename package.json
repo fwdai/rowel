@@ -22,7 +22,7 @@
     "logo": "bun run scripts/logo.tsx",
     "icons": "bun run scripts/icons.mjs",
     "extension:install": "cd extension && npm ci",
-    "extension:build": "cd extension && npm run build && cd .. && bun scripts/check-extension-build.mjs",
+    "extension:build": "cd extension && npm run build && npm run build:safari && cd .. && bun scripts/check-extension-build.mjs",
     "extension:lint": "bun scripts/extension-strings.mjs --check && cd extension && npm run lint",
     "extension:test": "cd extension && npm run tests",
     "extension:icons": "bun scripts/extension-icons.mjs",

@@ -322,6 +322,9 @@ jobs:
       - run: npm run tests
 
       - run: npm run build
+      # The Safari flavour (docs/safari-extension.md); after `build`, which
+      # clears build/.
+      - run: npm run build:safari
 
       - name: Check the built packages' IDs and host name
         working-directory: .

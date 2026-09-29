@@ -1,6 +1,7 @@
 # The Safari extension (macOS)
 
-Rowel's browser extension (the KeePassXC-Browser fork in `extension/`) runs in
+Rowel's browser extension (the KeePassXC-Browser fork in `extension/`,
+[browser-extension.md](browser-extension.md)) runs in
 Safari on macOS as well as in Chrome and Firefox. It ships inside Rowel.app,
 as the app extension `Contents/PlugIns/Rowel Safari Extension.appex`; there is
 nothing to download separately. The user turns it on in Safari › Settings ›
@@ -89,7 +90,8 @@ runs it on macOS as `build.beforeBundleCommand` (`src-tauri/tauri.macos.conf.jso
 merged over `tauri.conf.json` for macOS only):
 
 1. `bun run build:safari` in `extension/` — the Safari flavour, unpacked in
-   `extension/build/safari/`;
+   `extension/build/safari/` (no npm install needed; `bun run extension:build`
+   at the root builds it too, with the other browsers, and checks it);
 2. `xcodegen generate` in `src-tauri/gen/safari/` (from cache: only when
    `project.yml` changed; the generated project is committed, like the iOS
    one);

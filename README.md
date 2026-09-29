@@ -60,7 +60,9 @@ Rowel also has its own extension for Chrome, Edge and Firefox, a fork of
 KeePassXC-Browser in [`extension/`](extension). It uses its own native
 messaging host, so it doesn't clash with KeePassXC. It isn't in the browser
 stores yet. To build it, load it unpacked, or sync it with upstream, see
-[docs/browser-extension.md](docs/browser-extension.md).
+[docs/browser-extension.md](docs/browser-extension.md). On macOS the same
+extension also runs in Safari, built into Rowel.app; see
+[docs/safari-extension.md](docs/safari-extension.md).
 
 ## Screenshots
 
