@@ -8,13 +8,15 @@ import { GlobeGlyph } from '@/components/Main/icons'
 type Browser = BrowserStatus['browsers'][number]
 
 // Whether the manifest is in place only says something once the host is on:
-// turning it on is what writes one, for each browser found here. A place
-// KeePassXC already holds is said either way, since turning on will not take it.
+// turning it on is what writes one, for each browser found here. KeePassXC
+// holding its own name there (`conflict`, reported only with compatibility on)
+// costs only the stock extension, so it qualifies a ready browser rather than
+// replacing the state.
 const state = (t: TFunction, browser: Browser, enabled: boolean) => {
   if (!browser.detected) return t('Not found')
-  if (browser.conflict) return t('Registered to KeePassXC')
   if (!enabled) return t('Detected')
-  return browser.installed ? t('Ready') : t('Could not be set up')
+  if (!browser.installed) return t('Could not be set up')
+  return browser.conflict ? t('Ready — KeePassXC-Browser here connects to KeePassXC') : t('Ready')
 }
 
 export default function Browsers({

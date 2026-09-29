@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::browser::{self, manifest, Client};
 use crate::error::Result;
-use crate::settings;
+use crate::settings::{self, BrowserSettings};
 use crate::storage;
 
 /// The host as Settings shows it. `clients` are the open vault's — the list
@@ -16,17 +16,29 @@ use crate::storage;
 #[serde(rename_all = "camelCase")]
 pub struct BrowserStatus {
     pub enabled: bool,
+    pub keepassxc_compat: bool,
     pub browsers: Vec<manifest::Status>,
     pub clients: Vec<Client>,
 }
 
 fn status(app: &AppHandle) -> Result<BrowserStatus> {
     let root = storage::root_dir(app)?;
+    let host = settings::current(app).browser;
     Ok(BrowserStatus {
-        enabled: settings::current(app).browser.enabled,
-        browsers: manifest::status(&root),
+        enabled: host.enabled,
+        keepassxc_compat: host.keepassxc_compat,
+        browsers: manifest::status(&root, host.keepassxc_compat),
         clients: browser::clients(app),
     })
+}
+
+// The group goes back whole: a settings patch replaces a top-level key, so
+// sending one field would reset the other to its default. Settings sends one
+// change at a time, so nothing lands between the read and the write.
+fn save(app: &AppHandle, change: impl FnOnce(&mut BrowserSettings)) -> Result<BrowserSettings> {
+    let mut host = settings::current(app).browser;
+    change(&mut host);
+    Ok(settings::set(app, &json!({ "browser": host }))?.browser)
 }
 
 #[tauri::command]
@@ -41,12 +53,25 @@ pub fn browser_status(app: AppHandle) -> Result<BrowserStatus> {
 #[tauri::command]
 pub fn browser_set_enabled(enabled: bool, app: AppHandle) -> Result<BrowserStatus> {
     let root = storage::root_dir(&app)?;
-    settings::set(&app, &json!({ "browser": { "enabled": enabled } }))?;
+    let host = save(&app, |host| host.enabled = enabled)?;
     if enabled {
-        manifest::install(&root);
+        manifest::install(&root, host.keepassxc_compat);
         browser::server::start(&app);
     } else {
         manifest::remove(&root);
+    }
+    status(&app)
+}
+
+/// Also register under KeePassXC's host name, for the stock KeePassXC-Browser
+/// extension — or stop, taking that manifest back and leaving Rowel's own.
+/// With the host off there is nothing to write; the choice waits for it.
+#[tauri::command]
+pub fn browser_set_keepassxc_compat(enabled: bool, app: AppHandle) -> Result<BrowserStatus> {
+    let root = storage::root_dir(&app)?;
+    let host = save(&app, |host| host.keepassxc_compat = enabled)?;
+    if host.enabled {
+        manifest::install(&root, host.keepassxc_compat);
     }
     status(&app)
 }

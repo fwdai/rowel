@@ -1,32 +1,67 @@
 //! The native messaging manifests: how a browser finds this host.
 //!
 //! Each browser looks for a JSON file named after the host in a directory of
-//! its own — or, on Windows, for a registry value naming such a file. The
-//! host name is KeePassXC's, so the stock KeePassXC-Browser extension, which
-//! asks for that name and nothing else, connects to Rowel unchanged. The
-//! other side of that: a KeePassXC install on the same machine has a manifest
-//! at the very same place, and it is left alone — Rowel neither overwrites
-//! another host's registration nor removes it, and reports the clash instead.
+//! its own — or, on Windows, for a registry value naming such a file. Rowel
+//! registers under two names. Its own, for the Rowel extension, is written
+//! whenever the host is on. KeePassXC's is written too while the compatibility
+//! setting is, so the stock KeePassXC-Browser extension, which asks for that
+//! name and nothing else, connects to Rowel unchanged. The other side of that:
+//! a KeePassXC install on the same machine has a manifest at the very same
+//! place, and it is left alone — Rowel neither overwrites another host's
+//! registration nor removes it, and reports the clash instead.
 
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const HOST_NAME: &str = "org.keepassxc.keepassxc_browser";
+/// A name a browser finds this host by, and the extensions it lets in.
+pub struct NativeHost {
+    pub name: &'static str,
+    // What tells a manifest of ours from KeePassXC's own, whatever path either
+    // names: the description is the one field the browser never reads.
+    description: &'static str,
+    chromium_origins: &'static [&'static str],
+    // Firefox reads extension ids under a key of its own.
+    firefox_extensions: &'static [&'static str],
+}
 
-// What tells a manifest of ours from KeePassXC's own, whatever path either
-// names: the description is the one field the browser never reads.
-const DESCRIPTION: &str = "Rowel — fills logins through the KeePassXC-Browser extension";
+/// Rowel's own name, for the Rowel extension.
+pub const ROWEL: NativeHost = NativeHost {
+    name: "app.rowel.browser",
+    description: "Rowel — fills logins through the Rowel extension",
+    // The id the key pinned in the extension's manifest derives. The Chrome
+    // Web Store and Edge Add-ons may assign ids of their own on listing it;
+    // those go here too.
+    chromium_origins: &["chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/"],
+    firefox_extensions: &["browser@rowel.app"],
+};
 
-// The extension's ids: the Chrome Web Store one and the Edge Add-ons one,
-// which every Chromium accepts; and Firefox's, which Firefox reads under a
-// key of its own.
-const CHROMIUM_ORIGINS: &[&str] = &[
-    "chrome-extension://oboonakemofpalcgghocfoadofidjkkk/",
-    "chrome-extension://pdffhmdngciaglkoonimfcmckehcpafo/",
-];
-const FIREFOX_EXTENSIONS: &[&str] = &["keepassxc-browser@keepassxc.org"];
+/// KeePassXC's name, for the stock KeePassXC-Browser extension.
+pub const KEEPASSXC: NativeHost = NativeHost {
+    name: "org.keepassxc.keepassxc_browser",
+    // Unchanged from when this was Rowel's only manifest, so one written then
+    // is still recognised as ours, and replaced or removed.
+    description: "Rowel — fills logins through the KeePassXC-Browser extension",
+    // The Chrome Web Store id and the Edge Add-ons one, which every Chromium
+    // accepts.
+    chromium_origins: &[
+        "chrome-extension://oboonakemofpalcgghocfoadofidjkkk/",
+        "chrome-extension://pdffhmdngciaglkoonimfcmckehcpafo/",
+    ],
+    firefox_extensions: &["keepassxc-browser@keepassxc.org"],
+};
+
+pub const HOSTS: &[NativeHost] = &[ROWEL, KEEPASSXC];
+
+/// Whether `arg` is the id of a Firefox extension either manifest lets in,
+/// which is what Firefox passes the host it launches.
+pub fn is_firefox_extension(arg: &str) -> bool {
+    HOSTS
+        .iter()
+        .any(|host| host.firefox_extensions.contains(&arg))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {
@@ -103,8 +138,8 @@ pub const BROWSERS: &[Browser] = &[
 ];
 
 /// One browser as Settings shows it: whether it seems to be on this machine,
-/// whether this host's manifest is in place, and whether another host —
-/// KeePassXC itself — holds the place instead.
+/// whether Rowel's own manifest is in place, and — with compatibility on —
+/// whether KeePassXC itself holds its name there instead.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
@@ -115,17 +150,18 @@ pub struct Status {
     pub conflict: bool,
 }
 
-/// The manifest for one family, naming `host` as the executable.
-pub fn manifest(family: Family, host: &Path) -> String {
+/// The manifest registering `host` for one family, naming `exe` as the
+/// executable.
+pub fn manifest(host: &NativeHost, family: Family, exe: &Path) -> String {
     let mut manifest = json!({
-        "name": HOST_NAME,
-        "description": DESCRIPTION,
-        "path": host,
+        "name": host.name,
+        "description": host.description,
+        "path": exe,
         "type": "stdio",
     });
     match family {
-        Family::Chromium => manifest["allowed_origins"] = json!(CHROMIUM_ORIGINS),
-        Family::Firefox => manifest["allowed_extensions"] = json!(FIREFOX_EXTENSIONS),
+        Family::Chromium => manifest["allowed_origins"] = json!(host.chromium_origins),
+        Family::Firefox => manifest["allowed_extensions"] = json!(host.firefox_extensions),
     }
     serde_json::to_string_pretty(&manifest).unwrap_or_default()
 }
@@ -133,7 +169,7 @@ pub fn manifest(family: Family, host: &Path) -> String {
 /// What a manifest found in place is to this host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Found {
-    /// Written by this host, for the executable at `host`.
+    /// Written by this host, for the executable at `exe`.
     Current,
     /// Written by this host, but for another path — an earlier install.
     Stale,
@@ -141,17 +177,17 @@ pub enum Found {
     Foreign,
 }
 
-/// Read `text` as a manifest and say whose it is.
-pub fn classify(text: &str, host: &Path) -> Found {
+/// Read `text`, found under `host`'s name, as a manifest and say whose it is.
+pub fn classify(host: &NativeHost, text: &str, exe: &Path) -> Found {
     let Ok(Value::Object(manifest)) = serde_json::from_str::<Value>(text) else {
         return Found::Foreign;
     };
-    let ours = manifest.get("description").and_then(Value::as_str) == Some(DESCRIPTION);
+    let ours = manifest.get("description").and_then(Value::as_str) == Some(host.description);
     if !ours {
         return Found::Foreign;
     }
     let path = manifest.get("path").and_then(Value::as_str);
-    if path == Some(host.to_string_lossy().as_ref()) {
+    if path == Some(exe.to_string_lossy().as_ref()) {
         Found::Current
     } else {
         Found::Stale
@@ -167,72 +203,161 @@ pub fn host_path() -> Option<PathBuf> {
     std::env::current_exe().ok()
 }
 
-fn found(root: &Path, browser: &Browser, host: &Path) -> Option<Found> {
-    platform::existing(root, browser).map(|text| classify(&text, host))
+/// Where manifests are kept: this machine's places (`System`), or a
+/// directory under test.
+pub trait Places {
+    fn detected(&self, browser: &Browser) -> bool;
+    /// The manifest in place under `host`'s name for `browser`, whoever
+    /// wrote it.
+    fn existing(&self, host: &NativeHost, browser: &Browser) -> Option<String>;
+    fn install(&self, host: &NativeHost, browser: &Browser, manifest: &str) -> io::Result<()>;
+    fn remove(&self, host: &NativeHost, browser: &Browser) -> io::Result<()>;
 }
 
-/// Write the manifest for every browser that seems to be here and is not
-/// already registered to another host. `root` is the app's data directory,
-/// where Windows keeps the files its registry points at.
-pub fn install(root: &Path) -> Vec<Status> {
-    if let Some(host) = host_path() {
-        for browser in BROWSERS {
-            if !platform::detected(browser) || found(root, browser, &host) == Some(Found::Foreign) {
-                continue;
-            }
-            if let Err(e) = platform::install(root, browser, &manifest(browser.family, &host)) {
+/// This machine's places. The path is the app's data directory, where Windows
+/// keeps the files its registry points at.
+pub struct System<'a>(pub &'a Path);
+
+impl Places for System<'_> {
+    fn detected(&self, browser: &Browser) -> bool {
+        platform::detected(browser)
+    }
+
+    fn existing(&self, host: &NativeHost, browser: &Browser) -> Option<String> {
+        platform::existing(self.0, host, browser)
+    }
+
+    fn install(&self, host: &NativeHost, browser: &Browser, manifest: &str) -> io::Result<()> {
+        platform::install(self.0, host, browser, manifest)
+    }
+
+    fn remove(&self, host: &NativeHost, browser: &Browser) -> io::Result<()> {
+        platform::remove(self.0, host, browser)
+    }
+}
+
+fn found(
+    places: &impl Places,
+    host: &NativeHost,
+    browser: &Browser,
+    exe: Option<&Path>,
+) -> Option<Found> {
+    let exe = exe?;
+    places
+        .existing(host, browser)
+        .map(|text| classify(host, &text, exe))
+}
+
+/// Write Rowel's manifest for every browser that seems to be here, and
+/// KeePassXC's name as well while `compat` is on — or, while it is off, take
+/// back one of ours under that name. A place another host holds is left alone.
+pub fn install(root: &Path, compat: bool) {
+    install_in(&System(root), host_path().as_deref(), compat);
+}
+
+pub fn install_in(places: &impl Places, exe: Option<&Path>, compat: bool) {
+    let Some(exe) = exe else {
+        return;
+    };
+    for browser in BROWSERS {
+        let detected = places.detected(browser);
+        for (host, wanted) in [(&ROWEL, true), (&KEEPASSXC, compat)] {
+            let result = match found(places, host, browser, Some(exe)) {
+                Some(Found::Foreign) => continue,
+                _ if wanted && detected => {
+                    places.install(host, browser, &manifest(host, browser.family, exe))
+                }
+                Some(_) if !wanted => places.remove(host, browser),
+                _ => continue,
+            };
+            if let Err(e) = result {
                 log::warn!(
-                    "browser host: could not register with {}: {e}",
+                    "browser host: could not update {} for {}: {e}",
+                    host.name,
                     browser.label
                 );
             }
         }
     }
-    status(root)
 }
 
-/// Remove every manifest of ours, whether or not its browser is still here.
-/// Another host's stays.
-pub fn remove(root: &Path) -> Vec<Status> {
-    let host = host_path();
+/// Remove every manifest of ours, under either name, whether or not its
+/// browser is still here. Another host's stays.
+pub fn remove(root: &Path) {
+    remove_in(&System(root), host_path().as_deref());
+}
+
+pub fn remove_in(places: &impl Places, exe: Option<&Path>) {
     for browser in BROWSERS {
-        let theirs = host
-            .as_deref()
-            .and_then(|host| found(root, browser, host))
-            .is_some_and(|found| found == Found::Foreign);
-        if theirs {
-            continue;
-        }
-        if let Err(e) = platform::remove(root, browser) {
-            log::warn!(
-                "browser host: could not unregister from {}: {e}",
-                browser.label
-            );
+        for host in HOSTS {
+            if found(places, host, browser, exe) == Some(Found::Foreign) {
+                continue;
+            }
+            if let Err(e) = places.remove(host, browser) {
+                log::warn!(
+                    "browser host: could not remove {} from {}: {e}",
+                    host.name,
+                    browser.label
+                );
+            }
         }
     }
-    status(root)
 }
 
-pub fn status(root: &Path) -> Vec<Status> {
-    let host = host_path();
+pub fn status(root: &Path, compat: bool) -> Vec<Status> {
+    status_in(&System(root), host_path().as_deref(), compat)
+}
+
+pub fn status_in(places: &impl Places, exe: Option<&Path>, compat: bool) -> Vec<Status> {
     BROWSERS
         .iter()
-        .map(|browser| {
-            let found = host.as_deref().and_then(|host| found(root, browser, host));
-            Status {
-                id: browser.id,
-                label: browser.label,
-                detected: platform::detected(browser),
-                installed: found == Some(Found::Current),
-                conflict: found == Some(Found::Foreign),
-            }
+        .map(|browser| Status {
+            id: browser.id,
+            label: browser.label,
+            detected: places.detected(browser),
+            installed: found(places, &ROWEL, browser, exe) == Some(Found::Current),
+            // KeePassXC holding its own name only matters while Rowel would
+            // register under it too.
+            conflict: compat && found(places, &KEEPASSXC, browser, exe) == Some(Found::Foreign),
         })
         .collect()
 }
 
+fn remove_file(path: &Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+// Whether a registry value names `path`. Windows paths ignore case and take
+// either slash, and a value written by another tool may differ in both, or end
+// in a separator; reading such a value as another file would delete a
+// manifest KeePassXC-Browser still launches through.
+#[cfg(any(windows, test))]
+fn names(value: &str, path: &Path) -> bool {
+    let normal = |s: &str| {
+        s.trim_end_matches(['\\', '/'])
+            .replace('/', "\\")
+            .to_lowercase()
+    };
+    normal(value) == normal(&path.to_string_lossy())
+}
+
+/// Delete Windows' one manifest per browser from before Rowel had a name of
+/// its own, unless `named` — the value of KeePassXC's registry key — still
+/// points at it.
+#[cfg(any(windows, test))]
+pub fn remove_unless_named(legacy: &Path, named: Option<&str>) -> io::Result<()> {
+    if named.is_some_and(|value| names(value, legacy)) {
+        return Ok(());
+    }
+    remove_file(legacy)
+}
+
 #[cfg(not(windows))]
 mod platform {
-    use super::{Browser, Family, HOST_NAME};
+    use super::{remove_file, Browser, Family, NativeHost};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -254,7 +379,7 @@ mod platform {
         }
     }
 
-    fn manifest_path(browser: &Browser) -> Option<PathBuf> {
+    fn manifest_path(host: &NativeHost, browser: &Browser) -> Option<PathBuf> {
         let dir = if cfg!(target_os = "macos") {
             dirs::home_dir()?
                 .join("Library/Application Support")
@@ -270,20 +395,24 @@ mod platform {
                     .join("NativeMessagingHosts"),
             }
         };
-        Some(dir.join(format!("{HOST_NAME}.json")))
+        Some(dir.join(format!("{}.json", host.name)))
     }
 
     pub fn detected(browser: &Browser) -> bool {
         profile_dir(browser).is_some_and(|dir| dir.is_dir())
     }
 
-    /// The manifest in place for `browser`, whoever wrote it.
-    pub fn existing(_root: &Path, browser: &Browser) -> Option<String> {
-        fs::read_to_string(manifest_path(browser)?).ok()
+    pub fn existing(_root: &Path, host: &NativeHost, browser: &Browser) -> Option<String> {
+        fs::read_to_string(manifest_path(host, browser)?).ok()
     }
 
-    pub fn install(_root: &Path, browser: &Browser, manifest: &str) -> std::io::Result<()> {
-        let Some(path) = manifest_path(browser) else {
+    pub fn install(
+        _root: &Path,
+        host: &NativeHost,
+        browser: &Browser,
+        manifest: &str,
+    ) -> std::io::Result<()> {
+        let Some(path) = manifest_path(host, browser) else {
             return Ok(());
         };
         if let Some(dir) = path.parent() {
@@ -292,14 +421,11 @@ mod platform {
         fs::write(path, manifest)
     }
 
-    pub fn remove(_root: &Path, browser: &Browser) -> std::io::Result<()> {
-        let Some(path) = manifest_path(browser) else {
+    pub fn remove(_root: &Path, host: &NativeHost, browser: &Browser) -> std::io::Result<()> {
+        let Some(path) = manifest_path(host, browser) else {
             return Ok(());
         };
-        match fs::remove_file(path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            other => other,
-        }
+        remove_file(&path)
     }
 }
 
@@ -309,20 +435,34 @@ mod platform {
 // which is what `existing` reads.
 #[cfg(windows)]
 mod platform {
-    use super::{Browser, HOST_NAME};
+    use super::{remove_file, Browser, NativeHost, KEEPASSXC};
     use std::fs;
     use std::path::{Path, PathBuf};
     use windows_registry::CURRENT_USER;
 
-    fn key(browser: &Browser) -> String {
+    fn key(host: &NativeHost, browser: &Browser) -> String {
         format!(
-            "Software\\{}\\NativeMessagingHosts\\{HOST_NAME}",
-            browser.windows
+            "Software\\{}\\NativeMessagingHosts\\{}",
+            browser.windows, host.name
         )
     }
 
-    fn manifest_path(root: &Path, browser: &Browser) -> PathBuf {
-        root.join("browser").join(format!("{}.json", browser.id))
+    fn manifest_path(root: &Path, host: &NativeHost, browser: &Browser) -> PathBuf {
+        root.join("browser")
+            .join(browser.id)
+            .join(format!("{}.json", host.name))
+    }
+
+    // The one manifest per browser from before Rowel had a name of its own,
+    // registered under KeePassXC's. It goes once that key no longer points at
+    // it: rewritten, removed, or taken by KeePassXC since.
+    fn remove_legacy(root: &Path, browser: &Browser) -> std::io::Result<()> {
+        let legacy = root.join("browser").join(format!("{}.json", browser.id));
+        let named = CURRENT_USER
+            .open(key(&KEEPASSXC, browser))
+            .and_then(|key| key.get_string(""))
+            .ok();
+        super::remove_unless_named(&legacy, named.as_deref())
     }
 
     pub fn detected(browser: &Browser) -> bool {
@@ -331,36 +471,39 @@ mod platform {
             .is_ok()
     }
 
-    /// The manifest the registry points at for `browser`, whoever wrote it.
-    pub fn existing(_root: &Path, browser: &Browser) -> Option<String> {
+    pub fn existing(_root: &Path, host: &NativeHost, browser: &Browser) -> Option<String> {
         let path = CURRENT_USER
-            .open(key(browser))
+            .open(key(host, browser))
             .and_then(|key| key.get_string(""))
             .ok()?;
         fs::read_to_string(path).ok()
     }
 
-    pub fn install(root: &Path, browser: &Browser, manifest: &str) -> std::io::Result<()> {
-        let path = manifest_path(root, browser);
+    pub fn install(
+        root: &Path,
+        host: &NativeHost,
+        browser: &Browser,
+        manifest: &str,
+    ) -> std::io::Result<()> {
+        let path = manifest_path(root, host, browser);
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
         fs::write(&path, manifest)?;
         CURRENT_USER
-            .create(key(browser))
+            .create(key(host, browser))
             .and_then(|key| key.set_string("", path.to_string_lossy()))
-            .map_err(|e| std::io::Error::other(e.to_string()))
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        remove_legacy(root, browser)
     }
 
-    pub fn remove(root: &Path, browser: &Browser) -> std::io::Result<()> {
-        if CURRENT_USER.open(key(browser)).is_ok() {
+    pub fn remove(root: &Path, host: &NativeHost, browser: &Browser) -> std::io::Result<()> {
+        if CURRENT_USER.open(key(host, browser)).is_ok() {
             CURRENT_USER
-                .remove_tree(key(browser))
+                .remove_tree(key(host, browser))
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
         }
-        match fs::remove_file(manifest_path(root, browser)) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            other => other,
-        }
+        remove_file(&manifest_path(root, host, browser))?;
+        remove_legacy(root, browser)
     }
 }

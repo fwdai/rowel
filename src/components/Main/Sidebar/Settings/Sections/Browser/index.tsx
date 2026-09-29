@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   browserForgetClient,
   browserSetEnabled,
+  browserSetKeepassxcCompat,
   browserStatus,
   type BrowserStatus
 } from '@/api/browser'
@@ -12,7 +13,7 @@ import { useUi } from '@/store'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
 import Toggle from '@/components/elements/Toggle'
-import { ExtensionGlyph } from '@/components/Main/icons'
+import { ExtensionGlyph, LinkGlyph } from '@/components/Main/icons'
 import Browsers from './Browsers'
 import Clients from './Clients'
 
@@ -70,10 +71,13 @@ export default function Browser() {
     })
   }
   const toggle = (enabled: boolean) => change(() => browserSetEnabled(enabled))
+  const toggleCompat = (enabled: boolean) => change(() => browserSetKeepassxcCompat(enabled))
   const forget = (key: string) => change(() => browserForgetClient(key))
 
   const enabled = !!status?.enabled
+  const compat = !!status?.keepassxcCompat
   const label = t('Fill logins in your browser')
+  const compatLabel = t('Also work with the KeePassXC-Browser extension')
 
   return (
     <>
@@ -83,7 +87,7 @@ export default function Browser() {
           icon={<ExtensionGlyph />}
           iconActive={enabled}
           description={t(
-            "{{appName}} fills logins through the KeePassXC-Browser extension. Install it from your browser's store, then turn this on."
+            "{{appName}} fills logins through its own browser extension, or through KeePassXC-Browser as a fallback. Install one from your browser's store, then turn this on."
           )}
           control={
             <Toggle
@@ -102,6 +106,26 @@ export default function Browser() {
             </span>
           )}
         </SettingsRow>
+        {/* What the choice does is only written while the host is on, so the
+            row waits for it; the choice itself is kept either way. */}
+        <SettingsRow
+          label={compatLabel}
+          icon={<LinkGlyph />}
+          iconActive={enabled && compat}
+          description={t(
+            'Lets the stock KeePassXC-Browser extension connect too. A browser KeePassXC itself is registered with stays with KeePassXC.'
+          )}
+          control={
+            <Toggle
+              name="keepassxcCompat"
+              checked={compat}
+              disabled={!status || busy || !enabled}
+              onChange={toggleCompat}
+              aria-label={compatLabel}
+              testid="settings-browser-keepassxc-toggle"
+            />
+          }
+        />
       </SettingsGroup>
       {status && (
         <>

@@ -11,11 +11,11 @@ use std::io;
 
 use interprocess::local_socket::{prelude::*, Stream};
 
-use super::{frame, root_dir, socket_name};
+use super::{frame, manifest, root_dir, socket_name};
 
 /// Whether these arguments are a browser's, launching its native host.
 pub fn launched_by_browser(mut args: impl Iterator<Item = String>) -> bool {
-    args.any(|arg| arg.starts_with("chrome-extension://") || arg.ends_with("@keepassxc.org"))
+    args.any(|arg| arg.starts_with("chrome-extension://") || manifest::is_firefox_extension(&arg))
 }
 
 /// Relay until either side closes. The exit code is the process's: zero for

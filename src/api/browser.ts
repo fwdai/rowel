@@ -2,17 +2,21 @@ import { call } from './client'
 
 /**
  * The browser extension host (desktop only): Rowel speaks the KeePassXC-Browser
- * protocol, so the stock extension fills logins from the vault. Every command
- * that changes something answers with the whole status as it now stands, so
- * Settings redraws from what Rust says rather than from a guess.
+ * protocol, so its own extension, and the stock KeePassXC one, fill logins from
+ * the vault. Every command that changes something answers with the whole
+ * status as it now stands, so Settings redraws from what Rust says rather than
+ * from a guess.
  */
 export interface BrowserStatus {
   enabled: boolean
+  /** Whether the host also registers under KeePassXC's name, for the stock extension. */
+  keepassxcCompat: boolean
   /**
    * Every browser Rust knows how to register with. `detected` is its profile
-   * directory being there; `installed` is the manifest it finds Rowel by, which
-   * is written on enabling and only for a detected browser; `conflict` is that
-   * place already held by KeePassXC itself, which Rowel leaves alone.
+   * directory being there; `installed` is Rowel's own manifest, which is
+   * written on enabling and only for a detected browser; `conflict` — only
+   * ever set with `keepassxcCompat` on — is KeePassXC's name there already
+   * held by KeePassXC itself, which Rowel leaves alone.
    */
   browsers: {
     id: string
@@ -34,6 +38,9 @@ export const browserStatus = (): Promise<BrowserStatus> => call('browser_status'
 
 export const browserSetEnabled = (enabled: boolean): Promise<BrowserStatus> =>
   call('browser_set_enabled', { enabled })
+
+export const browserSetKeepassxcCompat = (enabled: boolean): Promise<BrowserStatus> =>
+  call('browser_set_keepassxc_compat', { enabled })
 
 /**
  * How long Rust holds an `associate` or a passkey ask open for the user (its
