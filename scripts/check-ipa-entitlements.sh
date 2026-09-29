@@ -31,16 +31,26 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 unzip -q "$IPA" -d "$TMP"
 
+# The group both entitlements files name; the vault is shared through it.
+GROUP=group.app.rowel.mobile
+
+# PlistBuddy, not plutil: plutil reads the dots in the key as a key path.
+# Prints the value (an array one element per line), or nothing if absent.
+entitlement() {
+  /usr/libexec/PlistBuddy -c "Print :$1" "$TMP/ents.plist" 2>/dev/null || true
+}
+
 for bundle in "$APP_DIR" "$APPEX_DIR"; do
+  name=$(basename "$bundle")
   codesign -d --entitlements - --xml "$TMP/$bundle" 2>/dev/null > "$TMP/ents.plist"
-  for key in com.apple.developer.authentication-services.autofill-credential-provider \
-    com.apple.security.application-groups; do
-    # PlistBuddy, not plutil: plutil reads the dots in the key as a key path.
-    if ! /usr/libexec/PlistBuddy -c "Print :$key" "$TMP/ents.plist" >/dev/null 2>&1; then
-      echo "error: $(basename "$bundle") in the IPA is not signed with $key." >&2
-      exit 1
-    fi
-  done
+  if [[ $(entitlement com.apple.developer.authentication-services.autofill-credential-provider) != true ]]; then
+    echo "error: $name in the IPA is not signed with autofill-credential-provider = true." >&2
+    exit 1
+  fi
+  if ! entitlement com.apple.security.application-groups | grep -qxE "[[:space:]]*${GROUP//./\\.}"; then
+    echo "error: $name in the IPA is not signed with the App Group $GROUP." >&2
+    exit 1
+  fi
 done
 
 echo "check-ipa-entitlements: app and AutoFill extension carry their entitlements"
