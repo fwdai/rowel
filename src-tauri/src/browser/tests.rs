@@ -1371,6 +1371,21 @@ fn the_app_group_is_the_one_the_app_is_entitled_to() {
     assert!(entitlements.contains(&format!("<string>{DESKTOP_APP_GROUP}</string>")));
 }
 
+// The Safari extension is Swift (src-tauri/gen/safari) and has to agree with
+// this side on where the socket is and how a frame is capped: held to the
+// constants here, since nothing else would notice the two drifting apart.
+#[test]
+fn the_safari_extension_agrees_on_the_group_the_socket_and_the_cap() {
+    let entitlements = include_str!("../../gen/safari/rowel_safari/rowel_safari.entitlements");
+    assert!(entitlements.contains(&format!("<string>{DESKTOP_APP_GROUP}</string>")));
+    let connection = include_str!("../../gen/safari/Sources/HostConnection.swift");
+    assert!(connection.contains(&format!("appGroup = \"{DESKTOP_APP_GROUP}\"")));
+    assert!(connection.contains(&format!("socketFile = \"{}\"", super::SOCKET_FILE)));
+    let framing = include_str!("../../gen/safari/Sources/Frame.swift");
+    assert_eq!(frame::MAX_FRAME, 1024 * 1024);
+    assert!(framing.contains("maxLength = 1024 * 1024"));
+}
+
 #[test]
 fn a_browser_launch_is_told_by_what_it_puts_on_the_command_line() {
     fn launched(list: &[&str]) -> bool {

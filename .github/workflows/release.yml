@@ -102,6 +102,15 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: bun scripts/check-macos-entitlements.mjs
 
+      # The Safari web extension is built, and signed with the same Developer
+      # ID identity, by scripts/build-safari-extension.sh, which Tauri runs as
+      # beforeBundleCommand on macOS (tauri.macos.conf.json). It regenerates
+      # the extension's Xcode project with xcodegen when project.yml changed,
+      # and builds the extension/ fork's Safari flavour with bun.
+      - name: Install xcodegen for the Safari extension
+        if: matrix.platform == 'macos-latest'
+        run: command -v xcodegen || brew install xcodegen
+
       - name: Build, sign, notarize and upload to the draft release
         uses: tauri-apps/tauri-action@v1
         env:
@@ -167,6 +176,30 @@ jobs:
           fi
           echo "Exited with $RC — started fine, then stopped for its own reasons."
           cat /tmp/smoke.err || true
+
+      # The launch above says nothing about the Safari extension: Safari, not
+      # the app, starts it. So check what Safari and Gatekeeper will: that it
+      # is there, signed by the same team with hardened runtime and a
+      # timestamp (notarization has already vouched for that much, but not
+      # for the entitlements), sandboxed and in the App Group the app's socket
+      # is in.
+      - name: Check the bundled Safari extension
+        if: matrix.platform == 'macos-latest'
+        run: |
+          APPEX="${{ matrix.bundlePath }}/macos/Rowel.app/Contents/PlugIns/Rowel Safari Extension.appex"
+          if [ ! -d "$APPEX" ]; then
+            echo "::error::No Safari extension at $APPEX"
+            exit 1
+          fi
+          codesign --verify --strict --deep --verbose=2 "${{ matrix.bundlePath }}/macos/Rowel.app"
+          INFO=$(codesign -dvv "$APPEX" 2>&1)
+          echo "$INFO"
+          echo "$INFO" | grep -q "TeamIdentifier=UFBL3F444A" || { echo "::error::extension not signed by team UFBL3F444A"; exit 1; }
+          echo "$INFO" | grep -q "flags=.*runtime" || { echo "::error::extension without hardened runtime"; exit 1; }
+          echo "$INFO" | grep -q "^Timestamp=" || { echo "::error::extension signature has no timestamp"; exit 1; }
+          ENT=$(codesign -d --entitlements - --xml "$APPEX" 2>/dev/null)
+          echo "$ENT" | grep -q "com.apple.security.app-sandbox" || { echo "::error::extension is not sandboxed"; exit 1; }
+          echo "$ENT" | grep -q "UFBL3F444A.app.rowel.desktop" || { echo "::error::extension is not in the app group"; exit 1; }
 
       # Replace the placeholder release body with GitHub's auto-generated
       # release notes (the same "What's Changed" list the UI button produces),

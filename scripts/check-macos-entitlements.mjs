@@ -13,6 +13,9 @@
 // on any runner, and it is deliberately fail-closed: anything it cannot parse or
 // verify is an error, never a pass.
 //
+// It checks the Safari web extension's entitlements too (src-tauri/gen/safari),
+// which ship inside the app with no profile of their own.
+//
 // Usage: bun scripts/check-macos-entitlements.mjs
 
 import { readFileSync, existsSync } from 'node:fs'
@@ -50,6 +53,20 @@ const isProfileGated = (key) =>
 const TEAM_ID = 'UFBL3F444A'
 const APP_GROUPS = 'com.apple.security.application-groups'
 const isTeamGroup = (value) => typeof value === 'string' && value.startsWith(`${TEAM_ID}.`)
+
+// The entitlements each signed macOS bundle asks for, and whether it carries
+// the provisioning profile. The Safari extension (an .appex inside the app) has
+// no profile of its own, so it may ask for nothing gated at all: a refusal
+// there does not stop the app launching — the smoke test in release.yml would
+// not see it — it only leaves Safari unable to load the extension.
+const safariEntitlementsPath = join(
+  root,
+  'src-tauri',
+  'gen',
+  'safari',
+  'rowel_safari',
+  'rowel_safari.entitlements',
+)
 
 // --- the smallest plist reader that covers both files ---------------------
 // Handles the subset Apple emits: dict, array, string, true/false, date,
@@ -211,6 +228,19 @@ const gatedRequests = (entitlements, label) => {
 }
 
 // --- run ------------------------------------------------------------------
+
+// The Safari extension first: it has no profile, so anything gated is fatal.
+const safariGated = gatedRequests(
+  readEntitlements(safariEntitlementsPath, 'the Safari extension entitlements'),
+  'Safari extension',
+)
+if (Object.keys(safariGated).length > 0) {
+  fail(
+    `the Safari extension (src-tauri/gen/safari) requests profile-gated entitlements ` +
+      `(${Object.keys(safariGated).join(', ')}) and carries no provisioning profile.\n` +
+      `  macOS would refuse to spawn it, and Safari would never load the extension.`,
+  )
+}
 
 const entitlements = readEntitlements(entitlementsPath, 'Entitlements.plist')
 const gatedValues = gatedRequests(entitlements, 'app')

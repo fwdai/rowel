@@ -1,0 +1,80 @@
+# The Safari web extension: an app extension (.appex) and nothing else. It is
+# not a Tauri-generated project — Tauri has no Safari support — but kept
+# beside the iOS one and managed the same way: edit this file, run
+# `xcodegen generate` here, commit both. scripts/build-safari-extension.sh
+# regenerates it (from cache, so only when this file changed) and builds it;
+# Tauri then copies the signed .appex into Rowel.app/Contents/PlugIns
+# (tauri.macos.conf.json). See docs/safari-extension.md.
+name: rowel_safari
+options:
+  bundleIdPrefix: app.rowel.desktop
+  deploymentTarget:
+    macOS: "12.0"
+configs:
+  debug: debug
+  release: release
+targets:
+  rowel_safari:
+    type: app-extension
+    platform: macOS
+    scheme: {}
+    sources:
+      - path: Sources
+    info:
+      path: rowel_safari/Info.plist
+      properties:
+        CFBundleDisplayName: Rowel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.Safari.web-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SafariWebExtensionHandler
+    # Sandboxed, as every Safari extension must be, and in the App Group the
+    # app is in (src-tauri/Entitlements.plist): the group container is where
+    # the app's socket is, and the one place outside its own sandbox this can
+    # connect to. The team-id form of the group needs no provisioning profile
+    # on macOS, and this bundle carries none — anything profile-gated here
+    # would stop Safari loading the extension at all
+    # (scripts/check-macos-entitlements.mjs checks this file as well).
+    # Written from here by xcodegen, so a regeneration keeps them.
+    entitlements:
+      path: rowel_safari/rowel_safari.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups: [UFBL3F444A.app.rowel.desktop]
+    settings:
+      base:
+        PRODUCT_NAME: Rowel Safari Extension
+        PRODUCT_MODULE_NAME: RowelSafari
+        PRODUCT_BUNDLE_IDENTIFIER: app.rowel.desktop.safari
+        DEVELOPMENT_TEAM: UFBL3F444A
+        SWIFT_VERSION: "5.0"
+        # The build script sets both from tauri.conf.json's version.
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1.0.0
+        ENABLE_HARDENED_RUNTIME: true
+        # Signed by the build script, not by Xcode: with the Developer ID
+        # identity and a timestamp for a release, ad hoc otherwise.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        # The extension's web resources: the Safari build of the fork
+        # (extension/, `build:safari`). The build script passes its own.
+        WEB_EXTENSION_DIR: $(SRCROOT)/../../../extension/build/safari
+    dependencies:
+      - sdk: SafariServices.framework
+    postCompileScripts:
+      # The web extension goes at the root of the bundle's Resources, where
+      # Safari looks for manifest.json. A folder reference would nest it one
+      # level down, and a group would flatten its directories.
+      - script: |
+          set -eu
+          if [ ! -f "$WEB_EXTENSION_DIR/manifest.json" ]; then
+            echo "error: no web extension at $WEB_EXTENSION_DIR (build it with scripts/build-safari-extension.sh)"
+            exit 1
+          fi
+          dest="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          mkdir -p "$dest"
+          rsync -a --delete "$WEB_EXTENSION_DIR/" "$dest/"
+        name: Copy Web Extension
+        basedOnDependencyAnalysis: false
