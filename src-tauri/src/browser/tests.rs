@@ -11,12 +11,16 @@ use super::actions::{Client, Connection, Host, Login};
 use super::manifest::{self, Family, HOST_NAME};
 use super::passkeys::{self, Assertion, Registration};
 use super::protocol::{increment, str_of, Code, NONCE_LEN, VERSION};
-use super::{frame, proxy, save_login_in, server, socket_name, Pending, IDENTIFIER};
+use super::{
+    frame, group_container, proxy, save_login_in, server, socket_dir, socket_name, Pending,
+    IDENTIFIER,
+};
 use crate::crypto::{PayloadCipher, VaultKey};
 use crate::models::Entry;
 use crate::passkey::store::MemoryVault;
 use crate::passkey::{Ceremony, UserConsent};
 use crate::store::{migrate, SqliteStore, VaultStore};
+use rowel_core::app::DESKTOP_APP_GROUP;
 
 // Passkeys through the extension, end to end.
 mod ceremonies;
@@ -1290,6 +1294,81 @@ fn bind_listens_at_the_root_and_takes_over_a_socket_left_behind() {
     std::mem::forget(listener);
     let again = server::bind(dir.path()).expect("a listener over a stale socket file");
     drop(again);
+}
+
+#[test]
+fn bind_makes_a_missing_socket_directory_owner_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir
+        .path()
+        .join("Group Containers")
+        .join("group")
+        .join("dev");
+    let listener = server::bind(&root).expect("a listener in a directory not yet made");
+    assert!(root.join(super::SOCKET_FILE).exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for made in [&root, root.parent().unwrap()] {
+            let mode = std::fs::metadata(made).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "{} is owner-only", made.display());
+        }
+    }
+    drop(listener);
+}
+
+#[test]
+fn the_group_container_is_the_team_prefixed_one_under_the_home() {
+    assert_eq!(
+        group_container(std::path::Path::new("/Users/someone")),
+        std::path::Path::new(
+            "/Users/someone/Library/Group Containers/UFBL3F444A.app.rowel.desktop"
+        )
+    );
+    // The iOS group is `group.`-prefixed, which macOS gates behind a profile.
+    assert_ne!(DESKTOP_APP_GROUP, rowel_core::app::APP_GROUP);
+    assert!(!DESKTOP_APP_GROUP.starts_with("group."));
+}
+
+#[test]
+fn the_socket_is_in_the_group_container_on_macos_and_the_data_dir_elsewhere() {
+    // The debug override wins over both; a run that sets it has nothing to
+    // say about the platform default.
+    if std::env::var_os("ROWEL_DB_DIR").is_some() {
+        return;
+    }
+    let expected = if cfg!(target_os = "macos") {
+        group_container(&dirs::home_dir().unwrap())
+    } else {
+        dirs::data_dir().unwrap().join(IDENTIFIER)
+    };
+    // `cargo test` builds with debug assertions: the `dev` subdirectory.
+    assert_eq!(socket_dir(), Some(expected.join("dev")));
+}
+
+#[test]
+fn the_group_socket_path_fits_a_unix_socket_address() {
+    // `sun_path` is 104 bytes on macOS, the terminating NUL included, and the
+    // group container's path is long: a home under /Users leaves a short name
+    // of up to 25 characters room in a debug build's `dev` subdirectory, 29 in
+    // a release build's. Past that the bind fails, and the host stays off with
+    // "could not listen" in the log (docs/safari-extension.md).
+    let home = format!("/Users/{}", "a".repeat(25));
+    let path = group_container(std::path::Path::new(&home))
+        .join("dev")
+        .join(super::SOCKET_FILE);
+    assert!(
+        path.as_os_str().len() < 104,
+        "{} is too long",
+        path.display()
+    );
+}
+
+#[test]
+fn the_app_group_is_the_one_the_app_is_entitled_to() {
+    let entitlements = include_str!("../../Entitlements.plist");
+    assert!(entitlements.contains("<key>com.apple.security.application-groups</key>"));
+    assert!(entitlements.contains(&format!("<string>{DESKTOP_APP_GROUP}</string>")));
 }
 
 #[test]

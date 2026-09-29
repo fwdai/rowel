@@ -12,7 +12,7 @@ use tauri::AppHandle;
 
 use super::actions::{Connection, Host};
 use super::{frame, socket_name, AppHost};
-use crate::{settings, storage};
+use crate::settings;
 
 // One listener per process, for its whole life: once the host is on, turning
 // it off in Settings only makes the accept loop refuse what arrives, and the
@@ -41,9 +41,9 @@ pub fn start(app: &AppHandle) {
     let spawned = std::thread::Builder::new()
         .name("browser-host".into())
         .spawn(move || {
-            let listener = storage::root_dir(&app)
-                .map_err(|e| io::Error::other(e.to_string()))
-                .and_then(|root| bind(&root));
+            let listener = super::socket_dir()
+                .ok_or_else(|| io::Error::other("no socket directory for this user"))
+                .and_then(|dir| bind(&dir));
             let listener = match listener {
                 Ok(listener) => listener,
                 Err(e) => {
@@ -85,12 +85,27 @@ pub fn start(app: &AppHandle) {
 /// behind is replaced rather than refused; the single-instance guard is what
 /// keeps two live apps from contending for one.
 ///
+/// `root` is made if it is missing — on macOS it is in the App Group
+/// container (`socket_dir`), which nothing may have created yet: the system
+/// makes it when a signed, entitled process first asks for it, and an
+/// unsigned `tauri dev` build never does. A plain directory made there
+/// serves the same, for the app and for the extension alike.
+///
 /// The socket file is made owner-only after the bind rather than through the
 /// listener's `mode` option, which macOS does not support (the crate answers
 /// `Unsupported`, and that is what "could not listen" was). The moment
-/// between the two is covered by the data directory, which is `0700` from
-/// its creation, so nothing else could reach the file in it anyway.
+/// between the two is covered by the directory, which is `0700` from its
+/// creation — the data directory, or the group container (the system makes
+/// it `0700` as well) — so nothing else could reach the file in it anyway.
 pub fn bind(root: &Path) -> io::Result<Listener> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(root)?;
+    }
     let listener = ListenerOptions::new()
         .name(socket_name(root)?)
         .try_overwrite(true)

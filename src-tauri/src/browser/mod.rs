@@ -64,26 +64,50 @@ pub const SOCKET_FILE: &str = "browser.sock";
 /// before it is refused.
 pub const CONSENT_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The app's data directory, resolved the way `storage::root_dir` resolves it
-/// but without Tauri: the debug override, then the platform's app-data
-/// directory under the identifier, with a `dev` subdirectory in debug builds.
-pub fn root_dir() -> Option<PathBuf> {
+/// The directory the app's socket is in: the one place the listener
+/// (`server::start`) and the proxy (`proxy::run`) both resolve it from, so
+/// the two cannot disagree. Resolved without Tauri, since the proxy has no
+/// `AppHandle`: the debug override first, then
+///
+/// - on macOS, the App Group container ([`group_container`]), where the Safari
+///   extension — sandboxed, and able to reach nothing else of the app's — can
+///   connect to it too;
+/// - elsewhere, the app's data directory, resolved the way `storage::root_dir`
+///   resolves it.
+///
+/// Either way with a `dev` subdirectory in debug builds, so a debug app and a
+/// release app never share a socket, as they never share a vault.
+pub fn socket_dir() -> Option<PathBuf> {
     if cfg!(debug_assertions) {
         if let Ok(dir) = std::env::var("ROWEL_DB_DIR") {
             return Some(PathBuf::from(dir));
         }
     }
-    let dir = dirs::data_dir()?.join(IDENTIFIER);
-    Some(if cfg!(debug_assertions) {
-        dir.join("dev")
+    let dir = if cfg!(target_os = "macos") {
+        group_container(&dirs::home_dir()?)
     } else {
-        dir
-    })
+        dirs::data_dir()?.join(IDENTIFIER)
+    };
+    Some(rowel_core::layout::dev_subdir(dir))
 }
 
-/// The socket the app listens on for `root`: a file beside the vault on Unix,
-/// and on Windows a named pipe whose name carries a digest of `root`, so a
-/// debug build and a release build — or a test — never share one.
+/// The macOS App Group container for `home`'s user,
+/// `~/Library/Group Containers/<DESKTOP_APP_GROUP>`: where
+/// `containerURL(forSecurityApplicationGroupIdentifier:)` points the Safari
+/// extension. Spelled out rather than asked of Foundation because the app is
+/// not sandboxed and may run unsigned (`tauri dev`), and the proxy is launched
+/// by a browser: none of them holds the entitlement the API would look up,
+/// and none needs it to make and use the directory. The first to bind creates
+/// it (`server::bind`).
+pub fn group_container(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Group Containers")
+        .join(rowel_core::app::DESKTOP_APP_GROUP)
+}
+
+/// The socket the app listens on in `root`: a file in it on Unix, and on
+/// Windows a named pipe whose name carries a digest of `root`, so a debug
+/// build and a release build — or a test — never share one.
 pub fn socket_name(root: &Path) -> io::Result<Name<'static>> {
     #[cfg(unix)]
     {

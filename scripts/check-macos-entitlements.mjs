@@ -40,6 +40,17 @@ const PROFILE_GATED = [
 const isProfileGated = (key) =>
   PROFILE_GATED.includes(key) || key.startsWith('com.apple.developer.')
 
+// The one exception, and only for application groups: a macOS-style group id
+// (`<team id>.<name>`) is granted by the signature's team id alone and needs no
+// profile (Apple DTS, developer forums thread 721701). The Developer ID profile
+// does not list application-groups at all, and the app and its Safari extension
+// share `UFBL3F444A.app.rowel.desktop` without it. An iOS-style `group.` id is
+// the opposite: macOS 15+ checks it against the profile, and without one
+// granting it the process is SIGKILLed like any other gated entitlement.
+const TEAM_ID = 'UFBL3F444A'
+const APP_GROUPS = 'com.apple.security.application-groups'
+const isTeamGroup = (value) => typeof value === 'string' && value.startsWith(`${TEAM_ID}.`)
+
 // --- the smallest plist reader that covers both files ---------------------
 // Handles the subset Apple emits: dict, array, string, true/false, date,
 // integer. Returns plain JS values. Throws on anything unexpected so a format
@@ -155,17 +166,55 @@ const granted = (requested, grantedList) =>
     g.endsWith('*') ? requested.startsWith(g.slice(0, -1)) : g === requested,
   )
 
-// --- run ------------------------------------------------------------------
-if (!existsSync(entitlementsPath)) fail(`missing ${entitlementsPath}`)
-
-let entitlements
-try {
-  entitlements = parsePlist(readFileSync(entitlementsPath, 'utf8'))
-} catch (e) {
-  fail(`could not parse Entitlements.plist: ${e.message}`)
+const readEntitlements = (path, label) => {
+  if (!existsSync(path)) fail(`missing ${path}`)
+  try {
+    return parsePlist(readFileSync(path, 'utf8'))
+  } catch (e) {
+    fail(`could not parse ${label}: ${e.message}`)
+  }
 }
 
-const requestedGated = Object.keys(entitlements).filter(isProfileGated)
+// What of `entitlements` a profile has to back: every profile-gated key, with
+// application-groups narrowed to the groups the team id does not grant (and
+// dropped when that leaves none). Team-id groups are reported, not verified.
+const gatedRequests = (entitlements, label) => {
+  const gated = {}
+  for (const [key, value] of Object.entries(entitlements)) {
+    if (!isProfileGated(key)) continue
+    if (key !== APP_GROUPS) {
+      gated[key] = value
+      continue
+    }
+    if (!Array.isArray(value)) {
+      fail(`${label}: "${APP_GROUPS}" is not a list of groups`)
+    }
+    const byTeam = value.filter(isTeamGroup)
+    const others = value.filter((group) => !isTeamGroup(group))
+    if (byTeam.length > 0) {
+      console.log(
+        `check-macos-entitlements: ${label}: ${byTeam.join(', ')} under "${APP_GROUPS}" ` +
+          `is a macOS-style group (team id ${TEAM_ID}); the signature grants it, no profile needed.`,
+      )
+    }
+    for (const group of others) {
+      if (typeof group === 'string' && group.startsWith('group.')) {
+        console.error(
+          `check-macos-entitlements: ${label}: "${group}" is an iOS-style group id. On macOS 15+ ` +
+            `it is profile-gated; use the team-id form, ${TEAM_ID}.<name>, instead.`,
+        )
+      }
+    }
+    if (others.length > 0) gated[key] = others
+  }
+  return gated
+}
+
+// --- run ------------------------------------------------------------------
+
+const entitlements = readEntitlements(entitlementsPath, 'Entitlements.plist')
+const gatedValues = gatedRequests(entitlements, 'app')
+const requestedGated = Object.keys(gatedValues)
 
 if (requestedGated.length === 0) {
   console.log(
@@ -199,6 +248,14 @@ if (!platforms.includes('OSX')) {
   problems.push(`profile is for ${platforms.join('/') || 'an unknown platform'}, not macOS (OSX)`)
 }
 
+// The team-id groups passed above on the strength of the signature's team id:
+// that only holds if the app is signed by the team this script assumes.
+if (!(profile.TeamIdentifier ?? []).includes(TEAM_ID)) {
+  problems.push(
+    `profile is for team ${(profile.TeamIdentifier ?? []).join(', ') || '(none)'}, not ${TEAM_ID}`,
+  )
+}
+
 // Developer ID profiles are the only kind that work for direct distribution;
 // they are the ones marked as provisioning every device.
 if (profile.ProvisionsAllDevices !== true) {
@@ -224,7 +281,7 @@ for (const key of requestedGated) {
     problems.push(`profile does not grant "${key}"`)
     continue
   }
-  const requested = entitlements[key]
+  const requested = gatedValues[key]
   const grantedValue = profileEntitlements[key]
   const describe = (v) => (Array.isArray(v) ? v.join(', ') : String(v))
 

@@ -11,7 +11,7 @@ use std::io;
 
 use interprocess::local_socket::{prelude::*, Stream};
 
-use super::{frame, root_dir, socket_name};
+use super::{frame, socket_dir, socket_name};
 
 /// Whether these arguments are a browser's, launching its native host.
 pub fn launched_by_browser(mut args: impl Iterator<Item = String>) -> bool {
@@ -23,8 +23,8 @@ pub fn launched_by_browser(mut args: impl Iterator<Item = String>) -> bool {
 /// that was not there to begin with — the extension shows that as its
 /// "not connected" state and retries when the user clicks it.
 pub fn run() -> i32 {
-    let Some(root) = root_dir() else {
-        eprintln!("rowel: no data directory for this user");
+    let Some(root) = socket_dir() else {
+        eprintln!("rowel: no socket directory for this user");
         return 1;
     };
     let stream = socket_name(&root).and_then(Stream::connect);
