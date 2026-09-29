@@ -1,0 +1,13 @@
+.idea
+
+*.swp
+*~
+*.tmp
+
+*.zip
+*.crx
+.bz
+.bz2
+.xz
+node_modules
+test-results
