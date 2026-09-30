@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useUi, closeSettings, setSettingsSection, type Section as Key } from '@/store'
 import Modal from '@/components/elements/Modal'
-import Kbd from '@/components/elements/Kbd'
+import DialogHeader from '@/components/elements/DialogHeader'
 import { cx } from '@/utils/cx'
 import Nav from './Nav'
 import Section from './Section'
@@ -9,7 +9,7 @@ import { descriptionOf, titleOf } from './sections'
 import { SubpageProvider, useSubpageState } from './sectionNav'
 import SubpageBody from './SubpageBody'
 import { subpageDescriptionOf, subpageTitleOf } from './subpages'
-import { BackGlyph, CloseGlyph } from '../../icons'
+import { BackGlyph } from '../../icons'
 
 const TITLE_ID = 'settings-title'
 
@@ -45,56 +45,36 @@ export default function SettingsModal() {
       >
         <Nav section={section} onSelect={select} disabled={locked} />
         <div className="flex min-w-0 flex-1 flex-col bg-pane">
-          <div className="flex flex-none items-start gap-3 px-7 pt-4 pb-3.5 inset-shadow-hairline">
-            {subpage && (
-              <button
-                type="button"
-                aria-label={t('Back')}
-                title={t('Back')}
-                data-testid="settings-subpage-back"
-                disabled={locked}
-                onClick={close}
-                className={cx(
-                  'grid h-7.5 w-7.5 flex-none place-items-center self-center rounded-sm border border-line2 text-text2 transition-colors',
-                  locked
-                    ? 'cursor-default opacity-50'
-                    : 'cursor-pointer hover:border-accent-line hover:text-text'
-                )}
-              >
-                <BackGlyph size={16} />
-              </button>
-            )}
-            {/* No crumb above the title: the back button already says there is
-                somewhere to go back to, and a line added over the title would
-                move the header on every step in and out. */}
-            <div className="min-w-0 flex-1">
-              <h1
-                id={TITLE_ID}
-                className="truncate text-xl font-semibold tracking-display text-text"
-              >
-                {subpage ? subpageTitleOf(subpage) : titleOf(section)}
-              </h1>
-              <p className="mt-0.5 text-sm text-text2">
-                {subpage ? subpageDescriptionOf(subpage) : descriptionOf(section)}
-              </p>
-            </div>
-            {/* Says what closes it as well as closing it: Escape does the same. */}
-            <button
-              type="button"
-              aria-label={t('Close')}
-              title={t('Close')}
-              data-testid="modal-close"
-              disabled={locked}
-              onClick={closeSettings}
-              className={cx(
-                'flex h-7 flex-none items-center gap-2 rounded-sm px-1.5 text-text2 transition-colors',
-                locked ? 'cursor-default opacity-50' : 'cursor-pointer hover:bg-hover hover:text-text'
-              )}
-            >
-              <Kbd>esc</Kbd>
-              <CloseGlyph />
-            </button>
-          </div>
+          {/* No crumb above the title: the back button already says there is
+              somewhere to go back to, and a line added over the title would
+              move the header on every step in and out. */}
+          <DialogHeader
+            id={TITLE_ID}
+            title={subpage ? subpageTitleOf(subpage) : titleOf(section)}
+            description={subpage ? subpageDescriptionOf(subpage) : descriptionOf(section)}
+            onClose={closeSettings}
+            disabled={locked}
+            leading={
+              subpage && (
+                <button
+                  type="button"
+                  aria-label={t('Back')}
+                  title={t('Back')}
+                  data-testid="settings-subpage-back"
+                  disabled={locked}
+                  onClick={close}
+                  className={cx(
+                    'grid h-7.5 w-7.5 flex-none place-items-center self-center rounded-sm border border-line2 text-text2 transition-colors',
+                    locked
+                      ? 'cursor-default opacity-50'
+                      : 'cursor-pointer hover:border-accent-line hover:text-text'
+                  )}
+                >
+                  <BackGlyph size={16} />
+                </button>
+              )
+            }
+          />
           {/* A sub-page takes the whole column rather than the section's
               scroller: its frame scrolls itself and pins its own action bar. */}
           {subpage ? (
