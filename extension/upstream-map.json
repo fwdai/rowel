@@ -19,7 +19,9 @@
     { "from": "icons/keepassxc_", "to": "icons/rowel_" },
     { "from": "icons/keepassxc-dark_", "to": "icons/rowel-dark_" },
     { "from": "keepassxc-browser_settings.json", "to": "rowel_settings.json" },
-    { "from": "Not a KeePassXC-Browser settings file.", "to": "Not a Rowel settings file." }
+    { "from": "Not a KeePassXC-Browser settings file.", "to": "Not a Rowel settings file." },
+    { "from": "KeePassXC-Browser Passwords", "to": "Rowel Passwords" },
+    { "from": "KeePassXC-Browser Passkeys", "to": "Rowel Passkeys" }
   ],
   "textFiles": [
     "rowel/**/*.{js,html,css,json}",

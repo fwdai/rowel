@@ -236,10 +236,6 @@ Left as upstream has it, on purpose or because it isn't worth a fork change:
   KeePassXC(-Browser), but still use their own word for "database" rather than
   "vault". A few sentences name Rowel twice where upstream named both the
   extension and the app.
-- The default group names `KeePassXC-Browser Passwords` / `KeePassXC-Browser
-  Passkeys` (the options placeholders and `content/banner.js`). They are sent to
-  the host as group names, so renaming them is a protocol decision, not a copy
-  change.
 - The **Request Global Auto-Type** context menu entry and shortcut (a KeePassXC
   feature).
 - The contributor and supporter credits on the About page, and upstream's
