@@ -1,17 +1,27 @@
 import { useTranslation } from 'react-i18next'
 import type { Kind } from '@/kinds'
 import { KIND_TINT } from '@/kinds/tint'
+import Kbd from '@/components/elements/Kbd'
 import { cx } from '@/utils/cx'
 
 interface Props {
   kind: Kind
+  /** The digit that picks it (see `index.tsx`), shown where there is a keyboard. */
+  digit: number
   onSelect: () => void
 }
 
-// One choice in the "Add a secret" grid: the kind's tinted glyph, its label and
-// the one line that says what it holds. A real button, so ⏎/Space activate it
-// and the global :focus-visible ring is all the focus styling it needs.
-export default function KindTile({ kind, onSelect }: Props) {
+/**
+ * One choice in the "Add a secret" grid: the kind's tinted glyph and its label.
+ * A real button, so ⏎/Space activate it and the global :focus-visible ring is
+ * all the focus styling it needs.
+ *
+ * Three to a row leaves room for a label only, so the line that says what the
+ * kind holds rides on `title`, and a longer translation of the label ellipsizes
+ * rather than reflowing the tile. `bg-card` is a gradient image, so the hover
+ * has to drop it before its wash can show.
+ */
+export default function KindTile({ kind, digit, onSelect }: Props) {
   const { t } = useTranslation()
   const { Glyph } = kind
 
@@ -19,9 +29,13 @@ export default function KindTile({ kind, onSelect }: Props) {
     <button
       type="button"
       data-testid={`add-kind-${kind.type}`}
+      title={t(kind.description)}
       onClick={onSelect}
-      className="flex cursor-pointer items-center gap-3.5 rounded-lg border border-line p-3.5 text-left transition-colors hover:border-line2 hover:bg-hover"
+      className="relative flex min-w-0 cursor-pointer flex-col items-center gap-2 rounded-lg border border-line bg-card px-2 py-3.5 shadow-card transition-colors hover:border-line2 hover:bg-none hover:bg-hover"
     >
+      <span aria-hidden className="absolute top-2 right-2 any-pointer-coarse:hidden">
+        <Kbd>{digit}</Kbd>
+      </span>
       <span
         className={cx(
           'grid h-10 w-10 flex-none place-items-center rounded-sm',
@@ -30,12 +44,7 @@ export default function KindTile({ kind, onSelect }: Props) {
       >
         <Glyph size={18} />
       </span>
-      <span className="min-w-0">
-        <span className="block truncate text-base font-medium text-text">{t(kind.label)}</span>
-        {/* The card is sized so every description fits on one line; a longer
-            translation ellipsizes rather than reflowing the tile. */}
-        <span className="block truncate text-base text-text2">{t(kind.description)}</span>
-      </span>
+      <span className="max-w-full truncate text-base font-medium text-text">{t(kind.label)}</span>
     </button>
   )
 }

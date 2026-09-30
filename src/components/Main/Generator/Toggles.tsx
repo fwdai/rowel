@@ -2,6 +2,8 @@ import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
 import type { TKey } from '@/i18n'
 import type { GeneratorSettings } from '@/services/generator'
+import SettingsRow from '@/components/elements/SettingsRow'
+import Switch from '@/components/elements/Toggle'
 import CharsetChips from './Charset'
 
 type Flag = 'numbers' | 'excludeSimilar' | 'capitalize'
@@ -24,12 +26,39 @@ const MEMORABLE: Toggle[] = [
 interface Props {
   settings: GeneratorSettings
   onChange: (patch: Partial<GeneratorSettings>) => void
+  // As settings rows in the desktop card, rather than the phone's chip strip.
+  rows?: boolean
 }
 
-export default function Toggles({ settings, onChange }: Props) {
+export default function Toggles({ settings, onChange, rows }: Props) {
   const { t } = useTranslation()
   const memorable = settings.mode === 'memorable'
   const toggles = memorable ? MEMORABLE : RANDOM
+  const set = (flag: Flag, on: boolean) => onChange({ [flag]: on } as Partial<GeneratorSettings>)
+
+  // A row has room for the classes' names, and each flag gets a real switch.
+  if (rows)
+    return (
+      <>
+        {!memorable && (
+          <SettingsRow
+            label={t('Characters')}
+            control={
+              <CharsetChips settings={settings} onChange={onChange} testidPrefix="generator-charset" />
+            }
+          />
+        )}
+        {toggles.map(({ flag, label }) => (
+          <SettingsRow
+            key={flag}
+            label={t(label)}
+            control={
+              <Switch checked={settings[flag]} onChange={on => set(flag, on)} aria-label={t(label)} />
+            }
+          />
+        ))}
+      </>
+    )
 
   return (
     <div className="mt-3.5 flex gap-1.5">
@@ -50,9 +79,7 @@ export default function Toggles({ settings, onChange }: Props) {
             key={flag}
             type="button"
             aria-pressed={active}
-            onClick={() =>
-              onChange({ [flag]: !active } as Partial<GeneratorSettings>)
-            }
+            onClick={() => set(flag, !active)}
             className={cx(
               'grid h-9 flex-1 cursor-pointer place-items-center rounded-sm border text-base transition-colors',
               active

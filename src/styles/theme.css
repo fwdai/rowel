@@ -459,7 +459,7 @@
  *             secret .08em (revealed secrets, card numbers, TOTP)
  *   Radius    xs 4 chips & inlays · sm 8 controls · lg 12 tiles & cards
  *             xl 14 overlays · 2xl 28 sheets (a bottom sheet's top corners)
- *   Width     dialog-sm 470 (generator) · dialog 640 (pickers: add, palette)
+ *   Width     dialog-sm 560 (generator) · dialog 640 (pickers: add, palette)
  *             dialog-lg 720 (the Modal default) · sheet 860 (the entry detail
  *             column) · settings 1040 (the settings modal) — on top of
  *             Tailwind's rem container scale
@@ -503,7 +503,7 @@
   --radius-xl: 14px;
   --radius-2xl: 28px;
 
-  --container-dialog-sm: 470px;
+  --container-dialog-sm: 560px;
   --container-dialog: 640px;
   --container-dialog-lg: 720px;
   --container-sheet: 860px;

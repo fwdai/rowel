@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
 import AuthShell from '@/components/elements/AuthShell'
@@ -548,6 +548,29 @@ describe('overlay frames', () => {
     render(<Main />)
     act(() => openAddPicker())
     expect(screen.getByTestId('add-secret-modal')).not.toHaveAttribute('data-frame')
+  })
+
+  // No Escape on a phone, and a tall sheet leaves little scrim to tap.
+  it('closes the bottom sheet from its close button or a pull on the grabber', async () => {
+    seed()
+    render(<Main />)
+    act(() => openAddPicker())
+    await userEvent.click(screen.getByTestId('modal-close'))
+    expect(useUi.getState().addPicker).toBe(false)
+
+    const pull = (dy: number) => {
+      const grabber = screen.getByTestId('bottom-sheet-grabber')
+      grabber.setPointerCapture = () => {}
+      fireEvent.pointerDown(grabber, { pointerId: 1, clientY: 100 })
+      fireEvent.pointerMove(grabber, { pointerId: 1, clientY: 100 + dy })
+      fireEvent.pointerUp(grabber, { pointerId: 1, clientY: 100 + dy })
+    }
+    act(() => openAddPicker())
+    // Too short to be a flick, however quick: it springs back.
+    pull(10)
+    expect(useUi.getState().addPicker).toBe(true)
+    pull(120)
+    expect(useUi.getState().addPicker).toBe(false)
   })
 
   it('keeps the page sheet for the generator a password row opens', () => {

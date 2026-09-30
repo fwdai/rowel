@@ -19,7 +19,7 @@ export default function Sheet({ fit = 'screen', ...props }: FrameProps) {
 }
 
 /**
- * A phone has no room for a 470–860px card floating on a scrim, so the same
+ * A phone has no room for a 560–860px card floating on a scrim, so the same
  * content takes the whole screen instead: safe-area padded, its own close
  * control in a 44px bar, and one scroller pinned to the visible viewport so a
  * focused field is not left under the keyboard. It is as modal as the card:

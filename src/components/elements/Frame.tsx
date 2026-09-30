@@ -1,5 +1,5 @@
-import { createContext, useContext, type ComponentType, type ReactNode, type Ref } from 'react'
-import Modal from './Modal'
+import { useContext, type ComponentType, type ReactNode, type Ref } from 'react'
+import { FrameContext } from './frameContext'
 
 /**
  * What a dialog hands its frame, whichever frame it turns out to be.
@@ -31,10 +31,6 @@ export interface FrameProps {
   ref?: Ref<HTMLDivElement>
   children: ReactNode
 }
-
-// The card is the default, so a dialog rendered outside either shell — a test,
-// an isolated screen — still comes up framed.
-const FrameContext = createContext<ComponentType<FrameProps>>(Modal)
 
 /** Hands every `Frame` below it the implementation this shell wants. */
 export const FrameProvider = ({

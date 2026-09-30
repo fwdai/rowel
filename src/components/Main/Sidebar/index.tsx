@@ -15,8 +15,8 @@ import { ArchiveRailGlyph, GridRailGlyph, StarRailGlyph } from '../icons'
 // Tags is a view like the three above it, not a filter over them: its menu
 // lists the vault's tags, and a picked tag gathers its items from across the
 // vault under the Tags tile.
-// The generator is a tool, not a place, so it has no tile: it opens from ⌘G,
-// the command palette and the Add picker (see `AddSecret/GenerateAction`).
+// The generator is a tool, not a place, so it has no tile: it opens from ⌘G
+// and the command palette, or from the password field of the login it is for.
 // The Vault Health tile is parked, not removed: `VaultHealth.tsx` and the
 // `health` view stay, reachable from Settings › Audit.
 export default function Sidebar() {

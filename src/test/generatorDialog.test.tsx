@@ -41,23 +41,9 @@ describe('Generator', () => {
     expect(screen.queryByTestId('generator-dialog')).not.toBeInTheDocument()
   })
 
-  // The Add picker's row is the pointer half of ⌘G: same open, no apply
-  // callback, so confirming copies rather than filling a field. The picker
-  // gives way to the dialog rather than stacking under it.
-  it('opens from the Add picker with nothing to apply the value to', async () => {
-    withEntries([loginMeta({ id: 'l1', title: 'Google' })])
-    render(<Main />)
-
-    await userEvent.click(screen.getByTestId('add-entry-button'))
-    await userEvent.click(screen.getByTestId('generator-button'))
-
-    expect(await screen.findByTestId('generator-dialog')).toBeInTheDocument()
-    expect(screen.queryByTestId('add-secret-modal')).not.toBeInTheDocument()
-    expect(useUi.getState().generator.apply).toBeNull()
-  })
-
-  // And the palette's command, for the keyboard-first route that does not
-  // know the chord yet — it shows it beside the label.
+  // The palette's command is the pointer half of ⌘G, for the route that does
+  // not know the chord yet — it shows it beside the label. Same open, no apply
+  // callback, so confirming copies rather than filling a field.
   it('opens from the command palette', async () => {
     withEntries([loginMeta({ id: 'l1', title: 'Google' })])
     render(<Main />)

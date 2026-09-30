@@ -13,12 +13,18 @@ export function useGenerator() {
   const [settings, setSettings] = useState<GeneratorSettings>(defaultSettings)
   const [value, setValue] = useState('')
   const [nonce, setNonce] = useState(0)
+  // A draw is in flight: the value on screen is the one being replaced, so
+  // nothing should copy or fill it in the meantime.
+  const [pending, setPending] = useState(true)
 
   useEffect(() => {
     let current = true
+    setPending(true)
     generate(settings)
       .then(next => {
-        if (current) setValue(next)
+        if (!current) return
+        setValue(next)
+        setPending(false)
       })
       .catch(() => {})
     return () => {
@@ -38,5 +44,5 @@ export function useGenerator() {
 
   const regenerate = useCallback(() => setNonce(previous => previous + 1), [])
 
-  return { settings, value, update, regenerate, ...entropy(settings) }
+  return { settings, value, pending, update, regenerate, ...entropy(settings) }
 }
