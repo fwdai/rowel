@@ -4,9 +4,10 @@
     <title data-i18n="popupTitle"></title>
     <meta charset="UTF-8">
     <link rel="stylesheet" href="../css/colors.css">
-    <link rel="stylesheet" href="popup.css">
     <link rel="stylesheet" href="../bootstrap/bootstrap.min.css">
     <link rel="stylesheet" href="../fonts/fork-awesome.min.css">
+    <link rel="stylesheet" href="popup.css">
+    <link rel="stylesheet" href="../css/rowel.css">
     <script src="../common/browser-polyfill.min.js"></script>
     <script src="../common/global.js"></script>
     <script src="../common/global_ui.js"></script>
@@ -18,14 +19,18 @@
   <body>
     <div class="container">
       <div id="settings" class="settings">
+        <div class="rowel-brand">
+          <span class="rowel-mark" aria-hidden="true"></span>
+          <span>Rowel</span>
+        </div>
         <div class="action-buttons-area">
-          <button id="options-button" class="btn btn-sm btn-success" data-i18n="[title]popupSettingsText">
+          <button id="options-button" class="btn btn-sm rowel-ghost" data-i18n="[title]popupSettingsText">
             <i class="fa fa-cog" aria-hidden="true"></i>
           </button>
-          <button id="choose-custom-login-fields-button" class="btn btn-sm btn-warning" data-i18n="[title]popupChooseCredentialsText"></button>
+          <button id="choose-custom-login-fields-button" class="btn btn-sm rowel-ghost" data-i18n="[title]popupChooseCredentialsText"></button>
         </div>
         <div class="lock-button-area">
-          <button id="lock-database-button" class="btn btn-sm btn-danger" data-i18n="[title]lockDatabase">
+          <button id="lock-database-button" class="btn btn-sm rowel-ghost" data-i18n="[title]lockDatabase">
             <i class="fa fa-lock" aria-hidden="true"></i>
           </button>
         </div>
@@ -125,7 +130,7 @@
         <hr>
         <p data-i18n="popupUsernameFieldDetected"></p>
         <div class="right-align">
-          <button id="username-only-button" class="btn btn-sm btn-primary" data-i18n="[title]usernameButtonTitle">
+          <button id="username-only-button" class="btn btn-sm rowel-ghost" data-i18n="[title]usernameButtonTitle">
             <i class="fa fa-plus" aria-hidden="true"></i>
             <span data-i18n="popupUsernameButton"></span>
           </button>
@@ -136,7 +141,7 @@
         <hr>
         <p data-i18n="popupIframeDetected"></p>
         <div class="right-align">
-          <button id="allow-iframe-button" class="btn btn-sm btn-primary" data-i18n="[title]allowIframeButtonTitle">
+          <button id="allow-iframe-button" class="btn btn-sm rowel-ghost" data-i18n="[title]allowIframeButtonTitle">
             <i class="fa fa-plus" aria-hidden="true"></i>
             <span data-i18n="popupAllowIframeButton"></span>
           </button>

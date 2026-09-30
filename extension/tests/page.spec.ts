@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-//import { getBaseDomainFromUrl, getTopLevelDomainFromUrl } from '../keepassxc-browser/background/page.js';
+//import { getBaseDomainFromUrl, getTopLevelDomainFromUrl } from '../rowel/background/page.js';
 
 test.skip('Test getTopLevelDomainFromUrl()', async ({ page }) => {
     // TODO: Enable these tests later. Not sure how to tests cookies API which requires to be running in the

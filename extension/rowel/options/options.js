@@ -287,7 +287,7 @@ options.initGeneralSettings = async function() {
                     if (contents['checkUpdateKeePassXC'] === undefined
                         || contents['autoCompleteUsernames'] === undefined
                         || contents['autoFillAndSend'] === undefined) {
-                        console.log('Error: Not a KeePassXC-Browser settings file.');
+                        console.log('Error: Not a Rowel settings file.');
                         return;
                     }
 
@@ -307,7 +307,7 @@ options.initGeneralSettings = async function() {
         const link = document.createElement('a');
         const file = new Blob([ JSON.stringify(options.settings) ], { type: 'application/json' });
         link.href = URL.createObjectURL(file);
-        link.download = 'keepassxc-browser_settings.json';
+        link.download = 'rowel_settings.json';
         link.click();
     });
 

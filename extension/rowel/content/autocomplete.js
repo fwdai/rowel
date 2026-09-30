@@ -94,6 +94,7 @@ class Autocomplete {
         if (!this.wrapper) {
             const styleSheet = createStylesheet('css/autocomplete.css');
             const colorStyleSheet = createStylesheet('css/colors.css');
+            const rowelStyleSheet = createStylesheet('css/rowel.css');
             this.wrapper = kpxcUI.createElement('div');
             this.wrapper.style.all = 'unset';
             this.wrapper.style.display = 'none';
@@ -112,6 +113,7 @@ class Autocomplete {
             this.shadowRoot = this.wrapper.attachShadow({ mode: 'closed' });
             this.shadowRoot.append(colorStyleSheet);
             this.shadowRoot.append(styleSheet);
+            this.shadowRoot.append(rowelStyleSheet);
 
             this.list = kpxcUI.createElement('div', 'kpxcAutocomplete-items', { id: 'kpxcAutocomplete-list' });
             initColorTheme(this.container);

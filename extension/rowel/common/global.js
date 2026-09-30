@@ -84,7 +84,7 @@ const getIconClass = function(className) {
 const showNotification = function(message) {
     browser.notifications.create({
         'type': 'basic',
-        'iconUrl': browser.runtime.getURL('icons/keepassxc_64x64.png'),
+        'iconUrl': browser.runtime.getURL('icons/rowel_64x64.png'),
         'title': 'Rowel',
         'message': message
     });

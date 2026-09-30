@@ -1,0 +1,66 @@
+#kpxcDefine-fields {
+    z-index: 2147483646;
+}
+
+/* Rowel: the chips are the app's micro-labels (system font, 11px uppercase,
+   4px radius) in translucent versions of its inks, from the tokens
+   rowel-tokens.css puts on :host. A chip sits over the host page's own
+   colours, so its text is white by default and the app's ink over a light
+   field (the -dark variants and kpxcDefine-dark-text, which the script adds),
+   as upstream had it. */
+.kpxcDefine-fixed-field {
+    align-items: center;
+    background-color: color-mix(in srgb, var(--c-text3) 25%, transparent);
+    border: 2px solid var(--c-text3);
+    border-radius: 4px;
+    box-sizing: border-box !important;
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    font-family: var(--font-sans, system-ui, sans-serif) !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    justify-content: center;
+    letter-spacing: 0.12em !important;
+    line-height: 1 !important;
+    overflow: hidden;
+    position: absolute;
+    text-transform: uppercase !important;
+    z-index: 2147483646;
+}
+
+.kpxcDefine-fixed-hover-field {
+    background-color: color-mix(in srgb, var(--c-accent) 25%, transparent);
+    border: 2px solid var(--c-accent);
+}
+
+.kpxcDefine-fixed-hover-field-dark {
+    background-color: color-mix(in srgb, var(--c-accent) 25%, transparent);
+    border: 2px solid var(--c-accent);
+    color: #15161a;
+}
+
+.kpxcDefine-fixed-password-field {
+    background-color: color-mix(in srgb, var(--c-bad) 25%, transparent);
+    border: 2px solid var(--c-bad);
+}
+
+.kpxcDefine-fixed-username-field {
+    background-color: color-mix(in srgb, var(--c-warn) 25%, transparent);
+    border: 2px solid var(--c-warn);
+}
+
+.kpxcDefine-fixed-totp-field {
+    background-color: color-mix(in srgb, var(--c-good) 25%, transparent);
+    border: 2px solid var(--c-good);
+}
+
+.kpxcDefine-fixed-string-field {
+    background-color: color-mix(in srgb, var(--c-lockfield) 25%, transparent);
+    border: 2px solid var(--c-lockfield);
+}
+
+.kpxcDefine-fixed-field-dark,
+.kpxcDefine-dark-text {
+    color: #15161a;
+}

@@ -7,7 +7,7 @@ import {
     siteMatch,
     slashNeededForUrl,
     trimURL
-} from '../keepassxc-browser/common/global.js';
+} from '../rowel/common/global.js';
 
 test('Test compareVersion()', async ({ page }) => {
     // compareVersion(minimum, current)

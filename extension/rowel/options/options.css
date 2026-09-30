@@ -10,12 +10,27 @@ a {
     text-decoration: none !important;
 }
 
-h1, span.menu-item {
-    font-size: 0.65rem;
+/* Page titles: the app's display size, tight tracking. */
+main h2,
+.tab > h2 {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: var(--tracking-display);
+    line-height: 1.2;
 }
 
+span.menu-item {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
+}
+
+/* The GPL attribution at the foot of the rail, in micro type. */
 footer {
-    font-size: 0.65rem !important;
+    color: var(--c-text3);
+    font-size: 10px;
+    letter-spacing: var(--tracking-label);
+    line-height: 1.4;
 }
 
 a:hover {
@@ -150,15 +165,28 @@ table td:last-of-type {
     color: var(--kpxc-text-color);
 }
 
+/* Cards: 12px radius and the app's card lift. The markup's .shadow utility
+   reads --bs-box-shadow, so it is pointed at --card-shadow here. */
 .card {
+    --bs-box-shadow: var(--card-shadow);
     background-color: var(--kpxc-card-background-color);
     border-color: var(--kpxc-card-border-color);
     overflow: hidden; /* fix border radius looking fuzzy */
 }
 
+/* Card headers as the app's section rows: pane ground, 13px semibold, ink
+   glyph. Upstream's markup gives them .h6 and .rounded-0. */
 .card-header {
     background-color: var(--kpxc-card-header-color);
     color: var(--kpxc-text-color);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 20px;
+    padding: 8px 12px;
+}
+
+.card-header .fa {
+    margin-right: 6px;
 }
 
 .card-body {
@@ -190,8 +218,13 @@ table td:last-of-type {
     margin-right: 0.2rem;
 }
 
+/* The sidebar is the app's rail: --c-rail ground, hairline right edge, nav
+   items in ink with a hover wash and the "you are here" lens on the active
+   one. Below md it is a 50px fixed bar holding only the toggler, and the
+   expanded #sidebar paints its own ground over the content. */
 .sidebar {
-    background-color: var(--kpxc-sidebar-background-color) !important;
+    background-color: var(--kpxc-sidebar-background-color);
+    border-right: 1px solid var(--c-line);
     height: 50px;
     bottom: 0;
     position: fixed;
@@ -199,23 +232,66 @@ table td:last-of-type {
     z-index: 100;
 }
 
-.sidebar a {
-    border: 1px solid transparent;
-}
-
 #sidebar {
-    background-color: var(--kpxc-sidebar-background-color) !important;
+    background-color: var(--kpxc-sidebar-background-color);
 }
 
-.nav-item,
-.sidebar-heading {
-    font-size: .75rem;
+.sidebar .nav {
+    --bs-nav-link-color: var(--c-text);
+    --bs-nav-link-hover-color: var(--c-text);
+    --bs-nav-link-padding-x: 10px;
+    --bs-nav-link-padding-y: 6px;
+    gap: 2px;
 }
 
-.active > a {
-    border-color: currentColor;
-    border-radius: var(--bs-border-radius-sm);
-    color: #a0a0a0 !important;
+.sidebar .nav-link {
+    align-items: center;
+    border-radius: 8px;
+    display: flex;
+    transition: background-color 120ms ease;
+}
+
+.sidebar .nav-link .fa {
+    color: var(--c-text2);
+    font-size: 14px;
+    text-align: center;
+    width: 22px;
+}
+
+.sidebar .nav-link:hover {
+    background-color: var(--c-hover);
+}
+
+.sidebar .active > .nav-link {
+    background-color: var(--c-lens);
+    box-shadow: var(--lens-shadow);
+}
+
+.sidebar .active > .nav-link .fa {
+    color: var(--c-text);
+}
+
+/* The mobile toggler: Bootstrap's hamburger is a white SVG; drawn here
+   through a mask so it is ink on either rail. */
+.sidebar .navbar-toggler {
+    --bs-navbar-toggler-padding-x: 8px;
+    --bs-navbar-toggler-padding-y: 6px;
+    --bs-navbar-toggler-font-size: 16px;
+    --bs-navbar-toggler-border-color: var(--c-line2);
+    --bs-navbar-toggler-border-radius: 8px;
+    --bs-navbar-toggler-focus-width: 3px;
+    margin-top: 8px;
+}
+
+.sidebar .navbar-toggler:focus {
+    box-shadow: 0 0 0 3px var(--c-accent-soft);
+}
+
+.sidebar .navbar-toggler-icon {
+    background-color: var(--c-text);
+    background-image: none;
+    -webkit-mask: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='%23000' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") center / 100% no-repeat;
+    mask: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='%23000' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") center / 100% no-repeat;
 }
 
 .collapse.show {
@@ -286,9 +362,23 @@ button#sitePreferencesCancelEdit {
     filter: brightness(88%) !important;
 }
 
+/* Below md the expanded menu is a sheet hanging off the 50px bar. */
+@media (max-width: 767.98px) {
+    #sidebar {
+        border-bottom: 1px solid var(--c-line2);
+        border-radius: 0 0 12px 12px;
+        box-shadow: var(--menu-shadow);
+        padding-bottom: 8px;
+    }
+}
+
 @media (min-width: 768px) {
     .sidebar {
         height: auto;
+    }
+
+    #sidebar {
+        background-color: transparent;
     }
 
     footer {
@@ -296,12 +386,15 @@ button#sitePreferencesCancelEdit {
     }
 }
 
-@media (min-width: 1440px) {
+/* From lg the rail is a fixed 240px (upstream: only from 1440px), so the
+   tracked nav labels fit on one line; main is shifted to match. */
+@media (min-width: 992px) {
     .sidebar {
         width: 240px;
     }
 
-    footer {
-        display: block;
+    main.col-lg-10 {
+        margin-left: 240px;
+        width: calc(100% - 240px);
     }
 }

@@ -6,22 +6,22 @@
     "author": "Rowel",
     "homepage_url": "https://github.com/fwdai/rowel",
     "icons": {
-        "16": "icons/keepassxc.svg",
-        "32": "icons/keepassxc.svg",
-        "48": "icons/keepassxc.svg",
-        "64": "icons/keepassxc.svg",
-        "96": "icons/keepassxc.svg",
-        "128": "icons/keepassxc.svg"
+        "16": "icons/rowel.svg",
+        "32": "icons/rowel.svg",
+        "48": "icons/rowel.svg",
+        "64": "icons/rowel.svg",
+        "96": "icons/rowel.svg",
+        "128": "icons/rowel.svg"
     },
     "browser_action": {
         "default_icon": {
-            "16": "icons/keepassxc.svg",
-            "18": "icons/keepassxc.svg",
-            "19": "icons/keepassxc.svg",
-            "32": "icons/keepassxc.svg",
-            "36": "icons/keepassxc.svg",
-            "38": "icons/keepassxc.svg",
-            "64": "icons/keepassxc.svg"
+            "16": "icons/rowel.svg",
+            "18": "icons/rowel.svg",
+            "19": "icons/rowel.svg",
+            "32": "icons/rowel.svg",
+            "36": "icons/rowel.svg",
+            "38": "icons/rowel.svg",
+            "64": "icons/rowel.svg"
         },
         "default_title": "Rowel",
         "default_popup": "popups/popup.html"
@@ -71,7 +71,7 @@
                 "content/form.js",
                 "content/icon.js",
                 "content/icon-handler.js",
-                "content/keepassxc-browser.js",
+                "content/rowel.js",
                 "content/observer-helper.js",
                 "content/pwgen.js",
                 "content/totp-autocomplete.js",
@@ -151,7 +151,7 @@
     "web_accessible_resources": [
         "icons/disconnected.svg",
         "icons/help.svg",
-        "icons/keepassxc.svg",
+        "icons/rowel.svg",
         "icons/key.svg",
         "icons/locked.svg",
         "icons/otp.svg",
@@ -159,6 +159,8 @@
         "css/banner.css",
         "css/button.css",
         "css/colors.css",
+        "css/rowel.css",
+        "css/rowel-tokens.css",
         "css/define.css",
         "css/notification.css",
         "css/pwgen.css",

@@ -84,7 +84,11 @@ jobs:
             extension:
               - *ci
               - 'extension/**'
+              - 'extension/upstream-map.json'
+              - 'scripts/extension-sync.mjs'
               - 'scripts/extension-strings.mjs'
+              - 'scripts/extension-theme.mjs'
+              - 'src/styles/theme.css'
               - 'scripts/check-extension-build.mjs'
             safari:
               - *ci
@@ -335,11 +339,24 @@ jobs:
           cache: npm
           cache-dependency-path: extension/package-lock.json
 
+      # The source is upstream's tree under Rowel's paths (extension/
+      # upstream-map.json). An upstream sync that left a file under an old
+      # name, or a reference to one, without `bun run extension:sync` fails here.
+      - name: Paths follow the upstream map
+        working-directory: .
+        run: node scripts/extension-sync.mjs --check
+
       # An upstream sync that brings new or changed strings without re-running
       # `bun run extension:strings` fails here instead of shipping "KeePassXC".
       - name: Strings are rebranded
         working-directory: .
         run: node scripts/extension-strings.mjs --check
+
+      # css/rowel-tokens.css is generated from the app's design tokens; a change to
+      # src/styles/theme.css without `bun run extension:theme` fails here.
+      - name: Theme is generated
+        working-directory: .
+        run: node scripts/extension-theme.mjs --check
 
       - run: npm ci
       - run: npm run lint

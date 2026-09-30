@@ -199,6 +199,7 @@ kpxcUI.createNotification = async function(type, message) {
     logDebug(message);
 
     const notification = kpxcUI.createElement('div', 'kpxc-notification kpxc-notification-' + type, {});
+    initColorTheme(notification);
     type = type.charAt(0).toUpperCase() + type.slice(1) + '!';
 
     const className = getIconClass('kpxc-banner-icon');
@@ -213,6 +214,7 @@ kpxcUI.createNotification = async function(type, message) {
     notification.appendMultiple(icon, label, msg);
 
     const styleSheet = createStylesheet('css/notification.css');
+    const rowelStyleSheet = createStylesheet('css/rowel.css');
     notificationWrapper = notificationWrapper || document.createElement('div');
     notificationWrapper.style.all = 'unset';
     notificationWrapper.style.display = 'none';
@@ -223,6 +225,7 @@ kpxcUI.createNotification = async function(type, message) {
     }
 
     this.shadowRoot.append(styleSheet);
+    this.shadowRoot.append(rowelStyleSheet);
     this.shadowRoot.append(notification);
     document.body.append(notificationWrapper);
 

@@ -9,21 +9,21 @@
     "homepage_url": "https://github.com/fwdai/rowel",
     "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApFScDLPjx3rTfa7Hgoj6woTK90ABGNO+Z18fqxEiTwAGj4lnJYE0ySOf7FTnmH/w6JIrai5r90RmWimDrW3nINnSCgjKntvzCIjGOPhWjYnvrFY44CWEIqDd45pZHcnPFlh+NoSgXwsz0s06IbhU0XyFesUZslhxBgDBi++pRc784rYxBwPmj69aAtAEw2ErLSLl6KWOAPwn3hZBZ3J2EZUg4g14dxYLf2Vu+Urjj/IhyG+izQUtb+IqcoIRMP/B0b6RvnQB2nbOXiPZbGMMtvdy30lImh1tX5xbsPgZ0ptI+Af03llzB+7RVm6n0KUnqQGyKHU0YYt9SxhVinolRwIDAQAB",
     "icons": {
-        "16": "icons/keepassxc_16x16.png",
-        "48": "icons/keepassxc_48x48.png",
-        "64": "icons/keepassxc_64x64.png",
-        "96": "icons/keepassxc_96x96.png",
-        "128": "icons/keepassxc_128x128.png"
+        "16": "icons/rowel_16x16.png",
+        "48": "icons/rowel_48x48.png",
+        "64": "icons/rowel_64x64.png",
+        "96": "icons/rowel_96x96.png",
+        "128": "icons/rowel_128x128.png"
     },
     "action": {
         "default_icon": {
-            "16": "icons/keepassxc_16x16.png",
-            "18": "icons/keepassxc_18x18.png",
-            "19": "icons/keepassxc_19x19.png",
-            "32": "icons/keepassxc_32x32.png",
-            "36": "icons/keepassxc_36x36.png",
-            "38": "icons/keepassxc_38x38.png",
-            "64": "icons/keepassxc_64x64.png"
+            "16": "icons/rowel_16x16.png",
+            "18": "icons/rowel_18x18.png",
+            "19": "icons/rowel_19x19.png",
+            "32": "icons/rowel_32x32.png",
+            "36": "icons/rowel_36x36.png",
+            "38": "icons/rowel_38x38.png",
+            "64": "icons/rowel_64x64.png"
         },
         "default_title": "Rowel",
         "default_popup": "popups/popup.html"
@@ -57,7 +57,7 @@
                 "content/form.js",
                 "content/icon.js",
                 "content/icon-handler.js",
-                "content/keepassxc-browser.js",
+                "content/rowel.js",
                 "content/observer-helper.js",
                 "content/pwgen.js",
                 "content/totp-autocomplete.js",
@@ -139,7 +139,7 @@
             "resources": [
                 "icons/disconnected.svg",
                 "icons/help.svg",
-                "icons/keepassxc.svg",
+                "icons/rowel.svg",
                 "icons/key.svg",
                 "icons/locked.svg",
                 "icons/otp.svg",
@@ -147,6 +147,8 @@
                 "css/banner.css",
                 "css/button.css",
                 "css/colors.css",
+                "css/rowel.css",
+                "css/rowel-tokens.css",
                 "css/define.css",
                 "css/notification.css",
                 "css/pwgen.css",

@@ -5,7 +5,7 @@
 // syncs never conflict on it). Differences from upstream:
 //   - never pulls translations from Transifex;
 //   - stages each browser's copy under build/<browser>/ instead of swapping
-//     keepassxc-browser/manifest.json in place, so the source tree is left as
+//     rowel/manifest.json in place, so the source tree is left as
 //     it was and the staged folders can be loaded unpacked;
 //   - zips with `zip` rather than `tar -a`, which only writes a zip with BSD tar;
 //   - drops the manifest `key` from the Chromium store zip: the Chrome Web
@@ -18,13 +18,13 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const SOURCE = 'keepassxc-browser';
+const SOURCE = 'rowel';
 const OUT = 'build';
 const BROWSERS = {
     chromium: 'dist/manifest_chromium.json',
     firefox: 'dist/manifest_firefox.json',
 };
-// Copied into keepassxc-browser/ by the Playwright global setup while tests run.
+// Copied into rowel/ by the Playwright global setup while tests run.
 const SKIP = new Set([ path.join(SOURCE, 'tests') ]);
 
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));

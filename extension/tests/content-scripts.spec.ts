@@ -3,7 +3,7 @@
 import { test, expect } from '@playwright/test';
 import { pathToFileURL } from 'node:url';
 
-const DEST = 'keepassxc-browser/tests';
+const DEST = 'rowel/tests';
 
 let page;
 
