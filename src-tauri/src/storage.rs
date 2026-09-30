@@ -76,8 +76,11 @@ pub fn root_dir(app: &AppHandle) -> Result<PathBuf> {
     }
 
     let dir = app_data_root(app)?;
+    // The log dir is inside the data dir on iOS (Tauri resolves it to
+    // `<app data dir>/logs` there), and the log plugin makes it on every
+    // launch. It is not the vault's and stays behind (`move_data_dir`).
     #[cfg(target_os = "ios")]
-    let dir = ios::shared_root(dir);
+    let dir = ios::shared_root(dir, app.path().app_log_dir().ok());
     Ok(dir)
 }
 
@@ -110,7 +113,7 @@ mod ios {
     // Group, or the entitlement is missing from the build — leaves the vault
     // where it was: the app keeps working, and only the extension cannot see
     // it. The next launch that does get a container moves it then.
-    pub(super) fn shared_root(app_data: PathBuf) -> PathBuf {
+    pub(super) fn shared_root(app_data: PathBuf, log_dir: Option<PathBuf>) -> PathBuf {
         static ROOT: OnceLock<PathBuf> = OnceLock::new();
         ROOT.get_or_init(|| {
             let Some(container) = container() else {
@@ -118,7 +121,7 @@ mod ios {
                 return app_data;
             };
             let shared = rowel_core::layout::app_group_root(&container);
-            super::settle_data_dir(app_data, shared)
+            super::settle_data_dir(app_data, shared, log_dir.as_slice())
         })
         .clone()
     }
@@ -138,8 +141,8 @@ mod ios {
 /// a registry whose workspaces are gone, and start a second vault beside the
 /// first — which the next launch's move would then refuse, for good.
 #[cfg(any(target_os = "ios", test))]
-fn settle_data_dir(app_data: PathBuf, shared: PathBuf) -> PathBuf {
-    match move_data_dir(&app_data, &shared) {
+fn settle_data_dir(app_data: PathBuf, shared: PathBuf, leave: &[PathBuf]) -> PathBuf {
+    match move_data_dir(&app_data, &shared, leave) {
         Ok(moved) if moved.is_empty() => shared,
         Ok(moved) => {
             log::info!(
@@ -160,6 +163,15 @@ fn settle_data_dir(app_data: PathBuf, shared: PathBuf) -> PathBuf {
 /// Move everything in the data directory `from` into `to`, one top-level entry
 /// at a time — the workspace registry, the preferences, every workspace — then
 /// remove `from`. Returns the names it moved.
+///
+/// Everything but the paths in `leave`: what shares the directory without
+/// being the vault's. On iOS that is the log dir, which Tauri puts inside the
+/// app's data dir and the log plugin makes again on every launch, before this
+/// runs. An entry the next launch finds there again is not a vault of the
+/// app's own: moved once, it would meet its own copy in `to` on the launch
+/// after and take the container's vault — the one the app was just running
+/// from — aside for a directory of logs. So it stays, and `from` stays with
+/// it; the move is finished all the same.
 ///
 /// Each entry is one rename, so a crash leaves every entry wholly in one
 /// directory or the other, never torn. The next run finds `from` still there
@@ -186,15 +198,17 @@ fn settle_data_dir(app_data: PathBuf, shared: PathBuf) -> PathBuf {
 /// A move that then fails puts it back ([`put_back`]) once its own entries
 /// are, so an error leaves both directories as they were. Nothing is deleted.
 #[cfg(any(target_os = "ios", test))]
-fn move_data_dir(from: &Path, to: &Path) -> Result<Vec<String>> {
+fn move_data_dir(from: &Path, to: &Path, leave: &[PathBuf]) -> Result<Vec<String>> {
     let entries = match fs::read_dir(from) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
-    let names = entries
+    let (left, names): (Vec<_>, Vec<_>) = entries
         .map(|entry| entry.map(|e| e.file_name()))
-        .collect::<std::io::Result<Vec<_>>>()?;
+        .collect::<std::io::Result<Vec<_>>>()?
+        .into_iter()
+        .partition(|name| leave.contains(&from.join(name)));
     let aside = if names.iter().any(|name| to.join(name).exists()) {
         let aside = set_aside(to)?;
         log::warn!(
@@ -225,11 +239,13 @@ fn move_data_dir(from: &Path, to: &Path) -> Result<Vec<String>> {
         }
         moved.push(name);
     }
-    if let Err(e) = fs::remove_dir(from) {
-        log::warn!(
-            "could not remove the emptied data dir {}: {e}",
-            from.display()
-        );
+    if left.is_empty() {
+        if let Err(e) = fs::remove_dir(from) {
+            log::warn!(
+                "could not remove the emptied data dir {}: {e}",
+                from.display()
+            );
+        }
     }
     Ok(names
         .iter()
@@ -927,7 +943,7 @@ mod tests {
         fs::write(from.join("settings.json"), "{}").unwrap();
         fs::write(from.join("workspaces/w1").join(DB_FILE), "w1").unwrap();
 
-        let mut moved = move_data_dir(&from, &to).unwrap();
+        let mut moved = move_data_dir(&from, &to, &[]).unwrap();
         moved.sort();
 
         assert_eq!(
@@ -954,7 +970,7 @@ mod tests {
         fs::write(to.join(DB_FILE), "db").unwrap();
         fs::write(from.join(KDF_SIDECAR_FILE), "kdf").unwrap();
 
-        assert_eq!(move_data_dir(&from, &to).unwrap(), [KDF_SIDECAR_FILE]);
+        assert_eq!(move_data_dir(&from, &to, &[]).unwrap(), [KDF_SIDECAR_FILE]);
         assert!(!from.exists());
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
         assert_eq!(
@@ -971,7 +987,7 @@ mod tests {
         let (from, to) = (root.join("app-data"), root.join("group"));
         fs::create_dir_all(&from).unwrap();
 
-        assert!(move_data_dir(&from, &to).unwrap().is_empty());
+        assert!(move_data_dir(&from, &to, &[]).unwrap().is_empty());
         assert!(!from.exists());
     }
 
@@ -981,7 +997,7 @@ mod tests {
         let root = tmp_sidecar().parent().unwrap().to_path_buf();
         let (from, to) = (root.join("app-data"), root.join("group"));
 
-        assert!(move_data_dir(&from, &to).unwrap().is_empty());
+        assert!(move_data_dir(&from, &to, &[]).unwrap().is_empty());
         assert!(!to.exists());
     }
 
@@ -1024,7 +1040,7 @@ mod tests {
         fs::write(to.join("workspaces.json"), "their registry").unwrap();
         fs::write(to.join("workspaces/old").join(DB_FILE), "their old").unwrap();
 
-        assert_eq!(settle_data_dir(from.clone(), to.clone()), to);
+        assert_eq!(settle_data_dir(from.clone(), to.clone(), &[]), to);
 
         assert!(!from.exists());
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "ours");
@@ -1053,7 +1069,7 @@ mod tests {
             "their old"
         );
         // And the next launch has nothing to move and nothing to set aside.
-        assert_eq!(settle_data_dir(from, to.clone()), to);
+        assert_eq!(settle_data_dir(from, to.clone(), &[]), to);
         assert_eq!(set_aside_dirs(&to).len(), 1);
     }
 
@@ -1069,13 +1085,13 @@ mod tests {
         fs::create_dir_all(&to).unwrap();
         fs::write(from.join(DB_FILE), "second").unwrap();
         fs::write(to.join(DB_FILE), "first").unwrap();
-        assert_eq!(settle_data_dir(from.clone(), to.clone()), to);
+        assert_eq!(settle_data_dir(from.clone(), to.clone(), &[]), to);
         let first = set_aside_dirs(&to);
         assert_eq!(first.len(), 1);
 
         fs::create_dir_all(&from).unwrap();
         fs::write(from.join(DB_FILE), "third").unwrap();
-        assert_eq!(settle_data_dir(from, to.clone()), to);
+        assert_eq!(settle_data_dir(from, to.clone(), &[]), to);
 
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "third");
         let both = set_aside_dirs(&to);
@@ -1108,7 +1124,7 @@ mod tests {
             return;
         }
 
-        let chosen = settle_data_dir(from.clone(), to.clone());
+        let chosen = settle_data_dir(from.clone(), to.clone(), &[]);
 
         fs::set_permissions(&container, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(chosen, from);
@@ -1140,7 +1156,7 @@ mod tests {
             return;
         }
 
-        let chosen = settle_data_dir(from.clone(), to.clone());
+        let chosen = settle_data_dir(from.clone(), to.clone(), &[]);
 
         fs::set_permissions(&from, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(chosen, from);
@@ -1152,10 +1168,46 @@ mod tests {
         );
         assert!(set_aside_dirs(&to).is_empty());
         // And once the move can be made, it is, from the same two vaults.
-        assert_eq!(settle_data_dir(from.clone(), to.clone()), to);
+        assert_eq!(settle_data_dir(from.clone(), to.clone(), &[]), to);
         assert!(!from.exists());
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "ours");
         assert_eq!(set_aside_dirs(&to).len(), 1);
+    }
+
+    // Tauri puts the iOS log dir inside the app's data dir, and the log plugin
+    // makes it again on every launch, before the move runs. It is not the
+    // vault: it stays where it is, and a second launch that finds only it in
+    // the old directory has nothing to move — not a vault of the app's own
+    // that takes the container's aside. (Before this, `logs` collided with
+    // its own copy from the launch before, and every cold start evicted the
+    // vault the app had just been running from.)
+    #[test]
+    fn the_log_dir_stays_behind_and_is_no_collision_on_the_next_launch() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let (from, to) = (root.join("app-data"), root.join("group"));
+        let logs = from.join("logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(logs.join("app.log"), "first launch").unwrap();
+        fs::write(from.join(DB_FILE), "db").unwrap();
+        let leave = [logs.clone()];
+
+        assert_eq!(settle_data_dir(from.clone(), to.clone(), &leave), to);
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
+        // The vault moved; the logs, and the directory holding them, did not.
+        assert!(!to.join("logs").exists());
+        assert_eq!(
+            fs::read_to_string(logs.join("app.log")).unwrap(),
+            "first launch"
+        );
+
+        // The next launch: the plugin has written the log dir again, and
+        // nothing else is in the old directory.
+        fs::write(logs.join("app.log"), "second launch").unwrap();
+
+        assert_eq!(settle_data_dir(from.clone(), to.clone(), &leave), to);
+        assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
+        assert!(set_aside_dirs(&to).is_empty(), "the vault was set aside");
+        assert!(!to.join("logs").exists());
     }
 
     // The app runs from the container once the data dir is in it — on the
@@ -1167,10 +1219,10 @@ mod tests {
         fs::create_dir_all(&from).unwrap();
         fs::write(from.join(DB_FILE), "db").unwrap();
 
-        assert_eq!(settle_data_dir(from.clone(), to.clone()), to);
+        assert_eq!(settle_data_dir(from.clone(), to.clone(), &[]), to);
         assert!(!from.exists());
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
-        assert_eq!(settle_data_dir(from, to.clone()), to);
+        assert_eq!(settle_data_dir(from, to.clone(), &[]), to);
     }
 
     // A rename that fails partway — here on a target a directory cannot be
@@ -1191,7 +1243,7 @@ mod tests {
         // directory cannot be renamed onto a symlink, so `workspaces` fails.
         std::os::unix::fs::symlink(root.join("nowhere"), to.join("workspaces")).unwrap();
 
-        assert_eq!(settle_data_dir(from.clone(), to.clone()), from);
+        assert_eq!(settle_data_dir(from.clone(), to.clone(), &[]), from);
 
         assert!(from.join("workspaces/w1").is_dir());
         assert_eq!(
@@ -1231,13 +1283,13 @@ mod tests {
             return;
         }
 
-        let chosen = settle_data_dir(from.clone(), to.clone());
+        let chosen = settle_data_dir(from.clone(), to.clone(), &[]);
 
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(chosen, to);
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
         assert!(fs::read_dir(&from).unwrap().next().is_none());
-        assert_eq!(settle_data_dir(from.clone(), to.clone()), to);
+        assert_eq!(settle_data_dir(from.clone(), to.clone(), &[]), to);
         assert!(!from.exists());
     }
 

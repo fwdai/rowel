@@ -594,7 +594,9 @@ suggestion tapped is what makes the AutoFill extension ask for the unlock. So
 that the extension, a separate process with a sandbox of its own, can open the
 same vault, the data directory lives in the App Group container
 (`group.app.rowel.mobile`) rather than the app's own sandbox — moved there
-once, entry by entry, from where older installs kept it; a move that cannot
+once, entry by entry, from where older installs kept it (the log directory
+Tauri keeps inside it is not the vault's and stays behind, so that a launch
+finding it there again does not take it for a vault); a move that cannot
 finish is undone, and the app runs from the old directory, whole, until a
 launch that can. A container found holding a vault of its own (one an
 earlier install left, while a build without the container ran from the
