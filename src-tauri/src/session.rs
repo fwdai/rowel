@@ -151,6 +151,10 @@ impl Session {
     /// auto-lock's clock is what ends that. A store that arrives while
     /// backgrounded — an unlock finishing as the user swipes away, a lease
     /// coming back — is parked as it arrives (`place`).
+    ///
+    /// Only iOS has a caller (`background`); the rule itself is platform-free
+    /// and tested on every one.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
     pub fn set_background(&mut self, on: bool) {
         self.backgrounded = on;
         self.place();
