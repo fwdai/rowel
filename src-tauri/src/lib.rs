@@ -10,6 +10,10 @@ mod appkey;
 // The master-password domain: the failed-unlock backoff and the rekey saga.
 mod auth;
 mod autolock;
+// iOS: the vault's connection is let go while the app is in the background,
+// so the suspended process holds no lock in the App Group container.
+#[cfg(target_os = "ios")]
+mod background;
 mod biometrics;
 // The browser extension host: the KeePassXC-Browser protocol over a local
 // socket, and the proxy mode the browser launches this binary in. `pub` so the
@@ -140,6 +144,10 @@ pub fn run() {
         .setup(|app| {
             // Preferences first: the shell and the auto-lock both open on them.
             settings::boot(app.handle());
+            // iOS: park the vault's connection for the background, from the
+            // first transition on (see `background`).
+            #[cfg(target_os = "ios")]
+            background::watch(app.handle());
             // The plaintext favicon directory the in-vault cache replaced: the
             // vault's host list in the clear, so it goes on the first launch
             // that can see it, whether or not this one looks an icon up.

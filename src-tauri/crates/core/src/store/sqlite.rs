@@ -2,8 +2,9 @@
 //! guards a WAL-mode, whole-file-encrypted database. No pool, no async, no ORM.
 
 use std::fs;
-use std::path::Path;
-use std::sync::Mutex;
+use std::ops::{Deref, DerefMut};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::{params, Connection, OptionalExtension, Row, Statement};
 use rusqlite_migration::{Migrations, M};
@@ -102,7 +103,50 @@ const META_UPSERT: &str = "INSERT INTO meta (key, value) VALUES (?1, ?2)
 pub const SYNC_META_PREFIX: &str = "sync_";
 
 pub struct SqliteStore {
-    conn: Mutex<Connection>,
+    path: PathBuf,
+    inner: Mutex<Inner>,
+}
+
+/// The connection, and what stands in for it while the store is parked.
+///
+/// Parked ([`SqliteStore::park`]) means no connection is kept between uses:
+/// each use opens one and closes it as it finishes. iOS ends a suspended
+/// process that holds a lock on a file in a shared container (its
+/// `0xdead10cc`), and an idle WAL connection holds one on the `-shm` for as
+/// long as it exists — so the app parks its store when it goes to the
+/// background, and every lock is gone before the process is suspended. The
+/// key is kept only while there is no connection to hold it: from a park
+/// until a connection is kept again ([`SqliteStore::unpark`] and the next use).
+struct Inner {
+    conn: Option<Connection>,
+    parked: bool,
+    key: Option<Zeroizing<Vec<u8>>>,
+}
+
+/// The connection for one use: the kept one, or — while parked — one opened
+/// for this use alone, closed when the guard drops.
+struct Conn<'a> {
+    inner: MutexGuard<'a, Inner>,
+    temp: Option<Connection>,
+}
+
+impl Deref for Conn<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.temp
+            .as_ref()
+            .or(self.inner.conn.as_ref())
+            .expect("a Conn holds a kept or a temporary connection")
+    }
+}
+
+impl DerefMut for Conn<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        self.temp
+            .as_mut()
+            .or(self.inner.conn.as_mut())
+            .expect("a Conn holds a kept or a temporary connection")
+    }
 }
 
 impl SqliteStore {
@@ -110,69 +154,128 @@ impl SqliteStore {
     /// `key` bytes. The key is used directly (no passphrase KDF); the caller
     /// derives it. Opening an existing DB with the wrong key fails here.
     pub fn open(path: &Path, key: &[u8]) -> Result<Self> {
-        let existed = path.metadata().map(|m| m.len() > 0).unwrap_or(false);
         if let Some(parent) = path.parent() {
             create_private_dir(parent)?;
         }
         // Before SQLite touches the path, so the file — and the `-wal`/`-shm`
         // it will create beside it — is never on disk under the umask's mode.
         restrict(path)?;
+        let conn = connect(path, key)?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            inner: Mutex::new(Inner {
+                conn: Some(conn),
+                parked: false,
+                key: None,
+            }),
+        })
+    }
 
-        let mut conn = Connection::open(path)?;
-        // Raw-key pragma: the hex bytes are the key, not a passphrase. Must run
-        // before any other pragma that touches the (encrypted) file.
-        conn.execute_batch(&key_pragma("key", key))?;
-        // Connection hygiene: WAL for crash-safe per-row writes; NORMAL is the
-        // durable/fast pairing for WAL; temp_store=MEMORY keeps sort/temp data
-        // (plaintext metadata) off disk; busy_timeout absorbs the brief lock a
-        // second connection (e.g. a snapshot) can hold; secure_delete zeroes
-        // what a DELETE or a shrinking UPDATE frees, so a purged payload's
-        // ciphertext does not sit in a free page until that page is reused —
-        // which is what "delete forever" has to mean to anyone who later gets
-        // the database key. No foreign_keys pragma: the schema has no
-        // relations. SQLCipher has no such default pragmas.
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
+    /// Keep no connection between uses, from now until [`Self::unpark`]: the
+    /// one held is closed, and each use until then opens one of its own and
+    /// closes it again (see [`Inner`]). `key` is what opens them — the same
+    /// raw key the store was opened with. Parking a parked store only renews
+    /// the key.
+    pub fn park(&self, key: &[u8]) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.parked = true;
+        inner.key = Some(Zeroizing::new(key.to_vec()));
+        // Closing the connection is what releases the file locks; the next
+        // use opens one of its own.
+        inner.conn = None;
+    }
+
+    /// Keep a connection again: the next use opens one and holds it, and the
+    /// key kept for the parked uses goes with it. A no-op on a store that is
+    /// not parked.
+    pub fn unpark(&self) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.parked = false;
+    }
+
+    /// Whether the store is parked (see [`Self::park`]).
+    pub fn is_parked(&self) -> bool {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).parked
+    }
+
+    /// The connection for one use. Kept, this is the held one; parked, one
+    /// opened here and closed when the guard drops; unparked and not yet
+    /// reopened, one opened here and kept from now on.
+    fn lock(&self) -> Result<Conn<'_>> {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if inner.conn.is_some() {
+            return Ok(Conn { inner, temp: None });
+        }
+        let key = inner.key.as_ref().ok_or_else(|| {
+            StoreError::Other("the store holds no connection and no key to open one".into())
+        })?;
+        let conn = connect(&self.path, key)?;
+        if inner.parked {
+            return Ok(Conn {
+                inner,
+                temp: Some(conn),
+            });
+        }
+        inner.conn = Some(conn);
+        inner.key = None;
+        Ok(Conn { inner, temp: None })
+    }
+}
+
+/// One keyed, configured, migrated connection to the database at `path`.
+/// The whole of an open past the directory and file modes, and what a parked
+/// store does for each use.
+fn connect(path: &Path, key: &[u8]) -> Result<Connection> {
+    let existed = path.metadata().map(|m| m.len() > 0).unwrap_or(false);
+    let mut conn = Connection::open(path)?;
+    // Raw-key pragma: the hex bytes are the key, not a passphrase. Must run
+    // before any other pragma that touches the (encrypted) file.
+    conn.execute_batch(&key_pragma("key", key))?;
+    // Connection hygiene: WAL for crash-safe per-row writes; NORMAL is the
+    // durable/fast pairing for WAL; temp_store=MEMORY keeps sort/temp data
+    // (plaintext metadata) off disk; busy_timeout absorbs the brief lock a
+    // second connection (e.g. a snapshot) can hold; secure_delete zeroes
+    // what a DELETE or a shrinking UPDATE frees, so a purged payload's
+    // ciphertext does not sit in a free page until that page is reused —
+    // which is what "delete forever" has to mean to anyone who later gets
+    // the database key. No foreign_keys pragma: the schema has no
+    // relations. SQLCipher has no such default pragmas.
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
              PRAGMA temp_store = MEMORY;
              PRAGMA busy_timeout = 5000;
              PRAGMA secure_delete = ON;",
-        )
-        .map_err(|e| wrong_key_or(existed, e))?;
+    )
+    .map_err(|e| wrong_key_or(existed, e))?;
 
-        // Force key verification on an existing DB (a wrong key errors only on
-        // read). Same mapping as above: only SQLCipher's "not a database" is the
-        // key's fault; a busy lock or an I/O error here keeps its own cause.
-        if existed {
-            conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
-                r.get::<_, i64>(0)
-            })
-            .map_err(|e| wrong_key_or(existed, e))?;
-        }
-
-        // A vault stamped by a newer build must surface as "update the app",
-        // never as a key failure — for a password manager, a fake "wrong
-        // password" is the worst possible misdiagnosis.
-        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > schema_version() {
-            return Err(StoreError::SchemaNewer);
-        }
-
-        // Apply pending schema migrations on the decrypted DB (tracked via
-        // `user_version`; idempotent — a no-op once the DB is at the latest).
-        migrations()
-            .to_latest(&mut conn)
-            .map_err(|e| StoreError::Other(e.to_string()))?;
-
-        Ok(Self {
-            conn: Mutex::new(conn),
+    // Force key verification on an existing DB (a wrong key errors only on
+    // read). Same mapping as above: only SQLCipher's "not a database" is the
+    // key's fault; a busy lock or an I/O error here keeps its own cause.
+    if existed {
+        conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+            r.get::<_, i64>(0)
         })
+        .map_err(|e| wrong_key_or(existed, e))?;
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    // A vault stamped by a newer build must surface as "update the app",
+    // never as a key failure — for a password manager, a fake "wrong
+    // password" is the worst possible misdiagnosis.
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version > schema_version() {
+        return Err(StoreError::SchemaNewer);
     }
 
+    // Apply pending schema migrations on the decrypted DB (tracked via
+    // `user_version`; idempotent — a no-op once the DB is at the latest).
+    migrations()
+        .to_latest(&mut conn)
+        .map_err(|e| StoreError::Other(e.to_string()))?;
+    Ok(conn)
+}
+
+impl SqliteStore {
     /// Write a consistent, still-encrypted snapshot of the live DB to `dest`
     /// using SQLite's online-backup API. Unlike `fs::copy` of a WAL-mode file,
     /// this reads *through* the connection, so it always captures committed WAL
@@ -183,7 +286,7 @@ impl SqliteStore {
         restrict(dest)?;
         let mut dst = Connection::open(dest)?;
         dst.execute_batch(&key_pragma("key", key))?;
-        let src = self.lock();
+        let src = self.lock()?;
         let backup = rusqlite::backup::Backup::new(&src, &mut dst)?;
         backup.run_to_completion(100, std::time::Duration::from_millis(50), None)?;
         Ok(())
@@ -194,8 +297,13 @@ impl SqliteStore {
     /// key afterwards. Used by change-master-password after the payloads have
     /// been re-encrypted under the new app key.
     pub fn rekey(&self, new_key: &[u8]) -> Result<()> {
-        let conn = self.lock();
+        let mut conn = self.lock()?;
         conn.execute_batch(&key_pragma("rekey", new_key))?;
+        // A parked store opens each use with the key it was parked with; the
+        // one the file takes from here on is this one.
+        if conn.inner.key.is_some() {
+            conn.inner.key = Some(Zeroizing::new(new_key.to_vec()));
+        }
         // `PRAGMA rekey` is an ordinary write transaction that rewrites every
         // page, so in WAL mode the re-encrypted pages land in `vault.db-wal`
         // and the main file still opens under the OLD password until something
@@ -212,7 +320,7 @@ impl SqliteStore {
     /// Test seam: stamp the DB as if a future build had migrated it further.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_user_version(&self, version: i64) -> Result<()> {
-        self.lock()
+        self.lock()?
             .execute_batch(&format!("PRAGMA user_version = {version}"))?;
         Ok(())
     }
@@ -224,7 +332,7 @@ impl SqliteStore {
     /// does not read it: the whole point of a metadata projection is that
     /// reporting a write never decrypts anything.
     pub fn row_meta(&self, id: &str) -> Result<Option<EntryMeta>> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let sql = format!("SELECT {META_COLS} FROM entries WHERE id = ?1");
         Ok(conn.query_row(&sql, params![id], row_to_meta).optional()?)
     }
@@ -232,7 +340,7 @@ impl SqliteStore {
     /// Set the derived card-network slug without stamping `updated_at` — it is
     /// derived metadata, not a user edit (used by the one-time unlock backfill).
     pub fn set_card_brand(&self, id: &str, brand: &str) -> Result<()> {
-        self.lock().execute(
+        self.lock()?.execute(
             "UPDATE entries SET card_brand = ?1 WHERE id = ?2",
             params![brand, id],
         )?;
@@ -243,7 +351,7 @@ impl SqliteStore {
     /// reason [`SqliteStore::set_card_brand`] does not: it is a projection of
     /// the payload the row already holds, not a user edit.
     pub fn set_has_passkey(&self, id: &str, has_passkey: bool) -> Result<()> {
-        self.lock().execute(
+        self.lock()?.execute(
             "UPDATE entries SET has_passkey = ?1 WHERE id = ?2",
             params![has_passkey, id],
         )?;
@@ -254,7 +362,7 @@ impl SqliteStore {
     /// `updated_at`, for the same reason [`SqliteStore::set_card_brand`] does
     /// not: the payload already holds them, this only writes them down.
     pub fn set_env_meta(&self, id: &str, file_name: Option<&str>, var_count: i64) -> Result<()> {
-        self.lock().execute(
+        self.lock()?.execute(
             "UPDATE entries SET file_name = ?1, var_count = ?2 WHERE id = ?3",
             params![file_name, var_count, id],
         )?;
@@ -263,7 +371,7 @@ impl SqliteStore {
 
     /// Stamp a login row's derived username without touching `updated_at`.
     pub fn set_username(&self, id: &str, username: &str) -> Result<()> {
-        self.lock().execute(
+        self.lock()?.execute(
             "UPDATE entries SET username = ?1 WHERE id = ?2",
             params![username, id],
         )?;
@@ -300,7 +408,7 @@ impl SqliteStore {
     /// Winners are written verbatim: no timestamp is stamped here, or the
     /// merged row would immediately look newer than its source everywhere else.
     pub fn merge_records(&self, recs: &[Record]) -> Result<usize> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         let mut changed = 0usize;
         {
@@ -343,7 +451,7 @@ impl SqliteStore {
     /// How many live entries the vault holds: what the list shows, so the
     /// same filter as `list`, and every tombstone (archived or purged) left out.
     pub fn count_live(&self) -> Result<u32> {
-        Ok(self.lock().query_row(
+        Ok(self.lock()?.query_row(
             "SELECT count(*) FROM entries WHERE deleted_at IS NULL",
             [],
             |r| r.get(0),
@@ -356,7 +464,7 @@ impl SqliteStore {
     /// Matched with `substr`, not `LIKE`: `_` is a LIKE wildcard, so the literal
     /// prefix `sync_` would also match `syncX…` — a silent over-delete.
     pub fn meta_delete_prefix(&self, prefix: &str) -> Result<usize> {
-        Ok(self.lock().execute(
+        Ok(self.lock()?.execute(
             "DELETE FROM meta WHERE substr(key, 1, length(?1)) = ?1",
             params![prefix],
         )?)
@@ -374,7 +482,7 @@ impl SqliteStore {
     /// the tombstone has been pushed at least once, or the delete is lost
     /// instead of propagated) belongs to the sync engine, not the store.
     pub fn purge_tombstones_before(&self, cutoff_ms: i64) -> Result<usize> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let reclaimed = conn.execute(
             "DELETE FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
             params![cutoff_ms],
@@ -400,7 +508,7 @@ impl SqliteStore {
     /// the caller's policy, not the store's.
     pub fn get_favicon(&self, host: &str, miss_ttl_ms: i64) -> Result<Option<Option<String>>> {
         let row: Option<(Option<String>, i64)> = self
-            .lock()
+            .lock()?
             .query_row(
                 "SELECT uri, fetched_at FROM favicons WHERE host = ?1",
                 params![host],
@@ -420,7 +528,7 @@ impl SqliteStore {
     /// Re-stamps `fetched_at`, so a repeated miss restarts its TTL rather than
     /// being retried on every launch once the first one aged out.
     pub fn put_favicon(&self, host: &str, uri: Option<&str>) -> Result<()> {
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO favicons (host, uri, fetched_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(host) DO UPDATE SET uri = excluded.uri, fetched_at = excluded.fetched_at",
             params![host, uri, now_ms()],
@@ -435,7 +543,7 @@ impl SqliteStore {
     #[cfg(test)]
     pub(crate) fn drop_favicons_for_test(&self) -> Result<()> {
         let previous = schema_version() - 2;
-        self.lock().execute_batch(&format!(
+        self.lock()?.execute_batch(&format!(
             "ALTER TABLE entries DROP COLUMN username;
              DROP TABLE favicons;
              PRAGMA user_version = {previous};"
@@ -447,7 +555,7 @@ impl SqliteStore {
     /// that trips over it take the keys written before it back down.
     #[cfg(test)]
     pub(crate) fn refuse_meta_key_for_test(&self, key: &str) -> Result<()> {
-        self.lock().execute_batch(&format!(
+        self.lock()?.execute_batch(&format!(
             "CREATE TRIGGER refuse_meta BEFORE INSERT ON meta WHEN NEW.key = '{key}'
              BEGIN SELECT RAISE(ABORT, 'refused'); END;"
         ))?;
@@ -458,7 +566,7 @@ impl SqliteStore {
     #[cfg(test)]
     pub(crate) fn pragma_i64(&self, name: &str) -> Result<i64> {
         Ok(self
-            .lock()
+            .lock()?
             .query_row(&format!("PRAGMA {name}"), [], |r| r.get(0))?)
     }
 }
@@ -497,7 +605,7 @@ fn checkpoint_truncate(conn: &Connection) -> Result<()> {
 impl VaultStore for SqliteStore {
     fn meta_get(&self, key: &str) -> Result<Option<String>> {
         Ok(self
-            .lock()
+            .lock()?
             .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
                 r.get(0)
             })
@@ -505,12 +613,12 @@ impl VaultStore for SqliteStore {
     }
 
     fn meta_set(&self, key: &str, value: &str) -> Result<()> {
-        self.lock().execute(META_UPSERT, params![key, value])?;
+        self.lock()?.execute(META_UPSERT, params![key, value])?;
         Ok(())
     }
 
     fn meta_set_many(&self, pairs: &[(&str, &str)]) -> Result<()> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         {
             let mut write = tx.prepare(META_UPSERT)?;
@@ -525,7 +633,7 @@ impl VaultStore for SqliteStore {
     }
 
     fn list(&self) -> Result<Vec<EntryMeta>> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let sql = format!("SELECT {META_COLS} FROM entries WHERE deleted_at IS NULL ORDER BY id");
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([], row_to_meta)?;
@@ -533,7 +641,7 @@ impl VaultStore for SqliteStore {
     }
 
     fn list_deleted(&self) -> Result<Vec<EntryMeta>> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         // A purged row keeps its tombstone (sync needs it) but has no payload
         // left, so an empty payload is exactly "already permanently deleted".
         let sql = format!(
@@ -547,7 +655,7 @@ impl VaultStore for SqliteStore {
     }
 
     fn get(&self, id: &str) -> Result<Option<Record>> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let sql = format!("SELECT {COLS} FROM entries WHERE id = ?1 AND deleted_at IS NULL");
         Ok(conn
             .query_row(&sql, params![id], row_to_record)
@@ -556,7 +664,7 @@ impl VaultStore for SqliteStore {
 
     fn upsert(&self, rec: &Record) -> Result<()> {
         let now = now_ms();
-        let conn = self.lock();
+        let conn = self.lock()?;
         // created_at is set only on insert; updated_at is always stamped to now.
         // `favorite` is deliberately absent from the update set: the star is not
         // part of the entry the editor round-trips, so an ordinary save must
@@ -601,7 +709,7 @@ impl VaultStore for SqliteStore {
 
     fn delete(&self, id: &str) -> Result<()> {
         let now = now_ms();
-        let conn = self.lock();
+        let conn = self.lock()?;
         conn.execute(
             "UPDATE entries SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
             params![now, id],
@@ -611,7 +719,7 @@ impl VaultStore for SqliteStore {
 
     fn restore(&self, id: &str) -> Result<()> {
         let now = now_ms();
-        self.lock().execute(
+        self.lock()?.execute(
             "UPDATE entries SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2",
             params![now, id],
         )?;
@@ -635,7 +743,7 @@ impl VaultStore for SqliteStore {
     /// ordered sensibly for anything else reading timestamps.
     fn purge(&self, id: &str) -> Result<()> {
         let now = now_ms();
-        let conn = self.lock();
+        let conn = self.lock()?;
         let purged = conn.execute(
             "UPDATE entries
              SET payload = x'', title = '', tags = '[]', url_host = '',
@@ -661,7 +769,7 @@ impl VaultStore for SqliteStore {
         // Tombstones are excluded like they are in `purge`: a trashed entry has
         // no star to set, and the `updated_at` bump would hand a deleted row a
         // fresh stamp for the sync merge to carry around.
-        self.lock().execute(
+        self.lock()?.execute(
             "UPDATE entries SET favorite = ?1, updated_at = ?2
              WHERE id = ?3 AND deleted_at IS NULL",
             params![favorite, now, id],
@@ -670,7 +778,7 @@ impl VaultStore for SqliteStore {
     }
 
     fn export_for_sync(&self) -> Result<Vec<Record>> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let sql = format!("SELECT {COLS} FROM entries ORDER BY id");
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([], row_to_record)?;
@@ -678,7 +786,7 @@ impl VaultStore for SqliteStore {
     }
 
     fn import(&self, recs: &[Record]) -> Result<()> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         {
             // Bulk sync-in: timestamps are preserved verbatim (no stamping), and
@@ -883,6 +991,7 @@ mod checkpoint_tests {
         // connection's five-second busy timeout first.
         store
             .lock()
+            .unwrap()
             .execute_batch("PRAGMA busy_timeout = 0;")
             .unwrap();
 
@@ -901,5 +1010,105 @@ mod checkpoint_tests {
             "expected a checkpoint failure, got: {err}"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+// Parking: no connection held between uses, and every use still works.
+#[cfg(test)]
+mod park_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    const KEY: &[u8] = &[0x33; 32];
+
+    fn tmp_db() -> std::path::PathBuf {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "rowel-park-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        create_private_dir(&dir).unwrap();
+        dir.join("vault.db")
+    }
+
+    // SQLite removes the `-shm` when the last connection to a WAL database
+    // closes, so its absence is the observable for "no connection, and so no
+    // lock, is held".
+    fn shm(path: &Path) -> std::path::PathBuf {
+        let mut name = path.file_name().unwrap().to_os_string();
+        name.push("-shm");
+        path.with_file_name(name)
+    }
+
+    #[test]
+    fn a_parked_store_holds_no_connection_between_uses_and_still_works() {
+        let path = tmp_db();
+        let store = SqliteStore::open(&path, KEY).unwrap();
+        store.meta_set("before", "1").unwrap();
+        assert!(shm(&path).exists(), "an open WAL connection has its -shm");
+
+        store.park(KEY);
+        assert!(store.is_parked());
+        assert!(!shm(&path).exists(), "parking closed the connection");
+
+        // Reads and writes work while parked, each on a connection of its own
+        // that is closed again as it finishes.
+        assert_eq!(store.meta_get("before").unwrap().as_deref(), Some("1"));
+        assert!(!shm(&path).exists());
+        store.meta_set("during", "2").unwrap();
+        store.meta_set_many(&[("a", "x"), ("b", "y")]).unwrap();
+        assert!(!shm(&path).exists());
+        assert_eq!(store.meta_get("during").unwrap().as_deref(), Some("2"));
+        assert_eq!(store.meta_get("b").unwrap().as_deref(), Some("y"));
+
+        // Unparked, the next use opens a connection and keeps it.
+        store.unpark();
+        assert!(!store.is_parked());
+        assert_eq!(store.meta_get("a").unwrap().as_deref(), Some("x"));
+        assert!(shm(&path).exists(), "a kept connection is back");
+        assert_eq!(store.meta_get("before").unwrap().as_deref(), Some("1"));
+    }
+
+    // The store as it was: unparking one that was never parked, and parking
+    // one twice, leave it working and hold nothing they should not.
+    #[test]
+    fn unparking_an_open_store_and_parking_twice_are_harmless() {
+        let path = tmp_db();
+        let store = SqliteStore::open(&path, KEY).unwrap();
+        store.unpark();
+        store.meta_set("k", "v").unwrap();
+        assert!(shm(&path).exists());
+
+        store.park(KEY);
+        store.park(KEY);
+        assert!(!shm(&path).exists());
+        assert_eq!(store.meta_get("k").unwrap().as_deref(), Some("v"));
+        assert!(!shm(&path).exists());
+    }
+
+    // A password change while parked: the uses after it open with the key the
+    // file now takes, not the one it was parked with.
+    #[test]
+    fn a_rekey_while_parked_carries_the_new_key_into_the_next_use() {
+        let path = tmp_db();
+        let store = SqliteStore::open(&path, KEY).unwrap();
+        store.meta_set("k", "v").unwrap();
+        store.park(KEY);
+
+        let new_key = &[0x44; 32];
+        store.rekey(new_key).unwrap();
+        assert_eq!(store.meta_get("k").unwrap().as_deref(), Some("v"));
+        assert!(!shm(&path).exists());
+
+        // And the file really is under the new key.
+        drop(store);
+        assert!(matches!(
+            SqliteStore::open(&path, KEY).err(),
+            Some(StoreError::WrongKey)
+        ));
+        let reopened = SqliteStore::open(&path, new_key).unwrap();
+        assert_eq!(reopened.meta_get("k").unwrap().as_deref(), Some("v"));
     }
 }

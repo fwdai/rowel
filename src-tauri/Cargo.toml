@@ -182,9 +182,16 @@ objc2-app-kit = { version = "0.3", features = [
 [target.'cfg(target_os = "ios")'.dependencies]
 # UIPasteboard: the iOS clipboard write, with the local-only + expiry options
 # that keep a secret off Universal Clipboard (see `commands/clipboard.rs`).
+# UIApplication: the background and foreground notifications, and the
+# background task the vault's connection is parked under (see `background`);
+# `block2` gates the task's expiry handler. UIResponder is UIApplication's
+# superclass.
 objc2-ui-kit = { version = "0.3", default-features = false, features = [
   "std",
+  "block2",
+  "UIApplication",
   "UIPasteboard",
+  "UIResponder",
 ] }
 # ASCredentialIdentityStore: the logins and passkeys QuickType suggests for the
 # AutoFill extension (see `credential_identities`). Only the store, its state

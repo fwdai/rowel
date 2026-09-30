@@ -609,6 +609,15 @@ biometric-gated key is stored under that group's keychain access group, which
 only the app and its extension are entitled to read; the key's biometric
 access control is unchanged.
 
+A shared container has one rule of iOS's own: a process suspended while it
+holds a lock on a file there is ended (`0xdead10cc`), and an idle WAL
+connection holds one on the database's `-shm` for as long as it is open. So
+while the app is in the background the session keeps no connection to the
+vault between uses — the one it held is closed as the app goes, and each use
+until the app is back opens and closes one of its own (`Session::set_background`,
+`SqliteStore::park`). The key stays in memory, as it does in the foreground:
+the vault is as unlocked as it was, and the auto-lock is what ends that.
+
 The extension (`app.rowel.mobile.autofill`: Swift for the sheet, and the
 `rowel-autofill` crate over `rowel_core` for the vault) reaches exactly those
 two things: the active workspace's vault in the shared container, and that
