@@ -22,12 +22,13 @@ interface Props {
   /** Offered only when nothing is waiting for a password: a password field has
    *  no use for a keypair. */
   ssh?: boolean
-  /** The switch's box. It sits beside a title in the card and spans the width
-   *  of a phone screen on the tab root, so the size travels as classes. */
+  /** The switch's box. It sits beside a title in a phone's sheet and spans the
+   *  width of the desktop card and the phone's tab root, so the size travels as
+   *  classes. */
   className?: string
 }
 
-// Mode switch in the dialog header — the shared Segmented control.
+// The generator's mode switch — the shared Segmented control.
 export default function Tabs({ mode, onChange, ssh, className = 'flex-none' }: Props) {
   const { t } = useTranslation()
   const tabs = ssh ? TABS : TABS.filter(tab => tab.value !== 'ssh')

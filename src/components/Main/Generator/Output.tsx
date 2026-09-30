@@ -12,9 +12,26 @@ interface Props {
   level: number
 }
 
+// The meter and its reading, under the secret wherever the secret is drawn.
+export function Entropy({
+  bits,
+  level,
+  stretch,
+  className
+}: Omit<Props, 'value'> & { stretch?: boolean; className?: string }) {
+  const { t } = useTranslation()
+  return (
+    <div className={cx('flex items-center gap-2.5', className)}>
+      <Meter level={level} stretch={stretch} />
+      <span className={cx(META_TYPE, LEVEL_INK[level])}>
+        {t(ENTROPY_LABELS[level])} · {bits} {t('bits')}
+      </span>
+    </div>
+  )
+}
+
 // The generated secret on its field tile, with the entropy meter underneath.
 export default function Output({ value, bits, level }: Props) {
-  const { t } = useTranslation()
   return (
     <>
       <div
@@ -23,12 +40,7 @@ export default function Output({ value, bits, level }: Props) {
       >
         {value}
       </div>
-      <div className="mt-3 flex items-center gap-2.5">
-        <Meter level={level} />
-        <span className={cx(META_TYPE, LEVEL_INK[level])}>
-          {t(ENTROPY_LABELS[level])} · {bits} {t('bits')}
-        </span>
-      </div>
+      <Entropy bits={bits} level={level} className="mt-3" />
     </>
   )
 }
