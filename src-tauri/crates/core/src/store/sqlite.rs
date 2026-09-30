@@ -125,9 +125,14 @@ struct Inner {
 
 /// The connection for one use: the kept one, or — while parked — one opened
 /// for this use alone, closed when the guard drops.
+///
+/// Fields drop in the order written, and the order matters: the temporary
+/// connection closes *before* the mutex is let go, so anyone who then takes
+/// the mutex — the background's parking, above all — finds the file lock
+/// already gone, and "parked" means what it says the moment it returns.
 struct Conn<'a> {
-    inner: MutexGuard<'a, Inner>,
     temp: Option<Connection>,
+    inner: MutexGuard<'a, Inner>,
 }
 
 impl Deref for Conn<'_> {

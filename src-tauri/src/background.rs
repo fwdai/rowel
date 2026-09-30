@@ -15,7 +15,12 @@
 //! The parking runs off the main thread, under a background task: a command
 //! that holds the session — a sync merge landing as the user swipes away —
 //! finishes first, and the process is not suspended until the store is
-//! parked. Each notification takes a turn; a worker that finds a newer turn
+//! parked. A store that is away on a lease (a password change, a workspace
+//! being made or restored) is out of the session's reach, so the task stays
+//! open until the lease comes back — its return parks the store — or the
+//! session ends; iOS's own expiry ends it if that takes too long, which
+//! leaves things as they were before this module and no worse.
+//! Each notification takes a turn; a worker that finds a newer turn
 //! by the time it holds the session does nothing, so a quick swipe away and
 //! back cannot leave the store parked in the foreground, or held open in the
 //! background.
@@ -23,6 +28,7 @@
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use block2::RcBlock;
 use objc2::MainThreadMarker;
@@ -41,6 +47,9 @@ use crate::state::AppState;
 // The notifications in the order they came, so a worker can tell it has been
 // overtaken.
 static TURN: AtomicU64 = AtomicU64::new(0);
+
+// How often a worker looks again for a lease to have come back.
+const LEASE_POLL: Duration = Duration::from_millis(50);
 
 /// Start following the app's background and foreground transitions, for the
 /// life of the process.
@@ -64,12 +73,24 @@ fn observe(name: &NSNotificationName, app: AppHandle, background: bool) {
         let task = if background { Task::begin() } else { None };
         let app = app.clone();
         std::thread::spawn(move || {
-            {
-                let state = app.state::<AppState>();
-                let mut session = state.session.lock().unwrap_or_else(|e| e.into_inner());
-                if TURN.load(Ordering::SeqCst) == turn {
+            let state = app.state::<AppState>();
+            loop {
+                let lease_out = {
+                    let mut session = state.session.lock().unwrap_or_else(|e| e.into_inner());
+                    if TURN.load(Ordering::SeqCst) != turn {
+                        break;
+                    }
                     session.set_background(background);
+                    background && session.is_held_out()
+                };
+                // The store is away on a lease, where parking cannot reach
+                // it: keep the task, and so the process, until it is back —
+                // its return parks it (`Session::adopt`) — or the session has
+                // ended. The parking above is repeated harmlessly meanwhile.
+                if !lease_out {
+                    break;
                 }
+                std::thread::sleep(LEASE_POLL);
             }
             if let Some(task) = task {
                 task.end();

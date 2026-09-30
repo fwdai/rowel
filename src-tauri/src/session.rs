@@ -89,6 +89,15 @@ impl Session {
         self.key.is_some() || self.held_out
     }
 
+    /// A lease is out: the key and store are away with a whole-vault
+    /// operation, to be handed back (`adopt`, `restore`). What the iOS
+    /// background asks, since a store that is away cannot be parked until it
+    /// comes back. Only iOS has a caller (`background`).
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    pub fn is_held_out(&self) -> bool {
+        self.held_out
+    }
+
     pub fn epoch(&self) -> Epoch {
         Epoch(self.epoch)
     }
