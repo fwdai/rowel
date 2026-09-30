@@ -333,7 +333,7 @@ describe('a .env dropped on the idle window', () => {
     seed()
     render(<Main />)
     act(() => openAddPicker())
-    expect(screen.getByTestId('add-env-file')).toHaveTextContent('Drop a .env file')
+    expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
 
     await drop('/Users/me/code/api/.env')
 
