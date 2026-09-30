@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
 import { CloseGlyph } from '../Main/icons'
 import Kbd from './Kbd'
+import { useFrameOwnsClose } from './frameContext'
 
 /**
  * The header row every dialog shares: a title, a line saying what it is for,
@@ -32,6 +33,8 @@ export default function DialogHeader({
   className?: string
 }) {
   const { t } = useTranslation()
+  // On a phone the frame's own bar has the close; `esc` means nothing there.
+  const framed = useFrameOwnsClose()
 
   return (
     <div
@@ -49,21 +52,23 @@ export default function DialogHeader({
         {description != null && <p className="mt-0.5 text-sm text-text2">{description}</p>}
       </div>
       {/* Says what closes it as well as closing it: Escape does the same. */}
-      <button
-        type="button"
-        aria-label={t('Close')}
-        title={t('Close')}
-        data-testid="modal-close"
-        disabled={disabled}
-        onClick={onClose}
-        className={cx(
-          'flex h-7 flex-none items-center gap-2 rounded-sm px-1.5 text-text2 transition-colors',
-          disabled ? 'cursor-default opacity-50' : 'cursor-pointer hover:bg-hover hover:text-text'
-        )}
-      >
-        <Kbd>esc</Kbd>
-        <CloseGlyph />
-      </button>
+      {!framed && (
+        <button
+          type="button"
+          aria-label={t('Close')}
+          title={t('Close')}
+          data-testid="modal-close"
+          disabled={disabled}
+          onClick={onClose}
+          className={cx(
+            'flex h-7 flex-none items-center gap-2 rounded-sm px-1.5 text-text2 transition-colors',
+            disabled ? 'cursor-default opacity-50' : 'cursor-pointer hover:bg-hover hover:text-text'
+          )}
+        >
+          <Kbd>esc</Kbd>
+          <CloseGlyph />
+        </button>
+      )}
     </div>
   )
 }
