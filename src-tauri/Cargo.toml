@@ -1,6 +1,6 @@
 [package]
 name = "rowel"
-version = "1.0.0-alpha.7"
+version = "1.0.0-alpha.8"
 description = "Modern, Lightweight, Fast and Free Password Manager"
 authors = ["Alex Chaplinsky"]
 edition = "2021"
