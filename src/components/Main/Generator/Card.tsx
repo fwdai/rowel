@@ -26,7 +26,8 @@ interface Props {
 // rows, and the action bar pinned under a hairline.
 export default function Card({ generator, apply, ssh, onClose }: Props) {
   const { t } = useTranslation()
-  const { mode, setMode, keys, settings, value, bits, level, update, regenerate } = generator
+  const { mode, setMode, keys, settings, value, bits, level, ready, update, regenerate } =
+    generator
 
   // Says where the value goes, which is what confirming does in each case.
   const description: TKey = keys
@@ -61,7 +62,13 @@ export default function Card({ generator, apply, ssh, onClose }: Props) {
           </div>
         ) : (
           <>
-            <Hero value={value} bits={bits} level={level} onRegenerate={regenerate} />
+            <Hero
+              value={value}
+              bits={bits}
+              level={level}
+              ready={ready}
+              onRegenerate={regenerate}
+            />
             <div className={cx(CARD, 'mt-3')}>
               <Amount settings={settings} onChange={update} row />
               <Toggles settings={settings} onChange={update} rows />

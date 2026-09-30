@@ -24,7 +24,7 @@ export function useGeneratorDialog(
   ssh: SshApply | null,
   onClose: () => void
 ) {
-  const { settings, value, update, regenerate, bits, level } = useGenerator()
+  const { settings, value, pending, update, regenerate, bits, level } = useGenerator()
   // Opened off the ssh private-key row, the generator is that one job —
   // otherwise it starts on whatever password mode the settings remember.
   const [mode, setMode] = useState<DialogMode>(ssh ? 'ssh' : settings.mode)
@@ -41,23 +41,27 @@ export function useGeneratorDialog(
     [update]
   )
 
+  // Whether confirming can do anything. In either mode a draw in flight (or
+  // one that failed) means the thing on screen is what the user asked to
+  // replace, not what they'd be using. Both shells disable their confirm on
+  // it, rather than each re-deriving what "not ready" means.
+  const ready = keys ? key.ready : !pending && !!value
+
   // A keypair fills a whole draft, so standalone it opens a new entry rather
-  // than landing on the clipboard the way a password does. While a draw is in
-  // flight (or has failed) confirming does nothing: the pair on screen is the
-  // one the user asked to replace, not the one they'd be saving.
+  // than landing on the clipboard the way a password does.
   const confirm = useCallback(() => {
+    if (!ready) return
     if (keys) {
-      if (!key.ready || !key.pair) return
+      if (!key.pair) return
       if (ssh) ssh(key.pair)
       else startEntry('ssh', key.pair)
       onClose()
       return
     }
-    if (!value) return
     apply?.(value)
     copy(value)
     onClose()
-  }, [keys, key.ready, key.pair, ssh, apply, value, onClose])
+  }, [ready, keys, key.pair, ssh, apply, value, onClose])
 
   const confirmLabel: TKey = keys ? (ssh ? 'Use' : 'Save as SSH key') : 'Use & copy'
 
@@ -66,10 +70,7 @@ export function useGeneratorDialog(
     setMode: changeMode,
     keys,
     key,
-    // Whether confirming can do anything: a password is always there, a keypair
-    // only once the draw has landed. Both shells disable their confirm on it,
-    // rather than each re-deriving what "not ready" means.
-    ready: !keys || key.ready,
+    ready,
     settings,
     value,
     bits,
