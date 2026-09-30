@@ -1,0 +1,730 @@
+/*
+ * Rowel's theme for the extension: upstream's Bootstrap markup in the app's
+ * palette, fonts and radii. Every value is a token from rowel-tokens.css
+ * (generated from src/styles/theme.css), so one block serves both themes.
+ * Loaded after colors.css and Bootstrap everywhere, so equal-specificity rules
+ * here win by order; `!important` appears only where upstream's own CSS
+ * forces a value. Upstream's files are left untouched, which keeps
+ * `git subtree pull` conflict-free (docs/browser-extension.md).
+ */
+@import url('rowel-tokens.css');
+
+/* Upstream's colors.css and Bootstrap 5.3 variables, pointed at the tokens.
+   Also on `[data-bs-theme]`, since both re-set theirs on whichever element
+   carries it (the page root, or a shadow root's wrapper). The options sidebar
+   is the app's rail; options.css paints its text in ink, not text-white. The
+   -rgb triplets are what `.bg-*`, `.text-*` and `a` compose with an alpha;
+   `.alert-*` reads the subtle trio: the app's soft wash (12%), its edge (30%)
+   and the solid ink. */
+:root,
+:host,
+[data-bs-theme] {
+    --kpxc-sidebar-background-color: var(--c-rail);
+    --kpxc-background-color: var(--c-detail);
+    --kpxc-card-background-color: var(--c-detail);
+    --kpxc-card-header-color: var(--c-pane);
+    --kpxc-card-border-color: var(--c-line2);
+    --kpxc-text-color: var(--c-text);
+    --kpxc-link-color: var(--c-accent);
+    --kpxc-link-hover-color: var(--c-accent-hover);
+    --kpxc-input-background-color: var(--c-field);
+    --kpxc-input-border: 1px solid var(--c-line2);
+    --kpxc-input-border-color: var(--c-line2);
+    --kpxc-input-main-border-color: var(--c-line2);
+    --kpxc-input-active-border-color: var(--c-accent-line);
+    --kpxc-container-border: 1px solid var(--c-line2);
+    --kpxc-box-shadow-strong: var(--shadow);
+    --kpxc-table-hover-color: var(--c-hover);
+    --kpxc-table-odd-color: var(--c-list);
+    --bs-body-bg: var(--c-detail);
+    --bs-body-bg-rgb: var(--c-detail-rgb);
+    --bs-body-color: var(--c-text);
+    --bs-body-color-rgb: var(--c-text-rgb);
+    --bs-emphasis-color: var(--c-text);
+    --bs-emphasis-color-rgb: var(--c-text-rgb);
+    --bs-secondary-color: var(--c-text2);
+    --bs-secondary-color-rgb: var(--c-text2-rgb);
+    --bs-tertiary-color: var(--c-text3);
+    --bs-tertiary-color-rgb: var(--c-text3-rgb);
+    --bs-secondary-bg: var(--c-list);
+    --bs-secondary-bg-rgb: var(--c-list-rgb);
+    --bs-tertiary-bg: var(--c-pane);
+    --bs-tertiary-bg-rgb: var(--c-pane-rgb);
+    --bs-link-color: var(--c-accent);
+    --bs-link-color-rgb: var(--c-accent-rgb);
+    --bs-link-hover-color: var(--c-accent-hover);
+    --bs-link-hover-color-rgb: var(--c-accent-hover-rgb);
+    --bs-primary: var(--c-accent);
+    --bs-primary-rgb: var(--c-accent-rgb);
+    --bs-primary-bg-subtle: rgba(var(--c-accent-rgb), 0.12);
+    --bs-primary-border-subtle: rgba(var(--c-accent-rgb), 0.3);
+    --bs-primary-text-emphasis: var(--c-accent);
+    --bs-secondary: var(--c-text2);
+    --bs-secondary-rgb: var(--c-text2-rgb);
+    --bs-secondary-bg-subtle: rgba(var(--c-text2-rgb), 0.12);
+    --bs-secondary-border-subtle: rgba(var(--c-text2-rgb), 0.3);
+    --bs-secondary-text-emphasis: var(--c-text2);
+    --bs-success: var(--c-good);
+    --bs-success-rgb: var(--c-good-rgb);
+    --bs-success-bg-subtle: rgba(var(--c-good-rgb), 0.12);
+    --bs-success-border-subtle: rgba(var(--c-good-rgb), 0.3);
+    --bs-success-text-emphasis: var(--c-good);
+    --bs-warning: var(--c-warn);
+    --bs-warning-rgb: var(--c-warn-rgb);
+    --bs-warning-bg-subtle: rgba(var(--c-warn-rgb), 0.12);
+    --bs-warning-border-subtle: rgba(var(--c-warn-rgb), 0.3);
+    --bs-warning-text-emphasis: var(--c-warn);
+    --bs-danger: var(--c-bad);
+    --bs-danger-rgb: var(--c-bad-rgb);
+    --bs-danger-bg-subtle: rgba(var(--c-bad-rgb), 0.12);
+    --bs-danger-border-subtle: rgba(var(--c-bad-rgb), 0.3);
+    --bs-danger-text-emphasis: var(--c-bad);
+    --bs-info: var(--c-lockfield);
+    --bs-info-rgb: var(--c-lockfield-rgb);
+    --bs-info-bg-subtle: rgba(var(--c-lockfield-rgb), 0.12);
+    --bs-info-border-subtle: rgba(var(--c-lockfield-rgb), 0.3);
+    --bs-info-text-emphasis: var(--c-lockfield);
+    --bs-border-color: var(--c-line2);
+    --bs-border-color-translucent: var(--c-line2);
+    --bs-focus-ring-color: var(--c-accent-soft);
+    --bs-form-valid-color: var(--c-good);
+    --bs-form-valid-border-color: var(--c-good);
+    --bs-form-invalid-color: var(--c-bad);
+    --bs-form-invalid-border-color: var(--c-bad);
+    --bs-code-color: var(--c-bad);
+    --bs-body-font-family: var(--font-sans);
+    --bs-body-font-size: 13px;
+    --bs-body-line-height: 1.45;
+    --bs-font-monospace: var(--font-mono);
+    --bs-border-radius: 8px;
+    --bs-border-radius-sm: 4px;
+    --bs-border-radius-lg: 12px;
+}
+
+/* Links. The ink accent is the body colour, so links are underlined to stay
+   links; options.css sets `text-decoration: none !important` on a. */
+a {
+    text-decoration: underline !important;
+    text-underline-offset: 2px;
+}
+
+a.btn,
+a.btn-close,
+a.nav-link,
+a.navbar-brand,
+a.list-group-item,
+a.dropdown-item,
+.sidebar a {
+    text-decoration: none !important;
+}
+
+/* Buttons: filled accent for the verbs, ghost for the rest. options.css forces
+   .btn-success green with !important, hence the !important on the filled set. */
+.btn {
+    --bs-btn-focus-shadow-rgb: var(--bs-primary-rgb);
+}
+
+.btn-sm {
+    --bs-btn-border-radius: 8px;
+}
+
+.btn-primary,
+.btn-success {
+    --bs-btn-color: var(--c-accent-fg) !important;
+    --bs-btn-bg: var(--c-accent) !important;
+    --bs-btn-border-color: var(--c-accent) !important;
+    --bs-btn-hover-color: var(--c-accent-fg) !important;
+    --bs-btn-hover-bg: var(--c-accent-hover) !important;
+    --bs-btn-hover-border-color: var(--c-accent-hover) !important;
+    --bs-btn-active-color: var(--c-accent-fg) !important;
+    --bs-btn-active-bg: var(--c-accent-hover) !important;
+    --bs-btn-active-border-color: var(--c-accent-hover) !important;
+    --bs-btn-disabled-color: var(--c-accent-fg);
+    --bs-btn-disabled-bg: var(--c-accent);
+    --bs-btn-disabled-border-color: var(--c-accent);
+}
+
+.btn-success:hover {
+    filter: none !important;
+}
+
+.btn-warning {
+    --bs-btn-color: #fff;
+    --bs-btn-bg: var(--c-warn);
+    --bs-btn-border-color: var(--c-warn);
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: var(--c-warn);
+    --bs-btn-hover-border-color: var(--c-warn);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--c-warn);
+    --bs-btn-active-border-color: var(--c-warn);
+    --bs-btn-disabled-color: #fff;
+    --bs-btn-disabled-bg: var(--c-warn);
+    --bs-btn-disabled-border-color: var(--c-warn);
+    --bs-btn-focus-shadow-rgb: var(--bs-warning-rgb);
+}
+
+.btn-warning:hover {
+    filter: brightness(92%);
+}
+
+.btn-danger {
+    --bs-btn-color: #fff;
+    --bs-btn-bg: var(--c-bad);
+    --bs-btn-border-color: var(--c-bad);
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: var(--c-bad-hover);
+    --bs-btn-hover-border-color: var(--c-bad-hover);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--c-bad-hover);
+    --bs-btn-active-border-color: var(--c-bad-hover);
+    --bs-btn-disabled-color: #fff;
+    --bs-btn-disabled-bg: var(--c-bad);
+    --bs-btn-disabled-border-color: var(--c-bad);
+    --bs-btn-focus-shadow-rgb: var(--bs-danger-rgb);
+}
+
+/* The neutral ghost: field ground, hairline edge, ink glyph. .rowel-ghost is
+   Rowel's own class for the popup toolbar and the secondary actions. */
+.btn-secondary,
+.rowel-ghost {
+    --bs-btn-color: var(--c-text);
+    --bs-btn-bg: var(--c-field);
+    --bs-btn-border-color: var(--c-line2);
+    --bs-btn-hover-color: var(--c-text);
+    --bs-btn-hover-bg: var(--c-tile);
+    --bs-btn-hover-border-color: var(--c-line2);
+    --bs-btn-active-color: var(--c-text);
+    --bs-btn-active-bg: var(--c-tile);
+    --bs-btn-active-border-color: var(--c-line2);
+    --bs-btn-disabled-color: var(--c-text3);
+    --bs-btn-disabled-bg: var(--c-field);
+    --bs-btn-disabled-border-color: var(--c-line2);
+}
+
+.rowel-ghost {
+    --bs-btn-hover-bg: var(--c-hover);
+    --bs-btn-active-bg: var(--c-sel);
+}
+
+/* Checks, radios and switches: accent when on. options.css forces the checked
+   colour (green for switches) with !important. */
+.form-check-input {
+    background-color: var(--c-field);
+    border-color: var(--c-line2);
+}
+
+.form-check-input:focus {
+    border-color: var(--c-accent-line);
+    box-shadow: 0 0 0 0.25rem var(--c-accent-soft);
+}
+
+.form-check-input:checked,
+.form-switch > .form-check-input:checked,
+.table-striped > tbody > tr:nth-of-type(odd) .form-check-input:checked {
+    background-color: var(--c-accent) !important;
+    border-color: var(--c-accent) !important;
+}
+
+.form-check-input:checked[type='checkbox'] {
+    --bs-form-check-bg-image: var(--rowel-check-mark);
+}
+
+.form-check-input:checked[type='radio'] {
+    --bs-form-check-bg-image: var(--rowel-radio-dot);
+}
+
+.form-switch .form-check-input:focus {
+    --bs-form-switch-bg: var(--rowel-switch-knob-focus);
+}
+
+.form-switch .form-check-input:checked {
+    --bs-form-switch-bg: var(--rowel-switch-knob);
+}
+
+/* Ranges: options.css paints the thumb green. */
+.form-range::-webkit-slider-thumb,
+input[type='range']::-webkit-slider-thumb {
+    background-color: var(--c-accent);
+}
+
+.form-range::-moz-range-thumb,
+input[type='range']::-moz-range-thumb {
+    background-color: var(--c-accent);
+}
+
+.form-range::-webkit-slider-thumb:active,
+.form-range::-moz-range-thumb:active {
+    background-color: var(--c-accent-hover);
+}
+
+.form-range:focus::-webkit-slider-thumb,
+.form-range:focus::-moz-range-thumb {
+    box-shadow: 0 0 0 1px var(--c-detail), 0 0 0 0.25rem var(--c-accent-soft);
+}
+
+/* Fields. options.css forces input background and border with !important;
+   the radius is spelled out because Bootstrap's -sm variants shrink it to 4px. */
+.form-control,
+.form-select {
+    background-color: var(--c-field) !important;
+    border-color: var(--c-line2) !important;
+    border-radius: 8px;
+    color: var(--c-text) !important;
+}
+
+.form-control::placeholder {
+    color: var(--c-text3);
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--c-accent-line) !important;
+    box-shadow: 0 0 0 0.25rem var(--c-accent-soft);
+}
+
+input:invalid,
+.form-control:invalid {
+    border-color: var(--c-bad) !important;
+}
+
+/* Cards, lists, tables, modals: what Bootstrap's own variable cascade does not
+   already resolve to the tokens above. */
+.card {
+    --bs-card-border-radius: 12px;
+    --bs-card-inner-border-radius: 11px;
+    --bs-card-cap-bg: var(--c-pane);
+}
+
+.list-group {
+    --bs-list-group-active-color: var(--c-text);
+    --bs-list-group-active-bg: var(--c-sel);
+    --bs-list-group-active-border-color: var(--c-line2);
+}
+
+.table {
+    --bs-table-bg: transparent;
+    --bs-table-striped-bg: var(--c-list);
+}
+
+.modal {
+    --bs-modal-box-shadow: var(--shadow);
+}
+
+/* Rowel's own chrome, shared by the popup, options and shortcuts pages (their
+   own stylesheets do the layout). The brand row is the asterisk mark and the
+   word in the app's micro-label; the mark is the toolbar's bare-mark SVG used
+   as a mask, so it is inked with --c-brand in both themes. */
+.rowel-brand {
+    align-items: center;
+    color: var(--c-text2);
+    display: flex;
+    font-size: 11px;
+    font-weight: 600;
+    gap: 8px;
+    letter-spacing: var(--tracking-label);
+    line-height: 20px;
+    margin: 0;
+    text-transform: uppercase;
+}
+
+.rowel-mark {
+    background-color: var(--c-brand);
+    display: inline-block;
+    flex: none;
+    height: 20px;
+    -webkit-mask: url(../icons/toolbar/light/icon_normal.svg) center / contain no-repeat;
+    mask: url(../icons/toolbar/light/icon_normal.svg) center / contain no-repeat;
+    width: 20px;
+}
+
+/* The in-page surfaces below are injected into arbitrary websites inside a
+   shadow root. Host rules cannot reach in, but inherited properties (font,
+   colour, line-height) do, so those are forced with !important as upstream
+   forces its own. */
+
+/* autocomplete.css: the app's menu. A translucent sheet over a blurred
+   backdrop; rows are washed on hover and selection, never filled green. The
+   active row's children stay transparent so the wash is not stacked on
+   itself, except in compact mode, where the row is display: contents and the
+   wash has to go on its cells. */
+.kpxcAutocomplete-container {
+    -webkit-backdrop-filter: saturate(1.4) blur(12px);
+    backdrop-filter: saturate(1.4) blur(12px);
+    background-color: var(--menu);
+    border: 1px solid var(--menu-line);
+    border-radius: 8px;
+    box-shadow: var(--menu-shadow);
+    box-sizing: border-box !important;
+    color: var(--c-text) !important;
+    font-family: var(--font-sans) !important;
+    font-size: 13px !important;
+    letter-spacing: normal !important;
+    line-height: 1.45 !important;
+    padding: 4px;
+    text-transform: none !important;
+    word-spacing: normal !important;
+}
+
+.kpxcAutocomplete-item {
+    background-color: transparent;
+    border-radius: 4px;
+    color: var(--c-text);
+    line-height: 1.35;
+    padding: 6px 8px;
+}
+
+.kpxcAutocomplete-item:hover {
+    background-color: var(--c-hover);
+}
+
+.kpxcAutocomplete-item--active {
+    background-color: var(--c-sel) !important;
+    color: var(--c-text) !important;
+}
+
+.kpxcAutocomplete-item--active * {
+    background-color: transparent !important;
+}
+
+.kpxcAutocomplete-item__header {
+    gap: 8px;
+}
+
+.kpxcAutocomplete-item__label {
+    color: var(--c-text) !important;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.kpxcAutocomplete-item__value,
+.kpxcAutocomplete-item__value--last {
+    color: var(--c-text2) !important;
+    font-size: 12px;
+    margin-top: 2px;
+}
+
+.kpxcAutocomplete-item__group {
+    color: var(--c-text3) !important;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+}
+
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__header,
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__group,
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__value,
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__value--last {
+    align-self: center;
+    height: auto;
+    line-height: 1.35;
+    margin: 0;
+    padding-bottom: 6px;
+    padding-top: 6px;
+}
+
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__header {
+    padding-left: 8px;
+    padding-right: 16px;
+}
+
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__group,
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__value--last {
+    padding-left: 16px;
+    padding-right: 8px;
+}
+
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item:hover > * {
+    background-color: var(--c-hover) !important;
+}
+
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item--active > * {
+    background-color: var(--c-sel) !important;
+}
+
+.kpxcAutocomplete-container footer {
+    background-color: var(--c-pane);
+    border-radius: 0;
+    border-top: 1px solid var(--c-line);
+    color: var(--c-text3) !important;
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+    margin: 4px -4px -4px;
+    padding: 6px 12px;
+}
+
+/* button.css: the in-page buttons (banner, custom fields). A ghost by
+   default; green and blue are the verbs and take the filled accent, red is a
+   ghost in the danger ink, orange is filled warn. */
+.kpxc-button {
+    background-color: var(--c-field) !important;
+    border: 1px solid var(--c-line2) !important;
+    border-radius: 8px !important;
+    box-sizing: border-box !important;
+    color: var(--c-text) !important;
+    font-family: var(--font-sans) !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    height: 28px !important;
+    letter-spacing: normal !important;
+    line-height: 1 !important;
+    margin: 0 3px !important;
+    padding: 0 10px !important;
+    text-transform: none !important;
+    transition: background-color 0.16s, border-color 0.16s;
+}
+
+.kpxc-button:hover {
+    background-color: var(--c-tile) !important;
+    filter: none !important;
+}
+
+.kpxc-green-button,
+.kpxc-blue-button {
+    background-color: var(--c-accent) !important;
+    border-color: var(--c-accent) !important;
+    color: var(--c-accent-fg) !important;
+}
+
+.kpxc-green-button:hover,
+.kpxc-blue-button:hover {
+    background-color: var(--c-accent-hover) !important;
+    border-color: var(--c-accent-hover) !important;
+}
+
+.kpxc-red-button {
+    background-color: var(--c-field) !important;
+    border-color: var(--c-line2) !important;
+    color: var(--c-bad) !important;
+}
+
+.kpxc-red-button:hover {
+    background-color: var(--bs-danger-bg-subtle) !important;
+    border-color: var(--bs-danger-border-subtle) !important;
+}
+
+.kpxc-orange-button {
+    background-color: var(--c-warn) !important;
+    border-color: var(--c-warn) !important;
+    color: var(--c-accent-fg) !important;
+}
+
+.kpxc-orange-button:hover {
+    filter: brightness(92%) !important;
+}
+
+.kpxc-white-button {
+    background-color: var(--c-field) !important;
+    border-color: var(--c-line2) !important;
+    color: var(--c-text) !important;
+}
+
+.kpxc-button:disabled,
+.kpxc-button:disabled:hover,
+.kpxc-gray-button,
+.kpxc-gray-button:hover {
+    background-color: var(--c-tile) !important;
+    border-color: transparent !important;
+    color: var(--c-text3) !important;
+    cursor: default !important;
+    filter: none !important;
+}
+
+/* notification.css: the app's toast. An opaque card whatever the page, the
+   type told by a 3px bar down the left edge and the tinted label, not by a
+   pastel fill. */
+.kpxc-notification {
+    align-items: center;
+    background-color: var(--c-detail);
+    border: 1px solid var(--c-line2);
+    border-radius: 12px;
+    box-sizing: border-box !important;
+    color: var(--c-text) !important;
+    display: flex;
+    font-family: var(--font-sans) !important;
+    font-size: 13px !important;
+    gap: 6px;
+    line-height: 1.45 !important;
+    margin: 12px;
+    text-transform: none !important;
+    max-width: 520px;
+    min-width: 280px;
+    padding: 10px 14px 10px 16px;
+    width: auto;
+}
+
+.kpxc-notification span {
+    padding: 0;
+}
+
+.kpxc-notification .kpxc-banner-icon,
+.kpxc-notification .kpxc-banner-icon-moz,
+.kpxc-notification .kpxc-banner-icon-safari {
+    display: inline-block;
+    flex: none;
+    height: 20px;
+    margin-right: 2px;
+    padding: 0;
+    width: 20px;
+}
+
+.kpxc-notification .kpxc-label {
+    flex: none;
+    font-weight: 600;
+}
+
+.kpxc-notification-success {
+    box-shadow: var(--menu-shadow), inset 3px 0 0 var(--c-good);
+}
+
+.kpxc-notification-success .kpxc-label {
+    color: var(--c-good);
+}
+
+.kpxc-notification-warning {
+    box-shadow: var(--menu-shadow), inset 3px 0 0 var(--c-warn);
+}
+
+.kpxc-notification-warning .kpxc-label {
+    color: var(--c-warn);
+}
+
+.kpxc-notification-info {
+    box-shadow: var(--menu-shadow), inset 3px 0 0 var(--c-lockfield);
+}
+
+.kpxc-notification-info .kpxc-label {
+    color: var(--c-lockfield);
+}
+
+.kpxc-notification-error {
+    box-shadow: var(--menu-shadow), inset 3px 0 0 var(--c-bad);
+}
+
+.kpxc-notification-error .kpxc-label {
+    color: var(--c-bad);
+}
+
+/* banner.css: the save strip as a card-like bar, with a hairline on the edge
+   that faces the page and the card's lift. Replaces Lato, the #38383d edges
+   and their shadows, #ccc, #787878, the dialog's boxed rows and upstream's
+   dark-scheme block. */
+div.kpxc-banner {
+    background-color: var(--c-detail) !important;
+    color: var(--c-text) !important;
+    font-family: var(--font-sans) !important;
+    font-size: 13px !important;
+    gap: 8px;
+    letter-spacing: normal !important;
+    line-height: 1.45 !important;
+    padding: 6px 12px !important;
+    text-transform: none !important;
+    word-spacing: normal !important;
+}
+
+.kpxc-banner-on-bottom {
+    border-bottom: 0 !important;
+    border-top: 1px solid var(--c-line2) !important;
+    box-shadow: var(--card-shadow), var(--shadow) !important;
+}
+
+.kpxc-banner-on-top {
+    border-bottom: 1px solid var(--c-line2) !important;
+    border-top: 0 !important;
+    box-shadow: var(--card-shadow), var(--shadow) !important;
+}
+
+div.kpxc-banner div.banner-info,
+div.banner-buttons {
+    gap: 2px;
+    padding: 0 4px;
+}
+
+div.kpxc-banner .banner-info-text {
+    font-weight: 500;
+}
+
+div.kpxc-banner .small {
+    color: var(--c-text2);
+    font-size: 12px;
+}
+
+div.kpxc-banner .small.info {
+    color: var(--c-text);
+    font-weight: 600;
+}
+
+div.kpxc-banner .kpxc-banner-icon,
+div.kpxc-banner .kpxc-banner-icon-moz,
+div.kpxc-banner .kpxc-banner-icon-safari {
+    flex: none;
+    height: 20px;
+    width: 20px;
+}
+
+.kpxc-separator {
+    border-left: 1px solid var(--c-line2);
+    height: 20px !important;
+    margin: 0 6px !important;
+}
+
+div.kpxc-banner .kpxc-checkbox {
+    accent-color: var(--c-accent);
+    margin: 0 2px 0 4px !important;
+}
+
+div.kpxc-banner label {
+    color: var(--c-text2);
+    font-family: var(--font-sans) !important;
+    font-size: 12px !important;
+    margin: 0 6px 0 0 !important;
+}
+
+div.kpxc-banner-dialog {
+    background-color: var(--c-detail) !important;
+    border: 1px solid var(--c-line2);
+    box-sizing: border-box !important;
+    color: var(--c-text) !important;
+    font-family: var(--font-sans) !important;
+    font-size: 13px !important;
+    letter-spacing: normal !important;
+    line-height: 1.45 !important;
+    margin: 8px auto;
+    overflow-y: auto !important;
+    padding: 12px;
+    text-transform: none !important;
+    word-spacing: normal !important;
+}
+
+div.kpxc-banner-dialog-bottom,
+div.kpxc-banner-dialog-top {
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+}
+
+div.kpxc-banner-dialog > p {
+    margin: 0 0 8px;
+}
+
+div.kpxc-banner-dialog > p > span.strong {
+    font-weight: 600 !important;
+}
+
+div.kpxc-banner-dialog .list-group {
+    font-size: 13px !important;
+}
+
+div.kpxc-banner-dialog .list-group-item,
+div.kpxc-banner-dialog .list-group-item:first-child,
+div.kpxc-banner-dialog .list-group-item:last-child {
+    background-color: transparent !important;
+    border: 0 !important;
+    border-radius: 4px !important;
+    color: var(--c-text) !important;
+    padding: 6px 8px;
+}
+
+div.kpxc-banner-dialog .list-group-item:hover {
+    background-color: var(--c-hover) !important;
+    color: var(--c-text) !important;
+}

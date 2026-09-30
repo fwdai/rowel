@@ -151,6 +151,7 @@ kpxcBanner.create = async function(credentials = {}) {
     const styleSheet = createStylesheet('css/banner.css');
     const buttonStyleSheet = createStylesheet('css/button.css');
     const colorStyleSheet = createStylesheet('css/colors.css');
+    const rowelStyleSheet = createStylesheet('css/rowel.css');
 
     const wrapper = document.createElement('div');
     wrapper.style.all = 'unset';
@@ -160,6 +161,7 @@ kpxcBanner.create = async function(credentials = {}) {
     this.shadowRoot.append(colorStyleSheet);
     this.shadowRoot.append(styleSheet);
     this.shadowRoot.append(buttonStyleSheet);
+    this.shadowRoot.append(rowelStyleSheet);
     this.shadowRoot.append(banner);
     kpxcBanner.wrapper = wrapper;
 

@@ -1,0 +1,41 @@
+{
+  "$comment": "How upstream KeePassXC-Browser paths and names map onto this fork. scripts/extension-sync.mjs applies it after a `git subtree pull` (docs/browser-extension.md, Syncing with upstream). `paths` are moved with `git mv`, in order, relative to extension/; a `*` matches within one file name and is carried into `to`. `text` rules are literal strings rewritten in the files `textFiles` match, minus `textExclude`; a rule with `regex: true` is a JavaScript regular expression. Internal JS identifiers (kpxc*, keepass.*, kpxcEvent) and protocol strings are deliberately not renamed.",
+  "paths": [
+    { "from": "keepassxc-browser/", "to": "rowel/" },
+    { "from": "rowel/content/keepassxc-browser.js", "to": "rowel/content/rowel.js" },
+    { "from": "rowel/icons/keepassxc.svg", "to": "rowel/icons/rowel.svg" },
+    { "from": "rowel/icons/keepassxc_*.png", "to": "rowel/icons/rowel_*.png" },
+    { "from": "rowel/icons/keepassxc-dark_*.png", "to": "rowel/icons/rowel-dark_*.png" }
+  ],
+  "text": [
+    {
+      "$comment": "The source folder in paths and globs ('keepassxc-browser', ../keepassxc-browser/, keepassxc-browser/**), but not in URLs (keepassxreboot/keepassxc-browser, addon/keepassxc-browser/).",
+      "regex": true,
+      "from": "(?<![\\w-])(?<!\\w/)keepassxc-browser(?=/|['\"])",
+      "to": "rowel"
+    },
+    { "from": "keepassxc-browser.js", "to": "rowel.js" },
+    { "from": "icons/keepassxc.svg", "to": "icons/rowel.svg" },
+    { "from": "icons/keepassxc_", "to": "icons/rowel_" },
+    { "from": "icons/keepassxc-dark_", "to": "icons/rowel-dark_" },
+    { "from": "keepassxc-browser_settings.json", "to": "rowel_settings.json" },
+    { "from": "Not a KeePassXC-Browser settings file.", "to": "Not a Rowel settings file." }
+  ],
+  "textFiles": [
+    "rowel/**/*.{js,html,css,json}",
+    "dist/*.json",
+    "safari/*.mjs",
+    "safari/*.js",
+    "tests/**/*",
+    "package.json",
+    "rowel-build.js"
+  ],
+  "textExclude": [
+    "rowel/_locales/**",
+    "rowel/bootstrap/**",
+    "rowel/fonts/**",
+    "rowel/tests/**",
+    "rowel/common/browser-polyfill.min.js",
+    "rowel/background/nacl*.js"
+  ]
+}

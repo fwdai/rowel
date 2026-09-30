@@ -1,0 +1,213 @@
+/* Loaded after Bootstrap (unlike upstream, which loads it first and then wins
+   with !important), so plain rules here take precedence. Colours are the Rowel
+   tokens (../css/rowel-tokens.css); ../css/rowel.css loads last and defines
+   the shared .rowel-brand / .rowel-mark / .rowel-ghost. */
+body {
+    display: flex;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    width: 460px;
+}
+
+p {
+    margin-bottom: 8px;
+}
+
+code {
+    font-size: 12px;
+}
+
+hr {
+    border-top-color: var(--c-line);
+    margin: 10px 0;
+    opacity: 1;
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    max-width: 460px;
+}
+
+.loader {
+    animation: spin 2s linear infinite;
+    border: 3px solid var(--c-line2);
+    border-radius: 50%;
+    border-top: 3px solid var(--c-accent);
+    float: left;
+    height: 1.4em;
+    margin-right: 1em;
+    width: 1.4em;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Header: the brand on the left, the toolbar buttons pushed right. */
+.settings {
+    align-items: center;
+    border-bottom: 1px solid var(--c-line);
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    text-align: left;
+}
+
+.settings .rowel-brand {
+    margin-right: auto;
+}
+
+.action-buttons-area,
+.function-buttons-area,
+.lock-button-area {
+    display: flex;
+    gap: 6px;
+}
+
+/* The toolbar's icon-only ghosts share one size. The custom-fields button
+   draws its SVG through a mask, so the glyph is ink in both themes. */
+#options-button,
+#choose-custom-login-fields-button,
+#choose-custom-login-fields-button-moz,
+#choose-custom-login-fields-button-safari,
+#lock-database-button {
+    align-items: center;
+    display: inline-flex;
+    height: 28px;
+    justify-content: center;
+    padding: 0;
+    width: 32px;
+}
+
+#choose-custom-login-fields-button::before,
+#choose-custom-login-fields-button-moz::before,
+#choose-custom-login-fields-button-safari::before {
+    background-color: currentColor;
+    content: '';
+    height: 20px;
+    -webkit-mask: url(../icons/custom_login_fields.svg) center / contain no-repeat;
+    mask: url(../icons/custom_login_fields.svg) center / contain no-repeat;
+    width: 20px;
+}
+
+#lock-database-button {
+    display: none;
+}
+
+/* Status states: the identifier badges are the app's soft washes with ink
+   text. Bootstrap's .bg-* utilities are !important, hence these. */
+#associated-identifier,
+#unassociated-identifier {
+    border: 1px solid var(--bs-success-border-subtle);
+    border-radius: 4px;
+    background-color: var(--bs-success-bg-subtle) !important;
+    color: var(--c-text) !important;
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 18px;
+    padding: 0 6px;
+}
+
+#unassociated-identifier {
+    border-color: var(--bs-warning-border-subtle);
+    background-color: var(--bs-warning-bg-subtle) !important;
+}
+
+.alert {
+    font-size: 12px;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+}
+
+.alert-dismissible {
+    padding-right: 32px;
+}
+
+.alert-dismissible .btn-close {
+    padding: 10px;
+}
+
+/* Credential list (popup_login, popup_httpauth). */
+#list {
+    padding-left: 0px;
+}
+
+#login-list {
+    overflow-y: auto;
+    max-height: 380px;
+}
+
+.list-group {
+    --bs-list-group-item-padding-x: 10px;
+    --bs-list-group-item-padding-y: 6px;
+    margin-bottom: 1rem;
+}
+
+.list-group-item {
+    cursor: pointer;
+    transition: background-color 120ms ease;
+}
+
+.list-group-item:hover {
+    background-color: var(--c-hover);
+}
+
+.list-group-item:active {
+    background-color: var(--c-sel);
+}
+
+#filter-block label {
+    color: var(--c-text2);
+    display: block;
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+
+#login-filter {
+    background-color: var(--c-field);
+    border: 1px solid var(--c-line2);
+    border-radius: 8px;
+    color: var(--c-text);
+    font: inherit;
+    height: 28px;
+    margin-bottom: 8px;
+    outline: none;
+    padding: 0 10px;
+    width: 100%;
+}
+
+#login-filter:focus {
+    border-color: var(--c-accent-line);
+    box-shadow: 0 0 0 3px var(--c-accent-soft);
+}
+
+#popup-alerts {
+    margin-top: 10px;
+    text-align: start;
+}
+
+#filter-block,
+#not-configured,
+#need-reconfigure,
+#configured-not-associated,
+#configured-and-associated,
+#error-encountered,
+#database-not-opened,
+#username-field-detected,
+#update-available,
+#getting-started-guide,
+#troubleshooting-guide {
+    display: none;
+}
+
+.right-align {
+    text-align: right;
+}
+
+#left-margin {
+    margin-left: 1em;
+}

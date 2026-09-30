@@ -1,9 +1,9 @@
-// Regenerates the browser extension's artwork (extension/keepassxc-browser/
-// icons) from Rowel's, with the same `tauri icon` rasterizer icons.mjs uses.
+// Regenerates the browser extension's artwork (extension/rowel/icons) from
+// Rowel's, with the same `tauri icon` rasterizer icons.mjs uses.
 //
-// Upstream's file names are kept, so neither the extension's code nor its
-// manifests change for the art and an upstream sync only ever conflicts on
-// the pixels. Two sources:
+// The files are upstream's under Rowel's names (icons/rowel*.png and rowel.svg
+// for keepassxc*; see extension/upstream-map.json), so an upstream sync only
+// ever conflicts on the pixels. Two sources:
 //   - the app icon (the mark on its light tile) for the extension icons, the
 //     in-page field icon and the colored toolbar set;
 //   - the bare mark, inked per toolbar theme, for the monochrome sets.
@@ -17,7 +17,7 @@ import { join } from 'node:path'
 
 const TILE = 'src-tauri/icons/asterisq.svg'
 const MARK = 'src/assets/images/logo.svg'
-const ICONS = 'extension/keepassxc-browser/icons'
+const ICONS = 'extension/rowel/icons'
 const TOOLBAR = join(ICONS, 'toolbar')
 
 // Toolbar themes: `light` is drawn for light browser chrome (dark ink) and
@@ -94,12 +94,12 @@ try {
   }
 
   // In-page field icons: the plain tile, and the colored toolbar's states.
-  writeFileSync(join(ICONS, 'keepassxc.svg'), tile)
+  writeFileSync(join(ICONS, 'rowel.svg'), tile)
   copyFileSync(join(TOOLBAR, 'colored', 'icon_cross.svg'), join(ICONS, 'disconnected.svg'))
   copyFileSync(join(TOOLBAR, 'colored', 'icon_locked.svg'), join(ICONS, 'locked.svg'))
 
   // Extension icons (manifest, notifications, options page favicons).
-  for (const file of readdirSync(ICONS).filter(f => /^keepassxc(-dark)?_\d+x\d+\.png$/.test(f))) {
+  for (const file of readdirSync(ICONS).filter(f => /^rowel(-dark)?_\d+x\d+\.png$/.test(f))) {
     const png = join(ICONS, file)
     rasterize(TILE, pngSize(png), png)
   }

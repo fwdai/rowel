@@ -143,6 +143,7 @@ kpxcCustomLoginFieldsBanner.create = async function() {
     const defineStyleSheet = createStylesheet('css/define.css');
     const buttonStyleSheet = createStylesheet('css/button.css');
     const colorStyleSheet = createStylesheet('css/colors.css');
+    const rowelStyleSheet = createStylesheet('css/rowel.css');
 
     const wrapper = document.createElement('div');
     wrapper.style.all = 'unset';
@@ -153,6 +154,7 @@ kpxcCustomLoginFieldsBanner.create = async function() {
     this.shadowRoot.append(defineStyleSheet);
     this.shadowRoot.append(buttonStyleSheet);
     this.shadowRoot.append(styleSheet);
+    this.shadowRoot.append(rowelStyleSheet);
 
     // Only create the banner to top window
     if (window.self === window.top) {

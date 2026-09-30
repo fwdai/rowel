@@ -15,5 +15,11 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    width: 50%;
+    max-width: 640px;
+    width: 100%;
+}
+
+.tab > .rowel-brand,
+.tab > h2 {
+    align-self: flex-start;
 }

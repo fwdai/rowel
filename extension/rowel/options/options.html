@@ -8,9 +8,10 @@
     <link rel="stylesheet" href="../bootstrap/bootstrap.min.css">
     <link rel="stylesheet" href="../fonts/fork-awesome.min.css">
     <link rel="stylesheet" href="options.css">
-    <link rel="icon" type="image/png" href="../icons/keepassxc_32x32.png" sizes="32x32">
-    <link rel="icon" type="image/png" href="../icons/keepassxc_64x64.png" sizes="64x64">
-    <link rel="icon" type="image/png" href="../icons/keepassxc_96x96.png" sizes="96x96">
+    <link rel="stylesheet" href="../css/rowel.css">
+    <link rel="icon" type="image/png" href="../icons/rowel_32x32.png" sizes="32x32">
+    <link rel="icon" type="image/png" href="../icons/rowel_64x64.png" sizes="64x64">
+    <link rel="icon" type="image/png" href="../icons/rowel_96x96.png" sizes="96x96">
     <script src="../common/browser-polyfill.min.js"></script>
     <script src="../common/global.js"></script>
     <script src="../common/global_ui.js"></script>
@@ -23,45 +24,48 @@
     <div class="container-fluid">
       <div class="row">
         <nav class="col-md-3 col-lg-2 sidebar">
-          <button class="navbar-dark navbar-toggler collapsed d-block d-md-none pt-2" type="button" data-bs-toggle="collapse" data-bs-target="#sidebar" aria-controls="sidebar">
+          <button class="navbar-toggler collapsed d-block d-md-none" type="button" data-bs-toggle="collapse" data-bs-target="#sidebar" aria-controls="sidebar">
             <span class="navbar-toggler-icon"></span>
           </button>
           <div class="collapse d-none d-md-block" id="sidebar">
-            <h1 class="text-uppercase text-white d-none d-md-flex px-3 pb-4 mt-4 mb-1">Rowel</h1>
+            <h1 class="rowel-brand d-none d-md-flex px-3 mt-4 mb-4">
+              <span class="rowel-mark" aria-hidden="true"></span>
+              <span>Rowel</span>
+            </h1>
             <ul class="nav flex-column mb-2 text-uppercase">
               <li class="active nav-item">
-                <a class="nav-link text-light rounded-sm" href="#general-settings">
+                <a class="nav-link" href="#general-settings">
                   <i class="fa fa-cog fa-lg pe-2" aria-hidden="true"></i>
                   <span class="menu-item" data-i18n="optionsMenuGeneral"></span>
                 </a>
               </li>
               <li class="nav-item">
-                <a class="nav-link text-light rounded-sm" href="#connected-databases">
+                <a class="nav-link" href="#connected-databases">
                   <i class="fa fa-link fa-lg pe-2" aria-hidden="true"></i>
                   <span class="menu-item" data-i18n="optionsMenuConnectedDatabases"></span>
                 </a>
               </li>
               <li class="nav-item">
-                <a class="nav-link text-light rounded-sm" href="#custom-fields">
+                <a class="nav-link" href="#custom-fields">
                   <i class="fa fa-sign-in fa-lg pe-2" aria-hidden="true"></i>
                   <span class="menu-item" data-i18n="optionsMenuCustomFields"></span>
                 </a>
               </li>
               <li class="nav-item">
-                <a class="nav-link text-light rounded-sm" href="#site-preferences">
+                <a class="nav-link" href="#site-preferences">
                   <i class="fa fa-list-alt fa-lg pe-2" aria-hidden="true"></i>
                   <span class="menu-item" data-i18n="optionsMenuSitePreferences"></span>
                 </a>
               </li>
               <li class="nav-item">
-                <a class="nav-link text-light rounded-sm" href="#about">
+                <a class="nav-link" href="#about">
                   <i class="fa fa-info-circle fa-lg pe-2" aria-hidden="true"></i>
                   <span class="menu-item" data-i18n="optionsMenuAbout"></span>
                 </a>
               </li>
             </ul>
           </div>
-          <footer class="px-3 mt-4 mb-1 text-uppercase position-absolute small text-muted">
+          <footer class="px-3 mt-4 mb-1 text-uppercase position-absolute">
             Based on KeePassXC-Browser © 2017-2025 - KeePassXC Team
           </footer>
         </nav>

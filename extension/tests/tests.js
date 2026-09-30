@@ -16,7 +16,7 @@ function createResult(card, res, text) {
     document.querySelector(card).appendMultiple(icon, span, br);
 }
 
-// Input field matching (keepassxc-browser.js)
+// Input field matching (rowel.js)
 async function testInputFields() {
     // Div ID, expected fields, action element ID (a button to be clicked)
     const testDivs = [

@@ -11,7 +11,7 @@ import vm from 'node:vm';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SHIM = readFileSync(join(here, 'safari-native.js'), 'utf8');
-const POLYFILL = readFileSync(join(here, '..', 'keepassxc-browser', 'common', 'browser-polyfill.min.js'), 'utf8');
+const POLYFILL = readFileSync(join(here, '..', 'rowel', 'common', 'browser-polyfill.min.js'), 'utf8');
 
 const settle = async () => {
     for (let i = 0; i < 10; i++) {

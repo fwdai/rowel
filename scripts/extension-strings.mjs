@@ -1,5 +1,5 @@
 // Rebrands the browser extension's user-facing strings
-// (extension/keepassxc-browser/_locales/*/messages.json) from KeePassXC to
+// (extension/rowel/_locales/*/messages.json) from KeePassXC to
 // Rowel. Run it after every `git subtree pull` of upstream: taking upstream's
 // locale files wholesale and re-running this resolves their conflicts.
 //
@@ -13,7 +13,7 @@
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const LOCALES = 'extension/keepassxc-browser/_locales'
+const LOCALES = 'extension/rowel/_locales'
 const RELEASES = 'github.com/fwdai/rowel/releases'
 
 // Upstream's name for the extension, as the translations spell it.

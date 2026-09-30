@@ -26,7 +26,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const source = join(root, 'keepassxc-browser');
+const source = join(root, 'rowel');
 const out = join(root, 'build', 'safari');
 const SHIM = 'background/safari-native.js';
 const POLYFILL = 'common/browser-polyfill.min.js';

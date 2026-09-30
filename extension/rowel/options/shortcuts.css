@@ -1,7 +1,6 @@
 body {
-    background: var(--kpxc-input-background-color) !important;
+    background: var(--kpxc-card-header-color);
     color: var(--kpxc-text-color);
-    font-size: .875rem;
     padding-top: 20px;
 }
 
@@ -9,37 +8,49 @@ input {
     background-color: var(--kpxc-input-background-color);
     border: var(--kpxc-input-border);
     border-color: var(--kpxc-input-border-color);
+    border-radius: 8px;
     color: var(--kpxc-text-color);
+    font: inherit;
+    height: 28px;
+    outline: none;
+    padding: 0 10px;
 }
 
-input:active {
+input:focus {
     border-color: var(--kpxc-input-active-border-color);
+    box-shadow: 0 0 0 3px var(--c-accent-soft);
 }
 
+/* The dialog is a Rowel card: 12px radius, hairline edge, the card lift. */
 .conf-container {
     margin: 0 auto;
     width: 680px;
     max-height: 315px;
-    background-color: var(--kpxc-background-color);
+    background-color: var(--kpxc-card-background-color);
     border: var(--kpxc-container-border);
-    border-radius: 4px;
-    box-shadow: 0 4px 6px 0 hsla(0, 0%, 0%, 0.2);
+    border-radius: 12px;
+    box-shadow: var(--card-shadow);
     color: var(--kpxc-text-color);
 }
 
 .conf-container .conf-title {
-    margin: 10px 0 0 20px;
+    margin: 12px 20px 0;
     display: flex;
     flex-direction: row;
     align-items: center;
+    gap: 12px;
 }
 
-.conf-title #icon {
-    width: 3em;
+.conf-title h5 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
 }
 
 .conf-container > hr {
-    margin: 10px 0;
+    border-top-color: var(--c-line);
+    margin: 12px 0;
+    opacity: 1;
 }
 
 .conf-content {
@@ -62,13 +73,7 @@ input:active {
 }
 
 .alert {
-    box-shadow: 0 4px 6px 0 hsla(0, 0%, 0%, 0.2);
+    box-shadow: var(--card-shadow);
     margin: 20px auto;
     width: 680px;
-}
-
-@media (prefers-color-scheme: dark) {
-    .bg-danger {
-        color: #000;
-    }
 }
