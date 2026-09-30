@@ -51,10 +51,12 @@ export default function DialogHeader({
         </h1>
         {description != null && <p className="mt-0.5 text-sm text-text2">{description}</p>}
       </div>
-      {/* Says what closes it as well as closing it: Escape does the same. */}
+      {/* Says what closes it as well as closing it: Escape does the same, so
+          it is a pointer target and not the first tab stop of every dialog. */}
       {!framed && (
         <button
           type="button"
+          tabIndex={-1}
           aria-label={t('Close')}
           title={t('Close')}
           data-testid="modal-close"

@@ -30,7 +30,8 @@ export default function ActionRow({ testid, glyph, label, caption, onClick, chil
       </span>
       <span className="min-w-0 flex-1">
         <span className="block text-base font-medium text-text">{label}</span>
-        <span className="mt-0.5 block text-sm text-text2">{caption}</span>
+        {/* The phone's sheet has no room for a second line under each row. */}
+        <span className="mt-0.5 block text-sm text-text2 max-md:hidden">{caption}</span>
       </span>
     </>
   )

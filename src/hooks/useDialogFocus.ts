@@ -4,8 +4,10 @@ import { useDialogPresence } from './useDialogPresence'
 const TABBABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+// A control taken out of the tab order (a dialog header's pointer-only close)
+// is not where focus should start or wrap either.
 const tabbables = (root: HTMLElement | null) =>
-  Array.from(root?.querySelectorAll<HTMLElement>(TABBABLE) ?? [])
+  Array.from(root?.querySelectorAll<HTMLElement>(TABBABLE) ?? []).filter(el => el.tabIndex >= 0)
 
 /**
  * The keyboard contract every dialog frame shares — the centered `Modal` and

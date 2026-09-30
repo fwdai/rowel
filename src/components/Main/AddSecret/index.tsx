@@ -18,6 +18,12 @@ const TITLE_ID = 'add-secret-title'
 
 const COLUMNS = 3
 
+// A tile left alone on the last row takes the whole row, laid out sideways, so
+// seven kinds do not end on an orphan. The digit and arrow bindings do not
+// care where a tile is drawn.
+const ODD_TILE =
+  '[&>button:nth-child(3n+1):last-child]:col-span-3 [&>button:nth-child(3n+1):last-child]:flex-row [&>button:nth-child(3n+1):last-child]:justify-center [&>button:nth-child(3n+1):last-child]:gap-3'
+
 // How far each arrow moves through the 3-column grid. `useRadioNav` is the 1-D
 // radiogroup pattern (selection follows focus, one tab stop), which is the
 // wrong contract here: these tiles are actions, so focus has to move without
@@ -99,7 +105,7 @@ export default function AddSecret() {
           className="px-7 @max-[500px]:px-5"
         />
         <div className="min-h-0 overflow-y-auto p-7 @max-[500px]:p-5">
-          <div ref={grid} onKeyDown={onKeyDown} className="grid grid-cols-3 gap-2.5">
+          <div ref={grid} onKeyDown={onKeyDown} className={cx('grid grid-cols-3 gap-2.5', ODD_TILE)}>
             {KINDS.map((kind, index) => (
               <KindTile
                 key={kind.type}
