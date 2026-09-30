@@ -199,6 +199,7 @@ kpxcUI.createNotification = async function(type, message) {
     logDebug(message);
 
     const notification = kpxcUI.createElement('div', 'kpxc-notification kpxc-notification-' + type, {});
+    initColorTheme(notification);
     type = type.charAt(0).toUpperCase() + type.slice(1) + '!';
 
     const className = getIconClass('kpxc-banner-icon');

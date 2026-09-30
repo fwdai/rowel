@@ -366,6 +366,12 @@ input:invalid,
     word-spacing: normal !important;
 }
 
+/* Upstream paints the list opaque under the dark scheme; the sheet is the
+   container's. */
+.kpxcAutocomplete-items {
+    background: transparent;
+}
+
 .kpxcAutocomplete-item {
     background-color: transparent;
     border-radius: 4px;
