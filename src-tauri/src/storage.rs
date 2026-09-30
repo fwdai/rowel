@@ -76,9 +76,15 @@ pub fn root_dir(app: &AppHandle) -> Result<PathBuf> {
     }
 
     let dir = app_data_root(app)?;
-    // The log dir is inside the data dir on iOS (Tauri resolves it to
-    // `<app data dir>/logs` there), and the log plugin makes it on every
-    // launch. It is not the vault's and stays behind (`move_data_dir`).
+    // The log dir is inside the data dir on iOS, and the log plugin makes it
+    // on every launch. It is not the vault's and stays behind
+    // (`move_data_dir`). The relationship is Tauri's, not ours: on every
+    // target but macOS its `app_log_dir` is `data_local_dir/<id>/logs` and
+    // its `app_data_dir` is `data_dir/<id>` (`tauri/src/path/desktop.rs`),
+    // and `dirs` answers both with `~/Library/Application Support` on iOS.
+    // It cannot be exercised without an app, so the move does not depend on
+    // its exact shape: the entry that holds the log dir stays, wherever
+    // under the data dir it is, and a log dir outside it matches nothing.
     #[cfg(target_os = "ios")]
     let dir = ios::shared_root(dir, app.path().app_log_dir().ok());
     Ok(dir)
@@ -164,8 +170,9 @@ fn settle_data_dir(app_data: PathBuf, shared: PathBuf, leave: &[PathBuf]) -> Pat
 /// at a time — the workspace registry, the preferences, every workspace — then
 /// remove `from`. Returns the names it moved.
 ///
-/// Everything but the paths in `leave`: what shares the directory without
-/// being the vault's. On iOS that is the log dir, which Tauri puts inside the
+/// Everything but the paths in `leave`, and any entry one of them is under:
+/// what shares the directory without being the vault's. On iOS that is the
+/// log dir, which Tauri puts inside the
 /// app's data dir and the log plugin makes again on every launch, before this
 /// runs. An entry the next launch finds there again is not a vault of the
 /// app's own: moved once, it would meet its own copy in `to` on the launch
@@ -208,7 +215,10 @@ fn move_data_dir(from: &Path, to: &Path, leave: &[PathBuf]) -> Result<Vec<String
         .map(|entry| entry.map(|e| e.file_name()))
         .collect::<std::io::Result<Vec<_>>>()?
         .into_iter()
-        .partition(|name| leave.contains(&from.join(name)));
+        .partition(|name| {
+            let entry = from.join(name);
+            leave.iter().any(|left| left.starts_with(&entry))
+        });
     let aside = if names.iter().any(|name| to.join(name).exists()) {
         let aside = set_aside(to)?;
         log::warn!(
@@ -1208,6 +1218,31 @@ mod tests {
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
         assert!(set_aside_dirs(&to).is_empty(), "the vault was set aside");
         assert!(!to.join("logs").exists());
+    }
+
+    // The path Tauri answers for the log dir is not the move's to shape: a
+    // log dir deeper in the data dir keeps the entry it is under, and one
+    // outside it names no entry and leaves nothing behind.
+    #[test]
+    fn what_stays_is_the_entry_the_left_path_is_under() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let (from, to) = (root.join("app-data"), root.join("group"));
+        fs::create_dir_all(from.join("Logs/rowel")).unwrap();
+        fs::write(from.join(DB_FILE), "db").unwrap();
+
+        let moved = move_data_dir(&from, &to, &[from.join("Logs/rowel")]).unwrap();
+        assert_eq!(moved, [DB_FILE]);
+        assert!(from.join("Logs/rowel").is_dir());
+        assert!(!to.join("Logs").exists());
+
+        // A log dir beside the data dir (a debug build's `dev`, and its logs
+        // beside it): the whole data dir moves and goes.
+        let (from, to) = (root.join("dev"), root.join("group-2"));
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join(DB_FILE), "db").unwrap();
+        let moved = move_data_dir(&from, &to, &[root.join("logs")]).unwrap();
+        assert_eq!(moved, [DB_FILE]);
+        assert!(!from.exists());
     }
 
     // The app runs from the container once the data dir is in it — on the
