@@ -70,6 +70,10 @@ pub struct Session {
     epoch: u64,
     // A lease is out. Reads as locked to commands, as live to the auto-lock.
     held_out: bool,
+    // iOS: the app is in the background, and the store is to hold no
+    // connection between uses (`set_background`). About the app, not the
+    // session: a lock and an unlock leave it as it is.
+    backgrounded: bool,
 }
 
 impl Session {
@@ -83,6 +87,15 @@ impl Session {
     /// rekey would otherwise have restored past its timeout.
     pub fn is_live(&self) -> bool {
         self.key.is_some() || self.held_out
+    }
+
+    /// A lease is out: the key and store are away with a whole-vault
+    /// operation, to be handed back (`adopt`, `restore`). What the iOS
+    /// background asks, since a store that is away cannot be parked until it
+    /// comes back. Only iOS has a caller (`background`).
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    pub fn is_held_out(&self) -> bool {
+        self.held_out
     }
 
     pub fn epoch(&self) -> Epoch {
@@ -135,6 +148,37 @@ impl Session {
         self.key = Some(key);
         self.store = Some(store);
         self.sync_configured = sync_configured;
+        self.place();
+    }
+
+    /// iOS: the app went to the background (`on`) or came back. In the
+    /// background the store keeps no connection between uses
+    /// (`SqliteStore::park`), so a suspended process holds no lock on a file
+    /// in the App Group container — which iOS ends it for (`0xdead10cc`),
+    /// and would again whenever the AutoFill extension opened the vault
+    /// behind it. The key stays: the vault is as unlocked as it was, and the
+    /// auto-lock's clock is what ends that. A store that arrives while
+    /// backgrounded — an unlock finishing as the user swipes away, a lease
+    /// coming back — is parked as it arrives (`place`).
+    ///
+    /// Only iOS has a caller (`background`); the rule itself is platform-free
+    /// and tested on every one.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    pub fn set_background(&mut self, on: bool) {
+        self.backgrounded = on;
+        self.place();
+    }
+
+    // The held store, parked or not as the background state says.
+    fn place(&self) {
+        let (Some(key), Some(store)) = (&self.key, &self.store) else {
+            return;
+        };
+        if self.backgrounded {
+            store.park(&*key.sqlcipher_key());
+        } else {
+            store.unpark();
+        }
     }
 
     // Drop the in-memory key and close the store. Every lock path ends here,
@@ -183,6 +227,7 @@ impl Session {
         self.key = Some(key);
         self.store = Some(store);
         self.sync_configured = sync_configured;
+        self.place();
         true
     }
 
@@ -646,6 +691,42 @@ mod epoch_tests {
             before,
             "taking the key out is a change of hands"
         );
+    }
+
+    // iOS: the background parks the store that is held, and the one that
+    // arrives while it lasts; the foreground unparks what is held.
+    #[test]
+    fn the_background_parks_the_store_held_and_the_store_that_arrives() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = unlocked(&dir);
+        assert!(!session.store().unwrap().is_parked());
+
+        session.set_background(true);
+        assert!(session.store().unwrap().is_parked());
+        assert!(session.is_unlocked(), "the key stays");
+        // Uses go on working while parked.
+        assert!(session.store().unwrap().count_live().is_ok());
+
+        session.set_background(false);
+        assert!(!session.store().unwrap().is_parked());
+
+        // An unlock that lands in the background.
+        session.clear();
+        session.set_background(true);
+        let key = key("first");
+        let store = store_in(&dir, &key);
+        session.set(key, store, true);
+        assert!(session.store().unwrap().is_parked());
+
+        // A lease that comes back in the background stays parked; one that
+        // comes back in the foreground is unparked.
+        let lease = session.take_out().unwrap();
+        assert!(session.restore(lease));
+        assert!(session.store().unwrap().is_parked());
+        session.set_background(false);
+        let lease = session.take_out().unwrap();
+        assert!(session.restore(lease));
+        assert!(!session.store().unwrap().is_parked());
     }
 
     #[test]
