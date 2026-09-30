@@ -181,6 +181,7 @@
   "Passports, ID cards & licenses": "护照、身份证与驾照",
   "Add a secret": "新建条目",
   "Everything is encrypted before it touches disk.": "所有内容在写入磁盘前都已加密。",
+  "Other ways in": "其他方式",
   "Your vault is empty": "保险库是空的",
   "Add your first login, card or note. Everything is encrypted before it touches disk.": "添加第一个登录项、银行卡或笔记。所有内容在写入磁盘前都已加密。",
   "Import from another app": "从其他应用导入",
