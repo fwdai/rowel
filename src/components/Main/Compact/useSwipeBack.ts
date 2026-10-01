@@ -18,6 +18,8 @@ const OUT_MS = 160
 const SPRING_MS = 200
 
 interface Origin {
+  /** The one finger this drag belongs to; a second one landing is ignored. */
+  id: number
   x: number
   y: number
   at: number
@@ -25,12 +27,19 @@ interface Origin {
   pop: boolean | null
 }
 
+// `theme.css` zeroes every transition under reduced motion, so the slide out
+// is over at once and the pop should be too.
+const reducedMotion = () =>
+  window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false
+
 /**
  * The iOS edge swipe, for a pushed screen: a drag in from the left edge takes
  * the screen with the finger, and letting go far or fast enough pops it the
  * same way its back control would — `onBack` is that control's handler, and
  * `disabled` its own flag, so the two can never disagree about whether the
- * screen may be left.
+ * screen may be left. Both are read when the pop lands, not when the drag
+ * began: a lock that arrives mid-swipe (a restore starting under a settings
+ * pane) puts the screen back rather than leaving it off the edge.
  *
  * The screen is moved by hand rather than through state: a pointermove at
  * 60Hz re-rendering the whole entry screen is a cost the drag would show. Only
@@ -45,6 +54,12 @@ export function useSwipeBack(onBack: () => void, disabled = false) {
   const screen = useRef<HTMLDivElement | null>(null)
   const origin = useRef<Origin | null>(null)
   const leaving = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // What the back control would do *now*, for a pop that lands after the
+  // render that started it.
+  const latest = useRef({ onBack, disabled })
+  useEffect(() => {
+    latest.current = { onBack, disabled }
+  })
 
   // A screen popped while sliding out must not pop twice.
   useEffect(
@@ -61,6 +76,14 @@ export function useSwipeBack(onBack: () => void, disabled = false) {
     el.style.translate = `${x} 0`
   }
 
+  // Lets go the way the back control would: through it, or — if it refuses
+  // by now — back to where the screen was.
+  const pop = () => {
+    leaving.current = null
+    if (latest.current.disabled) return move('0', SPRING_MS)
+    latest.current.onBack()
+  }
+
   const ref = (el: HTMLDivElement | null) => {
     screen.current = el
     if (el) el.style.touchAction = 'pan-y'
@@ -68,14 +91,14 @@ export function useSwipeBack(onBack: () => void, disabled = false) {
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     // A mouse at the edge of a narrow window is selecting text, not popping.
-    if (disabled || leaving.current || e.pointerType === 'mouse') return
+    if (disabled || leaving.current || origin.current || e.pointerType === 'mouse') return
     if (e.clientX - e.currentTarget.getBoundingClientRect().left > EDGE_PX) return
-    origin.current = { x: e.clientX, y: e.clientY, at: e.timeStamp, pop: null }
+    origin.current = { id: e.pointerId, x: e.clientX, y: e.clientY, at: e.timeStamp, pop: null }
   }
 
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
     const from = origin.current
-    if (!from) return
+    if (from?.id !== e.pointerId) return
     const dx = e.clientX - from.x
     const dy = e.clientY - from.y
     if (from.pop === null) {
@@ -90,27 +113,26 @@ export function useSwipeBack(onBack: () => void, disabled = false) {
 
   const onPointerUp = (e: PointerEvent<HTMLDivElement>) => {
     const from = origin.current
-    if (!from) return
+    if (from?.id !== e.pointerId) return
     origin.current = null
     if (!from.pop) return
     const dx = e.clientX - from.x
     const speed = dx / Math.max(1, e.timeStamp - from.at)
     const width = e.currentTarget.getBoundingClientRect().width
     if (dx > width * COMMIT_SHARE || (dx > FLICK_MIN_PX && speed > FLICK_SPEED)) {
+      if (reducedMotion()) return pop()
       move('100%', OUT_MS)
-      leaving.current = setTimeout(() => {
-        leaving.current = null
-        onBack()
-      }, OUT_MS)
+      leaving.current = setTimeout(pop, OUT_MS)
     } else {
       move('0', SPRING_MS)
     }
   }
 
-  const onPointerCancel = () => {
+  const onPointerCancel = (e: PointerEvent<HTMLDivElement>) => {
     const from = origin.current
+    if (from?.id !== e.pointerId) return
     origin.current = null
-    if (from?.pop) move('0', SPRING_MS)
+    if (from.pop) move('0', SPRING_MS)
   }
 
   return { ref, onPointerDown, onPointerMove, onPointerUp, onPointerCancel }

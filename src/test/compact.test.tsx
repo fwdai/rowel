@@ -691,6 +691,44 @@ describe('swipe back', () => {
     expect(entry.style.translate).toBe('')
   })
 
+  // The drag is one finger's: another landing on the edge mid-way is neither a
+  // new drag nor the end of this one.
+  it('belongs to the finger that started it', async () => {
+    const entry = await openEntry()
+    entry.setPointerCapture = () => {}
+    entry.getBoundingClientRect = () => ({ left: 0, width: 390 }) as DOMRect
+    fireEvent.pointerDown(entry, { pointerId: 1, pointerType: 'touch', clientX: 0, clientY: 100 })
+    fireEvent.pointerMove(entry, { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 100 })
+    fireEvent.pointerDown(entry, { pointerId: 2, pointerType: 'touch', clientX: 0, clientY: 300 })
+    fireEvent.pointerUp(entry, { pointerId: 2, pointerType: 'touch', clientX: 0, clientY: 300 })
+    expect(entry.style.translate).toBe('200px 0')
+    await act(() => new Promise(resolve => setTimeout(resolve, 200)))
+    expect(useVault.getState().currentId).toBe('l1')
+
+    fireEvent.pointerUp(entry, { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 100 })
+    await waitFor(() => expect(useVault.getState().currentId).toBeNull())
+  })
+
+  // A restore starting under the pane mid-swipe: the back control would refuse
+  // by the time the finger lifts, so the pane comes back rather than staying
+  // off the edge with the lock holding it there.
+  it('puts a pane back if it is locked before the swipe lands', async () => {
+    seed()
+    render(<Main />)
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    const pane = screen.getByTestId('settings-pane')
+    pane.setPointerCapture = () => {}
+    pane.getBoundingClientRect = () => ({ left: 0, width: 390 }) as DOMRect
+    fireEvent.pointerDown(pane, { pointerId: 1, pointerType: 'touch', clientX: 0, clientY: 100 })
+    fireEvent.pointerMove(pane, { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 100 })
+    act(() => lockSettings(true))
+    fireEvent.pointerUp(pane, { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 100 })
+    await act(() => new Promise(resolve => setTimeout(resolve, 200)))
+    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(pane.style.translate).toBe('0 0')
+  })
+
   it('pops a settings pane and a sub-page, but not a locked one', async () => {
     seed()
     render(<Main />)
