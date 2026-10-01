@@ -154,6 +154,13 @@ Settings are one screen slot between them, so each closes the other.
 Transitions are mount animations only (`animate-sheet` slides in from the
 right, `animate-rise` slides up, `animate-fade` for roots). No exit animations.
 
+A screen pushed from the right can also be popped the iOS way: a drag in from
+the left edge takes it with the finger, and letting go past a third of the width
+(or a flick) slides it out and runs the same handler its back control does
+(`Compact/useSwipeBack`, on the entry screen and both settings panes, under the
+same `settingsLocked`). The form is not among them: it rose from the bottom and
+its only exit is the guarded Cancel.
+
 ## iOS conventions to follow
 
 - Touch targets ≥ 44×44pt. Rows ≥ 44pt tall; list rows in the design are 64pt.

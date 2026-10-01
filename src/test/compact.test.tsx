@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
 import AuthShell from '@/components/elements/AuthShell'
@@ -639,6 +639,80 @@ describe('entries slice', () => {
 })
 
 // The frame a dialog gets is context, not a layout question it asks itself.
+describe('swipe back', () => {
+  // A finger dragged in from the left edge, released after `dx`. jsdom lays
+  // nothing out, so the screen is given a phone's width to measure the drag
+  // against; a drag past a third of it, or short of that but faster than a
+  // flick, pops.
+  const swipe = (
+    el: HTMLElement,
+    { x = 0, dx, dy = 0 }: { x?: number; dx: number; dy?: number }
+  ) => {
+    el.setPointerCapture = () => {}
+    el.getBoundingClientRect = () => ({ left: 0, width: 390 }) as DOMRect
+    const touch = { pointerId: 1, pointerType: 'touch' }
+    fireEvent.pointerDown(el, { ...touch, clientX: x, clientY: 100 })
+    fireEvent.pointerMove(el, { ...touch, clientX: x + dx, clientY: 100 + dy })
+    fireEvent.pointerUp(el, { ...touch, clientX: x + dx, clientY: 100 + dy })
+  }
+
+  const openEntry = async () => {
+    mockCommand('reveal_entry', () => loginEntry({ id: 'l1', title: 'Google' }))
+    seed()
+    render(<Main />)
+    await userEvent.click(screen.getByText('Google'))
+    return screen.getByTestId('entry-screen')
+  }
+
+  it('pops the entry screen on a drag in from the left edge', async () => {
+    const entry = await openEntry()
+    swipe(entry, { dx: 200 })
+    // The screen slides the rest of the way out first, then the row is dropped.
+    expect(useVault.getState().currentId).toBe('l1')
+    await waitFor(() => expect(useVault.getState().currentId).toBeNull())
+    expect(screen.getAllByTestId('entry-item')).toHaveLength(2)
+  })
+
+  it('springs back from a short drag, and ignores one that is not from the edge', async () => {
+    const entry = await openEntry()
+    swipe(entry, { dx: 10 })
+    swipe(entry, { x: 120, dx: 300 })
+    await act(() => new Promise(resolve => setTimeout(resolve, 200)))
+    expect(useVault.getState().currentId).toBe('l1')
+    expect(entry.style.translate).toBe('0 0')
+  })
+
+  // A drag that goes down first is the scroller's, however far it then drifts.
+  it('leaves a scroll alone', async () => {
+    const entry = await openEntry()
+    swipe(entry, { dx: 200, dy: 240 })
+    await act(() => new Promise(resolve => setTimeout(resolve, 200)))
+    expect(useVault.getState().currentId).toBe('l1')
+    expect(entry.style.translate).toBe('')
+  })
+
+  it('pops a settings pane and a sub-page, but not a locked one', async () => {
+    seed()
+    render(<Main />)
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    await userEvent.click(screen.getByTestId('workspace-new-row'))
+
+    act(() => lockSettings(true))
+    swipe(screen.getByTestId('settings-subpage'), { dx: 200 })
+    await act(() => new Promise(resolve => setTimeout(resolve, 200)))
+    expect(screen.getByRole('heading', { name: 'New workspace' })).toBeInTheDocument()
+
+    act(() => lockSettings(false))
+    swipe(screen.getByTestId('settings-subpage'), { dx: 200 })
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    )
+    swipe(screen.getByTestId('settings-pane'), { dx: 200 })
+    await waitFor(() => expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument())
+  })
+})
+
 describe('Frame', () => {
   const dialog = (
     <Frame onClose={() => {}} testid="framed">
