@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
 import Show from '@/components/Main/Body/Aside/Show'
@@ -60,6 +60,42 @@ describe('Password history', () => {
     expect(await screen.findByTestId('password-history-toggle')).toHaveTextContent(
       /^2 previous$/
     )
+  })
+
+  // A cleared password still has the ones before it: the row stays, with
+  // nothing to show, reveal or copy, only the way in to the history.
+  it('keeps the history reachable when the password is cleared', async () => {
+    let entry = withHistory({ password: '' })
+    mockCommand('reveal_entry', () => entry)
+    mockCommand('clear_password_history', () => {
+      entry = loginEntry({ password: '', updatedAt: new Date().toISOString() })
+      return toEntryMeta(entry)
+    })
+    withEntries([loginMeta()])
+    setCurrentEntry('l1')
+    render(<Main />)
+
+    const toggle = await screen.findByTestId('password-history-toggle')
+    expect(toggle).toHaveTextContent('Changed 3h ago · 2 previous')
+    expect(screen.queryByTestId('entry-value-password')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('reveal-password')).not.toBeInTheDocument()
+
+    await userEvent.click(toggle)
+    await userEvent.click(screen.getByTestId('password-history-reveal-0'))
+    expect(screen.getByTestId('password-history-value-0')).toHaveTextContent('second-old')
+    await userEvent.click(screen.getByTestId('password-history-copy-1'))
+    expect(calls('copy_to_clipboard')).toContainEqual(
+      expect.objectContaining({ value: 'first-old' })
+    )
+
+    await userEvent.click(screen.getByTestId('password-history-clear'))
+    await userEvent.click(screen.getByTestId('password-history-clear'))
+    expect(calls('clear_password_history')).toEqual([{ id: 'l1' }])
+    // Nothing kept and nothing current: the row is gone again.
+    await waitFor(() =>
+      expect(screen.queryByTestId('password-history-toggle')).not.toBeInTheDocument()
+    )
+    expect(screen.queryByText('Password')).not.toBeInTheDocument()
   })
 
   // Masked by default, each on its own; revealed one at a time, copied either way.
@@ -146,5 +182,16 @@ describe('Password history', () => {
     await userEvent.click(await screen.findByTestId('password-history-toggle'))
     expect(screen.getByTestId('password-history')).toBeInTheDocument()
     expect(screen.getByTestId('password-history-clear')).toBeInTheDocument()
+  })
+
+  it('keeps the history reachable on the phone when the password is cleared', async () => {
+    setLayout('compact')
+    mockCommand('reveal_entry', () => withHistory({ password: '' }))
+    withEntries([loginMeta()])
+    setCurrentEntry('l1')
+    render(<Main />)
+
+    await userEvent.click(await screen.findByTestId('password-history-toggle'))
+    expect(screen.getByTestId('password-history')).toBeInTheDocument()
   })
 })

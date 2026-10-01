@@ -958,6 +958,25 @@ mod tests {
         assert_eq!(blank.password_updated_at, None);
     }
 
+    // Clearing a password is a change too: the one taken away is still a
+    // previous password the user may need, whether the field comes back empty
+    // or missing.
+    #[test]
+    fn a_cleared_password_is_kept_as_a_previous_one() {
+        let stored = with_password("old");
+        for mut cleared in [
+            with_password(""),
+            Entry {
+                password: None,
+                ..with_password("")
+            },
+        ] {
+            cleared.record_password_change(Some(&stored), NOW);
+            assert_eq!(cleared.password_history, Some(vec![previous("old", NOW)]));
+            assert_eq!(cleared.password_updated_at.as_deref(), Some(NOW));
+        }
+    }
+
     // Newest first, and never more than the cap: the oldest falls off the end.
     #[test]
     fn the_history_is_newest_first_and_capped() {

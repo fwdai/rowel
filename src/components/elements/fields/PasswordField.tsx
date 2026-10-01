@@ -9,6 +9,7 @@ import IconButton from '../IconButton'
 import StrengthBar from '../StrengthBar'
 import Field from './Field'
 import PasswordHistory from './PasswordHistory'
+import FieldRow from './Row'
 import { useField, useFields } from './context'
 import { META } from '../tokens'
 
@@ -43,7 +44,21 @@ export default function PasswordField({
   const { value, set, editing } = useField(name)
   const stamp = rotationStamp(t, useDates(), entry.password_updated_at)
   // Reading only: the editor is about the password being set, not the old ones.
-  const history = editing ? undefined : entry.passwordHistory
+  // The stamp is a sentence about the password, not a label for one — and,
+  // once there are previous ones, the way in to them.
+  const history =
+    !editing && entry.id && entry.passwordHistory?.length ? (
+      <PasswordHistory id={entry.id} history={entry.passwordHistory} stamp={stamp} />
+    ) : null
+
+  // A cleared password still has the ones before it, so the row outlives its
+  // value: nothing to show, reveal or copy, only the way in to the history.
+  if (!editing && !value && history)
+    return (
+      <FieldRow label={label} below={history}>
+        {() => null}
+      </FieldRow>
+    )
 
   return (
     <Field
@@ -69,13 +84,7 @@ export default function PasswordField({
         (value || stamp) && (
           <>
             <StrengthBar password={value} />
-            {/* A sentence about the password, not a label for one — and, once
-                there are previous ones, the way in to them. */}
-            {entry.id && history?.length ? (
-              <PasswordHistory id={entry.id} history={history} stamp={stamp} />
-            ) : (
-              stamp && <span className={META}>{stamp}</span>
-            )}
+            {history ?? (stamp && <span className={META}>{stamp}</span>)}
           </>
         )
       }
