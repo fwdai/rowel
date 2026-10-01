@@ -1448,7 +1448,10 @@ fn rowels_manifest_names_its_own_host_and_extension() {
     assert_eq!(chromium["path"], exe.to_string_lossy().as_ref());
     assert_eq!(
         chromium["allowed_origins"],
-        json!(["chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/"])
+        json!([
+            "chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/",
+            "chrome-extension://aajfpjaphnegnekpggjnocmgbhkabeke/"
+        ])
     );
     assert!(chromium.get("allowed_extensions").is_none());
 
