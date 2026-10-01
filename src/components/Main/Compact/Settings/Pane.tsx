@@ -14,6 +14,7 @@ import {
 import BackButton from '../BackButton'
 import NavBar from '../NavBar'
 import { TAB_BAR_CLEARANCE } from '../chrome'
+import { useSwipeBack } from '../useSwipeBack'
 
 /**
  * One settings section, pushed from the root — or a sub-page of it, pushed
@@ -21,7 +22,8 @@ import { TAB_BAR_CLEARANCE } from '../chrome'
  *
  * One level deep rather than modal: the tab bar stays up, so the scroller
  * reserves its clearance, and the way back is the shared `NavBar` carrying the
- * previous screen's name, exactly as the entry screen's row does.
+ * previous screen's name, exactly as the entry screen's row does — and, as
+ * there, an edge swipe is that same control by gesture, held by the same lock.
  */
 export default function Pane({
   section,
@@ -35,11 +37,16 @@ export default function Pane({
 }) {
   const { t } = useTranslation()
   const { subpage } = useSubpage()
+  const swipe = useSwipeBack(onBack, locked)
 
   if (subpage) return <SubpagePane subpage={subpage} locked={locked} />
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col animate-sheet bg-screen">
+    <div
+      {...swipe}
+      data-testid="settings-pane"
+      className="flex min-h-0 flex-1 flex-col animate-sheet bg-screen"
+    >
       <NavBar
         leading={
           <BackButton
@@ -68,9 +75,14 @@ export default function Pane({
 // tab bar's clearance, so the column has no scroller of its own.
 function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean }) {
   const { close } = useSubpage()
+  const swipe = useSwipeBack(close, locked)
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col animate-sheet bg-screen">
+    <div
+      {...swipe}
+      data-testid="settings-subpage"
+      className="flex min-h-0 flex-1 flex-col animate-sheet bg-screen"
+    >
       <NavBar
         leading={
           <BackButton
