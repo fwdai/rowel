@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
 import { copy } from '@/services/copy'
@@ -7,7 +7,7 @@ import { EyeGlyph, EyeOffGlyph } from '../../Main/icons'
 import CopyButton from '../CopyButton'
 import IconButton from '../IconButton'
 import { verbatimInput } from '../inputProps'
-import { HOVER_ONLY, MASK_DOTS, VALUE_LINE } from '../tokens'
+import { HOVER_ONLY, MASK_DOTS, MASK_INPUT, VALUE_LINE } from '../tokens'
 import { useField } from './context'
 import { requiredError } from './formats'
 import FieldRow from './Row'
@@ -47,10 +47,6 @@ export interface FieldProps {
   /** A format complaint about a non-empty value, or ''. */
   check?: (value: string) => string
 }
-
-// An input cannot fake dots, so the editor hides its own text; a read value is
-// plain text and gets the fixed mask (MASK_DOTS) instead.
-const MASK = { WebkitTextSecurity: 'disc' } as CSSProperties
 
 // One field, both modes. Reading, it is the detail row it has always been:
 // the value, reveal toggle, copy button, hidden when empty. Editing, the same
@@ -92,7 +88,8 @@ export default function Field({
       : requiredError(value, required, attempted)
 
   const masked = secure && !show
-  const mask = masked ? MASK : undefined
+  // The editor hides its own text; a read value gets the fixed mask instead.
+  const mask = masked ? MASK_INPUT : undefined
   // The headline treatment is for a secret being read, not for its mask.
   // A tier up on the phone (16px), where the desktop's 13 reads as a form; a
   // masked secret also takes the secret's tracking there, so the dots sit

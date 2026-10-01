@@ -18,6 +18,8 @@ mod tests;
 
 use serde::{Deserialize, Deserializer};
 
+use crate::models::ExtraField;
+
 /// Read a number a foreign exporter may have written as anything: an integer, a
 /// string holding one, a float, or a member it simply left out. Never an error.
 ///
@@ -162,9 +164,10 @@ pub struct ImportedEntry {
     // source format carries none, which is the case for every CSV dialect.
     pub passkeys: Vec<ImportedPasskey>,
     // Free-form label/value pairs, in source order — meaningful on every kind.
-    // Empty when the source carries none; only Bitwarden has somewhere to put
-    // them (its custom `fields`), so CSV and CXF always leave this empty.
-    pub extra: Vec<(String, String)>,
+    // Empty when the source carries none; Bitwarden keeps them in its custom
+    // `fields` and CXF in `custom-fields` credentials, and CSV has nowhere to
+    // put them, so it always leaves this empty.
+    pub extra: Vec<ExtraField>,
     // Entry state that belongs to no kind. The star and the three timestamps
     // are carried so an export is a faithful copy and a re-import is not
     // mistaken for a fresh edit — an entry stamped "now" on the way in wins
@@ -189,10 +192,23 @@ impl ImportedEntry {
         if ENVIRONMENTS.contains(&known.as_str()) {
             self.api_environment = Some(known);
         } else {
-            self.extra
-                .push((export::ENVIRONMENT_LABEL.to_owned(), value));
+            self.extra.push(ExtraField {
+                label: export::ENVIRONMENT_LABEL.to_owned(),
+                value,
+                secret: false,
+            });
         }
     }
+}
+
+/// Remove the custom field labelled `label` (case-insensitively) and hand back
+/// its value: a field of ours is not the user's, so it leaves the extras when it
+/// is claimed. The first one wins, which is why an exporter writes ours first.
+pub(crate) fn take_labelled(extra: &mut Vec<ExtraField>, label: &str) -> Option<String> {
+    let at = extra
+        .iter()
+        .position(|f| f.label.eq_ignore_ascii_case(label))?;
+    non_empty(Some(extra.remove(at).value))
 }
 
 /// A passkey as an import parses it. It is the app's own [`crate::models::Passkey`]:

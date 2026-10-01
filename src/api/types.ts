@@ -11,6 +11,8 @@ export type EntryType = 'login' | 'note' | 'card' | 'identity' | 'ssh' | 'env' |
 export interface ExtraField {
   label: string
   value: string
+  // Concealed: masked until revealed. Absent when not, as Rust omits it.
+  secret?: boolean
 }
 
 interface BaseEntry {

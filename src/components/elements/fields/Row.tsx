@@ -41,7 +41,7 @@ const VALUE_START = 'pl-[168px] @max-[420px]:pl-0'
  */
 export const STACK = '@max-[420px]:flex-wrap @max-[420px]:gap-y-1.5'
 export const STACK_LABEL = '@max-[420px]:w-full'
-const STACK_SIGIL = '@max-[420px]:hidden'
+export const STACK_SIGIL = '@max-[420px]:hidden'
 // The rail no longer has a fixed column to fit, so where a finger is one of the
 // pointers its controls grow to the 44px target. Both conditions: an iPad
 // running the wide shell keeps the 60px rail, which only holds two 28px

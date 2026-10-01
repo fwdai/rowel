@@ -67,6 +67,8 @@ pub const AUTHORITY_LABEL: &str = "Authority";
 pub const PERSONAL_NUMBER_LABEL: &str = "Personal number";
 pub const PASSWORD_UPDATED_LABEL: &str = "Password updated";
 pub const FAVORITE_LABEL: &str = "Favorite";
+/// What the CXF credential holding the user's own custom fields is called.
+const EXTRA_LABEL: &str = "Custom fields";
 
 /// The values that have no member in any format we write, paired with the label
 /// they travel under and whether they are secret (a hidden Bitwarden field, a
@@ -133,6 +135,27 @@ pub fn claimed_labels() -> Vec<String> {
     labels
 }
 
+/// The labels the importer claims (see [`claimed_labels`]) that one of the
+/// user's own extras wears but `written` — what an exporter put down under our
+/// labels — does not. Each gets an empty field of ours ahead of the user's: the
+/// importer takes the empty one (an empty value sets no slot) and theirs stays
+/// theirs. Without a colliding extra there is none, so the usual export is
+/// unchanged.
+fn shadowed<'a>(e: &ImportedEntry, written: &[&str], claimed: &'a [String]) -> Vec<&'a str> {
+    claimed
+        .iter()
+        .map(String::as_str)
+        .filter(|label| !written.contains(label))
+        .filter(|label| e.extra.iter().any(|f| f.label.eq_ignore_ascii_case(label)))
+        .collect()
+}
+
+/// A CXF custom field — an `EditableField` with the label it is filed under.
+fn cxf_field(label: &str, value: &str, secret: bool) -> Value {
+    let field_type = if secret { "concealed-string" } else { "string" };
+    json!({ "fieldType": field_type, "label": label, "value": value })
+}
+
 /// Serialize to Bitwarden's unencrypted JSON export shape.
 pub fn to_bitwarden_json(entries: &[ImportedEntry]) -> serde_json::Result<Vec<u8>> {
     let claimed = claimed_labels();
@@ -164,21 +187,17 @@ pub fn to_bitwarden_json(entries: &[ImportedEntry]) -> serde_json::Result<Vec<u8
             // importer claims that we had nothing to write under — the email is
             // unset, the star is off and Bitwarden has a member for it anyway —
             // still gets a field of ours, empty, when the user has one wearing
-            // it: the importer takes the empty one (an empty value sets no
-            // slot) and theirs stays theirs. Without a colliding extra nothing
-            // is written, so the usual export is unchanged.
-            for label in &claimed {
-                let written = ours.iter().any(|(l, _, _)| l == label);
-                let collides = e.extra.iter().any(|(l, _)| l.eq_ignore_ascii_case(label));
-                if !written && collides {
-                    push_field(&mut item, label, "", FIELD_TEXT);
-                }
+            // it (see `shadowed`).
+            let written: Vec<&str> = ours.iter().map(|(l, _, _)| *l).collect();
+            for label in shadowed(e, &written, &claimed) {
+                push_field(&mut item, label, "", FIELD_TEXT);
             }
-            // Then the user's extras, in their order. `fields` is only ever
-            // written when there is something to write, so an export of a
-            // vault without any is byte-identical to before.
-            for (label, value) in &e.extra {
-                push_field(&mut item, label, value, FIELD_TEXT);
+            // Then the user's extras, in their order, a concealed one hidden.
+            // `fields` is only ever written when there is something to write,
+            // so an export of a vault without any is byte-identical to before.
+            for f in &e.extra {
+                let kind = if f.secret { FIELD_HIDDEN } else { FIELD_TEXT };
+                push_field(&mut item, &f.label, &f.value, kind);
             }
             match e.kind {
                 EntryKind::Login => {
@@ -517,28 +536,43 @@ fn cxf_item(e: &ImportedEntry) -> Value {
     // under the labels the importer reads back, the way the ssh-key's extra
     // parts do. Written only when there is something to write, so an export of
     // a vault that uses none of them is unchanged.
-    let mut fields: Vec<Value> = labelled_fields(e)
-        .into_iter()
-        .map(|(label, value, secret)| {
-            let field_type = if secret { "concealed-string" } else { "string" };
-            json!({ "fieldType": field_type, "label": label, "value": value })
-        })
-        .collect();
+    let mut ours = labelled_fields(e);
     // Bitwarden has a member for each of these two; CXF has neither.
     if e.favorite {
-        fields.push(json!({ "fieldType": "string", "label": FAVORITE_LABEL, "value": "true" }));
+        ours.push((FAVORITE_LABEL, "true", false));
     }
     if let Some(number) = &e.doc_personal_number {
-        fields.push(
-            json!({ "fieldType": "string", "label": PERSONAL_NUMBER_LABEL, "value": number }),
-        );
+        ours.push((PERSONAL_NUMBER_LABEL, number, false));
     }
+    let written: Vec<&str> = ours.iter().map(|(l, _, _)| *l).collect();
+    let claimed = claimed_labels();
+    // A user's extra wearing one of our labels gets an empty one of ours ahead
+    // of it, as in the Bitwarden export (see `shadowed`).
+    let placeholders = shadowed(e, &written, &claimed)
+        .into_iter()
+        .map(|label| (label, "", false));
+    let fields: Vec<Value> = ours
+        .iter()
+        .copied()
+        .chain(placeholders)
+        .map(|(label, value, secret)| cxf_field(label, value, secret))
+        .collect();
     if !fields.is_empty() {
         credentials.push(json!({
             "type": "custom-fields",
             "id": random_id(),
             "label": APP_NAME,
             "fields": fields,
+        }));
+    }
+    // The user's own extras, last — so every label of ours is read back before
+    // theirs — in their order, a concealed one concealed.
+    if !e.extra.is_empty() {
+        credentials.push(json!({
+            "type": "custom-fields",
+            "id": random_id(),
+            "label": EXTRA_LABEL,
+            "fields": e.extra.iter().map(|f| cxf_field(&f.label, &f.value, f.secret)).collect::<Vec<_>>(),
         }));
     }
 

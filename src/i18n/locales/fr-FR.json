@@ -118,6 +118,8 @@
   "Custom fields": "Champs personnalisés",
   "Add field": "Ajouter un champ",
   "Remove field": "Supprimer le champ",
+  "Conceal value": "Masquer la valeur",
+  "Stop concealing": "Ne plus masquer",
   "Label": "Libellé",
   "Value": "Valeur",
   "Variables": "Variables",

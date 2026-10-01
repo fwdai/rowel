@@ -5,7 +5,10 @@
 use serde::Deserialize;
 
 use super::export::PASSPHRASE_LABEL;
-use super::{non_empty, EntryKind, ImportResult, ImportedEntry, ImportedPasskey, Importer};
+use super::{
+    non_empty, take_labelled, EntryKind, ImportResult, ImportedEntry, ImportedPasskey, Importer,
+};
+use crate::models::ExtraField;
 
 pub struct Bitwarden;
 
@@ -63,9 +66,9 @@ struct SshKey {
 }
 
 /// A Bitwarden custom field. `type` is 0 = text, 1 = hidden, 2 = boolean,
-/// 3 = linked; the first two are values a person typed and become extra fields,
-/// the other two are Bitwarden's own machinery and are dropped. An absent type
-/// reads as text, which is what an unset one means there.
+/// 3 = linked; the first two are values a person typed and become extra fields
+/// (a hidden one concealed), the other two are Bitwarden's own machinery and are
+/// dropped. An absent type reads as text, which is what an unset one means there.
 #[derive(Deserialize)]
 struct Field {
     #[serde(default)]
@@ -80,12 +83,22 @@ pub const FIELD_TEXT: u8 = 0;
 pub const FIELD_HIDDEN: u8 = 1;
 
 // A row with neither a name nor a value says nothing, so it is not carried.
-fn extras(fields: Vec<Field>) -> Vec<(String, String)> {
+fn extras(fields: Vec<Field>) -> Vec<ExtraField> {
     fields
         .into_iter()
-        .filter(|f| matches!(f.kind.unwrap_or(FIELD_TEXT), FIELD_TEXT | FIELD_HIDDEN))
-        .map(|f| (f.name.unwrap_or_default(), f.value.unwrap_or_default()))
-        .filter(|(name, value)| !name.is_empty() || !value.is_empty())
+        .filter_map(|f| {
+            let secret = match f.kind.unwrap_or(FIELD_TEXT) {
+                FIELD_TEXT => false,
+                FIELD_HIDDEN => true,
+                _ => return None,
+            };
+            Some(ExtraField {
+                label: f.name.unwrap_or_default(),
+                value: f.value.unwrap_or_default(),
+                secret,
+            })
+        })
+        .filter(|f| !f.label.is_empty() || !f.value.is_empty())
         .collect()
 }
 
@@ -357,7 +370,7 @@ impl Importer for Bitwarden {
                     // user's: it is taken back out of the extras it rode in.
                     let (passphrase, extra): (Vec<_>, Vec<_>) = extra
                         .into_iter()
-                        .partition(|(label, _)| label.eq_ignore_ascii_case(PASSPHRASE_LABEL));
+                        .partition(|f| f.label.eq_ignore_ascii_case(PASSPHRASE_LABEL));
                     result.entries.push(ImportedEntry {
                         kind: EntryKind::Ssh,
                         title,
@@ -368,7 +381,7 @@ impl Importer for Bitwarden {
                         ssh_passphrase: passphrase
                             .into_iter()
                             .next()
-                            .and_then(|(_, v)| non_empty(Some(v))),
+                            .and_then(|f| non_empty(Some(f.value))),
                         extra,
                         ..base
                     });
@@ -379,14 +392,4 @@ impl Importer for Bitwarden {
         }
         result
     }
-}
-
-// Remove the custom field labelled `label` (case-insensitively) and hand back
-// its value: a field of ours is not the user's, so it leaves the extras when it
-// is claimed — the same move the SSH passphrase makes in its own arm.
-fn take_labelled(extra: &mut Vec<(String, String)>, label: &str) -> Option<String> {
-    let at = extra
-        .iter()
-        .position(|(l, _)| l.eq_ignore_ascii_case(label))?;
-    non_empty(Some(extra.remove(at).1))
 }

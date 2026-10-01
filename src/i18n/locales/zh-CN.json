@@ -118,6 +118,8 @@
   "Custom fields": "自定义字段",
   "Add field": "添加字段",
   "Remove field": "删除字段",
+  "Conceal value": "隐藏值",
+  "Stop concealing": "取消隐藏",
   "Label": "标签",
   "Value": "值",
   "Variables": "变量",

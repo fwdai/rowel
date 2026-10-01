@@ -15,7 +15,7 @@ use crate::crypto::PayloadCipher;
 use crate::error::{Error, Result};
 use crate::events;
 use crate::import::{self, EntryKind, Format, ImportedEntry, RowError};
-use crate::models::{Entry, EntryMetaDto, ExtraField};
+use crate::models::{Entry, EntryMetaDto};
 use crate::save;
 use crate::session::{list_metas, live_records, store_err};
 use crate::state::AppState;
@@ -365,15 +365,7 @@ fn imported_to_entry(imp: &ImportedEntry) -> Entry {
         tags: (!imp.tags.is_empty()).then(|| imp.tags.clone()),
         // Extras belong to no kind, so they are mapped here rather than in the
         // match below. None when there are none, for the same reason.
-        extra: (!imp.extra.is_empty()).then(|| {
-            imp.extra
-                .iter()
-                .map(|(label, value)| ExtraField {
-                    label: label.clone(),
-                    value: value.clone(),
-                })
-                .collect()
-        }),
+        extra: (!imp.extra.is_empty()).then(|| imp.extra.clone()),
         // The star and the stamps the source carried, not this moment: an entry
         // stamped "now" on the way in is a newer copy of itself and wins every
         // last-writer-wins sync race against the vault it came from. Only a
@@ -508,13 +500,7 @@ fn entry_to_imported(e: &Entry) -> ImportedEntry {
         // for an API key — a passport must not export with one.
         api_expires: api_key.then(|| e.expiry_date.clone()).flatten(),
         passkeys: e.passkeys.clone().unwrap_or_default(),
-        extra: e
-            .extra
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .map(|f| (f.label.clone(), f.value.clone()))
-            .collect(),
+        extra: e.extra.clone().unwrap_or_default(),
         favorite: e.favorite,
         created_at: e.created_at.clone(),
         updated_at: e.updated_at.clone(),
