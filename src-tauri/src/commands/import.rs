@@ -15,7 +15,7 @@ use crate::crypto::PayloadCipher;
 use crate::error::{Error, Result};
 use crate::events;
 use crate::import::{self, EntryKind, Format, ImportedEntry, RowError};
-use crate::models::{Entry, EntryMetaDto, PASSWORD_HISTORY_CAP};
+use crate::models::{Entry, EntryMetaDto};
 use crate::save;
 use crate::session::{list_metas, live_records, store_err};
 use crate::state::AppState;
@@ -385,15 +385,12 @@ fn imported_to_entry(imp: &ImportedEntry) -> Entry {
             e.email = imp.email.clone();
             e.otp = imp.otp.clone();
             e.passkeys = (!imp.passkeys.is_empty()).then(|| imp.passkeys.clone());
-            // The source's own history, newest first, held to the cap the
-            // vault keeps for every login.
-            e.password_history = (!imp.password_history.is_empty()).then(|| {
-                imp.password_history
-                    .iter()
-                    .take(PASSWORD_HISTORY_CAP)
-                    .cloned()
-                    .collect()
-            });
+            // The source's own history, newest first. Already held to the
+            // vault's cap by the parser, so that the duplicate check — which
+            // compares the parsed entry with the stored one — sees the same
+            // list on both sides.
+            e.password_history =
+                (!imp.password_history.is_empty()).then(|| imp.password_history.clone());
         }
         EntryKind::Card => {
             e.number = imp.card_number.clone();
@@ -522,6 +519,7 @@ fn entry_to_imported(e: &Entry) -> ImportedEntry {
 mod tests {
     use super::*;
     use crate::crypto::{self, KdfParams, VaultKey};
+    use crate::models::PASSWORD_HISTORY_CAP;
     use crate::store::SqliteStore;
 
     // Cheap Argon2id params: this proves which cipher the export reads with,
@@ -689,6 +687,52 @@ mod tests {
             .collect();
         store.import(&fresh).unwrap();
         assert_eq!(store.list().unwrap().len(), 2);
+    }
+
+    // The vault keeps ten previous passwords, so a file carrying more is held
+    // to ten as it is read — and a second import of that same file has to read
+    // as the row already there, not as twelve against the ten that were kept.
+    #[test]
+    fn a_login_with_more_history_than_the_vault_keeps_is_still_a_duplicate() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, store) = argon2_vault(&dir.path().join("vault.db"));
+        let cipher = key.payload_cipher();
+        let history: Vec<serde_json::Value> = (0..PASSWORD_HISTORY_CAP + 2)
+            .map(|i| {
+                serde_json::json!({
+                    "lastUsedDate": format!("2026-01-{:02}T00:00:00.000Z", 20 - i),
+                    "password": format!("old-{i}")
+                })
+            })
+            .collect();
+        let json = serde_json::json!({ "items": [{
+            "type": 1, "name": "Site",
+            "login": { "username": "alice", "password": "current",
+                       "uris": [{ "uri": "https://ex.com" }] },
+            "passwordHistory": history
+        }] })
+        .to_string();
+        let parse = || {
+            Format::from_name("bitwarden")
+                .unwrap()
+                .importer()
+                .parse(json.as_bytes())
+                .entries
+        };
+
+        let rows = parse();
+        assert_eq!(rows[0].password_history.len(), PASSWORD_HISTORY_CAP);
+        assert_eq!(duplicate_flags(&store, &cipher, &rows).unwrap(), [false]);
+        let records: Vec<Record> = rows
+            .iter()
+            .map(|row| {
+                let entry = imported_to_entry(row);
+                migrate::build_record(&entry, cipher.seal(&entry).unwrap()).unwrap()
+            })
+            .collect();
+        store.import(&records).unwrap();
+
+        assert_eq!(duplicate_flags(&store, &cipher, &parse()).unwrap(), [true]);
     }
 
     // Sync picks a conflict's winner by the greater `updated_at` alone, so a
