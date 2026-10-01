@@ -281,17 +281,19 @@ impl Entry {
     /// stamp becomes `now`. Only a login has a password, so on every other
     /// kind this only carries the (empty) stored values forward.
     ///
-    /// What is kept is *moved* out of `stored`, never copied: the history, the
-    /// stamp, and — when it changed — the old password, so no second copy of
-    /// any of them is left behind for the stored row's drop. An old password
-    /// that is not kept (unchanged, or blank) stays where it was, the caller's
-    /// to scrub with the rest of the row.
+    /// Everything this reads off `stored` is *taken* out of it, never copied:
+    /// the history and the stamp move to `self`, and the old password either
+    /// goes into the history or — unchanged, or blank — is scrubbed here, so
+    /// the stored row is left holding no password at all. Every save unseals
+    /// the stored row, a title-only edit included, and whoever drops that row
+    /// afterwards scrubs only what they know about; this is the one place that
+    /// knows about the password.
     pub fn record_password_change(&mut self, stored: Option<&mut Entry>, now: &str) {
-        let (history, stamp, old) = match stored {
+        let (history, stamp, mut old) = match stored {
             Some(s) => (
                 s.password_history.take(),
                 s.password_updated_at.take(),
-                Some(&mut s.password),
+                s.password.take(),
             ),
             None => (None, None, None),
         };
@@ -299,27 +301,25 @@ impl Entry {
         self.password_history = history;
         self.password_updated_at = stamp;
 
-        let current = self.password.as_deref().unwrap_or_default();
-        let changed = old
-            .as_deref()
-            .and_then(|o| o.as_deref())
-            .unwrap_or_default()
-            != current;
-        if !changed {
-            return;
+        let changed =
+            old.as_deref().unwrap_or_default() != self.password.as_deref().unwrap_or_default();
+        if changed {
+            if let Some(password) = old.take().filter(|p| !p.is_empty()) {
+                let history = self.password_history.get_or_insert_with(Vec::new);
+                history.insert(
+                    0,
+                    PasswordHistoryItem {
+                        password,
+                        replaced_at: now.to_string(),
+                    },
+                );
+                history.truncate(PASSWORD_HISTORY_CAP);
+            }
+            self.password_updated_at = Some(now.to_string());
         }
-        if let Some(password) = old.and_then(|o| o.take()).filter(|p| !p.is_empty()) {
-            let history = self.password_history.get_or_insert_with(Vec::new);
-            history.insert(
-                0,
-                PasswordHistoryItem {
-                    password,
-                    replaced_at: now.to_string(),
-                },
-            );
-            history.truncate(PASSWORD_HISTORY_CAP);
+        if let Some(mut old) = old {
+            old.zeroize();
         }
-        self.password_updated_at = Some(now.to_string());
     }
 
     /// Put back the passkey private keys the webview was never given, taking
@@ -1005,11 +1005,11 @@ mod tests {
         }
     }
 
-    // Kept by move: the stored row is left without what went into the history,
-    // so no copy of the old password outlives it. One that is not kept —
-    // unchanged — stays where it was, for the caller to scrub with the row.
+    // Taken, never copied: the stored row is left without its password, its
+    // history and its stamp, whether the password went into the history or —
+    // unchanged — was scrubbed, so nothing of it is left for the row's drop.
     #[test]
-    fn the_old_password_is_moved_out_of_the_stored_row() {
+    fn the_old_password_is_taken_out_of_the_stored_row_either_way() {
         let mut stored = with_password("old");
         let mut incoming = with_password("new");
         incoming.record_password_change(Some(&mut stored), NOW);
@@ -1023,7 +1023,7 @@ mod tests {
         };
         let mut incoming = with_password("same");
         incoming.record_password_change(Some(&mut stored), NOW);
-        assert_eq!(stored.password.as_deref(), Some("same"));
+        assert_eq!(stored.password, None);
         assert_eq!(stored.password_history, None);
         assert_eq!(
             incoming.password_history,

@@ -38,7 +38,6 @@ use interprocess::local_socket::{prelude::*, Name};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
-use zeroize::Zeroize;
 
 pub use self::actions::Client;
 use self::actions::{Host, Login};
@@ -716,12 +715,9 @@ pub(crate) fn save_login_in(
             ..Default::default()
         },
     };
+    // Takes the old password with it, into the history or scrubbed, so
+    // `previous` drops holding nothing.
     entry.record_password_change(previous.as_mut(), now);
-    // An old password the history did not keep (unchanged) is scrubbed here
-    // rather than dropped with `previous`.
-    if let Some(old) = previous.as_mut().and_then(|p| p.password.as_mut()) {
-        old.zeroize();
-    }
     let payload = cipher.seal(&entry).map_err(save_failed)?;
     let record = migrate::build_record(&entry, payload).map_err(save_failed)?;
     store
