@@ -60,7 +60,9 @@ Inside the decrypted database:
   body, card PIN) is **also** sealed as its own AES-256-GCM value nested inside.
   So a secret stays ciphertext even inside the *decrypted* database and is
   unsealed only when the user reveals or copies it (**decrypt-on-reveal**,
-  `reveal_entry` in `src-tauri/src/commands/vault.rs`).
+  `reveal_entry` in `src-tauri/src/commands/vault.rs`). Custom fields (`extra`)
+  ride in the whole-entry seal only: one the user marks concealed is masked on
+  screen and exported as a hidden field, but is not sealed again on its own.
 - **A payload is bound to its row.** Because the metadata columns are in the
   clear inside the decrypted database, someone holding only the SQLCipher key
   could otherwise move one row's sealed payload under another row's title and

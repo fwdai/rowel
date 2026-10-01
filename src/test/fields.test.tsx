@@ -444,8 +444,9 @@ describe('Passkeys on a login', () => {
   })
 })
 
-// Free-form label/value pairs. Wired into the identity form for now, but the
-// block itself knows nothing about the kind it renders for.
+// Free-form label/value pairs. Every kind renders them; the block itself knows
+// nothing about the kind it renders for, so it is tested through the identity
+// form.
 const identityMeta = () =>
   loginMeta({ id: 'i1', type: 'identity', title: 'UK Passport', urlHost: '' })
 
@@ -600,6 +601,59 @@ describe('Custom fields', () => {
     await userEvent.click(screen.getByText('Save'))
     expect(savedDraft()).toEqual(
       expect.objectContaining({ extra: [{ label: 'Categories', value: '' }] })
+    )
+  })
+
+  // Most entries never get one, so the editor offers the action alone — no
+  // heading over an empty section — until the first row is asked for.
+  it('offers only the add action until a row is added', async () => {
+    mockCommand('reveal_entry', () => identityEntry())
+    render(<Show entry={identityMeta()} editing />)
+
+    await waitFor(() => expect(input('name').value).toBe('ADA LOVELACE'))
+    expect(screen.queryByText('Custom fields')).not.toBeInTheDocument()
+    expect(document.querySelector('input[name="extra-label-0"]')).toBeNull()
+
+    await userEvent.click(screen.getByTestId('add-extra-field'))
+    expect(screen.getByText('Custom fields')).toBeInTheDocument()
+    expect(input('extra-label-0')).toBeInTheDocument()
+  })
+
+  it('masks a concealed value until it is revealed, and keeps it copyable', async () => {
+    mockCommand('reveal_entry', () => identityEntry([
+        { label: 'Blood type', value: 'O+' },
+        { label: 'Recovery PIN', value: '8842', secret: true }
+      ]))
+    render(<Show entry={identityMeta()} />)
+
+    const value = await screen.findByTestId('entry-extra-value-1')
+    expect(value).not.toHaveTextContent('8842')
+    // A plain one has nothing to reveal.
+    expect(screen.getByTestId('entry-extra-value-0')).toHaveTextContent('O+')
+    expect(screen.queryByTestId('reveal-extra-0')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('reveal-extra-1'))
+    expect(value).toHaveTextContent('8842')
+    await userEvent.click(screen.getByTestId('reveal-extra-1'))
+    expect(value).not.toHaveTextContent('8842')
+  })
+
+  it('conceals a value from the editor and saves it so', async () => {
+    mockCommand('reveal_entry', () => identityEntry([{ label: 'Recovery PIN', value: '8842' }]))
+    render(<Show entry={identityMeta()} editing />)
+
+    await waitFor(() => expect(input('extra-value-0').value).toBe('8842'))
+    expect(screen.getByTestId('conceal-extra-0')).toHaveAttribute('title', 'Conceal value')
+    await userEvent.click(screen.getByTestId('conceal-extra-0'))
+    // The box's dots are a WebKit style jsdom does not keep, so the toggle's
+    // own state is what can be read here.
+    expect(screen.getByTestId('conceal-extra-0')).toHaveAttribute('title', 'Stop concealing')
+
+    await userEvent.click(screen.getByText('Save'))
+    expect(savedDraft()).toEqual(
+      expect.objectContaining({
+        extra: [{ label: 'Recovery PIN', value: '8842', secret: true }]
+      })
     )
   })
 })

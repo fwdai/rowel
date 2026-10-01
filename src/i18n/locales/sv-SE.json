@@ -118,6 +118,8 @@
   "Custom fields": "Egna fält",
   "Add field": "Lägg till fält",
   "Remove field": "Ta bort fält",
+  "Conceal value": "Dölj värdet",
+  "Stop concealing": "Sluta dölja",
   "Label": "Etikett",
   "Value": "Värde",
   "Variables": "Variabler",

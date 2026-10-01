@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react'
+
 // A step rounder on the phone shell, where a card is the screen's main shape
 // rather than a panel inside a pane. `shadow-card` is its lift off the pane:
 // a faint drop plus a white top edge on light, a top glow alone on dark.
@@ -70,3 +72,6 @@ export const VALUE = `${VALUE_LINE} text-base`
 // secret's length: twelve dots for a value line, twenty-four for a block.
 export const MASK_DOTS = '•'.repeat(12)
 export const BLOCK_DOTS = '•'.repeat(24)
+
+// An input cannot fake dots, so a masked editor box hides its own text instead.
+export const MASK_INPUT = { WebkitTextSecurity: 'disc' } as CSSProperties

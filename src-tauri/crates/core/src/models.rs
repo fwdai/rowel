@@ -121,7 +121,8 @@ pub struct Entry {
     /// BE"). Kind-agnostic: any entry may hold them. `None` when there are none,
     /// so every pre-extras vault JSON, `.swftx` backup and fixture serializes
     /// byte-identically to before. Not obscured per field: the payload is sealed
-    /// as a whole, and per-field secrecy for extras is deferred.
+    /// as a whole, so a field marked `secret` is no more encrypted at rest than
+    /// any other — the flag says how it is shown (masked) and exported (hidden).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Vec<ExtraField>>,
     /// The user's star. Stored as a column rather than in the payload, so it
@@ -334,10 +335,15 @@ impl fmt::Debug for Passkey {
 }
 
 /// One free-form field on an entry: a label the user wrote and its value.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExtraField {
     pub label: String,
     pub value: String,
+    /// Concealed: masked until revealed, and a hidden field in an export.
+    /// Omitted when unset, so extras written before the flag existed serialize
+    /// byte-identically.
+    #[serde(default, skip_serializing_if = "is_unset")]
+    pub secret: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -798,6 +804,21 @@ mod tests {
         assert!(bare.extra.is_none());
         let out = serde_json::to_string(&bare).unwrap();
         assert!(!out.contains("extra"), "{out}");
+    }
+
+    // A concealed field says so; a plain one carries no `secret` key at all, so
+    // extras written before the flag existed serialize byte-identically.
+    #[test]
+    fn extra_field_secret_round_trips_and_is_omitted_when_unset() {
+        let plain = r#"{"label":"Blood type","value":"O+"}"#;
+        let field: ExtraField = serde_json::from_str(plain).unwrap();
+        assert!(!field.secret);
+        assert_eq!(serde_json::to_string(&field).unwrap(), plain);
+
+        let concealed = r#"{"label":"PIN","value":"1234","secret":true}"#;
+        let field: ExtraField = serde_json::from_str(concealed).unwrap();
+        assert!(field.secret);
+        assert_eq!(serde_json::to_string(&field).unwrap(), concealed);
     }
 
     fn meta(has_passkey: bool) -> crate::store::EntryMeta {

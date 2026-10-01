@@ -2,9 +2,25 @@ use super::export::{
     sanitize_cell, to_bitwarden_json, to_cxf_json, to_generic_csv, unsanitize_cell, CSV_VERSION,
 };
 use super::{detect, EntryKind, Format, ImportedEntry, ImportedPasskey, Importer};
+use crate::models::ExtraField;
 
 fn parse(fmt: Format, bytes: &[u8]) -> super::ImportResult {
     fmt.importer().parse(bytes)
+}
+
+fn field(label: &str, value: &str) -> ExtraField {
+    ExtraField {
+        label: label.into(),
+        value: value.into(),
+        secret: false,
+    }
+}
+
+fn concealed(label: &str, value: &str) -> ExtraField {
+    ExtraField {
+        secret: true,
+        ..field(label, value)
+    }
 }
 
 #[test]
@@ -114,7 +130,8 @@ fn round_trip_bitwarden_identity() {
 }
 
 // Bitwarden's custom fields are the extras: text and hidden are values a person
-// typed, boolean and linked are its own machinery and have nothing to carry.
+// typed (a hidden one stays concealed), boolean and linked are its own
+// machinery and have nothing to carry.
 #[test]
 fn bitwarden_reads_text_and_hidden_fields_as_extras() {
     let json = br#"{"items":[
@@ -132,34 +149,32 @@ fn bitwarden_reads_text_and_hidden_fields_as_extras() {
     assert_eq!(
         r.entries[0].extra,
         vec![
-            ("Categories".into(), "B, BE".into()),
-            ("Restrictions".into(), "01".into()),
+            field("Categories", "B, BE"),
+            concealed("Restrictions", "01"),
             // No type at all reads as text, and a value-less field is still a
             // label the user wrote.
-            ("Issuer note".into(), String::new()),
+            field("Issuer note", ""),
         ]
     );
 }
 
 // Extras belong to no kind, so a login keeps them too — and comes back with the
-// same pairs in the same order.
+// same pairs in the same order, a concealed one as a hidden field.
 #[test]
 fn round_trip_bitwarden_extras() {
     let entries = vec![ImportedEntry {
         kind: EntryKind::Login,
         title: "Acme".into(),
         username: Some("alice".into()),
-        extra: vec![
-            ("Account ID".into(), "42".into()),
-            ("Blood type".into(), "O+".into()),
-        ],
+        extra: vec![field("Account ID", "42"), concealed("Recovery PIN", "0000")],
         ..Default::default()
     }];
     let bytes = to_bitwarden_json(&entries).unwrap();
     let out: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(out["items"][0]["fields"][0]["name"], "Account ID");
     assert_eq!(out["items"][0]["fields"][0]["type"], 0);
-    assert_eq!(out["items"][0]["fields"][1]["value"], "O+");
+    assert_eq!(out["items"][0]["fields"][1]["value"], "0000");
+    assert_eq!(out["items"][0]["fields"][1]["type"], 1);
 
     let back = parse(Format::Bitwarden, &bytes);
     assert!(back.errors.is_empty(), "{:?}", back.errors);
@@ -971,10 +986,7 @@ fn imported_environment_lands_on_the_switch_or_in_the_extras() {
     let back = parse(Format::Cxf, &to_cxf_json(&[staging]).unwrap());
     assert!(back.errors.is_empty(), "{:?}", back.errors);
     assert_eq!(back.entries[0].api_environment, None);
-    assert_eq!(
-        back.entries[0].extra,
-        vec![("Environment".to_string(), "staging".to_string())]
-    );
+    assert_eq!(back.entries[0].extra, vec![field("Environment", "staging")]);
 
     let bytes = b"type,title,api_key,environment\napikey,Coupler.io,cpl_live_abc,Production\n";
     let back = super::csv::GenericCsv.parse(bytes);
@@ -1445,7 +1457,7 @@ fn round_trip_bitwarden_favorite_dates_and_a_labelled_field() {
 #[test]
 fn a_users_own_field_sharing_our_label_survives_a_bitwarden_round_trip() {
     let mut login = starred_login();
-    login.extra = vec![("Email".into(), "the user's own note".into())];
+    login.extra = vec![field("Email", "the user's own note")];
     let entries = vec![login];
     let bytes = to_bitwarden_json(&entries).unwrap();
     let out: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
@@ -1467,8 +1479,8 @@ fn a_users_own_field_sharing_a_label_we_did_not_write_survives_a_bitwarden_round
     login.email = None;
     login.favorite = false;
     login.extra = vec![
-        ("Email".into(), "the user's own note".into()),
-        ("favorite".into(), "yes, very".into()),
+        field("Email", "the user's own note"),
+        field("favorite", "yes, very"),
     ];
     let entries = vec![login];
     let bytes = to_bitwarden_json(&entries).unwrap();
@@ -1564,4 +1576,177 @@ fn round_trip_cxf_favorite_dates_and_a_labelled_field() {
     let back = parse(Format::Cxf, &bytes);
     assert!(back.errors.is_empty(), "{:?}", back.errors);
     assert_eq!(back.entries, entries);
+}
+
+// --- custom fields in CXF ----------------------------------------------------
+
+// Another exporter's `custom-fields` credential is the user's own fields: a
+// `concealed-string` stays concealed, anything else is shown as its text, and a
+// field with neither a label nor a value is not carried.
+#[test]
+fn cxf_reads_custom_fields_as_extras() {
+    let json = br#"{"version":{"major":1,"minor":0},"accounts":[{"items":[
+      {"id":"aQ","title":"Acme","credentials":[
+        {"type":"basic-auth","username":{"fieldType":"string","value":"neo"}},
+        {"type":"custom-fields","label":"More","fields":[
+          {"fieldType":"string","label":"Account ID","value":"42"},
+          {"fieldType":"concealed-string","label":"Recovery PIN","value":"0000"},
+          {"fieldType":"boolean","label":"Business","value":"true"},
+          {"fieldType":"string","label":"","value":""}
+        ]}
+      ]}
+    ]}]}"#;
+    let back = parse(Format::Cxf, json);
+    assert!(back.errors.is_empty(), "{:?}", back.errors);
+    assert_eq!(
+        back.entries[0].extra,
+        vec![
+            field("Account ID", "42"),
+            concealed("Recovery PIN", "0000"),
+            field("Business", "true"),
+        ]
+    );
+}
+
+// The user's extras travel in a custom-fields credential of their own, after
+// ours, with their concealment — and one wearing a label of ours that we had
+// nothing to write under comes back as theirs, as in Bitwarden.
+#[test]
+fn round_trip_cxf_extras() {
+    let mut login = starred_login();
+    login.email = None;
+    login.extra = vec![
+        field("Account ID", "42"),
+        concealed("Recovery PIN", "0000"),
+        field("Email", "the user's own note"),
+    ];
+    let entries = vec![login];
+    let bytes = to_cxf_json(&entries).unwrap();
+    let out: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let custom: Vec<&serde_json::Value> = out["accounts"][0]["items"][0]["credentials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["type"] == "custom-fields")
+        .collect();
+    let types: Vec<(&str, &str)> = custom.last().unwrap()["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["label"].as_str().unwrap(),
+                f["fieldType"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        types,
+        vec![
+            ("Account ID", "string"),
+            ("Recovery PIN", "concealed-string"),
+            ("Email", "string"),
+        ]
+    );
+
+    let back = parse(Format::Cxf, &bytes);
+    assert!(back.errors.is_empty(), "{:?}", back.errors);
+    assert_eq!(back.entries, entries);
+}
+
+// An export of a vault with no extras writes no credential for them.
+#[test]
+fn cxf_export_omits_custom_fields_without_extras() {
+    let entries = vec![ImportedEntry {
+        kind: EntryKind::Note,
+        title: "Wifi".into(),
+        notes: Some("on the router".into()),
+        ..Default::default()
+    }];
+    let bytes = to_cxf_json(&entries).unwrap();
+    let out: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let credentials = out["accounts"][0]["items"][0]["credentials"]
+        .as_array()
+        .unwrap();
+    assert!(credentials.iter().all(|c| c["type"] != "custom-fields"));
+}
+
+// --- a user's field wearing a label of ours ----------------------------------
+
+// The SSH and API-key labels are claimed by their kind, not by the shared table,
+// and a user's field wearing one — with or without a value of ours under it —
+// still comes back as theirs, concealment and all, in both formats.
+#[test]
+fn a_users_field_sharing_a_kind_label_survives_a_round_trip() {
+    let bare_key = ImportedEntry {
+        ssh_passphrase: None,
+        extra: vec![concealed("Passphrase", "the user's own")],
+        ..ssh_entry()
+    };
+    let locked_key = ImportedEntry {
+        extra: vec![concealed("passphrase", "the user's own")],
+        ..ssh_entry()
+    };
+    let api_key = ImportedEntry {
+        api_scopes: None,
+        extra: vec![
+            concealed("Scopes", "the user's own"),
+            field("Environment", "theirs too"),
+        ],
+        ..apikey_entry()
+    };
+
+    let cxf = vec![bare_key.clone(), locked_key.clone(), api_key];
+    let back = parse(Format::Cxf, &to_cxf_json(&cxf).unwrap());
+    assert!(back.errors.is_empty(), "{:?}", back.errors);
+    assert_eq!(back.entries, cxf);
+
+    // Bitwarden carries no tags, and an API key goes out one-way as a login.
+    let bitwarden: Vec<ImportedEntry> = [bare_key, locked_key]
+        .into_iter()
+        .map(|e| ImportedEntry { tags: vec![], ..e })
+        .collect();
+    let back = parse(Format::Bitwarden, &to_bitwarden_json(&bitwarden).unwrap());
+    assert!(back.errors.is_empty(), "{:?}", back.errors);
+    assert_eq!(back.entries, bitwarden);
+}
+
+// Another exporter's custom fields are the user's whatever they are called: a
+// label of ours there is not ours, so nothing is claimed from them — not the
+// star, not a document's part, not an SSH key's — and every value stays put.
+#[test]
+fn a_third_party_cxf_field_sharing_our_label_stays_the_users() {
+    let json = br#"{"version":{"major":1,"minor":0},"exporterRpId":"example.com","accounts":[{"items":[
+      {"id":"aQ","title":"Acme","credentials":[
+        {"type":"basic-auth","username":{"fieldType":"string","value":"neo"}},
+        {"type":"custom-fields","label":"More","fields":[
+          {"fieldType":"string","label":"Favorite","value":"yes, very"},
+          {"fieldType":"string","label":"Nationality","value":"French"},
+          {"fieldType":"concealed-string","label":"PIN","value":"1234"}
+        ]}
+      ]},
+      {"id":"aR","title":"Deploy","credentials":[
+        {"type":"ssh-key","keyType":"ssh-ed25519","privateKey":{"fieldType":"concealed-string","value":"KEY"}},
+        {"type":"custom-fields","label":"SSH key","fields":[
+          {"fieldType":"concealed-string","label":"Passphrase","value":"hunter2"}
+        ]}
+      ]}
+    ]}]}"#;
+    let back = parse(Format::Cxf, json);
+    assert!(back.errors.is_empty(), "{:?}", back.errors);
+    let login = &back.entries[0];
+    assert!(!login.favorite);
+    assert_eq!(login.doc_nationality, None);
+    assert_eq!(login.card_pin, None);
+    assert_eq!(
+        login.extra,
+        vec![
+            field("Favorite", "yes, very"),
+            field("Nationality", "French"),
+            concealed("PIN", "1234"),
+        ]
+    );
+    let key = &back.entries[1];
+    assert_eq!(key.ssh_passphrase, None);
+    assert_eq!(key.extra, vec![concealed("Passphrase", "hunter2")]);
 }

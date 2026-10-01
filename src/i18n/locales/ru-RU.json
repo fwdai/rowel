@@ -118,6 +118,8 @@
   "Custom fields": "Свои поля",
   "Add field": "Добавить поле",
   "Remove field": "Удалить поле",
+  "Conceal value": "Скрывать значение",
+  "Stop concealing": "Не скрывать",
   "Label": "Название",
   "Value": "Значение",
   "Variables": "Переменные",
