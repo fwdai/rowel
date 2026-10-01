@@ -5,13 +5,14 @@
 //!
 //! - [`VaultKey::Argon2`] — the current scheme. The master password is fed
 //!   **directly** to Argon2id (no `hash_secret` pre-hash); the 32-byte output is
-//!   HKDF-split into a SQLCipher key and a payload key. Payloads are sealed with
-//!   AES-256-GCM under the payload key ([`PayloadCipher::Aead`]) — one AEAD per
-//!   entry, no per-payload KDF.
+//!   HKDF-split into a SQLCipher key, a payload key and an attachment key.
+//!   Payloads are sealed with AES-256-GCM under the payload key
+//!   ([`PayloadCipher::Aead`]) — one AEAD per entry, no per-payload KDF — and
+//!   attached files under the attachment key ([`AttachmentCipher`]).
 //! - [`VaultKey::Legacy`] — back-compat for interim/dev DBs created before the
 //!   Argon2id wiring, which have no sidecar. Keeps the old deterministic
 //!   SQLCipher key and the per-field PBKDF2 [`Cryptor`] payload format so those
-//!   vaults still open.
+//!   vaults still open. They take no attachments.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use zeroize::Zeroizing;
@@ -20,9 +21,10 @@ use super::{hash_secret, hkdf_subkey, seal_aead, sqlcipher_key, unseal_aead, Cry
 use crate::error::{Error, Result};
 use crate::models::Entry;
 
-// HKDF `info` labels — one master key, three independent subkeys.
+// HKDF `info` labels — one master key, four independent subkeys.
 const INFO_SQLCIPHER: &[u8] = b"sqlcipher-db-key";
 const INFO_PAYLOAD: &[u8] = b"payload-aead-key";
+const INFO_ATTACHMENT: &[u8] = b"attachment-aead-key";
 // The gdrive/sync token blob is encrypted with a legacy `Cryptor`; give it a
 // stable, install-specific secret derived from the master so the (disabled) sync
 // path keeps a self-consistent cipher without holding the password.
@@ -61,6 +63,19 @@ impl VaultKey {
                 PayloadCipher::Aead(Zeroizing::new(hkdf_subkey(master, INFO_PAYLOAD)))
             }
             Self::Legacy { secret } => PayloadCipher::Legacy(Cryptor::new(secret_str(secret))),
+        }
+    }
+
+    /// The cipher that seals attached files, or `None` for a legacy-keyed
+    /// vault: those still open, but get no new storage scheme of their own —
+    /// attaching a file there is refused rather than sealed some second way.
+    pub fn attachment_cipher(&self) -> Option<AttachmentCipher> {
+        match self {
+            Self::Argon2 { master } => Some(AttachmentCipher(Zeroizing::new(hkdf_subkey(
+                master,
+                INFO_ATTACHMENT,
+            )))),
+            Self::Legacy { .. } => None,
         }
     }
 
@@ -166,6 +181,26 @@ impl PayloadCipher {
     }
 }
 
+/// Seals and unseals the files attached to entries: AES-256-GCM under a subkey
+/// of its own, so a file key and a payload key never coincide, with the
+/// attachment's id as associated data. The id is what binds a blob to its row,
+/// as [`PayloadCipher`] binds a payload: a blob moved under another row's name
+/// and entry fails its tag there. There is no id inside the plaintext to check
+/// instead — it is the file's own bytes — so the AAD is the whole binding, and
+/// there is no AAD-less generation to fall back to.
+pub struct AttachmentCipher(Zeroizing<[u8; KEY_LEN]>);
+
+impl AttachmentCipher {
+    pub fn seal(&self, id: &str, bytes: &[u8]) -> Result<Vec<u8>> {
+        seal_aead(&*self.0, id.as_bytes(), bytes)
+    }
+
+    /// The file stored on row `id`, scrubbed when the caller drops it.
+    pub fn unseal(&self, id: &str, blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        unseal_aead(&*self.0, id.as_bytes(), blob).map(Zeroizing::new)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +268,36 @@ mod tests {
         let cipher = key.payload_cipher();
         assert_eq!(cipher.unseal("1", &sealed).unwrap().id, "1");
         assert!(cipher.unseal("2", &sealed).is_err());
+    }
+
+    #[test]
+    fn an_attachment_round_trips_and_its_key_is_its_own() {
+        let key = argon2_key();
+        let cipher = key.attachment_cipher().unwrap();
+        let sealed = cipher.seal("a1", b"%PDF-1.7 secret").unwrap();
+        assert!(!sealed.windows(6).any(|w| w == b"secret"));
+        assert_eq!(&**cipher.unseal("a1", &sealed).unwrap(), b"%PDF-1.7 secret");
+
+        let PayloadCipher::Aead(payload) = key.payload_cipher() else {
+            panic!("argon2 vault must use the AEAD payload cipher");
+        };
+        assert_ne!(*cipher.0, *payload, "file and payload subkeys must differ");
+        assert!(unseal_aead(&*payload, b"a1", &sealed).is_err());
+    }
+
+    // The swap the AAD exists for: a blob moved under another attachment row.
+    #[test]
+    fn an_attachment_does_not_unseal_under_another_rows_id() {
+        let cipher = argon2_key().attachment_cipher().unwrap();
+        let sealed = cipher.seal("a1", b"file").unwrap();
+        assert!(cipher.unseal("a2", &sealed).is_err());
+    }
+
+    #[test]
+    fn a_legacy_vault_has_no_attachment_cipher() {
+        assert!(VaultKey::legacy_from_password("pw")
+            .attachment_cipher()
+            .is_none());
     }
 
     #[test]

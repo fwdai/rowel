@@ -181,6 +181,19 @@ export interface EntryMeta {
   deletedAt?: string
 }
 
+// A file attached to an entry, as its list shows it. The file itself never
+// reaches the webview: it is read, sealed, unsealed and written in Rust.
+export interface Attachment {
+  id: string
+  entryId: string
+  name: string
+  // Guessed from the name; absent when it says nothing.
+  mime?: string
+  // Bytes, before sealing.
+  size: number
+  createdAt?: string
+}
+
 export interface UnlockResult {
   entries: EntryMeta[]
   syncConfigured: boolean

@@ -27,7 +27,9 @@ use crate::error::{Error, Result};
 use crate::session::{store_err, Session};
 use crate::state::AppState;
 use crate::storage;
-use crate::store::{identity, state_digest, Record, SqliteStore, StoreError, VaultStore};
+use crate::store::{
+    identity, vault_digest, Attachment, Record, SqliteStore, StoreError, VaultStore,
+};
 
 /// How long a tombstone is kept before it is reclaimed. A device offline for
 /// longer than this can resurrect what it deleted; see
@@ -85,9 +87,10 @@ pub trait LocalVault {
     /// Open a pulled `.rowel` pack and read it out. The local database is not
     /// touched: the snapshot goes into its own scratch DB.
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot>;
-    /// Last-writer-wins merge of `incoming`; returns the rows written.
-    fn merge(&self, incoming: &[Record]) -> Result<usize>;
-    /// Fingerprint of the whole entry table, tombstones included.
+    /// Last-writer-wins merge of the pulled entries and attachments; returns
+    /// the rows written.
+    fn merge(&self, incoming: &Snapshot) -> Result<usize>;
+    /// Fingerprint of the entry and attachment tables, tombstones included.
     fn digest(&self) -> Result<[u8; 32]>;
     /// Reclaim tombstones older than `cutoff_ms`, then pack the vault for upload.
     fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>>;
@@ -122,9 +125,11 @@ pub trait LocalVault {
     fn adopt_name(&self, name: &str, at_ms: i64) -> Result<()>;
 }
 
-/// A pulled pack, opened: the entries in it and the name it was pushed under.
+/// A pulled pack, opened: the entries and attachments in it and the name it
+/// was pushed under.
 pub struct Snapshot {
     pub records: Vec<Record>,
+    pub attachments: Vec<Attachment>,
     /// The name in the pack's `meta`, with the ms-epoch stamp it was set at.
     /// `(None, 0)` for a pack pushed before names travelled.
     pub name: Option<String>,
@@ -179,7 +184,7 @@ pub fn sync<R: Remote, L: LocalVault>(
             None => None,
         };
         if let Some(snapshot) = &incoming {
-            outcome.merged += local.merge(&snapshot.records)?;
+            outcome.merged += local.merge(snapshot)?;
             // The name is last-writer-wins too, but on its own stamp: a rename
             // is a change to the vault that leaves no row in the entry table.
             // `identity::name_wins` is the whole decision — a total order, so a
@@ -223,7 +228,11 @@ pub fn sync<R: Remote, L: LocalVault>(
             // Anything else — equal pairs, or a remote that just won — has
             // nothing to say and stops here.
             let held = local.name()?;
-            if local.digest()? == state_digest(&snapshot.records)
+            let theirs = vault_digest(
+                &snapshot.records,
+                snapshot.attachments.iter().map(|a| (&a.meta, a.blob.len())),
+            );
+            if local.digest()? == theirs
                 && !identity::name_wins(
                     (held.0.as_deref(), held.1),
                     (snapshot.name.as_deref(), snapshot.name_ms),
@@ -338,8 +347,8 @@ impl LocalVault for SessionVault {
         decode_pack(pack_bytes, &self.kdf_params_json, &self.key, &self.scratch)
     }
 
-    fn merge(&self, incoming: &[Record]) -> Result<usize> {
-        self.with_store(|store| store.merge_records(incoming).map_err(store_err))
+    fn merge(&self, incoming: &Snapshot) -> Result<usize> {
+        self.with_store(|store| merge_snapshot(store, incoming))
     }
 
     fn digest(&self) -> Result<[u8; 32]> {
@@ -429,9 +438,20 @@ fn records_from_snapshot(snapshot: &[u8], key: &[u8], scratch_dir: &Path) -> Res
     let (name, name_ms) = identity::vault_name(&store).map_err(store_err)?;
     Ok(Snapshot {
         records: store.export_for_sync().map_err(store_err)?,
+        attachments: store.export_attachments_for_sync().map_err(store_err)?,
         name,
         name_ms,
     })
+}
+
+// Entries first, so a purge among them has taken its files on this side before
+// the pulled attachment rows are weighed against them.
+fn merge_snapshot(store: &SqliteStore, incoming: &Snapshot) -> Result<usize> {
+    let entries = store.merge_records(&incoming.records).map_err(store_err)?;
+    let files = store
+        .merge_attachments(&incoming.attachments)
+        .map_err(store_err)?;
+    Ok(entries + files)
 }
 
 // A pack this build cannot parse is corruption, except for a format stamped by
@@ -476,6 +496,7 @@ impl Drop for Scratch {
 mod tests {
     use super::*;
     use crate::crypto::KdfParams;
+    use crate::store::{state_digest, AttachmentMeta};
     use std::sync::atomic::AtomicBool;
     use std::sync::Mutex;
 
@@ -590,8 +611,8 @@ mod tests {
         fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
             decode_pack(pack_bytes, &kdf_json(), KEY, &self.scratch)
         }
-        fn merge(&self, incoming: &[Record]) -> Result<usize> {
-            self.store.merge_records(incoming).map_err(store_err)
+        fn merge(&self, incoming: &Snapshot) -> Result<usize> {
+            merge_snapshot(&self.store, incoming)
         }
         fn digest(&self) -> Result<[u8; 32]> {
             self.store.state_digest().map_err(store_err)
@@ -996,6 +1017,110 @@ mod tests {
         let b = Device::seeded(&[record("recent", 100, b"stale copy")]);
         sync(&remote, &b, NOW).unwrap();
         assert_eq!(b.ids(), vec!["live"], "the delete propagated");
+    }
+
+    // --- attachments -------------------------------------------------------
+    //
+    // They ride the same pack and merge per row beside the entries, so a file
+    // added, or removed, on one device reaches the other — and a removal is
+    // never undone by a peer that still holds the file.
+
+    fn attachment(id: &str, entry_id: &str, blob: &[u8]) -> Attachment {
+        Attachment {
+            meta: AttachmentMeta {
+                id: id.into(),
+                entry_id: entry_id.into(),
+                name: format!("{id}.pdf"),
+                mime: None,
+                size: blob.len() as i64,
+                created_at: 0,
+                updated_at: 0,
+                deleted_at: None,
+            },
+            blob: blob.to_vec(),
+        }
+    }
+
+    fn files(device: &Device, entry_id: &str) -> Vec<String> {
+        device
+            .store
+            .list_attachments(entry_id)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect()
+    }
+
+    #[test]
+    fn an_attachment_added_on_one_device_reaches_the_other() {
+        let a = Device::seeded(&[record("1", 200, b"one")]);
+        let b = Device::seeded(&[record("1", 200, b"one")]);
+        let remote = FakeRemote::default();
+        sync(&remote, &a, NOW).unwrap();
+        sync(&remote, &b, NOW).unwrap();
+
+        // Only the attachment table changed, so the push has to see it.
+        a.store
+            .insert_attachment(&attachment("f1", "1", b"sealed"))
+            .unwrap();
+        assert!(sync(&remote, &a, NOW).unwrap().pushed);
+
+        let outcome = sync(&remote, &b, NOW).unwrap();
+        assert_eq!(outcome.merged, 1);
+        assert!(!outcome.pushed);
+        assert_eq!(files(&b, "1"), vec!["f1"]);
+        assert_eq!(
+            b.store.get_attachment("f1").unwrap().unwrap().blob,
+            b"sealed"
+        );
+        assert_eq!(
+            a.store.state_digest().unwrap(),
+            b.store.state_digest().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_removed_attachment_stays_removed_on_every_device() {
+        let a = Device::seeded(&[record("1", 200, b"one")]);
+        a.store
+            .insert_attachment(&attachment("f1", "1", b"sealed"))
+            .unwrap();
+        let b = Device::new();
+        let remote = FakeRemote::default();
+        sync(&remote, &a, NOW).unwrap();
+        sync(&remote, &b, NOW).unwrap();
+        assert_eq!(files(&b, "1"), vec!["f1"]);
+
+        // B removes it; A, which still holds it live, pulls the removal.
+        b.store.remove_attachment("f1").unwrap();
+        assert!(sync(&remote, &b, NOW).unwrap().pushed);
+        sync(&remote, &a, NOW).unwrap();
+        assert!(files(&a, "1").is_empty());
+
+        // A stale snapshot from before the removal cannot bring it back.
+        let stale = Device::seeded(&[record("1", 200, b"one")]);
+        stale
+            .store
+            .import_attachments(&[Attachment {
+                meta: AttachmentMeta {
+                    updated_at: i64::MAX,
+                    ..attachment("f1", "1", b"").meta
+                },
+                blob: b"sealed".to_vec(),
+            }])
+            .unwrap();
+        remote.put(stale.pack_bytes());
+        sync(&remote, &a, NOW).unwrap();
+        assert!(files(&a, "1").is_empty());
+        assert!(a.store.get_attachment("f1").unwrap().is_none());
+        assert!(remote_files(&remote).iter().all(|f| f.blob.is_empty()));
+    }
+
+    fn remote_files(remote: &FakeRemote) -> Vec<Attachment> {
+        let unpacked = pack::unpack(&remote.content().unwrap()).unwrap();
+        records_from_snapshot(&unpacked.snapshot, KEY, &tmp_dir())
+            .unwrap()
+            .attachments
     }
 
     #[test]

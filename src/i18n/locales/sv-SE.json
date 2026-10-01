@@ -699,5 +699,11 @@
   "{{site}} wants to sign in with your passkey": "{{site}} vill logga in med din nyckel",
   "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} vill logga in med din nyckel för {{account}}",
   "Account": "Konto",
-  "Asked by {{origin}} through the browser extension.": "Begärt av {{origin}} via webbläsartillägget."
+  "Asked by {{origin}} through the browser extension.": "Begärt av {{origin}} via webbläsartillägget.",
+  "Attach file": "Bifoga fil",
+  "Attaching…": "Bifogar…",
+  "Attachments": "Bilagor",
+  "Attachments can be up to {{size}} each": "Varje bilaga får vara högst {{size}}",
+  "Remove attachment": "Ta bort bilaga",
+  "Remove?": "Ta bort?"
 }

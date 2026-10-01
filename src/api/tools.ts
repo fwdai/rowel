@@ -63,9 +63,12 @@ export const getAudit = (checkBreaches: boolean): Promise<Audit> =>
  *
  * `label` names the filter in the dialog's own chrome, so it comes from the
  * catalogue the webview owns. `'env'` takes any file — an env file may be
- * named anything.
+ * named anything — and so does `'attachment'`.
  */
-export const pickFileToRead = (kind: 'image' | 'env', label?: string): Promise<string | null> =>
+export const pickFileToRead = (
+  kind: 'image' | 'env' | 'attachment',
+  label?: string
+): Promise<string | null> =>
   call('pick_file', { kind, label: label ?? null })
 
 export interface ScanResult {

@@ -65,7 +65,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         // with: an extension the scanner opens makes it an image, anything else
         // an env file, which may be named anything (`read_env_file` applies its
         // own name-or-content check to those). So a dropped photo cannot be
-        // read back as text, nor a dropped `.env` be OCRed.
+        // read back as text, nor a dropped `.env` be OCRed. Either may still be
+        // attached to the open entry (see `PathGrants::grant_drop`).
         if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
             let grants = handle.state::<PathGrants>();
             for path in paths {
@@ -74,7 +75,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 } else {
                     Purpose::Env
                 };
-                grants.grant(path, purpose);
+                grants.grant_drop(path, purpose);
             }
         }
         // Coming back to the foreground is how a consent flow the user walked

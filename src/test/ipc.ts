@@ -169,6 +169,18 @@ const DEFAULTS: Record<string, Handler> = {
   export_vault: () => null,
   save_env_file: () => null,
 
+  // Attachments: none until a spec adds one, and a save dialog dismissed.
+  attachment_list: () => [],
+  attachment_add: ({ entryId, path }) => ({
+    id: 'a1',
+    entryId,
+    name: String(path).replace(/^.*[\\/]/, ''),
+    size: 2048,
+    createdAt: '2024-01-01T00:00:00.000Z'
+  }),
+  attachment_save: () => null,
+  attachment_delete: () => undefined,
+
   generate_password: () => 'Generated123!',
   generate_ssh_key: () => ({
     privateKey:

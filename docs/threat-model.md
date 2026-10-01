@@ -21,16 +21,18 @@ and external links are opened through the OS only for `http`/`https` URLs
 (`opener:allow-open-url` scope in `capabilities/default.json`; plain `http` is
 kept because routers and intranet logins have no other address, and the scope
 exists to shut out `file:`, `javascript:` and custom schemes, not to upgrade
-transport). Two commands read a path the webview names — `scan_image` (a photo
-of a card or identity document) and `read_env_file` — and neither trusts the
-path it is handed. A path is readable only if it was granted by one of two
+transport). Three commands read a path the webview names — `scan_image` (a photo
+of a card or identity document), `read_env_file` and `attachment_add` — and
+none trusts the path it is handed. A path is readable only if it was granted by one of two
 events the core itself observes: the OS file dialog run from Rust
 (`pick_file`), or an OS drag-and-drop onto the window (`PathGrants`, one-shot,
 consumed on use). A grant carries the purpose it was made for — the picker's
-kind (`image` or `env`), or for a drop the file's kind — and each reader spends
-only a grant of its own purpose: a path the user chose in an env-file dialog
-cannot be read by `scan_image`, so the dialog's framing is part of what was
-consented to. The session must then still be the one that asked — the epoch
+kind (`image`, `env` or `attachment`), or for a drop the file's kind — and each
+reader spends only a grant of its own purpose: a path the user chose in an
+env-file dialog cannot be read by `scan_image`, so the dialog's framing is part
+of what was consented to. The one exception is a drop, which `attachment_add`
+may also spend: the file was handed to the app itself, and attaching it seals
+it away and returns nothing of it. The session must then still be the one that asked — the epoch
 is re-checked after the read, so a lock or a workspace switch mid-read discards
 the bytes. Only then is the file classified: the extension against a fixed
 image list (`scan/mod.rs`), the `.env` name-or-parse check and the 1 MiB cap
@@ -133,7 +135,9 @@ no pre-hash (`crypto/kdf.rs`) — and from that master two independent subkeys b
   with a fresh random nonce per value and no per-payload KDF. This is the key
   that seals each entry payload and each nested secret field.
 
-One KDF pass covers both, and neither subkey reveals the other.
+A third label, `attachment-aead-key`, keys the attached files (see
+"Attachments" below). One KDF pass covers all of them, and no subkey reveals
+another.
 
 The parameters and the salt have to be readable *before* the encrypted database
 can be opened, so they live in a plaintext sidecar beside it, `vault.kdf.json`
@@ -231,6 +235,52 @@ carries them as part of the opaque payload and never sees them.
 - **The AAGUID is a model identifier, not a device one.** One fixed value for
   every Rowel install (`passkey::AAGUID`), so it cannot be used to correlate a
   user across relying parties.
+
+### Attachments
+
+Any entry but an env file can carry files (`commands/attachments.rs`). A file
+is never put inside the entry: an entry is sealed and revealed whole, so its
+bytes would reach the webview on every reveal.
+
+- **Where they live.** One row per file in an `attachments` table beside
+  `entries`, inside the same SQLCipher database. `entry_id`, `name`, `mime`,
+  `size` and the timestamps are plaintext columns, protected at rest by
+  SQLCipher like an entry's title. The `blob` is the file sealed with the app
+  AEAD on top.
+- **How they are keyed.** AES-256-GCM under a third HKDF subkey of the master
+  (`attachment-aead-key`, beside the SQLCipher and payload labels in
+  `crypto/vault.rs`), with a fresh nonce per file and the attachment id as
+  associated data, so a blob moved under another row fails its tag
+  (`crypto::AttachmentCipher`). A master-password change re-seals every blob
+  under the new subkey with the payloads, before the `PRAGMA rekey`. A
+  legacy-keyed (sidecar-less) vault is refused attachments rather than given a
+  second scheme.
+- **The webview never sees the bytes.** It names a file; Rust reads it, seals
+  it and stores it. The path must carry a grant (`PathGrants`): the attachment
+  picker (`pick_file` with the `attachment` purpose) or an OS drop on the
+  window, which a drop may be spent on whatever its kind, since attaching hands
+  nothing back. A save unseals in Rust and writes through the same save-dialog
+  writer as an export (`save::save_export`: owner-only on desktop, staged in
+  the sandbox for the iOS exporter). The webview receives name, type and size.
+  Add and save re-check the session epoch after their off-thread step, so a
+  lock or workspace switch mid-read discards the bytes; every command fails on
+  a locked vault.
+- **The cap.** 10 MiB per file (`MAX_ATTACHMENT_BYTES`), enforced on the read
+  itself (`read_regular_file_capped`), refused as `fileTooLarge`. There is no
+  whole-vault budget yet: the 256 MiB pack cap and the 256 MiB backup-restore
+  cap bound the vault as a whole, and nothing warns before files take a vault
+  past them.
+- **Delete, purge, sync.** Deleting an entry tombstones its live files at the
+  same instant; restoring it brings back exactly those. "Delete forever" (and a
+  purge arriving through sync) empties every file's blob, name and type in
+  place, leaving a content-free shell zeroed by `secure_delete`. Removing a
+  single file goes straight to that shell, since nothing restores it. Sync
+  carries the rows in the pack and merges them per row, last-writer-wins on
+  `updated_at`, with the shell absorbing as an entry's is, so a removed file
+  does not come back from a peer that still holds it. Tombstones are reclaimed
+  with the entries' after 90 days. Shares, the Bitwarden/CXF/CSV exports and
+  the legacy `.swftx` export carry no attachments; a `.rowel` backup is the
+  database snapshot and carries them.
 
 ## Key lifecycle across the process split
 

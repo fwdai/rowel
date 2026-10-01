@@ -1,4 +1,6 @@
 pub mod app;
+// Files attached to entries, sealed and kept beside them.
+pub mod attachments;
 pub mod audit;
 pub mod auth;
 // Adding the account's other vaults with the password that just opened one.

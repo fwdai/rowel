@@ -19,7 +19,7 @@ pub mod identity;
 #[cfg(test)]
 mod tests;
 
-pub use hash::{record_hash, state_digest};
+pub use hash::{record_hash, state_digest, vault_digest};
 pub use sqlite::{create_private_dir, SqliteStore, SYNC_META_PREFIX};
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -107,6 +107,31 @@ pub struct EntryMeta {
     pub username: Option<String>,
 }
 
+/// A file attached to an entry, without the file: what the entry's list of
+/// attachments shows. Name, type and size sit in plaintext columns like an
+/// entry's title — protected at rest by SQLCipher, readable without unsealing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentMeta {
+    pub id: String,
+    pub entry_id: String,
+    pub name: String,
+    pub mime: Option<String>,
+    /// The file's length in bytes, before sealing.
+    pub size: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub deleted_at: Option<i64>,
+}
+
+/// A full attachment row: the metadata plus the **opaque** sealed file. Like
+/// [`Record::payload`], the store never inspects or encrypts `blob`; the caller
+/// seals it (see `crypto::AttachmentCipher`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    pub meta: AttachmentMeta,
+    pub blob: Vec<u8>,
+}
+
 /// The swappable storage contract. Any backend behind this interface is a drop-in.
 pub trait VaultStore: Send {
     /// Read a `meta` value (schema_version, kdf, salt, …). Values are caller-owned.
@@ -141,6 +166,23 @@ pub trait VaultStore: Send {
     fn export_for_sync(&self) -> Result<Vec<Record>>;
     /// Bulk-write records in one transaction, preserving their timestamps (sync in).
     fn import(&self, recs: &[Record]) -> Result<()>;
+
+    // Attachments follow their entry: [`VaultStore::delete`] tombstones an
+    // entry's attachments with it, [`VaultStore::restore`] brings back the ones
+    // that delete took, and [`VaultStore::purge`] purges them.
+
+    /// Live attachments of one entry, metadata only, oldest first.
+    fn list_attachments(&self, entry_id: &str) -> Result<Vec<AttachmentMeta>>;
+    /// One live attachment with its sealed blob (`None` if missing or removed).
+    fn get_attachment(&self, id: &str) -> Result<Option<Attachment>>;
+    /// Add an attachment, stamping `created_at` and `updated_at` to now.
+    fn insert_attachment(&self, att: &Attachment) -> Result<()>;
+    /// Remove one attachment for good: tombstone it and discard its blob.
+    fn remove_attachment(&self, id: &str) -> Result<()>;
+    /// Every attachment row including tombstones, timestamps intact (for sync).
+    fn export_attachments_for_sync(&self) -> Result<Vec<Attachment>>;
+    /// Bulk-write attachment rows in one transaction, timestamps preserved.
+    fn import_attachments(&self, atts: &[Attachment]) -> Result<()>;
 }
 
 /// Milliseconds since the Unix epoch.

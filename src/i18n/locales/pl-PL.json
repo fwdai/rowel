@@ -719,5 +719,11 @@
   "{{site}} wants to sign in with your passkey": "{{site}} chce Cię zalogować Twoim kluczem dostępu",
   "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} chce Cię zalogować kluczem dostępu dla {{account}}",
   "Account": "Konto",
-  "Asked by {{origin}} through the browser extension.": "Prośba od {{origin}} przez rozszerzenie przeglądarki."
+  "Asked by {{origin}} through the browser extension.": "Prośba od {{origin}} przez rozszerzenie przeglądarki.",
+  "Attach file": "Załącz plik",
+  "Attaching…": "Załączanie…",
+  "Attachments": "Załączniki",
+  "Attachments can be up to {{size}} each": "Każdy załącznik może mieć do {{size}}",
+  "Remove attachment": "Usuń załącznik",
+  "Remove?": "Usunąć?"
 }
