@@ -24,6 +24,13 @@ default-run = "rowel"
 members = ["crates/core", "crates/autofill"]
 default-members = [".", "crates/core", "crates/autofill"]
 
+# Full DWARF debuginfo is most of a multi-GB target dir on macOS: the dev
+# profile keeps it in every crate's .o files under target/debug/deps. Line
+# tables are enough for file:line in panics and backtraces, which is all a dev
+# build is debugged with here.
+[profile.dev]
+debug = "line-tables-only"
+
 [lib]
 name = "rowel_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
