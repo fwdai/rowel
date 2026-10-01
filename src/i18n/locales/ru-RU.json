@@ -724,6 +724,8 @@
   "Attaching…": "Прикрепляем…",
   "Attachments": "Вложения",
   "Attachments can be up to {{size}} each": "Размер каждого вложения — до {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "Вложения в этом хранилище достигли предела ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "Вложения в этом хранилище занимают {{used}} из {{limit}}",
   "Remove attachment": "Удалить вложение",
   "Remove?": "Удалить?"
 }

@@ -704,6 +704,8 @@
   "Attaching…": "Bifogar…",
   "Attachments": "Bilagor",
   "Attachments can be up to {{size}} each": "Varje bilaga får vara högst {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "Bilagorna i det här valvet har nått sin gräns ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "{{used}} av {{limit}} används av bilagor i det här valvet",
   "Remove attachment": "Ta bort bilaga",
   "Remove?": "Ta bort?"
 }

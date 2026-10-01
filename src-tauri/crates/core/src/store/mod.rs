@@ -183,6 +183,9 @@ pub trait VaultStore: Send {
     fn export_attachments_for_sync(&self) -> Result<Vec<Attachment>>;
     /// Bulk-write attachment rows in one transaction, timestamps preserved.
     fn import_attachments(&self, atts: &[Attachment]) -> Result<()>;
+    /// The bytes of every file the vault still holds — archived ones too,
+    /// since they ride every pack until purged. What the vault budget counts.
+    fn attachment_bytes(&self) -> Result<u64>;
 }
 
 /// Milliseconds since the Unix epoch.

@@ -194,6 +194,12 @@ export interface Attachment {
   createdAt?: string
 }
 
+// How much of the vault's attachment budget its files take, in bytes.
+export interface AttachmentUsage {
+  used: number
+  limit: number
+}
+
 export interface UnlockResult {
   entries: EntryMeta[]
   syncConfigured: boolean

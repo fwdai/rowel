@@ -437,42 +437,7 @@ impl SqliteStore {
     /// Winners are written verbatim: no timestamp is stamped here, or the
     /// merged row would immediately look newer than its source everywhere else.
     pub fn merge_records(&self, recs: &[Record]) -> Result<usize> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let mut changed = 0usize;
-        {
-            // Tombstones must be visible here, so this reads the raw row rather
-            // than going through `get` (which hides them).
-            let mut find = tx.prepare(&format!("SELECT {COLS} FROM entries WHERE id = ?1"))?;
-            let mut write = tx.prepare(&verbatim_upsert())?;
-
-            for incoming in recs {
-                let local: Option<Record> = find
-                    .query_row(params![incoming.id], row_to_record)
-                    .optional()?;
-
-                let wins = match &local {
-                    None => true,
-                    // Absorbing in both directions, so the two devices agree:
-                    // a purge cannot be undone, and it always propagates.
-                    Some(local) if is_purged(local) => false,
-                    Some(_) if is_purged(incoming) => true,
-                    Some(local) => rank(incoming) > rank(local),
-                };
-
-                if wins {
-                    exec_record(&mut write, incoming)?;
-                    changed += 1;
-                    // A purge takes the entry's files with it here too, stamped
-                    // with the shell's own time so every device writes the same.
-                    if is_purged(incoming) {
-                        purge_attachments_of(&tx, &incoming.id, incoming.updated_at)?;
-                    }
-                }
-            }
-        }
-        tx.commit()?;
-        Ok(changed)
+        self.merge(recs, &[])
     }
 
     /// [`SqliteStore::merge_records`] for attachment rows, by the same order:
@@ -481,33 +446,21 @@ impl SqliteStore {
     /// removed on one device never comes back from another, whatever its stamp.
     /// Returns how many rows were written.
     pub fn merge_attachments(&self, atts: &[Attachment]) -> Result<usize> {
+        self.merge(&[], atts)
+    }
+
+    /// A pulled snapshot merged in one transaction: the entries, then the
+    /// attachments, each by its own order, then every attachment brought into
+    /// line with its entry (see [`reconcile_attachments`]). Neither row merge
+    /// looks at the other table; the last step is what keeps a file from
+    /// outliving its entry, whichever device purged or archived it first.
+    /// Returns how many rows were written, the last step's included.
+    pub fn merge(&self, recs: &[Record], atts: &[Attachment]) -> Result<usize> {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
-        let mut changed = 0usize;
-        {
-            // The local side by its blob's length, never the blob itself: that
-            // is all the order looks at (see `attachment_hash`).
-            let mut find = tx.prepare(&format!("{} WHERE id = ?1", attachment_states()))?;
-            let mut write = tx.prepare(&verbatim_attachment_upsert())?;
-            for incoming in atts {
-                let local = find
-                    .query_row(params![incoming.meta.id], row_to_attachment_state)
-                    .optional()?;
-                let theirs = (&incoming.meta, incoming.blob.len());
-                let wins = match &local {
-                    None => true,
-                    Some((meta, len)) if is_purged_attachment(meta, *len) => false,
-                    Some(_) if is_purged_attachment(theirs.0, theirs.1) => true,
-                    Some((meta, len)) => {
-                        attachment_rank(theirs.0, theirs.1) > attachment_rank(meta, *len)
-                    }
-                };
-                if wins {
-                    exec_attachment(&mut write, incoming)?;
-                    changed += 1;
-                }
-            }
-        }
+        let changed = merge_entry_rows(&tx, recs)?
+            + merge_attachment_rows(&tx, atts)?
+            + reconcile_attachments(&tx)?;
         tx.commit()?;
         Ok(changed)
     }
@@ -568,17 +521,19 @@ impl SqliteStore {
     /// entry no longer exists at all: with the entry reclaimed there is nothing
     /// left to list them under. Only entries are counted in the result.
     pub fn purge_tombstones_before(&self, cutoff_ms: i64) -> Result<usize> {
-        let conn = self.lock()?;
-        let reclaimed = conn.execute(
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let reclaimed = tx.execute(
             "DELETE FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
             params![cutoff_ms],
         )?;
-        let files = conn.execute(
+        let files = tx.execute(
             "DELETE FROM attachments
              WHERE (deleted_at IS NOT NULL AND deleted_at < ?1)
                 OR entry_id NOT IN (SELECT id FROM entries)",
             params![cutoff_ms],
         )?;
+        tx.commit()?;
         if reclaimed + files > 0 {
             drop_wal_history(&conn);
         }
@@ -652,6 +607,17 @@ impl SqliteStore {
             "CREATE TRIGGER refuse_meta BEFORE INSERT ON meta WHEN NEW.key = '{key}'
              BEGIN SELECT RAISE(ABORT, 'refused'); END;"
         ))?;
+        Ok(())
+    }
+
+    /// Test seam: make every write to `attachments` fail, so a test can watch
+    /// a write that spans both tables take the entry back down with it.
+    #[cfg(test)]
+    pub(crate) fn refuse_attachment_writes_for_test(&self) -> Result<()> {
+        self.lock()?.execute_batch(
+            "CREATE TRIGGER refuse_attachments BEFORE UPDATE ON attachments
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )?;
         Ok(())
     }
 
@@ -864,12 +830,14 @@ impl VaultStore for SqliteStore {
     /// the same id cannot resurrect it either. The stamp only keeps the row
     /// ordered sensibly for anything else reading timestamps.
     ///
-    /// The entry's attachments are emptied the same way, into shells
-    /// [`SqliteStore::merge_attachments`] holds absorbing too.
+    /// The entry's attachments are emptied the same way, in the same
+    /// transaction, into shells [`SqliteStore::merge_attachments`] holds
+    /// absorbing too (see [`reconcile_attachments`]).
     fn purge(&self, id: &str) -> Result<()> {
         let now = now_ms();
-        let conn = self.lock()?;
-        let purged = conn.execute(
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let purged = tx.execute(
             "UPDATE entries
              SET payload = x'', title = '', tags = '[]', url_host = '',
                  card_brand = NULL, favorite = 0, has_passkey = 0,
@@ -878,10 +846,11 @@ impl VaultStore for SqliteStore {
              WHERE id = ?2 AND deleted_at IS NOT NULL",
             params![now, id],
         )?;
+        let files = reconcile_attachments(&tx)?;
+        tx.commit()?;
         // The old payload is zeroed in place by `secure_delete`; this drops the
         // WAL frame that still holds the page as it was before the update.
-        if purged > 0 {
-            purge_attachments_of(&conn, id, now)?;
+        if purged + files > 0 {
             drop_wal_history(&conn);
         }
         Ok(())
@@ -931,7 +900,7 @@ impl VaultStore for SqliteStore {
         let conn = self.lock()?;
         let sql = format!(
             "SELECT {ATT_META_COLS} FROM attachments
-             WHERE entry_id = ?1 AND deleted_at IS NULL
+             WHERE entry_id = ?1 AND deleted_at IS NULL AND {LIVE_PARENT}
              ORDER BY created_at, id"
         );
         let mut stmt = conn.prepare(&sql)?;
@@ -941,8 +910,10 @@ impl VaultStore for SqliteStore {
 
     fn get_attachment(&self, id: &str) -> Result<Option<Attachment>> {
         let conn = self.lock()?;
-        let sql =
-            format!("SELECT {ATT_COLS} FROM attachments WHERE id = ?1 AND deleted_at IS NULL");
+        let sql = format!(
+            "SELECT {ATT_COLS} FROM attachments
+             WHERE id = ?1 AND deleted_at IS NULL AND {LIVE_PARENT}"
+        );
         Ok(conn
             .query_row(&sql, params![id], row_to_attachment)
             .optional()?)
@@ -965,7 +936,10 @@ impl VaultStore for SqliteStore {
         let now = now_ms();
         let conn = self.lock()?;
         let removed = conn.execute(
-            &format!("{PURGE_ATTACHMENT} WHERE id = ?2 AND {NOT_PURGED}"),
+            &format!(
+                "{} WHERE id = ?2 AND {NOT_PURGED}",
+                purge_attachments_at("?1")
+            ),
             params![now, id],
         )?;
         if removed > 0 {
@@ -993,23 +967,129 @@ impl VaultStore for SqliteStore {
         tx.commit()?;
         Ok(())
     }
+
+    fn attachment_bytes(&self) -> Result<u64> {
+        let bytes: i64 = self.lock()?.query_row(
+            "SELECT COALESCE(SUM(size), 0) FROM attachments WHERE length(blob) > 0",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(bytes.max(0) as u64)
+    }
 }
 
 // Discarding an attachment: the blob and everything that described the file go,
-// the tombstone stays for sync. `?1` is the stamp; callers add the `WHERE`.
-const PURGE_ATTACHMENT: &str = "UPDATE attachments
-     SET blob = x'', name = '', mime = NULL, size = 0,
-         deleted_at = COALESCE(deleted_at, ?1), updated_at = ?1";
+// the tombstone stays for sync. `at` is the stamp, an SQL expression; callers
+// add the `WHERE`.
+fn purge_attachments_at(at: &str) -> String {
+    format!(
+        "UPDATE attachments
+         SET blob = x'', name = '', mime = NULL, size = 0,
+             deleted_at = COALESCE(deleted_at, {at}), updated_at = {at}"
+    )
+}
 // Not already a purged shell, so a second purge does not re-stamp one.
 const NOT_PURGED: &str = "(deleted_at IS NULL OR length(blob) > 0)";
+// The attachment's entry is there and live: what listing or saving one needs,
+// over and above the attachment's own tombstone.
+const LIVE_PARENT: &str = "EXISTS (SELECT 1 FROM entries e
+     WHERE e.id = attachments.entry_id AND e.deleted_at IS NULL)";
 
-// Purge every attachment of `entry_id` at `at` — the entry's own purge, here or
-// arriving through a merge.
-fn purge_attachments_of(conn: &Connection, entry_id: &str, at: i64) -> rusqlite::Result<usize> {
-    conn.execute(
-        &format!("{PURGE_ATTACHMENT} WHERE entry_id = ?2 AND {NOT_PURGED}"),
-        params![at, entry_id],
-    )
+/// Bring every attachment into line with its entry. An attachment's state never
+/// exceeds its parent's:
+///
+/// - live entry: the file may be live or tombstoned, and is left alone;
+/// - archived entry (tombstoned, payload kept): a live file is tombstoned at
+///   the entry's own `deleted_at`, as `delete` would have — so a `restore`
+///   brings it back with the others;
+/// - purged or missing entry: the file is a purged shell, stamped with the
+///   entry shell's `updated_at` (its own, when there is no entry at all).
+///
+/// The stamps come from the rows alone, so every device that runs this on the
+/// same rows writes the same thing and the merge stays a join. It runs inside
+/// every write that can leave the two tables out of step — a merge, a purge —
+/// so a file a peer added before it heard of the purge, or one a crash left
+/// behind, is caught by the next one. Returns how many rows it wrote.
+fn reconcile_attachments(conn: &Connection) -> rusqlite::Result<usize> {
+    let gone = conn.execute(
+        &format!(
+            "{} WHERE {NOT_PURGED} AND NOT EXISTS (SELECT 1 FROM entries e
+                 WHERE e.id = attachments.entry_id
+                   AND (e.deleted_at IS NULL OR length(e.payload) > 0))",
+            purge_attachments_at(
+                "COALESCE((SELECT e.updated_at FROM entries e
+                           WHERE e.id = attachments.entry_id), attachments.updated_at)"
+            )
+        ),
+        [],
+    )?;
+    // What is left live under an entry that is not live is under an archived
+    // one: the step above took every other kind.
+    let archived = conn.execute(
+        &format!(
+            "UPDATE attachments
+             SET deleted_at = (SELECT e.deleted_at FROM entries e
+                               WHERE e.id = attachments.entry_id),
+                 updated_at = (SELECT e.deleted_at FROM entries e
+                               WHERE e.id = attachments.entry_id)
+             WHERE deleted_at IS NULL AND NOT {LIVE_PARENT}"
+        ),
+        [],
+    )?;
+    Ok(gone + archived)
+}
+
+// Merge `recs` into the entry table; see `SqliteStore::merge_records`.
+fn merge_entry_rows(tx: &Connection, recs: &[Record]) -> rusqlite::Result<usize> {
+    // Tombstones must be visible here, so this reads the raw row rather than
+    // going through `get` (which hides them).
+    let mut find = tx.prepare(&format!("SELECT {COLS} FROM entries WHERE id = ?1"))?;
+    let mut write = tx.prepare(&verbatim_upsert())?;
+    let mut changed = 0usize;
+    for incoming in recs {
+        let local: Option<Record> = find
+            .query_row(params![incoming.id], row_to_record)
+            .optional()?;
+        let wins = match &local {
+            None => true,
+            // Absorbing in both directions, so the two devices agree: a purge
+            // cannot be undone, and it always propagates.
+            Some(local) if is_purged(local) => false,
+            Some(_) if is_purged(incoming) => true,
+            Some(local) => rank(incoming) > rank(local),
+        };
+        if wins {
+            exec_record(&mut write, incoming)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+// Merge `atts` into the attachment table; see `SqliteStore::merge_attachments`.
+fn merge_attachment_rows(tx: &Connection, atts: &[Attachment]) -> rusqlite::Result<usize> {
+    // The local side by its blob's length, never the blob itself: that is all
+    // the order looks at (see `attachment_hash`).
+    let mut find = tx.prepare(&format!("{} WHERE id = ?1", attachment_states()))?;
+    let mut write = tx.prepare(&verbatim_attachment_upsert())?;
+    let mut changed = 0usize;
+    for incoming in atts {
+        let local = find
+            .query_row(params![incoming.meta.id], row_to_attachment_state)
+            .optional()?;
+        let theirs = (&incoming.meta, incoming.blob.len());
+        let wins = match &local {
+            None => true,
+            Some((meta, len)) if is_purged_attachment(meta, *len) => false,
+            Some(_) if is_purged_attachment(theirs.0, theirs.1) => true,
+            Some((meta, len)) => attachment_rank(theirs.0, theirs.1) > attachment_rank(meta, *len),
+        };
+        if wins {
+            exec_attachment(&mut write, incoming)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 fn verbatim_attachment_upsert() -> String {

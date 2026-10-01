@@ -694,6 +694,8 @@
   "Attaching…": "正在附加…",
   "Attachments": "附件",
   "Attachments can be up to {{size}} each": "每个附件最大 {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "此保险库的附件已达上限（{{limit}}）",
+  "{{used}} of {{limit}} used by attachments in this vault": "此保险库的附件已使用 {{used}}，上限 {{limit}}",
   "Remove attachment": "移除附件",
   "Remove?": "确定移除？"
 }

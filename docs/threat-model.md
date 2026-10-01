@@ -265,19 +265,32 @@ bytes would reach the webview on every reveal.
   Add and save re-check the session epoch after their off-thread step, so a
   lock or workspace switch mid-read discards the bytes; every command fails on
   a locked vault.
-- **The cap.** 10 MiB per file (`MAX_ATTACHMENT_BYTES`), enforced on the read
-  itself (`read_regular_file_capped`), refused as `fileTooLarge`. There is no
-  whole-vault budget yet: the 256 MiB pack cap and the 256 MiB backup-restore
-  cap bound the vault as a whole, and nothing warns before files take a vault
-  past them.
-- **Delete, purge, sync.** Deleting an entry tombstones its live files at the
-  same instant; restoring it brings back exactly those. "Delete forever" (and a
-  purge arriving through sync) empties every file's blob, name and type in
-  place, leaving a content-free shell zeroed by `secure_delete`. Removing a
-  single file goes straight to that shell, since nothing restores it. Sync
-  carries the rows in the pack and merges them per row, last-writer-wins on
-  `updated_at`, with the shell absorbing as an entry's is, so a removed file
-  does not come back from a peer that still holds it. Tombstones are reclaimed
+- **The caps.** 10 MiB per file (`MAX_ATTACHMENT_BYTES`), enforced on the read
+  itself (`read_regular_file_capped`), refused as `fileTooLarge`. 128 MiB for
+  all of a vault's files together (`MAX_VAULT_ATTACHMENT_BYTES`), archived ones
+  included since they ride every pack until purged, refused as `vaultFull`
+  before the file is sealed. That is half the 256 MiB pack and backup-restore
+  cap, which also has to hold the entries, the indexes and the WAL. The entry's
+  list mentions the budget only once more than 80% of it is spent. As a net
+  for a vault that got past it some other way (an older build, a hand-edited
+  database), the sync engine refuses to upload a pack larger than the download
+  cap, so no device is handed a pack it cannot pull.
+- **Delete, purge, sync.** A file is never more alive than its entry: under a
+  live entry it may be live or tombstoned, under an archived one it is
+  tombstoned, under a purged or missing one it is a purged shell. Deleting an
+  entry tombstones its live files at the same instant; restoring it brings back
+  exactly those. "Delete forever" (and a purge arriving through sync) empties
+  every file's blob, name and type in place, leaving a content-free shell
+  zeroed by `secure_delete`. Removing a single file goes straight to that
+  shell, since nothing restores it. Sync carries the rows in the pack and
+  merges them per row, last-writer-wins on `updated_at`, with the shell
+  absorbing as an entry's is, so a removed file does not come back from a peer
+  that still holds it. Every write that touches both tables (delete, restore,
+  purge, merge, the tombstone sweep) is one transaction, and a purge and every
+  merge end by bringing each file into line with its entry
+  (`reconcile_attachments`), so a file a peer added before it saw the purge,
+  or one a crash left behind, becomes a shell on the next merge. Listing and
+  saving a file also require its entry to be live. Tombstones are reclaimed
   with the entries' after 90 days. Shares, the Bitwarden/CXF/CSV exports and
   the legacy `.swftx` export carry no attachments; a `.rowel` backup is the
   database snapshot and carries them.

@@ -3,10 +3,10 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Show from '@/components/Main/Body/Aside/Show'
 import Main from '@/components/Main'
-import { setCurrentEntry } from '@/store'
+import { initialApp, setCurrentEntry, setEntries, setSyncStatus } from '@/store'
 import type { Attachment } from '@/api/types'
 import { loginEntry, loginMeta, withEntries } from './utils'
-import { calls, mockCommand } from './ipc'
+import { calls, mockCommand, seedAttachments } from './ipc'
 
 // The drag-drop stream, with a hand that can drop a file (see envIngest.test).
 type Handler = (event: { payload: { type: string; paths: string[] } }) => void
@@ -38,6 +38,8 @@ const file = (overrides: Partial<Attachment> = {}): Attachment => ({
   createdAt: '2024-01-01T00:00:00.000Z',
   ...overrides
 })
+
+const MB = 1024 * 1024
 
 beforeEach(() => {
   handlers = []
@@ -114,7 +116,7 @@ describe('attachments on an entry', () => {
   })
 
   it('asks before removing, then removes', async () => {
-    mockCommand('attachment_list', () => [file()])
+    seedAttachments([file()])
     render(<Show entry={loginMeta()} />)
 
     await userEvent.click(await screen.findByTestId('attachment-remove-button'))
@@ -129,6 +131,83 @@ describe('attachments on an entry', () => {
       expect(screen.queryByTestId('attachments-section')).not.toBeInTheDocument()
     )
     expect(screen.getByTestId('attach-file-button')).toBeInTheDocument()
+  })
+})
+
+describe('the files of an open entry', () => {
+  // Another device attached a file, then removed it. Each merge replaces the
+  // entry list while the same entry stays open, and the files follow.
+  it('are reread when a sync merge lands', async () => {
+    render(<Show entry={loginMeta()} />)
+    await waitFor(() => expect(calls('attachment_list')).toHaveLength(1))
+
+    mockCommand('attachment_list', () => [file()])
+    act(() => setEntries([loginMeta()]))
+    expect(await screen.findByTestId('attachments-section')).toHaveTextContent('contract.pdf')
+
+    mockCommand('attachment_list', () => [])
+    act(() => setEntries([loginMeta()]))
+    await waitFor(() =>
+      expect(screen.queryByTestId('attachments-section')).not.toBeInTheDocument()
+    )
+  })
+
+  it('are published once one is attached or removed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      setSyncStatus({ ...initialApp.sync, configured: true })
+      mockCommand('pick_file', () => '/Users/me/contract.pdf')
+      render(<Show entry={loginMeta()} />)
+
+      await userEvent.click(await screen.findByTestId('attach-file-button'))
+      await screen.findByTestId('attachments-section')
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(calls('sync_now')).toHaveLength(1)
+
+      await userEvent.click(screen.getByTestId('attachment-remove-button'))
+      await userEvent.click(screen.getByTestId('attachment-remove-confirm'))
+      await waitFor(() => expect(calls('attachment_delete')).toHaveLength(1))
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(calls('sync_now')).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe("the vault's attachment budget", () => {
+  it('goes unmentioned while there is room', async () => {
+    mockCommand('attachment_list', () => [file()])
+    mockCommand('attachment_usage', () => ({ used: 100 * MB, limit: 128 * MB }))
+    render(<Show entry={loginMeta()} />)
+
+    await screen.findByTestId('attachments-section')
+    await waitFor(() => expect(calls('attachment_usage')).not.toHaveLength(0))
+    expect(screen.queryByTestId('attachments-usage')).not.toBeInTheDocument()
+  })
+
+  it('is mentioned under the files once it is nearly spent', async () => {
+    mockCommand('attachment_list', () => [file()])
+    mockCommand('attachment_usage', () => ({ used: 120 * MB, limit: 128 * MB }))
+    render(<Show entry={loginMeta()} />)
+
+    expect(await screen.findByTestId('attachments-usage')).toHaveTextContent(
+      '120 MB of 128 MB used by attachments in this vault'
+    )
+  })
+
+  it('says so when a file would take the vault past it', async () => {
+    mockCommand('pick_file', () => '/Users/me/scan.pdf')
+    mockCommand('attachment_add', () =>
+      Promise.reject({ kind: 'vaultFull', message: "this vault's attachments are at their limit" })
+    )
+    render(<Show entry={loginMeta()} />)
+
+    await userEvent.click(await screen.findByTestId('attach-file-button'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "This vault's attachments are at their limit (128 MB)"
+    )
   })
 })
 

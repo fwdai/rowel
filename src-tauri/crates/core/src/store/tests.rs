@@ -1697,6 +1697,112 @@ fn a_merged_entry_purge_purges_its_attachments_here() {
     assert!(listed(&peer, "1").is_empty());
 }
 
+// --- an attachment never outlives its entry -------------------------------------
+//
+// Live entry: the file may be live or tombstoned. Archived entry: tombstoned
+// too. Purged or missing entry: a purged shell. However a row got there.
+
+// A shell: tombstoned, with nothing of the file left in it.
+fn is_shell(a: &Attachment) -> bool {
+    a.meta.deleted_at.is_some() && a.blob.is_empty() && a.meta.name.is_empty()
+}
+
+// The peer added a file before it heard of the purge here: the merge keeps the
+// entry purged, and the file has to go with it rather than arrive live.
+#[test]
+fn a_peer_file_for_an_entry_purged_here_arrives_as_a_shell() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    store.purge("1").unwrap();
+
+    store
+        .merge_attachments(&[att_at("a1", b"file", i64::MAX - 1)])
+        .unwrap();
+
+    assert!(is_shell(&att_row(&store, "a1")));
+    assert!(listed(&store, "1").is_empty());
+    assert_eq!(store.get_attachment("a1").unwrap(), None);
+    assert_eq!(store.attachment_bytes().unwrap(), 0);
+}
+
+// A purge that stopped between the entry and its files — written here directly,
+// as a crash would leave it. Nothing lists or hands out the file meanwhile, and
+// the next merge, whatever it carries, finishes the purge.
+#[test]
+fn a_purge_cut_short_is_finished_by_the_next_merge() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    store.purge("1").unwrap();
+    store
+        .import_attachments(&[att("a1", "1", b"left")])
+        .unwrap();
+
+    assert!(listed(&store, "1").is_empty());
+    assert_eq!(store.get_attachment("a1").unwrap(), None);
+
+    assert_eq!(store.merge_records(&[]).unwrap(), 1);
+    assert!(is_shell(&att_row(&store, "a1")));
+}
+
+// The entry and its files are emptied together or not at all.
+#[test]
+fn a_purge_that_fails_on_the_files_leaves_the_entry_too() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    let mut archived = att("a1", "1", b"file");
+    archived.meta.deleted_at = Some(1000);
+    store.import_attachments(&[archived]).unwrap();
+    store.refuse_attachment_writes_for_test().unwrap();
+
+    assert!(store.purge("1").is_err());
+
+    assert_eq!(row(&store, "1").payload, b"sealed-payload");
+    assert_eq!(att_row(&store, "a1").blob, b"file");
+}
+
+// A file a peer added to an entry archived here is archived with it, at the
+// entry's own `deleted_at` — which is what lets a restore bring it back.
+#[test]
+fn a_peer_file_for_an_entry_archived_here_is_archived_and_restored_with_it() {
+    let store = seeded(&[tombstone("1", 1000)]);
+
+    store
+        .merge_attachments(&[att_at("a1", b"file", 2000)])
+        .unwrap();
+
+    let archived = att_row(&store, "a1");
+    assert_eq!(archived.meta.deleted_at, Some(1000));
+    assert_eq!(archived.blob, b"file");
+    assert!(listed(&store, "1").is_empty());
+
+    store.restore("1").unwrap();
+    assert_eq!(listed(&store, "1"), vec!["a1"]);
+}
+
+// Belt and braces: even a live row under an archived entry is never listed or
+// handed out, merge or no merge.
+#[test]
+fn a_live_file_under_an_archived_entry_is_not_listed() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    store
+        .import_attachments(&[att("a1", "1", b"file")])
+        .unwrap();
+
+    assert!(listed(&store, "1").is_empty());
+    assert_eq!(store.get_attachment("a1").unwrap(), None);
+}
+
+#[test]
+fn attachment_bytes_counts_every_file_the_vault_still_holds() {
+    let store = seeded(&[stamped("1", b"x", 1000), tombstone("2", 1000)]);
+    store.insert_attachment(&att("a1", "1", b"12345")).unwrap();
+    store.insert_attachment(&att("a2", "1", b"gone")).unwrap();
+    store.remove_attachment("a2").unwrap();
+    let mut archived = att("b1", "2", b"123");
+    archived.meta.deleted_at = Some(1000);
+    store.import_attachments(&[archived]).unwrap();
+
+    // The archived file still rides every pack; the removed one does not.
+    assert_eq!(store.attachment_bytes().unwrap(), 8);
+}
+
 #[test]
 fn the_digest_sees_attachments_and_ignores_their_absence() {
     let a = seeded(&[stamped("1", b"x", 1000)]);

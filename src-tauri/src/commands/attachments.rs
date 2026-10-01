@@ -19,10 +19,24 @@ use crate::state::AppState;
 use crate::storage::read_regular_file_capped;
 use crate::store::{migrate, Attachment, AttachmentMeta, SqliteStore, VaultStore};
 
-/// The largest file one attachment may be. Every byte rides the sync pack,
-/// which is capped at 256 MiB for the whole vault, so this keeps one file to a
-/// small share of it.
+/// The largest file one attachment may be: a small share of the vault's
+/// budget below.
 pub const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+
+/// The most one vault's files may add up to, archived ones included (see
+/// `VaultStore::attachment_bytes`). Every byte rides the sync pack, which a
+/// pull refuses past `sync::pack::MAX_PACK_BYTES` (256 MiB), and so does a
+/// backup restore. The pack is the whole SQLCipher snapshot — entries, indexes
+/// and WAL besides the files — so the files get half of it and the rest is
+/// headroom.
+pub const MAX_VAULT_ATTACHMENT_BYTES: u64 = 128 * 1024 * 1024;
+
+/// How much of the vault's attachment budget its files take, in bytes.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct AttachmentUsage {
+    pub used: u64,
+    pub limit: u64,
+}
 
 /// One attachment as the entry's list shows it: never the file itself.
 #[derive(Serialize, Debug, Clone, PartialEq)]
@@ -54,7 +68,8 @@ impl From<AttachmentMeta> for AttachmentDto {
 /// Attach the file at `path` to the entry `entry_id`. The path has to be one
 /// the user chose for this: picked through the attachment `pick_file`, or
 /// dropped on the window (see `grants`). The read runs off the IPC thread and
-/// is refused past [`MAX_ATTACHMENT_BYTES`]; a lock or a workspace switch while
+/// is refused past [`MAX_ATTACHMENT_BYTES`], or past what is left of
+/// [`MAX_VAULT_ATTACHMENT_BYTES`]; a lock or a workspace switch while
 /// it runs discards what was read rather than writing it into whatever vault
 /// is open by then.
 #[tauri::command]
@@ -65,10 +80,10 @@ pub async fn attachment_add(
     grants: State<'_, PathGrants>,
 ) -> Result<AttachmentDto> {
     let path = PathBuf::from(path);
-    let (epoch, cipher) = begin_add(&state, &grants, &entry_id, &path)?;
+    let (epoch, cipher, room) = begin_add(&state, &grants, &entry_id, &path)?;
     let attachment = {
         let entry_id = entry_id.clone();
-        super::blocking(move || seal_file(&cipher, &entry_id, &path)).await?
+        super::blocking(move || seal_file(&cipher, &entry_id, &path, room)).await?
     };
     finish_add(&state, epoch, &attachment)
 }
@@ -108,6 +123,13 @@ pub async fn attachment_save(
     Ok(dest.map(|p| p.to_string_lossy().into_owned()))
 }
 
+/// How full the vault's attachment budget is, for the entry's list to say so
+/// once it is nearly spent.
+#[tauri::command]
+pub fn attachment_usage(state: State<'_, AppState>) -> Result<AttachmentUsage> {
+    usage(&state)
+}
+
 /// Remove an attachment for good (see `VaultStore::remove_attachment`).
 #[tauri::command]
 pub fn attachment_delete(id: String, state: State<'_, AppState>) -> Result<()> {
@@ -121,27 +143,46 @@ pub fn attachment_delete(id: String, state: State<'_, AppState>) -> Result<()> {
 /// hold attachments, a live entry of a kind that takes them, and a path the
 /// user chose. Hands back the session and the cipher the read is for. The
 /// grant is spent last, so a refusal above leaves the user's choice standing.
+/// Hands back, too, the room left in the vault's budget.
 fn begin_add(
     state: &AppState,
     grants: &PathGrants,
     entry_id: &str,
     path: &Path,
-) -> Result<(Epoch, AttachmentCipher)> {
+) -> Result<(Epoch, AttachmentCipher, u64)> {
     let session = state.session.lock().unwrap();
     let cipher = cipher_of(&session)?;
-    attachable(session.store()?, entry_id)?;
+    let store = session.store()?;
+    attachable(store, entry_id)?;
+    let used = store.attachment_bytes().map_err(store_err)?;
     if !grants.take(path, Purpose::Attachment) {
         return Err(Error::Unsupported(
             "this file was not chosen in the app".into(),
         ));
     }
-    Ok((session.epoch(), cipher))
+    Ok((
+        session.epoch(),
+        cipher,
+        MAX_VAULT_ATTACHMENT_BYTES.saturating_sub(used),
+    ))
 }
 
-/// Read the file at `path` whole, refusing it past the cap, and seal it under
-/// a fresh id. The plaintext is scrubbed on the way out.
-fn seal_file(cipher: &AttachmentCipher, entry_id: &str, path: &Path) -> Result<Attachment> {
+/// Read the file at `path` whole, refusing it past the cap or past the `room`
+/// left in the vault's budget, and seal it under a fresh id. The plaintext is
+/// scrubbed on the way out.
+fn seal_file(
+    cipher: &AttachmentCipher,
+    entry_id: &str,
+    path: &Path,
+    room: u64,
+) -> Result<Attachment> {
     let bytes = Zeroizing::new(read_regular_file_capped(path, MAX_ATTACHMENT_BYTES)?);
+    // Checked here, where the size is known and nothing is sealed yet. Two adds
+    // racing can each fit on their own and overshoot together, by one file at
+    // most — which the headroom under the pack cap absorbs.
+    if bytes.len() as u64 > room {
+        return Err(Error::VaultFull);
+    }
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -181,6 +222,14 @@ fn finish_add(state: &AppState, epoch: Epoch, attachment: &Attachment) -> Result
         .find(|m| m.id == attachment.meta.id)
         .map(AttachmentDto::from)
         .ok_or(Error::NotFound)
+}
+
+fn usage(state: &AppState) -> Result<AttachmentUsage> {
+    let session = state.session.lock().unwrap();
+    Ok(AttachmentUsage {
+        used: session.store()?.attachment_bytes().map_err(store_err)?,
+        limit: MAX_VAULT_ATTACHMENT_BYTES,
+    })
 }
 
 fn begin_save(state: &AppState, id: &str) -> Result<(Epoch, AttachmentCipher, Attachment)> {
@@ -304,8 +353,8 @@ mod tests {
         let path = file(&dir, "scan.pdf", b"%PDF-1.7 the file");
         let grants = granted(&path);
 
-        let (epoch, cipher) = begin_add(&state, &grants, "e1", &path).unwrap();
-        let attachment = seal_file(&cipher, "e1", &path).unwrap();
+        let (epoch, cipher, room) = begin_add(&state, &grants, "e1", &path).unwrap();
+        let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
         assert!(!attachment.blob.windows(8).any(|w| w == b"the file"));
         let dto = finish_add(&state, epoch, &attachment).unwrap();
         assert_eq!(
@@ -324,12 +373,13 @@ mod tests {
     fn a_file_past_the_cap_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let cipher = argon2_key().attachment_cipher().unwrap();
+        let room = MAX_VAULT_ATTACHMENT_BYTES;
         let at_cap = file(
             &dir,
             "at-cap.bin",
             &vec![0u8; MAX_ATTACHMENT_BYTES as usize],
         );
-        assert!(seal_file(&cipher, "e1", &at_cap).is_ok());
+        assert!(seal_file(&cipher, "e1", &at_cap, room).is_ok());
 
         let over = file(
             &dir,
@@ -337,9 +387,52 @@ mod tests {
             &vec![0u8; MAX_ATTACHMENT_BYTES as usize + 1],
         );
         assert!(matches!(
-            seal_file(&cipher, "e1", &over),
+            seal_file(&cipher, "e1", &over, room),
             Err(Error::FileTooLarge)
         ));
+    }
+
+    // The budget is the vault's, not the file's: a file well under the per-file
+    // cap is refused once it would take the vault's files past theirs.
+    #[test]
+    fn a_file_past_the_vault_budget_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _) = vault(&dir, &argon2_key(), "login");
+        // The budget counts sizes, so the row need not hold the bytes.
+        store
+            .import_attachments(&[Attachment {
+                meta: AttachmentMeta {
+                    id: "big".into(),
+                    entry_id: "e1".into(),
+                    name: "big.bin".into(),
+                    mime: None,
+                    size: MAX_VAULT_ATTACHMENT_BYTES as i64 - 4,
+                    created_at: 1,
+                    updated_at: 1,
+                    deleted_at: None,
+                },
+                blob: b"sealed".to_vec(),
+            }])
+            .unwrap();
+        let state = open_with(argon2_key(), store);
+
+        let fits = file(&dir, "fits.txt", b"1234");
+        let (_, cipher, room) = begin_add(&state, &granted(&fits), "e1", &fits).unwrap();
+        assert!(seal_file(&cipher, "e1", &fits, room).is_ok());
+
+        let over = file(&dir, "over.txt", b"12345");
+        let (_, cipher, room) = begin_add(&state, &granted(&over), "e1", &over).unwrap();
+        assert!(matches!(
+            seal_file(&cipher, "e1", &over, room),
+            Err(Error::VaultFull)
+        ));
+        assert_eq!(
+            usage(&state).unwrap(),
+            AttachmentUsage {
+                used: MAX_VAULT_ATTACHMENT_BYTES - 4,
+                limit: MAX_VAULT_ATTACHMENT_BYTES
+            }
+        );
     }
 
     #[test]
@@ -415,8 +508,8 @@ mod tests {
         let (store, db) = vault(&dir, &argon2_key(), "login");
         let state = open_with(argon2_key(), store);
         let path = file(&dir, "a.txt", b"secret");
-        let (epoch, cipher) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
-        let attachment = seal_file(&cipher, "e1", &path).unwrap();
+        let (epoch, cipher, room) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
+        let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
 
         state.session.lock().unwrap().clear();
         assert!(matches!(
@@ -450,8 +543,8 @@ mod tests {
         let (store, _) = vault(&dir, &argon2_key(), "login");
         let state = open_with(argon2_key(), store);
         let path = file(&dir, "a.txt", b"secret");
-        let (epoch, cipher) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
-        let attachment = seal_file(&cipher, "e1", &path).unwrap();
+        let (epoch, cipher, room) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
+        let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
 
         state
             .session
@@ -473,8 +566,13 @@ mod tests {
         let (store, _) = vault(&dir, &argon2_key(), "login");
         let state = open_with(argon2_key(), store);
         let path = file(&dir, "a.txt", b"x");
-        let (epoch, cipher) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
-        let dto = finish_add(&state, epoch, &seal_file(&cipher, "e1", &path).unwrap()).unwrap();
+        let (epoch, cipher, room) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
+        let dto = finish_add(
+            &state,
+            epoch,
+            &seal_file(&cipher, "e1", &path, room).unwrap(),
+        )
+        .unwrap();
 
         state
             .session

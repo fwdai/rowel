@@ -8,6 +8,7 @@ import {
   purgeEntry as purgeEntryCmd,
   setFavorite
 } from '@/api/vault'
+import { addAttachment, deleteAttachment } from '@/api/attachments'
 import { getAudit, type Audit } from '@/api/tools'
 import type { EntryDraft } from '@/kinds/draft'
 import { usePrefs } from './prefs'
@@ -36,6 +37,12 @@ export interface VaultState {
   // them, so nothing is left to seed the next entry with.
   prefill: Record<string, string> | null
   audit: Audit | null
+  /**
+   * Bumped whenever what the vault holds may have changed: every `setEntries`
+   * (our writes, a sync merge, an import) and every attachment write. A view
+   * that keeps a copy of its own — an entry's files — rereads on it.
+   */
+  revision: number
 }
 
 export const initialVault: VaultState = {
@@ -45,7 +52,8 @@ export const initialVault: VaultState = {
   editing: false,
   creating: null,
   prefill: null,
-  audit: null
+  audit: null,
+  revision: 0
 }
 
 export const useVault = create<VaultState>()(() => initialVault)
@@ -111,8 +119,15 @@ export const startEntry = (type: EntryType, prefill?: Record<string, string>) =>
 export const setEntries = (items: EntryMeta[]) =>
   useVault.setState(state => {
     const kept = findEntry({ items, archive: state.archive }, state.currentId) !== null
-    return { items, currentId: kept ? state.currentId : null, editing: kept && state.editing }
+    return {
+      items,
+      currentId: kept ? state.currentId : null,
+      editing: kept && state.editing,
+      revision: state.revision + 1
+    }
   })
+
+const bumpRevision = () => useVault.setState(state => ({ revision: state.revision + 1 }))
 
 export const setArchive = (archive: EntryMeta[]) => useVault.setState({ archive })
 
@@ -204,6 +219,24 @@ export const toggleFavorite = async (id: string) => {
   // selected would leave the detail pane on an entry the list no longer has.
   if (useUi.getState().view === 'favorites' && !meta.favorite) setNoEntry()
   else setCurrentEntry(meta.id)
+  scheduleSync()
+}
+
+// --- attachments ----------------------------------------------------------------
+
+// An entry's files are listed by the entry itself (`useAttachments`), but a
+// change to them is a change to the vault like any other: published, and
+// announced through `revision` so the open list rereads.
+
+export const attachFile = async (entryId: string, path: string) => {
+  await addAttachment(entryId, path)
+  bumpRevision()
+  scheduleSync()
+}
+
+export const removeAttachment = async (id: string) => {
+  await deleteAttachment(id)
+  bumpRevision()
   scheduleSync()
 }
 

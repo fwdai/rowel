@@ -704,6 +704,8 @@
   "Attaching…": "Ekleniyor…",
   "Attachments": "Ekler",
   "Attachments can be up to {{size}} each": "Her ek en fazla {{size}} olabilir",
+  "This vault's attachments are at their limit ({{limit}})": "Bu kasadaki ekler sınırına ulaştı ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "Bu kasada ekler için {{used}} / {{limit}} kullanılıyor",
   "Remove attachment": "Eki kaldır",
   "Remove?": "Kaldırılsın mı?"
 }

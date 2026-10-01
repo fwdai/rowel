@@ -720,6 +720,8 @@
   "Attaching…": "Ajout en cours…",
   "Attachments": "Pièces jointes",
   "Attachments can be up to {{size}} each": "Chaque pièce jointe peut faire jusqu’à {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "Les pièces jointes de ce coffre ont atteint leur limite ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "{{used}} sur {{limit}} utilisés par les pièces jointes de ce coffre",
   "Remove attachment": "Supprimer la pièce jointe",
   "Remove?": "Supprimer ?"
 }

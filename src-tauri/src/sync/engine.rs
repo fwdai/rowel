@@ -7,7 +7,7 @@
 //!
 //! # Why this converges
 //!
-//! Every push is the *whole* state, and [`SqliteStore::merge_records`] is a join
+//! Every push is the *whole* state, and [`SqliteStore::merge`] is a join
 //! (idempotent, commutative, associative). So a device that loses a race has not
 //! lost data: its digest still differs from the remote, and its next sync pulls
 //! the winner, merges, and pushes the union. Divergence is temporary by
@@ -50,6 +50,10 @@ const META_LAST_MS: &str = "sync_last_ms";
 // Surfaced verbatim by the sync indicator, so it has to read as a sentence.
 fn foreign_vault_error() -> String {
     format!("Google Drive holds a vault from a different {APP_NAME} install")
+}
+
+fn too_large_to_sync_error() -> String {
+    "This vault is too large to sync. Remove some attachments and try again.".into()
 }
 
 /// The remote snapshot together with the revision it was read at.
@@ -258,6 +262,13 @@ pub fn sync<R: Remote, L: LocalVault>(
         // ago, so the "never purge before it has been pushed once" rule holds
         // without any extra bookkeeping.
         let bytes = local.pack(now_ms - TOMBSTONE_TTL_MS)?;
+        // Every pull refuses a pack past this, so one uploaded anyway could
+        // never be read again by any device, this one included. The vault
+        // budget (`commands::attachments`) keeps a vault well short of it;
+        // this is the net for one that got there some other way.
+        if bytes.len() > pack::MAX_PACK_BYTES {
+            return Err(Error::Other(too_large_to_sync_error()));
+        }
         let revision = remote.upload(&bytes)?;
         local.note_push(&revision, now_ms)?;
         outcome.pushed = true;
@@ -444,14 +455,12 @@ fn records_from_snapshot(snapshot: &[u8], key: &[u8], scratch_dir: &Path) -> Res
     })
 }
 
-// Entries first, so a purge among them has taken its files on this side before
-// the pulled attachment rows are weighed against them.
+// One transaction for both tables, so a file never lands without the entry
+// state it is checked against (see `SqliteStore::merge`).
 fn merge_snapshot(store: &SqliteStore, incoming: &Snapshot) -> Result<usize> {
-    let entries = store.merge_records(&incoming.records).map_err(store_err)?;
-    let files = store
-        .merge_attachments(&incoming.attachments)
-        .map_err(store_err)?;
-    Ok(entries + files)
+    store
+        .merge(&incoming.records, &incoming.attachments)
+        .map_err(store_err)
 }
 
 // A pack this build cannot parse is corruption, except for a format stamped by
@@ -564,6 +573,9 @@ mod tests {
         // of settling the id before the push is that this is never `None` for a
         // run that had one to settle.
         id_when_packed: Mutex<Option<String>>,
+        // Packs come out one byte past what a pull will download, as a vault
+        // stuffed past the budget by an older build or by hand would.
+        oversized: AtomicBool,
     }
 
     impl Device {
@@ -573,6 +585,7 @@ mod tests {
                 store: SqliteStore::open(&dir.join("vault.db"), KEY).unwrap(),
                 scratch: dir.join("scratch"),
                 id_when_packed: Mutex::default(),
+                oversized: AtomicBool::new(false),
             }
         }
 
@@ -619,6 +632,9 @@ mod tests {
         }
         fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>> {
             *self.id_when_packed.lock().unwrap() = self.vault_id()?;
+            if self.oversized.load(Ordering::SeqCst) {
+                return Ok(vec![0; pack::MAX_PACK_BYTES + 1]);
+            }
             self.store
                 .purge_tombstones_before(cutoff_ms)
                 .map_err(store_err)?;
@@ -1114,6 +1130,88 @@ mod tests {
         assert!(files(&a, "1").is_empty());
         assert!(a.store.get_attachment("f1").unwrap().is_none());
         assert!(remote_files(&remote).iter().all(|f| f.blob.is_empty()));
+    }
+
+    // A peer attached a file to an entry this device purged before it saw the
+    // file. The merge keeps the entry purged and takes the file with it, and
+    // the two settle on the same shell rather than pushing at each other.
+    #[test]
+    fn a_file_added_to_an_entry_purged_elsewhere_ends_a_shell_everywhere() {
+        let a = Device::seeded(&[record("1", 200, b"one")]);
+        let b = Device::new();
+        let remote = FakeRemote::default();
+        sync(&remote, &a, NOW).unwrap();
+        sync(&remote, &b, NOW).unwrap();
+        b.store
+            .insert_attachment(&attachment("f1", "1", b"sealed"))
+            .unwrap();
+        assert!(sync(&remote, &b, NOW).unwrap().pushed);
+
+        a.store.delete("1").unwrap();
+        a.store.purge("1").unwrap();
+        sync(&remote, &a, NOW).unwrap();
+        assert!(a.store.get_attachment("f1").unwrap().is_none());
+        assert!(remote_files(&remote).iter().all(|f| f.blob.is_empty()));
+
+        sync(&remote, &b, NOW).unwrap();
+        assert!(files(&b, "1").is_empty());
+        assert!(b.store.get_attachment("f1").unwrap().is_none());
+        assert_eq!(
+            a.store.state_digest().unwrap(),
+            b.store.state_digest().unwrap()
+        );
+        assert!(!sync(&remote, &a, NOW).unwrap().pushed);
+        assert!(!sync(&remote, &b, NOW).unwrap().pushed);
+    }
+
+    // A peer attached a file to an entry this device archived meanwhile: the
+    // file is archived with it, and a restore here brings it back everywhere.
+    #[test]
+    fn a_file_added_to_an_entry_archived_elsewhere_is_archived_and_restored_with_it() {
+        let a = Device::seeded(&[record("1", 200, b"one")]);
+        let b = Device::new();
+        let remote = FakeRemote::default();
+        sync(&remote, &a, NOW).unwrap();
+        sync(&remote, &b, NOW).unwrap();
+        b.store
+            .insert_attachment(&attachment("f1", "1", b"sealed"))
+            .unwrap();
+        assert!(sync(&remote, &b, NOW).unwrap().pushed);
+
+        a.store.delete("1").unwrap();
+        sync(&remote, &a, NOW).unwrap();
+        sync(&remote, &b, NOW).unwrap();
+        assert!(files(&b, "1").is_empty());
+        assert_eq!(
+            a.store.state_digest().unwrap(),
+            b.store.state_digest().unwrap()
+        );
+
+        a.store.restore("1").unwrap();
+        assert_eq!(files(&a, "1"), vec!["f1"]);
+        sync(&remote, &a, NOW).unwrap();
+        sync(&remote, &b, NOW).unwrap();
+        assert_eq!(files(&b, "1"), vec!["f1"]);
+        assert_eq!(
+            b.store.get_attachment("f1").unwrap().unwrap().blob,
+            b"sealed"
+        );
+    }
+
+    // A pack past the download cap would be one no device could pull again,
+    // this one included, so it never goes up.
+    #[test]
+    fn a_pack_too_large_to_download_is_never_uploaded() {
+        let a = Device::seeded(&[record("1", 200, b"one")]);
+        a.oversized.store(true, Ordering::SeqCst);
+        let remote = FakeRemote::default();
+
+        match sync(&remote, &a, NOW) {
+            Err(Error::Other(msg)) => assert_eq!(msg, too_large_to_sync_error()),
+            other => panic!("expected the too-large error, got {other:?}"),
+        }
+        assert_eq!(remote.uploads(), 0);
+        assert_eq!(remote.content(), None);
     }
 
     fn remote_files(remote: &FakeRemote) -> Vec<Attachment> {

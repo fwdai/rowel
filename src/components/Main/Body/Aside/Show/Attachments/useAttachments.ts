@@ -1,38 +1,44 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { Attachment } from '@/api/types'
-import {
-  addAttachment,
-  deleteAttachment,
-  listAttachments,
-  saveAttachment
-} from '@/api/attachments'
+import type { Attachment, AttachmentUsage } from '@/api/types'
+import { attachmentUsage, listAttachments, saveAttachment } from '@/api/attachments'
 import { pickFileToRead } from '@/api/tools'
 import { describeError, errorKind } from '@/api/errors'
+import { attachFile, removeAttachment, useVault } from '@/store'
 
 /**
  * One entry's attachments and what can be done to them. The list is the
  * entry's own and nobody else draws it, so it lives here rather than in the
- * vault store: read when the entry opens, kept in step by this hook's own
- * writes, gone when the entry closes.
+ * vault store — but it is read again on the store's `revision`, which moves
+ * with this hook's own writes (made through the store, so they are published)
+ * and with a sync merge, which can add or remove files while the entry stays
+ * open. The vault's budget is read with it.
  */
 export function useAttachments(entryId: string) {
   const { t } = useTranslation()
+  const revision = useVault(state => state.revision)
   const [items, setItems] = useState<Attachment[]>([])
+  const [usage, setUsage] = useState<AttachmentUsage | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    let alive = true
     setItems([])
     setError(null)
+  }, [entryId])
+
+  useEffect(() => {
+    let alive = true
     listAttachments(entryId)
       .then(listed => alive && setItems(listed))
+      .catch(() => {})
+    attachmentUsage()
+      .then(used => alive && setUsage(used))
       .catch(() => {})
     return () => {
       alive = false
     }
-  }, [entryId])
+  }, [entryId, revision])
 
   const fail = (e: unknown) =>
     setError(
@@ -48,8 +54,7 @@ export function useAttachments(entryId: string) {
     if (!picked) return
     setBusy(true)
     try {
-      const added = await addAttachment(entryId, picked)
-      setItems(current => [...current, added])
+      await attachFile(entryId, picked)
     } catch (e) {
       fail(e)
     } finally {
@@ -64,10 +69,8 @@ export function useAttachments(entryId: string) {
 
   const remove = (id: string) => {
     setError(null)
-    deleteAttachment(id)
-      .then(() => setItems(current => current.filter(item => item.id !== id)))
-      .catch(fail)
+    removeAttachment(id).catch(fail)
   }
 
-  return { items, error, busy, add, save, remove }
+  return { items, usage, error, busy, add, save, remove }
 }

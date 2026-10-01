@@ -710,6 +710,8 @@
   "Attaching…": "Wird angehängt…",
   "Attachments": "Anhänge",
   "Attachments can be up to {{size}} each": "Anhänge dürfen jeweils bis zu {{size}} groß sein",
+  "This vault's attachments are at their limit ({{limit}})": "Die Anhänge dieses Tresors haben ihr Limit erreicht ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "{{used}} von {{limit}} durch Anhänge in diesem Tresor belegt",
   "Remove attachment": "Anhang entfernen",
   "Remove?": "Entfernen?"
 }

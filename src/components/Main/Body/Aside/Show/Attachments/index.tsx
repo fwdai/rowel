@@ -2,11 +2,15 @@ import { useTranslation } from 'react-i18next'
 import type { EntryMeta } from '@/api/types'
 import AddAction from '@/components/elements/AddAction'
 import Panel from '@/components/elements/Panel'
-import { LABEL } from '@/components/elements/tokens'
+import { LABEL, META } from '@/components/elements/tokens'
+import { humanSize } from '@/utils/size'
 import { useFileDrop } from '@/hooks/useFileDrop'
 import { attachTarget, isAttachDrop } from './drop'
 import AttachmentRow from './Row'
 import { useAttachments } from './useAttachments'
+
+// How much of the vault's budget its files may take before the list says so.
+const NEARLY_FULL = 0.8
 
 /**
  * The files attached to an entry, under its fields while reading.
@@ -15,7 +19,8 @@ import { useAttachments } from './useAttachments'
  * gets one quiet "Attach file" and nothing else; the section with its label
  * and rows appears once there is a file to list. Add, list, save, remove —
  * nothing here opens a file or shows one, because the bytes never come to the
- * webview at all.
+ * webview at all. The vault's budget for files goes unmentioned until it is
+ * nearly spent, and then only under a list of files.
  *
  * A file dropped on the window while this entry is open is attached to it,
  * unless the drop is the scanner's or the env flow's (see `drop.ts`). Both
@@ -24,7 +29,7 @@ import { useAttachments } from './useAttachments'
  */
 export default function Attachments({ entry }: { entry: EntryMeta }) {
   const { t } = useTranslation()
-  const { items, error, busy, add, save, remove } = useAttachments(entry.id)
+  const { items, usage, error, busy, add, save, remove } = useAttachments(entry.id)
 
   useFileDrop(paths => {
     const [path] = paths
@@ -46,6 +51,14 @@ export default function Attachments({ entry }: { entry: EntryMeta }) {
               />
             ))}
           </Panel>
+          {usage && usage.used > usage.limit * NEARLY_FULL && (
+            <p className={`mt-1.5 px-1 ${META}`} data-testid="attachments-usage">
+              {t('{{used}} of {{limit}} used by attachments in this vault', {
+                used: humanSize(usage.used),
+                limit: humanSize(usage.limit)
+              })}
+            </p>
+          )}
         </div>
       )}
       <AddAction

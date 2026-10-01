@@ -714,6 +714,8 @@
   "Attaching…": "Anexando…",
   "Attachments": "Anexos",
   "Attachments can be up to {{size}} each": "Cada anexo pode ter até {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "Os anexos deste cofre atingiram o limite ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "{{used}} de {{limit}} usados por anexos neste cofre",
   "Remove attachment": "Remover anexo",
   "Remove?": "Remover?"
 }
