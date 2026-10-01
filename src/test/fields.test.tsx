@@ -444,9 +444,9 @@ describe('Passkeys on a login', () => {
   })
 })
 
-// Free-form label/value pairs. Every kind but the env file renders them; the
-// block itself knows nothing about the kind it renders for, so it is tested
-// through the identity form.
+// Free-form label/value pairs. Every kind renders them; the block itself knows
+// nothing about the kind it renders for, so it is tested through the identity
+// form.
 const identityMeta = () =>
   loginMeta({ id: 'i1', type: 'identity', title: 'UK Passport', urlHost: '' })
 

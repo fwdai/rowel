@@ -155,6 +155,39 @@ describe('Env fields, reading', () => {
     expect(screen.getByTestId('entry-value-note')).toHaveTextContent('rotate monthly')
   })
 
+  // Custom fields under the file, as on every other kind: nothing without
+  // them, and a concealed one masked until its eye is pressed.
+  it('reads custom fields under the file, and has no section without them', async () => {
+    const { unmount } = renderRead()
+    expect(screen.queryByText('Custom fields')).not.toBeInTheDocument()
+    unmount()
+
+    render(
+      <FieldsProvider
+        value={{
+          entry: {
+            ...draft(BODY),
+            extra: [
+              { label: 'Deployed to', value: 'fly.io' },
+              { label: 'Vault token', value: 'hvs.1', secret: true }
+            ]
+          },
+          set: null,
+          attempted: false
+        }}
+      >
+        <Fields />
+      </FieldsProvider>
+    )
+    expect(screen.getByText('Custom fields')).toBeInTheDocument()
+    expect(screen.getByTestId('entry-extra-label-0')).toHaveTextContent('Deployed to')
+    expect(screen.getByTestId('entry-extra-value-0')).toHaveTextContent('fly.io')
+    const token = screen.getByTestId('entry-extra-value-1')
+    expect(token).not.toHaveTextContent('hvs.1')
+    await userEvent.click(screen.getByTestId('reveal-extra-1'))
+    expect(token).toHaveTextContent('hvs.1')
+  })
+
   it('masks the whole file on the File tab until the eye is pressed', async () => {
     renderRead()
     await userEvent.click(screen.getByTestId('env-tab-file'))
@@ -259,6 +292,25 @@ describe('Env fields, filtering', () => {
 })
 
 describe('Env fields, editing', () => {
+  // Only the add action until a row is asked for; then the pair is written to
+  // the draft's `extra`, concealed when its eye is pressed.
+  it('adds a custom field and writes it to the draft', async () => {
+    const onSet = vi.fn()
+    render(<Editor body={BODY} onSet={onSet} />)
+    expect(screen.queryByText('Custom fields')).not.toBeInTheDocument()
+    expect(document.querySelector('input[name="extra-label-0"]')).toBeNull()
+
+    await userEvent.click(screen.getByTestId('add-extra-field'))
+    expect(screen.getByText('Custom fields')).toBeInTheDocument()
+    await userEvent.type(document.querySelector('input[name="extra-label-0"]')!, 'Deployed to')
+    await userEvent.type(document.querySelector('input[name="extra-value-0"]')!, 'fly.io')
+    await userEvent.click(screen.getByTestId('conceal-extra-0'))
+
+    expect(onSet).toHaveBeenLastCalledWith('extra', [
+      { label: 'Deployed to', value: 'fly.io', secret: true }
+    ])
+  })
+
   it('rewrites just that line of the file when a value is typed', async () => {
     const onSet = vi.fn()
     render(<Editor body={BODY} onSet={onSet} />)
