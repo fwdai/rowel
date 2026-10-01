@@ -1633,11 +1633,15 @@ fn merge_attachments_is_last_writer_wins_and_a_newer_tombstone_wins() {
     );
     assert_eq!(att_row(&store, "a1").blob, b"v1");
 
-    // A peer tombstoned it later: the tombstone wins.
-    let mut tomb = att_at("a1", b"v1", 2000);
+    // A peer removed it later — a blob-less shell, which is what a removal is:
+    // the shell wins. (A tombstone that kept its blob is an archive, and under
+    // a live entry the reconcile brings it back; see
+    // `an_entry_a_merge_brings_back_brings_its_archived_files_with_it`.)
+    let mut tomb = att_at("a1", b"", 2000);
     tomb.meta.deleted_at = Some(2000);
     assert_eq!(store.merge_attachments(&[tomb]).unwrap(), 1);
     assert!(listed(&store, "1").is_empty());
+    assert!(att_row(&store, "a1").blob.is_empty());
 
     // An unknown row arrives verbatim.
     assert_eq!(
@@ -1757,8 +1761,52 @@ fn a_purge_that_fails_on_the_files_leaves_the_entry_too() {
     assert_eq!(att_row(&store, "a1").blob, b"file");
 }
 
+// Two devices archive the same entry at different instants, and the one whose
+// archive wins never saw the other's file: the file stays archived at its own
+// instant, and the restore must bring it back all the same — what makes a
+// file restorable is that it still has its bytes, not when it was archived.
+#[test]
+fn a_file_archived_at_another_instant_than_its_entry_is_restored_with_it() {
+    let store = seeded(&[tombstone("1", 2000)]);
+    let mut archived = att("a1", "1", b"file");
+    archived.meta.deleted_at = Some(1000);
+    archived.meta.updated_at = 1000;
+    store.import_attachments(&[archived]).unwrap();
+    assert!(listed(&store, "1").is_empty());
+
+    store.restore("1").unwrap();
+
+    assert_eq!(listed(&store, "1"), vec!["a1"]);
+    assert_eq!(store.get_attachment("a1").unwrap().unwrap().blob, b"file");
+}
+
+// The entry comes back live through a merge rather than a restore — a peer
+// edited it after this device archived it — and its archived files come back
+// with it: a file that still has its bytes is never left hidden under an entry
+// that is on screen. Stamped from the entry's row, so every device agrees.
+#[test]
+fn an_entry_a_merge_brings_back_brings_its_archived_files_with_it() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    let mut archived = att("a1", "1", b"file");
+    archived.meta.deleted_at = Some(1000);
+    archived.meta.updated_at = 1000;
+    store.import_attachments(&[archived]).unwrap();
+
+    assert_eq!(
+        store
+            .merge_records(&[stamped("1", b"edited", 3000)])
+            .unwrap(),
+        2
+    );
+
+    assert_eq!(listed(&store, "1"), vec!["a1"]);
+    let back = att_row(&store, "a1");
+    assert_eq!(back.meta.deleted_at, None);
+    assert_eq!(back.meta.updated_at, 3000);
+}
+
 // A file a peer added to an entry archived here is archived with it, at the
-// entry's own `deleted_at` — which is what lets a restore bring it back.
+// entry's own `deleted_at`, and a restore brings it back.
 #[test]
 fn a_peer_file_for_an_entry_archived_here_is_archived_and_restored_with_it() {
     let store = seeded(&[tombstone("1", 1000)]);

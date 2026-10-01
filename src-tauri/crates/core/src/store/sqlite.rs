@@ -766,8 +766,8 @@ impl VaultStore for SqliteStore {
         Ok(())
     }
 
-    // The entry's live attachments are tombstoned in the same step and at the
-    // same instant, which is how `restore` tells them from ones removed before.
+    // The entry's live attachments go with it, in the same step: the reconcile
+    // archives them at the entry's new `deleted_at`.
     fn delete(&self, id: &str) -> Result<()> {
         let now = now_ms();
         let mut conn = self.lock()?;
@@ -776,40 +776,24 @@ impl VaultStore for SqliteStore {
             "UPDATE entries SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
             params![now, id],
         )?;
-        tx.execute(
-            "UPDATE attachments SET deleted_at = ?1, updated_at = ?1
-             WHERE entry_id = ?2 AND deleted_at IS NULL",
-            params![now, id],
-        )?;
+        reconcile_attachments(&tx)?;
         tx.commit()?;
         Ok(())
     }
 
-    // Brings back the attachments the entry's delete took — tombstoned at the
-    // entry's own `deleted_at`, blob still there — and none removed on their own.
+    // Brings back every file the entry still holds — archived with it here, or
+    // on a peer at some other instant — and none removed on their own, which
+    // are blob-less shells (see `remove_attachment`). The reconcile does it,
+    // so an entry a merge brings back live gets its files back the same way.
     fn restore(&self, id: &str) -> Result<()> {
         let now = now_ms();
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
-        let deleted_at: Option<i64> = tx
-            .query_row(
-                "SELECT deleted_at FROM entries WHERE id = ?1",
-                params![id],
-                |r| r.get(0),
-            )
-            .optional()?
-            .flatten();
         tx.execute(
             "UPDATE entries SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2",
             params![now, id],
         )?;
-        if let Some(at) = deleted_at {
-            tx.execute(
-                "UPDATE attachments SET deleted_at = NULL, updated_at = ?1
-                 WHERE entry_id = ?2 AND deleted_at = ?3 AND length(blob) > 0",
-                params![now, id, at],
-            )?;
-        }
+        reconcile_attachments(&tx)?;
         tx.commit()?;
         Ok(())
     }
@@ -995,22 +979,39 @@ const NOT_PURGED: &str = "(deleted_at IS NULL OR length(blob) > 0)";
 const LIVE_PARENT: &str = "EXISTS (SELECT 1 FROM entries e
      WHERE e.id = attachments.entry_id AND e.deleted_at IS NULL)";
 
-/// Bring every attachment into line with its entry. An attachment's state never
-/// exceeds its parent's:
+/// Bring every attachment into line with its entry. A file's state is its
+/// entry's: a file that still holds its bytes is live under a live entry and
+/// archived under an archived one, and a removed file is a blob-less shell
+/// whatever its entry does (`remove_attachment` empties it on the spot, so a
+/// tombstone that still has a blob can only ever be an archive).
 ///
-/// - live entry: the file may be live or tombstoned, and is left alone;
+/// - live entry: a file with its blob is live — brought back if it was
+///   archived, by this device's delete or on a peer at some other instant, so
+///   no file is ever left hidden under an entry that is on screen;
 /// - archived entry (tombstoned, payload kept): a live file is tombstoned at
-///   the entry's own `deleted_at`, as `delete` would have — so a `restore`
-///   brings it back with the others;
+///   the entry's own `deleted_at`, as `delete` would have; one already
+///   archived, at whatever instant, is left as it is;
 /// - purged or missing entry: the file is a purged shell, stamped with the
 ///   entry shell's `updated_at` (its own, when there is no entry at all).
 ///
 /// The stamps come from the rows alone, so every device that runs this on the
 /// same rows writes the same thing and the merge stays a join. It runs inside
-/// every write that can leave the two tables out of step — a merge, a purge —
-/// so a file a peer added before it heard of the purge, or one a crash left
-/// behind, is caught by the next one. Returns how many rows it wrote.
+/// every write that moves an entry or can leave the two tables out of step —
+/// a delete, a restore, a merge, a purge — so a file a peer added before it
+/// heard of the purge, one archived on a peer at an instant this device's
+/// archive never saw, or one a crash left behind, is caught by the next one.
+/// Returns how many rows it wrote.
 fn reconcile_attachments(conn: &Connection) -> rusqlite::Result<usize> {
+    let back = conn.execute(
+        &format!(
+            "UPDATE attachments
+             SET deleted_at = NULL,
+                 updated_at = (SELECT e.updated_at FROM entries e
+                               WHERE e.id = attachments.entry_id)
+             WHERE deleted_at IS NOT NULL AND length(blob) > 0 AND {LIVE_PARENT}"
+        ),
+        [],
+    )?;
     let gone = conn.execute(
         &format!(
             "{} WHERE {NOT_PURGED} AND NOT EXISTS (SELECT 1 FROM entries e
@@ -1036,7 +1037,7 @@ fn reconcile_attachments(conn: &Connection) -> rusqlite::Result<usize> {
         ),
         [],
     )?;
-    Ok(gone + archived)
+    Ok(back + gone + archived)
 }
 
 // Merge `recs` into the entry table; see `SqliteStore::merge_records`.

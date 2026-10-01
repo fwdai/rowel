@@ -275,21 +275,27 @@ bytes would reach the webview on every reveal.
   for a vault that got past it some other way (an older build, a hand-edited
   database), the sync engine refuses to upload a pack larger than the download
   cap, so no device is handed a pack it cannot pull.
-- **Delete, purge, sync.** A file is never more alive than its entry: under a
-  live entry it may be live or tombstoned, under an archived one it is
-  tombstoned, under a purged or missing one it is a purged shell. Deleting an
-  entry tombstones its live files at the same instant; restoring it brings back
-  exactly those. "Delete forever" (and a purge arriving through sync) empties
-  every file's blob, name and type in place, leaving a content-free shell
-  zeroed by `secure_delete`. Removing a single file goes straight to that
-  shell, since nothing restores it. Sync carries the rows in the pack and
-  merges them per row, last-writer-wins on `updated_at`, with the shell
-  absorbing as an entry's is, so a removed file does not come back from a peer
-  that still holds it. Every write that touches both tables (delete, restore,
-  purge, merge, the tombstone sweep) is one transaction, and a purge and every
-  merge end by bringing each file into line with its entry
-  (`reconcile_attachments`), so a file a peer added before it saw the purge,
-  or one a crash left behind, becomes a shell on the next merge. Listing and
+- **Delete, purge, sync.** A file's state is its entry's: a file that still
+  holds its bytes is live under a live entry and tombstoned under an archived
+  one, and under a purged or missing entry it is a purged shell. Removing a
+  single file goes straight to that shell, since nothing restores it — so a
+  tombstone that still has a blob can only be an archive, and what makes a
+  file restorable is that it has its bytes, never the instant it was archived
+  at. Deleting an entry archives its live files at the same instant; restoring
+  it brings back every file it still holds, including one a peer archived at
+  some other instant, and an entry a merge brings back live (a peer edited it
+  after it was archived here) gets its files back the same way. "Delete
+  forever" (and a purge arriving through sync) empties every file's blob, name
+  and type in place, leaving a content-free shell zeroed by `secure_delete`.
+  Sync carries the rows in the pack and merges them per row, last-writer-wins
+  on `updated_at`, with the shell absorbing as an entry's is, so a removed
+  file does not come back from a peer that still holds it. Every write that
+  touches both tables (delete, restore, purge, merge, the tombstone sweep) is
+  one transaction, and each of them ends by bringing every file into line
+  with its entry (`reconcile_attachments`, whose stamps come from the rows
+  alone so every device writes the same thing), so a file a peer added before
+  it saw the purge, or one a crash left behind, becomes a shell on the next
+  merge, and no file is left hidden under an entry that is on screen. Listing and
   saving a file also require its entry to be live. Tombstones are reclaimed
   with the entries' after 90 days. Shares, the Bitwarden/CXF/CSV exports and
   the legacy `.swftx` export carry no attachments; a `.rowel` backup is the
