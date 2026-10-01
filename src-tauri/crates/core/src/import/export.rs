@@ -224,6 +224,15 @@ pub fn to_bitwarden_json(entries: &[ImportedEntry]) -> serde_json::Result<Vec<u8
                         item["login"]["fido2Credentials"] =
                             json!(e.passkeys.iter().map(fido2_credential).collect::<Vec<_>>());
                     }
+                    // A member of the item rather than of its login, as
+                    // Bitwarden writes it; likewise only when there is any.
+                    if !e.password_history.is_empty() {
+                        item["passwordHistory"] = json!(e
+                            .password_history
+                            .iter()
+                            .map(|h| json!({ "lastUsedDate": h.replaced_at, "password": h.password }))
+                            .collect::<Vec<_>>());
+                    }
                 }
                 EntryKind::Card => {
                     item["card"] = json!({

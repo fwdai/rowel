@@ -8,6 +8,7 @@ import { RefreshGlyph } from '../../Main/icons'
 import IconButton from '../IconButton'
 import StrengthBar from '../StrengthBar'
 import Field from './Field'
+import PasswordHistory from './PasswordHistory'
 import { useField, useFields } from './context'
 import { META } from '../tokens'
 
@@ -41,6 +42,8 @@ export default function PasswordField({
   const { entry } = useFields()
   const { value, set, editing } = useField(name)
   const stamp = rotationStamp(t, useDates(), entry.password_updated_at)
+  // Reading only: the editor is about the password being set, not the old ones.
+  const history = editing ? undefined : entry.passwordHistory
 
   return (
     <Field
@@ -66,8 +69,13 @@ export default function PasswordField({
         (value || stamp) && (
           <>
             <StrengthBar password={value} />
-            {/* A sentence about the password, not a label for one. */}
-            {stamp && <span className={META}>{stamp}</span>}
+            {/* A sentence about the password, not a label for one — and, once
+                there are previous ones, the way in to them. */}
+            {entry.id && history?.length ? (
+              <PasswordHistory id={entry.id} history={history} stamp={stamp} />
+            ) : (
+              stamp && <span className={META}>{stamp}</span>
+            )}
           </>
         )
       }

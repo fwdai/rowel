@@ -209,8 +209,7 @@ carries them as part of the opaque payload and never sees them.
   incoming entry are completed, in the order it lists them, so removing one in
   the editor removes it and reordering reorders. A blank key whose credential id
   is not in the stored row — or that has no stored row at all — is refused
-  (`NotFound`) rather than saved as a credential that could never sign. The
-  stored row is unsealed only when a blank key is present.
+  (`NotFound`) rather than saved as a credential that could never sign.
 - The one way a passkey key leaves the app is an **explicit user-initiated
   export** (a `.rowel` backup, which is the encrypted vault snapshot itself, or
   Bitwarden JSON, which is plaintext by construction and carries the key as
@@ -233,6 +232,20 @@ carries them as part of the opaque payload and never sees them.
 - **The AAGUID is a model identifier, not a device one.** One fixed value for
   every Rowel install (`passkey::AAGUID`), so it cannot be used to correlate a
   user across relying parties.
+
+### Password history
+
+A login keeps up to ten passwords it has replaced (`passwordHistory`, newest
+first), **inside the sealed payload** like the password itself — no column, no
+table, nothing sync or the store can read. It is written only by the core:
+every save that can change a password (`save_entry`, the browser extension's
+`save_login`) unseals the row it replaces and runs `Entry::record_password_change`,
+which keeps the stored list and stamp and ignores whatever the caller sent, so
+the webview cannot plant a "previous" password or backdate a rotation. Clearing
+(`clear_password_history`) rewrites the stored row in the core. A share strips
+the history before it is sealed and again on receipt, the audit never reads it,
+and it leaves the app only in an explicit export (a `.rowel` backup, or
+Bitwarden JSON's `passwordHistory`, plaintext by construction).
 
 ## Key lifecycle across the process split
 
@@ -469,7 +482,8 @@ fresh random 256-bit AES-GCM key and uploaded to the sender's own Drive as an
   when the sender's device never got to delete the file.
 - **Sender-controlled content is not trusted.** Encryption proves the sender
   held the key, not that the entry is well-formed. On receipt the entry is
-  sanitized again (id, timestamps, favorite, passkeys stripped), its kind is
+  sanitized again (id, timestamps, favorite, passkeys and password history
+  stripped), its kind is
   checked, and it is always saved as a fresh row, so a crafted envelope cannot
   overwrite an existing entry. Downloads are capped at 2 MiB and time-limited,
   because a pasted link can name any public Drive file; the same cap is applied

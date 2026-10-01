@@ -23,6 +23,28 @@ fn concealed(label: &str, value: &str) -> ExtraField {
     }
 }
 
+// Bitwarden's history is a member of the item, `null` when there is none, and
+// an entry without a password in it says nothing worth keeping.
+#[test]
+fn bitwarden_reads_a_login_s_password_history() {
+    let json = br#"{"items":[
+      {"type":1,"name":"GitHub","login":{"password":"now"},"passwordHistory":[
+        {"lastUsedDate":"2026-02-01T00:00:00.000Z","password":"before"},
+        {"lastUsedDate":null,"password":""},
+        {"lastUsedDate":"2026-01-01T00:00:00.000Z","password":"long-ago"}]},
+      {"type":1,"name":"GitLab","login":{"password":"pw"},"passwordHistory":null}
+    ]}"#;
+    let r = parse(Format::Bitwarden, json);
+    assert!(r.errors.is_empty());
+
+    let history = &r.entries[0].password_history;
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].password, "before");
+    assert_eq!(history[0].replaced_at, "2026-02-01T00:00:00.000Z");
+    assert_eq!(history[1].password, "long-ago");
+    assert!(r.entries[1].password_history.is_empty());
+}
+
 #[test]
 fn bitwarden_maps_every_item_type_and_flags_unsupported() {
     let json = br#"{"items":[

@@ -6,7 +6,8 @@ import {
   listDeleted,
   restoreEntry as restoreEntryCmd,
   purgeEntry as purgeEntryCmd,
-  setFavorite
+  setFavorite,
+  clearPasswordHistory as clearPasswordHistoryCmd
 } from '@/api/vault'
 import { getAudit, type Audit } from '@/api/tools'
 import type { EntryDraft } from '@/kinds/draft'
@@ -207,4 +208,12 @@ export const toggleFavorite = async (id: string) => {
   scheduleSync()
 }
 
-export const resetVault = () => useVault.setState(initialVault, true)
+// The row's `updatedAt` moves, which is what makes the open entry reveal
+// itself again (see `useRevealed`) — and come back without its history.
+export const clearPasswordHistory = async (id: string) => {
+  const meta = await clearPasswordHistoryCmd(id)
+  setEntries(upsert(useVault.getState().items, meta))
+  scheduleSync()
+}
+
+export const resetVault =() => useVault.setState(initialVault, true)

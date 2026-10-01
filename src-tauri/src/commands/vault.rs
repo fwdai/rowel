@@ -41,7 +41,7 @@ pub fn save_entry(
     let cipher = session.payload_cipher()?;
     let store = session.store()?;
 
-    restore_passkey_keys(&mut entry, store, &cipher)?;
+    merge_stored(&mut entry, store, &cipher, &now())?;
     let payload = cipher.seal(&entry)?;
     let record = migrate::build_record(&entry, payload)?;
     store.upsert(&record).map_err(store_err)?;
@@ -51,11 +51,21 @@ pub fn save_entry(
     meta_dto_of(store, &record.id)
 }
 
-// The other half of the reveal's redaction: an entry coming back from the
-// webview carries its passkeys without their private keys, so every one of them
-// is read off the row being replaced and matched by credential id (see
-// `Entry::restore_passkey_keys`). The stored row is unsealed only when the
-// entry has a passkey at all, so an ordinary save costs nothing extra. The
+// This moment, as the stamps on an entry are written.
+fn now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+// Complete an entry coming back from the webview from the row it replaces: the
+// stored row is the source of truth for what the webview is never handed or
+// never trusted with.
+//
+// The password history and rotation stamp are carried forward from it, and a
+// changed password is recorded there (see `Entry::record_password_change`).
+//
+// And the other half of the reveal's redaction: the entry carries its passkeys
+// without their private keys, so every one of them is read off the stored row
+// and matched by credential id (see `Entry::restore_passkey_keys`). The
 // unsealed row is handed over whole so the keys move rather than copy, and what
 // is left of it is scrubbed and dropped inside `Entry::restore_passkey_keys`.
 //
@@ -64,25 +74,51 @@ pub fn save_entry(
 // redacts, so there is no path by which the webview came to hold one: a key
 // here is one it invented, and honouring it would let it overwrite the key the
 // core holds for that credential with something it can sign with itself.
-fn restore_passkey_keys(
+fn merge_stored(
     entry: &mut Entry,
     store: &SqliteStore,
     cipher: &PayloadCipher,
+    now: &str,
 ) -> Result<()> {
     if entry.has_supplied_passkey_key() {
         return Err(Error::Unsupported(
             "a passkey's private key cannot be set from here".into(),
         ));
     }
-    if !entry.has_passkeys() {
-        return Ok(());
-    }
     let stored = store
         .get(&entry.id)
         .map_err(store_err)?
         .map(|record| cipher.unseal(&record.id, &record.payload))
         .transpose()?;
+    entry.record_password_change(stored.as_ref(), now);
     entry.restore_passkey_keys(stored)
+}
+
+// Forget a login's previous passwords. The stored row is unsealed, cleared and
+// resealed here rather than sent round the webview, so nothing else on it can
+// move. `updatedAt` moves, so the change wins the sync race like any edit.
+#[tauri::command]
+pub fn clear_password_history(id: String, state: State<'_, AppState>) -> Result<EntryMetaDto> {
+    let session = state.session.lock().unwrap();
+    let store = session.store()?;
+    clear_history_in(store, &session.payload_cipher()?, &id, &now())?;
+    meta_dto_of(store, &id)
+}
+
+fn clear_history_in(
+    store: &SqliteStore,
+    cipher: &PayloadCipher,
+    id: &str,
+    now: &str,
+) -> Result<()> {
+    let record = store.get(id).map_err(store_err)?.ok_or(Error::NotFound)?;
+    let mut entry = cipher.unseal(&record.id, &record.payload)?;
+    entry.password_history = None;
+    entry.updated_at = Some(now.to_string());
+    let payload = cipher.seal(&entry)?;
+    store
+        .upsert(&migrate::build_record(&entry, payload)?)
+        .map_err(store_err)
 }
 
 // Tombstone one entry (retained for sync); it drops out of the list.
@@ -313,7 +349,7 @@ pub async fn save_env_file(
 mod tests {
     use super::*;
     use crate::crypto::VaultKey;
-    use crate::models::Passkey;
+    use crate::models::{Passkey, PasswordHistoryItem};
     use crate::store::SqliteStore;
 
     fn passkey(credential_id: &str, private_key: &str) -> Passkey {
@@ -354,6 +390,14 @@ mod tests {
             .unwrap();
     }
 
+    fn unsealed(store: &SqliteStore, cipher: &PayloadCipher) -> Entry {
+        let record = store.get("l1").unwrap().unwrap();
+        cipher.unseal(&record.id, &record.payload).unwrap()
+    }
+
+    const THEN: &str = "2026-01-01T00:00:00.000Z";
+    const NOW: &str = "2026-09-26T12:00:00.000Z";
+
     // The round trip the webview makes: what a reveal hands out carries no
     // private key, and the save that comes back is completed from the row it
     // replaces — so the key survives an edit it never travelled through.
@@ -372,7 +416,7 @@ mod tests {
 
         let mut incoming = revealed;
         incoming.title = "Renamed".into();
-        restore_passkey_keys(&mut incoming, &store, &cipher).unwrap();
+        merge_stored(&mut incoming, &store, &cipher, NOW).unwrap();
         assert_eq!(incoming.passkeys.as_ref().unwrap()[0].private_key, "k1");
 
         // And it is the completed entry that lands, not the blanked one.
@@ -392,20 +436,87 @@ mod tests {
 
         let mut fresh = login(vec![passkey("c1", "")]);
         assert!(matches!(
-            restore_passkey_keys(&mut fresh, &store, &cipher),
+            merge_stored(&mut fresh, &store, &cipher, NOW),
             Err(Error::NotFound)
         ));
     }
 
-    // No passkeys, nothing to do: an ordinary save never unseals the old row.
+    // No passkeys, nothing to put back.
     #[test]
     fn a_save_without_passkeys_is_left_alone() {
         let dir = tempfile::tempdir().unwrap();
         let (store, cipher) = open(&dir);
 
         let mut entry = login(vec![]);
-        restore_passkey_keys(&mut entry, &store, &cipher).unwrap();
+        merge_stored(&mut entry, &store, &cipher, NOW).unwrap();
         assert!(entry.passkeys.unwrap().is_empty());
+    }
+
+    // The webview's round trip for a rotation: the revealed entry comes back
+    // with a new password and a history of its own making. What lands is the
+    // stored history with the old password in front — the planted one is gone.
+    // Clearing then empties it on the row, and the next ordinary save keeps
+    // it empty.
+    #[test]
+    fn a_save_records_the_replaced_password_and_a_clear_forgets_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, cipher) = open(&dir);
+        save(
+            &store,
+            &cipher,
+            &Entry {
+                password: Some("old".into()),
+                ..login(vec![])
+            },
+        );
+
+        let mut incoming = Entry {
+            password: Some("new".into()),
+            password_history: Some(vec![PasswordHistoryItem {
+                password: "planted".into(),
+                replaced_at: THEN.into(),
+            }]),
+            ..login(vec![])
+        };
+        merge_stored(&mut incoming, &store, &cipher, NOW).unwrap();
+        save(&store, &cipher, &incoming);
+
+        let stored = unsealed(&store, &cipher);
+        let history = stored.password_history.unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].password, "old");
+        assert_eq!(history[0].replaced_at, NOW);
+        assert_eq!(stored.password_updated_at.as_deref(), Some(NOW));
+
+        clear_history_in(&store, &cipher, "l1", NOW).unwrap();
+        let cleared = unsealed(&store, &cipher);
+        assert_eq!(cleared.password_history, None);
+        assert_eq!(cleared.password.as_deref(), Some("new"));
+        assert_eq!(cleared.updated_at.as_deref(), Some(NOW));
+
+        // A reveal hands the cleared row out; saving it unchanged adds nothing.
+        let mut edit = cleared.redacted();
+        merge_stored(&mut edit, &store, &cipher, NOW).unwrap();
+        assert_eq!(edit.password_history, None);
+    }
+
+    // Clearing keeps everything else on the row, passkey keys included — the
+    // row never left the core.
+    #[test]
+    fn clearing_the_history_keeps_the_passkey_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, cipher) = open(&dir);
+        save(&store, &cipher, &login(vec![passkey("c1", "k1")]));
+
+        clear_history_in(&store, &cipher, "l1", NOW).unwrap();
+        assert_eq!(
+            unsealed(&store, &cipher).passkeys.unwrap()[0].private_key,
+            "k1"
+        );
+        assert!(matches!(
+            clear_history_in(&store, &cipher, "missing", NOW),
+            Err(Error::NotFound)
+        ));
     }
 
     // A save carrying a private key is one the webview could only have made up
@@ -419,7 +530,7 @@ mod tests {
 
         let mut forged = login(vec![passkey("c1", "theirs")]);
         assert!(matches!(
-            restore_passkey_keys(&mut forged, &store, &cipher),
+            merge_stored(&mut forged, &store, &cipher, NOW),
             Err(Error::Unsupported(_))
         ));
 
@@ -443,7 +554,7 @@ mod tests {
 
         let mut incoming = login(vec![passkey("c1", ""), passkey("c9", "")]);
         assert!(matches!(
-            restore_passkey_keys(&mut incoming, &store, &cipher),
+            merge_stored(&mut incoming, &store, &cipher, NOW),
             Err(Error::NotFound)
         ));
         assert!(incoming

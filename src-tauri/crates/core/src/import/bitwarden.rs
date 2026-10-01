@@ -8,7 +8,7 @@ use super::export::PASSPHRASE_LABEL;
 use super::{
     non_empty, take_labelled, EntryKind, ImportResult, ImportedEntry, ImportedPasskey, Importer,
 };
-use crate::models::ExtraField;
+use crate::models::{ExtraField, PasswordHistoryItem};
 
 pub struct Bitwarden;
 
@@ -43,6 +43,10 @@ struct Item {
     ssh_key: Option<SshKey>,
     #[serde(default)]
     fields: Vec<Field>,
+    /// A login's previous passwords. A member of the item, not of its `login`,
+    /// and `null` rather than `[]` when there are none.
+    #[serde(default, rename = "passwordHistory")]
+    password_history: Option<Vec<PasswordHistory>>,
     /// The star and the two dates Bitwarden keeps on every item, whatever its
     /// type — read here so a re-import is a copy rather than a fresh entry.
     #[serde(default)]
@@ -77,6 +81,30 @@ struct Field {
     value: Option<String>,
     #[serde(default, rename = "type", deserialize_with = "super::lenient_u8")]
     kind: Option<u8>,
+}
+
+/// One of Bitwarden's previous passwords: the password, and when it stopped
+/// being the one in use.
+#[derive(Deserialize)]
+struct PasswordHistory {
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default, rename = "lastUsedDate")]
+    last_used_date: Option<String>,
+}
+
+// An entry with no password says nothing, so it is not carried.
+fn password_history(history: Option<Vec<PasswordHistory>>) -> Vec<PasswordHistoryItem> {
+    history
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|h| {
+            Some(PasswordHistoryItem {
+                password: non_empty(h.password)?,
+                replaced_at: h.last_used_date.unwrap_or_default(),
+            })
+        })
+        .collect()
 }
 
 pub const FIELD_TEXT: u8 = 0;
@@ -305,6 +333,7 @@ impl Importer for Bitwarden {
                         notes: non_empty(item.notes),
                         otp: non_empty(login.totp),
                         passkeys,
+                        password_history: password_history(item.password_history),
                         extra,
                         ..base
                     });

@@ -142,6 +142,38 @@ pub struct Entry {
         skip_serializing_if = "Option::is_none"
     )]
     pub password_updated_at: Option<String>,
+    /// The passwords this login had before its current one, newest first and
+    /// at most [`PASSWORD_HISTORY_CAP`] of them. Written only by the core (see
+    /// [`Entry::record_password_change`]): whatever a caller sends here is
+    /// replaced by the stored row's list. Sealed with the rest of the payload,
+    /// and `None` when there is none, so an entry without history serializes
+    /// byte-identically to before the field existed.
+    #[serde(
+        rename = "passwordHistory",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub password_history: Option<Vec<PasswordHistoryItem>>,
+}
+
+/// How many replaced passwords a login keeps.
+pub const PASSWORD_HISTORY_CAP: usize = 10;
+
+/// One password a login no longer uses, and when it stopped (RFC3339).
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct PasswordHistoryItem {
+    pub password: String,
+    #[serde(rename = "replacedAt")]
+    pub replaced_at: String,
+}
+
+// When it was replaced, and never what it was.
+impl fmt::Debug for PasswordHistoryItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PasswordHistoryItem")
+            .field("replaced_at", &self.replaced_at)
+            .finish_non_exhaustive()
+    }
 }
 
 fn is_unset(flag: &bool) -> bool {
@@ -226,6 +258,41 @@ impl Entry {
             .iter()
             .flatten()
             .any(|p| !p.private_key.is_empty())
+    }
+
+    /// Settle this entry's password bookkeeping against `stored`, the row it is
+    /// about to replace (`None` for a new one). The one place a password
+    /// change is recorded, so the editor's save and the browser extension's
+    /// agree on what a change is.
+    ///
+    /// The history and the rotation stamp are the stored row's, whatever came
+    /// in with `self`: a caller cannot add to, reorder or backdate either.
+    /// Then, if the password moved, the old one (when there was one) goes to
+    /// the front of the history, capped at [`PASSWORD_HISTORY_CAP`], and the
+    /// stamp becomes `now`. Only a login has a password, so on every other
+    /// kind this only carries the (empty) stored values forward.
+    pub fn record_password_change(&mut self, stored: Option<&Entry>, now: &str) {
+        self.password_history = stored.and_then(|s| s.password_history.clone());
+        self.password_updated_at = stored.and_then(|s| s.password_updated_at.clone());
+
+        let old = stored
+            .and_then(|s| s.password.as_deref())
+            .unwrap_or_default();
+        if old == self.password.as_deref().unwrap_or_default() {
+            return;
+        }
+        if !old.is_empty() {
+            let history = self.password_history.get_or_insert_with(Vec::new);
+            history.insert(
+                0,
+                PasswordHistoryItem {
+                    password: old.to_string(),
+                    replaced_at: now.to_string(),
+                },
+            );
+            history.truncate(PASSWORD_HISTORY_CAP);
+        }
+        self.password_updated_at = Some(now.to_string());
     }
 
     /// Put back the passkey private keys the webview was never given, taking
@@ -819,6 +886,159 @@ mod tests {
         let field: ExtraField = serde_json::from_str(concealed).unwrap();
         assert!(field.secret);
         assert_eq!(serde_json::to_string(&field).unwrap(), concealed);
+    }
+
+    const THEN: &str = "2026-01-01T00:00:00.000Z";
+    const NOW: &str = "2026-09-26T12:00:00.000Z";
+
+    fn with_password(password: &str) -> Entry {
+        Entry {
+            id: "l1".into(),
+            kind: "login".into(),
+            title: "Site".into(),
+            password: Some(password.into()),
+            ..Entry::default()
+        }
+    }
+
+    fn previous(password: &str, at: &str) -> PasswordHistoryItem {
+        PasswordHistoryItem {
+            password: password.into(),
+            replaced_at: at.into(),
+        }
+    }
+
+    // The first change: the old password goes into a history that did not
+    // exist yet, and the stamp moves.
+    #[test]
+    fn a_changed_password_is_kept_as_the_first_previous_one() {
+        let stored = with_password("old");
+        let mut incoming = with_password("new");
+
+        incoming.record_password_change(Some(&stored), NOW);
+
+        assert_eq!(incoming.password_history, Some(vec![previous("old", NOW)]));
+        assert_eq!(incoming.password_updated_at.as_deref(), Some(NOW));
+    }
+
+    // Saving anything else about a login is not a rotation: nothing is added
+    // and the stamp stays the stored one.
+    #[test]
+    fn an_unchanged_password_records_nothing() {
+        let stored = Entry {
+            password_updated_at: Some(THEN.into()),
+            password_history: Some(vec![previous("older", THEN)]),
+            ..with_password("same")
+        };
+        let mut incoming = Entry {
+            title: "Renamed".into(),
+            ..with_password("same")
+        };
+
+        incoming.record_password_change(Some(&stored), NOW);
+
+        assert_eq!(
+            incoming.password_history,
+            Some(vec![previous("older", THEN)])
+        );
+        assert_eq!(incoming.password_updated_at.as_deref(), Some(THEN));
+    }
+
+    // A first password, on a new login or a blank one, replaces nothing: it is
+    // stamped, but there is no previous one to keep.
+    #[test]
+    fn a_first_password_is_stamped_but_has_no_history() {
+        let mut fresh = with_password("first");
+        fresh.record_password_change(None, NOW);
+        assert_eq!(fresh.password_history, None);
+        assert_eq!(fresh.password_updated_at.as_deref(), Some(NOW));
+
+        let mut blank = with_password("");
+        blank.record_password_change(None, NOW);
+        assert_eq!(blank.password_updated_at, None);
+    }
+
+    // Newest first, and never more than the cap: the oldest falls off the end.
+    #[test]
+    fn the_history_is_newest_first_and_capped() {
+        let mut stored = with_password("p0");
+        for i in 1..=PASSWORD_HISTORY_CAP + 2 {
+            let mut next = with_password(&format!("p{i}"));
+            next.record_password_change(Some(&stored), &format!("t{i}"));
+            stored = next;
+        }
+
+        let history = stored.password_history.unwrap();
+        assert_eq!(history.len(), PASSWORD_HISTORY_CAP);
+        assert_eq!(
+            history[0].password,
+            format!("p{}", PASSWORD_HISTORY_CAP + 1)
+        );
+        assert_eq!(
+            history[0].replaced_at,
+            format!("t{}", PASSWORD_HISTORY_CAP + 2)
+        );
+        assert_eq!(history.last().unwrap().password, "p2");
+    }
+
+    // The caller's list and stamp count for nothing: the stored row's are kept,
+    // so a webview cannot plant a "previous" password or backdate a rotation.
+    #[test]
+    fn a_supplied_history_and_stamp_are_ignored() {
+        let stored = Entry {
+            password_updated_at: Some(THEN.into()),
+            ..with_password("same")
+        };
+        let mut forged = Entry {
+            password_updated_at: Some("1999-01-01T00:00:00Z".into()),
+            password_history: Some(vec![previous("planted", THEN)]),
+            ..with_password("same")
+        };
+
+        forged.record_password_change(Some(&stored), NOW);
+
+        assert_eq!(forged.password_history, None);
+        assert_eq!(forged.password_updated_at.as_deref(), Some(THEN));
+    }
+
+    // A cleared history is the stored state, so later saves keep it cleared —
+    // until the password changes again and starts a new one.
+    #[test]
+    fn a_cleared_history_stays_cleared_until_the_password_changes() {
+        let cleared = with_password("current");
+
+        let mut edit = Entry {
+            password_history: Some(vec![previous("stale", THEN)]),
+            ..with_password("current")
+        };
+        edit.record_password_change(Some(&cleared), NOW);
+        assert_eq!(edit.password_history, None);
+
+        let mut rotation = with_password("next");
+        rotation.record_password_change(Some(&edit), NOW);
+        assert_eq!(
+            rotation.password_history,
+            Some(vec![previous("current", NOW)])
+        );
+    }
+
+    // Wire names are camelCase, absent when unset, and `Debug` never prints a
+    // previous password.
+    #[test]
+    fn the_history_serializes_camel_case_and_debug_hides_it() {
+        let entry = Entry {
+            password_history: Some(vec![previous("hunter2", THEN)]),
+            ..with_password("now")
+        };
+        let out = serde_json::to_value(&entry).unwrap();
+        assert_eq!(out["passwordHistory"][0]["password"], "hunter2");
+        assert_eq!(out["passwordHistory"][0]["replacedAt"], THEN);
+
+        assert!(!format!("{entry:?}").contains("hunter2"));
+        assert!(!format!("{:?}", previous("hunter2", THEN)).contains("hunter2"));
+
+        let bare = serde_json::to_string(&with_password("pw")).unwrap();
+        assert!(!bare.contains("passwordHistory"), "{bare}");
     }
 
     fn meta(has_passkey: bool) -> crate::store::EntryMeta {

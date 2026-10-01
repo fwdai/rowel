@@ -24,6 +24,11 @@ export const purgeEntry = (id: string): Promise<void> => call('purge_entry', { i
 export const setFavorite = (id: string, favorite: boolean): Promise<EntryMeta> =>
   call('set_favorite', { id, favorite })
 
+// Forget a login's previous passwords; returns its refreshed metadata. The
+// core clears the stored row itself — nothing is sent but the id.
+export const clearPasswordHistory = (id: string): Promise<EntryMeta> =>
+  call('clear_password_history', { id })
+
 export interface SwftxImport {
   count: number
   /** The refreshed live list, so the caller never has to re-read the vault. */
