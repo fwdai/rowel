@@ -298,7 +298,7 @@ describe('Type-aware fields', () => {
     expect(stamp.textContent).toMatch(/^Changed on /)
   })
 
-  it('rates the password being typed and stamps when it changed', async () => {
+  it('rates the password being typed', async () => {
     render(<Show type="login" editing />)
     await userEvent.type(input('title'), 'Acme')
     await userEvent.type(input('username'), 'octocat')
@@ -306,30 +306,14 @@ describe('Type-aware fields', () => {
 
     // The strength meter is debounced through a timeout.
     expect(await screen.findByText('Very strong')).toBeInTheDocument()
-    // The stamp belongs to the saved password, so it lands on Save.
+    // The stamp belongs to the saved password, and the core writes it.
     expect(screen.queryByText('Changed just now')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByText('Save'))
-    expect(screen.getByText('Changed just now')).toBeInTheDocument()
   })
 
-  it('leaves the rotation stamp alone when the password ends up unchanged', async () => {
-    const stamp = '2024-01-01T00:00:00.000Z'
-    mockCommand('reveal_entry', () => loginEntry({ password_updated_at: stamp }))
-    render(<Show entry={loginMeta()} editing />)
-
-    await waitFor(() => expect(input('password').value).toBe('secret'))
-    // Typed and taken back: the password never moved.
-    await userEvent.type(input('password'), 'x')
-    await userEvent.type(input('password'), '{backspace}')
-
-    await userEvent.click(screen.getByText('Save'))
-    expect(calls('save_entry')).toContainEqual(
-      { entry: expect.objectContaining({ password: 'secret', password_updated_at: stamp }) }
-    )
-  })
-
-  it('moves the rotation stamp when the password really changed', async () => {
+  // The rotation stamp is the core's to move (`Entry::record_password_change`),
+  // so a save sends the password and leaves the stamp as it was revealed —
+  // whether the password changed or not.
+  it('leaves the rotation stamp to the core', async () => {
     const stamp = '2024-01-01T00:00:00.000Z'
     mockCommand('reveal_entry', () => loginEntry({ password_updated_at: stamp }))
     render(<Show entry={loginMeta()} editing />)
@@ -338,12 +322,9 @@ describe('Type-aware fields', () => {
     await userEvent.type(input('password'), '2')
 
     await userEvent.click(screen.getByText('Save'))
-    expect(calls('save_entry')).toContainEqual(
-      { entry: expect.objectContaining({ password: 'secret2' }) }
-    )
-    expect(calls('save_entry')).not.toContainEqual(
-      { entry: expect.objectContaining({ password_updated_at: stamp }) }
-    )
+    expect(calls('save_entry')).toContainEqual({
+      entry: expect.objectContaining({ password: 'secret2', password_updated_at: stamp })
+    })
   })
 })
 

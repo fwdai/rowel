@@ -84,9 +84,11 @@ pub fn check_shareable(entry: &Entry) -> Result<()> {
 /// Strip everything the recipient's vault must decide for itself.
 ///
 /// The id is theirs to assign, the timestamps describe the sender's copy, the
-/// star is the sender's opinion, and a copied passkey would be a second
-/// authenticator the site never registered. Everything else — tags, extra
-/// fields, the secret itself — is the point of the share and travels intact.
+/// star is the sender's opinion, a copied passkey would be a second
+/// authenticator the site never registered, and the passwords the sender used
+/// to have are not part of what they chose to share. Everything else — tags,
+/// extra fields, the secret itself — is the point of the share and travels
+/// intact.
 ///
 /// Applied on both ends. Sending, so nothing leaves that should not; receiving,
 /// because the plaintext is whatever the link's author sealed, and a crafted
@@ -97,6 +99,7 @@ pub fn sanitize(entry: &Entry) -> Entry {
         created_at: None,
         updated_at: None,
         password_updated_at: None,
+        password_history: None,
         favorite: false,
         passkeys: None,
         ..entry.clone()
@@ -254,6 +257,7 @@ mod tests {
             "createdAt": "2024-01-01T00:00:00Z",
             "updatedAt": "2024-02-01T00:00:00Z",
             "password_updated_at": "2024-02-01T00:00:00Z",
+            "passwordHistory": [{ "password": "0ld-s3cret", "replacedAt": "2024-02-01T00:00:00Z" }],
             "passkeys": [{
                 "credentialId": "Y3JlZA", "rpId": "ex.com",
                 "userHandle": "dXNlcg", "userName": "alice",
@@ -277,6 +281,11 @@ mod tests {
         assert!(!blob.windows(6).any(|w| w == b"s3cret"));
 
         let back = unseal(&key, &blob, NOW).unwrap();
+        // The sender's previous passwords never leave their vault.
+        assert!(back.password_history.is_none());
+        assert!(!serde_json::to_string(&sanitize(&entry()))
+            .unwrap()
+            .contains("0ld-s3cret"));
         assert_eq!(back.title, "Site");
         assert_eq!(back.password.as_deref(), Some("s3cret"));
         assert_eq!(back.otp.as_deref(), Some("SEED"));

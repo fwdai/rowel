@@ -5,6 +5,7 @@ import eventsRs from '../../src-tauri/src/events.rs?raw'
 import errorRs from '../../src-tauri/crates/core/src/error.rs?raw'
 import modelsRs from '../../src-tauri/crates/core/src/models.rs?raw'
 import errorsTs from './errors.ts?raw'
+import typesTs from './types.ts?raw'
 import { EVENTS } from './events'
 import { KINDS, completeEntry } from '@/kinds'
 import type { Entry, LoginEntry } from './types'
@@ -206,6 +207,24 @@ const omittableStrings = () => {
 // Optional on the webview side as well, so nothing has to fill them in.
 const OPTIONAL_IN_TS = ['createdAt', 'updatedAt', 'password_updated_at']
 
+// The wire name of every field of one Rust struct: its `rename` when it has
+// one, its own name otherwise.
+const rustFields = (struct: string) => {
+  const body = modelsRs.match(new RegExp(`pub struct ${struct} \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''
+  return unique(
+    [...body.matchAll(/(?:#\[serde\(([^\]]*?)\)\]\s*)?pub (\w+):/g)].map(
+      ([, attrs, name]) => attrs?.match(/rename = "(\w+)"/)?.[1] ?? name
+    )
+  )
+}
+
+// The keys one TS interface declares.
+const tsFields = (name: string) =>
+  names(
+    typesTs.match(new RegExp(`interface ${name}\\b[^{]*\\{([\\s\\S]*?)\\n\\}`))?.[1] ?? '',
+    /^\s+(\w+)\??:/gm
+  )
+
 describe('the Rust/webview contract', () => {
   // The TS entry types promise a string for every field of a kind, while Rust
   // sends `Option<String>` and drops the `None`s — so `completeEntry` fills the
@@ -229,6 +248,14 @@ describe('the Rust/webview contract', () => {
     expect(login.otp).toBe('')
     expect(login.website).toBe('')
     expect(login.note).toBe('')
+  })
+
+  // The history is read straight off the reveal, so its shape is the wire's.
+  it('reads a password history the way Rust writes one', () => {
+    expect(tsFields('PasswordHistoryItem')).toEqual(['password', 'replacedAt'])
+    expect(rustFields('PasswordHistoryItem')).toEqual(tsFields('PasswordHistoryItem'))
+    expect(rustFields('Entry')).toContain('passwordHistory')
+    expect(tsFields('LoginEntry')).toContain('passwordHistory')
   })
 
   it('invokes exactly the commands Rust registers', () => {

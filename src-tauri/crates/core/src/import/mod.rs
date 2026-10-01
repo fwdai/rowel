@@ -163,6 +163,10 @@ pub struct ImportedEntry {
     // WebAuthn passkeys (only meaningful when kind == Login). Empty when the
     // source format carries none, which is the case for every CSV dialect.
     pub passkeys: Vec<ImportedPasskey>,
+    // A login's previous passwords, newest first (only meaningful when kind ==
+    // Login). Only Bitwarden has a member for them; CSV and CXF leave this
+    // empty.
+    pub password_history: Vec<crate::models::PasswordHistoryItem>,
     // Free-form label/value pairs, in source order — meaningful on every kind.
     // Empty when the source carries none; Bitwarden keeps them in its custom
     // `fields` and CXF in `custom-fields` credentials, and CSV has nowhere to

@@ -224,6 +224,7 @@ pub fn run() {
             commands::vault::restore_entry,
             commands::vault::purge_entry,
             commands::vault::set_favorite,
+            commands::vault::clear_password_history,
             commands::vault::import_swftx,
             commands::vault::export_vault,
             commands::vault::save_env_file,

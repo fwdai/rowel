@@ -643,8 +643,10 @@ fn save_failed(e: crate::error::Error) -> Code {
 /// One row sealed and upserted, as `commands::vault::save_entry` writes one:
 /// over the login `id` — its username and password, the rest of the entry
 /// kept — or as a new login for `url` titled `host`. The stamps are the
-/// editor's: `updatedAt` on every save, and the rotation stamp only when the
-/// password actually changed. `now` is passed in so a test can pin it.
+/// editor's: `updatedAt` on every save, and the rotation stamp and password
+/// history only when the password actually changed (the same
+/// `Entry::record_password_change` the editor's save goes through). `now` is
+/// passed in so a test can pin it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn save_login_in(
     store: &SqliteStore,
@@ -656,21 +658,35 @@ pub(crate) fn save_login_in(
     password: &str,
     now: &str,
 ) -> std::result::Result<(), Code> {
-    let entry = match id {
+    let mut stored = match id {
         Some(id) => {
             let record = store
                 .get(id)
                 .map_err(|e| save_failed(session::store_err(e)))?
                 .ok_or(Code::NoValidUuidProvided)?;
-            let mut entry = cipher
+            let entry = cipher
                 .unseal(&record.id, &record.payload)
                 .map_err(save_failed)?;
             if entry.kind != "login" {
                 return Err(Code::NoValidUuidProvided);
             }
-            if entry.password.as_deref().unwrap_or_default() != password {
-                entry.password_updated_at = Some(now.to_string());
-            }
+            Some(entry)
+        }
+        None => None,
+    };
+    // The stored row becomes the saved one by move, never by copy: what this
+    // save replaces — the password, and the bookkeeping that follows it — is
+    // taken out first for `record_password_change` to weigh, and the rest (the
+    // OTP seed, the passkeys and their keys) crosses once, so no second copy of
+    // any secret is left behind for a drop that would not scrub it.
+    let mut previous = stored.as_mut().map(|s| Entry {
+        password: s.password.take(),
+        password_history: s.password_history.take(),
+        password_updated_at: s.password_updated_at.take(),
+        ..Default::default()
+    });
+    let mut entry = match stored {
+        Some(mut entry) => {
             // Written back to the field it was served from: `logins_for` fills
             // the extension's username from `username`, or from `email` when
             // that is blank, so a login kept by its email must not grow a
@@ -694,12 +710,14 @@ pub(crate) fn save_login_in(
             website: Some(url.to_string()),
             username: Some(username.to_string()),
             password: Some(password.to_string()),
-            password_updated_at: (!password.is_empty()).then(|| now.to_string()),
             created_at: Some(now.to_string()),
             updated_at: Some(now.to_string()),
             ..Default::default()
         },
     };
+    // Takes the old password with it, into the history or scrubbed, so
+    // `previous` drops holding nothing.
+    entry.record_password_change(previous.as_mut(), now);
     let payload = cipher.seal(&entry).map_err(save_failed)?;
     let record = migrate::build_record(&entry, payload).map_err(save_failed)?;
     store
