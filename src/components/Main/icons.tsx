@@ -31,6 +31,9 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  File,
+  FileArchive,
+  FileImage,
   FileText,
   Fingerprint,
   Globe,
@@ -137,6 +140,11 @@ export const ArchiveGlyph = glyph(Archive, 14)
 export const ArchiveRestoreGlyph = glyph(ArchiveRestore, 14)
 export const RefreshGlyph = glyph(RefreshCw, 14)
 export const DownloadGlyph = glyph(Download, 14)
+// What an attached file is, at a glance.
+export const FileGlyph = glyph(File, 14)
+export const FileImageGlyph = glyph(FileImage, 14)
+export const FileTextGlyph = glyph(FileText, 14)
+export const FileArchiveGlyph = glyph(FileArchive, 14)
 export const CloseGlyph = glyph(X, 14)
 export const ChevronDownGlyph = glyph(ChevronDown, 14)
 export const FingerprintGlyph = glyph(Fingerprint, 14)

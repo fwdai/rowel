@@ -1,6 +1,7 @@
 import type { BackendError } from '@/api/errors'
 import type { AppStatus, Settings } from '@/api/app'
 import type { BrowserStatus } from '@/api/browser'
+import type { Attachment } from '@/api/types'
 import { EVENTS } from '@/api/events'
 import { emitEventSoon } from './events'
 
@@ -58,6 +59,14 @@ const DEFAULT_SETTINGS: Settings = {
 }
 
 let settings: Settings = DEFAULT_SETTINGS
+
+// The files the fake vault holds: what `attachment_add` stored, or a spec
+// seeded with `seedAttachments`. Listed by entry, so a reread finds them.
+let attachments: Attachment[] = []
+
+export const seedAttachments = (files: Attachment[]): void => {
+  attachments = files
+}
 
 /**
  * The launch probe's answer on a plain desktop with nothing enrolled. Exported
@@ -169,6 +178,25 @@ const DEFAULTS: Record<string, Handler> = {
   export_vault: () => null,
   save_env_file: () => null,
 
+  // Attachments: none until a spec adds one, and a save dialog dismissed.
+  attachment_list: ({ entryId }) => attachments.filter(file => file.entryId === entryId),
+  attachment_add: ({ entryId, path }) => {
+    const file: Attachment = {
+      id: 'a1',
+      entryId: String(entryId),
+      name: String(path).replace(/^.*[\\/]/, ''),
+      size: 2048,
+      createdAt: '2024-01-01T00:00:00.000Z'
+    }
+    attachments = [...attachments, file]
+    return file
+  },
+  attachment_save: () => null,
+  attachment_delete: ({ id }) => {
+    attachments = attachments.filter(file => file.id !== id)
+  },
+  attachment_usage: () => ({ used: 0, limit: 128 * 1024 * 1024 }),
+
   generate_password: () => 'Generated123!',
   generate_ssh_key: () => ({
     privateKey:
@@ -277,4 +305,5 @@ export const resetIpc = (): void => {
   queued.clear()
   recorded.clear()
   settings = DEFAULT_SETTINGS
+  attachments = []
 }

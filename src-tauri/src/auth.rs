@@ -492,6 +492,7 @@ fn rekey_vault(
         .map(|r| reseal_record(r, &old_cipher, &new_cipher))
         .collect::<Result<_>>()?;
     store.import(&resealed).map_err(store_err)?;
+    reseal_attachments(store, old_key, new_key)?;
     store.rekey(&*new_key.sqlcipher_key()).map_err(store_err)?;
     record_kdf_meta(store, params)?;
     storage::atomic_write_file(sidecar, &params.to_json()?)?;
@@ -509,6 +510,27 @@ fn restore_db_file(db: &Path, backup: &Path) -> Result<()> {
     }
     fs::copy(backup, db)?;
     Ok(())
+}
+
+// The attached files follow the payloads onto the new key: their subkey is
+// derived from the same master. A purged shell has no blob to carry. A vault
+// with nothing attached does nothing here — which is every legacy-keyed one,
+// since those are refused attachments, so the `None` below is never reached
+// with a file in hand.
+fn reseal_attachments(store: &SqliteStore, old_key: &VaultKey, new_key: &VaultKey) -> Result<()> {
+    let mut atts = store.export_attachments_for_sync().map_err(store_err)?;
+    atts.retain(|a| !a.blob.is_empty());
+    if atts.is_empty() {
+        return Ok(());
+    }
+    let refused = || Error::Unsupported("this vault's key scheme cannot hold attachments".into());
+    let old = old_key.attachment_cipher().ok_or_else(refused)?;
+    let new = new_key.attachment_cipher().ok_or_else(refused)?;
+    for a in &mut atts {
+        let file = old.unseal(&a.meta.id, &a.blob)?;
+        a.blob = new.seal(&a.meta.id, &file)?;
+    }
+    store.import_attachments(&atts).map_err(store_err)
 }
 
 // Unseal a record's payload under the old cipher and re-seal it under the new one,
@@ -1014,6 +1036,59 @@ mod recovery_tests {
         // The invariant every exit of the saga keeps: no marker on disk behind a
         // change that committed.
         assert!(!p.db_backup.exists() && !p.sidecar_backup.exists() && !p.staging.exists());
+    }
+
+    // An attached file is sealed under a subkey of the master, so a password
+    // change has to carry it across like the payloads, or it would never open
+    // again under the new password.
+    #[test]
+    fn a_password_change_carries_the_attached_files_across() {
+        use crate::store::{Attachment, AttachmentMeta};
+
+        let (dir, p) = paths();
+        let old = VaultKey::Argon2 {
+            master: zeroize::Zeroizing::new(vec![1u8; 32]),
+        };
+        fs::write(&p.sidecar, "old-params").unwrap();
+        {
+            let store = store_with_one_entry(&p.db, &old);
+            let blob = old
+                .attachment_cipher()
+                .unwrap()
+                .seal("f1", b"file")
+                .unwrap();
+            store
+                .insert_attachment(&Attachment {
+                    meta: AttachmentMeta {
+                        id: "f1".into(),
+                        entry_id: "1".into(),
+                        name: "f.txt".into(),
+                        mime: None,
+                        size: 4,
+                        created_at: 0,
+                        updated_at: 0,
+                        deleted_at: None,
+                    },
+                    blob,
+                })
+                .unwrap();
+        }
+        let params = KdfParams::argon2id(b"salt-0123456789012345", 256, 1, 1);
+        let derive = || VaultKey::Argon2 {
+            master: crate::crypto::derive(b"new-pw", &params).unwrap(),
+        };
+
+        rekey_workspace(dir.path(), old, derive(), &params).unwrap();
+
+        let new = derive();
+        let store = SqliteStore::open(&p.db, &*new.sqlcipher_key()).unwrap();
+        let stored = store.get_attachment("f1").unwrap().unwrap();
+        let file = new
+            .attachment_cipher()
+            .unwrap()
+            .unseal("f1", &stored.blob)
+            .unwrap();
+        assert_eq!(&**file, b"file");
     }
 
     // The workspace is on a password of its own. Nothing is touched, and the

@@ -1,5 +1,6 @@
 import { useVault, useUi, startEntry, closeAddPicker, isModalOpen } from '@/store'
 import { ingestDroppedEnvFile, type IngestedEnv } from '@/kinds/env/ingest'
+import { attachTarget, isAttachDrop } from '../Body/Aside/Show/Attachments/drop'
 
 /**
  * Open the env editor as a new draft with the file already in it — the same
@@ -28,15 +29,17 @@ const idleDropContext = (): boolean | null => {
  * to add, so a drop answers it and closes it. Every other dialog (Settings ›
  * Import has a zone of its own) keeps the drop.
  *
- * Images are the scanner's, so they are not even read. Anything else is read
- * and kept only if it is named or reads like an env file — a file that is
- * neither does nothing, as today.
+ * Images are the scanner's, so they are not even read. Neither is a file that
+ * is not named like an env while an entry is open: that one is attached to the
+ * entry (`Show/Attachments`). Anything else is read and kept only if it is
+ * named or reads like an env file — a file that is neither does nothing.
  */
 export const dropIdle = async (paths: string[]): Promise<void> => {
   const context = idleDropContext()
   if (context === null) return
   const [path] = paths
   if (!path) return
+  if (attachTarget() && isAttachDrop(path)) return
   const file = await ingestDroppedEnvFile(path).catch(() => null)
   // Reading crosses an async boundary: only the same still-idle surface may
   // consume its result. Opening/closing the picker also changes ownership.

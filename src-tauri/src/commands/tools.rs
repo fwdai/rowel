@@ -14,9 +14,9 @@ use crate::state::AppState;
 use crate::{favicon, scan};
 
 /// The OS file dialog, for a file the backend will then read: `kind` is
-/// `"image"` (filtered to what the scanner opens) or `"env"` (any file, since
-/// an env file may be named anything). The path picked, or `None` when the
-/// dialog was dismissed.
+/// `"image"` (filtered to what the scanner opens), `"env"` (any file, since
+/// an env file may be named anything) or `"attachment"` (any file). The path
+/// picked, or `None` when the dialog was dismissed.
 ///
 /// Run from Rust rather than through the dialog plugin's JS API so the choice
 /// is one the backend witnessed: the picked path is granted (see `grants`)
@@ -40,6 +40,7 @@ pub async fn pick_file(
             Purpose::Image
         }
         "env" => Purpose::Env,
+        "attachment" => Purpose::Attachment,
         other => return Err(Error::Unsupported(format!("no {other} picker"))),
     };
     // The dialog blocks its caller until the user answers, so it runs on the

@@ -142,6 +142,11 @@ pub enum Error {
     #[error("the file is not text")]
     FileNotText,
 
+    /// An attachment that would take the vault's files past their budget
+    /// (see the app's `commands::attachments`). The file itself may be small.
+    #[error("this vault's attachments are at their limit")]
+    VaultFull,
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -201,6 +206,7 @@ impl Error {
             Error::VaultDeletedRemotely => "vaultDeletedRemotely",
             Error::FileTooLarge => "fileTooLarge",
             Error::FileNotText => "fileNotText",
+            Error::VaultFull => "vaultFull",
             Error::Io(_) => "io",
             Error::Serde(_) => "serde",
             Error::Crypto(_) => "crypto",

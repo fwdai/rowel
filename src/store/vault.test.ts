@@ -14,6 +14,8 @@ import {
   editEntry,
   saveEntry,
   deleteEntry,
+  attachFile,
+  removeAttachment,
   enterMain,
   setSyncStatus,
   initialApp,
@@ -185,6 +187,19 @@ describe('auto-sync', () => {
     await deleteEntry('a')
     await vi.advanceTimersByTimeAsync(2_000)
     expect(calls('sync_now')).toHaveLength(1)
+  })
+
+  // A file is a write to the vault like any other, even with no entry changed.
+  it('publishes an attachment added or removed', async () => {
+    connected()
+
+    await attachFile('a', '/Users/me/scan.pdf')
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(calls('sync_now')).toHaveLength(1)
+
+    await removeAttachment('a1')
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(calls('sync_now')).toHaveLength(2)
   })
 })
 

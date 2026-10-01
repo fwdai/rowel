@@ -38,6 +38,7 @@ export type BackendErrorKind =
   | 'vaultDeletedRemotely'
   | 'fileTooLarge'
   | 'fileNotText'
+  | 'vaultFull'
   | 'io'
   | 'serde'
   | 'crypto'
@@ -144,6 +145,8 @@ export const describeError = (error: unknown): string => {
       return t('This file is too large')
     case 'fileNotText':
       return t('This file is not text')
+    case 'vaultFull':
+      return t("This vault's attachments are at their limit ({{limit}})", { limit: '128 MB' })
     default:
       return messageOf(error)
   }

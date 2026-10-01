@@ -730,5 +730,13 @@
   "{{site}} wants to sign in with your passkey": "{{site}} хоче виконати вхід з вашим ключем доступу",
   "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} хоче виконати вхід з вашим ключем доступу для {{account}}",
   "Account": "Обліковий запис",
-  "Asked by {{origin}} through the browser extension.": "Запит від {{origin}} через розширення браузера."
+  "Asked by {{origin}} through the browser extension.": "Запит від {{origin}} через розширення браузера.",
+  "Attach file": "Прикріпити файл",
+  "Attaching…": "Прикріплюємо…",
+  "Attachments": "Вкладення",
+  "Attachments can be up to {{size}} each": "Розмір кожного вкладення — до {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "Вкладення в цьому сховищі досягли межі ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "Вкладення в цьому сховищі займають {{used}} із {{limit}}",
+  "Remove attachment": "Видалити вкладення",
+  "Remove?": "Видалити?"
 }

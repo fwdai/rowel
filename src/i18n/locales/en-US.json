@@ -714,5 +714,13 @@
   "{{site}} wants to sign in with your passkey": "{{site}} wants to sign in with your passkey",
   "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} wants to sign in with your passkey for {{account}}",
   "Account": "Account",
-  "Asked by {{origin}} through the browser extension.": "Asked by {{origin}} through the browser extension."
+  "Asked by {{origin}} through the browser extension.": "Asked by {{origin}} through the browser extension.",
+  "Attach file": "Attach file",
+  "Attaching…": "Attaching…",
+  "Attachments": "Attachments",
+  "Attachments can be up to {{size}} each": "Attachments can be up to {{size}} each",
+  "This vault's attachments are at their limit ({{limit}})": "This vault's attachments are at their limit ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "{{used}} of {{limit}} used by attachments in this vault",
+  "Remove attachment": "Remove attachment",
+  "Remove?": "Remove?"
 }

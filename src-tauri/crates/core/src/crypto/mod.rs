@@ -20,7 +20,7 @@ pub mod kdf;
 pub use kdf::{derive, KdfParams};
 
 mod vault;
-pub use vault::{PayloadCipher, VaultKey};
+pub use vault::{AttachmentCipher, PayloadCipher, VaultKey};
 
 #[cfg(test)]
 mod tests;

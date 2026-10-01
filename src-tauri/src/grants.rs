@@ -1,6 +1,7 @@
 //! Paths the user has pointed the app at.
 //!
-//! A command that reads a local file (`scan_image`, `read_env_file`) gets its
+//! A command that reads a local file (`scan_image`, `read_env_file`,
+//! `attachment_add`) gets its
 //! path from the webview, and the webview's word is not authorization: a
 //! script that got to run there could name any file on disk — another
 //! project's `.env`, a photo in the user's library — and have the backend hand
@@ -40,6 +41,17 @@ pub enum Purpose {
     /// An environment file to read: what `commands::env::read_env_file` reads,
     /// handing its whole text back to the webview.
     Env,
+    /// A file to attach to an entry: what `commands::attachments::attachment_add`
+    /// reads, sealing it into the vault. Nothing of it goes back to the webview.
+    Attachment,
+}
+
+/// One path the user chose, and how.
+struct Grant {
+    path: PathBuf,
+    purpose: Purpose,
+    /// Dropped on the window rather than picked from a dialog.
+    dropped: bool,
 }
 
 /// How many grants are held at once. A user picks or drops one file at a time
@@ -50,7 +62,7 @@ const CAP: usize = 64;
 #[derive(Default)]
 pub struct PathGrants {
     // Oldest first, so the bound evicts from the front.
-    paths: Mutex<VecDeque<(PathBuf, Purpose)>>,
+    paths: Mutex<VecDeque<Grant>>,
 }
 
 impl PathGrants {
@@ -62,15 +74,32 @@ impl PathGrants {
     /// another — replaces what was held for it, so the last thing the user was
     /// asked is what the path stands for.
     pub fn grant(&self, path: &Path, purpose: Purpose) {
+        self.insert(path, purpose, false);
+    }
+
+    /// [`PathGrants::grant`] for a file dropped on the window, `purpose` being
+    /// what its kind makes it. A drop is also spendable as an attachment: the
+    /// user handed the file to the app itself rather than to a dialog with a
+    /// framing of its own, and attaching it seals it in the vault and gives
+    /// nothing of it back — less than the kind's own reader exposes.
+    pub fn grant_drop(&self, path: &Path, purpose: Purpose) {
+        self.insert(path, purpose, true);
+    }
+
+    fn insert(&self, path: &Path, purpose: Purpose, dropped: bool) {
         let Ok(path) = path.canonicalize() else {
             return;
         };
         let mut paths = self.paths.lock().unwrap();
-        paths.retain(|(held, _)| held != &path);
+        paths.retain(|held| held.path != path);
         if paths.len() >= CAP {
             paths.pop_front();
         }
-        paths.push_back((path, purpose));
+        paths.push_back(Grant {
+            path,
+            purpose,
+            dropped,
+        });
     }
 
     /// Spend the grant for `path` as `purpose`: whether the user chose it for
@@ -85,10 +114,10 @@ impl PathGrants {
             return false;
         };
         let mut paths = self.paths.lock().unwrap();
-        match paths
-            .iter()
-            .position(|(held, granted)| held == &path && *granted == purpose)
-        {
+        match paths.iter().position(|held| {
+            held.path == path
+                && (held.purpose == purpose || (held.dropped && purpose == Purpose::Attachment))
+        }) {
             Some(at) => {
                 paths.remove(at);
                 true
@@ -176,6 +205,27 @@ mod tests {
         // The refused take spent nothing: the reader it was picked for still
         // has its grant.
         assert!(grants.take(&path, Purpose::Env));
+    }
+
+    // A drop can be attached whatever its kind; a picked file only from the
+    // attachment picker, and an attachment pick reads as nothing else.
+    #[test]
+    fn a_dropped_file_can_be_attached_and_a_picked_one_only_as_picked() {
+        let grants = PathGrants::default();
+        let dropped = scratch("dropped");
+        grants.grant_drop(&dropped, Purpose::Env);
+        assert!(grants.take(&dropped, Purpose::Attachment));
+        assert!(!grants.take(&dropped, Purpose::Env), "spent by the attach");
+
+        let picked = scratch("picked-env");
+        grants.grant(&picked, Purpose::Env);
+        assert!(!grants.take(&picked, Purpose::Attachment));
+
+        let attached = scratch("picked-attachment");
+        grants.grant(&attached, Purpose::Attachment);
+        assert!(!grants.take(&attached, Purpose::Env));
+        assert!(!grants.take(&attached, Purpose::Image));
+        assert!(grants.take(&attached, Purpose::Attachment));
     }
 
     #[test]

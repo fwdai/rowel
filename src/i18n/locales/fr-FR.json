@@ -725,5 +725,13 @@
   "{{site}} wants to sign in with your passkey": "{{site}} souhaite vous connecter avec votre clé d’accès",
   "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} souhaite vous connecter avec votre clé d’accès pour {{account}}",
   "Account": "Compte",
-  "Asked by {{origin}} through the browser extension.": "Demandé par {{origin}} via l’extension de navigateur."
+  "Asked by {{origin}} through the browser extension.": "Demandé par {{origin}} via l’extension de navigateur.",
+  "Attach file": "Joindre un fichier",
+  "Attaching…": "Ajout en cours…",
+  "Attachments": "Pièces jointes",
+  "Attachments can be up to {{size}} each": "Chaque pièce jointe peut faire jusqu’à {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "Les pièces jointes de ce coffre ont atteint leur limite ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "{{used}} sur {{limit}} utilisés par les pièces jointes de ce coffre",
+  "Remove attachment": "Supprimer la pièce jointe",
+  "Remove?": "Supprimer ?"
 }

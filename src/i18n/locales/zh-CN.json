@@ -697,5 +697,13 @@
   "{{site}} wants to sign in with your passkey": "{{site}} 想使用你的通行密钥登录",
   "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} 想使用你的 {{account}} 通行密钥登录",
   "Account": "账户",
-  "Asked by {{origin}} through the browser extension.": "由 {{origin}} 通过浏览器扩展请求。"
+  "Asked by {{origin}} through the browser extension.": "由 {{origin}} 通过浏览器扩展请求。",
+  "Attach file": "附加文件",
+  "Attaching…": "正在附加…",
+  "Attachments": "附件",
+  "Attachments can be up to {{size}} each": "每个附件最大 {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "此保险库的附件已达上限（{{limit}}）",
+  "{{used}} of {{limit}} used by attachments in this vault": "此保险库的附件已使用 {{used}}，上限 {{limit}}",
+  "Remove attachment": "移除附件",
+  "Remove?": "确定移除？"
 }

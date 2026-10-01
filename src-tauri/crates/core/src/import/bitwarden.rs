@@ -8,7 +8,7 @@ use super::export::PASSPHRASE_LABEL;
 use super::{
     non_empty, take_labelled, EntryKind, ImportResult, ImportedEntry, ImportedPasskey, Importer,
 };
-use crate::models::{ExtraField, PasswordHistoryItem};
+use crate::models::{ExtraField, PasswordHistoryItem, PASSWORD_HISTORY_CAP};
 
 pub struct Bitwarden;
 
@@ -93,7 +93,11 @@ struct PasswordHistory {
     last_used_date: Option<String>,
 }
 
-// An entry with no password says nothing, so it is not carried.
+// An entry with no password says nothing, so it is not carried; and no more
+// are carried than the vault keeps, so that what an import reads is what the
+// vault will hold — a second import of the same file then matches the rows
+// already there instead of doubling them (the duplicate check compares whole
+// entries, history included).
 fn password_history(history: Option<Vec<PasswordHistory>>) -> Vec<PasswordHistoryItem> {
     history
         .unwrap_or_default()
@@ -104,6 +108,7 @@ fn password_history(history: Option<Vec<PasswordHistory>>) -> Vec<PasswordHistor
                 replaced_at: h.last_used_date.unwrap_or_default(),
             })
         })
+        .take(PASSWORD_HISTORY_CAP)
         .collect()
 }
 

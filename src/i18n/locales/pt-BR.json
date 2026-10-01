@@ -719,5 +719,13 @@
   "{{site}} wants to sign in with your passkey": "{{site}} quer entrar com sua chave de acesso",
   "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} quer entrar com sua chave de acesso para {{account}}",
   "Account": "Conta",
-  "Asked by {{origin}} through the browser extension.": "Solicitado por {{origin}} pela extensão do navegador."
+  "Asked by {{origin}} through the browser extension.": "Solicitado por {{origin}} pela extensão do navegador.",
+  "Attach file": "Anexar arquivo",
+  "Attaching…": "Anexando…",
+  "Attachments": "Anexos",
+  "Attachments can be up to {{size}} each": "Cada anexo pode ter até {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "Os anexos deste cofre atingiram o limite ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "{{used}} de {{limit}} usados por anexos neste cofre",
+  "Remove attachment": "Remover anexo",
+  "Remove?": "Remover?"
 }

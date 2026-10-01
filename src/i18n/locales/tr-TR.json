@@ -708,5 +708,13 @@
   "{{site}} wants to sign in with your passkey": "{{site}} geçiş anahtarınızla oturum açmak istiyor",
   "{{site}} wants to sign in with your passkey for {{account}}": "{{site}}, {{account}} için geçiş anahtarınızla oturum açmak istiyor",
   "Account": "Hesap",
-  "Asked by {{origin}} through the browser extension.": "{{origin}} tarafından tarayıcı uzantısı üzerinden istendi."
+  "Asked by {{origin}} through the browser extension.": "{{origin}} tarafından tarayıcı uzantısı üzerinden istendi.",
+  "Attach file": "Dosya ekle",
+  "Attaching…": "Ekleniyor…",
+  "Attachments": "Ekler",
+  "Attachments can be up to {{size}} each": "Her ek en fazla {{size}} olabilir",
+  "This vault's attachments are at their limit ({{limit}})": "Bu kasadaki ekler sınırına ulaştı ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "Bu kasada ekler için {{used}} / {{limit}} kullanılıyor",
+  "Remove attachment": "Eki kaldır",
+  "Remove?": "Kaldırılsın mı?"
 }

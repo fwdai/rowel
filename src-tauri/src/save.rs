@@ -181,9 +181,12 @@ async fn ask(
     Ok(chosen.and_then(|f| f.into_path().ok()))
 }
 
-/// A destination given without one keeps the extension the export needs.
+/// A destination given without one keeps the extension the export needs. A
+/// file that never had one (an attachment called `id_ed25519`) is left as the
+/// user named it.
 pub fn with_extension(dest: PathBuf, extension: &str) -> PathBuf {
     match dest.extension() {
+        _ if extension.is_empty() => dest,
         Some(e) if e == extension => dest,
         _ => dest.with_extension(extension),
     }

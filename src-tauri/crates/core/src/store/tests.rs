@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{migrate, record_hash, Record, SqliteStore, StoreError, VaultStore, SYNC_META_PREFIX};
+use super::{
+    migrate, record_hash, Attachment, AttachmentMeta, Record, SqliteStore, StoreError, VaultStore,
+    SYNC_META_PREFIX,
+};
 use crate::crypto::{self, KdfParams, VaultKey};
 use crate::models::Entry;
 
@@ -1459,4 +1462,410 @@ fn meta_delete_prefix_removes_only_the_namespace() {
         Some("keep")
     );
     assert_eq!(store.meta_get("kdf").unwrap().as_deref(), Some("argon2id"));
+}
+
+// --- attachments --------------------------------------------------------------
+
+fn att(id: &str, entry_id: &str, blob: &[u8]) -> Attachment {
+    Attachment {
+        meta: AttachmentMeta {
+            id: id.into(),
+            entry_id: entry_id.into(),
+            name: format!("{id}.pdf"),
+            mime: Some("application/pdf".into()),
+            size: blob.len() as i64,
+            created_at: 100,
+            updated_at: 100,
+            deleted_at: None,
+        },
+        blob: blob.to_vec(),
+    }
+}
+
+// An attachment of entry "1" at a given `updated_at`, as the merge reasons.
+fn att_at(id: &str, blob: &[u8], updated_at: i64) -> Attachment {
+    let mut a = att(id, "1", blob);
+    a.meta.updated_at = updated_at;
+    a
+}
+
+fn att_row(store: &SqliteStore, id: &str) -> Attachment {
+    store
+        .export_attachments_for_sync()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.meta.id == id)
+        .unwrap()
+}
+
+fn listed(store: &SqliteStore, entry_id: &str) -> Vec<String> {
+    store
+        .list_attachments(entry_id)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.id)
+        .collect()
+}
+
+#[test]
+fn an_attachment_round_trips_and_lists_under_its_entry_only() {
+    let store = seeded(&[stamped("1", b"x", 1000), stamped("2", b"y", 1000)]);
+    store
+        .insert_attachment(&att("a1", "1", b"sealed-file"))
+        .unwrap();
+    store.insert_attachment(&att("b1", "2", b"other")).unwrap();
+
+    let metas = store.list_attachments("1").unwrap();
+    assert_eq!(metas.len(), 1);
+    assert_eq!(metas[0].name, "a1.pdf");
+    assert_eq!(metas[0].size, 11);
+    // The insert stamps both clocks, like `upsert` does for an entry.
+    assert!(metas[0].created_at > 100);
+    assert_eq!(metas[0].created_at, metas[0].updated_at);
+
+    let got = store.get_attachment("a1").unwrap().unwrap();
+    assert_eq!(got.blob, b"sealed-file");
+    assert_eq!(got.meta.entry_id, "1");
+    assert_eq!(store.get_attachment("missing").unwrap(), None);
+}
+
+#[test]
+fn removing_an_attachment_discards_its_blob_and_hides_it() {
+    let store = seeded(&[stamped("1", b"x", 1000)]);
+    store
+        .insert_attachment(&att("a1", "1", b"sealed-file"))
+        .unwrap();
+
+    store.remove_attachment("a1").unwrap();
+
+    assert!(listed(&store, "1").is_empty());
+    assert_eq!(store.get_attachment("a1").unwrap(), None);
+    // The tombstone stays for sync, with nothing of the file left in it.
+    let shell = att_row(&store, "a1");
+    assert!(shell.meta.deleted_at.is_some());
+    assert!(shell.blob.is_empty());
+    assert_eq!((shell.meta.name.as_str(), shell.meta.size), ("", 0));
+}
+
+#[test]
+fn deleting_an_entry_tombstones_its_attachments_and_restoring_brings_them_back() {
+    let store = seeded(&[stamped("1", b"x", 1000)]);
+    store.insert_attachment(&att("a1", "1", b"kept")).unwrap();
+    store
+        .insert_attachment(&att("a2", "1", b"removed"))
+        .unwrap();
+    store.remove_attachment("a2").unwrap();
+
+    store.delete("1").unwrap();
+    assert!(listed(&store, "1").is_empty());
+    let tombstone = att_row(&store, "a1");
+    assert_eq!(tombstone.meta.deleted_at, row(&store, "1").deleted_at);
+    assert_eq!(tombstone.blob, b"kept", "an archived entry keeps its files");
+
+    store.restore("1").unwrap();
+    // The one the delete took comes back; the one removed before it does not.
+    assert_eq!(listed(&store, "1"), vec!["a1"]);
+    assert_eq!(store.get_attachment("a1").unwrap().unwrap().blob, b"kept");
+    assert_eq!(store.get_attachment("a2").unwrap(), None);
+}
+
+#[test]
+fn purging_an_entry_purges_its_attachments() {
+    let store = seeded(&[stamped("1", b"x", 1000), stamped("2", b"y", 1000)]);
+    store
+        .insert_attachment(&att("a1", "1", b"secret-file"))
+        .unwrap();
+    store
+        .insert_attachment(&att("b1", "2", b"untouched"))
+        .unwrap();
+    store.delete("1").unwrap();
+
+    store.purge("1").unwrap();
+
+    let shell = att_row(&store, "a1");
+    assert!(shell.blob.is_empty());
+    assert!(shell.meta.deleted_at.is_some());
+    assert_eq!(shell.meta.name, "");
+    assert_eq!(
+        store.get_attachment("b1").unwrap().unwrap().blob,
+        b"untouched"
+    );
+}
+
+#[test]
+fn reclaiming_tombstones_takes_the_attachments_with_them() {
+    let store = seeded(&[stamped("live", b"x", 1000), tombstone("old", 1000)]);
+    store
+        .insert_attachment(&att("a1", "live", b"kept"))
+        .unwrap();
+    store
+        .insert_attachment(&att("a2", "live", b"gone"))
+        .unwrap();
+    store.remove_attachment("a2").unwrap();
+    let mut archived = att("o1", "old", b"archived");
+    archived.meta.deleted_at = Some(1000);
+    store.import_attachments(&[archived]).unwrap();
+
+    store.purge_tombstones_before(i64::MAX).unwrap();
+
+    let ids: Vec<String> = store
+        .export_attachments_for_sync()
+        .unwrap()
+        .into_iter()
+        .map(|a| a.meta.id)
+        .collect();
+    assert_eq!(ids, vec!["a1"]);
+}
+
+#[test]
+fn merge_attachments_is_last_writer_wins_and_a_newer_tombstone_wins() {
+    let store = seeded(&[stamped("1", b"x", 1000)]);
+    store
+        .import_attachments(&[att_at("a1", b"v1", 1000)])
+        .unwrap();
+
+    // Older incoming: nothing written.
+    assert_eq!(
+        store
+            .merge_attachments(&[att_at("a1", b"v0", 500)])
+            .unwrap(),
+        0
+    );
+    assert_eq!(att_row(&store, "a1").blob, b"v1");
+
+    // A peer removed it later — a blob-less shell, which is what a removal is:
+    // the shell wins. (A tombstone that kept its blob is an archive, and under
+    // a live entry the reconcile brings it back; see
+    // `an_entry_a_merge_brings_back_brings_its_archived_files_with_it`.)
+    let mut tomb = att_at("a1", b"", 2000);
+    tomb.meta.deleted_at = Some(2000);
+    assert_eq!(store.merge_attachments(&[tomb]).unwrap(), 1);
+    assert!(listed(&store, "1").is_empty());
+    assert!(att_row(&store, "a1").blob.is_empty());
+
+    // An unknown row arrives verbatim.
+    assert_eq!(
+        store
+            .merge_attachments(&[att_at("a2", b"new", 3000)])
+            .unwrap(),
+        1
+    );
+    assert_eq!(att_row(&store, "a2").meta.updated_at, 3000);
+}
+
+// "Remove" has to hold against a peer that still holds the file live — even
+// one whose copy is stamped later — or a sync would hand it straight back.
+#[test]
+fn a_removed_attachment_does_not_come_back_from_a_peer() {
+    let store = seeded(&[stamped("1", b"x", 1000)]);
+    store
+        .import_attachments(&[att_at("a1", b"file", 1000)])
+        .unwrap();
+    store.remove_attachment("a1").unwrap();
+
+    assert_eq!(
+        store
+            .merge_attachments(&[att_at("a1", b"file", i64::MAX)])
+            .unwrap(),
+        0
+    );
+    assert!(att_row(&store, "a1").blob.is_empty());
+    assert!(listed(&store, "1").is_empty());
+
+    // And the shell travels: the peer that held it live gives it up.
+    let peer = seeded(&[stamped("1", b"x", 1000)]);
+    peer.import_attachments(&[att_at("a1", b"file", i64::MAX)])
+        .unwrap();
+    peer.merge_attachments(&store.export_attachments_for_sync().unwrap())
+        .unwrap();
+    assert_eq!(
+        peer.export_attachments_for_sync().unwrap(),
+        store.export_attachments_for_sync().unwrap()
+    );
+}
+
+// A purge arriving through the entry merge takes the entry's files on this
+// device too — including one added here that the purging peer never saw.
+#[test]
+fn a_merged_entry_purge_purges_its_attachments_here() {
+    let purged = seeded(&[tombstone("1", 1000)]);
+    purged.purge("1").unwrap();
+    let peer = seeded(&[stamped("1", b"x", 1000)]);
+    peer.insert_attachment(&att("a1", "1", b"added-here"))
+        .unwrap();
+
+    peer.merge_records(&purged.export_for_sync().unwrap())
+        .unwrap();
+
+    assert!(att_row(&peer, "a1").blob.is_empty());
+    assert!(listed(&peer, "1").is_empty());
+}
+
+// --- an attachment never outlives its entry -------------------------------------
+//
+// Live entry: the file may be live or tombstoned. Archived entry: tombstoned
+// too. Purged or missing entry: a purged shell. However a row got there.
+
+// A shell: tombstoned, with nothing of the file left in it.
+fn is_shell(a: &Attachment) -> bool {
+    a.meta.deleted_at.is_some() && a.blob.is_empty() && a.meta.name.is_empty()
+}
+
+// The peer added a file before it heard of the purge here: the merge keeps the
+// entry purged, and the file has to go with it rather than arrive live.
+#[test]
+fn a_peer_file_for_an_entry_purged_here_arrives_as_a_shell() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    store.purge("1").unwrap();
+
+    store
+        .merge_attachments(&[att_at("a1", b"file", i64::MAX - 1)])
+        .unwrap();
+
+    assert!(is_shell(&att_row(&store, "a1")));
+    assert!(listed(&store, "1").is_empty());
+    assert_eq!(store.get_attachment("a1").unwrap(), None);
+    assert_eq!(store.attachment_bytes().unwrap(), 0);
+}
+
+// A purge that stopped between the entry and its files — written here directly,
+// as a crash would leave it. Nothing lists or hands out the file meanwhile, and
+// the next merge, whatever it carries, finishes the purge.
+#[test]
+fn a_purge_cut_short_is_finished_by_the_next_merge() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    store.purge("1").unwrap();
+    store
+        .import_attachments(&[att("a1", "1", b"left")])
+        .unwrap();
+
+    assert!(listed(&store, "1").is_empty());
+    assert_eq!(store.get_attachment("a1").unwrap(), None);
+
+    assert_eq!(store.merge_records(&[]).unwrap(), 1);
+    assert!(is_shell(&att_row(&store, "a1")));
+}
+
+// The entry and its files are emptied together or not at all.
+#[test]
+fn a_purge_that_fails_on_the_files_leaves_the_entry_too() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    let mut archived = att("a1", "1", b"file");
+    archived.meta.deleted_at = Some(1000);
+    store.import_attachments(&[archived]).unwrap();
+    store.refuse_attachment_writes_for_test().unwrap();
+
+    assert!(store.purge("1").is_err());
+
+    assert_eq!(row(&store, "1").payload, b"sealed-payload");
+    assert_eq!(att_row(&store, "a1").blob, b"file");
+}
+
+// Two devices archive the same entry at different instants, and the one whose
+// archive wins never saw the other's file: the file stays archived at its own
+// instant, and the restore must bring it back all the same — what makes a
+// file restorable is that it still has its bytes, not when it was archived.
+#[test]
+fn a_file_archived_at_another_instant_than_its_entry_is_restored_with_it() {
+    let store = seeded(&[tombstone("1", 2000)]);
+    let mut archived = att("a1", "1", b"file");
+    archived.meta.deleted_at = Some(1000);
+    archived.meta.updated_at = 1000;
+    store.import_attachments(&[archived]).unwrap();
+    assert!(listed(&store, "1").is_empty());
+
+    store.restore("1").unwrap();
+
+    assert_eq!(listed(&store, "1"), vec!["a1"]);
+    assert_eq!(store.get_attachment("a1").unwrap().unwrap().blob, b"file");
+}
+
+// The entry comes back live through a merge rather than a restore — a peer
+// edited it after this device archived it — and its archived files come back
+// with it: a file that still has its bytes is never left hidden under an entry
+// that is on screen. Stamped from the entry's row, so every device agrees.
+#[test]
+fn an_entry_a_merge_brings_back_brings_its_archived_files_with_it() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    let mut archived = att("a1", "1", b"file");
+    archived.meta.deleted_at = Some(1000);
+    archived.meta.updated_at = 1000;
+    store.import_attachments(&[archived]).unwrap();
+
+    assert_eq!(
+        store
+            .merge_records(&[stamped("1", b"edited", 3000)])
+            .unwrap(),
+        2
+    );
+
+    assert_eq!(listed(&store, "1"), vec!["a1"]);
+    let back = att_row(&store, "a1");
+    assert_eq!(back.meta.deleted_at, None);
+    assert_eq!(back.meta.updated_at, 3000);
+}
+
+// A file a peer added to an entry archived here is archived with it, at the
+// entry's own `deleted_at`, and a restore brings it back.
+#[test]
+fn a_peer_file_for_an_entry_archived_here_is_archived_and_restored_with_it() {
+    let store = seeded(&[tombstone("1", 1000)]);
+
+    store
+        .merge_attachments(&[att_at("a1", b"file", 2000)])
+        .unwrap();
+
+    let archived = att_row(&store, "a1");
+    assert_eq!(archived.meta.deleted_at, Some(1000));
+    assert_eq!(archived.blob, b"file");
+    assert!(listed(&store, "1").is_empty());
+
+    store.restore("1").unwrap();
+    assert_eq!(listed(&store, "1"), vec!["a1"]);
+}
+
+// Belt and braces: even a live row under an archived entry is never listed or
+// handed out, merge or no merge.
+#[test]
+fn a_live_file_under_an_archived_entry_is_not_listed() {
+    let store = seeded(&[tombstone("1", 1000)]);
+    store
+        .import_attachments(&[att("a1", "1", b"file")])
+        .unwrap();
+
+    assert!(listed(&store, "1").is_empty());
+    assert_eq!(store.get_attachment("a1").unwrap(), None);
+}
+
+#[test]
+fn attachment_bytes_counts_every_file_the_vault_still_holds() {
+    let store = seeded(&[stamped("1", b"x", 1000), tombstone("2", 1000)]);
+    store.insert_attachment(&att("a1", "1", b"12345")).unwrap();
+    store.insert_attachment(&att("a2", "1", b"gone")).unwrap();
+    store.remove_attachment("a2").unwrap();
+    let mut archived = att("b1", "2", b"123");
+    archived.meta.deleted_at = Some(1000);
+    store.import_attachments(&[archived]).unwrap();
+
+    // The archived file still rides every pack; the removed one does not.
+    assert_eq!(store.attachment_bytes().unwrap(), 8);
+}
+
+#[test]
+fn the_digest_sees_attachments_and_ignores_their_absence() {
+    let a = seeded(&[stamped("1", b"x", 1000)]);
+    let b = seeded(&[stamped("1", b"x", 1000)]);
+    // No attachments: the digest is the entries' alone, as before they existed.
+    assert_eq!(
+        a.state_digest().unwrap(),
+        super::state_digest(&a.export_for_sync().unwrap())
+    );
+
+    b.import_attachments(&[att_at("a1", b"file", 1000)])
+        .unwrap();
+    assert_ne!(a.state_digest().unwrap(), b.state_digest().unwrap());
+
+    a.merge_attachments(&b.export_attachments_for_sync().unwrap())
+        .unwrap();
+    assert_eq!(a.state_digest().unwrap(), b.state_digest().unwrap());
 }

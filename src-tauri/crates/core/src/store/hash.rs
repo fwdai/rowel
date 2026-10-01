@@ -1,5 +1,5 @@
-//! Content hashing for sync: a canonical fingerprint per record, and a digest
-//! over the whole entry table.
+//! Content hashing for sync: a canonical fingerprint per record and per
+//! attachment row, and a digest over everything the two tables hold.
 //!
 //! Both are consumed by the sync engine as *comparison* primitives, so the only
 //! property that matters is that two stores agree bit-for-bit on the same
@@ -12,7 +12,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::Record;
+use super::{AttachmentMeta, Record};
 
 /// `u64` LE length, then the bytes. The prefix is what makes the concatenation
 /// of fields unambiguous.
@@ -109,6 +109,50 @@ pub fn state_digest(recs: &[Record]) -> [u8; 32] {
     for r in order {
         field(&mut h, r.id.as_bytes());
         h.update(record_hash(r));
+    }
+    h.finalize().into()
+}
+
+/// [`record_hash`]'s counterpart for an attachment row, under the same rules:
+/// the id left out, every field in a fixed order, length-prefixed or tagged.
+///
+/// The sealed file stands in by its length alone. A row's blob is written once
+/// and only ever changes by being emptied, which the length (and the tombstone
+/// beside it) already says — so hashing megabytes of ciphertext, and reading
+/// them out of the database under the session lock to do it, would buy nothing.
+pub fn attachment_hash(m: &AttachmentMeta, blob_len: usize) -> [u8; 32] {
+    let mut h = Sha256::new();
+    field(&mut h, m.entry_id.as_bytes());
+    field(&mut h, m.name.as_bytes());
+    opt_field(&mut h, m.mime.as_deref());
+    h.update(m.size.to_le_bytes());
+    h.update(m.created_at.to_le_bytes());
+    h.update(m.updated_at.to_le_bytes());
+    opt_i64(&mut h, m.deleted_at);
+    h.update((blob_len as u64).to_le_bytes());
+    h.finalize().into()
+}
+
+/// The whole synced state: [`state_digest`] over the entries, extended by the
+/// attachment rows — each as its metadata and blob length — when there are
+/// any. A vault without attachments digests exactly as it did before they
+/// existed, so nothing about it looks changed.
+pub fn vault_digest<'a>(
+    recs: &[Record],
+    atts: impl IntoIterator<Item = (&'a AttachmentMeta, usize)>,
+) -> [u8; 32] {
+    let entries = state_digest(recs);
+    let mut order: Vec<(&AttachmentMeta, usize)> = atts.into_iter().collect();
+    if order.is_empty() {
+        return entries;
+    }
+    order.sort_unstable_by(|a, b| a.0.id.as_bytes().cmp(b.0.id.as_bytes()));
+
+    let mut h = Sha256::new();
+    h.update(entries);
+    for (meta, blob_len) in order {
+        field(&mut h, meta.id.as_bytes());
+        h.update(attachment_hash(meta, blob_len));
     }
     h.finalize().into()
 }

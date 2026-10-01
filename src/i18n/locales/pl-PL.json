@@ -730,5 +730,13 @@
   "{{site}} wants to sign in with your passkey": "{{site}} chce Cię zalogować Twoim kluczem dostępu",
   "{{site}} wants to sign in with your passkey for {{account}}": "{{site}} chce Cię zalogować kluczem dostępu dla {{account}}",
   "Account": "Konto",
-  "Asked by {{origin}} through the browser extension.": "Prośba od {{origin}} przez rozszerzenie przeglądarki."
+  "Asked by {{origin}} through the browser extension.": "Prośba od {{origin}} przez rozszerzenie przeglądarki.",
+  "Attach file": "Załącz plik",
+  "Attaching…": "Załączanie…",
+  "Attachments": "Załączniki",
+  "Attachments can be up to {{size}} each": "Każdy załącznik może mieć do {{size}}",
+  "This vault's attachments are at their limit ({{limit}})": "Załączniki w tym sejfie osiągnęły limit ({{limit}})",
+  "{{used}} of {{limit}} used by attachments in this vault": "Załączniki w tym sejfie zajmują {{used}} z {{limit}}",
+  "Remove attachment": "Usuń załącznik",
+  "Remove?": "Usunąć?"
 }
