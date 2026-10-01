@@ -15,6 +15,11 @@ interface Props {
   history: PasswordHistoryItem[]
   /** The rotation stamp ("Changed 3d ago"), or '' when the entry has none. */
   stamp: string
+  /**
+   * Given when the toggle is the row's whole value — a cleared password with
+   * previous ones — so the row's `<label>` has a control to point at.
+   */
+  toggleId?: string
 }
 
 /**
@@ -23,7 +28,7 @@ interface Props {
  * the list opens inline under it. One face for both shells — the rows are the
  * detail row's geometry, so they fold with the container like every other.
  */
-export default function PasswordHistory({ id, history, stamp }: Props) {
+export default function PasswordHistory({ id, history, stamp, toggleId }: Props) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const count = t('{{count}} previous', { count: history.length })
@@ -31,6 +36,7 @@ export default function PasswordHistory({ id, history, stamp }: Props) {
   return (
     <>
       <button
+        id={toggleId}
         type="button"
         aria-expanded={open}
         data-testid="password-history-toggle"

@@ -79,6 +79,8 @@ describe('Password history', () => {
     expect(toggle).toHaveTextContent('Changed 3h ago · 2 previous')
     expect(screen.queryByTestId('entry-value-password')).not.toBeInTheDocument()
     expect(screen.queryByTestId('reveal-password')).not.toBeInTheDocument()
+    // With no value, the toggle is the row's control: its label names it.
+    expect(screen.getByLabelText('Password')).toBe(toggle)
 
     await userEvent.click(toggle)
     await userEvent.click(screen.getByTestId('password-history-reveal-0'))

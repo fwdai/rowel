@@ -46,19 +46,20 @@ export default function PasswordField({
   // Reading only: the editor is about the password being set, not the old ones.
   // The stamp is a sentence about the password, not a label for one — and,
   // once there are previous ones, the way in to them.
-  const history =
-    !editing && entry.id && entry.passwordHistory?.length ? (
-      <PasswordHistory id={entry.id} history={entry.passwordHistory} stamp={stamp} />
+  const id = !editing ? entry.id : undefined
+  const previous = id ? entry.passwordHistory : undefined
+  const historyOf = (toggleId?: string) =>
+    id && previous?.length ? (
+      <PasswordHistory id={id} history={previous} stamp={stamp} toggleId={toggleId} />
     ) : null
 
   // A cleared password still has the ones before it, so the row outlives its
-  // value: nothing to show, reveal or copy, only the way in to the history.
-  if (!editing && !value && history)
-    return (
-      <FieldRow label={label} below={history}>
-        {() => null}
-      </FieldRow>
-    )
+  // value: nothing to show, reveal or copy, only the way in to the history —
+  // which is then the row's value, and what its label points at.
+  if (!editing && !value && previous?.length)
+    return <FieldRow label={label}>{historyOf}</FieldRow>
+
+  const history = historyOf()
 
   return (
     <Field

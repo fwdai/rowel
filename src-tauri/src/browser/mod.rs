@@ -38,6 +38,7 @@ use interprocess::local_socket::{prelude::*, Name};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
+use zeroize::Zeroize;
 
 pub use self::actions::Client;
 use self::actions::{Host, Login};
@@ -658,7 +659,7 @@ pub(crate) fn save_login_in(
     password: &str,
     now: &str,
 ) -> std::result::Result<(), Code> {
-    let stored = match id {
+    let mut stored = match id {
         Some(id) => {
             let record = store
                 .get(id)
@@ -674,9 +675,19 @@ pub(crate) fn save_login_in(
         }
         None => None,
     };
-    let mut entry = match &stored {
-        Some(stored) => {
-            let mut entry = stored.clone();
+    // The stored row becomes the saved one by move, never by copy: what this
+    // save replaces — the password, and the bookkeeping that follows it — is
+    // taken out first for `record_password_change` to weigh, and the rest (the
+    // OTP seed, the passkeys and their keys) crosses once, so no second copy of
+    // any secret is left behind for a drop that would not scrub it.
+    let mut previous = stored.as_mut().map(|s| Entry {
+        password: s.password.take(),
+        password_history: s.password_history.take(),
+        password_updated_at: s.password_updated_at.take(),
+        ..Default::default()
+    });
+    let mut entry = match stored {
+        Some(mut entry) => {
             // Written back to the field it was served from: `logins_for` fills
             // the extension's username from `username`, or from `email` when
             // that is blank, so a login kept by its email must not grow a
@@ -705,7 +716,12 @@ pub(crate) fn save_login_in(
             ..Default::default()
         },
     };
-    entry.record_password_change(stored.as_ref(), now);
+    entry.record_password_change(previous.as_mut(), now);
+    // An old password the history did not keep (unchanged) is scrubbed here
+    // rather than dropped with `previous`.
+    if let Some(old) = previous.as_mut().and_then(|p| p.password.as_mut()) {
+        old.zeroize();
+    }
     let payload = cipher.seal(&entry).map_err(save_failed)?;
     let record = migrate::build_record(&entry, payload).map_err(save_failed)?;
     store

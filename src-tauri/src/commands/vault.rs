@@ -85,12 +85,12 @@ fn merge_stored(
             "a passkey's private key cannot be set from here".into(),
         ));
     }
-    let stored = store
+    let mut stored = store
         .get(&entry.id)
         .map_err(store_err)?
         .map(|record| cipher.unseal(&record.id, &record.payload))
         .transpose()?;
-    entry.record_password_change(stored.as_ref(), now);
+    entry.record_password_change(stored.as_mut(), now);
     entry.restore_passkey_keys(stored)
 }
 

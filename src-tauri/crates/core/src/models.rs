@@ -167,6 +167,15 @@ pub struct PasswordHistoryItem {
     pub replaced_at: String,
 }
 
+// A previous password is scrubbed wherever it is dropped — off the end of a
+// capped list, with a cleared history, with a list the webview sent and the
+// save ignored — rather than left on the heap for the allocator.
+impl Drop for PasswordHistoryItem {
+    fn drop(&mut self) {
+        self.password.zeroize();
+    }
+}
+
 // When it was replaced, and never what it was.
 impl fmt::Debug for PasswordHistoryItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -271,22 +280,40 @@ impl Entry {
     /// the front of the history, capped at [`PASSWORD_HISTORY_CAP`], and the
     /// stamp becomes `now`. Only a login has a password, so on every other
     /// kind this only carries the (empty) stored values forward.
-    pub fn record_password_change(&mut self, stored: Option<&Entry>, now: &str) {
-        self.password_history = stored.and_then(|s| s.password_history.clone());
-        self.password_updated_at = stored.and_then(|s| s.password_updated_at.clone());
+    ///
+    /// What is kept is *moved* out of `stored`, never copied: the history, the
+    /// stamp, and — when it changed — the old password, so no second copy of
+    /// any of them is left behind for the stored row's drop. An old password
+    /// that is not kept (unchanged, or blank) stays where it was, the caller's
+    /// to scrub with the rest of the row.
+    pub fn record_password_change(&mut self, stored: Option<&mut Entry>, now: &str) {
+        let (history, stamp, old) = match stored {
+            Some(s) => (
+                s.password_history.take(),
+                s.password_updated_at.take(),
+                Some(&mut s.password),
+            ),
+            None => (None, None, None),
+        };
+        // The webview's list, if it sent one, drops here and is scrubbed.
+        self.password_history = history;
+        self.password_updated_at = stamp;
 
-        let old = stored
-            .and_then(|s| s.password.as_deref())
-            .unwrap_or_default();
-        if old == self.password.as_deref().unwrap_or_default() {
+        let current = self.password.as_deref().unwrap_or_default();
+        let changed = old
+            .as_deref()
+            .and_then(|o| o.as_deref())
+            .unwrap_or_default()
+            != current;
+        if !changed {
             return;
         }
-        if !old.is_empty() {
+        if let Some(password) = old.and_then(|o| o.take()).filter(|p| !p.is_empty()) {
             let history = self.password_history.get_or_insert_with(Vec::new);
             history.insert(
                 0,
                 PasswordHistoryItem {
-                    password: old.to_string(),
+                    password,
                     replaced_at: now.to_string(),
                 },
             );
@@ -912,10 +939,10 @@ mod tests {
     // exist yet, and the stamp moves.
     #[test]
     fn a_changed_password_is_kept_as_the_first_previous_one() {
-        let stored = with_password("old");
+        let mut stored = with_password("old");
         let mut incoming = with_password("new");
 
-        incoming.record_password_change(Some(&stored), NOW);
+        incoming.record_password_change(Some(&mut stored), NOW);
 
         assert_eq!(incoming.password_history, Some(vec![previous("old", NOW)]));
         assert_eq!(incoming.password_updated_at.as_deref(), Some(NOW));
@@ -925,7 +952,7 @@ mod tests {
     // and the stamp stays the stored one.
     #[test]
     fn an_unchanged_password_records_nothing() {
-        let stored = Entry {
+        let mut stored = Entry {
             password_updated_at: Some(THEN.into()),
             password_history: Some(vec![previous("older", THEN)]),
             ..with_password("same")
@@ -935,7 +962,7 @@ mod tests {
             ..with_password("same")
         };
 
-        incoming.record_password_change(Some(&stored), NOW);
+        incoming.record_password_change(Some(&mut stored), NOW);
 
         assert_eq!(
             incoming.password_history,
@@ -963,7 +990,6 @@ mod tests {
     // or missing.
     #[test]
     fn a_cleared_password_is_kept_as_a_previous_one() {
-        let stored = with_password("old");
         for mut cleared in [
             with_password(""),
             Entry {
@@ -971,10 +997,38 @@ mod tests {
                 ..with_password("")
             },
         ] {
-            cleared.record_password_change(Some(&stored), NOW);
+            // Fresh each time: the old password is moved out by the first call.
+            let mut stored = with_password("old");
+            cleared.record_password_change(Some(&mut stored), NOW);
             assert_eq!(cleared.password_history, Some(vec![previous("old", NOW)]));
             assert_eq!(cleared.password_updated_at.as_deref(), Some(NOW));
         }
+    }
+
+    // Kept by move: the stored row is left without what went into the history,
+    // so no copy of the old password outlives it. One that is not kept —
+    // unchanged — stays where it was, for the caller to scrub with the row.
+    #[test]
+    fn the_old_password_is_moved_out_of_the_stored_row() {
+        let mut stored = with_password("old");
+        let mut incoming = with_password("new");
+        incoming.record_password_change(Some(&mut stored), NOW);
+        assert_eq!(stored.password, None);
+        assert_eq!(stored.password_history, None);
+        assert_eq!(stored.password_updated_at, None);
+
+        let mut stored = Entry {
+            password_history: Some(vec![previous("older", THEN)]),
+            ..with_password("same")
+        };
+        let mut incoming = with_password("same");
+        incoming.record_password_change(Some(&mut stored), NOW);
+        assert_eq!(stored.password.as_deref(), Some("same"));
+        assert_eq!(stored.password_history, None);
+        assert_eq!(
+            incoming.password_history,
+            Some(vec![previous("older", THEN)])
+        );
     }
 
     // Newest first, and never more than the cap: the oldest falls off the end.
@@ -983,7 +1037,7 @@ mod tests {
         let mut stored = with_password("p0");
         for i in 1..=PASSWORD_HISTORY_CAP + 2 {
             let mut next = with_password(&format!("p{i}"));
-            next.record_password_change(Some(&stored), &format!("t{i}"));
+            next.record_password_change(Some(&mut stored), &format!("t{i}"));
             stored = next;
         }
 
@@ -1004,7 +1058,7 @@ mod tests {
     // so a webview cannot plant a "previous" password or backdate a rotation.
     #[test]
     fn a_supplied_history_and_stamp_are_ignored() {
-        let stored = Entry {
+        let mut stored = Entry {
             password_updated_at: Some(THEN.into()),
             ..with_password("same")
         };
@@ -1014,7 +1068,7 @@ mod tests {
             ..with_password("same")
         };
 
-        forged.record_password_change(Some(&stored), NOW);
+        forged.record_password_change(Some(&mut stored), NOW);
 
         assert_eq!(forged.password_history, None);
         assert_eq!(forged.password_updated_at.as_deref(), Some(THEN));
@@ -1024,17 +1078,17 @@ mod tests {
     // until the password changes again and starts a new one.
     #[test]
     fn a_cleared_history_stays_cleared_until_the_password_changes() {
-        let cleared = with_password("current");
+        let mut cleared = with_password("current");
 
         let mut edit = Entry {
             password_history: Some(vec![previous("stale", THEN)]),
             ..with_password("current")
         };
-        edit.record_password_change(Some(&cleared), NOW);
+        edit.record_password_change(Some(&mut cleared), NOW);
         assert_eq!(edit.password_history, None);
 
         let mut rotation = with_password("next");
-        rotation.record_password_change(Some(&edit), NOW);
+        rotation.record_password_change(Some(&mut edit), NOW);
         assert_eq!(
             rotation.password_history,
             Some(vec![previous("current", NOW)])
