@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import AddAction from '@/components/elements/AddAction'
 import Panel from '@/components/elements/Panel'
 import {
+  CustomFieldsField,
   EmailField,
   FieldRow,
   NoteField,
@@ -68,6 +69,7 @@ export default function Fields() {
         {otp && <OtpField autoFocus={editing && !entry.otp} />}
       </div>
       <PasskeysField />
+      <CustomFieldsField />
     </>
   )
 }

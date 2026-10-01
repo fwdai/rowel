@@ -40,7 +40,8 @@ pub async fn get_audit(state: State<'_, AppState>, check_breaches: bool) -> Resu
 }
 
 // Flag each non-empty password as weak / reused / breached. Entries arrive
-// already decrypted (the payload cipher unseals to plaintext).
+// already decrypted (the payload cipher unseals to plaintext). Only the
+// password in use counts: the password history is never read here.
 fn audit(entries: &[Entry], check_breaches: bool) -> Result<Audit> {
     let creds: Vec<(&Entry, &str)> = entries
         .iter()
@@ -130,6 +131,20 @@ mod tests {
         assert!(a["1"].is_repeating);
         assert!(a["2"].is_repeating);
         assert!(!a["3"].is_repeating);
+    }
+
+    // Only the password in use is audited: one login's previous password being
+    // another's current one is not reuse — it was rotated away from.
+    #[test]
+    fn previous_passwords_are_not_counted_as_reuse() {
+        let mut rotated = login("1", "Unique2@ab");
+        rotated.password_history = Some(vec![crate::models::PasswordHistoryItem {
+            password: "Repeated1!".into(),
+            replaced_at: "2026-01-01T00:00:00Z".into(),
+        }]);
+        let a = audit(&[rotated, login("2", "Repeated1!")], false).unwrap();
+        assert!(!a["1"].is_repeating);
+        assert!(!a["2"].is_repeating);
     }
 
     // Opt-out (check_breaches = false) makes no network call and leaves breached false.

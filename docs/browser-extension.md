@@ -31,16 +31,16 @@ Changing any of them breaks the connection until the host changes too.
 | --- | --- | --- |
 | Native messaging host | `app.rowel.browser` | `rowel/background/client.js` (`nativeHostName`) |
 | Firefox add-on ID | `browser@rowel.app` | `dist/manifest_firefox.json` (`browser_specific_settings.gecko.id`) |
-| Chromium extension ID | `dimghkhcdfaokfingegmgbnpnpcoeofj` | derived from `key` in `rowel/manifest.json` and `dist/manifest_chromium.json` |
+| Chromium extension ID (unpacked) | `dimghkhcdfaokfingegmgbnpnpcoeofj` | derived from `key` in `rowel/manifest.json` and `dist/manifest_chromium.json` |
+| Chrome Web Store ID | `aajfpjaphnegnekpggjnocmgbhkabeke` | assigned by the store; not in the source |
 
 The `key` is only the public half. It makes an unpacked Chromium build get the
 same ID on every machine. The Chrome Web Store and Edge Add-ons won't take an
 upload that carries a `key`, so the build strips it from the store zip. A
 listing then gets an ID from the store, and that ID has to be added to the
-host's `chromium_origins` before the listed extension can connect. (To keep
-the pinned ID on the Chrome Web Store instead, the first upload can include
-the matching private key as `key.pem` at the zip root. Whoever created the key
-has it; it is not in this repo.)
+host's `chromium_origins` before the listed extension can connect. The Chrome
+Web Store's is in; Edge Add-ons will assign another when the extension is
+listed there, which goes in the same list.
 
 ## Versioning
 
@@ -156,7 +156,8 @@ CI fails if the file is stale. Rules go in `rowel.css`.
   Its `path` must be the Rowel executable you are running.
 - **The host manifest is there but Chrome still refuses.** Its
   `allowed_origins` must contain the extension's ID. An extension loaded from
-  a folder without the `key`, or installed from a store, has a different ID.
+  a folder without the `key`, or installed from a store other than the Chrome
+  Web Store, has an ID the host doesn't list.
 - **Firefox refuses.** `allowed_extensions` must contain `browser@rowel.app`.
 - The background page's console (`chrome://extensions` → **service worker**,
   or `about:debugging` → **Inspect**) logs native messaging errors, tagged

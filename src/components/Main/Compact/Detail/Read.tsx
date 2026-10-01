@@ -1,4 +1,5 @@
 import type { Entry, EntryMeta } from '@/api/types'
+import { setNoEntry } from '@/store'
 import { cx } from '@/utils/cx'
 import Body from '../../Body/Aside/Show/Body'
 import Eyebrow from '../../Body/Aside/Show/Eyebrow'
@@ -6,6 +7,7 @@ import Favorite from '../../Body/Aside/Show/Favorite'
 import Identity from '../../Body/Aside/Show/Identity'
 import { useDelete } from '../../Body/Aside/Show/useDelete'
 import { PRIMARY_CLEARANCE, TOUCH } from '../chrome'
+import { useSwipeBack } from '../useSwipeBack'
 import NavRow from './NavRow'
 import PrimaryAction from './PrimaryAction'
 
@@ -30,10 +32,16 @@ interface Props {
  */
 export default function Read({ entry, revealed }: Props) {
   const { error, remove } = useDelete(entry.id)
+  // The edge swipe is the nav row's back control, by gesture.
+  const swipe = useSwipeBack(setNoEntry)
 
   return (
     // `relative`: what the bottom action and its fade are pinned to.
-    <div className="relative flex min-h-0 flex-1 flex-col animate-sheet bg-screen text-text">
+    <div
+      {...swipe}
+      data-testid="entry-screen"
+      className="relative flex min-h-0 flex-1 flex-col animate-sheet bg-screen text-text"
+    >
       <NavRow entry={entry} onDelete={remove} />
 
       <div

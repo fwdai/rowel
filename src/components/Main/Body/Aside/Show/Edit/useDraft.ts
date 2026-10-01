@@ -104,17 +104,12 @@ export function useDraft(type: EntryType, revealed: Entry | null): Draft {
       return
     }
     setSaveError(null)
-    // The rotation stamp records a password *change*, not typing: stamping it
-    // per keystroke made "changed just now" true of a password that was typed
-    // back to what it already was.
-    const stamped =
-      model.password !== pristine.password
-        ? { ...model, password_updated_at: new Date().toISOString() }
-        : model
-    setModel(stamped)
     setSaving(true)
+    // The rotation stamp and the password history are the core's to write: it
+    // compares the saved password with the stored one, so a password typed
+    // back to what it was is no change (see `Entry::record_password_change`).
     // Never imply success on a failed write: surface the error, stay in edit.
-    saveEntry(pruneExtra(stamped))
+    saveEntry(pruneExtra(model))
       .catch(() => setSaveError(t('Could not save. Please try again.')))
       .finally(() => setSaving(false))
   }

@@ -3,14 +3,30 @@ import { cardBrandOf, cardDigits, groupCardNumber, hasBrandMark } from '@/utils/
 import CardBrandMark from '@/components/elements/CardBrandMark'
 import Panel from '@/components/elements/Panel'
 import { FACE_ASIDE } from '@/components/elements/tokens'
-import { NoteField, useField, useFields } from '@/components/elements/fields'
+import {
+  CustomFieldsField,
+  NoteField,
+  useField,
+  useFields
+} from '@/components/elements/fields'
 import { useTranslation } from 'react-i18next'
 import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import { CARD_MASK } from '../meta'
 import { formatExpiry, isExpired, splitExpiry } from '../expiry'
 import Value from './Value'
 
+// The card and its note, then what the plastic has no room for, as on a
+// document.
 export default function Fields() {
+  return (
+    <>
+      <Card />
+      <CustomFieldsField />
+    </>
+  )
+}
+
+function Card() {
   const { t } = useTranslation()
   const { set, attempted } = useFields()
   const editing = !!set

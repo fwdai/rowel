@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import Panel from '@/components/elements/Panel'
 import Segmented from '@/components/elements/Segmented'
 import IconButton from '@/components/elements/IconButton'
-import { NoteField, useField } from '@/components/elements/fields'
+import { CustomFieldsField, NoteField, useField } from '@/components/elements/fields'
 import { META } from '@/components/elements/tokens'
 import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import { bandsOf, parseEnv, varsOf } from '../parse'
@@ -86,6 +86,10 @@ export default function Fields() {
           <NoteField label="Note" />
         </Panel>
       )}
+
+      {/* What the file has no line for — the account it belongs to, where it
+          is deployed — as on every other kind. */}
+      <CustomFieldsField />
     </>
   )
 }

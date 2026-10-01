@@ -15,7 +15,7 @@ use crate::crypto::PayloadCipher;
 use crate::error::{Error, Result};
 use crate::events;
 use crate::import::{self, EntryKind, Format, ImportedEntry, RowError};
-use crate::models::{Entry, EntryMetaDto, ExtraField};
+use crate::models::{Entry, EntryMetaDto, PASSWORD_HISTORY_CAP};
 use crate::save;
 use crate::session::{list_metas, live_records, store_err};
 use crate::state::AppState;
@@ -365,15 +365,7 @@ fn imported_to_entry(imp: &ImportedEntry) -> Entry {
         tags: (!imp.tags.is_empty()).then(|| imp.tags.clone()),
         // Extras belong to no kind, so they are mapped here rather than in the
         // match below. None when there are none, for the same reason.
-        extra: (!imp.extra.is_empty()).then(|| {
-            imp.extra
-                .iter()
-                .map(|(label, value)| ExtraField {
-                    label: label.clone(),
-                    value: value.clone(),
-                })
-                .collect()
-        }),
+        extra: (!imp.extra.is_empty()).then(|| imp.extra.clone()),
         // The star and the stamps the source carried, not this moment: an entry
         // stamped "now" on the way in is a newer copy of itself and wins every
         // last-writer-wins sync race against the vault it came from. Only a
@@ -393,6 +385,15 @@ fn imported_to_entry(imp: &ImportedEntry) -> Entry {
             e.email = imp.email.clone();
             e.otp = imp.otp.clone();
             e.passkeys = (!imp.passkeys.is_empty()).then(|| imp.passkeys.clone());
+            // The source's own history, newest first, held to the cap the
+            // vault keeps for every login.
+            e.password_history = (!imp.password_history.is_empty()).then(|| {
+                imp.password_history
+                    .iter()
+                    .take(PASSWORD_HISTORY_CAP)
+                    .cloned()
+                    .collect()
+            });
         }
         EntryKind::Card => {
             e.number = imp.card_number.clone();
@@ -508,13 +509,8 @@ fn entry_to_imported(e: &Entry) -> ImportedEntry {
         // for an API key — a passport must not export with one.
         api_expires: api_key.then(|| e.expiry_date.clone()).flatten(),
         passkeys: e.passkeys.clone().unwrap_or_default(),
-        extra: e
-            .extra
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .map(|f| (f.label.clone(), f.value.clone()))
-            .collect(),
+        password_history: e.password_history.clone().unwrap_or_default(),
+        extra: e.extra.clone().unwrap_or_default(),
         favorite: e.favorite,
         created_at: e.created_at.clone(),
         updated_at: e.updated_at.clone(),
@@ -584,6 +580,59 @@ mod tests {
 
         drop(store);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    // A login's previous passwords leave in a Bitwarden export and come back in
+    // on import, newest first, each with when it was replaced — and an import
+    // that brings more than the vault keeps is held to the cap.
+    #[test]
+    fn password_history_round_trips_through_bitwarden_json() {
+        let previous = |i: usize| crate::models::PasswordHistoryItem {
+            password: format!("old-{i}"),
+            replaced_at: format!("2026-01-{:02}T00:00:00.000Z", 20 - i),
+        };
+        let entry = Entry {
+            id: "1".into(),
+            kind: "login".into(),
+            title: "Site".into(),
+            password: Some("current".into()),
+            password_history: Some((0..PASSWORD_HISTORY_CAP + 2).map(previous).collect()),
+            ..Entry::default()
+        };
+
+        let json = import::export::to_bitwarden_json(&[entry_to_imported(&entry)]).unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&json).unwrap();
+        let item = &written["items"][0];
+        assert_eq!(item["passwordHistory"][0]["password"], "old-0");
+        assert_eq!(
+            item["passwordHistory"][0]["lastUsedDate"],
+            "2026-01-20T00:00:00.000Z"
+        );
+
+        let parsed = Format::from_name("bitwarden")
+            .unwrap()
+            .importer()
+            .parse(&json);
+        assert!(parsed.errors.is_empty());
+        let back = imported_to_entry(&parsed.entries[0]);
+        assert_eq!(back.password.as_deref(), Some("current"));
+        assert_eq!(
+            back.password_history,
+            Some((0..PASSWORD_HISTORY_CAP).map(previous).collect())
+        );
+
+        // A login without any writes no member and reads back as none.
+        let bare = Entry {
+            password_history: None,
+            ..entry
+        };
+        let json = import::export::to_bitwarden_json(&[entry_to_imported(&bare)]).unwrap();
+        assert!(!String::from_utf8_lossy(&json).contains("passwordHistory"));
+        let parsed = Format::from_name("bitwarden")
+            .unwrap()
+            .importer()
+            .parse(&json);
+        assert_eq!(imported_to_entry(&parsed.entries[0]).password_history, None);
     }
 
     fn login(password: &str) -> ImportedEntry {

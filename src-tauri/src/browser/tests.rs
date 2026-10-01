@@ -16,7 +16,7 @@ use super::{
     Pending, SafariSocketError, IDENTIFIER, SUN_PATH_MAX,
 };
 use crate::crypto::{PayloadCipher, VaultKey};
-use crate::models::Entry;
+use crate::models::{Entry, PasswordHistoryItem};
 use crate::passkey::store::MemoryVault;
 use crate::passkey::{Ceremony, UserConsent};
 use crate::store::{migrate, SqliteStore, VaultStore};
@@ -969,6 +969,51 @@ fn a_save_with_the_same_password_does_not_count_as_a_rotation() {
     assert_eq!(entry.username.as_deref(), Some("new-name"));
     assert_eq!(entry.password_updated_at.as_deref(), Some(THEN));
     assert_eq!(entry.updated_at.as_deref(), Some(NOW));
+    assert_eq!(entry.password_history, None, "nothing was replaced");
+}
+
+// A password the page rotated is kept in the login's history, in front of
+// what was already there — the same record the editor's save makes.
+#[test]
+fn a_save_that_rotates_the_password_keeps_the_old_one_in_history() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &Entry {
+            id: "gh".into(),
+            kind: "login".into(),
+            title: "GitHub".into(),
+            username: Some("octocat".into()),
+            password: Some("old".into()),
+            password_history: Some(vec![PasswordHistoryItem {
+                password: "older".into(),
+                replaced_at: THEN.into(),
+            }]),
+            ..Entry::default()
+        },
+    );
+    save_login_in(
+        &store,
+        &cipher,
+        Some("gh"),
+        "https://github.com",
+        "github.com",
+        "octocat",
+        "new",
+        NOW,
+    )
+    .unwrap();
+
+    let entry = stored(&store, &cipher, "gh");
+    assert_eq!(entry.password.as_deref(), Some("new"));
+    let history: Vec<(&str, &str)> = entry
+        .password_history
+        .iter()
+        .flatten()
+        .map(|p| (p.password.as_str(), p.replaced_at.as_str()))
+        .collect();
+    assert_eq!(history, [("old", NOW), ("older", THEN)]);
 }
 
 #[test]
@@ -1448,7 +1493,10 @@ fn rowels_manifest_names_its_own_host_and_extension() {
     assert_eq!(chromium["path"], exe.to_string_lossy().as_ref());
     assert_eq!(
         chromium["allowed_origins"],
-        json!(["chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/"])
+        json!([
+            "chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/",
+            "chrome-extension://aajfpjaphnegnekpggjnocmgbhkabeke/"
+        ])
     );
     assert!(chromium.get("allowed_extensions").is_none());
 

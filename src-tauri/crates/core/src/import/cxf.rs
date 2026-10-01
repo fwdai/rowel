@@ -11,9 +11,13 @@
 //! counted across every account, which is the order they appear in the file.
 
 use super::export::{
-    ENVIRONMENT_LABEL, FINGERPRINT_LABEL, PASSPHRASE_LABEL, PUBLIC_KEY_LABEL, SCOPES_LABEL,
+    ENVIRONMENT_LABEL, EXPORTER_RP_ID, EXTRA_LABEL, FINGERPRINT_LABEL, PASSPHRASE_LABEL,
+    PUBLIC_KEY_LABEL, SCOPES_LABEL,
 };
-use super::{non_empty, EntryKind, ImportResult, ImportedEntry, ImportedPasskey, Importer};
+use super::{
+    non_empty, take_labelled, EntryKind, ImportResult, ImportedEntry, ImportedPasskey, Importer,
+};
+use crate::models::ExtraField;
 use crate::otp::{self, OtpAlgorithm, OtpParams};
 use serde::Deserialize;
 use serde_json::Value;
@@ -22,6 +26,9 @@ pub struct Cxf;
 
 #[derive(Deserialize)]
 struct Document {
+    /// Who wrote the file. Only one of ours has fields of ours in it.
+    #[serde(default, rename = "exporterRpId")]
+    exporter_rp_id: Option<String>,
     #[serde(default)]
     accounts: Vec<Account>,
 }
@@ -124,9 +131,12 @@ struct Credential {
     // ssh-key
     #[serde(default, rename = "privateKey")]
     private_key: Option<Value>,
-    // custom-fields: a list of EditableFields with a `label` each
+    // custom-fields: a list of EditableFields with a `label` each, under a
+    // label of the credential's own
     #[serde(default)]
     fields: Vec<Value>,
+    #[serde(default)]
+    label: Option<String>,
 }
 
 impl Importer for Cxf {
@@ -139,14 +149,16 @@ impl Importer for Cxf {
                 return result;
             }
         };
+        let rowel = doc.exporter_rp_id.as_deref() == Some(EXPORTER_RP_ID);
         for (i, item) in doc.accounts.into_iter().flat_map(|a| a.items).enumerate() {
-            map_item(item, i + 1, &mut result);
+            map_item(item, i + 1, rowel, &mut result);
         }
         result
     }
 }
 
-fn map_item(item: Item, row: usize, result: &mut ImportResult) {
+/// `rowel` says the document is one of ours, and so may hold fields of ours.
+fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
     let Item {
         title,
         creation_at,
@@ -170,7 +182,8 @@ fn map_item(item: Item, row: usize, result: &mut ImportResult) {
     let mut card: Option<Credential> = None;
     let mut ssh: Option<Credential> = None;
     let mut api: Option<Credential> = None;
-    let mut custom: Vec<Value> = Vec::new();
+    let mut ours: Vec<ExtraField> = Vec::new();
+    let mut theirs: Vec<ExtraField> = Vec::new();
     let mut passkeys: Vec<ImportedPasskey> = Vec::new();
     let mut otp: Option<String> = None;
     let mut note: Option<String> = None;
@@ -183,9 +196,18 @@ fn map_item(item: Item, row: usize, result: &mut ImportResult) {
             "ssh-key" if text(&cred.private_key).is_some() => ssh = ssh.or(Some(cred)),
             // Likewise the token: an `api-key` without one is nothing to keep.
             "api-key" if text(&cred.key).is_some() => api = api.or(Some(cred)),
-            // Only read for the labels the exporter writes beside an ssh-key;
-            // anything else in there has no slot on an entry.
-            "custom-fields" => custom.extend(cred.fields),
+            // What CXF has no member for, our exporter writes under labels of
+            // ours, which are taken back out below. Only it does, and never in
+            // the credential the user's own fields travel in: anywhere else a
+            // label of ours is the user's choice, and so is the field.
+            "custom-fields" => {
+                let fields = cred.fields.iter().filter_map(custom_field);
+                if rowel && cred.label.as_deref() != Some(EXTRA_LABEL) {
+                    ours.extend(fields);
+                } else {
+                    theirs.extend(fields);
+                }
+            }
             "passkey" => match passkey(&cred, created_at.clone()) {
                 Some(p) => passkeys.push(p),
                 None => result.push_err(row, "incomplete passkey"),
@@ -238,9 +260,9 @@ fn map_item(item: Item, row: usize, result: &mut ImportResult) {
             notes,
             tags,
             ssh_private_key: text(&c.private_key),
-            ssh_public_key: custom_field(&custom, PUBLIC_KEY_LABEL),
-            ssh_fingerprint: custom_field(&custom, FINGERPRINT_LABEL),
-            ssh_passphrase: custom_field(&custom, PASSPHRASE_LABEL),
+            ssh_public_key: take_labelled(&mut ours, PUBLIC_KEY_LABEL),
+            ssh_fingerprint: take_labelled(&mut ours, FINGERPRINT_LABEL),
+            ssh_passphrase: take_labelled(&mut ours, PASSPHRASE_LABEL),
             ..Default::default()
         }
     } else if let Some(c) = api {
@@ -254,10 +276,10 @@ fn map_item(item: Item, row: usize, result: &mut ImportResult) {
             // site without one says the same thing one level up.
             url: text(&c.url).or(url),
             api_expires: text(&c.expiry_date),
-            api_scopes: custom_field(&custom, SCOPES_LABEL),
+            api_scopes: take_labelled(&mut ours, SCOPES_LABEL),
             ..Default::default()
         };
-        entry.set_environment(custom_field(&custom, ENVIRONMENT_LABEL));
+        entry.set_environment(take_labelled(&mut ours, ENVIRONMENT_LABEL));
         entry
     } else if let Some(c) = card {
         let (month, year) = expiry(&c.expiry_date);
@@ -287,10 +309,12 @@ fn map_item(item: Item, row: usize, result: &mut ImportResult) {
     };
     // What belongs to no kind: the item's own dates, and everything CXF has no
     // member for, which the exporter put in the custom-fields credential the
-    // ssh-key's extras already travel in.
+    // ssh-key's extras already travel in. What no label claims is kept, ahead
+    // of the user's own.
     entry.created_at = created_at;
     entry.updated_at = modified_at.and_then(rfc3339);
-    super::export::set_labelled(&mut entry, |label| custom_field(&custom, label));
+    super::export::set_labelled(&mut entry, |label| take_labelled(&mut ours, label));
+    entry.extra.extend(ours.into_iter().chain(theirs));
     result.entries.push(entry);
 }
 
@@ -312,16 +336,22 @@ fn passkey(c: &Credential, created_at: Option<String>) -> Option<ImportedPasskey
     })
 }
 
-/// The value of the custom field labelled `label` (case-insensitive), if any.
-fn custom_field(fields: &[Value], label: &str) -> Option<String> {
-    fields
-        .iter()
-        .find(|f| {
-            f.get("label")
-                .and_then(Value::as_str)
-                .is_some_and(|l| l.eq_ignore_ascii_case(label))
-        })
-        .and_then(|f| non_empty(f.get("value")?.as_str().map(str::to_owned)))
+/// One field of a `custom-fields` credential as an extra: a `concealed-string`
+/// is concealed, any other type is shown as the text it holds. A field with
+/// neither a label nor a value says nothing, so it is not carried.
+fn custom_field(f: &Value) -> Option<ExtraField> {
+    let text = |key| {
+        f.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let field = ExtraField {
+        label: text("label"),
+        value: text("value"),
+        secret: f.get("fieldType").and_then(Value::as_str) == Some("concealed-string"),
+    };
+    (!field.label.is_empty() || !field.value.is_empty()).then_some(field)
 }
 
 /// A CXF value is an `EditableField` (`{"fieldType":…,"value":…}`); older

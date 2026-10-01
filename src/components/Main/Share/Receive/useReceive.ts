@@ -19,14 +19,16 @@ export interface Receive {
 /**
  * What a sender is not allowed to decide about a row in someone else's vault:
  * who it is (`id`), how long it has been there (the timestamps), whether it is
- * starred, and the credentials only the device that made them can use
- * (`passkeys`). Everything else is the secret that was actually shared.
+ * starred, the passwords it used to have (`passwordHistory`), and the
+ * credentials only the device that made them can use (`passkeys`). Everything
+ * else is the secret that was actually shared.
  */
 const NOT_THEIRS_TO_SEND = [
   'id',
   'createdAt',
   'updatedAt',
   'password_updated_at',
+  'passwordHistory',
   'favorite',
   'passkeys'
 ] as const

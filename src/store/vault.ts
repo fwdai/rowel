@@ -6,7 +6,8 @@ import {
   listDeleted,
   restoreEntry as restoreEntryCmd,
   purgeEntry as purgeEntryCmd,
-  setFavorite
+  setFavorite,
+  clearPasswordHistory as clearPasswordHistoryCmd
 } from '@/api/vault'
 import { addAttachment, deleteAttachment } from '@/api/attachments'
 import { getAudit, type Audit } from '@/api/tools'
@@ -219,6 +220,14 @@ export const toggleFavorite = async (id: string) => {
   // selected would leave the detail pane on an entry the list no longer has.
   if (useUi.getState().view === 'favorites' && !meta.favorite) setNoEntry()
   else setCurrentEntry(meta.id)
+  scheduleSync()
+}
+
+// The row's `updatedAt` moves, which is what makes the open entry reveal
+// itself again (see `useRevealed`) — and come back without its history.
+export const clearPasswordHistory = async (id: string) => {
+  const meta = await clearPasswordHistoryCmd(id)
+  setEntries(upsert(useVault.getState().items, meta))
   scheduleSync()
 }
 

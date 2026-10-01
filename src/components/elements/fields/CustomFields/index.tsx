@@ -15,7 +15,8 @@ import CustomFieldRow from './Row'
  * an entry, so nothing here knows which kind it is rendering for. Reading, it is
  * one detail row per pair and nothing at all when there are none; editing, each
  * row is a label box and a value box that can be dropped, plus one button that
- * appends another.
+ * appends another. Most entries never have one, so until the first row is added
+ * the editor shows that button alone — no heading over an empty section.
  */
 export default function CustomFields({ name = 'extra' }) {
   const { t } = useTranslation()
@@ -29,35 +30,39 @@ export default function CustomFields({ name = 'extra' }) {
   const write = (next: ExtraField[]) => set?.(name, next)
   const append = () => write([...rows, { label: '', value: '' }])
 
+  const any = shown.length > 0
+
   return (
     <div className="mt-4">
-      <span className={`mb-1.5 block ${LABEL}`}>{t('Custom fields')}</span>
-      {shown.length > 0 && (
-        <Panel>
-          {shown.map((field, index) => (
-            // Position is the only identity a pair has; a label is free text and
-            // two rows may share one (or have none yet).
-            <CustomFieldRow
-              key={index}
-              field={field}
-              index={index}
-              onChange={
-                set
-                  ? next => write(rows.map((row, i) => (i === index ? next : row)))
-                  : undefined
-              }
-              onRemove={set ? () => write(rows.filter((_, i) => i !== index)) : undefined}
-              onAppend={set && index === shown.length - 1 ? append : undefined}
-            />
-          ))}
-        </Panel>
+      {any && (
+        <>
+          <span className={`mb-1.5 block ${LABEL}`}>{t('Custom fields')}</span>
+          <Panel>
+            {shown.map((field, index) => (
+              // Position is the only identity a pair has; a label is free text
+              // and two rows may share one (or have none yet).
+              <CustomFieldRow
+                key={index}
+                field={field}
+                index={index}
+                onChange={
+                  set
+                    ? next => write(rows.map((row, i) => (i === index ? next : row)))
+                    : undefined
+                }
+                onRemove={set ? () => write(rows.filter((_, i) => i !== index)) : undefined}
+                onAppend={set && index === shown.length - 1 ? append : undefined}
+              />
+            ))}
+          </Panel>
+        </>
       )}
       {set && (
         <AddAction
           label={t('Add field')}
           testid="add-extra-field"
           onClick={append}
-          className="mt-1.5"
+          className={any ? 'mt-1.5' : undefined}
         />
       )}
     </div>

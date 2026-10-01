@@ -11,6 +11,8 @@ export type EntryType = 'login' | 'note' | 'card' | 'identity' | 'ssh' | 'env' |
 export interface ExtraField {
   label: string
   value: string
+  // Concealed: masked until revealed. Absent when not, as Rust omits it.
+  secret?: boolean
 }
 
 interface BaseEntry {
@@ -46,6 +48,12 @@ export interface Passkey {
   createdAt?: string // RFC3339
 }
 
+// A password a login no longer uses, and when it was replaced.
+export interface PasswordHistoryItem {
+  password: string
+  replacedAt: string // RFC3339
+}
+
 export interface LoginEntry extends BaseEntry {
   type: 'login'
   website: string
@@ -54,7 +62,12 @@ export interface LoginEntry extends BaseEntry {
   email: string
   note: string
   otp: string // base32 TOTP secret, or an otpauth:// URI when the parameters are not the defaults
+  // Both written by the core on save, never by the webview: whatever a save
+  // sends for them is replaced with the stored row's (see
+  // `Entry::record_password_change`).
   password_updated_at?: string
+  // Previous passwords, newest first. Absent when there are none.
+  passwordHistory?: PasswordHistoryItem[]
   // Absent on entries with no passkeys, so a pre-passkey vault is unchanged.
   passkeys?: Passkey[]
 }
