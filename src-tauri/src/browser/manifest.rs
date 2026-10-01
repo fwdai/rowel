@@ -31,10 +31,13 @@ pub struct NativeHost {
 pub const ROWEL: NativeHost = NativeHost {
     name: "app.rowel.browser",
     description: "Rowel — fills logins through the Rowel extension",
-    // The id the key pinned in the extension's manifest derives. The Chrome
-    // Web Store and Edge Add-ons may assign ids of their own on listing it;
-    // those go here too.
-    chromium_origins: &["chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/"],
+    // The id the key pinned in the extension's manifest derives (unpacked
+    // builds), then the Chrome Web Store's. Edge Add-ons assigns one of its
+    // own on listing; that goes here too.
+    chromium_origins: &[
+        "chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/",
+        "chrome-extension://aajfpjaphnegnekpggjnocmgbhkabeke/",
+    ],
     firefox_extensions: &["browser@rowel.app"],
 };
 
