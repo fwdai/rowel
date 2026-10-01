@@ -1670,3 +1670,83 @@ fn cxf_export_omits_custom_fields_without_extras() {
         .unwrap();
     assert!(credentials.iter().all(|c| c["type"] != "custom-fields"));
 }
+
+// --- a user's field wearing a label of ours ----------------------------------
+
+// The SSH and API-key labels are claimed by their kind, not by the shared table,
+// and a user's field wearing one — with or without a value of ours under it —
+// still comes back as theirs, concealment and all, in both formats.
+#[test]
+fn a_users_field_sharing_a_kind_label_survives_a_round_trip() {
+    let bare_key = ImportedEntry {
+        ssh_passphrase: None,
+        extra: vec![concealed("Passphrase", "the user's own")],
+        ..ssh_entry()
+    };
+    let locked_key = ImportedEntry {
+        extra: vec![concealed("passphrase", "the user's own")],
+        ..ssh_entry()
+    };
+    let api_key = ImportedEntry {
+        api_scopes: None,
+        extra: vec![
+            concealed("Scopes", "the user's own"),
+            field("Environment", "theirs too"),
+        ],
+        ..apikey_entry()
+    };
+
+    let cxf = vec![bare_key.clone(), locked_key.clone(), api_key];
+    let back = parse(Format::Cxf, &to_cxf_json(&cxf).unwrap());
+    assert!(back.errors.is_empty(), "{:?}", back.errors);
+    assert_eq!(back.entries, cxf);
+
+    // Bitwarden carries no tags, and an API key goes out one-way as a login.
+    let bitwarden: Vec<ImportedEntry> = [bare_key, locked_key]
+        .into_iter()
+        .map(|e| ImportedEntry { tags: vec![], ..e })
+        .collect();
+    let back = parse(Format::Bitwarden, &to_bitwarden_json(&bitwarden).unwrap());
+    assert!(back.errors.is_empty(), "{:?}", back.errors);
+    assert_eq!(back.entries, bitwarden);
+}
+
+// Another exporter's custom fields are the user's whatever they are called: a
+// label of ours there is not ours, so nothing is claimed from them — not the
+// star, not a document's part, not an SSH key's — and every value stays put.
+#[test]
+fn a_third_party_cxf_field_sharing_our_label_stays_the_users() {
+    let json = br#"{"version":{"major":1,"minor":0},"exporterRpId":"example.com","accounts":[{"items":[
+      {"id":"aQ","title":"Acme","credentials":[
+        {"type":"basic-auth","username":{"fieldType":"string","value":"neo"}},
+        {"type":"custom-fields","label":"More","fields":[
+          {"fieldType":"string","label":"Favorite","value":"yes, very"},
+          {"fieldType":"string","label":"Nationality","value":"French"},
+          {"fieldType":"concealed-string","label":"PIN","value":"1234"}
+        ]}
+      ]},
+      {"id":"aR","title":"Deploy","credentials":[
+        {"type":"ssh-key","keyType":"ssh-ed25519","privateKey":{"fieldType":"concealed-string","value":"KEY"}},
+        {"type":"custom-fields","label":"SSH key","fields":[
+          {"fieldType":"concealed-string","label":"Passphrase","value":"hunter2"}
+        ]}
+      ]}
+    ]}]}"#;
+    let back = parse(Format::Cxf, json);
+    assert!(back.errors.is_empty(), "{:?}", back.errors);
+    let login = &back.entries[0];
+    assert!(!login.favorite);
+    assert_eq!(login.doc_nationality, None);
+    assert_eq!(login.card_pin, None);
+    assert_eq!(
+        login.extra,
+        vec![
+            field("Favorite", "yes, very"),
+            field("Nationality", "French"),
+            concealed("PIN", "1234"),
+        ]
+    );
+    let key = &back.entries[1];
+    assert_eq!(key.ssh_passphrase, None);
+    assert_eq!(key.extra, vec![concealed("Passphrase", "hunter2")]);
+}

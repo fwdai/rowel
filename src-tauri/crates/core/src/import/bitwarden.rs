@@ -366,11 +366,10 @@ impl Importer for Bitwarden {
                 }
                 Some(5) => {
                     let key = item.ssh_key.unwrap_or_default();
-                    // The passphrase is the one field that is ours, not the
-                    // user's: it is taken back out of the extras it rode in.
-                    let (passphrase, extra): (Vec<_>, Vec<_>) = extra
-                        .into_iter()
-                        .partition(|f| f.label.eq_ignore_ascii_case(PASSPHRASE_LABEL));
+                    // The passphrase is ours, not the user's: it is taken back
+                    // out of the extras it rode in — the first one wearing its
+                    // label, as the exporter writes ours ahead of theirs.
+                    let passphrase = take_labelled(&mut extra, PASSPHRASE_LABEL);
                     result.entries.push(ImportedEntry {
                         kind: EntryKind::Ssh,
                         title,
@@ -378,10 +377,7 @@ impl Importer for Bitwarden {
                         ssh_private_key: non_empty(key.private_key),
                         ssh_public_key: non_empty(key.public_key),
                         ssh_fingerprint: non_empty(key.key_fingerprint),
-                        ssh_passphrase: passphrase
-                            .into_iter()
-                            .next()
-                            .and_then(|f| non_empty(Some(f.value))),
+                        ssh_passphrase: passphrase,
                         extra,
                         ..base
                     });
