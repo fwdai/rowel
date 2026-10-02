@@ -1,6 +1,6 @@
 {
   "name": "rowel",
-  "version": "1.0.0-alpha.8",
+  "version": "1.0.0",
   "description": "Modern, Lightweight, Fast and Free Password Manager",
   "type": "module",
   "repository": "https://github.com/fwdai/rowel.git",
