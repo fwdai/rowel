@@ -230,7 +230,7 @@ windows = { version = "0.62", features = ["Security_Credentials", "Security_Cred
 keyring = { version = "3", features = ["windows-native"] }
 # Where a browser looks for a native messaging host on Windows is a registry
 # key, not a file (`browser::manifest`).
-windows-registry = "0.5"
+windows-registry = "0.100"
 
 [dev-dependencies]
 # The core's test seams (`MemoryVault`, `set_user_version`) for the app's tests.
