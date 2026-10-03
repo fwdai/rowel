@@ -28,7 +28,7 @@ bindgen = ["uniffi/cli"]
 
 [dependencies]
 rowel-core = { path = "../core" }
-uniffi = "0.29"
+uniffi = "0.32"
 thiserror = "2"
 log = "0.4.34"
 zeroize = "1.8.2"
