@@ -721,6 +721,8 @@
   "Account": "Conta",
   "Asked by {{origin}} through the browser extension.": "Solicitado por {{origin}} pela extensão do navegador.",
   "Attach file": "Anexar arquivo",
+  "Photo Library": "Biblioteca de fotos",
+  "Choose File…": "Escolher arquivo…",
   "Attaching…": "Anexando…",
   "Attachments": "Anexos",
   "Attachments can be up to {{size}} each": "Cada anexo pode ter até {{size}}",

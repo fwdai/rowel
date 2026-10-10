@@ -1,10 +1,10 @@
 import { useTranslation } from 'react-i18next'
 import type { EntryMeta } from '@/api/types'
-import AddAction from '@/components/elements/AddAction'
 import Panel from '@/components/elements/Panel'
 import { LABEL, META } from '@/components/elements/tokens'
 import { humanSize } from '@/utils/size'
 import { useFileDrop } from '@/hooks/useFileDrop'
+import AttachButton from './AttachButton'
 import { attachTarget, isAttachDrop } from './drop'
 import AttachmentRow from './Row'
 import { useAttachments } from './useAttachments'
@@ -20,7 +20,9 @@ const NEARLY_FULL = 0.8
  * and rows appears once there is a file to list. Add, list, save, remove —
  * nothing here opens a file or shows one, because the bytes never come to the
  * webview at all. The vault's budget for files goes unmentioned until it is
- * nearly spent, and then only under a list of files.
+ * nearly spent, and then only under a list of files. On a phone the attach
+ * action first asks where from — the photo library or the file browser — since
+ * the two are separate pickers there (see `AttachButton`).
  *
  * A file dropped on the window while this entry is open is attached to it,
  * unless the drop is the scanner's or the env flow's (see `drop.ts`). Both
@@ -29,7 +31,7 @@ const NEARLY_FULL = 0.8
  */
 export default function Attachments({ entry }: { entry: EntryMeta }) {
   const { t } = useTranslation()
-  const { items, usage, error, busy, add, save, remove } = useAttachments(entry.id)
+  const { items, usage, error, busy, add, pick, save, remove } = useAttachments(entry.id)
 
   useFileDrop(paths => {
     const [path] = paths
@@ -61,10 +63,9 @@ export default function Attachments({ entry }: { entry: EntryMeta }) {
           )}
         </div>
       )}
-      <AddAction
-        label={busy ? t('Attaching…') : t('Attach file')}
-        testid="attach-file-button"
-        onClick={() => void add()}
+      <AttachButton
+        busy={busy}
+        onPick={from => void pick(from)}
         className={items.length === 0 ? 'mt-4 px-1' : 'mt-2 px-1'}
       />
       {error && (

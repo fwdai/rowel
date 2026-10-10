@@ -710,6 +710,8 @@
   "Account": "Hesap",
   "Asked by {{origin}} through the browser extension.": "{{origin}} tarafından tarayıcı uzantısı üzerinden istendi.",
   "Attach file": "Dosya ekle",
+  "Photo Library": "Fotoğraf Arşivi",
+  "Choose File…": "Dosya Seç…",
   "Attaching…": "Ekleniyor…",
   "Attachments": "Ekler",
   "Attachments can be up to {{size}} each": "Her ek en fazla {{size}} olabilir",
