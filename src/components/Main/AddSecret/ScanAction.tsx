@@ -3,7 +3,7 @@ import { useScanSupported, closeAddPicker } from '@/store'
 import { isMobile } from '@/lib/platform'
 import { pickAndScan } from '../Scan/pick'
 import { ScanGlyph } from '../icons'
-import ActionRow from './ActionRow'
+import ActionRow from '@/components/elements/ActionRow'
 
 /**
  * "Scan a card or document…": the picked-file twin of dropping a photo on the

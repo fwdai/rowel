@@ -732,6 +732,8 @@
   "Account": "Konto",
   "Asked by {{origin}} through the browser extension.": "Prośba od {{origin}} przez rozszerzenie przeglądarki.",
   "Attach file": "Załącz plik",
+  "Photo Library": "Biblioteka zdjęć",
+  "Choose File…": "Wybierz plik…",
   "Attaching…": "Załączanie…",
   "Attachments": "Załączniki",
   "Attachments can be up to {{size}} each": "Każdy załącznik może mieć do {{size}}",

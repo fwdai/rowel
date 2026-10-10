@@ -732,6 +732,8 @@
   "Account": "Обліковий запис",
   "Asked by {{origin}} through the browser extension.": "Запит від {{origin}} через розширення браузера.",
   "Attach file": "Прикріпити файл",
+  "Photo Library": "Медіатека",
+  "Choose File…": "Вибрати файл…",
   "Attaching…": "Прикріплюємо…",
   "Attachments": "Вкладення",
   "Attachments can be up to {{size}} each": "Розмір кожного вкладення — до {{size}}",

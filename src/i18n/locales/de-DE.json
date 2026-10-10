@@ -716,6 +716,8 @@
   "Account": "Konto",
   "Asked by {{origin}} through the browser extension.": "Angefragt von {{origin}} über die Browsererweiterung.",
   "Attach file": "Datei anhängen",
+  "Photo Library": "Fotomediathek",
+  "Choose File…": "Datei auswählen…",
   "Attaching…": "Wird angehängt…",
   "Attachments": "Anhänge",
   "Attachments can be up to {{size}} each": "Anhänge dürfen jeweils bis zu {{size}} groß sein",
