@@ -228,8 +228,14 @@ jobs:
         run: |
           set -euo pipefail
           sh src-tauri/crates/autofill/bindgen.sh
-          git diff --exit-code -- src-tauri/gen/apple/Sources/autofill/generated \
-            || { echo '::error::Stale UniFFI bindings: run src-tauri/crates/autofill/bindgen.sh and commit what it writes'; exit 1; }
+          # status, not diff: a deleted file comes back untracked, which diff misses.
+          generated=src-tauri/gen/apple/Sources/autofill/generated
+          if [ -n "$(git status --porcelain -- "$generated")" ]; then
+            git status --short -- "$generated"
+            git diff -- "$generated"
+            echo '::error::Stale UniFFI bindings: run src-tauri/crates/autofill/bindgen.sh and commit what it writes'
+            exit 1
+          fi
 
       # Malformed XML in any of these only surfaces at build or upload time
       # otherwise, and a dropped privacy manifest is not an error at all — App
