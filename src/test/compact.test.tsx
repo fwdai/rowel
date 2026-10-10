@@ -12,6 +12,7 @@ import {
   useVault,
   selectCurrent,
   editEntry,
+  focusSearch,
   lockSettings,
   openPalette,
   openSettings,
@@ -81,9 +82,13 @@ describe('compact shell', () => {
     // The way back is named after where it goes, iOS-style — the list root's
     // own title, from the same hook the list root draws it with.
     expect(screen.getByTestId('compact-back')).toHaveTextContent('All Items')
-    // One screen at a time: the list and the tab bar are gone while it is up.
-    expect(screen.queryByTestId('entry-item')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument()
+    // The list and its tab bar stay under it — there to come back to, and in
+    // view under an edge swipe — but inert: nothing on them can be tapped,
+    // focused or read out while the entry is up. (jsdom implements no `inert`
+    // semantics, so the attribute itself is the assertion.)
+    expect(screen.getAllByTestId('entry-item')).toHaveLength(2)
+    expect(screen.getByTestId('tab-bar').closest('[inert]')).not.toBeNull()
+    expect(screen.getByTestId('entry-screen').closest('[inert]')).toBeNull()
     // The corner holds one control: the star sits by the entry's name, and
     // Edit waits under the menu.
     expect(screen.getByTestId('favorite-toggle')).toBeInTheDocument()
@@ -95,6 +100,7 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('compact-back'))
     expect(useVault.getState().currentId).toBeNull()
     expect(screen.getAllByTestId('entry-item')).toHaveLength(2)
+    expect(screen.getByTestId('tab-bar').closest('[inert]')).toBeNull()
   })
 
   it('lands a new entry on the form screen, titled by its kind', async () => {
@@ -230,6 +236,24 @@ describe('compact shell', () => {
     expect(calls('copy_to_clipboard')).toContainEqual(
       { value: 'hunter2', clearAfterMs: expect.any(Number) }
     )
+  })
+
+  // ⌘F with an entry up asks for a caret the list cannot take yet — it is
+  // inert under the entry — so the request waits, and lands the moment the
+  // list is back. Before the list stayed mounted, mounting it was what applied
+  // the request; now nothing remounts, so the field has to notice the uncover.
+  it('lands a search request made under an entry once the list is back', async () => {
+    mockCommand('reveal_entry', () => loginEntry({ id: 'l1' }))
+    seed()
+    render(<Main />)
+
+    await userEvent.click(screen.getByText('Google'))
+    const input = screen.getByTestId('search-input')
+    act(() => focusSearch())
+    expect(input).not.toHaveFocus()
+
+    await userEvent.click(screen.getByTestId('compact-back'))
+    expect(input).toHaveFocus()
   })
 
   it('copies a field value when the value itself is tapped', async () => {
@@ -384,7 +408,9 @@ describe('compact shell', () => {
     act(() => startEntry('login'))
     act(() => openSettings())
     expect(screen.getByTestId('save-entry-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('settings-nav-security')).not.toBeInTheDocument()
+    // The root opened is there under the form, but out of reach.
+    expect(screen.getByTestId('settings-nav-security').closest('[inert]')).not.toBeNull()
+    expect(screen.getByTestId('save-entry-button').closest('[inert]')).toBeNull()
   })
 
   it('shows the audit score under the groups on the health view', () => {
@@ -410,12 +436,14 @@ describe('compact shell', () => {
 
     await userEvent.click(screen.getByTestId('settings-nav-security'))
     expect(screen.getByRole('heading', { name: 'Security' })).toBeInTheDocument()
-    // One level deep, not a modal: the tab bar is still there.
+    // One level deep, not a modal: the tab bar is still there, and so is the
+    // root under the pane — inert until the pane is popped.
     expect(screen.getByTestId('tab-bar')).toBeInTheDocument()
-    expect(screen.queryByTestId('settings-nav-security')).not.toBeInTheDocument()
+    expect(screen.getByTestId('tab-bar').closest('[inert]')).toBeNull()
+    expect(screen.getByTestId('settings-nav-security').closest('[inert]')).not.toBeNull()
 
     await userEvent.click(screen.getByTestId('settings-back'))
-    expect(screen.getByTestId('settings-nav-security')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-security').closest('[inert]')).toBeNull()
   })
 
   // A section body that sends the user elsewhere (the export pane's "save a
@@ -468,11 +496,13 @@ describe('compact shell', () => {
 
     expect(screen.getByRole('heading', { name: 'New workspace' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Workspaces')
-    expect(screen.queryByTestId('settings-back')).not.toBeInTheDocument()
+    // The section stays under its sub-page, inert, as the root stays under it.
+    expect(screen.getByTestId('settings-back').closest('[inert]')).not.toBeNull()
+    expect(screen.getByTestId('settings-subpage-back').closest('[inert]')).toBeNull()
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
     expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-back')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-back').closest('[inert]')).toBeNull()
   })
 
   // The chip's default is the wide modal's section state, which a pushed pane
@@ -671,6 +701,39 @@ describe('swipe back', () => {
     expect(useVault.getState().currentId).toBe('l1')
     await waitFor(() => expect(useVault.getState().currentId).toBeNull())
     expect(screen.getAllByTestId('entry-item')).toHaveLength(2)
+  })
+
+  // The layer under the screen — the list root, with the tab bar on it — is
+  // where the finger is going: it comes along, as `--pop` (the share of the
+  // width the screen has cleared; see `.stack-under`), held at rest under the
+  // screen while it is up, and left to its own geometry once it is gone.
+  it('brings the screen under it along, and lets it go when the pop lands', async () => {
+    const entry = await openEntry()
+    const under = entry.parentElement!.previousElementSibling as HTMLElement
+    expect(under).toContainElement(screen.getByTestId('tab-bar'))
+    expect(under).toHaveAttribute('data-covered')
+    expect(under).toHaveAttribute('data-recede')
+
+    entry.setPointerCapture = () => {}
+    entry.getBoundingClientRect = () => ({ left: 0, width: 390 }) as DOMRect
+    const touch = { pointerId: 1, pointerType: 'touch' }
+    fireEvent.pointerDown(entry, { ...touch, clientX: 0, clientY: 100 })
+    fireEvent.pointerMove(entry, { ...touch, clientX: 195, clientY: 100 })
+    expect(under.style.getPropertyValue('--pop')).toBe('0.5')
+
+    // A short drag puts both back. (Let go within the flick's minimum: jsdom's
+    // events are all stamped at once, so any longer drag reads as a flick.)
+    fireEvent.pointerUp(entry, { ...touch, clientX: 10, clientY: 100 })
+    expect(under.style.getPropertyValue('--pop')).toBe('0')
+    expect(entry.style.translate).toBe('0 0')
+
+    swipe(entry, { dx: 200 })
+    expect(under.style.getPropertyValue('--pop')).toBe('1')
+    await waitFor(() => expect(useVault.getState().currentId).toBeNull())
+    expect(under).not.toHaveAttribute('data-covered')
+    expect(under).not.toHaveAttribute('inert')
+    expect(under.style.getPropertyValue('--pop')).toBe('')
+    expect(under.style.transition).toBe('')
   })
 
   it('springs back from a short drag, and ignores one that is not from the edge', async () => {

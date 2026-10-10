@@ -45,6 +45,15 @@ export const TAB_BAR_NOTCH =
   'mask-[radial-gradient(circle_at_50%_0,transparent_34px,#000_35px)]'
 
 /**
+ * The face of a screen pushed from the right — the entry, a settings pane, a
+ * sub-page. It arrives across the whole width as the `Stack` layer under it
+ * recedes, and throws a shadow off its left edge onto that layer: unseen at
+ * rest, where it lies past the screen's edge, and the seam between the two
+ * screens while an edge swipe holds them apart.
+ */
+export const PUSHED_SCREEN = 'flex min-h-0 flex-1 flex-col animate-push bg-screen shadow-push'
+
+/**
  * What a root screen's scroller reserves under its content so the last row can
  * be scrolled clear of the bar it slides under (the disc's crown at 112px + a
  * breath). The fade behind the bar is the same height, so the disc always

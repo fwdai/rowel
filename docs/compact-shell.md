@@ -151,15 +151,27 @@ Tabs (labels are the desktop's i18n keys): **All Items · Favorites · Generator
 settings and the standalone generator and calls `setView`; Generator and
 Settings are one screen slot between them, so each closes the other.
 
-Transitions are mount animations only (`animate-sheet` slides in from the
-right, `animate-rise` slides up, `animate-fade` for roots). No exit animations.
+Screens are layered, not swapped: `Compact/Stack` keeps the screen a push came
+from mounted under the pushed one — the tab root (with its tab bar) under the
+entry or the form, the settings root under a section pane, the pane under its
+sub-page — so it keeps its scroll and is there to come back to, and so the
+motion has something to happen over. Under a screen the layer is `inert`, and
+its geometry is one number, `--pop` (`.stack-under` in `theme.css`): how far
+the screen over it has been popped. A push (`animate-push`, the whole width
+from the right) transitions it from 1 to 0, which recedes the layer a third of
+its width and dims it, as iOS's stack does; a form (`animate-rise`, from the
+bottom) only dims it. There are no exit animations: the way back by a tap is a
+cut, since the store has already dropped what the screen was showing.
 
 A screen pushed from the right can also be popped the iOS way: a drag in from
-the left edge takes it with the finger, and letting go past a third of the width
-(or a flick) slides it out and runs the same handler its back control does
-(`Compact/useSwipeBack`, on the entry screen and both settings panes, under the
-same `settingsLocked`). The form is not among them: it rose from the bottom and
-its only exit is the guarded Cancel.
+the left edge takes it with the finger, and the layer under it comes along —
+`--pop` written per frame — out of its receded rest and up to full width and
+brightness as the screen clears. Letting go past a third of the width (or a
+flick) slides it the rest of the way out and runs the same handler its back
+control does (`Compact/useSwipeBack`, on the entry screen and both settings
+panes, under the same `settingsLocked`); short of that, both spring back. The
+form is not among them: it rose from the bottom and its only exit is the
+guarded Cancel.
 
 ## iOS conventions to follow
 
