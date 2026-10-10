@@ -6,7 +6,13 @@ import Panel from '../../Generator/Panel'
 import Tabs from '../../Generator/Tabs'
 import { useGeneratorDialog } from '../../Generator/useGeneratorDialog'
 import { RefreshGlyph } from '../../icons'
-import { ACTION_BUTTON, ROOT_ACTION, ROOT_CLEARANCE, ROOT_HEADER } from '../chrome'
+import {
+  ACTION_BUTTON,
+  HEADER_ACTION,
+  ROOT_ACTION,
+  ROOT_CLEARANCE,
+  ROOT_HEADER
+} from '../chrome'
 import Heading from '../Heading'
 
 /**
@@ -35,14 +41,16 @@ export default function Generator() {
     >
       <div className={`${ROOT_HEADER} px-4`}>
         <Heading title={t('Generator')} />
-        {/* 44px, not the card's 36px: this one is aimed at with a finger. */}
+        {/* The header action tier, not the card's bordered 36px tile: in the
+            corner of a root it is one of the sort, sync and menu buttons, and
+            has to look it. */}
         <IconButton
           title={t('Regenerate')}
           testid="generator-regenerate"
           onClick={regenerate}
-          className="h-11 w-11 border border-line2"
+          className={HEADER_ACTION}
         >
-          <RefreshGlyph size={18} />
+          <RefreshGlyph />
         </IconButton>
       </div>
 

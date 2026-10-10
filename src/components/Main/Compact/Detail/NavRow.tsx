@@ -5,7 +5,7 @@ import MoreMenu from '../../Body/Aside/Show/MoreMenu'
 import { useListTitle } from '../../Body/ListColumn/useListTitle'
 import BackButton from '../BackButton'
 import NavBar from '../NavBar'
-import { TOUCH } from '../chrome'
+import { HEADER_ACTION } from '../chrome'
 
 /**
  * The read screen's nav row: the way back on the left, one menu on the right,
@@ -46,7 +46,7 @@ export default function NavRow({
             onDelete={onDelete}
             onEdit={() => editEntry()}
             onShare={() => openSend(entry.id)}
-            className={TOUCH}
+            className={HEADER_ACTION}
             menu="right-0 top-full mt-1"
           />
         )

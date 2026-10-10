@@ -68,6 +68,22 @@ describe('compact shell', () => {
     expect(screen.getByTestId('tags-button')).toBeInTheDocument()
   })
 
+  // Sort keeps the title row's corner, as on the desktop; the tag filter
+  // narrows the list the way the query does, so it is set into the search
+  // field's end — its own control, not part of the query.
+  it('puts sort in the title row and the tag filter in the search field', async () => {
+    seed()
+    render(<Main />)
+
+    const field = screen.getByTestId('search-input').parentElement!
+    expect(field).toContainElement(screen.getByTestId('tags-button'))
+    expect(field).not.toContainElement(screen.getByTestId('sort-menu'))
+
+    await userEvent.click(screen.getByTestId('tags-button'))
+    expect(screen.getByTestId('tags-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('search-input')).toHaveValue('')
+  })
+
   it('pushes the detail screen on select and comes back from it', async () => {
     mockCommand('reveal_entry', () => loginEntry({ id: 'l1', title: 'Google' }))
     seed()
