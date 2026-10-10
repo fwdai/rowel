@@ -106,6 +106,9 @@ pub async fn scan_image_bytes(
             "the photo has to be sent as bytes".into(),
         ));
     };
+    // `Request` only lends the body, so the scanner works on a clone: that
+    // copy is what gets zeroized (see `scan_bytes`); the body Tauri holds is
+    // dropped with the request like any other.
     let result = scan::scan_bytes(image.clone()).await?;
     super::same_session(&state, epoch)?;
     Ok(result)

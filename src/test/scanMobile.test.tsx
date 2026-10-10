@@ -93,6 +93,21 @@ describe('scanning on a phone', () => {
       expect(calls('scan_image_bytes')).toEqual([BYTES])
     })
 
+    it('reports a photo it could not even load, since the sheets are gone', async () => {
+      const broken = new File([BYTES], 'IMG_0043.jpg', { type: 'image/jpeg' })
+      Object.defineProperty(broken, 'arrayBuffer', {
+        value: () => Promise.reject(new Error('the file went away'))
+      })
+      await openSheet()
+
+      await userEvent.upload(screen.getByTestId('scan-source-capture'), broken)
+
+      await waitFor(() => expect(useUi.getState().scanError).toBe('failed'))
+      expect(useUi.getState().scanBusy).toBe(false)
+      closed()
+      expect(calls('scan_image_bytes')).toHaveLength(0)
+    })
+
     it('reports a photo nothing could be read from', async () => {
       await openSheet()
 

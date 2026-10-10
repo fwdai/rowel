@@ -126,8 +126,10 @@ pub async fn scan(path: String) -> Result<ScanResult> {
 /// OCR a photo the webview holds as bytes — the one the phone's camera just
 /// took through the capture input, which was never written anywhere — and
 /// return the fields read out of it. The same recognizer and parsers as `scan`,
-/// off the UI thread; the bytes are a card in the clear and are zeroized with
-/// the lines once parsed.
+/// off the UI thread. The bytes are a card in the clear, so this buffer is
+/// zeroized with the lines once parsed — best effort, since it is one copy of
+/// several: the IPC body the command cloned it from, the `NSData` the backend
+/// decodes, and the webview's own buffers are dropped, not scrubbed.
 pub async fn scan_bytes(mut image: Vec<u8>) -> Result<ScanResult> {
     tauri::async_runtime::spawn_blocking(move || {
         let ocr = platform_ocr().ok_or_else(|| {
