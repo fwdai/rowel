@@ -5,20 +5,25 @@ import Audit from '../../Body/Aside/Audit'
 import { DetailEmpty } from '../../Body/Empty'
 import { useVariant, isWholeView } from '../../Body/Empty/variant'
 import Tags from '../../Sidebar/Tags'
-import { ROOT_HEADER, TAB_BAR_CLEARANCE, TOUCH } from '../chrome'
+import { FIELD_ACTION, HEADER_ACTION, ROOT_HEADER, TAB_BAR_CLEARANCE } from '../chrome'
 
 // The 44px search field's measure. Passed as classes rather than asked for by
 // a flag: the box is the same field, dressed for a finger — its surface,
-// states and motion are the field's own (`ListColumn/Search`).
-const SEARCH = 'mt-4 h-11 gap-2.5 rounded-lg pl-3.5 pr-2.5 [&_input]:text-md'
+// states and motion are the field's own (`ListColumn/Search`). 8px under the
+// title row, not 16: the row is already 56px tall around a 24px title, and
+// the list under the field is what the screen is for. The right padding is
+// the 4px inset of the tag tile set into the field's end.
+const SEARCH = 'mt-2 h-11 gap-2.5 rounded-lg pl-3.5 pr-1 [&_input]:text-md'
 
 /**
  * The list root — the screen the tab bar comes home to.
  *
  * The shared list column, with the phone's chrome around it: a 24px title
- * where the desktop has a 20px one, the rail's sort and tag tiles in the title
- * row (there is no rail; the rail's Add went to the tab bar's centre), and room
- * at the bottom of the scroller for the floating bar the rows slide under.
+ * where the desktop has a 20px one, the rail's sort tile in the title row as
+ * on the desktop (there is no rail; the rail's Add went to the tab bar's
+ * centre), the tag filter set into the end of the search field — it narrows
+ * the list the way a query does, so it lives with the query — and room at the
+ * bottom of the scroller for the floating bar the rows slide under.
  */
 export default function Vault() {
   // The list is the only pane here, so it also carries whatever the wide shell
@@ -44,15 +49,12 @@ export default function Vault() {
       <ListColumn
         heading={<Title className="text-2xl" />}
         header={ROOT_HEADER}
-        actions={
-          <>
-            <SortMenu className={TOUCH} />
-            {/* The tag tile hangs off the list header rather than a rail, so
-                its menu drops below the trigger instead of out to a side. */}
-            <Tags className={TOUCH} menu="right-0 top-full mt-2" />
-          </>
-        }
+        actions={<SortMenu className={HEADER_ACTION} />}
         search={SEARCH}
+        // The tile sits in the field rather than on a rail, so its menu drops
+        // below the field's edge instead of out to a side: `top-full` is the
+        // tile's bottom, 4px inside the field's.
+        filter={<Tags className={FIELD_ACTION} menu="right-0 top-full mt-3" />}
         scroller={TAB_BAR_CLEARANCE}
         footer={footer}
       />

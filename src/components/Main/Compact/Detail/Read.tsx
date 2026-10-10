@@ -6,7 +6,7 @@ import Eyebrow from '../../Body/Aside/Show/Eyebrow'
 import Favorite from '../../Body/Aside/Show/Favorite'
 import Identity from '../../Body/Aside/Show/Identity'
 import { useDelete } from '../../Body/Aside/Show/useDelete'
-import { PRIMARY_CLEARANCE, TOUCH } from '../chrome'
+import { HEADER_ACTION, PRIMARY_CLEARANCE } from '../chrome'
 import { useSwipeBack } from '../useSwipeBack'
 import NavRow from './NavRow'
 import PrimaryAction from './PrimaryAction'
@@ -68,7 +68,7 @@ export default function Read({ entry, revealed }: Props) {
               className="mt-1 flex items-center gap-2 truncate whitespace-nowrap"
             />
           </Identity>
-          {!entry.deletedAt && <Favorite entry={entry} className={`${TOUCH} flex-none`} />}
+          {!entry.deletedAt && <Favorite entry={entry} className={`${HEADER_ACTION} flex-none`} />}
         </div>
 
         <Body entry={entry} revealed={revealed} error={error} />

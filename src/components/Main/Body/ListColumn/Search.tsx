@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { useUi, setFilterQuery } from '@/store'
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
@@ -18,8 +18,15 @@ const DESKTOP = 'mt-3 h-8 gap-2.5 rounded-sm pl-3 pr-1.5'
 // in useListKeys and reach this field by bubbling.
 // `className` is the box's measure (height, radius, padding), not a layout
 // flag: the field is 32px where a mouse points at it and the compact root swaps
-// in the 44px touch one.
-export default function Search({ className = DESKTOP }: { className?: string }) {
+// in the 44px touch one. `filter` is a control set into the field's end, past
+// the clear button — its own action, not part of the query.
+export default function Search({
+  className = DESKTOP,
+  filter
+}: {
+  className?: string
+  filter?: ReactNode
+}) {
   const { t } = useTranslation()
   const query = useUi(state => state.query)
   const empty = query === ''
@@ -52,10 +59,11 @@ export default function Search({ className = DESKTOP }: { className?: string }) 
       className={className}
       inputRef={input}
       trailing={
-        /* One trailing slot, both occupants stacked in its single cell so the
-           hint and the clear button crossfade in place: nothing to the left of
-           them moves when a query arrives or goes. */
-        <span className="grid flex-none place-items-center [&>*]:col-start-1 [&>*]:row-start-1">
+        <>
+          {/* One trailing slot, both occupants stacked in its single cell so
+              the hint and the clear button crossfade in place: nothing to the
+              left of them moves when a query arrives or goes. */}
+          <span className="grid flex-none place-items-center [&>*]:col-start-1 [&>*]:row-start-1">
           {/* The shortcut that lands here, shown while the field is idle and
               empty; focus fades it and eases it a step to the right, as if the
               caret's arrival nudged it out. A finger has no ⌘, so no coarse
@@ -63,30 +71,35 @@ export default function Search({ className = DESKTOP }: { className?: string }) 
           <span
             aria-hidden
             className={cx(
-              'transition-[opacity,transform] duration-300 any-pointer-coarse:hidden group-focus-within:translate-x-1 group-focus-within:opacity-0',
+              'transition-[opacity,transform] duration-300 any-pointer-coarse:hidden group-has-[input:focus]:translate-x-1 group-has-[input:focus]:opacity-0',
               !empty && 'translate-x-1 opacity-0'
             )}
           >
             <Kbd>{chord('F')}</Kbd>
           </span>
-          {/* Always mounted so it can ease in: a query fades and grows it from
-              a dot to a button, clearing does the reverse. Out of reach and out
-              of the tab order while there is nothing to clear. */}
-          <button
-            type="button"
-            onClick={clear}
-            aria-label={t('Clear')}
-            aria-hidden={empty}
-            tabIndex={empty ? -1 : 0}
-            data-testid="search-clear-button"
-            className={cx(
-              'grid h-5 w-5 cursor-pointer place-items-center rounded-full text-text3 transition-[opacity,transform,color,background-color] hover:bg-hover hover:text-text',
-              empty ? 'pointer-events-none scale-75 opacity-0' : 'scale-100 opacity-100'
-            )}
-          >
-            <CloseGlyph size={12} />
-          </button>
-        </span>
+            {/* Always mounted so it can ease in: a query fades and grows it
+                from a dot to a button, clearing does the reverse. Out of reach
+                and out of the tab order while there is nothing to clear. A
+                finger gets the field's full 44px to land on, around a glyph
+                sized up to match. */}
+            <button
+              type="button"
+              onClick={clear}
+              aria-label={t('Clear')}
+              aria-hidden={empty}
+              tabIndex={empty ? -1 : 0}
+              data-testid="search-clear-button"
+              className={cx(
+                'grid h-5 w-5 cursor-pointer place-items-center rounded-full text-text3 transition-[opacity,transform,color,background-color] hover:bg-hover hover:text-text',
+                'any-pointer-coarse:h-11 any-pointer-coarse:w-11 any-pointer-coarse:[&>svg]:size-4',
+                empty ? 'pointer-events-none scale-75 opacity-0' : 'scale-100 opacity-100'
+              )}
+            >
+              <CloseGlyph size={12} />
+            </button>
+          </span>
+          {filter}
+        </>
       }
     />
   )

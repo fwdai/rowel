@@ -164,6 +164,13 @@ its only exit is the guarded Cancel.
 ## iOS conventions to follow
 
 - Touch targets ≥ 44×44pt. Rows ≥ 44pt tall; list rows in the design are 64pt.
+- One tier for every icon action in a header corner — sort, regenerate, the
+  sync chip, the entry's menu and star: `HEADER_ACTION` in `chrome.ts`, a 44px
+  target over a 20px glyph with no box of its own, the nav bar's proportion on
+  both platforms. The glyph is sized by the button, not at each call site, so
+  a control shared with the desktop needs no size prop. The one control set
+  into the search field (the tag filter) is `FIELD_ACTION`: a 36px tile inset
+  4px, with the field's full 44px as its hit area.
 - Safe areas: `env(safe-area-inset-top/bottom)` on anything touching an edge.
 - A 24px semibold title on tab roots, centred with its 44px actions on a 56px
   row flush against the safe area (`ROOT_HEADER`), no top bar and no app-name
@@ -171,6 +178,11 @@ its only exit is the guarded Cancel.
   get a nav row on the same 56px footing: a back control that carries the
   previous screen's title, trailing text/icon actions. Root and pushed headers
   share one top edge, so nothing jumps when a screen is pushed or popped.
+  The list root keeps its header short — 8px from the title row to the 44px
+  search field, and the field's run-out before the first row is the row
+  caption's own height — since the list is what the screen is for. Sort has
+  the title row's corner, as on the desktop; the tag filter sits in the end
+  of the search field, beside the query it narrows the list with.
 - Tab bar: floating pill, glass surface (`bg-glass` + `backdrop-blur`), icon
   over a 10px label, resting in the secondary ink (≥ 4.5:1 on the glass, for
   the label's sake). The selected tab is marked by one accent-soft lens that
