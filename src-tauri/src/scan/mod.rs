@@ -36,10 +36,20 @@ pub struct ScanResult {
     pub fields: BTreeMap<String, String>,
 }
 
-/// Text recognition over one local image file, in reading order (top to
-/// bottom) — the order the MRZ parser needs to see its lines in.
+/// Text recognition over one image, in reading order (top to bottom) — the
+/// order the MRZ parser needs to see its lines in.
 pub trait Ocr {
+    /// The image at a local path.
     fn recognize(&self, image_path: &Path) -> Result<Vec<String>>;
+
+    /// The image as its encoded bytes — a photo the camera just took, which
+    /// exists nowhere on disk. Only the phone's camera reaches here, and the
+    /// phone is Apple's, so the other backends keep the default: unsupported.
+    fn recognize_data(&self, _image: &[u8]) -> Result<Vec<String>> {
+        Err(Error::Unsupported(
+            "scanning a captured photo is not available on this platform".into(),
+        ))
+    }
 }
 
 /// Apple's Vision framework (same API on macOS and iOS).
@@ -84,10 +94,11 @@ pub fn scan_lines(lines: &[String]) -> Option<ScanResult> {
 /// a heavy CPU job, so it runs off the UI thread.
 ///
 /// `path` is what the frontend already has in hand — the drag-drop event's file
-/// path, or the one the dialog plugin returned. Bytes are deliberately not
-/// accepted: both backends load an image by URL/path, and the file is the
+/// path, or the one the dialog plugin returned. A file on disk is never taken
+/// as bytes: both backends load an image by URL/path, and the file is the
 /// user's own, so passing bytes would only add a copy of a card photo to
-/// memory without removing a read of the file.
+/// memory without removing a read of the file. (`scan_bytes` is for the photo
+/// that is *not* on disk.)
 pub async fn scan(path: String) -> Result<ScanResult> {
     // The path is the webview's word for a file on the user's disk, so it is
     // checked before anything opens it: only the image types the pickers offer
@@ -105,6 +116,29 @@ pub async fn scan(path: String) -> Result<ScanResult> {
         let found = scan_lines(&lines);
         // The recognized lines are the card number in the clear; the parsed
         // result is all that may outlive this call.
+        lines.zeroize();
+        found.ok_or(Error::Unrecognized)
+    })
+    .await
+    .map_err(|e| Error::Other(e.to_string()))?
+}
+
+/// OCR a photo the webview holds as bytes — the one the phone's camera just
+/// took through the capture input, which was never written anywhere — and
+/// return the fields read out of it. The same recognizer and parsers as `scan`,
+/// off the UI thread. The bytes are a card in the clear, so this buffer is
+/// zeroized with the lines once parsed — best effort, since it is one copy of
+/// several: the IPC body the command cloned it from, the `NSData` the backend
+/// decodes, and the webview's own buffers are dropped, not scrubbed.
+pub async fn scan_bytes(mut image: Vec<u8>) -> Result<ScanResult> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let ocr = platform_ocr().ok_or_else(|| {
+            Error::Unsupported("scanning is not available on this platform".into())
+        })?;
+        let recognized = ocr.recognize_data(&image);
+        image.zeroize();
+        let mut lines = recognized?;
+        let found = scan_lines(&lines);
         lines.zeroize();
         found.ok_or(Error::Unrecognized)
     })

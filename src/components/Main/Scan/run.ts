@@ -1,5 +1,5 @@
 import type { EntryType } from '@/api/types'
-import { scanImage } from '@/api/tools'
+import { scanImage, scanImageBytes } from '@/api/tools'
 import { errorKind } from '@/api/errors'
 import {
   useVault,
@@ -35,18 +35,20 @@ const reason = (error: unknown): ScanError => {
 /**
  * Read one image and land its fields in an editor.
  *
- * The same path for a drop and for a file picked from the dialog. A scan of the
- * kind already open fills that form in place — a second photo of the same
- * passport should not open a second draft — and anything else starts a new
- * entry of the kind that was recognized. Both go through the vault's `prefill`,
- * which `useDraft` is the only reader of.
+ * The same path for a drop, for a file picked from the dialog (both a path on
+ * disk) and for a photo the phone's camera or picker handed the webview (its
+ * bytes, since it is on no disk). A scan of the kind already open fills that
+ * form in place — a second photo of the same passport should not open a second
+ * draft — and anything else starts a new entry of the kind that was
+ * recognized. Both go through the vault's `prefill`, which `useDraft` is the
+ * only reader of.
  *
  * Never throws: the outcome is the status in the store.
  */
-export const runScan = async (path: string): Promise<void> => {
+export const runScan = async (image: string | Uint8Array): Promise<void> => {
   scanStarted()
   try {
-    const result = await scanImage(path)
+    const result = await (typeof image === 'string' ? scanImage(image) : scanImageBytes(image))
     const fields = cleanFields(result.fields)
     if (editingKind() === result.kind) setPrefill(fields)
     else startEntry(result.kind, fields)
