@@ -37,7 +37,10 @@ interface Props {
  * Without an enrollment there is nothing to lead with, so the card takes the
  * centre straight away. The ground is sized to the visual viewport, so the
  * keyboard the card brings up shortens the screen under the card rather than
- * covering it.
+ * covering it — and the masthead steps down to 64px while the card is up, so
+ * the top band still has room to match the bottom one and the card keeps the
+ * centre of what the keyboard leaves. A band never shrinks under its content,
+ * so a screen too short for even that scrolls rather than clips.
  */
 export default function LockScreen({ biometric, biometry = 'touch' }: Props) {
   const { t } = useTranslation()
@@ -59,7 +62,12 @@ export default function LockScreen({ biometric, biometry = 'touch' }: Props) {
     <AuthShell footer fill style={viewportStyle(viewport)}>
       <div className="grid flex-1 grid-rows-[1fr_auto_1fr]">
         <div className="flex flex-col items-center">
-          <Brand state={mascot.state} gaze={mascot.gaze} />
+          <Brand
+            state={mascot.state}
+            gaze={mascot.gaze}
+            size={password ? 64 : 96}
+            className={password ? 'mb-5' : 'mb-9'}
+          />
           <WorkspacePicker busy={field.pending || field.success} />
         </div>
 
