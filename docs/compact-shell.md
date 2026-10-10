@@ -132,9 +132,16 @@ Before any of that there is the lock, which is not a screen of the vault but a
 flow of its own: `App` renders `Auth/LockScreen` on compact and `Auth` on wide,
 both driven by `Auth/useUnlock` (attempt phase, lockout countdown, mascot gaze,
 the eyebrow's text and tone). The desktop leads with the passphrase card and
-keeps biometrics as its end segment; the phone leads with an 88px biometric
-tile when a key is enrolled and reveals the same card under "Enter Master
-Password". Which biometry the copy names is `lib/biometry` — `biometryLabel(type)`
+keeps biometrics as its end segment, centred as one block on the auth ground.
+The phone lays the same parts out in three bands over the whole ground
+(`AuthShell fill`): the brand and the vault chip under the safe area; at the
+exact centre of the screen the status line over the 88px biometric tile when
+a key is enrolled, or over the card; and by the footer "Enter Master Password"
+as a plain 44px text control — the backup for the day Face ID does not
+answer, not a second button the size of the first. The ground is sized to the
+visual viewport (`viewportStyle`), so the keyboard the card brings up
+shortens it rather than covering the card. Which biometry the copy names is
+`lib/biometry` — `biometryLabel(type)`
 and `biometryGlyph(type)`, from `app_status.biometric.type` (`LAContext.biometryType`
 on Apple, the fingerprint everywhere else), read off the app store's `status`
 by `App` and handed down as `biometric` / `biometry` — so `Masterpass` says the

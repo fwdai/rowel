@@ -4,6 +4,7 @@ import AuthShell from '@/components/elements/AuthShell'
 import Eyebrow from '@/components/elements/Eyebrow'
 import Masterpass from '@/components/elements/Masterpass'
 import type { BiometryType } from '@/api/types'
+import { useVisualViewport, viewportStyle } from '@/hooks/useVisualViewport'
 import BiometricTile from './BiometricTile'
 import Brand from './Brand'
 import { useUnlock } from './useUnlock'
@@ -16,13 +17,32 @@ interface Props {
   biometry?: BiometryType
 }
 
-// The phone lock screen. Same parts as the wide one and the same `useUnlock`,
-// ordered for a thumb instead of a keyboard: the biometric tile leads when a
-// key is enrolled and the passphrase card is one tap away under it. Without an
-// enrollment there is nothing to lead with, so the card shows straight away.
+/**
+ * The phone lock screen. Same parts as the wide one and the same `useUnlock`,
+ * laid out in three bands, each element where its purpose puts it:
+ *
+ * - The top band is who this is and which vault: the brand, and the vault
+ *   chip when there is more than one. It hangs under the safe area, as a
+ *   masthead does, and is not what the thumb is here for.
+ * - The centre band is the one thing to do, at the exact centre of the
+ *   screen: the status line, and under it the biometric tile when a key is
+ *   enrolled — one tap, where the eye lands — or the passphrase card. The two
+ *   bands around it are equal, so it is centred on the screen and not merely
+ *   in what the masthead leaves over.
+ * - The bottom band is the way round the tile: entering the passphrase, as
+ *   a plain text control by the footer. A backup for the day Face ID does not
+ *   answer, not a second offer of the same size as the first — a bordered
+ *   52px button there read as one.
+ *
+ * Without an enrollment there is nothing to lead with, so the card takes the
+ * centre straight away. The ground is sized to the visual viewport, so the
+ * keyboard the card brings up shortens the screen under the card rather than
+ * covering it.
+ */
 export default function LockScreen({ biometric, biometry = 'touch' }: Props) {
   const { t } = useTranslation()
   const { mascot, eyebrow, field, submit, biometric: unlock, change } = useUnlock()
+  const viewport = useVisualViewport()
   // Derived, not seeded: `biometric` only becomes true once the launch probe
   // answers, which is after this mounts — a card seeded from the first render
   // would never give way to the tile.
@@ -36,54 +56,63 @@ export default function LockScreen({ biometric, biometry = 'touch' }: Props) {
   const keep = () => setRevealed(true)
 
   return (
-    <AuthShell footer>
-      <Brand state={mascot.state} gaze={mascot.gaze} />
-      <WorkspacePicker busy={field.pending || field.success} />
-      <Eyebrow tone={eyebrow.tone} busy={eyebrow.busy} testid={eyebrow.testid}>
-        {eyebrow.text}
-      </Eyebrow>
-
-      {password ? (
-        <div className="mx-auto mt-8 max-w-[380px]">
-          {/* The card keeps its own biometric segment, so revealing the
-              passphrase never takes the faster way out away. */}
-          <Masterpass
-            key={field.vault}
-            biometric={biometric}
-            biometry={biometry}
-            testid="unlock-password-input"
-            invalid={field.invalid}
-            success={field.success}
-            pending={field.pending}
-            disabled={field.disabled}
-            onChange={event => {
-              keep()
-              change(event)
-            }}
-            onEnter={value => {
-              keep()
-              submit(value)
-            }}
-            onBiometric={unlock}
-          />
+    <AuthShell footer fill style={viewportStyle(viewport)}>
+      <div className="grid flex-1 grid-rows-[1fr_auto_1fr]">
+        <div className="flex flex-col items-center">
+          <Brand state={mascot.state} gaze={mascot.gaze} />
+          <WorkspacePicker busy={field.pending || field.success} />
         </div>
-      ) : (
-        <>
-          <div className="mt-8 flex justify-center">
-            <BiometricTile biometry={biometry} onUnlock={unlock} />
-          </div>
-          {/* 52px, the phone's secondary tier: bordered rather than filled, so
-              the tile above stays the one thing being offered. */}
-          <button
-            type="button"
-            data-testid="use-password-button"
-            onClick={() => setRevealed(true)}
-            className="mt-10 flex h-13 w-full cursor-pointer items-center justify-center rounded-xl border border-line2 text-md font-medium text-text transition-colors active:bg-hover"
-          >
-            {t('Enter Master Password')}
-          </button>
-        </>
-      )}
+
+        <div className="flex flex-col items-center">
+          <Eyebrow tone={eyebrow.tone} busy={eyebrow.busy} testid={eyebrow.testid}>
+            {eyebrow.text}
+          </Eyebrow>
+          {password ? (
+            <div className="mt-5 w-full max-w-[380px]">
+              {/* The card keeps its own biometric segment, so revealing the
+                  passphrase never takes the faster way out away. */}
+              <Masterpass
+                key={field.vault}
+                biometric={biometric}
+                biometry={biometry}
+                testid="unlock-password-input"
+                invalid={field.invalid}
+                success={field.success}
+                pending={field.pending}
+                disabled={field.disabled}
+                onChange={event => {
+                  keep()
+                  change(event)
+                }}
+                onEnter={value => {
+                  keep()
+                  submit(value)
+                }}
+                onBiometric={unlock}
+              />
+            </div>
+          ) : (
+            <div className="mt-5">
+              <BiometricTile biometry={biometry} onUnlock={unlock} />
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-end justify-center">
+          {!password && (
+            // The phone's text-control tier: 44px tall in the accent ink, as
+            // the nav rows' Cancel and Save are, with no box to weigh it.
+            <button
+              type="button"
+              data-testid="use-password-button"
+              onClick={() => setRevealed(true)}
+              className="mb-2 flex h-11 cursor-pointer items-center rounded-lg px-4 text-md font-medium text-accent transition-colors active:bg-hover"
+            >
+              {t('Enter Master Password')}
+            </button>
+          )}
+        </div>
+      </div>
     </AuthShell>
   )
 }

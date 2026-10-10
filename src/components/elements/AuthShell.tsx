@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from 'react'
+import type { CSSProperties, ReactNode, Ref } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
 import Back from '@/assets/images/back.svg?react'
@@ -16,6 +16,18 @@ interface Props {
    */
   footer?: boolean
   /**
+   * The content lays itself out over the shell's whole height — the phone
+   * lock screen's three bands — rather than centring as one block, which is
+   * what a form or a card wants.
+   */
+  fill?: boolean
+  /**
+   * The ground's own inline style: a caller sized to the visual viewport
+   * (`viewportStyle`) passes its height here, so the keyboard shortens the
+   * ground rather than covering what is centred on it.
+   */
+  style?: CSSProperties
+  /**
    * The scrolling ground itself, for a caller that keeps the shell mounted
    * across screens and has to put the scroll back at the top when the screen
    * under it changes (see Start).
@@ -28,7 +40,7 @@ interface Props {
 // behind a max-560px centered column. "Back" sits top-left, where every
 // stepped flow puts it, clear of the content it steps away from; the footer
 // strip is opt-in. Reused by the lock, setup and restore screens.
-export default function AuthShell({ children, onBack, footer, ref }: Props) {
+export default function AuthShell({ children, onBack, footer, fill, style, ref }: Props) {
   const { t } = useTranslation()
   return (
     // Compact narrows the gutters, pads past the notch by a nav bar's height
@@ -40,6 +52,7 @@ export default function AuthShell({ children, onBack, footer, ref }: Props) {
     // the wide layout is what it was.
     <div
       ref={ref}
+      style={style}
       className={cx(
         'relative flex h-full flex-col items-center overflow-x-hidden overflow-y-auto overscroll-contain bg-app px-5 pt-[calc(env(safe-area-inset-top)+2.75rem)] text-text select-none md:px-10 md:pt-0 md:pb-0',
         footer ? 'pb-[calc(env(safe-area-inset-bottom)+3.25rem)]' : 'pb-[env(safe-area-inset-bottom)]'
@@ -80,7 +93,14 @@ export default function AuthShell({ children, onBack, footer, ref }: Props) {
         </button>
       )}
 
-      <div className="relative my-auto w-[560px] max-w-full">{children}</div>
+      <div
+        className={cx(
+          'relative w-[560px] max-w-full',
+          fill ? 'flex flex-1 flex-col' : 'my-auto'
+        )}
+      >
+        {children}
+      </div>
 
       {footer && (
         <div className="absolute inset-x-0 bottom-0 flex h-13 items-center justify-center">
