@@ -1,7 +1,16 @@
-# Dependabot keeps dependencies patched across all three ecosystems the app
-# ships from: the JS frontend (npm, repo root), the Rust backend (cargo,
-# src-tauri/), and the CI/release workflows themselves (github-actions).
+# Dependabot keeps dependencies patched across the ecosystems the app ships
+# from: the JS frontend (npm, repo root), the Rust backend (cargo,
+# src-tauri/), the browser extension (npm, extension/), and the CI/release
+# workflows themselves (github-actions).
 # All PRs target main (the default branch); release branches are cut from it.
+#
+# Each PR is tested against main alone, never alongside the others, so merging
+# several in a row can still break main. Safe bumps are therefore grouped into
+# one PR per ecosystem, and anything that can break the API arrives on its own
+# PR, to be landed together with the code it needs.
+#
+# A dependency joins the first group it matches, so the release-train groups
+# come before the catch-all ones.
 version: 2
 updates:
   # JS/TS frontend — package.json / bun.lock at the repo root.
@@ -9,6 +18,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A release has a week to be yanked before it is proposed.
+    cooldown:
+      default-days: 7
     target-branch: main
     open-pull-requests-limit: 10
     labels:
@@ -24,12 +36,20 @@ updates:
       tauri-js:
         patterns:
           - '@tauri-apps/*'
+      npm-minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
 
   # Rust backend — src-tauri/Cargo.toml + Cargo.lock.
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     target-branch: main
     open-pull-requests-limit: 10
     labels:
@@ -45,6 +65,14 @@ updates:
       passkey-rs:
         patterns:
           - 'passkey-*'
+      # Patch only: Dependabot calls 0.29 -> 0.32 a minor update, but below
+      # 1.0 Cargo treats it as breaking (uniffi, passkey-rs and
+      # windows-registry all broke this way), so minors arrive one per PR.
+      cargo-patch:
+        patterns:
+          - '*'
+        update-types:
+          - patch
     ignore:
       # passkey-rs requires p256 ^0.13. 0.14 would link a second copy and
       # break the COSE key bridge. Lift once passkey-rs moves to p256 0.14.
@@ -60,13 +88,40 @@ updates:
       - dependency-name: rand
         versions: ['>=0.9']
 
+  # Browser extension — extension/package.json + package-lock.json. A fork of
+  # KeePassXC-Browser with dev-only tooling, so one monthly PR is enough.
+  - package-ecosystem: npm
+    directory: /extension
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    target-branch: main
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      extension:
+        patterns:
+          - '*'
+
   # GitHub Actions used by ci.yml / release.yml / codeql.yml.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     target-branch: main
     open-pull-requests-limit: 10
     labels:
       - dependencies
       - ci
+    groups:
+      actions-minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
