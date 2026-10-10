@@ -12,6 +12,7 @@ import {
   useVault,
   selectCurrent,
   editEntry,
+  focusSearch,
   lockSettings,
   openPalette,
   openSettings,
@@ -235,6 +236,24 @@ describe('compact shell', () => {
     expect(calls('copy_to_clipboard')).toContainEqual(
       { value: 'hunter2', clearAfterMs: expect.any(Number) }
     )
+  })
+
+  // ⌘F with an entry up asks for a caret the list cannot take yet — it is
+  // inert under the entry — so the request waits, and lands the moment the
+  // list is back. Before the list stayed mounted, mounting it was what applied
+  // the request; now nothing remounts, so the field has to notice the uncover.
+  it('lands a search request made under an entry once the list is back', async () => {
+    mockCommand('reveal_entry', () => loginEntry({ id: 'l1' }))
+    seed()
+    render(<Main />)
+
+    await userEvent.click(screen.getByText('Google'))
+    const input = screen.getByTestId('search-input')
+    act(() => focusSearch())
+    expect(input).not.toHaveFocus()
+
+    await userEvent.click(screen.getByTestId('compact-back'))
+    expect(input).toHaveFocus()
   })
 
   it('copies a field value when the value itself is tapped', async () => {
