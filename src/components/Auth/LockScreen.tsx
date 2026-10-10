@@ -22,8 +22,9 @@ interface Props {
  * laid out in three bands, each element where its purpose puts it:
  *
  * - The top band is who this is and which vault: the brand, and the vault
- *   chip when there is more than one. It hangs under the safe area, as a
- *   masthead does, and is not what the thumb is here for.
+ *   chip when there is more than one. It floats in the band — about a quarter
+ *   of the way down the screen, with air above and below — as a masthead
+ *   does, and is not what the thumb is here for.
  * - The centre band is the one thing to do, at the exact centre of the
  *   screen: the status line, and under it the biometric tile when a key is
  *   enrolled — one tap, where the eye lands — or the passphrase card. The two
@@ -61,7 +62,10 @@ export default function LockScreen({ biometric, biometry = 'touch' }: Props) {
   return (
     <AuthShell footer fill style={viewportStyle(viewport)}>
       <div className="grid flex-1 grid-rows-[1fr_auto_1fr]">
-        <div className="flex flex-col items-center">
+        {/* Centred in its band rather than pinned under the status bar: a
+            masthead floats in the upper third with air on both sides of it,
+            and the placement scales with the screen. */}
+        <div className="flex flex-col items-center justify-center">
           <Brand
             state={mascot.state}
             gaze={mascot.gaze}
