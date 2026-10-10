@@ -79,9 +79,11 @@ export default function Search({
           </span>
             {/* Always mounted so it can ease in: a query fades and grows it
                 from a dot to a button, clearing does the reverse. Out of reach
-                and out of the tab order while there is nothing to clear. A
-                finger gets the field's full 44px to land on, around a glyph
-                sized up to match. */}
+                and out of the tab order while there is nothing to clear. In the
+                compact root's 44px field a finger gets the field's full height
+                to land on, around a glyph sized up to match — only there: the
+                wide shell's field is 32px even under a finger (an iPad), and
+                a 44px button would stand out past its edges. */}
             <button
               type="button"
               onClick={clear}
@@ -91,7 +93,7 @@ export default function Search({
               data-testid="search-clear-button"
               className={cx(
                 'grid h-5 w-5 cursor-pointer place-items-center rounded-full text-text3 transition-[opacity,transform,color,background-color] hover:bg-hover hover:text-text',
-                'any-pointer-coarse:h-11 any-pointer-coarse:w-11 any-pointer-coarse:[&>svg]:size-4',
+                'max-md:any-pointer-coarse:h-11 max-md:any-pointer-coarse:w-11 max-md:any-pointer-coarse:[&>svg]:size-4',
                 empty ? 'pointer-events-none scale-75 opacity-0' : 'scale-100 opacity-100'
               )}
             >
