@@ -87,6 +87,11 @@ updates:
       # bump leaves two rand generations and breaks every RNG handoff.
       - dependency-name: rand
         versions: ['>=0.9']
+      # libc 0.2.190 gates mach_task_self() to macOS, but num_threads 0.1.7
+      # (via time -> tauri) still calls it on iOS, so the iOS build fails.
+      # Drop once a later libc or num_threads release builds for iOS again.
+      - dependency-name: libc
+        versions: ['0.2.190']
 
   # Browser extension — extension/package.json + package-lock.json. A fork of
   # KeePassXC-Browser with dev-only tooling, so one monthly PR is enough.
