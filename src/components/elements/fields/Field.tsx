@@ -123,8 +123,13 @@ export default function Field({
           )}
           {!editing && (
             // A row with a reveal has a control rail already; a plain one keeps
-            // its copy button quiet until the row is hovered or focused.
-            <span className={cx(!secure && HOVER_ONLY)}>
+            // its copy button quiet until the row is hovered or focused. On the
+            // phone there is no copy button at all: the value is the copy
+            // control (below), the toast says it worked, and the screen's own
+            // bottom button covers the main secret — as Passwords and
+            // 1Password draw their rows. A rail there holds only what means
+            // something else: the eye, the open-link.
+            <span className={cx(!secure && HOVER_ONLY, 'max-md:hidden')}>
               <CopyButton value={shown} title={t('Copy')} />
             </span>
           )}

@@ -359,6 +359,7 @@
   "Verifying": "Verificando",
   "Welcome": "Bem-vindo ao {{appName}}",
   "Add one-time code": "Adicionar código de uso único",
+  "One-time code": "Código de uso único",
   "Paste secret or link": "Cole o segredo ou o link",
   "Changed just now": "Alterada agora mesmo",
   "Changed on {{date}}": "Alterada em {{date}}",

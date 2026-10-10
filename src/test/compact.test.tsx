@@ -248,6 +248,26 @@ describe('compact shell', () => {
     )
   })
 
+  // The grouped list: a one-line header with nothing repeating the rows under
+  // it, the code as a row with its countdown, and the dates as one meta line.
+  it('lays the entry out as a grouped list', async () => {
+    mockCommand('generate_otp', () => ({ code: '123456', time: 25 }))
+    mockCommand('reveal_entry', () =>
+      loginEntry({ id: 'l1', title: 'Google', otp: 'JBSWY3DPEHPK3PXP' })
+    )
+    seed()
+    render(<Main />)
+
+    await userEvent.click(screen.getByText('Google'))
+    const code = await screen.findByTestId('entry-value-otp')
+    expect(code).toHaveTextContent('123 456')
+    expect(screen.getByTestId('otp-countdown')).toBeInTheDocument()
+    // No "Login · host" under the title: the rows say both.
+    expect(screen.queryByText(/^Login$/)).not.toBeInTheDocument()
+    expect(screen.getByTestId('entry-footer')).toHaveTextContent(/Created/)
+    expect(screen.getByTestId('add-tag-button')).toBeInTheDocument()
+  })
+
   it('copies a field value when the value itself is tapped', async () => {
     mockCommand('reveal_entry', () => loginEntry({ id: 'l1', username: 'copyme' }))
     seed()

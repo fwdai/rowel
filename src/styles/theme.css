@@ -526,6 +526,26 @@
 }
 
 /*
+ * The one-time code's countdown ring (fields/Otp/Countdown): `--otp-left` is how
+ * much of the code's window is left. The accent arc is what remains and the
+ * line is what has run out, growing clockwise from the top like a clock hand.
+ * Registered so the once-a-second value the generator hands over glides to
+ * the next rather than stepping; where it cannot be, the ring steps.
+ */
+@property --otp-left {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 100%;
+}
+@layer components {
+  .otp-ring {
+    background: conic-gradient(var(--c-line) calc(100% - var(--otp-left)), var(--c-accent) 0);
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 2.5px));
+    transition: --otp-left 1s linear;
+  }
+}
+
+/*
  * The orbiting border light, whole: the container clips down to the card's
  * 2px border ring (two-layer mask keeps the interior clear) and its ::before
  * is the rotating comet — an oversized conic square (covers the card's

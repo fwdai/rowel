@@ -85,7 +85,7 @@ export default function PasswordField({
         (value || stamp) && (
           <>
             <StrengthBar password={value} />
-            {history ?? (stamp && <span className={META}>{stamp}</span>)}
+            {history ?? (stamp && <span className={`min-w-0 truncate ${META}`}>{stamp}</span>)}
           </>
         )
       }

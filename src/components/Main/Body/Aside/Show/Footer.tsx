@@ -9,7 +9,7 @@ import { LABEL, META, META_TYPE } from '@/components/elements/tokens'
 import { useDates } from '@/hooks/useDates'
 import { toTime } from '@/utils/time'
 
-interface Props {
+export interface FooterProps {
   tags: string[]
   /** Editing: writes the tags back. Absent while reading. */
   onTags?: (next: string[]) => void
@@ -42,7 +42,7 @@ export default function Footer({
   createdAt,
   updatedAt,
   deletedAt
-}: Props) {
+}: FooterProps) {
   const { t } = useTranslation()
   const { dateTime, relativeLong, shortDate } = useDates()
   // Creation is a fact, so it reads as a date; a modification is about recency,

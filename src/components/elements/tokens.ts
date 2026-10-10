@@ -51,6 +51,26 @@ export const LABEL_TYPE = 'text-xs uppercase tracking-label'
 // (see Compact/Tab, which measured the same and moved first).
 export const LABEL = `${LABEL_TYPE} text-text2`
 
+// The label over a detail row's value. On the phone it is the grouped list's
+// caption — sentence case, 12px, the secondary ink, no tracking — rather than
+// the desktop's tracked uppercase: at 11px uppercase and 0.12em the label read
+// as big as the 16px value it captions, and a row became two lines of the
+// same weight.
+export const ROW_LABEL = `${LABEL} max-md:text-sm max-md:normal-case max-md:tracking-[0]`
+
+// A section's heading over its card (attachments, passkeys, custom fields,
+// tags): the label face, set off the card by its own gap. On the phone it is
+// the grouped list's section header — still uppercase, as iOS sets them, but
+// at 12px with the tracking pulled in, and inset to the rows' own 16px.
+export const SECTION_LABEL = `mb-1.5 block ${LABEL} max-md:mb-2 max-md:px-4 max-md:text-sm max-md:tracking-[0.06em]`
+
+// An "add" action standing under a section ("Attach file", "Add tag"). On the
+// desktop it is the accent text line `AddAction` draws; on the phone it is a
+// grouped-list cell of its own — the same card the rows sit on, one row tall —
+// so every such action on the screen is visibly the same control.
+export const ACTION_ROW =
+  'max-md:h-12 max-md:w-full max-md:gap-2.5 max-md:rounded-xl max-md:border max-md:border-line max-md:bg-card max-md:px-4 max-md:text-md max-md:shadow-card max-md:[&>svg]:size-[18px]'
+
 // The meta face, without an ink: counts, timestamps, hints, shortcuts, chips —
 // the same 11px as the label tier, set as ordinary text rather than a tracked
 // uppercase eyebrow. Tabular figures, so a count or a countdown holds its width

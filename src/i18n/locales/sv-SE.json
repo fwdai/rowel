@@ -359,6 +359,7 @@
   "Verifying": "Verifierar",
   "Welcome": "Välkommen till {{appName}}",
   "Add one-time code": "Lägg till engångskod",
+  "One-time code": "Engångskod",
   "Paste secret or link": "Klistra in hemlighet eller länk",
   "Changed just now": "Ändrat nyss",
   "Changed on {{date}}": "Ändrat {{date}}",

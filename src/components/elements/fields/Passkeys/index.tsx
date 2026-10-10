@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import type { Passkey } from '@/api/types'
 import Panel from '../../Panel'
-import { LABEL } from '../../tokens'
+import { SECTION_LABEL } from '../../tokens'
 import { useFields } from '../context'
 import PasskeyRow from './Row'
 
@@ -30,7 +30,7 @@ export default function Passkeys({ name = 'passkeys' }) {
 
   return (
     <div className="mt-4">
-      <span className={`mb-1.5 block ${LABEL}`}>{t('Passkeys')}</span>
+      <span className={SECTION_LABEL}>{t('Passkeys')}</span>
       <Panel>
         {passkeys.map(passkey => (
           <PasskeyRow

@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import type { ExtraField } from '@/api/types'
 import AddAction from '../../AddAction'
 import Panel from '../../Panel'
-import { LABEL } from '../../tokens'
+import { SECTION_LABEL } from '../../tokens'
 import { useFields } from '../context'
 import { isBlank, rowsOf } from './extras'
 import CustomFieldRow from './Row'
@@ -36,7 +36,7 @@ export default function CustomFields({ name = 'extra' }) {
     <div className="mt-4">
       {any && (
         <>
-          <span className={`mb-1.5 block ${LABEL}`}>{t('Custom fields')}</span>
+          <span className={SECTION_LABEL}>{t('Custom fields')}</span>
           <Panel>
             {shown.map((field, index) => (
               // Position is the only identity a pair has; a label is free text

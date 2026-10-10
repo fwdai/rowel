@@ -29,9 +29,9 @@ describe('Type-aware fields', () => {
     expect(screen.getByLabelText('URL')).toBe(input('website'))
     expect(screen.getByLabelText('Email')).toBe(input('email'))
     // The OTP row starts as the offer to add one; the box arrives on request.
-    expect(screen.getByLabelText('OTP')).toBe(screen.getByTestId('add-otp-button'))
+    expect(screen.getByLabelText('One-time code')).toBe(screen.getByTestId('add-otp-button'))
     await userEvent.click(screen.getByTestId('add-otp-button'))
-    expect(screen.getByLabelText('OTP')).toBe(input('otp'))
+    expect(screen.getByLabelText('One-time code')).toBe(input('otp'))
     expect(input('otp')).toHaveFocus()
   })
 
@@ -224,14 +224,22 @@ describe('Type-aware fields', () => {
     expect(calls('generate_otp')).toHaveLength(0)
   })
 
-  // The dial is the copy control: no separate button, and the editor's live
-  // preview offers none — while typing, it only proves the secret works.
-  it('copies the code when the dial is clicked', async () => {
+  // Reading, the code is a row under the password — its value the copy
+  // control, as every row's is, and how long it has left a ring in the rail.
+  // The editor's live preview offers no copy: while typing, the dial only
+  // proves the secret works.
+  it('reads the code as a row that copies when pressed', async () => {
     mockCommand('generate_otp', () => ({ code: '123456', time: 25 }))
     mockCommand('reveal_entry', () => loginEntry({ otp: 'JBSWY3DPEHPK3PXP' }))
     render(<Show entry={loginMeta()} />)
 
-    await userEvent.click(await screen.findByLabelText('Copy code'))
+    const code = await screen.findByTestId('entry-value-otp')
+    expect(code).toHaveTextContent('123 456')
+    expect(screen.getByLabelText('One-time code · Copy')).toBe(code)
+    expect(screen.getByTestId('otp-countdown')).toHaveAttribute('aria-label', 'refreshes in 25s')
+    expect(screen.queryByLabelText('Copy code')).not.toBeInTheDocument()
+
+    await userEvent.click(code)
     expect(calls('copy_to_clipboard')[0]).toMatchObject({ value: '123456' })
   })
 
