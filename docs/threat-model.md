@@ -37,7 +37,14 @@ is re-checked after the read, so a lock or a workspace switch mid-read discards
 the bytes. Only then is the file classified: the extension against a fixed
 image list (`scan/mod.rs`), the `.env` name-or-parse check and the 1 MiB cap
 (`commands/env.rs`). That classification is a sanity check on a file the user
-already chose, not the authorization; the grant is.
+already chose, not the authorization; the grant is. One scan command reads no
+path at all: `scan_image_bytes` takes a photo the webview already holds — the
+one the phone's camera just took through its `<input type="file" capture>`,
+which has no path on disk — as the request's raw body. (A photo chosen from the
+library on the phone goes through `pick_file` and a grant like any other.) No grant applies because none
+is needed: the bytes are data the webview had anyway, so the command cannot be
+used to read anything it did not; the result is the recognized fields, and
+both the bytes and the recognized text are zeroized once parsed.
 
 ## What sits on disk
 

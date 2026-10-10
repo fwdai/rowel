@@ -86,6 +86,15 @@ export interface ScanResult {
  */
 export const scanImage = (path: string): Promise<ScanResult> => call('scan_image', { path })
 
+/**
+ * Recognize a card or an identity document in a photo the webview holds —
+ * the one the phone's camera just took through the capture input, which has
+ * no path on disk. The bytes go over as the request's raw body, not as JSON.
+ * No grant is involved: nothing on disk is read for them.
+ */
+export const scanImageBytes = (image: Uint8Array): Promise<ScanResult> =>
+  call('scan_image_bytes', image)
+
 // The site's favicon as a data: URI, or null when it has none. The backend
 // fetches straight from the entry's own host (never a third-party favicon
 // service) and caches on disk, so repeat calls are a file read.

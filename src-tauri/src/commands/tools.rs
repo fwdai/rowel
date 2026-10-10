@@ -84,6 +84,33 @@ pub async fn scan_image(
     Ok(result)
 }
 
+/// Read a card or an identity document out of a photo the webview holds as
+/// bytes — the one the phone's camera just took through the capture input,
+/// which exists nowhere on disk and so has no path to grant.
+///
+/// No grant is needed, and none would mean anything: `grants` exists because a
+/// *path* is the webview naming a file on disk it never read, whereas these
+/// bytes are already the webview's own. Nothing on disk is opened for them.
+/// The bytes travel as the request's raw body (a `Uint8Array` argument on the
+/// JS side), not as JSON, so a photo is not spelled out as an array of numbers.
+/// Unlocked vaults only, and the session must still be the one that asked, as
+/// for `scan_image`.
+#[tauri::command]
+pub async fn scan_image_bytes(
+    state: State<'_, AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<ScanResult> {
+    let epoch = super::unlocked_epoch(&state)?;
+    let tauri::ipc::InvokeBody::Raw(image) = request.body() else {
+        return Err(Error::Unsupported(
+            "the photo has to be sent as bytes".into(),
+        ));
+    };
+    let result = scan::scan_bytes(image.clone()).await?;
+    super::same_session(&state, epoch)?;
+    Ok(result)
+}
+
 /// The icon for a host the entry list is showing. Unlocked vaults only: the
 /// hosts are vault data, and a locked app should be making no requests about
 /// them — a webview that asks anyway gets "no icon", not an error, since the

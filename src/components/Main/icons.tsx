@@ -17,6 +17,7 @@ import {
   AtSign,
   Braces,
   Calendar,
+  Camera,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -38,6 +39,7 @@ import {
   Fingerprint,
   Globe,
   IdCard,
+  Image,
   KeyRound,
   KeySquare,
   Layers,
@@ -145,6 +147,8 @@ export const FileGlyph = glyph(File, 14)
 export const FileImageGlyph = glyph(FileImage, 14)
 export const FileTextGlyph = glyph(FileText, 14)
 export const FileArchiveGlyph = glyph(FileArchive, 14)
+// Where a file comes from, on a phone: the photo library or the file browser.
+export const ImageGlyph = glyph(Image, 14)
 export const CloseGlyph = glyph(X, 14)
 export const ChevronDownGlyph = glyph(ChevronDown, 14)
 export const FingerprintGlyph = glyph(Fingerprint, 14)
@@ -187,6 +191,8 @@ export const EnvGlyph = glyph(Braces, 16)
 // a token is a key someone issued, with the issuer's name on it.
 export const ApiKeyGlyph = glyph(KeySquare, 16)
 export const ScanGlyph = glyph(ScanLine, 16)
+// The camera, on the phone's scan source sheet (its other row is ImageGlyph).
+export const CameraGlyph = glyph(Camera, 16)
 // The generator, as a row (the palette's command, the Add picker's action).
 export const DicesGlyph = glyph(Dices, 16)
 export const ShieldGlyph = glyph(ShieldCheck, 16)
