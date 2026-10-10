@@ -80,8 +80,8 @@ sys-locale = "0.3"
 # WebAuthn authenticator core (1Password's passkey-rs, MIT OR Apache-2.0). Kept
 # in lockstep across passkey-types/-authenticator/-client: the traits pass the
 # crates' own types, so a mixed set does not compile.
-passkey-types = "0.5"
-passkey-authenticator = "0.5"
+passkey-types = "0.6"
+passkey-authenticator = "0.6"
 # P-256 keys (PKCS#8 <-> COSE) and the COSE key type passkey-types speaks.
 # Both pinned to what passkey-authenticator itself depends on, so exactly one
 # copy of each is linked.
