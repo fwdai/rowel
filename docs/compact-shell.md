@@ -131,8 +131,14 @@ grouped list's geometry through `max-md:` in `fields/Row` and `tokens.ts`:
 sentence-case 12px captions (`ROW_LABEL`) 2px over the value, 8px over and
 under, and the rail pulled into the padding so a glyph sits 16px from the
 card's edge like the caption does. There is no copy button on a phone row —
-the value is the copy control, the toast confirms it, and the bottom button
-covers the main secret — so a rail holds only the eye and the open-link. The
+the value is the copy control (`fields/CopyValue`, the one element every
+row's value renders through: the typed fields, a custom pair, an env variable,
+a key's comment and fingerprint, a scope list), the toast confirms it, and the
+bottom button covers the main secret — so a rail holds only the eye and the
+open-link. Every row's copy button sits in `ROW_COPY`, which is what hides it
+there; the rows that draw their own geometry rather than rendering through
+`FieldRow` (a custom pair, an env variable) take the phone grid from the same
+exported classes, so one row on the phone is one row whatever it holds. The
 one-time code is a row under the password with a countdown ring in its rail
 (`fields/Otp/Countdown`, a conic gradient on a registered `--otp-left`), on
 both shells; the editor keeps the dial as the live preview. Under the rows,

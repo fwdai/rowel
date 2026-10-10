@@ -1,14 +1,14 @@
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
-import { copy } from '@/services/copy'
 import type { TKey } from '@/i18n'
 import { EyeGlyph, EyeOffGlyph } from '../../Main/icons'
 import CopyButton from '../CopyButton'
 import IconButton from '../IconButton'
 import { verbatimInput } from '../inputProps'
-import { HOVER_ONLY, MASK_DOTS, MASK_INPUT, VALUE_LINE } from '../tokens'
+import { HOVER_ONLY, MASK_DOTS, MASK_INPUT, ROW_COPY, VALUE_LINE } from '../tokens'
 import { useField } from './context'
+import CopyValue from './CopyValue'
 import { requiredError } from './formats'
 import FieldRow from './Row'
 
@@ -123,13 +123,10 @@ export default function Field({
           )}
           {!editing && (
             // A row with a reveal has a control rail already; a plain one keeps
-            // its copy button quiet until the row is hovered or focused. On the
-            // phone there is no copy button at all: the value is the copy
-            // control (below), the toast says it worked, and the screen's own
-            // bottom button covers the main secret — as Passwords and
-            // 1Password draw their rows. A rail there holds only what means
-            // something else: the eye, the open-link.
-            <span className={cx(!secure && HOVER_ONLY, 'max-md:hidden')}>
+            // its copy button quiet until the row is hovered or focused. The
+            // phone has none at all (see `ROW_COPY`): the value is the copy
+            // control.
+            <span className={cx(!secure && HOVER_ONLY, ROW_COPY)}>
               <CopyButton value={shown} title={t('Copy')} />
             </span>
           )}
@@ -159,25 +156,16 @@ export default function Field({
           // The gloss rides alongside the value rather than inside it, so the
           // testid — and everything reading it — still holds the value alone.
           <span className="flex min-w-0 items-baseline gap-1.5">
-            {/* The value IS the copy affordance: a finger cannot hover a row to
-                find the button, and text selection is off app-wide, so there is
-                nothing else a press on it could mean. A masked value hands over
-                the real one, exactly as the button beside it already does. */}
-            <button
-              type="button"
-              // Masked, the button's text is twelve dots and names nothing, so
-              // it says what it is and what pressing it does instead.
-              aria-label={label ? `${t(label)} · ${t('Copy')}` : t('Copy')}
-              onClick={() => copy(shown)}
-              className={cx(
-                ink,
-                'cursor-pointer text-left',
-                masked ? 'text-text2 max-md:text-text' : 'text-text'
-              )}
-              data-testid={`entry-value-${name}`}
+            {/* A masked value hands over the real one, exactly as the button
+                beside it already does. */}
+            <CopyValue
+              value={shown}
+              label={label ? `${t(label)} · ${t('Copy')}` : t('Copy')}
+              testid={`entry-value-${name}`}
+              className={cx(ink, masked ? 'text-text2 max-md:text-text' : 'text-text')}
             >
               {masked ? MASK_DOTS : shown}
-            </button>
+            </CopyValue>
             {gloss && (
               <span className="min-w-0 flex-none truncate text-base leading-6 text-text3 max-md:text-md">
                 · {gloss}

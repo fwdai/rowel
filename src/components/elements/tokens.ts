@@ -33,6 +33,13 @@ export const PANE_BLEED = 'md:-mt-[26px] md:-mx-[34px] md:-mb-[60px]'
 export const HOVER_ONLY =
   'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 any-pointer-coarse:opacity-100'
 
+// A row's copy button, which the phone does without: there the value is the
+// row's copy control (`fields/CopyValue`), the toast confirms a press, and the
+// screen's bottom button covers the main secret — as Passwords and 1Password
+// draw their rows. Every row that offers a copy button wraps it in this, so a
+// phone rail holds only what means something else: the eye, the open-link.
+export const ROW_COPY = 'max-md:hidden'
+
 // App-level transient feedback (the update prompt, the scan status): a floating
 // panel on the detail surface. Each toast places itself — two of them in the
 // same corner would sit on top of each other.

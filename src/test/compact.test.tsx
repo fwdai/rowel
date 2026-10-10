@@ -268,6 +268,54 @@ describe('compact shell', () => {
     expect(screen.getByTestId('add-tag-button')).toBeInTheDocument()
   })
 
+  // The rows that draw their own geometry — a custom pair, an env variable —
+  // follow the typed rows: the value is the copy control, and every copy
+  // button on the screen is in the phone-hidden wrapper (`ROW_COPY`; jsdom
+  // applies no stylesheet, so the wrapper itself is the assertion).
+  const noCopyButtons = () => {
+    for (const button of screen.getAllByTitle('Copy')) {
+      expect(button.closest('.max-md\\:hidden')).not.toBeNull()
+    }
+  }
+
+  it('copies a custom field from its value, with no copy button', async () => {
+    mockCommand('reveal_entry', () =>
+      loginEntry({ id: 'l1', extra: [{ label: 'Deployed to', value: 'fly.io' }] })
+    )
+    seed()
+    render(<Main />)
+
+    await userEvent.click(screen.getByText('Google'))
+    await userEvent.click(await screen.findByTestId('entry-extra-value-0'))
+    expect(calls('copy_to_clipboard')).toContainEqual(
+      { value: 'fly.io', clearAfterMs: expect.any(Number) }
+    )
+    noCopyButtons()
+  })
+
+  it('copies an env variable from its value, with no copy button', async () => {
+    mockCommand('reveal_entry', () => ({
+      id: 'e1',
+      type: 'env',
+      title: 'api',
+      body: 'PORT=3000\n',
+      fileName: '',
+      note: '',
+      tags: [],
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z'
+    }))
+    withEntries([loginMeta({ id: 'e1', type: 'env', title: 'api', urlHost: undefined })])
+    render(<Main />)
+
+    await userEvent.click(screen.getByTestId('entry-item'))
+    await userEvent.click(await screen.findByTestId('env-value-0'))
+    expect(calls('copy_to_clipboard')).toContainEqual(
+      { value: '3000', clearAfterMs: expect.any(Number) }
+    )
+    noCopyButtons()
+  })
+
   it('copies a field value when the value itself is tapped', async () => {
     mockCommand('reveal_entry', () => loginEntry({ id: 'l1', username: 'copyme' }))
     seed()
