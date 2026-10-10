@@ -85,3 +85,11 @@ export const otpStored = (value: string): string => {
   }
   return secret
 }
+
+// A code split down the middle for reading: three and three for the usual
+// six, four and four for an 8-digit seed, rather than 3 + everything else. The
+// row and the dial both read a code this way.
+export const groupDigits = (code: string): string => {
+  const half = Math.ceil(code.length / 2)
+  return `${code.slice(0, half)} ${code.slice(half)}`
+}

@@ -85,7 +85,18 @@ export default function PasswordField({
         (value || stamp) && (
           <>
             <StrengthBar password={value} />
-            {history ?? (stamp && <span className={META}>{stamp}</span>)}
+            {/* On the phone the stamp shares the meter's line and truncates
+                rather than wrapping under it: a zero flex basis is what keeps
+                a long one from breaking the line, and the grow is what gives
+                it the rest of the line to fill. */}
+            {history ??
+              (stamp && (
+                <span
+                  className={`${META} max-md:min-w-0 max-md:flex-1 max-md:basis-0 max-md:truncate max-md:text-right`}
+                >
+                  {stamp}
+                </span>
+              ))}
           </>
         )
       }

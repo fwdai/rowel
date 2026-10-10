@@ -370,6 +370,7 @@
   "Verifying": "Vérification",
   "Welcome": "Bienvenue dans {{appName}}",
   "Add one-time code": "Ajouter un code à usage unique",
+  "One-time code": "Code à usage unique",
   "Paste secret or link": "Coller le secret ou le lien",
   "Changed just now": "Modifié à l’instant",
   "Changed on {{date}}": "Modifié le {{date}}",

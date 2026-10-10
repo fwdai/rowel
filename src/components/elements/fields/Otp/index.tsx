@@ -1,20 +1,30 @@
 import { useTranslation } from 'react-i18next'
 import type { TKey } from '@/i18n'
+import { copy } from '@/services/copy'
+import { cx } from '@/utils/cx'
 import { useOtp } from '@/hooks/useOtp'
 import Panel from '../../Panel'
 import { verbatimInput } from '../../inputProps'
-import { LABEL } from '../../tokens'
+import { LABEL, VALUE_LINE } from '../../tokens'
 import { useField } from '../context'
+import FieldRow from '../Row'
+import Countdown from './Countdown'
 import Dial from './Dial'
-import { otpSecret, otpStored } from './secret'
+import { groupDigits, otpSecret, otpStored } from './secret'
 
-// The one field that is a panel rather than a row: a code with a lifetime needs
-// the dial, and the dial is the same size in both modes. Reading, it offers the
-// current code; editing, the secret's own input with that code as a live
-// preview — the only proof that what was pasted actually works.
+/**
+ * The one-time code, in both modes.
+ *
+ * Reading, it is a row like the credentials around it — the current code as
+ * the value, with how long it has left as a ring in the rail — the way
+ * Passwords and 1Password list a verification code under the password rather
+ * than in a widget of its own. The value is the copy control, as every row's
+ * is. Editing, it is a panel: the secret's own input with the code as a live
+ * preview on the dial — the only proof that what was pasted actually works.
+ */
 export default function OtpField({
   name = 'otp',
-  label = 'OTP',
+  label = 'One-time code',
   autoFocus
 }: {
   name?: string
@@ -31,42 +41,63 @@ export default function OtpField({
   const stored = otpStored(value)
   const { code, time, period } = useOtp(stored)
 
-  // Reading, the panel is worth its column only once a code has arrived.
-  // Passing the raw value through when it failed to parse bought nothing but a
-  // dead dial that copied '' — the backend rejects exactly what `otpSecret`
-  // rejects.
+  // Reading, the row is worth its place only once a code has arrived. Passing
+  // the raw value through when it failed to parse bought nothing but a dead
+  // row that copied '' — the backend rejects exactly what `otpSecret` rejects.
   if (!editing && !code) return null
+
+  if (!editing)
+    return (
+      <FieldRow label={label} actions={<Countdown code={code} time={time} period={period} />}>
+        {id => (
+          <button
+            id={id}
+            type="button"
+            aria-label={`${t(label)} · ${t('Copy')}`}
+            onClick={() => copy(code)}
+            data-testid={`entry-value-${name}`}
+            // Heavier than a typed value and tracked a touch, so the digits
+            // read at a glance as the dial's did; the row's own size otherwise.
+            className={cx(
+              VALUE_LINE,
+              'cursor-pointer text-left text-base font-medium tracking-[0.04em] text-text tabular-nums max-md:text-lg'
+            )}
+          >
+            {groupDigits(code)}
+          </button>
+        )}
+      </FieldRow>
+    )
 
   return (
     <Panel className="flex flex-col items-center p-3.5">
       <div className={`self-stretch ${LABEL}`}>{t(label)}</div>
 
-      {editing && (
-        <input
-          name={name}
-          // The panel's heading is not a label element, so the input names
-          // itself rather than borrowing the row geometry it does not use.
-          aria-label={t(label)}
-          value={value}
-          // Short enough to fit the column: the long form used to truncate mid-word.
-          placeholder={t('Paste secret or link')}
-          autoFocus={autoFocus}
-          {...verbatimInput}
-          onChange={event => set(event.target.value)}
-          // A pasted otpauth:// link collapses to the secret it carries —
-          // unless it also carries a digit count, period or algorithm of its
-          // own, which the link is the only place to keep.
-          onBlur={() => set(stored || value.trim())}
-          className={`mt-2.5 h-6 w-full self-stretch truncate border-b bg-transparent text-center text-base text-text outline-none transition-colors placeholder:text-text2 ${
-            value && !parsed ? 'border-bad' : 'border-line2 focus:border-accent-line'
-          }`}
-        />
-      )}
+      <input
+        name={name}
+        // The panel's heading is not a label element, so the input names
+        // itself rather than borrowing the row geometry it does not use.
+        aria-label={t(label)}
+        value={value}
+        // Short enough to fit the column: the long form used to truncate mid-word.
+        placeholder={t('Paste secret or link')}
+        autoFocus={autoFocus}
+        {...verbatimInput}
+        onChange={event => set(event.target.value)}
+        // A pasted otpauth:// link collapses to the secret it carries —
+        // unless it also carries a digit count, period or algorithm of its
+        // own, which the link is the only place to keep.
+        onBlur={() => set(stored || value.trim())}
+        className={`mt-2.5 h-6 w-full self-stretch truncate border-b bg-transparent text-center text-base text-text outline-none transition-colors placeholder:text-text2 ${
+          value && !parsed ? 'border-bad' : 'border-line2 focus:border-accent-line'
+        }`}
+      />
 
-      {/* Reading, the dial itself is the copy control — see `Dial`. */}
-      {parsed && <Dial code={code} time={time} period={period} copyable={!editing} />}
+      {/* The preview is not copyable: while typing, the dial is proof the
+          secret works, not a thing to take the code from. */}
+      {parsed && <Dial code={code} time={time} period={period} />}
 
-      {editing && value !== '' && !parsed && (
+      {value !== '' && !parsed && (
         <div className="mt-3 text-base text-bad">{t('Not a one-time-password secret')}</div>
       )}
     </Panel>
