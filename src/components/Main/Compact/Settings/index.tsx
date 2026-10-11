@@ -7,6 +7,7 @@ import {
 } from '../../Sidebar/Settings/sectionNav'
 import Root from './Root'
 import Pane from './Pane'
+import Stack from '../Stack'
 
 /**
  * Settings as a tab root, not an overlay: it has no close button, because the
@@ -41,21 +42,26 @@ export default function Settings() {
     setSection(next)
   }
 
-  return section ? (
+  return (
     <SectionNavProvider value={go}>
       <SubpageProvider value={nav}>
-        <Pane
-          section={section}
-          locked={locked}
-          onBack={() => {
-            if (useUi.getState().settingsLocked) return
-            nav.drop()
-            setSection(null)
-          }}
+        <Stack
+          under={<Root onSelect={setSection} />}
+          over={
+            section && (
+              <Pane
+                section={section}
+                locked={locked}
+                onBack={() => {
+                  if (useUi.getState().settingsLocked) return
+                  nav.drop()
+                  setSection(null)
+                }}
+              />
+            )
+          }
         />
       </SubpageProvider>
     </SectionNavProvider>
-  ) : (
-    <Root onSelect={setSection} />
   )
 }
