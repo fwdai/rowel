@@ -133,7 +133,8 @@ under, and the rail pulled into the padding so a glyph sits 16px from the
 card's edge like the caption does. There is no copy button on a phone row —
 the value is the copy control (`fields/CopyValue`, the one element every
 row's value renders through: the typed fields, a custom pair, an env variable,
-a key's comment and fingerprint, a scope list), the toast confirms it, and the
+a key's comment and fingerprint, a scope list, the one-time code), a check in
+the value's place confirms it, and the
 bottom button covers the main secret — so a rail holds only the eye and the
 open-link. Every row's copy button sits in `ROW_COPY`, which is what hides it
 there; the rows that draw their own geometry rather than rendering through
@@ -243,7 +244,8 @@ the token.
 - Bottom sheets carry a grabber and dismiss on scrim tap; full-screen forms
   put Cancel on the left and Save on the right of the nav row.
 - The primary action of a detail screen is a bottom, thumb-reachable button.
-- Copy on tap for value rows; the feedback is the existing copy toast.
+- Copy on tap for value rows; the feedback is a check in the value's place,
+  on the element that was tapped.
 - No hover-only UI. No tooltips as the sole label.
 - Keyboard: anything full-screen with inputs is sized from
   `useVisualViewport` (`viewportStyle`), like `Sheet` already is.

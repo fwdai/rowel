@@ -22,6 +22,7 @@ const isMask = (placeholder: TKey | Mask): placeholder is Mask => placeholder.st
 function CopiedMark({ zone }: { zone: 'top' | 'base' }) {
   return (
     <span
+      data-testid="copied-mark"
       className={`absolute -inset-x-1 inset-y-0 grid place-items-center rounded-[3px] text-white ${
         zone === 'top' ? 'bg-[#3F4247]' : 'bg-[#2B2D31]'
       }`}

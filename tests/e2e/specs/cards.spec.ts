@@ -75,20 +75,21 @@ describe("card entries", () => {
     await expect(value("pin")).toHaveText("••••");
   });
 
-  it("copies the number on click and confirms with the toast", async () => {
-    const toast = $('[data-testid="copy-toast"]');
-    // The toast is mounted only while a copy is fresh, so at rest there is no
+  it("copies the number on click and confirms in place", async () => {
+    const mark = $('[data-testid="copied-mark"]');
+    // The check is mounted only while a copy is fresh, so at rest there is no
     // element at all — which `not.toBeDisplayed` covers either way.
-    await expect(toast).not.toBeDisplayed();
+    await expect(mark).not.toBeDisplayed();
 
     await waitFor("entry-value-number");
     await value("number").click();
 
-    await expect(toast).toBeDisplayed();
-    await expect(toast).toHaveText("Copied to Clipboard");
+    await expect(mark).toBeDisplayed();
+    // The face confirms on the value itself; the app-level pill stays down.
+    await expect($('[data-testid="copy-toast"]')).not.toBeDisplayed();
 
-    // Let it time out rather than leaking a visible toast into the next test.
-    await toast.waitForDisplayed({ reverse: true, timeout: 10_000 });
+    // Let it time out rather than leaking a visible check into the next test.
+    await mark.waitForDisplayed({ reverse: true, timeout: 10_000 });
   });
 
   it("derives the mastercard mark from a mastercard number", async () => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import CopyToast from '@/components/elements/CopyToast'
+import { flashCopied } from '@/store'
 import { copy } from '@/services/copy'
 import { calls } from './ipc'
 
@@ -19,11 +20,20 @@ describe('CopyToast', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('appears on a copy and takes itself back down after two seconds', () => {
+  // A control still on screen confirms in place, so a plain copy leaves the
+  // pill down.
+  it('stays down for a plain copy', () => {
     render(<CopyToast />)
 
     act(() => copy('hunter2'))
     expect(calls('copy_to_clipboard')[0]).toMatchObject({ value: 'hunter2' })
+    expect(screen.queryByTestId('copy-toast')).not.toBeInTheDocument()
+  })
+
+  it('appears when flashed and takes itself back down after two seconds', () => {
+    render(<CopyToast />)
+
+    act(() => flashCopied())
     expect(screen.getByTestId('copy-toast')).toHaveTextContent('Copied to Clipboard')
 
     act(() => void vi.advanceTimersByTime(1999))
@@ -33,14 +43,14 @@ describe('CopyToast', () => {
     expect(screen.queryByTestId('copy-toast')).not.toBeInTheDocument()
   })
 
-  // The pill is up for two seconds from the *last* copy, so a quick second one
+  // The pill is up for two seconds from the *last* flash, so a quick second one
   // is not cut short by the first one's countdown.
-  it('restarts the countdown on a second copy', () => {
+  it('restarts the countdown on a second flash', () => {
     render(<CopyToast />)
 
-    act(() => copy('first'))
+    act(() => flashCopied())
     act(() => void vi.advanceTimersByTime(1500))
-    act(() => copy('second'))
+    act(() => flashCopied())
 
     act(() => void vi.advanceTimersByTime(1500))
     expect(screen.getByTestId('copy-toast')).toBeInTheDocument()

@@ -1,12 +1,12 @@
 import { useTranslation } from 'react-i18next'
 import type { TKey } from '@/i18n'
-import { copy } from '@/services/copy'
 import { cx } from '@/utils/cx'
 import { useOtp } from '@/hooks/useOtp'
 import Panel from '../../Panel'
 import { verbatimInput } from '../../inputProps'
 import { LABEL, VALUE_LINE } from '../../tokens'
 import { useField } from '../context'
+import CopyValue from '../CopyValue'
 import FieldRow from '../Row'
 import Countdown from './Countdown'
 import Dial from './Dial'
@@ -50,21 +50,20 @@ export default function OtpField({
     return (
       <FieldRow label={label} actions={<Countdown code={code} time={time} period={period} />}>
         {id => (
-          <button
+          <CopyValue
             id={id}
-            type="button"
-            aria-label={`${t(label)} · ${t('Copy')}`}
-            onClick={() => copy(code)}
-            data-testid={`entry-value-${name}`}
+            value={code}
+            label={`${t(label)} · ${t('Copy')}`}
+            testid={`entry-value-${name}`}
             // Heavier than a typed value and tracked a touch, so the digits
             // read at a glance as the dial's did; the row's own size otherwise.
             className={cx(
               VALUE_LINE,
-              'cursor-pointer text-left text-base font-medium tracking-[0.04em] text-text tabular-nums max-md:text-lg'
+              'text-base font-medium tracking-[0.04em] text-text tabular-nums max-md:text-lg'
             )}
           >
             {groupDigits(code)}
-          </button>
+          </CopyValue>
         )}
       </FieldRow>
     )
