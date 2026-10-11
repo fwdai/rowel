@@ -6,7 +6,7 @@ import Eyebrow from '../../Body/Aside/Show/Eyebrow'
 import Favorite from '../../Body/Aside/Show/Favorite'
 import Identity from '../../Body/Aside/Show/Identity'
 import { useDelete } from '../../Body/Aside/Show/useDelete'
-import { PRIMARY_CLEARANCE, TOUCH } from '../chrome'
+import { PRIMARY_CLEARANCE, PUSHED_SCREEN, TOUCH } from '../chrome'
 import { useSwipeBack } from '../useSwipeBack'
 import NavRow from './NavRow'
 import PrimaryAction from './PrimaryAction'
@@ -40,7 +40,7 @@ export default function Read({ entry, revealed }: Props) {
     <div
       {...swipe}
       data-testid="entry-screen"
-      className="relative flex min-h-0 flex-1 flex-col animate-sheet bg-screen text-text"
+      className={cx('relative text-text', PUSHED_SCREEN)}
     >
       <NavRow entry={entry} onDelete={remove} />
 

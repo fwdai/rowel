@@ -29,10 +29,23 @@ export default function Search({ className = DESKTOP }: { className?: string }) 
   // reaching into the DOM for a field it holds no ref to (`focusSearch`). The
   // request is a tick, so two presses running are two requests; the 0 it starts
   // at is the one value that is nobody asking.
+  //
+  // A request can arrive while the field cannot take it: on the phone the list
+  // stays mounted, inert, under a pushed entry (`Compact/Stack`), and an inert
+  // input refuses focus. So a request is held until it has been applied, and
+  // the check runs after every render rather than only when the tick moves —
+  // the uncover re-renders the column (the shell re-renders the root it keeps
+  // under the stack) without touching the tick, and that is the render the
+  // held request lands on.
   const requested = useUi(state => state.searchFocus)
+  const applied = useRef(0)
   useEffect(() => {
-    if (requested > 0) input.current?.focus()
-  }, [requested])
+    if (requested <= applied.current) return
+    const el = input.current
+    if (!el || el.closest('[inert]')) return
+    applied.current = requested
+    el.focus()
+  })
 
   // Clearing hands the caret back to the field: the button that was clicked
   // is about to fade out and leave the tab order, and a focus left on it would

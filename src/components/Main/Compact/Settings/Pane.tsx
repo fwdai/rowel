@@ -13,17 +13,19 @@ import {
 } from '../../Sidebar/Settings/subpages'
 import BackButton from '../BackButton'
 import NavBar from '../NavBar'
-import { TAB_BAR_CLEARANCE } from '../chrome'
+import Stack from '../Stack'
+import { PUSHED_SCREEN, TAB_BAR_CLEARANCE } from '../chrome'
 import { useSwipeBack } from '../useSwipeBack'
 
 /**
- * One settings section, pushed from the root — or a sub-page of it, pushed
- * from the section.
+ * One settings section, pushed from the root — and, pushed from it in turn,
+ * any sub-page of it.
  *
  * One level deep rather than modal: the tab bar stays up, so the scroller
  * reserves its clearance, and the way back is the shared `NavBar` carrying the
  * previous screen's name, exactly as the entry screen's row does — and, as
  * there, an edge swipe is that same control by gesture, held by the same lock.
+ * The section stays under its sub-page (`Stack`), as the root stays under it.
  */
 export default function Pane({
   section,
@@ -39,35 +41,35 @@ export default function Pane({
   const { subpage } = useSubpage()
   const swipe = useSwipeBack(onBack, locked)
 
-  if (subpage) return <SubpagePane subpage={subpage} locked={locked} />
-
   return (
-    <div
-      {...swipe}
-      data-testid="settings-pane"
-      className="flex min-h-0 flex-1 flex-col animate-sheet bg-screen"
-    >
-      <NavBar
-        leading={
-          <BackButton
-            testid="settings-back"
-            label={t('Settings')}
-            disabled={locked}
-            onClick={onBack}
+    <Stack
+      under={
+        <div {...swipe} data-testid="settings-pane" className={PUSHED_SCREEN}>
+          <NavBar
+            leading={
+              <BackButton
+                testid="settings-back"
+                label={t('Settings')}
+                disabled={locked}
+                onClick={onBack}
+              />
+            }
           />
-        }
-      />
 
-      <div className={cx('min-h-0 flex-1 overflow-y-auto px-4 pt-1', TAB_BAR_CLEARANCE)}>
-        {/* The pane names itself the way a root does — there is no room for a
-            centred nav title beside a back control that already carries one. */}
-        <h1 className="truncate text-2xl font-semibold tracking-display text-text">
-          {titleOf(section)}
-        </h1>
-        <p className="mt-1 mb-5 text-sm text-text2">{descriptionOf(section)}</p>
-        <Section section={section} />
-      </div>
-    </div>
+          <div className={cx('min-h-0 flex-1 overflow-y-auto px-4 pt-1', TAB_BAR_CLEARANCE)}>
+            {/* The pane names itself the way a root does — there is no room for
+                a centred nav title beside a back control that already carries
+                one. */}
+            <h1 className="truncate text-2xl font-semibold tracking-display text-text">
+              {titleOf(section)}
+            </h1>
+            <p className="mt-1 mb-5 text-sm text-text2">{descriptionOf(section)}</p>
+            <Section section={section} />
+          </div>
+        </div>
+      }
+      over={subpage && <SubpagePane subpage={subpage} locked={locked} />}
+    />
   )
 }
 
@@ -78,11 +80,7 @@ function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean })
   const swipe = useSwipeBack(close, locked)
 
   return (
-    <div
-      {...swipe}
-      data-testid="settings-subpage"
-      className="flex min-h-0 flex-1 flex-col animate-sheet bg-screen"
-    >
+    <div {...swipe} data-testid="settings-subpage" className={PUSHED_SCREEN}>
       <NavBar
         leading={
           <BackButton

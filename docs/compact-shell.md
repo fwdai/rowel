@@ -132,9 +132,16 @@ Before any of that there is the lock, which is not a screen of the vault but a
 flow of its own: `App` renders `Auth/LockScreen` on compact and `Auth` on wide,
 both driven by `Auth/useUnlock` (attempt phase, lockout countdown, mascot gaze,
 the eyebrow's text and tone). The desktop leads with the passphrase card and
-keeps biometrics as its end segment; the phone leads with an 88px biometric
-tile when a key is enrolled and reveals the same card under "Enter Master
-Password". Which biometry the copy names is `lib/biometry` — `biometryLabel(type)`
+keeps biometrics as its end segment, centred as one block on the auth ground.
+The phone lays the same parts out in three bands over the whole ground
+(`AuthShell fill`): the brand and the vault chip under the safe area; at the
+exact centre of the screen the status line over the 88px biometric tile when
+a key is enrolled, or over the card; and by the footer "Enter Master Password"
+as a plain 44px text control — the backup for the day Face ID does not
+answer, not a second button the size of the first. The ground is sized to the
+visual viewport (`viewportStyle`), so the keyboard the card brings up
+shortens it rather than covering the card. Which biometry the copy names is
+`lib/biometry` — `biometryLabel(type)`
 and `biometryGlyph(type)`, from `app_status.biometric.type` (`LAContext.biometryType`
 on Apple, the fingerprint everywhere else), read off the app store's `status`
 by `App` and handed down as `biometric` / `biometry` — so `Masterpass` says the
@@ -151,15 +158,27 @@ Tabs (labels are the desktop's i18n keys): **All Items · Favorites · Generator
 settings and the standalone generator and calls `setView`; Generator and
 Settings are one screen slot between them, so each closes the other.
 
-Transitions are mount animations only (`animate-sheet` slides in from the
-right, `animate-rise` slides up, `animate-fade` for roots). No exit animations.
+Screens are layered, not swapped: `Compact/Stack` keeps the screen a push came
+from mounted under the pushed one — the tab root (with its tab bar) under the
+entry or the form, the settings root under a section pane, the pane under its
+sub-page — so it keeps its scroll and is there to come back to, and so the
+motion has something to happen over. Under a screen the layer is `inert`, and
+its geometry is one number, `--pop` (`.stack-under` in `theme.css`): how far
+the screen over it has been popped. A push (`animate-push`, the whole width
+from the right) transitions it from 1 to 0, which recedes the layer a third of
+its width and dims it, as iOS's stack does; a form (`animate-rise`, from the
+bottom) only dims it. There are no exit animations: the way back by a tap is a
+cut, since the store has already dropped what the screen was showing.
 
 A screen pushed from the right can also be popped the iOS way: a drag in from
-the left edge takes it with the finger, and letting go past a third of the width
-(or a flick) slides it out and runs the same handler its back control does
-(`Compact/useSwipeBack`, on the entry screen and both settings panes, under the
-same `settingsLocked`). The form is not among them: it rose from the bottom and
-its only exit is the guarded Cancel.
+the left edge takes it with the finger, and the layer under it comes along —
+`--pop` written per frame — out of its receded rest and up to full width and
+brightness as the screen clears. Letting go past a third of the width (or a
+flick) slides it the rest of the way out and runs the same handler its back
+control does (`Compact/useSwipeBack`, on the entry screen and both settings
+panes, under the same `settingsLocked`); short of that, both spring back. The
+form is not among them: it rose from the bottom and its only exit is the
+guarded Cancel.
 
 ## iOS conventions to follow
 

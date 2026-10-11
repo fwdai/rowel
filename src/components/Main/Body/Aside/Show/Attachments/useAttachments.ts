@@ -6,6 +6,9 @@ import { pickFileToRead } from '@/api/tools'
 import { describeError, errorKind } from '@/api/errors'
 import { attachFile, removeAttachment, useVault } from '@/store'
 
+/** Where a picked attachment comes from: the file browser, or the photo library. */
+export type AttachSource = 'attachment' | 'photo'
+
 /**
  * One entry's attachments and what can be done to them. The list is the
  * entry's own and nobody else draws it, so it lives here rather than in the
@@ -47,19 +50,30 @@ export function useAttachments(entryId: string) {
         : describeError(e) || t('Something went wrong')
     )
 
-  /** Attach `path`, or the file the user picks when there is none. */
-  const add = async (path?: string) => {
+  /** Attach `path`, a file the user already chose (a drop on the window). */
+  const add = async (path: string) => {
     setError(null)
-    const picked = path ?? (await pickFileToRead('attachment').catch(() => null))
-    if (!picked) return
     setBusy(true)
     try {
-      await attachFile(entryId, picked)
+      await attachFile(entryId, path)
     } catch (e) {
       fail(e)
     } finally {
       setBusy(false)
     }
+  }
+
+  /**
+   * Let the user pick a file and attach it: any file from the file browser, or
+   * — `from: 'photo'` — an image from the photo library, where there is one
+   * (see `pickFileToRead`). The image filter's name is the only part of that
+   * dialog that is ours to translate.
+   */
+  const pick = async (from: AttachSource = 'attachment') => {
+    setError(null)
+    const label = from === 'photo' ? t('Images') : undefined
+    const picked = await pickFileToRead(from, label).catch(() => null)
+    if (picked) await add(picked)
   }
 
   const save = (id: string) => {
@@ -72,5 +86,5 @@ export function useAttachments(entryId: string) {
     removeAttachment(id).catch(fail)
   }
 
-  return { items, usage, error, busy, add, save, remove }
+  return { items, usage, error, busy, add, pick, save, remove }
 }
