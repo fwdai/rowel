@@ -71,10 +71,10 @@ export const ROW_LABEL = `${LABEL} max-md:text-sm max-md:normal-case max-md:trac
 // at 12px with the tracking pulled in, and inset to the rows' own 16px.
 export const SECTION_LABEL = `mb-1.5 block ${LABEL} max-md:mb-2 max-md:px-4 max-md:text-sm max-md:tracking-[0.06em]`
 
-// An "add" action standing under a section ("Attach file", "Add tag"). On the
-// desktop it is the accent text line `AddAction` draws; on the phone it is a
-// grouped-list cell of its own — the same card the rows sit on, one row tall —
-// so every such action on the screen is visibly the same control.
+// An "add" action standing under a section ("Attach file"). On the desktop it
+// is the accent text line `AddAction` draws; on the phone it is a grouped-list
+// cell of its own — the same card the rows sit on, one row tall. Not a tag's:
+// "Add tag" is a chip among the chips (`TagChip`), the shape of what it adds.
 export const ACTION_ROW =
   'max-md:h-12 max-md:w-full max-md:gap-2.5 max-md:rounded-xl max-md:border max-md:border-line max-md:bg-card max-md:px-4 max-md:text-md max-md:shadow-card max-md:[&>svg]:size-[18px]'
 

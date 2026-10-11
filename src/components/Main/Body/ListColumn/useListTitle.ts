@@ -5,8 +5,9 @@ import type { TKey } from '@/i18n'
 
 // The column is titled after the view, except in All Items, where an open kind
 // renames it to what it is now showing ("Logins"), and in Tags, where the tag
-// does ("#work"). The other views keep their own name: "Logins" would lose the
-// fact that you are looking at the Archive.
+// does ("work" — the name as the entry wears it, no `#`: a tag is not a
+// hashtag). The other views keep their own name: "Logins" would lose the fact
+// that you are looking at the Archive.
 const TITLES: Record<View, TKey> = {
   items: 'All Items',
   favorites: 'Favorites',
@@ -24,6 +25,6 @@ export const useListTitle = (): string => {
   const tag = useUi(state => state.filterTag)
 
   if (view === 'items' && type) return t(kindOf(type).pluralLabel)
-  if (view === 'tags' && tag) return `#${tag}`
+  if (view === 'tags' && tag) return tag
   return t(TITLES[view])
 }

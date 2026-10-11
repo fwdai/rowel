@@ -171,6 +171,12 @@ export const saveEntry = async (draft: EntryDraft) => {
   void runAudit()
 }
 
+// Writes an entry's tags back without an editor — the phone's picker. The
+// secrets go back exactly as they were revealed, so to the core this is an
+// edit that changed nothing but the tags: the row restamps, re-reveals and
+// syncs as after any save.
+export const saveTags = (entry: Entry, tags: string[]) => saveEntry({ ...entry, tags })
+
 // What the UI calls "Archive": the backend op is a tombstone, so the row only
 // leaves All Items — `loadArchive` still lists it.
 export const deleteEntry = async (id: string) => {

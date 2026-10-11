@@ -20,6 +20,12 @@ interface Props {
   className: string
   /** For a caller that hands the caret back after clearing from outside. */
   inputRef?: RefObject<HTMLInputElement | null>
+  /**
+   * Takes the caret as it mounts: a sheet that is there to be typed into (the
+   * tag picker). Mounting inside the tap that opened it is what lets iOS raise
+   * the keyboard for it.
+   */
+  autoFocus?: boolean
 }
 
 // The search field's surface, with nothing bound to it: the list search wires
@@ -36,7 +42,8 @@ export default function SearchBox({
   testid,
   trailing,
   className,
-  inputRef
+  inputRef,
+  autoFocus
 }: Props) {
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Escape') return
@@ -82,6 +89,7 @@ export default function SearchBox({
         placeholder={placeholder}
         value={value}
         autoComplete="off"
+        autoFocus={autoFocus}
         spellCheck={false}
         onChange={e => onChange(e.target.value)}
         onKeyDown={onKeyDown}

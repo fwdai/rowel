@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import { editEntry } from '@/store'
+import { editEntry, saveTags } from '@/store'
 import type { Entry, EntryMeta } from '@/api/types'
 import { FieldsProvider } from '@/components/elements/fields'
 import { kindOf } from '@/kinds'
@@ -47,10 +47,13 @@ export default function Body({ entry, revealed, error, Footer = DefaultFooter }:
         </div>
       )}
 
-      {/* Tags are metadata, so the footer needs no reveal to render. */}
+      {/* Tags are metadata, so the footer needs no reveal to render — only to
+          write: a save sends the whole entry back, secrets included. */}
       <Footer
         tags={entry.tags}
         onAdd={entry.deletedAt ? undefined : () => editEntry()}
+        onSave={revealed && !entry.deletedAt ? next => saveTags(revealed, next) : undefined}
+        subject={entry.title}
         createdAt={entry.createdAt}
         updatedAt={entry.updatedAt}
         deletedAt={entry.deletedAt}

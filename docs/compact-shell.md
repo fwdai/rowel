@@ -144,16 +144,39 @@ one-time code is a row under the password with a countdown ring in its rail
 (`fields/Otp/Countdown`, a conic gradient on a registered `--otp-left`), on
 both shells; the editor keeps the dial as the live preview. Under the rows,
 files, passkeys, custom fields and tags are sections (`SECTION_LABEL`: 12px
-uppercase, tracking pulled in, inset to the rows), every "add" is the same
-card-row cell (`ACTION_ROW`), and the dates are one centred meta line at the
-end — `Compact/Detail/Meta`, handed to `Show/Body` as its `Footer`, which
-reads the same facts the desktop's strip does.
+uppercase, tracking pulled in, inset to the rows), an "add" under a card is
+the same card-row cell (`ACTION_ROW`), and the dates are one centred meta line
+at the end — `Compact/Detail/Meta`, handed to `Show/Body` as its `Footer` and
+to `Edit/Body` as the editor's, which reads the same facts the desktop's strip
+does.
+
+Tags are not a card of anything: under their label the chips themselves are
+the content, flowing from the rows' inset, with a dashed "Add tag" chip at
+their end. One element draws a tag wherever it appears — on the entry, in the
+editor with its ×, under the search field as the list's filter, and as the
+add control — `elements/TagChip`: a 32px pill (24 on the desktop) with a
+soft fill and no edge, no `#` in front of it (a tag is not a hashtag; the
+list's title names the tag bare too), and a hit area reaching the 44px the
+platform asks for. Pressing a tag while reading goes to everything filed
+under it. Adding or taking one off never needs the editor: the add chip opens
+`elements/TagPicker`, a bottom sheet with one field over the vault's tags as
+checkbox rows (busiest first, with counts), the field narrowing the rows and,
+when nothing answers to it, offering "Create …" as the first row — Return does
+the same, and a name that differs only by case is the tag already there.
+While reading, the sheet's choices are held in `Meta` and written back once
+when it closes, if they changed (`saveTags`: the revealed entry saved with the
+new list, so the secrets go back as they came and the row restamps like any
+save); in the editor the sheet writes the draft directly and each chip's ×
+takes a tag off. The picker is mounted on `document.body` — see the note on
+overlays below — and takes the caret as it opens, which `useDialogFocus`
+leaves where it is.
 
 Overlays are not screens and do not live in the shell div. That div carries
 `viewportStyle`'s translate, which makes it the containing block of anything
 `fixed` inside it, so a sheet mounted there would take the keyboard offset
 twice. `Generator/Attached`, and every fixed overlay after it, is a sibling of
-the shell.
+the shell; one opened from inside a screen (the tag picker, which has a field
+to type into) portals itself to `document.body` for the same reason.
 
 Before any of that there is the lock, which is not a screen of the vault but a
 flow of its own: `App` renders `Auth/LockScreen` on compact and `Auth` on wide,
