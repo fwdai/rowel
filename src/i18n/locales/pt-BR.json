@@ -728,7 +728,6 @@
   "Account": "Conta",
   "Asked by {{origin}} through the browser extension.": "Solicitado por {{origin}} pela extensão do navegador.",
   "Attach file": "Anexar arquivo",
-  "Photo Library": "Biblioteca de fotos",
   "Choose File…": "Escolher arquivo…",
   "Attaching…": "Anexando…",
   "Attachments": "Anexos",
@@ -736,5 +735,8 @@
   "This vault's attachments are at their limit ({{limit}})": "Os anexos deste cofre atingiram o limite ({{limit}})",
   "{{used}} of {{limit}} used by attachments in this vault": "{{used}} de {{limit}} usados por anexos neste cofre",
   "Remove attachment": "Remover anexo",
-  "Remove?": "Remover?"
+  "Remove “{{name}}”?": "Remover “{{name}}”?",
+  "The file is removed from this entry. This can’t be undone.": "O arquivo será removido deste item. Isso não pode ser desfeito.",
+  "No preview for this kind of file": "Sem pré-visualização para este tipo de arquivo",
+  "Could not open this file.": "Não foi possível abrir este arquivo."
 }

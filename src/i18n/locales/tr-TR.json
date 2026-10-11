@@ -717,7 +717,6 @@
   "Account": "Hesap",
   "Asked by {{origin}} through the browser extension.": "{{origin}} tarafından tarayıcı uzantısı üzerinden istendi.",
   "Attach file": "Dosya ekle",
-  "Photo Library": "Fotoğraf Arşivi",
   "Choose File…": "Dosya Seç…",
   "Attaching…": "Ekleniyor…",
   "Attachments": "Ekler",
@@ -725,5 +724,8 @@
   "This vault's attachments are at their limit ({{limit}})": "Bu kasadaki ekler sınırına ulaştı ({{limit}})",
   "{{used}} of {{limit}} used by attachments in this vault": "Bu kasada ekler için {{used}} / {{limit}} kullanılıyor",
   "Remove attachment": "Eki kaldır",
-  "Remove?": "Kaldırılsın mı?"
+  "Remove “{{name}}”?": "“{{name}}” kaldırılsın mı?",
+  "The file is removed from this entry. This can’t be undone.": "Dosya bu kayıttan kaldırılır. Bu işlem geri alınamaz.",
+  "No preview for this kind of file": "Bu tür dosyalar için önizleme yok",
+  "Could not open this file.": "Bu dosya açılamadı."
 }

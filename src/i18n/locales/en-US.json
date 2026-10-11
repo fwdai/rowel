@@ -723,7 +723,6 @@
   "Account": "Account",
   "Asked by {{origin}} through the browser extension.": "Asked by {{origin}} through the browser extension.",
   "Attach file": "Attach file",
-  "Photo Library": "Photo Library",
   "Choose File…": "Choose File…",
   "Attaching…": "Attaching…",
   "Attachments": "Attachments",
@@ -731,5 +730,8 @@
   "This vault's attachments are at their limit ({{limit}})": "This vault's attachments are at their limit ({{limit}})",
   "{{used}} of {{limit}} used by attachments in this vault": "{{used}} of {{limit}} used by attachments in this vault",
   "Remove attachment": "Remove attachment",
-  "Remove?": "Remove?"
+  "Remove “{{name}}”?": "Remove “{{name}}”?",
+  "The file is removed from this entry. This can’t be undone.": "The file is removed from this entry. This can’t be undone.",
+  "No preview for this kind of file": "No preview for this kind of file",
+  "Could not open this file.": "Could not open this file."
 }

@@ -144,14 +144,47 @@ one-time code is a row under the password with a countdown ring in its rail
 (`fields/Otp/Countdown`, a conic gradient on a registered `--otp-left`), on
 both shells; the editor keeps the dial as the live preview. Under the rows,
 files, passkeys, custom fields and tags are sections (`SECTION_LABEL`: 12px
-uppercase, tracking pulled in, inset to the rows), an "add" under a card is
-the same card-row cell (`ACTION_ROW`), and the dates are one centred meta line
-at the end — `Compact/Detail/Meta`, handed to `Show/Body` as its `Footer` and
-to `Edit/Body` as the editor's, which reads the same facts the desktop's strip
-does.
+uppercase, tracking pulled in, inset to the rows), every "add" under a card
+is the same quiet accent line (`ACTION_ROW`), and the dates are one centred
+meta line at the end — `Compact/Detail/Meta`, handed to `Show/Body` as its
+`Footer` and to `Edit/Body` as the editor's, which reads the same facts the
+desktop's strip does. Files are a plain list, not
+a card and not a gallery (`Show/Attachments/Row`): each a line with a 40px
+thumbnail — the picture for an image, the kind's page for anything else —
+beside its name and "670 KB · PNG", hairlines between the lines, on the
+screen's own ground with nothing around them, as Mail and Notes list
+attachments. The lines, their "Attachments" heading
+(`SECTION_LABEL_FLUSH`), the verbs under the sections and the notes under
+them all stand on the pane outside any card, so they share the cards' margin
+and not the inset of the text within one — through one wrapper, `EDGE_GUTTER`,
+4px in from the cards' edge (a glyph or a capital set dead on that line reads
+as starting before it), and none of them carries an inset of its own. A label
+over a card (`SECTION_LABEL`) keeps the card's inset, aligned with its
+captions as iOS aligns a group's header with its cells.
+No controls on a line, on either shell: the whole line
+opens the file, and saving and removing live in the preview
+(`Attachments/Preview`), one view for both shells — the screen on the phone,
+a lightbox over the dimmed window on the desktop, told apart by
+`max-md:`/`md:` on the same elements — with the
+file's name in its bar and a Quick Look-style close on the left. Removing
+asks first through `elements/ConfirmSheet`: the platform's action sheet on the
+phone, a red verb over a bold Cancel from the bottom edge, and the same two
+rows on a small card on the desktop. The bytes come to the webview only for
+the file being shown (`attachment_read`), never with the list — a row's
+thumbnail is the backend's small PNG of the picture (`attachment_thumbnail`),
+turned the way its EXIF says, asked for as the row comes on screen and made
+one picture at a time, so a list of images costs kilobytes whatever the files
+weigh and never a burst of decodes; a picture the
+engine cannot decode (a TIFF or a BMP off Apple platforms) is fetched again as
+the backend's PNG of it (`attachment_render`), so what an image shows does
+not depend on the OS. Under the list, and alone on an entry with no files, one quiet line:
+"Attach file" behind a paperclip in the accent — text (`ACTION_ROW`, a 44px
+row), not a card cell: a boxed button under every section made the screen a
+stack of cards rather than content with quiet verbs.
 
-Tags are not a card of anything: under their label the chips themselves are
-the content, flowing from the rows' inset, with a dashed "Add tag" chip at
+Tags stand in the same gutter as the files, under a `SECTION_LABEL_FLUSH`
+heading, and are no more a card than they are: the chips themselves are the
+content, with a dashed "Add tag" chip at
 their end. One element draws a tag wherever it appears — on the entry, in the
 editor with its ×, under the search field as the list's filter, and as the
 add control — `elements/TagChip`: a 32px pill (24 on the desktop) with a

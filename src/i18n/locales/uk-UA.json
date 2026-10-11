@@ -739,7 +739,6 @@
   "Account": "Обліковий запис",
   "Asked by {{origin}} through the browser extension.": "Запит від {{origin}} через розширення браузера.",
   "Attach file": "Прикріпити файл",
-  "Photo Library": "Медіатека",
   "Choose File…": "Вибрати файл…",
   "Attaching…": "Прикріплюємо…",
   "Attachments": "Вкладення",
@@ -747,5 +746,8 @@
   "This vault's attachments are at their limit ({{limit}})": "Вкладення в цьому сховищі досягли межі ({{limit}})",
   "{{used}} of {{limit}} used by attachments in this vault": "Вкладення в цьому сховищі займають {{used}} із {{limit}}",
   "Remove attachment": "Видалити вкладення",
-  "Remove?": "Видалити?"
+  "Remove “{{name}}”?": "Видалити «{{name}}»?",
+  "The file is removed from this entry. This can’t be undone.": "Файл буде видалено з цього запису. Цю дію не можна скасувати.",
+  "No preview for this kind of file": "Для файлів цього типу немає попереднього перегляду",
+  "Could not open this file.": "Не вдалося відкрити цей файл."
 }

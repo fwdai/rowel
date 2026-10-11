@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import AddAction from '@/components/elements/AddAction'
 import SourceSheet from '@/components/elements/SourceSheet'
+import { PaperclipGlyph } from '@/components/Main/icons'
 import { isMobile } from '@/lib/platform'
 import type { AttachSource } from './useAttachments'
 
@@ -15,11 +16,14 @@ interface Props {
 }
 
 /**
- * The "Attach file" action under an entry's files.
+ * The way to attach a file: a quiet verb under the list, a paperclip before
+ * it, in the accent — the same line "Add tag" is, so an entry with nothing
+ * attached shows nothing heavier than a sentence, and one with files shows
+ * the same sentence under them.
  *
  * On desktop it goes straight to the file dialog: the photos there are files
  * like any other, and the dialog's own sidebar reaches the library. A phone
- * keeps its photos out of the file browser, so there the action first asks
+ * keeps its photos out of the file browser, so there the press first asks
  * where from (`SourceSheet`): the camera, the photo library or Files, each
  * answer opening the picker the OS has for it. A picker backed out of leaves
  * the question open; a photo taken or a file picked answers it.
@@ -41,6 +45,7 @@ export default function AttachButton({ busy, onPick, onFile, className }: Props)
     <>
       <AddAction
         label={busy ? t('Attaching…') : t('Attach file')}
+        glyph={<PaperclipGlyph size={14} />}
         testid="attach-file-button"
         onClick={() => (isMobile ? setAsking(true) : void onPick('attachment'))}
         className={className}

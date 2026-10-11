@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { showTag } from '@/store'
 import TagChip from '@/components/elements/TagChip'
 import TagPicker from '@/components/elements/TagPicker'
-import { META, SECTION_LABEL } from '@/components/elements/tokens'
+import { EDGE_GUTTER, META, SECTION_LABEL_FLUSH } from '@/components/elements/tokens'
 import { useDates } from '@/hooks/useDates'
 import { toTime } from '@/utils/time'
 import type { FooterProps } from '../../Body/Aside/Show/Footer'
@@ -15,10 +15,11 @@ const same = (a: string[], b: string[]) => a.length === b.length && a.every((tag
  * phone — the same facts `Show/Footer` draws as the desktop's strip, in both
  * faces: the read screen hands it `onSave`, the editor `onTags`.
  *
- * Tags are a section like the files above them, but not a card of anything:
- * the chips are the content, flowing from the rows' inset, with the dashed
- * "Add tag" chip at their end as the way to add one — the same shape as what
- * it adds. Pressing a tag while reading goes to everything filed under it;
+ * Tags are a section like the files above them, and like them not a card of
+ * anything: the chips are the content, standing on the pane in the same gutter
+ * the files' lines do (`EDGE_GUTTER`), with the dashed "Add tag" chip at their
+ * end as the way to add one — the same shape as what it adds. Pressing a tag
+ * while reading goes to everything filed under it;
  * adding or taking one off is the picker sheet, opened from the chip, which
  * never needs the editor: while reading, the sheet's choices are held here and
  * written back once, when it closes, if they changed. In the editor the sheet
@@ -74,11 +75,11 @@ export default function Meta({
   return (
     <footer data-testid="entry-footer">
       {(filed || writable) && (
-        <section className="mt-4" data-testid="tags-section">
-          <span className={SECTION_LABEL}>{t('Tags')}</span>
+        <section className={`mt-4 ${EDGE_GUTTER}`} data-testid="tags-section">
+          <span className={SECTION_LABEL_FLUSH}>{t('Tags')}</span>
           {/* 12px between rows of chips: with the chip's 6px of hit slop above
               and below, two rows' targets meet without overlapping. */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-3 px-4">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-3">
             {tags.map(tag =>
               onTags ? (
                 <TagChip
@@ -106,7 +107,7 @@ export default function Meta({
             )}
           </div>
           {error && (
-            <p className="mt-2 px-4 text-base text-bad" role="alert">
+            <p className="mt-2 text-base text-bad" role="alert">
               {error}
             </p>
           )}

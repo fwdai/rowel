@@ -739,7 +739,6 @@
   "Account": "Аккаунт",
   "Asked by {{origin}} through the browser extension.": "Запрос от {{origin}} через расширение браузера.",
   "Attach file": "Прикрепить файл",
-  "Photo Library": "Медиатека",
   "Choose File…": "Выбрать файл…",
   "Attaching…": "Прикрепляем…",
   "Attachments": "Вложения",
@@ -747,5 +746,8 @@
   "This vault's attachments are at their limit ({{limit}})": "Вложения в этом хранилище достигли предела ({{limit}})",
   "{{used}} of {{limit}} used by attachments in this vault": "Вложения в этом хранилище занимают {{used}} из {{limit}}",
   "Remove attachment": "Удалить вложение",
-  "Remove?": "Удалить?"
+  "Remove “{{name}}”?": "Удалить «{{name}}»?",
+  "The file is removed from this entry. This can’t be undone.": "Файл будет удалён из этой записи. Это действие нельзя отменить.",
+  "No preview for this kind of file": "Для файлов этого типа нет предпросмотра",
+  "Could not open this file.": "Не удалось открыть этот файл."
 }

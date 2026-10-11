@@ -2800,6 +2800,8 @@ dependencies = [
  "num-traits",
  "png 0.18.1",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -4613,6 +4615,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "hex",
+ "image",
  "interprocess",
  "keyring",
  "libc",

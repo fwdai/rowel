@@ -717,7 +717,6 @@
   "Account": "Konto",
   "Asked by {{origin}} through the browser extension.": "Begärt av {{origin}} via webbläsartillägget.",
   "Attach file": "Bifoga fil",
-  "Photo Library": "Bildbibliotek",
   "Choose File…": "Välj fil…",
   "Attaching…": "Bifogar…",
   "Attachments": "Bilagor",
@@ -725,5 +724,8 @@
   "This vault's attachments are at their limit ({{limit}})": "Bilagorna i det här valvet har nått sin gräns ({{limit}})",
   "{{used}} of {{limit}} used by attachments in this vault": "{{used}} av {{limit}} används av bilagor i det här valvet",
   "Remove attachment": "Ta bort bilaga",
-  "Remove?": "Ta bort?"
+  "Remove “{{name}}”?": "Ta bort ”{{name}}”?",
+  "The file is removed from this entry. This can’t be undone.": "Filen tas bort från den här posten. Det går inte att ångra.",
+  "No preview for this kind of file": "Ingen förhandsvisning för den här filtypen",
+  "Could not open this file.": "Det gick inte att öppna filen."
 }

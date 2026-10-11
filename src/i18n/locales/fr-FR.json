@@ -734,7 +734,6 @@
   "Account": "Compte",
   "Asked by {{origin}} through the browser extension.": "Demandé par {{origin}} via l’extension de navigateur.",
   "Attach file": "Joindre un fichier",
-  "Photo Library": "Photothèque",
   "Choose File…": "Choisir un fichier…",
   "Attaching…": "Ajout en cours…",
   "Attachments": "Pièces jointes",
@@ -742,5 +741,8 @@
   "This vault's attachments are at their limit ({{limit}})": "Les pièces jointes de ce coffre ont atteint leur limite ({{limit}})",
   "{{used}} of {{limit}} used by attachments in this vault": "{{used}} sur {{limit}} utilisés par les pièces jointes de ce coffre",
   "Remove attachment": "Supprimer la pièce jointe",
-  "Remove?": "Supprimer ?"
+  "Remove “{{name}}”?": "Supprimer « {{name}} » ?",
+  "The file is removed from this entry. This can’t be undone.": "Le fichier sera supprimé de cet élément. Cette action est irréversible.",
+  "No preview for this kind of file": "Pas d’aperçu pour ce type de fichier",
+  "Could not open this file.": "Impossible d’ouvrir ce fichier."
 }
