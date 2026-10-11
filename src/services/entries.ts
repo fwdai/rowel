@@ -2,16 +2,20 @@ import Fuse from 'fuse.js'
 import type { EntryMeta, EntryType } from '@/api/types'
 import { revealEntry } from '@/api/vault'
 import { kindOf } from '@/kinds'
+import { flashCopied } from '@/store'
 import { copy } from './copy'
 
 // Decrypts just this entry (secrets never live in the list metadata) and puts
 // the one secret worth a shortcut for its kind on the clipboard, with the usual
-// auto-clear timeout. Backs the list search's ⌘⏎.
+// auto-clear timeout. Backs the list search's ⌘⏎, which has no control on
+// screen to flash a check on, so the app-level pill is its confirmation.
 export const copySecret = (entry: EntryMeta): Promise<void> =>
   revealEntry(entry.id)
     .then(revealed => {
       const value = kindOf(revealed.type).primarySecret(revealed)
-      if (value) copy(value)
+      if (!value) return
+      copy(value)
+      flashCopied()
     })
     .catch(() => {})
 

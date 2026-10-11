@@ -63,7 +63,7 @@ runs one app process against one data dir, so nothing may depend on file order.
 | Import tiles | PR 4 | `import-tile-<bitwarden\|chrome\|lastpass\|keepass\|csv>` in the source grid, `import-tile-swftx` on the restore-backup row, `import-dropzone`; export lives in the same section behind an Import/Export switch with format cards, no `<select>` |
 | Theme and date format | PR 4 | `settings-theme-light` / `-dark` (asserted on `<html data-theme>`), `settings-date-format-trigger` then `settings-date-format-<pattern>` (asserted through the persisted `dateFormat`). `settings-theme-system` resolves against the OS, so the suite leaves it alone. |
 | Sync indicator reports a local-only vault | PR 4 | `sync-indicator`; the chip is mounted in every state, so with no provider configured `sync-indicator.spec.ts` asserts `data-tone="local"` rather than an absence. The tone, not the label — the label is localised. A connected reading is not e2e-able (see below). |
-| Copy toast | PR 4 | `copy-toast` — mounted only while `ui.copied` holds (2s after a copy), so it is absent at rest; assert *visibility* either way |
+| Copy toast | PR 4 | `copy-toast` — raised only by a copy whose control is gone (the generator's "Use & copy"), mounted only while `ui.copied` holds (2s), so it is absent at rest; assert *visibility* either way. Controls that stay on screen confirm in place with `copied-mark` |
 
 ---
 

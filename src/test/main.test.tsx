@@ -5,7 +5,7 @@ import Main from '@/components/Main'
 import type { EntryMeta } from '@/api/types'
 import { useUi, useVault, setView } from '@/store'
 import { withEntries, loginEntry, loginMeta } from './utils'
-import { mockCommand } from './ipc'
+import { calls, mockCommand } from './ipc'
 
 const note = (id: string, title: string): EntryMeta =>
   ({ id, type: 'note', title, tags: [], urlHost: '', favorite: false })
@@ -47,6 +47,20 @@ describe('Main', () => {
     await userEvent.type(screen.getByPlaceholderText('Search'), 'air')
     expect(screen.getByText('Airbnb')).toBeInTheDocument()
     expect(screen.queryByText('Google')).not.toBeInTheDocument()
+  })
+
+  // ⌘⏎ copies from the list without opening the entry, so there is no control
+  // on screen to flash a check on: the app-level pill is the only feedback.
+  it('confirms a ⌘⏎ copy from the search field with the pill', async () => {
+    mockCommand('reveal_entry', () => loginEntry({ id: 'l1', title: 'Google' }))
+    withEntries([loginMeta({ id: 'l1', title: 'Google' })])
+    render(<Main />)
+
+    await userEvent.click(screen.getByTestId('search-input'))
+    await userEvent.keyboard('{Meta>}{Enter}{/Meta}')
+
+    await vi.waitFor(() => expect(calls('copy_to_clipboard')).toHaveLength(1))
+    expect(await screen.findByTestId('copy-toast')).toHaveTextContent('Copied to Clipboard')
   })
 
   it('focuses the one search field on ⌘F', async () => {

@@ -34,7 +34,7 @@ export const HOVER_ONLY =
   'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 any-pointer-coarse:opacity-100'
 
 // A row's copy button, which the phone does without: there the value is the
-// row's copy control (`fields/CopyValue`), the toast confirms a press, and the
+// row's copy control (`fields/CopyValue`), its own check confirms a press, and the
 // screen's bottom button covers the main secret — as Passwords and 1Password
 // draw their rows. Every row that offers a copy button wraps it in this, so a
 // phone rail holds only what means something else: the eye, the open-link.

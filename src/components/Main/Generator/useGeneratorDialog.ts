@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { copy } from '@/services/copy'
 import type { TKey } from '@/i18n'
-import { startEntry, type GeneratorApply, type SshApply } from '@/store'
+import { flashCopied, startEntry, type GeneratorApply, type SshApply } from '@/store'
 import { useGenerator } from './useGenerator'
 import { useSshKey } from './Ssh/useSshKey'
 import type { DialogMode } from './Tabs'
@@ -60,6 +60,9 @@ export function useGeneratorDialog(
     }
     apply?.(value)
     copy(value)
+    // The dialog closes on the press, so there is no button left to flash a
+    // check on: the pill is the copy's only feedback.
+    flashCopied()
     onClose()
   }, [ready, keys, key.pair, ssh, apply, value, onClose])
 
