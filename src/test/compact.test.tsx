@@ -664,8 +664,9 @@ describe('overlay frames', () => {
     expect(screen.getByTestId('add-secret-modal')).not.toHaveAttribute('data-frame')
   })
 
-  // No Escape on a phone, and a tall sheet leaves little scrim to tap.
-  it('closes the bottom sheet from its close button or a pull on the grabber', async () => {
+  // No close icon on a bottom sheet: a screen reader gets a Close control in
+  // the grabber row, everyone else pulls the grabber or taps the scrim.
+  it('closes the bottom sheet from its screen-reader Close or a pull on the grabber', async () => {
     seed()
     render(<Main />)
     act(() => openAddPicker())

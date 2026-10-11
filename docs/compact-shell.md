@@ -237,7 +237,9 @@ guarded Cancel.
   with a ring of ground around it — a verb placed on the bar, not a fifth tab.
   Content scrolls underneath (the scroller reserves bottom padding; see
   `chrome.ts` for the geometry every piece of bottom chrome is measured from).
-- Bottom sheets carry a grabber and dismiss on scrim tap; full-screen forms
+- Bottom sheets carry a grabber and dismiss on scrim tap, swipe or Escape,
+  with no close icon (a screen-reader-only Close sits in the grabber row);
+  full-screen forms
   put Cancel on the left and Save on the right of the nav row.
 - Where a photo or a file comes from is one sheet, `elements/SourceSheet`:
   Take Photo · Photo Library · Choose File, under the names the system gives

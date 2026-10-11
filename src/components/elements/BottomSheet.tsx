@@ -4,9 +4,7 @@ import { useDialogFocus } from '@/hooks/useDialogFocus'
 import { useForwardedRef } from '@/hooks/useForwardedRef'
 import { useVisualViewport, viewportStyle } from '@/hooks/useVisualViewport'
 import { cx } from '@/utils/cx'
-import { CloseGlyph } from '../Main/icons'
 import type { FrameProps } from './Frame'
-import IconButton from './IconButton'
 
 // How far the card has to be pulled down, or how fast it has to be flicked
 // (px per ms, over at least FLICK_MIN_PX), before letting go dismisses it.
@@ -24,9 +22,11 @@ const FLICK_MIN_PX = 16
  * visual viewport for the same reason `Sheet` is: if a field in it ever takes
  * focus, the keyboard must not land on top of it.
  *
- * A sheet whose content runs to the top edge leaves almost no scrim to tap and
- * a phone has no Escape, so it also has a close button and follows the grabber
- * down: pulled far or fast enough it closes, otherwise it springs back.
+ * There is no close icon: the scrim, the grabber and Escape are the ways out,
+ * as on the system's own sheets. The card follows the grabber down — pulled
+ * far or fast enough it closes, otherwise it springs back. What a screen
+ * reader cannot do is tap a scrim or swipe a grabber, so the grabber row
+ * carries a Close control for it alone, out of sight until it has focus.
  */
 export default function BottomSheet({ onClose, labelledBy, testid, ref, children }: FrameProps) {
   const { t } = useTranslation()
@@ -38,7 +38,7 @@ export default function BottomSheet({ onClose, labelledBy, testid, ref, children
   const [pull, setPull] = useState<number | null>(null)
 
   const grab = (e: PointerEvent<HTMLDivElement>) => {
-    // Capturing the pointer would take the close button's click away from it.
+    // Capturing the pointer would take the Close control's click away from it.
     if ((e.target as Element).closest('button')) return
     e.currentTarget.setPointerCapture(e.pointerId)
     origin.current = { y: e.clientY, at: e.timeStamp }
@@ -90,8 +90,7 @@ export default function BottomSheet({ onClose, labelledBy, testid, ref, children
         {/* Only this row drags: one started in the content below is a scroll.
             32px tall, the grabber 6px in — the system's own proportion — so
             the body's heading sits a line under the grabber, not a band of
-            ground under it. The close keeps its 44px target by standing 6px
-            proud of the card's top edge, over the scrim; its glyph is inside. */}
+            ground under it. */}
         <div
           data-testid="bottom-sheet-grabber"
           onPointerDown={grab}
@@ -101,15 +100,14 @@ export default function BottomSheet({ onClose, labelledBy, testid, ref, children
           className="relative flex h-8 flex-none touch-none justify-center pt-1.5"
         >
           <span className="h-1 w-9 rounded-full bg-line2" />
-          <IconButton
-            muted
-            testid="modal-close"
-            label={t('Close')}
+          <button
+            type="button"
+            data-testid="modal-close"
             onClick={onClose}
-            className="absolute -top-1.5 right-1 h-11 w-11"
+            className="sr-only top-1 right-2 rounded-sm px-2 py-1 text-sm text-text2 focus-visible:not-sr-only focus-visible:absolute"
           >
-            <CloseGlyph size={18} />
-          </IconButton>
+            {t('Close')}
+          </button>
         </div>
         {/* The home indicator lives under the card's last row: the safe-area
             inset keeps the content off it, and 8px more is the system's own
