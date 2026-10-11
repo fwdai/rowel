@@ -431,19 +431,31 @@ fn file_name(name: &str) -> String {
 /// of photos opening at once used to decode them all at once, and the bitmaps
 /// together could take what a phone has. Pure, so it is tested without a vault.
 fn render_png(bytes: &[u8], fit: Option<u32>) -> Result<Vec<u8>> {
-    use image::ImageDecoder;
-
-    let _one_at_a_time = ONE_PICTURE.lock().unwrap_or_else(|e| e.into_inner());
-    let unsupported = |e: image::ImageError| Error::Unsupported(e.to_string());
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_RENDER_SIDE);
     limits.max_image_height = Some(MAX_RENDER_SIDE);
     limits.max_alloc = Some(MAX_RENDER_BYTES);
+    render_png_within(bytes, fit, limits)
+}
+
+/// [`render_png`] under the given `limits`, so a test can set a cap a small
+/// picture breaks. The cap is enforced here, not left to the codec: going
+/// through the decoder for its orientation skips the reservation
+/// `ImageReader::decode` makes against `max_alloc`, and the JPEG decoder among
+/// others does not check it on its own — so the pixels' size is reserved
+/// against the cap by hand, the way `decode` does it, before anything is read.
+fn render_png_within(bytes: &[u8], fit: Option<u32>, mut limits: image::Limits) -> Result<Vec<u8>> {
+    use image::ImageDecoder;
+
+    let _one_at_a_time = ONE_PICTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let unsupported = |e: image::ImageError| Error::Unsupported(e.to_string());
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| Error::Unsupported(e.to_string()))?;
-    reader.limits(limits);
+    reader.limits(limits.clone());
     let mut decoder = reader.into_decoder().map_err(unsupported)?;
+    limits.reserve(decoder.total_bytes()).map_err(unsupported)?;
+    decoder.set_limits(limits).map_err(unsupported)?;
     let orientation = decoder.orientation().map_err(unsupported)?;
     let mut decoded = image::DynamicImage::from_decoder(decoder).map_err(unsupported)?;
     decoded.apply_orientation(orientation);
@@ -925,6 +937,31 @@ mod tests {
         // Untagged, the same picture keeps its shape.
         let plain = image::load_from_memory(&render_png(&jpeg, None).unwrap()).unwrap();
         assert_eq!((plain.width(), plain.height()), (16, 8));
+    }
+
+    // The memory cap holds on the orientation-aware path too: a JPEG whose
+    // pixels would not fit the allowance is refused before they are decoded,
+    // the dimensions being within bounds notwithstanding (the JPEG decoder does
+    // not enforce the allowance itself — the reservation here is what does).
+    #[test]
+    fn a_picture_whose_pixels_exceed_the_cap_is_refused_before_decoding() {
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(64, 64, image::Rgb([7, 7, 7]))
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let jpeg = jpeg.into_inner();
+
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(MAX_RENDER_SIDE);
+        limits.max_image_height = Some(MAX_RENDER_SIDE);
+        limits.max_alloc = Some(64 * 64 * 3 - 1);
+        assert!(matches!(
+            render_png_within(&jpeg, None, limits.clone()),
+            Err(Error::Unsupported(_))
+        ));
+
+        limits.max_alloc = Some(64 * 64 * 3);
+        assert!(render_png_within(&jpeg, None, limits).is_ok());
     }
 
     // A thumbnail is bounded by its longer side and keeps the picture's shape;
