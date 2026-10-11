@@ -102,6 +102,16 @@ export const PRIMARY_ACTION = `${EDGE} h-[54px]`
 export const PRIMARY_CLEARANCE = 'pb-[102px]'
 
 /**
+ * A pushed screen's scroller. `overscroll-contain` is what keeps the edge swipe
+ * alive, not a scroll nicety: WebKit resets the used `touch-action` at a scroll
+ * container, so the `pan-y` `useSwipeBack` puts on the screen does not reach a
+ * touch that starts in here — and a drag the native scroller may hand to its
+ * parent begins a pan that cancels the pointer under the swipe. Contained, a
+ * sideways drag has nowhere to go, no pan begins, and the swipe keeps it.
+ */
+export const SCREEN_SCROLLER = 'min-h-0 flex-1 overflow-y-auto overscroll-contain'
+
+/**
  * The same action on a *root* screen, which keeps its tab bar: the button is
  * lifted clear of the Add disc's crown (its 112px + a 12px gap) rather than
  * sharing the bottom edge with the pill.

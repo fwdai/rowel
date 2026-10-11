@@ -7,7 +7,7 @@ import Eyebrow from '../../Body/Aside/Show/Eyebrow'
 import Favorite from '../../Body/Aside/Show/Favorite'
 import Identity from '../../Body/Aside/Show/Identity'
 import { useDelete } from '../../Body/Aside/Show/useDelete'
-import { HEADER_ACTION, PRIMARY_CLEARANCE, PUSHED_SCREEN } from '../chrome'
+import { HEADER_ACTION, PRIMARY_CLEARANCE, PUSHED_SCREEN, SCREEN_SCROLLER } from '../chrome'
 import { useSwipeBack } from '../useSwipeBack'
 import Meta from './Meta'
 import NavRow from './NavRow'
@@ -49,10 +49,7 @@ export default function Read({ entry, revealed }: Props) {
       <NavRow entry={entry} onDelete={remove} />
 
       <div
-        className={cx(
-          '@container min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-1',
-          PRIMARY_CLEARANCE
-        )}
+        className={cx('@container px-4 pt-1', SCREEN_SCROLLER, PRIMARY_CLEARANCE)}
       >
         {/* The screen has no title bar, so the entry names itself here: one
             44px tile beside the title, with the star — a 44px header action —
