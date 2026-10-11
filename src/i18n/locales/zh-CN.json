@@ -699,6 +699,8 @@
   "Account": "账户",
   "Asked by {{origin}} through the browser extension.": "由 {{origin}} 通过浏览器扩展请求。",
   "Attach file": "附加文件",
+  "Photo Library": "照片图库",
+  "Choose File…": "选取文件…",
   "Attaching…": "正在附加…",
   "Attachments": "附件",
   "Attachments can be up to {{size}} each": "每个附件最大 {{size}}",

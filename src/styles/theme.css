@@ -67,6 +67,20 @@
   }
 }
 /*
+ * A screen pushed over another in the phone shell (Compact/Stack): in from the
+ * right edge across the whole width, the way a navigation push lands, while the
+ * layer under it recedes — see `.stack-under` below. No fade: it is a surface
+ * sliding over a surface, and the one under it is in view the whole way.
+ */
+@keyframes push {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+/*
  * A setup step arriving under the mascot: from the right going forward, from
  * the left coming back. Further and slower than the phone sheet — this is a
  * change of place, and has to be seen as one.
@@ -396,6 +410,7 @@
   --shadow-menu: var(--menu-shadow);
   --shadow-lockfield: var(--lockfield-shadow);
   --shadow-lockfield-deep: var(--lockfield-shadow-deep);
+  --shadow-push: var(--push-shadow);
   /*
    * The lock field's own state ink (see elements/Masterpass): a fixed blue
    * that does not follow the user's accent. The field is the one bespoke
@@ -519,10 +534,52 @@
   --animate-pop: pop 160ms var(--ease-swift) both;
   --animate-drop: drop 140ms var(--ease-swift) both;
   --animate-sheet: sheet 160ms var(--ease-swift) both;
+  --animate-push: push 320ms var(--ease-swift) both;
   --animate-step-forward: step-forward 240ms var(--ease-swift) both;
   --animate-step-back: step-back 240ms var(--ease-swift) both;
   --animate-rise: rise 300ms var(--ease-swift) both;
   --animate-unfold: unfold 300ms var(--ease-swift) both;
+}
+
+/*
+ * The layer under a pushed screen (Compact/Stack). `--pop` is how far the
+ * screen over it has been popped: 0 while it is covered, 1 once it is gone.
+ * Everything the layer does under that screen is a function of this one
+ * number — it recedes a third of its width, as iOS's does under a push, and
+ * dims — so a push transitions one property and an edge swipe writes one
+ * value per frame. Registered so the transition can interpolate it; where it
+ * cannot be, the layer still lands where it should, just without the glide.
+ */
+@property --pop {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
+}
+@layer components {
+  .stack-under {
+    --pop: 1;
+    /* Its own stacking context, so the dim below stays over this layer and
+       never over the screen on top of it. */
+    isolation: isolate;
+  }
+  .stack-under[data-covered] {
+    --pop: 0;
+    transition: --pop 320ms var(--ease-swift);
+  }
+  .stack-under[data-recede] {
+    translate: calc((var(--pop) - 1) * 30%) 0;
+  }
+  /* The dim: the scrim at a third of its strength, over everything on the
+     layer including its floating chrome. */
+  .stack-under::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    background: var(--scrim);
+    opacity: calc((1 - var(--pop)) * 0.35);
+  }
 }
 
 /*
@@ -755,6 +812,8 @@
     0 18px 40px -10px rgba(22, 28, 48, 0.28), 0 4px 12px rgba(22, 28, 48, 0.08),
     0 0 0 0.5px rgba(22, 28, 48, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
   --scrim: rgba(40, 43, 48, 0.3);
+  /* What a pushed screen's left edge throws on the one it is dragged off. */
+  --push-shadow: -6px 0 20px rgba(24, 26, 30, 0.14);
   --thumb: rgba(20, 22, 26, 0.22);
   /*
    * The lock screen's signature field (see Masterpass): a white surface set
@@ -898,6 +957,7 @@
     0 18px 40px -8px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.3),
     0 0 0 0.5px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.07);
   --scrim: rgba(8, 9, 10, 0.7);
+  --push-shadow: -6px 0 20px rgba(0, 0, 0, 0.5);
   --thumb: rgba(255, 255, 255, 0.14);
   --lockfield-shadow:
     inset 0 1.5px 3px rgba(0, 0, 0, 0.5),
