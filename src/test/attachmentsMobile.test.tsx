@@ -5,7 +5,7 @@ import Show from '@/components/Main/Body/Aside/Show'
 import { FrameProvider } from '@/components/elements/Frame'
 import Sheet from '@/components/elements/Sheet'
 import { loginEntry, loginMeta } from './utils'
-import { calls, mockCommand } from './ipc'
+import { calls, mockCommand, seedAttachments } from './ipc'
 
 // The platform is baked in at build time, so a phone build is a module-level
 // fact rather than a prop: this file is the attachments suite as that build
@@ -82,5 +82,27 @@ describe('attaching a file on a phone', () => {
     )
     expect(calls('pick_file')).toEqual([])
     expect(calls('attachment_add')).toEqual([])
+  })
+})
+
+describe('a file on a phone', () => {
+  it('asks before removing from the bottom edge, once the file is open', async () => {
+    seedAttachments([
+      { id: 'a1', entryId: 'l1', name: 'contract.pdf', mime: 'application/pdf', size: 1536 }
+    ])
+    renderShow()
+
+    // The row itself carries no controls: the file opens, and the actions are
+    // the preview's.
+    await userEvent.click(await screen.findByTestId('attachment-open-button'))
+    await userEvent.click(screen.getByTestId('preview-remove-button'))
+
+    const sheet = screen.getByTestId('attachment-remove-sheet')
+    expect(sheet).toHaveAttribute('data-frame', 'bottom-sheet')
+    expect(sheet).toHaveTextContent('Remove “contract.pdf”?')
+    expect(calls('attachment_delete')).toEqual([])
+
+    await userEvent.click(screen.getByTestId('attachment-remove-confirm'))
+    expect(calls('attachment_delete')).toEqual([{ id: 'a1' }])
   })
 })

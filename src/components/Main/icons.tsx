@@ -51,6 +51,7 @@ import {
   MoreHorizontal,
   Palette,
   Pencil,
+  Paperclip,
   Plus,
   Puzzle,
   RefreshCw,
@@ -219,6 +220,9 @@ export const ClipboardGlyph = glyph(ClipboardList, 16)
 export const LinkGlyph = glyph(Link, 16)
 // A file going into the app (the import drop target).
 export const UploadGlyph = glyph(Upload, 16)
+// Attaching a file to an entry: the mail clip, which is what the verb means
+// to everyone.
+export const PaperclipGlyph = glyph(Paperclip, 16)
 
 // Rail tier (20px, for the 40px+ rail hit areas and Settings nav headers)
 export const PlusRailGlyph = glyph(Plus, 20)

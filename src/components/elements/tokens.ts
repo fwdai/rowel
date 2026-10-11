@@ -65,18 +65,35 @@ export const LABEL = `${LABEL_TYPE} text-text2`
 // same weight.
 export const ROW_LABEL = `${LABEL} max-md:text-sm max-md:normal-case max-md:tracking-[0]`
 
-// A section's heading over its card (attachments, passkeys, custom fields,
-// tags): the label face, set off the card by its own gap. On the phone it is
-// the grouped list's section header — still uppercase, as iOS sets them, but
-// at 12px with the tracking pulled in, and inset to the rows' own 16px.
-export const SECTION_LABEL = `mb-1.5 block ${LABEL} max-md:mb-2 max-md:px-4 max-md:text-sm max-md:tracking-[0.06em]`
+// The one gutter for everything that stands on the pane outside a card — a
+// plain list of files and its heading, an "add" verb under a section, a note
+// under either. 4px in from the cards' edge: a glyph or a capital set dead on
+// the cards' line reads as starting before it, because the card's stroke and
+// corner sit inside its box while the ink runs to the edge of its. Applied
+// once, as a wrapper, so the things inside it carry no inset of their own and
+// cannot drift apart from each other.
+export const EDGE_GUTTER = 'px-1'
 
-// An "add" action standing under a section ("Attach file", "Add tag"). On the
-// desktop it is the accent text line `AddAction` draws; on the phone it is a
-// grouped-list cell of its own — the same card the rows sit on, one row tall —
-// so every such action on the screen is visibly the same control.
-export const ACTION_ROW =
-  'max-md:h-12 max-md:w-full max-md:gap-2.5 max-md:rounded-xl max-md:border max-md:border-line max-md:bg-card max-md:px-4 max-md:text-md max-md:shadow-card max-md:[&>svg]:size-[18px]'
+// A section's heading over plain rows (the files): the label face, set off
+// what it heads by its own gap. On the phone it is the grouped list's section
+// header — still uppercase, as iOS sets them, but at 12px with the tracking
+// pulled in. It carries no inset of its own: it stands inside `EDGE_GUTTER`
+// with the rows it heads.
+export const SECTION_LABEL_FLUSH = `mb-1.5 block ${LABEL} max-md:mb-2 max-md:text-sm max-md:tracking-[0.06em]`
+
+// The same heading over a card (passkeys, custom fields, tags): inset to the
+// card's own 16px, so it lines up with the captions inside, as iOS aligns a
+// group's header with its cells' text.
+export const SECTION_LABEL = `${SECTION_LABEL_FLUSH} max-md:px-4`
+
+// An "add" action standing under a section ("Attach file", "Add tag"): the
+// accent text line `AddAction` draws, on both shells. On the phone it takes a
+// 44px row with the row tier's type and an 18px mark, so it is a finger's
+// target without becoming a thing; it stands inside `EDGE_GUTTER` and carries
+// no inset of its own. It used to be a card cell of its own, which put a
+// boxed button under every section and made the screen read as a stack of
+// cards rather than as content with quiet verbs.
+export const ACTION_ROW = 'max-md:h-11 max-md:gap-2.5 max-md:text-md max-md:[&>svg]:size-[18px]'
 
 // The meta face, without an ink: counts, timestamps, hints, shortcuts, chips —
 // the same 11px as the label tier, set as ordinary text rather than a tracked

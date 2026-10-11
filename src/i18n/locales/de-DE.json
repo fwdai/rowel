@@ -719,7 +719,6 @@
   "Account": "Konto",
   "Asked by {{origin}} through the browser extension.": "Angefragt von {{origin}} über die Browsererweiterung.",
   "Attach file": "Datei anhängen",
-  "Photo Library": "Fotomediathek",
   "Choose File…": "Datei auswählen…",
   "Attaching…": "Wird angehängt…",
   "Attachments": "Anhänge",
@@ -727,5 +726,8 @@
   "This vault's attachments are at their limit ({{limit}})": "Die Anhänge dieses Tresors haben ihr Limit erreicht ({{limit}})",
   "{{used}} of {{limit}} used by attachments in this vault": "{{used}} von {{limit}} durch Anhänge in diesem Tresor belegt",
   "Remove attachment": "Anhang entfernen",
-  "Remove?": "Entfernen?"
+  "Remove “{{name}}”?": "„{{name}}“ entfernen?",
+  "The file is removed from this entry. This can’t be undone.": "Die Datei wird aus diesem Eintrag entfernt. Das lässt sich nicht rückgängig machen.",
+  "No preview for this kind of file": "Für diese Art von Datei gibt es keine Vorschau",
+  "Could not open this file.": "Die Datei konnte nicht geöffnet werden."
 }

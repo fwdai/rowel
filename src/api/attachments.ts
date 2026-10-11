@@ -14,13 +14,28 @@ export const listAttachments = (entryId: string): Promise<Attachment[]> =>
 export const addAttachment = (entryId: string, path: string): Promise<Attachment> =>
   call('attachment_add', { entryId, path })
 
+export const attachmentUsage = (): Promise<AttachmentUsage> => call('attachment_usage')
+
 // Write an attachment to disk through the save dialog, under its own name. The
 // bytes go from the vault to the file in Rust. Resolves to the chosen path, or
 // null when the dialog was dismissed.
-export const attachmentUsage = (): Promise<AttachmentUsage> => call('attachment_usage')
-
 export const saveAttachment = (id: string): Promise<string | null> =>
   call('attachment_save', { id })
+
+// The two commands below answer with the file itself rather than JSON, which
+// `invoke` hands over as an ArrayBuffer. (Each names its command literally:
+// `contract.test` reads the names off these calls.)
+const asBytes = (buffer: ArrayBuffer) => new Uint8Array(buffer)
+
+// One attachment's bytes, to show it.
+export const readAttachment = (id: string): Promise<Uint8Array<ArrayBuffer>> =>
+  call<ArrayBuffer>('attachment_read', { id }).then(asBytes)
+
+// The same picture as a PNG, for an image the webview's own engine could not
+// decode (a TIFF on Windows). Rejects `unsupported` for a file that is not a
+// picture the backend can read either.
+export const renderAttachment = (id: string): Promise<Uint8Array<ArrayBuffer>> =>
+  call<ArrayBuffer>('attachment_render', { id }).then(asBytes)
 
 // Remove an attachment for good.
 export const deleteAttachment = (id: string): Promise<void> => call('attachment_delete', { id })

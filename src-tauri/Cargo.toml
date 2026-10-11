@@ -41,6 +41,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 rowel-core = { path = "crates/core" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# Re-encoding a picture the webview cannot decode itself (a TIFF, a BMP) as a
+# PNG it can, for the attachment preview. Only the codecs that need it: the
+# `png` and `tiff` decoders are already in the tree through Tauri's icons.
+image = { version = "0.25", default-features = false, features = ["png", "tiff", "bmp"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"

@@ -8,6 +8,12 @@ import { resetStores } from './utils'
 // jsdom implements no layout, so it ships no scrollIntoView.
 Element.prototype.scrollIntoView = vi.fn()
 
+// jsdom has no object URLs; a view that points the DOM at a blob (an
+// attachment's thumbnail or preview) gets a distinct fake per call.
+let objectUrls = 0
+URL.createObjectURL = () => `blob:test/${++objectUrls}`
+URL.revokeObjectURL = () => {}
+
 // Every suite starts on the wide shell — the one the desktop window and all the
 // pre-existing tests assume — with pristine stores and preferences. A compact
 // test calls `setLayout('compact')` itself.

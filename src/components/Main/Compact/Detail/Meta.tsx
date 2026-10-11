@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { showTag } from '@/store'
 import AddAction from '@/components/elements/AddAction'
 import Panel from '@/components/elements/Panel'
-import { ACTION_ROW, META, SECTION_LABEL } from '@/components/elements/tokens'
+import { ACTION_ROW, EDGE_GUTTER, META, SECTION_LABEL } from '@/components/elements/tokens'
 import { useDates } from '@/hooks/useDates'
 import { toTime } from '@/utils/time'
 import type { FooterProps } from '../../Body/Aside/Show/Footer'
@@ -63,12 +63,16 @@ export default function Meta({ tags, onAdd, createdAt, updatedAt, deletedAt }: F
         </div>
       )}
       {!filed && onAdd && (
-        <AddAction
-          label={t('Add tag')}
-          testid="add-tag-button"
-          onClick={onAdd}
-          className={`mt-3 ${ACTION_ROW}`}
-        />
+        // The same gutter the files' section stands in, so the two verbs under
+        // the rows start on one line.
+        <div className={EDGE_GUTTER}>
+          <AddAction
+            label={t('Add tag')}
+            testid="add-tag-button"
+            onClick={onAdd}
+            className={`mt-2 ${ACTION_ROW}`}
+          />
+        </div>
       )}
       {stamps.length > 0 && (
         <p className={`mt-6 px-4 text-center ${META}`}>

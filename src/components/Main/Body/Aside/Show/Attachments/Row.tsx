@@ -1,19 +1,10 @@
 import { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import type { Attachment } from '@/api/types'
-import { cx } from '@/utils/cx'
-import { humanSize } from '@/utils/size'
-import IconButton from '@/components/elements/IconButton'
-import { STACK_RAIL } from '@/components/elements/fields/Row'
 import { META, ROW_HAIRLINE } from '@/components/elements/tokens'
-import {
-  DownloadGlyph,
-  FileArchiveGlyph,
-  FileGlyph,
-  FileImageGlyph,
-  FileTextGlyph,
-  TrashGlyph
-} from '@/components/Main/icons'
+import { fileCaption, previewKind } from './kind'
+import Preview from './Preview'
+import Thumb from './Thumb'
+import { useAttachmentUrl } from './useAttachmentUrl'
 
 interface Props {
   attachment: Attachment
@@ -21,69 +12,57 @@ interface Props {
   onRemove: () => void
 }
 
-// The glyph says what kind of file it is, from the type the backend guessed
-// off the name; anything it could not place is just a file.
-const KindGlyph = ({ mime }: { mime?: string }) => {
-  if (mime?.startsWith('image/')) return <FileImageGlyph />
-  if (mime === 'application/zip') return <FileArchiveGlyph />
-  if (mime?.startsWith('text/') || mime === 'application/pdf' || mime === 'application/json')
-    return <FileTextGlyph />
-  return <FileGlyph />
-}
-
 /**
- * One attached file: what it is, its name over its size, and the two things
- * that can be done with it. The name sits over the size the way a passkey's
- * site sits over its account, so the row needs no fold of its own — and its
- * rail takes the fields' touch sizing (`STACK_RAIL`), so under a finger in a
- * narrow container the buttons grow to the 44px target like every other row's.
+ * One attached file, as a line of a plain list: a 40px thumbnail — the
+ * picture itself for an image, the kind's page for anything else — beside
+ * its name over its size and type, a hairline to the next, and nothing
+ * around it. The list sits on the screen's own ground, as a list of files
+ * does in Mail or in Notes' attachment view; a card would make a panel of
+ * what is really a short inventory, and a grid of tiles would make a gallery
+ * of what is really a vault. The whole line is a press that opens the file
+ * (`Preview`); it carries no other control, so a finger and a pointer take
+ * the same one path to save or remove.
  *
- * Remove is two presses on the same element, as the editor's Cancel is: the
- * first arms it ("Remove?"), the second removes; leaving it disarms.
+ * An image row reads its file as soon as it is shown and lends the preview
+ * the same URL, so the picture opens without a second read.
  */
-export default function AttachmentRow({ attachment, onSave, onRemove }: Props) {
-  const { t } = useTranslation()
-  const [armed, setArmed] = useState(false)
+export default function Row({ attachment, onSave, onRemove }: Props) {
+  const [open, setOpen] = useState(false)
+  const image = previewKind(attachment) === 'image'
+  const file = useAttachmentUrl(attachment, image)
+
+  const remove = () => {
+    setOpen(false)
+    onRemove()
+  }
 
   return (
-    <div
-      data-testid="attachment-row"
-      className={cx('flex items-center gap-3 px-3.5 py-3 max-md:px-4', ROW_HAIRLINE)}
-    >
-      <span className="flex-none text-text3">
-        <KindGlyph mime={attachment.mime} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-base text-text" title={attachment.name}>
-          {attachment.name}
-        </div>
-        <div className={`mt-0.5 ${META}`}>{humanSize(attachment.size)}</div>
-      </div>
-      <div className={cx('flex flex-none items-center gap-1', STACK_RAIL)}>
-        <IconButton title={t('Save…')} onClick={onSave} testid="attachment-save-button">
-          <DownloadGlyph />
-        </IconButton>
-        {armed ? (
-          <button
-            type="button"
-            data-testid="attachment-remove-confirm"
-            onClick={onRemove}
-            onBlur={() => setArmed(false)}
-            onMouseLeave={() => setArmed(false)}
-            className="h-7 cursor-pointer rounded-sm px-2 text-base text-bad hover:brightness-110"
-          >
-            {t('Remove?')}
-          </button>
-        ) : (
-          <IconButton
-            title={t('Remove attachment')}
-            onClick={() => setArmed(true)}
-            testid="attachment-remove-button"
-          >
-            <TrashGlyph />
-          </IconButton>
-        )}
-      </div>
+    <div data-testid="attachment-row" className={ROW_HAIRLINE}>
+      <button
+        type="button"
+        data-testid="attachment-open-button"
+        onClick={() => setOpen(true)}
+        // No inset of its own: the list stands inside the section's
+        // `EDGE_GUTTER`, with its heading and the verb under it.
+        className="flex w-full min-w-0 cursor-pointer items-center gap-3 py-2.5 text-left transition-colors hover:bg-hover active:bg-hover"
+      >
+        <Thumb attachment={attachment} url={file.url} onBroken={file.degrade} size="row" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-base text-text max-md:text-md">
+            {attachment.name}
+          </span>
+          <span className={`mt-0.5 block ${META}`}>{fileCaption(attachment)}</span>
+        </span>
+      </button>
+      {open && (
+        <Preview
+          attachment={attachment}
+          given={image ? file : undefined}
+          onSave={onSave}
+          onRemove={remove}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </div>
   )
 }

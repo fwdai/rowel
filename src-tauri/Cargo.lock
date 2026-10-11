@@ -4613,6 +4613,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "hex",
+ "image",
  "interprocess",
  "keyring",
  "libc",
