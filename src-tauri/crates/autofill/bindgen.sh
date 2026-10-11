@@ -14,6 +14,10 @@
 # `uniffi-bindgen` binary in this crate (the version the runtime is). Built for
 # the host — the bindings are the same for every target. Honours
 # CARGO_TARGET_DIR like any cargo command.
+#
+# CI re-runs this and fails on any difference (the `ios` job in ci.yml), so the
+# output must not depend on the machine: `--no-format` keeps whatever
+# swift-format the local Xcode ships out of it.
 set -eu
 
 cd "$(dirname "$0")/../.."
@@ -23,4 +27,4 @@ out=gen/apple/Sources/autofill/generated
 cargo build -p rowel-autofill
 cargo run -q -p rowel-autofill --features bindgen --bin uniffi-bindgen -- \
   generate --library "$target_dir/debug/librowel_autofill.a" \
-  --language swift --out-dir "$out"
+  --language swift --no-format --out-dir "$out"

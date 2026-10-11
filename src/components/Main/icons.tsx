@@ -36,8 +36,10 @@ import {
   FileImage,
   FileText,
   Fingerprint,
+  Folder,
   Globe,
   IdCard,
+  Image,
   KeyRound,
   KeySquare,
   Layers,
@@ -145,6 +147,9 @@ export const FileGlyph = glyph(File, 14)
 export const FileImageGlyph = glyph(FileImage, 14)
 export const FileTextGlyph = glyph(FileText, 14)
 export const FileArchiveGlyph = glyph(FileArchive, 14)
+// Where a file comes from, on a phone: the photo library or the file browser.
+export const ImageGlyph = glyph(Image, 14)
+export const FolderGlyph = glyph(Folder, 14)
 export const CloseGlyph = glyph(X, 14)
 export const ChevronDownGlyph = glyph(ChevronDown, 14)
 export const FingerprintGlyph = glyph(Fingerprint, 14)

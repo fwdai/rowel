@@ -220,6 +220,23 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --target aarch64-apple-ios-sim --all-targets -- -D warnings
 
+      # The AutoFill extension's Swift bindings are committed, and UniFFI checks
+      # them against the library on load: a stale copy builds fine and then
+      # aborts the extension at its first Rust call. A doc-comment edit
+      # (114c3458) and a uniffi bump (#563) each shipped one.
+      - name: AutoFill UniFFI bindings are current
+        run: |
+          set -euo pipefail
+          sh src-tauri/crates/autofill/bindgen.sh
+          # status, not diff: a deleted file comes back untracked, which diff misses.
+          generated=src-tauri/gen/apple/Sources/autofill/generated
+          if [ -n "$(git status --porcelain -- "$generated")" ]; then
+            git status --short -- "$generated"
+            git diff -- "$generated"
+            echo '::error::Stale UniFFI bindings: run src-tauri/crates/autofill/bindgen.sh and commit what it writes'
+            exit 1
+          fi
+
       # Malformed XML in any of these only surfaces at build or upload time
       # otherwise, and a dropped privacy manifest is not an error at all — App
       # Store Connect just rejects the submission by email days later.
