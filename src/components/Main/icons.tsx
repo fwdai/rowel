@@ -17,6 +17,7 @@ import {
   AtSign,
   Braces,
   Calendar,
+  Camera,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -192,6 +193,8 @@ export const EnvGlyph = glyph(Braces, 16)
 // a token is a key someone issued, with the issuer's name on it.
 export const ApiKeyGlyph = glyph(KeySquare, 16)
 export const ScanGlyph = glyph(ScanLine, 16)
+// The camera, on the phone's scan source sheet (its other row is ImageGlyph).
+export const CameraGlyph = glyph(Camera, 16)
 // The generator, as a row (the palette's command, the Add picker's action).
 export const DicesGlyph = glyph(Dices, 16)
 export const ShieldGlyph = glyph(ShieldCheck, 16)

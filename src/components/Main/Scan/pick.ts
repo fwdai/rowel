@@ -4,7 +4,8 @@ import { runScan } from './run'
 
 /**
  * Choose an image and scan it — the picked-file twin of dropping a photo on
- * the window, and on a phone the only way in, since there is nothing to drop.
+ * the window, and on a phone the "from the library" half of the source sheet
+ * (the camera half is `capture.ts`).
  *
  * The dialog is opened in Rust, which also clears the picked path for the read
  * that follows (see `pickFileToRead`), and which owns the filter: all image

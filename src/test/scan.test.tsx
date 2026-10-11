@@ -235,4 +235,18 @@ describe('scanning from the picker', () => {
 
     expect(useVault.getState().creating).toBe('card')
   })
+
+  // The phone's source sheet (see scanMobile.test) is not the desktop's way
+  // in: the row goes straight to the dialog.
+  it('asks no source question on the desktop', async () => {
+    seed()
+    seedApp({ scanSupported: true })
+    render(<Main />)
+    await openFromRail()
+
+    await userEvent.click(screen.getByTestId('add-scan-image'))
+
+    expect(screen.queryByTestId('scan-source-sheet')).not.toBeInTheDocument()
+    expect(calls('pick_file')).toHaveLength(1)
+  })
 })

@@ -42,5 +42,7 @@
 	</array>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Rowel uses Face ID to unlock your vault.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Rowel uses the camera to read a card or identity document into a new entry. The photo is read on this device and never leaves it.</string>
 </dict>
 </plist>

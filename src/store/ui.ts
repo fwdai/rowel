@@ -85,6 +85,9 @@ export interface UiState {
   // the probe's answer, not session state (`useScanSupported` in `store/app`).
   scanBusy: boolean
   scanError: ScanError | null
+  // The phone's "where from?" sheet for a scan (camera or photo library) is up,
+  // over the Add picker that asked.
+  scanSource: boolean
   // The app-level "Copied to Clipboard" pill is up. Raised by `flashCopied`
   // and lowered by it alone, so nothing else has to know the timing.
   copied: boolean
@@ -140,6 +143,7 @@ export const initialUi: UiState = {
   searchFocus: 0,
   scanBusy: false,
   scanError: null,
+  scanSource: false,
   copied: false,
   notice: null,
   consentAsk: null,
@@ -308,5 +312,7 @@ export const scanStarted = () => useUi.setState({ scanBusy: true, scanError: nul
 export const scanFinished = (error?: ScanError | null) =>
   useUi.setState({ scanBusy: false, scanError: error ?? null })
 export const dismissScan = () => useUi.setState({ scanError: null })
+export const openScanSource = () => useUi.setState({ scanSource: true })
+export const closeScanSource = () => useUi.setState({ scanSource: false })
 
 export const resetUi = () => useUi.setState(initialUi, true)

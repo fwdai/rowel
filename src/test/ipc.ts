@@ -1,3 +1,4 @@
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import type { BackendError } from '@/api/errors'
 import type { AppStatus, Settings } from '@/api/app'
 import type { BrowserStatus } from '@/api/browser'
@@ -209,6 +210,7 @@ const DEFAULTS: Record<string, Handler> = {
   fetch_favicon: () => null,
   copy_to_clipboard: () => undefined,
   scan_image: reject({ kind: 'unrecognized', message: 'nothing recognized' }),
+  scan_image_bytes: reject({ kind: 'unrecognized', message: 'nothing recognized' }),
   // The dialog Rust opens: nothing picked unless a test says otherwise.
   pick_file: () => null,
 
@@ -265,9 +267,13 @@ const overrides = new Map<string, Handler>()
 const queued = new Map<string, Handler[]>()
 const recorded = new Map<string, Args[]>()
 
-/** What `@tauri-apps/api/core`'s `invoke` is replaced with (see test/setup.ts). */
-export const invokeMock = (command: string, args: Args = {}): Promise<unknown> => {
-  recorded.set(command, [...(recorded.get(command) ?? []), args])
+/**
+ * What `@tauri-apps/api/core`'s `invoke` is replaced with (see test/setup.ts).
+ * Named arguments as a rule; the one command that takes a photo
+ * (`scan_image_bytes`) gets its bytes instead, recorded as they came.
+ */
+export const invokeMock = (command: string, args: InvokeArgs = {}): Promise<unknown> => {
+  recorded.set(command, [...(recorded.get(command) ?? []), args as Args])
   const handler =
     queued.get(command)?.shift() ?? overrides.get(command) ?? DEFAULTS[command]
   if (!handler)
@@ -276,7 +282,7 @@ export const invokeMock = (command: string, args: Args = {}): Promise<unknown> =
   // promise it resolves by hand needs the handler to have run by the time the
   // call returns.
   try {
-    return Promise.resolve(handler(args))
+    return Promise.resolve(handler(args as Args))
   } catch (error) {
     return Promise.reject(error)
   }

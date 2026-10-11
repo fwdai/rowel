@@ -242,6 +242,7 @@ pub fn run() {
             commands::audit::get_audit,
             commands::tools::pick_file,
             commands::tools::scan_image,
+            commands::tools::scan_image_bytes,
             commands::tools::fetch_favicon,
             commands::clipboard::copy_to_clipboard,
             commands::setup::setup_drive_connect,
