@@ -107,9 +107,12 @@ export default function BottomSheet({ onClose, labelledBy, testid, ref, children
             <CloseGlyph size={18} />
           </IconButton>
         </div>
-        {/* The home indicator lives under the card's last row; 24px keeps the
-            content off it. */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[calc(env(safe-area-inset-bottom)+24px)]">
+        {/* The home indicator lives under the card's last row: the safe-area
+            inset keeps the content off it, and 8px more is the system's own
+            clearance — a sheet's last row ends just above the indicator, not
+            a band of ground above it. What a body needs beyond that it pads
+            itself. */}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[calc(env(safe-area-inset-bottom)+8px)]">
           {children}
         </div>
       </div>

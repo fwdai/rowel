@@ -77,7 +77,7 @@ export default function SourceSheet({
         onClose={onClose}
         className="px-5"
       />
-      <div className="px-5 pt-1 pb-2">
+      <div className="px-5 pt-1 pb-3">
         <div className={CARD}>
           <ActionRow
             testid={`${testid}-camera`}
