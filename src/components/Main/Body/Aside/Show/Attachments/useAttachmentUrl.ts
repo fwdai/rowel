@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { Attachment } from '@/api/types'
 import { readAttachment, renderAttachment, thumbnailAttachment } from '@/api/attachments'
 import { typeOf } from './kind'
@@ -92,13 +92,32 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
  * or null while it is on its way and for good if the backend cannot make one
  * (HEIC) — the row then shows the kind's glyph. Bounded on the wire and in
  * memory: a list of images used to be the files themselves, held whole, up to
- * the vault's entire budget just by opening the entry.
+ * the vault's entire budget just by opening the entry. Asked for only once
+ * `row` has scrolled into view, so a long list decodes what is looked at —
+ * and, with the backend decoding one picture at a time, never a burst.
  */
-export function useThumbnail(attachment: Attachment, enabled: boolean): string | null {
+export function useThumbnail(
+  attachment: Attachment,
+  enabled: boolean,
+  row: RefObject<HTMLElement | null>
+): string | null {
   const [url, setUrl] = useState<string | null>(null)
+  const [seen, setSeen] = useState(false)
 
   useEffect(() => {
-    if (!enabled) return
+    const el = row.current
+    if (!enabled || seen || !el) return
+    // No observer (an old engine, the test runner): the row counts as seen.
+    if (typeof IntersectionObserver === 'undefined') return setSeen(true)
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) setSeen(true)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [enabled, seen, row])
+
+  useEffect(() => {
+    if (!enabled || !seen) return
     let alive = true
     let held: string | null = null
     thumbnailAttachment(attachment.id)
@@ -113,7 +132,7 @@ export function useThumbnail(attachment: Attachment, enabled: boolean): string |
       if (held) URL.revokeObjectURL(held)
       setUrl(null)
     }
-  }, [attachment.id, enabled])
+  }, [attachment.id, enabled, seen])
 
   return url
 }

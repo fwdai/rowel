@@ -209,9 +209,11 @@ pub async fn attachment_render(
 /// A picture for the list's row: the image scaled to fit [`THUMBNAIL_SIDE`],
 /// as a PNG. A list of images used to hand the webview every file whole just
 /// to draw it at 40px, and hold them all — up to the vault's whole budget,
-/// plus the decoded bitmaps; now a row costs kilobytes and the file itself
-/// is read only when it is opened. `Unsupported` for a picture the codecs here
-/// cannot read (HEIC), which the row answers with the kind's glyph.
+/// plus the decoded bitmaps; now a row costs kilobytes, the file itself is
+/// read only when it is opened, and the rows ask one at a time as they come
+/// on screen (`useThumbnail`) while [`render_png`] decodes one picture at a
+/// time whoever asks. `Unsupported` for a picture the codecs here cannot read
+/// (HEIC), which the row answers with the kind's glyph.
 #[tauri::command]
 pub async fn attachment_thumbnail(
     id: String,
@@ -418,13 +420,21 @@ fn file_name(name: &str) -> String {
         .unwrap_or_else(|| "attachment".into())
 }
 
-/// Decode a picture and write it back as a PNG — scaled down to fit `fit` a
-/// side first, when asked, keeping its proportions and never scaling up. The
-/// decoder is told how big an image it may build, since a small TIFF can
-/// describe an enormous one: a side past [`MAX_RENDER_SIDE`], or a decode past
-/// [`MAX_RENDER_BYTES`] of memory, is refused rather than attempted. Pure, so
-/// it is tested without a vault.
+/// Decode a picture and write it back as a PNG — turned the way its EXIF
+/// orientation says (a phone stores a photo as the sensor saw it and notes
+/// which way is up; a browser honours the note, the decoder here does not), and
+/// scaled down to fit `fit` a side first, when asked, keeping its proportions
+/// and never scaling up. The decoder is told how big an image it may build,
+/// since a small TIFF can describe an enormous one: a side past
+/// [`MAX_RENDER_SIDE`], or a decode past [`MAX_RENDER_BYTES`] of memory, is
+/// refused rather than attempted. One picture at a time, whoever asks: a list
+/// of photos opening at once used to decode them all at once, and the bitmaps
+/// together could take what a phone has. Pure, so it is tested without a vault.
 fn render_png(bytes: &[u8], fit: Option<u32>) -> Result<Vec<u8>> {
+    use image::ImageDecoder;
+
+    let _one_at_a_time = ONE_PICTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let unsupported = |e: image::ImageError| Error::Unsupported(e.to_string());
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_RENDER_SIDE);
     limits.max_image_height = Some(MAX_RENDER_SIDE);
@@ -433,9 +443,10 @@ fn render_png(bytes: &[u8], fit: Option<u32>) -> Result<Vec<u8>> {
         .with_guessed_format()
         .map_err(|e| Error::Unsupported(e.to_string()))?;
     reader.limits(limits);
-    let mut decoded = reader
-        .decode()
-        .map_err(|e| Error::Unsupported(e.to_string()))?;
+    let mut decoder = reader.into_decoder().map_err(unsupported)?;
+    let orientation = decoder.orientation().map_err(unsupported)?;
+    let mut decoded = image::DynamicImage::from_decoder(decoder).map_err(unsupported)?;
+    decoded.apply_orientation(orientation);
     if let Some(side) = fit {
         if decoded.width() > side || decoded.height() > side {
             decoded = decoded.thumbnail(side, side);
@@ -447,6 +458,9 @@ fn render_png(bytes: &[u8], fit: Option<u32>) -> Result<Vec<u8>> {
         .map_err(|e| Error::Other(e.to_string()))?;
     Ok(png.into_inner())
 }
+
+/// What makes [`render_png`] decode one picture at a time.
+static ONE_PICTURE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The largest picture a rendition will decode: 12k a side, a quarter gigabyte
 /// of pixels — well past any photo, well short of what a crafted header asks.
@@ -848,6 +862,69 @@ mod tests {
             render_png(b"%PDF-1.7 not a picture", None),
             Err(Error::Unsupported(_))
         ));
+    }
+
+    // A phone's JPEG says which way is up in its EXIF, and the rendition has to
+    // turn the pixels that way: a 16×8 picture, red on the left and blue on the
+    // right, tagged "rotate 90° clockwise" (orientation 6) comes out 8×16 with
+    // the red on top. The tag is spliced into the JPEG by hand — an APP1 segment
+    // holding the smallest TIFF that carries one Orientation entry — since the
+    // encoder here writes none.
+    #[test]
+    fn a_rendition_is_turned_the_way_its_exif_says() {
+        let mut picture = image::RgbImage::new(16, 8);
+        for (x, _, pixel) in picture.enumerate_pixels_mut() {
+            *pixel = if x < 8 {
+                image::Rgb([255, 0, 0])
+            } else {
+                image::Rgb([0, 0, 255])
+            };
+        }
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        picture
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let jpeg = jpeg.into_inner();
+
+        let tiff: Vec<u8> = [
+            &b"II"[..],
+            &42u16.to_le_bytes(),
+            &8u32.to_le_bytes(),      // the IFD follows the header
+            &1u16.to_le_bytes(),      // one entry:
+            &0x0112u16.to_le_bytes(), // Orientation,
+            &3u16.to_le_bytes(),      // a SHORT,
+            &1u32.to_le_bytes(),      // one of them,
+            &6u32.to_le_bytes(),      // = 6, rotate 90° clockwise
+            &0u32.to_le_bytes(),      // no next IFD
+        ]
+        .concat();
+        let payload = [&b"Exif\0\0"[..], &tiff].concat();
+        let mut app1 = vec![0xFF, 0xE1];
+        app1.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        app1.extend_from_slice(&payload);
+        // Right after SOI, before the encoder's own segments.
+        let tagged = [&jpeg[..2], &app1, &jpeg[2..]].concat();
+
+        let turned = image::load_from_memory(&render_png(&tagged, None).unwrap())
+            .unwrap()
+            .to_rgb8();
+        assert_eq!(turned.dimensions(), (8, 16));
+        let [r, _, b] = turned.get_pixel(4, 2).0;
+        assert!(
+            r > 200 && b < 60,
+            "top should be red, got {:?}",
+            turned.get_pixel(4, 2)
+        );
+        let [r, _, b] = turned.get_pixel(4, 13).0;
+        assert!(
+            b > 200 && r < 60,
+            "bottom should be blue, got {:?}",
+            turned.get_pixel(4, 13)
+        );
+
+        // Untagged, the same picture keeps its shape.
+        let plain = image::load_from_memory(&render_png(&jpeg, None).unwrap()).unwrap();
+        assert_eq!((plain.width(), plain.height()), (16, 8));
     }
 
     // A thumbnail is bounded by its longer side and keeps the picture's shape;

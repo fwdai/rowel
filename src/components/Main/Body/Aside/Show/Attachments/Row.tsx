@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Attachment } from '@/api/types'
 import { META, ROW_HAIRLINE } from '@/components/elements/tokens'
 import { fileCaption, previewKind } from './kind'
@@ -24,12 +24,14 @@ interface Props {
  * the same one path to save or remove.
  *
  * An image row draws the backend's small thumbnail of its file, never the
- * file: the file is read only when the row is opened, so a list of pictures
- * costs the webview kilobytes whatever the files weigh.
+ * file, and asks for it only once the row is on screen: the file is read
+ * whole only when the row is opened, so a list of pictures costs the webview
+ * kilobytes whatever the files weigh.
  */
 export default function Row({ attachment, onSave, onRemove }: Props) {
   const [open, setOpen] = useState(false)
-  const thumbnail = useThumbnail(attachment, previewKind(attachment) === 'image')
+  const line = useRef<HTMLDivElement | null>(null)
+  const thumbnail = useThumbnail(attachment, previewKind(attachment) === 'image', line)
 
   const remove = () => {
     setOpen(false)
@@ -37,7 +39,7 @@ export default function Row({ attachment, onSave, onRemove }: Props) {
   }
 
   return (
-    <div data-testid="attachment-row" className={ROW_HAIRLINE}>
+    <div ref={line} data-testid="attachment-row" className={ROW_HAIRLINE}>
       <button
         type="button"
         data-testid="attachment-open-button"
