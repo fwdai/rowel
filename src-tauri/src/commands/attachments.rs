@@ -661,7 +661,10 @@ mod tests {
             .unwrap()
             .remove_attachment(&dto.id)
             .unwrap();
-        assert!(matches!(begin_unseal(&state, &dto.id), Err(Error::NotFound)));
+        assert!(matches!(
+            begin_unseal(&state, &dto.id),
+            Err(Error::NotFound)
+        ));
     }
 
     // What the preview falls back on: a format the webview may not decode comes
