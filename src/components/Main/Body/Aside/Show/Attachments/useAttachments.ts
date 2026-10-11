@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment, AttachmentUsage } from '@/api/types'
-import { attachmentUsage, listAttachments, saveAttachment } from '@/api/attachments'
+import {
+  MAX_ATTACHMENT_BYTES,
+  attachmentUsage,
+  listAttachments,
+  saveAttachment
+} from '@/api/attachments'
 import { pickFileToRead } from '@/api/tools'
 import { describeError, errorKind } from '@/api/errors'
-import { attachFile, removeAttachment, useVault } from '@/store'
+import { attachBytes, attachFile, removeAttachment, useVault } from '@/store'
 
 /** Where a picked attachment comes from: the file browser, or the photo library. */
 export type AttachSource = 'attachment' | 'photo'
@@ -43,19 +48,19 @@ export function useAttachments(entryId: string) {
     }
   }, [entryId, revision])
 
-  const fail = (e: unknown) =>
-    setError(
-      errorKind(e) === 'fileTooLarge'
-        ? t('Attachments can be up to {{size}} each', { size: '10 MB' })
-        : describeError(e) || t('Something went wrong')
-    )
+  const tooLarge = () =>
+    setError(t('Attachments can be up to {{size}} each', { size: '10 MB' }))
 
-  /** Attach `path`, a file the user already chose (a drop on the window). */
-  const add = async (path: string) => {
+  const fail = (e: unknown) =>
+    errorKind(e) === 'fileTooLarge'
+      ? tooLarge()
+      : setError(describeError(e) || t('Something went wrong'))
+
+  const attach = async (work: () => Promise<void>) => {
     setError(null)
     setBusy(true)
     try {
-      await attachFile(entryId, path)
+      await work()
     } catch (e) {
       fail(e)
     } finally {
@@ -63,17 +68,36 @@ export function useAttachments(entryId: string) {
     }
   }
 
+  /** Attach `path`, a file the user already chose (a drop on the window). */
+  const add = (path: string) => attach(() => attachFile(entryId, path))
+
+  /**
+   * Attach a file the webview holds — a photo the phone's camera just took
+   * through the capture input. Refused by size before it is read: the backend
+   * would refuse it too, but not before the whole thing had been loaded and
+   * sent over.
+   */
+  const addFile = (file: File) => {
+    if (file.size > MAX_ATTACHMENT_BYTES) return tooLarge()
+    return attach(async () => {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      await attachBytes(entryId, file.name, bytes)
+    })
+  }
+
   /**
    * Let the user pick a file and attach it: any file from the file browser, or
    * — `from: 'photo'` — an image from the photo library, where there is one
    * (see `pickFileToRead`). The image filter's name is the only part of that
-   * dialog that is ours to translate.
+   * dialog that is ours to translate. Resolves to whether a file was picked,
+   * so the phone's sheet can stay up over a cancelled picker.
    */
-  const pick = async (from: AttachSource = 'attachment') => {
+  const pick = async (from: AttachSource = 'attachment'): Promise<boolean> => {
     setError(null)
     const label = from === 'photo' ? t('Images') : undefined
     const picked = await pickFileToRead(from, label).catch(() => null)
     if (picked) await add(picked)
+    return picked !== null
   }
 
   const save = (id: string) => {
@@ -86,5 +110,5 @@ export function useAttachments(entryId: string) {
     removeAttachment(id).catch(fail)
   }
 
-  return { items, usage, error, busy, add, pick, save, remove }
+  return { items, usage, error, busy, add, addFile, pick, save, remove }
 }

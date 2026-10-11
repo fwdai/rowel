@@ -2,10 +2,10 @@ import { scanFinished, scanStarted, useApp } from '@/store'
 import { runScan } from './run'
 
 /**
- * Scan a photo the phone's system picker handed the webview's file input
- * (`elements/FileInput`, opened by `AddSecret/ScanAction`) — from the camera,
- * the photo library or Files alike. It is a `File` with no path the backend
- * could be pointed at, so its bytes are what travels.
+ * Scan a photo the phone's camera just took through the webview's capture
+ * input (the "Take Photo" row of the source sheet). It is a `File` with no
+ * path the backend could be pointed at — it was never written anywhere — so
+ * its bytes are what travels.
  *
  * The read is an await with nothing of the session in hand, so it is stamped
  * like a Rust command's: a lock while it runs (and whatever unlock follows,

@@ -1,4 +1,4 @@
-import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
+import { invoke, type InvokeArgs, type InvokeOptions } from '@tauri-apps/api/core'
 import { isBackendError, type BackendError } from './errors'
 
 /**
@@ -7,10 +7,11 @@ import { isBackendError, type BackendError } from './errors'
  * or a thrown JS error included — so no caller has to guess what it caught.
  *
  * `args` is a record of named arguments as a rule; a `Uint8Array` travels as
- * the request's raw body instead, for the one command that takes a photo.
+ * the request's raw body instead, for the commands that take a file, and
+ * whatever else such a command needs rides as `options.headers`.
  */
-export const call = <T>(command: string, args?: InvokeArgs): Promise<T> =>
-  invoke<T>(command, args).catch((error: unknown) => {
+export const call = <T>(command: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> =>
+  invoke<T>(command, args, options).catch((error: unknown) => {
     const normalized: BackendError = isBackendError(error)
       ? error
       : { kind: 'other', message: String(error) }

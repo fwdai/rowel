@@ -458,6 +458,8 @@
   "Scan a card or document…": "Zeskanuj kartę lub dokument…",
   "A photo or screenshot, read on this device.": "Zdjęcie lub zrzut ekranu, odczytywane na tym urządzeniu.",
   "Take a photo or choose one from your library. It is read on this device.": "Zrób zdjęcie lub wybierz je z biblioteki zdjęć. Jest odczytywane na tym urządzeniu.",
+  "Scan a card or document": "Zeskanuj kartę lub dokument",
+  "Take Photo": "Zrób zdjęcie",
   "Photo Library": "Biblioteka zdjęć",
   "Images": "Obrazy",
   "Rowel backup": "Kopia {{appName}}",

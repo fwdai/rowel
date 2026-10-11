@@ -442,6 +442,8 @@
   "Scan a card or document…": "Skanna ett kort eller dokument…",
   "A photo or screenshot, read on this device.": "Ett foto eller en skärmbild, läst på den här enheten.",
   "Take a photo or choose one from your library. It is read on this device.": "Ta ett foto eller välj ett från ditt bildbibliotek. Det läses på den här enheten.",
+  "Scan a card or document": "Skanna ett kort eller dokument",
+  "Take Photo": "Ta foto",
   "Photo Library": "Bildbibliotek",
   "Images": "Bilder",
   "Rowel backup": "{{appName}}-säkerhetskopia",

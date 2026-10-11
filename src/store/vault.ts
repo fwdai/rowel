@@ -9,7 +9,7 @@ import {
   setFavorite,
   clearPasswordHistory as clearPasswordHistoryCmd
 } from '@/api/vault'
-import { addAttachment, deleteAttachment } from '@/api/attachments'
+import { addAttachment, addAttachmentBytes, deleteAttachment } from '@/api/attachments'
 import { getAudit, type Audit } from '@/api/tools'
 import type { EntryDraft } from '@/kinds/draft'
 import { usePrefs } from './prefs'
@@ -239,6 +239,13 @@ export const clearPasswordHistory = async (id: string) => {
 
 export const attachFile = async (entryId: string, path: string) => {
   await addAttachment(entryId, path)
+  bumpRevision()
+  scheduleSync()
+}
+
+// The same write, for a file the webview holds rather than one on disk.
+export const attachBytes = async (entryId: string, name: string, bytes: Uint8Array) => {
+  await addAttachmentBytes(entryId, name, bytes)
   bumpRevision()
   scheduleSync()
 }

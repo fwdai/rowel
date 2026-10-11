@@ -1,4 +1,4 @@
-import type { InvokeArgs } from '@tauri-apps/api/core'
+import type { InvokeArgs, InvokeOptions } from '@tauri-apps/api/core'
 import type { BackendError } from '@/api/errors'
 import type { AppStatus, Settings } from '@/api/app'
 import type { BrowserStatus } from '@/api/browser'
@@ -13,7 +13,7 @@ import { emitEventSoon } from './events'
  */
 
 type Args = Record<string, unknown>
-type Handler = (args: Args) => unknown
+type Handler = (args: Args, options?: InvokeOptions) => unknown
 
 const reject = (error: BackendError) => () => Promise.reject(error)
 
@@ -192,6 +192,20 @@ const DEFAULTS: Record<string, Handler> = {
     attachments = [...attachments, file]
     return file
   },
+  // The phone's add: the file is the body, its entry and name the headers, as
+  // Rust reads them.
+  attachment_add_bytes: (body, options) => {
+    const headers = (options?.headers ?? {}) as Record<string, string>
+    const file: Attachment = {
+      id: 'a1',
+      entryId: headers['x-entry-id'],
+      name: decodeURIComponent(headers['x-file-name']),
+      size: (body as unknown as Uint8Array).byteLength,
+      createdAt: '2024-01-01T00:00:00.000Z'
+    }
+    attachments = [...attachments, file]
+    return file
+  },
   attachment_save: () => null,
   attachment_delete: ({ id }) => {
     attachments = attachments.filter(file => file.id !== id)
@@ -269,11 +283,18 @@ const recorded = new Map<string, Args[]>()
 
 /**
  * What `@tauri-apps/api/core`'s `invoke` is replaced with (see test/setup.ts).
- * Named arguments as a rule; the one command that takes a photo
- * (`scan_image_bytes`) gets its bytes instead, recorded as they came.
+ * Named arguments as a rule; the commands that take a file (`scan_image_bytes`,
+ * `attachment_add_bytes`) get its bytes instead, recorded as they came — and
+ * when the call carried headers, recorded as `{ body, headers }`, so a spec
+ * can see both halves of what Rust would.
  */
-export const invokeMock = (command: string, args: InvokeArgs = {}): Promise<unknown> => {
-  recorded.set(command, [...(recorded.get(command) ?? []), args as Args])
+export const invokeMock = (
+  command: string,
+  args: InvokeArgs = {},
+  options?: InvokeOptions
+): Promise<unknown> => {
+  const seen = options?.headers ? { body: args, headers: options.headers } : args
+  recorded.set(command, [...(recorded.get(command) ?? []), seen as Args])
   const handler =
     queued.get(command)?.shift() ?? overrides.get(command) ?? DEFAULTS[command]
   if (!handler)
@@ -282,7 +303,7 @@ export const invokeMock = (command: string, args: InvokeArgs = {}): Promise<unkn
   // promise it resolves by hand needs the handler to have run by the time the
   // call returns.
   try {
-    return Promise.resolve(handler(args as Args))
+    return Promise.resolve(handler(args as Args, options))
   } catch (error) {
     return Promise.reject(error)
   }

@@ -239,16 +239,14 @@ guarded Cancel.
   `chrome.ts` for the geometry every piece of bottom chrome is measured from).
 - Bottom sheets carry a grabber and dismiss on scrim tap; full-screen forms
   put Cancel on the left and Save on the right of the nav row.
-- A choice among a few actions is an action sheet (`elements/ActionSheet`):
-  a floating group of centred rows inset from the edges, a separate Cancel
-  pill, no grabber, no close button, no chevrons. It is a different species
-  from the bottom sheet, which is a surface with content and a grabber, and
-  it may sit over one. Where the system's own sheet says the right thing it
-  wins outright: Scan opens the webview's file input (`elements/FileInput`),
-  which iOS answers with Photo Library · Take Photo · Choose File and then the
-  matching system picker, and what that hands back travels to Rust as bytes.
-  Attach asks with an action sheet instead, because the system's would offer
-  the camera, and each answer runs the matching system picker from Rust.
+- Where a photo or a file comes from is one sheet, `elements/SourceSheet`:
+  Take Photo · Photo Library · Choose File, under the names the system gives
+  them, each row opening the system's own picker (the camera through the
+  webview's capture input, the other two through the Rust dialog). Attach and
+  Scan both ask with it. A sheet never stacks on a sheet: a row of the Add
+  picker that needs one closes the picker and opens it in its place, as
+  Receive does. A lock drops every sheet with the session (`resetUi`); a
+  system picker already up is the OS's and outlives it until dismissed.
 - The primary action of a detail screen is a bottom, thumb-reachable button.
 - Copy on tap for value rows; the feedback is the existing copy toast.
 - No hover-only UI. No tooltips as the sole label.

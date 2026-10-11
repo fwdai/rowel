@@ -66,11 +66,17 @@ export const getAudit = (checkBreaches: boolean): Promise<Audit> =>
  * named anything — and so does `'attachment'`. `'photo'` is an attachment
  * pick under the image filter: on a phone that opens the photo library rather
  * than the file browser, and what it picks is readable only as an attachment.
+ * `browse` asks a phone for the file browser even under an image filter (a
+ * photo kept in Files); the desktop's one dialog ignores it.
  */
 export type PickKind = 'image' | 'env' | 'attachment' | 'photo'
 
-export const pickFileToRead = (kind: PickKind, label?: string): Promise<string | null> =>
-  call('pick_file', { kind, label: label ?? null })
+export const pickFileToRead = (
+  kind: PickKind,
+  label?: string,
+  browse = false
+): Promise<string | null> =>
+  call('pick_file', { kind, label: label ?? null, ...(browse && { browse }) })
 
 export interface ScanResult {
   kind: 'card' | 'identity'

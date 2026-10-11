@@ -461,6 +461,8 @@
   "Scan a card or document…": "Scanner une carte ou un document…",
   "A photo or screenshot, read on this device.": "Une photo ou une capture d’écran, lue sur cet appareil.",
   "Take a photo or choose one from your library. It is read on this device.": "Prenez une photo ou choisissez-en une dans votre photothèque. Elle est lue sur cet appareil.",
+  "Scan a card or document": "Scanner une carte ou un document",
+  "Take Photo": "Prendre une photo",
   "Photo Library": "Photothèque",
   "Images": "Images",
   "Rowel backup": "Sauvegarde {{appName}}",

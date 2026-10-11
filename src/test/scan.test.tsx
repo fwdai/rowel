@@ -236,9 +236,9 @@ describe('scanning from the picker', () => {
     expect(useVault.getState().creating).toBe('card')
   })
 
-  // The phone's file input (see scanMobile.test) is not the desktop's way in:
-  // the row goes straight to the dialog.
-  it('opens the dialog, not a file input, on the desktop', async () => {
+  // The phone's source sheet (see scanMobile.test) is not the desktop's way
+  // in: the row goes straight to the dialog.
+  it('asks no source question on the desktop', async () => {
     seed()
     seedApp({ scanSupported: true })
     render(<Main />)
@@ -246,7 +246,7 @@ describe('scanning from the picker', () => {
 
     await userEvent.click(screen.getByTestId('add-scan-image'))
 
-    expect(screen.queryByTestId('add-scan-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('scan-source-sheet')).not.toBeInTheDocument()
     expect(calls('pick_file')).toHaveLength(1)
   })
 })
