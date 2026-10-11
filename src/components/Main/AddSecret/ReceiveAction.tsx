@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { closeAddPicker, openReceive } from '@/store'
 import { ShareGlyph } from '../icons'
-import ActionRow from './ActionRow'
+import ActionRow from '@/components/elements/ActionRow'
 
 /**
  * The one way in that adds an entry without writing one: a link someone else

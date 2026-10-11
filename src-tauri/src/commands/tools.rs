@@ -15,16 +15,20 @@ use crate::{favicon, scan};
 
 /// The OS file dialog, for a file the backend will then read: `kind` is
 /// `"image"` (filtered to what the scanner opens), `"env"` (any file, since
-/// an env file may be named anything) or `"attachment"` (any file). The path
-/// picked, or `None` when the dialog was dismissed.
+/// an env file may be named anything), `"attachment"` (any file) or `"photo"`
+/// (an image to attach — the attachment pick under the image filter, which is
+/// what makes a phone offer its photo library rather than its file browser:
+/// the dialog plugin switches to the media picker when no filter names a
+/// non-media type). The path picked, or `None` when the dialog was dismissed.
 ///
 /// Run from Rust rather than through the dialog plugin's JS API so the choice
 /// is one the backend witnessed: the picked path is granted (see `grants`)
 /// before the webview hears of it, and `scan_image` / `read_env_file` read
-/// only granted paths. The grant carries the `kind` the dialog was opened as,
-/// so a file chosen from the env picker cannot be spent on a scan instead.
-/// `label` is the filter's name in the dialog's own chrome, translated by the
-/// webview, which owns the catalogue.
+/// only granted paths. The grant carries the purpose the dialog was opened
+/// for, so a file chosen from the env picker cannot be spent on a scan
+/// instead — and a photo picked to attach is only ever attached, never
+/// scanned. `label` is the filter's name in the dialog's own chrome,
+/// translated by the webview, which owns the catalogue.
 #[tauri::command]
 pub async fn pick_file(
     app: AppHandle,
@@ -41,6 +45,11 @@ pub async fn pick_file(
         }
         "env" => Purpose::Env,
         "attachment" => Purpose::Attachment,
+        "photo" => {
+            let label = label.unwrap_or_else(|| "Images".into());
+            dialog = dialog.add_filter(label, &scan::IMAGE_EXTENSIONS);
+            Purpose::Attachment
+        }
         other => return Err(Error::Unsupported(format!("no {other} picker"))),
     };
     // The dialog blocks its caller until the user answers, so it runs on the

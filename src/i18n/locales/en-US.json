@@ -716,6 +716,8 @@
   "Account": "Account",
   "Asked by {{origin}} through the browser extension.": "Asked by {{origin}} through the browser extension.",
   "Attach file": "Attach file",
+  "Photo Library": "Photo Library",
+  "Choose File…": "Choose File…",
   "Attaching…": "Attaching…",
   "Attachments": "Attachments",
   "Attachments can be up to {{size}} each": "Attachments can be up to {{size}} each",

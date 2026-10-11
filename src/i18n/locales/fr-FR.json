@@ -727,6 +727,8 @@
   "Account": "Compte",
   "Asked by {{origin}} through the browser extension.": "Demandé par {{origin}} via l’extension de navigateur.",
   "Attach file": "Joindre un fichier",
+  "Photo Library": "Photothèque",
+  "Choose File…": "Choisir un fichier…",
   "Attaching…": "Ajout en cours…",
   "Attachments": "Pièces jointes",
   "Attachments can be up to {{size}} each": "Chaque pièce jointe peut faire jusqu’à {{size}}",

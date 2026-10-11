@@ -710,6 +710,8 @@
   "Account": "Konto",
   "Asked by {{origin}} through the browser extension.": "Begärt av {{origin}} via webbläsartillägget.",
   "Attach file": "Bifoga fil",
+  "Photo Library": "Bildbibliotek",
+  "Choose File…": "Välj fil…",
   "Attaching…": "Bifogar…",
   "Attachments": "Bilagor",
   "Attachments can be up to {{size}} each": "Varje bilaga får vara högst {{size}}",
