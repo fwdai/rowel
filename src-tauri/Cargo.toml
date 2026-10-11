@@ -41,10 +41,15 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 rowel-core = { path = "crates/core" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
-# Re-encoding a picture the webview cannot decode itself (a TIFF, a BMP) as a
-# PNG it can, for the attachment preview. Only the codecs that need it: the
-# `png` and `tiff` decoders are already in the tree through Tauri's icons.
-image = { version = "0.25", default-features = false, features = ["png", "tiff", "bmp"] }
+# Pictures for the attachment list: a bounded thumbnail of a photo or a scan,
+# and a PNG re-encoding of one the webview cannot decode itself (a TIFF, a
+# BMP) for the preview. The codecs are the ones already in the tree (`png`,
+# `jpeg` and `tiff` through Tauri and the scanner) plus the small `bmp`; a GIF
+# or a WebP previews natively everywhere and only lacks a row thumbnail until
+# its codec is added here, and HEIC has no decoder — the phone's picker hands
+# photos over as JPEG, so that is the rare `.heic` picked from Files. A
+# picture without a thumbnail gets the kind's glyph.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"

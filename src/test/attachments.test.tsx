@@ -161,61 +161,96 @@ describe('attachments on an entry', () => {
 const bytesOf = (text: string) => new TextEncoder().encode(text).buffer
 
 describe('opening a file', () => {
-  it('draws an image as its own thumbnail and opens it without a second read', async () => {
+  // A row draws the backend's small thumbnail, never the file: the file is read
+  // only when it is opened. (A list of pictures used to be the pictures, whole.)
+  it('draws an image from its thumbnail and reads the file only when opened', async () => {
     seedAttachments([file({ name: 'IMG_0971.png', mime: 'image/png', size: 686_080 })])
-    mockCommand('attachment_read', () => bytesOf('not really a png'))
+    mockCommand('attachment_thumbnail', () => bytesOf('small png'))
+    mockCommand('attachment_read', () => bytesOf('the whole png'))
     render(<Show entry={loginMeta()} />)
 
     const thumb = await screen.findByTestId('attachment-thumb')
     expect(thumb).toHaveAttribute('src', expect.stringMatching(/^blob:/))
-    expect(calls('attachment_read')).toEqual([{ id: 'a1' }])
+    expect(calls('attachment_thumbnail')).toEqual([{ id: 'a1' }])
+    expect(calls('attachment_read')).toEqual([])
     expect(screen.getByTestId('attachment-row')).toHaveTextContent('670 KB · PNG')
 
     await userEvent.click(screen.getByTestId('attachment-open-button'))
 
     const preview = screen.getByTestId('attachment-preview')
     expect(preview).toHaveTextContent('IMG_0971.png')
-    expect(screen.getByTestId('preview-image')).toHaveAttribute('src', thumb.getAttribute('src'))
-    expect(calls('attachment_read')).toHaveLength(1)
+    const image = await screen.findByTestId('preview-image')
+    expect(image).toHaveAttribute('src', expect.stringMatching(/^blob:/))
+    expect(image.getAttribute('src')).not.toBe(thumb.getAttribute('src'))
+    expect(calls('attachment_read')).toEqual([{ id: 'a1' }])
 
     await userEvent.click(screen.getByTestId('attachment-preview-close'))
     expect(screen.queryByTestId('attachment-preview')).not.toBeInTheDocument()
   })
 
-  // A file attached before its format was in the backend's table has no type;
-  // its name still says what it is.
-  it('treats a typeless file as what its name says it is', async () => {
-    seedAttachments([file({ name: 'scan.tif', mime: undefined })])
-    mockCommand('attachment_read', () => bytesOf('tiff'))
+  // A picture the backend cannot make a thumbnail of (HEIC) keeps the kind's
+  // glyph in its row, and so does one the engine will not draw.
+  it('shows the kind’s glyph when there is no thumbnail to draw', async () => {
+    seedAttachments([file({ name: 'IMG_0971.heic', mime: 'image/heic' })])
+    mockCommand('attachment_thumbnail', () =>
+      Promise.reject({ kind: 'unsupported', message: 'no codec' })
+    )
     render(<Show entry={loginMeta()} />)
 
-    expect(await screen.findByTestId('attachment-thumb')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('attachment-open-button'))
-    expect(screen.getByTestId('preview-image')).toBeInTheDocument()
+    await screen.findByTestId('attachment-row')
+    await waitFor(() => expect(calls('attachment_thumbnail')).toHaveLength(1))
+    expect(screen.queryByTestId('attachment-thumb')).not.toBeInTheDocument()
+
+    mockCommand('attachment_thumbnail', () => bytesOf('png'))
+    seedAttachments([file({ id: 'a2', name: 'odd.png', mime: 'image/png' })])
+    act(() => setEntries([loginMeta()]))
+    const thumb = await screen.findByTestId('attachment-thumb')
+    fireEvent.error(thumb)
+    await waitFor(() => expect(screen.queryByTestId('attachment-thumb')).not.toBeInTheDocument())
+  })
+
+  // A file attached before its format was in the backend's table has no type;
+  // its name still says what it is, and the bytes are held under that type so
+  // the document viewer knows what it is looking at.
+  it('treats a typeless file as what its name says it is', async () => {
+    seedAttachments([
+      file({ id: 'a1', name: 'scan.tif', mime: undefined }),
+      file({ id: 'a2', name: 'old.pdf', mime: undefined })
+    ])
+    mockCommand('attachment_thumbnail', () => bytesOf('png'))
+    mockCommand('attachment_read', () => bytesOf('%PDF-1.4'))
+    const made = vi.spyOn(URL, 'createObjectURL')
+    render(<Show entry={loginMeta()} />)
+
+    const [tif, pdf] = await screen.findAllByTestId('attachment-row')
+    await waitFor(() => expect(tif.querySelector('[data-testid="attachment-thumb"]')).toBeTruthy())
+    expect(calls('attachment_thumbnail')).toEqual([{ id: 'a1' }])
+
+    await userEvent.click(pdf.querySelector('[data-testid="attachment-open-button"]')!)
+    expect(await screen.findByTestId('preview-document')).toBeInTheDocument()
+    const held = made.mock.calls[made.mock.calls.length - 1][0] as Blob
+    expect(held.type).toBe('application/pdf')
+    made.mockRestore()
   })
 
   // What a TIFF comes to on an engine that cannot decode one: the backend's PNG
-  // of it, shown in its place — in the row and in the open file alike, since
-  // the two share the one URL. A PNG that will not decode either is given up on.
+  // of it, shown in its place. A PNG that will not decode either is given up on.
   it('falls back to the backend’s PNG when the engine cannot decode a picture', async () => {
     seedAttachments([file({ name: 'scan.tiff', mime: 'image/tiff' })])
     mockCommand('attachment_read', () => bytesOf('tiff'))
     mockCommand('attachment_render', () => bytesOf('png'))
     render(<Show entry={loginMeta()} />)
 
-    const thumb = await screen.findByTestId('attachment-thumb')
-    const original = thumb.getAttribute('src')
-    fireEvent.error(thumb)
+    await userEvent.click(await screen.findByTestId('attachment-open-button'))
+    const image = await screen.findByTestId('preview-image')
+    const original = image.getAttribute('src')
+    fireEvent.error(image)
 
     await waitFor(() => expect(calls('attachment_render')).toEqual([{ id: 'a1' }]))
-    const rendered = await screen.findByTestId('attachment-thumb')
+    const rendered = await screen.findByTestId('preview-image')
     await waitFor(() => expect(rendered.getAttribute('src')).not.toBe(original))
 
-    await userEvent.click(screen.getByTestId('attachment-open-button'))
-    const image = screen.getByTestId('preview-image')
-    expect(image).toHaveAttribute('src', screen.getByTestId('attachment-thumb').getAttribute('src'))
-
-    fireEvent.error(image)
+    fireEvent.error(screen.getByTestId('preview-image'))
     expect(await screen.findByTestId('preview-unavailable')).toBeInTheDocument()
     expect(calls('attachment_render')).toHaveLength(1)
   })

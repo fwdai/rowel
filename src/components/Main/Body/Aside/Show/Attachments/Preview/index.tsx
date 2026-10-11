@@ -8,7 +8,7 @@ import { useDialogFocus } from '@/hooks/useDialogFocus'
 import { useVisualViewport, viewportStyle } from '@/hooks/useVisualViewport'
 import { CloseGlyph, DownloadGlyph, TrashGlyph } from '@/components/Main/icons'
 import { fileCaption, previewKind } from '../kind'
-import { useAttachmentUrl, type AttachmentUrl } from '../useAttachmentUrl'
+import { useAttachmentUrl } from '../useAttachmentUrl'
 import Stage from './Stage'
 
 const TITLE_ID = 'attachment-preview-title'
@@ -23,8 +23,6 @@ const BAR_ACTION = 'h-11 w-11'
 
 interface Props {
   attachment: Attachment
-  /** The file already read, by the row that drew its thumbnail. */
-  given?: AttachmentUrl
   onSave: () => void
   onRemove: () => void
   onClose: () => void
@@ -47,15 +45,14 @@ interface Props {
  * keyboard, sized to the visible viewport). Clicking the ground beside the
  * file closes it, as a lightbox does.
  */
-export default function Preview({ attachment, given, onSave, onRemove, onClose }: Props) {
+export default function Preview({ attachment, onSave, onRemove, onClose }: Props) {
   const { t } = useTranslation()
   const frame = useRef<HTMLDivElement | null>(null)
   useDialogFocus(frame, onClose)
   const view = useVisualViewport()
   const [asking, setAsking] = useState(false)
   const kind = previewKind(attachment)
-  const own = useAttachmentUrl(attachment, kind !== 'none' && !given)
-  const file = given ?? own
+  const file = useAttachmentUrl(attachment, kind !== 'none')
 
   return (
     <div

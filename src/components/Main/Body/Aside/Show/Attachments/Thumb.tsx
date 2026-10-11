@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Attachment } from '@/api/types'
 import { cx } from '@/utils/cx'
 import {
@@ -10,10 +11,8 @@ import { extensionOf, previewKind, type PreviewKind } from './kind'
 
 interface Props {
   attachment: Attachment
-  /** The image itself, once read; the tile shows the file's page until then. */
+  /** The picture, once read; the tile shows the file's page until then. */
   url?: string | null
-  /** The engine could not decode what `url` points at (see `useAttachmentUrl`). */
-  onBroken?: () => void
   /** A list row's 40px thumbnail, or the preview's 112px one for a file it cannot show. */
   size?: 'row' | 'hero'
 }
@@ -40,10 +39,11 @@ const GLYPHS: Record<PreviewKind, typeof FileGlyph> = {
  * size the file's type stamped in the corner ("PDF"), which is how Files and
  * Finder tell one document from the next; a 40px row thumbnail has no room
  * for the stamp, and the caption beside it says the type anyway. A picture
- * the engine cannot decode is reported up (`onBroken`), and the page holds
- * until a URL it can draw arrives, or for good.
+ * the engine cannot decode leaves the page showing.
  */
-export default function Thumb({ attachment, url, onBroken, size = 'row' }: Props) {
+export default function Thumb({ attachment, url, size = 'row' }: Props) {
+  // The URL that would not decode, if any: a new one gets a fresh try.
+  const [broken, setBroken] = useState<string | null>(null)
   const Glyph = attachment.mime === 'application/zip' ? FileArchiveGlyph : GLYPHS[previewKind(attachment)]
   const extension = size === 'hero' ? extensionOf(attachment.name) : null
 
@@ -60,21 +60,19 @@ export default function Thumb({ attachment, url, onBroken, size = 'row' }: Props
           {extension}
         </span>
       )}
-      {url && (
-        // Over the page rather than instead of it: an image that fails to
-        // decode draws nothing, and the page is what shows through. Keyed by
-        // URL so a swapped source starts a fresh load and a fresh error.
-        <img
-          key={url}
-          src={url}
-          alt=""
-          data-testid="attachment-thumb"
-          onError={onBroken}
-          className="absolute inset-0 h-full w-full bg-tile object-cover"
-        />
+      {url && url !== broken && (
+        <>
+          <img
+            src={url}
+            alt=""
+            data-testid="attachment-thumb"
+            onError={() => setBroken(url)}
+            className="absolute inset-0 h-full w-full bg-tile object-cover"
+          />
+          {/* A hairline over the picture, so a white image still has an edge. */}
+          <span className="absolute inset-0 rounded-[inherit] ring-1 ring-line ring-inset" />
+        </>
       )}
-      {/* A hairline over the picture, so a white image still has an edge. */}
-      {url && <span className="absolute inset-0 rounded-[inherit] ring-1 ring-line ring-inset" />}
     </span>
   )
 }

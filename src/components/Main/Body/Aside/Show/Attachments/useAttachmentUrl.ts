@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Attachment } from '@/api/types'
-import { readAttachment, renderAttachment } from '@/api/attachments'
+import { readAttachment, renderAttachment, thumbnailAttachment } from '@/api/attachments'
+import { typeOf } from './kind'
 
 export interface AttachmentUrl {
   /** An object URL for the file's bytes, once read; null before and on failure. */
@@ -27,10 +28,11 @@ type Held = Omit<AttachmentUrl, 'degrade'> & {
 const EMPTY: Held = { url: null, bytes: null, failed: false, unsupported: false, rendition: false }
 
 /**
- * One attachment's bytes as something the DOM can point at: an `<img>`, an
- * `<iframe>`, a thumbnail. Read when `enabled` first turns true and held as
- * long as the caller is mounted — the object URL is revoked on the way out, so
- * nothing outlives the view that asked.
+ * One attachment's bytes as something the DOM can point at — an `<img>`, an
+ * `<iframe>` — for the file that is open. Read when `enabled` first turns
+ * true and held as long as the caller is mounted: the object URL is revoked
+ * on the way out, so nothing outlives the view that asked, and only the open
+ * file is ever held whole (a row draws `useThumbnail`'s small picture).
  *
  * What an `<img>` makes of the bytes is the engine's business, and engines
  * differ (WebKit reads a TIFF, Chromium does not), so the caller reports a
@@ -44,16 +46,18 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
   // out of state so the cleanup and a late `degrade` see the latest.
   const alive = useRef(false)
   const current = useRef<string | null>(null)
+  const type = typeOf(attachment)
 
   const hold = useCallback(
     (bytes: Uint8Array<ArrayBuffer>, rendition: boolean) => {
       if (!alive.current) return
       if (current.current) URL.revokeObjectURL(current.current)
-      const type = rendition ? 'image/png' : attachment.mime
-      current.current = URL.createObjectURL(new Blob([bytes], { type }))
+      current.current = URL.createObjectURL(
+        new Blob([bytes], { type: rendition ? 'image/png' : type })
+      )
       setHeld({ ...EMPTY, url: current.current, bytes, rendition })
     },
-    [attachment.mime]
+    [type]
   )
 
   useEffect(() => {
@@ -81,4 +85,35 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
 
   const { url, bytes, failed, unsupported } = held
   return { url, bytes, failed, unsupported, degrade }
+}
+
+/**
+ * A picture's row thumbnail: the backend's small PNG of it, as an object URL,
+ * or null while it is on its way and for good if the backend cannot make one
+ * (HEIC) — the row then shows the kind's glyph. Bounded on the wire and in
+ * memory: a list of images used to be the files themselves, held whole, up to
+ * the vault's entire budget just by opening the entry.
+ */
+export function useThumbnail(attachment: Attachment, enabled: boolean): string | null {
+  const [url, setUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!enabled) return
+    let alive = true
+    let held: string | null = null
+    thumbnailAttachment(attachment.id)
+      .then(bytes => {
+        if (!alive) return
+        held = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
+        setUrl(held)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+      if (held) URL.revokeObjectURL(held)
+      setUrl(null)
+    }
+  }, [attachment.id, enabled])
+
+  return url
 }

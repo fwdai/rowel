@@ -202,7 +202,23 @@ pub async fn attachment_render(
     state: State<'_, AppState>,
 ) -> Result<tauri::ipc::Response> {
     let (_, bytes) = unseal(&state, &id).await?;
-    let png = super::blocking(move || render_png(&bytes)).await?;
+    let png = super::blocking(move || render_png(&bytes, None)).await?;
+    Ok(tauri::ipc::Response::new(png))
+}
+
+/// A picture for the list's row: the image scaled to fit [`THUMBNAIL_SIDE`],
+/// as a PNG. A list of images used to hand the webview every file whole just
+/// to draw it at 40px, and hold them all — up to the vault's whole budget,
+/// plus the decoded bitmaps; now a row costs kilobytes and the file itself
+/// is read only when it is opened. `Unsupported` for a picture the codecs here
+/// cannot read (HEIC), which the row answers with the kind's glyph.
+#[tauri::command]
+pub async fn attachment_thumbnail(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<tauri::ipc::Response> {
+    let (_, bytes) = unseal(&state, &id).await?;
+    let png = super::blocking(move || render_png(&bytes, Some(THUMBNAIL_SIDE))).await?;
     Ok(tauri::ipc::Response::new(png))
 }
 
@@ -402,12 +418,13 @@ fn file_name(name: &str) -> String {
         .unwrap_or_else(|| "attachment".into())
 }
 
-/// Decode a picture and write it back as a PNG. The decoder is told how big
-/// an image it may build, since a small TIFF can describe an enormous one:
-/// a side past [`MAX_RENDER_SIDE`], or a decode past [`MAX_RENDER_BYTES`] of
-/// memory, is refused rather than attempted. Pure, so it is tested without a
-/// vault.
-fn render_png(bytes: &[u8]) -> Result<Vec<u8>> {
+/// Decode a picture and write it back as a PNG — scaled down to fit `fit` a
+/// side first, when asked, keeping its proportions and never scaling up. The
+/// decoder is told how big an image it may build, since a small TIFF can
+/// describe an enormous one: a side past [`MAX_RENDER_SIDE`], or a decode past
+/// [`MAX_RENDER_BYTES`] of memory, is refused rather than attempted. Pure, so
+/// it is tested without a vault.
+fn render_png(bytes: &[u8], fit: Option<u32>) -> Result<Vec<u8>> {
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_RENDER_SIDE);
     limits.max_image_height = Some(MAX_RENDER_SIDE);
@@ -416,9 +433,14 @@ fn render_png(bytes: &[u8]) -> Result<Vec<u8>> {
         .with_guessed_format()
         .map_err(|e| Error::Unsupported(e.to_string()))?;
     reader.limits(limits);
-    let decoded = reader
+    let mut decoded = reader
         .decode()
         .map_err(|e| Error::Unsupported(e.to_string()))?;
+    if let Some(side) = fit {
+        if decoded.width() > side || decoded.height() > side {
+            decoded = decoded.thumbnail(side, side);
+        }
+    }
     let mut png = std::io::Cursor::new(Vec::new());
     decoded
         .write_to(&mut png, image::ImageFormat::Png)
@@ -430,6 +452,10 @@ fn render_png(bytes: &[u8]) -> Result<Vec<u8>> {
 /// of pixels — well past any photo, well short of what a crafted header asks.
 const MAX_RENDER_SIDE: u32 = 12_000;
 const MAX_RENDER_BYTES: u64 = 256 * 1024 * 1024;
+
+/// What a row's thumbnail is scaled to fit: a 40px tile at the sharpest phone
+/// density is 120px, with room for the crop `object-cover` makes.
+const THUMBNAIL_SIDE: u32 = 160;
 
 /// A best guess at the type from the name, for the list's glyph and for what
 /// the webview will try to show. `None` is simply "a file" — and a name the
@@ -812,16 +838,48 @@ mod tests {
             .write_to(&mut bmp, image::ImageFormat::Bmp)
             .unwrap();
 
-        let png = render_png(bmp.get_ref()).unwrap();
+        let png = render_png(bmp.get_ref(), None).unwrap();
         assert!(png.starts_with(b"\x89PNG"));
         let back = image::load_from_memory(&png).unwrap().to_rgba8();
         assert_eq!(back.dimensions(), (3, 2));
         assert_eq!(back.get_pixel(2, 1).0, [10, 20, 30, 255]);
 
         assert!(matches!(
-            render_png(b"%PDF-1.7 not a picture"),
+            render_png(b"%PDF-1.7 not a picture", None),
             Err(Error::Unsupported(_))
         ));
+    }
+
+    // A thumbnail is bounded by its longer side and keeps the picture's shape;
+    // one already small enough is left at its own size rather than blown up.
+    #[test]
+    fn a_thumbnail_fits_its_side_and_never_scales_up() {
+        let encode = |w, h| {
+            let mut png = std::io::Cursor::new(Vec::new());
+            image::RgbaImage::from_pixel(w, h, image::Rgba([1, 2, 3, 255]))
+                .write_to(&mut png, image::ImageFormat::Png)
+                .unwrap();
+            png.into_inner()
+        };
+        let size = |png: &[u8]| {
+            image::load_from_memory(png)
+                .unwrap()
+                .to_rgba8()
+                .dimensions()
+        };
+
+        assert_eq!(
+            size(&render_png(&encode(800, 200), Some(160)).unwrap()),
+            (160, 40)
+        );
+        assert_eq!(
+            size(&render_png(&encode(200, 800), Some(160)).unwrap()),
+            (40, 160)
+        );
+        assert_eq!(
+            size(&render_png(&encode(30, 20), Some(160)).unwrap()),
+            (30, 20)
+        );
     }
 
     #[test]

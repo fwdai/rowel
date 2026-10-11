@@ -4,7 +4,7 @@ import { META, ROW_HAIRLINE } from '@/components/elements/tokens'
 import { fileCaption, previewKind } from './kind'
 import Preview from './Preview'
 import Thumb from './Thumb'
-import { useAttachmentUrl } from './useAttachmentUrl'
+import { useThumbnail } from './useAttachmentUrl'
 
 interface Props {
   attachment: Attachment
@@ -23,13 +23,13 @@ interface Props {
  * (`Preview`); it carries no other control, so a finger and a pointer take
  * the same one path to save or remove.
  *
- * An image row reads its file as soon as it is shown and lends the preview
- * the same URL, so the picture opens without a second read.
+ * An image row draws the backend's small thumbnail of its file, never the
+ * file: the file is read only when the row is opened, so a list of pictures
+ * costs the webview kilobytes whatever the files weigh.
  */
 export default function Row({ attachment, onSave, onRemove }: Props) {
   const [open, setOpen] = useState(false)
-  const image = previewKind(attachment) === 'image'
-  const file = useAttachmentUrl(attachment, image)
+  const thumbnail = useThumbnail(attachment, previewKind(attachment) === 'image')
 
   const remove = () => {
     setOpen(false)
@@ -46,7 +46,7 @@ export default function Row({ attachment, onSave, onRemove }: Props) {
         // `EDGE_GUTTER`, with its heading and the verb under it.
         className="flex w-full min-w-0 cursor-pointer items-center gap-3 py-2.5 text-left transition-colors hover:bg-hover active:bg-hover"
       >
-        <Thumb attachment={attachment} url={file.url} onBroken={file.degrade} size="row" />
+        <Thumb attachment={attachment} url={thumbnail} size="row" />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-base text-text max-md:text-md">
             {attachment.name}
@@ -57,7 +57,6 @@ export default function Row({ attachment, onSave, onRemove }: Props) {
       {open && (
         <Preview
           attachment={attachment}
-          given={image ? file : undefined}
           onSave={onSave}
           onRemove={remove}
           onClose={() => setOpen(false)}

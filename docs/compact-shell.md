@@ -168,7 +168,9 @@ file's name in its bar and a Quick Look-style close on the left. Removing
 asks first through `elements/ConfirmSheet`: the platform's action sheet on the
 phone, a red verb over a bold Cancel from the bottom edge, and the same two
 rows on a small card on the desktop. The bytes come to the webview only for
-the file being shown (`attachment_read`), never with the list; a picture the
+the file being shown (`attachment_read`), never with the list — a row's
+thumbnail is the backend's small PNG of the picture (`attachment_thumbnail`),
+so a list of images costs kilobytes whatever the files weigh; a picture the
 engine cannot decode (a TIFF or a BMP off Apple platforms) is fetched again as
 the backend's PNG of it (`attachment_render`), so what an image shows does
 not depend on the OS. Under the list, and alone on an entry with no files, one quiet line:

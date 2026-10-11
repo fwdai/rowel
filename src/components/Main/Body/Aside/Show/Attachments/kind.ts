@@ -13,19 +13,26 @@ export const extensionOf = (name: string): string | null => {
   return match ? match[1].toUpperCase() : null
 }
 
+// What the picker filters images by, as types — `jpg` and `tif` under the
+// names their types go by.
+const imageType = (extension: string) =>
+  `image/${{ jpg: 'jpeg', tif: 'tiff' }[extension] ?? extension}`
+
 /**
- * The backend guesses a type from the name when a file is attached and stores
- * it for good, so a file attached before its format was in that table has
- * none. For those the name is guessed from again here — images by the same
- * list the picker filters by (`IMAGE_EXTENSIONS`), so what can be picked as a
- * picture is what is shown as one.
+ * The file's type: the one the backend guessed when it was attached, or —
+ * for a file attached before its format was in that table, which has none —
+ * one guessed again here from the name: images by the same list the picker
+ * filters by (`IMAGE_EXTENSIONS`), so what can be picked as a picture is what
+ * is shown as one. Empty for a name that says nothing. This is also the type
+ * the file's bytes are held under in the webview, which is what lets the
+ * document viewer recognise a typeless PDF.
  */
-const typeOf = ({ mime, name }: Attachment): string => {
+export const typeOf = ({ mime, name }: Attachment): string => {
   if (mime) return mime
-  if (isImagePath(name)) return 'image/'
-  const extension = extensionOf(name)?.toLowerCase()
+  const extension = extensionOf(name)?.toLowerCase() ?? ''
+  if (isImagePath(name)) return imageType(extension)
   if (extension === 'pdf') return 'application/pdf'
-  return extension && TEXT_EXTENSIONS.includes(extension) ? 'text/' : ''
+  return TEXT_EXTENSIONS.includes(extension) ? 'text/plain' : ''
 }
 
 export const previewKind = (attachment: Attachment): PreviewKind => {

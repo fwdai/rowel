@@ -211,6 +211,7 @@ const DEFAULTS: Record<string, Handler> = {
   // buffer. Empty, since a spec about what a file *shows* seeds its own.
   attachment_read: () => new ArrayBuffer(0),
   attachment_render: () => new ArrayBuffer(0),
+  attachment_thumbnail: () => new ArrayBuffer(0),
   attachment_delete: ({ id }) => {
     attachments = attachments.filter(file => file.id !== id)
   },

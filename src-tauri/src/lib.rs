@@ -234,6 +234,7 @@ pub fn run() {
             commands::attachments::attachment_save,
             commands::attachments::attachment_read,
             commands::attachments::attachment_render,
+            commands::attachments::attachment_thumbnail,
             commands::attachments::attachment_delete,
             commands::attachments::attachment_usage,
             commands::import::import_entries,

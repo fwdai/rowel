@@ -45,10 +45,16 @@ export const attachmentUsage = (): Promise<AttachmentUsage> => call('attachment_
 export const saveAttachment = (id: string): Promise<string | null> =>
   call('attachment_save', { id })
 
-// The two commands below answer with the file itself rather than JSON, which
-// `invoke` hands over as an ArrayBuffer. (Each names its command literally:
+// The three commands below answer with bytes rather than JSON, which `invoke`
+// hands over as an ArrayBuffer. (Each names its command literally:
 // `contract.test` reads the names off these calls.)
 const asBytes = (buffer: ArrayBuffer) => new Uint8Array(buffer)
+
+// A small PNG of a picture, for its row in the list: bounded by the backend,
+// so a list of images costs kilobytes rather than the files. Rejects
+// `unsupported` for a picture the backend cannot decode (HEIC).
+export const thumbnailAttachment = (id: string): Promise<Uint8Array<ArrayBuffer>> =>
+  call<ArrayBuffer>('attachment_thumbnail', { id }).then(asBytes)
 
 // One attachment's bytes, to show it.
 export const readAttachment = (id: string): Promise<Uint8Array<ArrayBuffer>> =>
