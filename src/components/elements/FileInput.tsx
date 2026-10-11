@@ -21,8 +21,10 @@ interface Props {
  * `Info.plist`); the library and Files need none.
  *
  * What it hands back is a `File` on no path the backend could be pointed at,
- * so it travels as bytes (`scan_image_bytes`, `attachment_add_bytes`). No
- * `capture`: that would skip the sheet and open the camera outright.
+ * so it travels as bytes (`scan_image_bytes`). No `capture`: that would skip
+ * the sheet and open the camera outright. And only where the camera belongs
+ * in the question — attaching a file asks with `ActionSheet` instead, since
+ * this sheet cannot be told to leave the camera out.
  *
  * Hidden, and out of the tab order: it is opened by the control that renders
  * it, which is what carries the label.

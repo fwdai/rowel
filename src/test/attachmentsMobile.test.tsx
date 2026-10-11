@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event'
 import Show from '@/components/Main/Body/Aside/Show'
 import { FrameProvider } from '@/components/elements/Frame'
 import Sheet from '@/components/elements/Sheet'
-import { MAX_ATTACHMENT_BYTES } from '@/api/attachments'
 import { loginEntry, loginMeta } from './utils'
 import { calls, mockCommand } from './ipc'
 
@@ -20,8 +19,6 @@ vi.mock('@/lib/platform', () => ({
   chord: (key: string) => `⌘${key}`
 }))
 
-const BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46])
-
 const renderShow = () =>
   render(
     <FrameProvider value={Sheet}>
@@ -29,67 +26,75 @@ const renderShow = () =>
     </FrameProvider>
   )
 
-const input = async () => screen.findByTestId<HTMLInputElement>('attach-file-input')
-
 beforeEach(() => {
   mockCommand('reveal_entry', () => loginEntry())
 })
 
 describe('attaching a file on a phone', () => {
-  it('opens the system sheet through a file input, not a sheet of its own', async () => {
+  it('asks where the file comes from, as an action sheet, before opening any picker', async () => {
     renderShow()
-    const opened = vi.spyOn(await input(), 'click')
 
     await userEvent.click(await screen.findByTestId('attach-file-button'))
 
-    expect(opened).toHaveBeenCalled()
-    // Any file: the system's sheet is what offers the photo library, the
-    // camera and Files, so nothing here narrows it.
-    expect(await input()).not.toHaveAttribute('accept')
-    expect(await input()).not.toHaveAttribute('capture')
+    const sheet = await screen.findByTestId('attach-source-sheet')
+    expect(sheet).toHaveAttribute('data-frame', 'action-sheet')
+    expect(sheet).toHaveAccessibleName('Attach file')
+    // The library and Files, and no camera: a file to attach is one the user
+    // already has.
+    expect(sheet).toHaveTextContent('Photo Library')
+    expect(sheet).toHaveTextContent('Choose File…')
+    expect(sheet).not.toHaveTextContent('Take Photo')
+    expect(screen.getByTestId('action-sheet-cancel')).toHaveTextContent('Cancel')
+    // Not the webview's file input either, whose sheet would offer the camera.
+    expect(document.querySelector('input[type="file"]')).toBeNull()
     expect(calls('pick_file')).toEqual([])
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('attaches what the sheet hands back from its bytes, under its name', async () => {
+  it('opens the photo library as an attachment pick under the image filter', async () => {
+    mockCommand('pick_file', () => '/tmp/IMG_0042.heic')
     renderShow()
 
-    await userEvent.upload(await input(), new File([BYTES], 'Résumé 2026.pdf'))
+    await userEvent.click(await screen.findByTestId('attach-file-button'))
+    await userEvent.click(await screen.findByTestId('attach-photo-button'))
 
+    expect(calls('pick_file')).toEqual([{ kind: 'photo', label: 'Images' }])
     await waitFor(() =>
-      expect(calls('attachment_add_bytes')).toEqual([
-        {
-          body: BYTES,
-          headers: { 'x-entry-id': 'l1', 'x-file-name': encodeURIComponent('Résumé 2026.pdf') }
-        }
-      ])
+      expect(calls('attachment_add')).toContainEqual({ entryId: 'l1', path: '/tmp/IMG_0042.heic' })
     )
+    expect(screen.queryByTestId('attach-source-sheet')).not.toBeInTheDocument()
+  })
+
+  it('opens the file browser as the plain attachment pick', async () => {
+    mockCommand('pick_file', () => '/tmp/contract.pdf')
+    renderShow()
+
+    await userEvent.click(await screen.findByTestId('attach-file-button'))
+    await userEvent.click(await screen.findByTestId('attach-from-files-button'))
+
+    expect(calls('pick_file')).toEqual([{ kind: 'attachment', label: null }])
+    await waitFor(() =>
+      expect(calls('attachment_add')).toContainEqual({ entryId: 'l1', path: '/tmp/contract.pdf' })
+    )
+    expect(screen.queryByTestId('attach-source-sheet')).not.toBeInTheDocument()
+  })
+
+  it('backs out through Cancel, or Escape, without opening a picker', async () => {
+    renderShow()
+
+    await userEvent.click(await screen.findByTestId('attach-file-button'))
+    await userEvent.click(await screen.findByTestId('action-sheet-cancel'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('attach-source-sheet')).not.toBeInTheDocument()
+    )
+
+    await userEvent.click(await screen.findByTestId('attach-file-button'))
+    await screen.findByTestId('attach-source-sheet')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByTestId('attach-source-sheet')).not.toBeInTheDocument()
+    )
+
+    expect(calls('pick_file')).toEqual([])
     expect(calls('attachment_add')).toEqual([])
-    // Listed like any other file, under the name it was given.
-    expect(await screen.findByTestId('attachments-section')).toHaveTextContent('Résumé 2026.pdf')
-  })
-
-  it('refuses a file past the cap before reading it', async () => {
-    renderShow()
-    const huge = new File([BYTES], 'movie.mov')
-    Object.defineProperty(huge, 'size', { value: MAX_ATTACHMENT_BYTES + 1 })
-    const read = vi.spyOn(huge, 'arrayBuffer')
-
-    await userEvent.upload(await input(), huge)
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('up to 10 MB')
-    expect(read).not.toHaveBeenCalled()
-    expect(calls('attachment_add_bytes')).toEqual([])
-  })
-
-  it('reports what the backend refused', async () => {
-    mockCommand('attachment_add_bytes', () => {
-      throw { kind: 'vaultFull', message: 'the vault is full' }
-    })
-    renderShow()
-
-    await userEvent.upload(await input(), new File([BYTES], 'scan.pdf'))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('attachments are at their limit')
   })
 })

@@ -4627,7 +4627,6 @@ dependencies = [
  "p256",
  "passkey-authenticator",
  "passkey-types",
- "percent-encoding",
  "rand",
  "reqwest",
  "ring",

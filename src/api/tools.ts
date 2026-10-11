@@ -63,11 +63,11 @@ export const getAudit = (checkBreaches: boolean): Promise<Audit> =>
  *
  * `label` names the filter in the dialog's own chrome, so it comes from the
  * catalogue the webview owns. `'env'` takes any file — an env file may be
- * named anything — and so does `'attachment'`. Desktop only: a phone picks
- * through the webview's own file input (`elements/FileInput`), and what that
- * hands back travels as bytes.
+ * named anything — and so does `'attachment'`. `'photo'` is an attachment
+ * pick under the image filter: on a phone that opens the photo library rather
+ * than the file browser, and what it picks is readable only as an attachment.
  */
-export type PickKind = 'image' | 'env' | 'attachment'
+export type PickKind = 'image' | 'env' | 'attachment' | 'photo'
 
 export const pickFileToRead = (kind: PickKind, label?: string): Promise<string | null> =>
   call('pick_file', { kind, label: label ?? null })

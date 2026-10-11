@@ -37,15 +37,14 @@ is re-checked after the read, so a lock or a workspace switch mid-read discards
 the bytes. Only then is the file classified: the extension against a fixed
 image list (`scan/mod.rs`), the `.env` name-or-parse check and the 1 MiB cap
 (`commands/env.rs`). That classification is a sanity check on a file the user
-already chose, not the authorization; the grant is. Two commands read no path
-at all: `scan_image_bytes` and `attachment_add_bytes` take a file the webview
-already holds — what the phone's system picker handed its `<input type="file">`,
-from the camera, the photo library or Files, which has no path the backend
-could be pointed at — as the request's raw body (and, for an attachment, the
-entry and the file's name as its headers). No grant applies because none
-is needed: the bytes are data the webview had anyway, so neither command can be
-used to read anything it did not; the result is the recognized fields, or a
-sealed file under a name kept to its last path component. The
+already chose, not the authorization; the grant is. One scan command reads no
+path at all: `scan_image_bytes` takes a photo the webview already holds — what
+the phone's system picker handed its `<input type="file">`, from the camera,
+the photo library or Files, which has no path the backend could be pointed at
+— as the request's raw body. (A file attached on the phone goes through
+`pick_file` and a grant like any other.) No grant applies because none
+is needed: the bytes are data the webview had anyway, so the command cannot be
+used to read anything it did not; the result is the recognized fields. The
 zeroizing here is best effort and covers the Rust working copy only: the
 command clones the body (Tauri lends it borrowed) and that clone and the
 recognized text are zeroized once parsed, while the IPC body Tauri holds, the
