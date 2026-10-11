@@ -702,7 +702,6 @@
   "Account": "账户",
   "Asked by {{origin}} through the browser extension.": "由 {{origin}} 通过浏览器扩展请求。",
   "Attach file": "附加文件",
-  "Photo Library": "照片图库",
   "Choose File…": "选取文件…",
   "Attaching…": "正在附加…",
   "Attachments": "附件",
@@ -710,5 +709,8 @@
   "This vault's attachments are at their limit ({{limit}})": "此保险库的附件已达上限（{{limit}}）",
   "{{used}} of {{limit}} used by attachments in this vault": "此保险库的附件已使用 {{used}}，上限 {{limit}}",
   "Remove attachment": "移除附件",
-  "Remove?": "确定移除？"
+  "Remove “{{name}}”?": "要移除“{{name}}”吗？",
+  "The file is removed from this entry. This can’t be undone.": "该文件将从此条目中移除，且无法撤销。",
+  "No preview for this kind of file": "此类文件无法预览",
+  "Could not open this file.": "无法打开此文件。"
 }

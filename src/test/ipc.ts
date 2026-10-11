@@ -207,6 +207,11 @@ const DEFAULTS: Record<string, Handler> = {
     return file
   },
   attachment_save: () => null,
+  // Bytes, as the real command answers: raw, which `invoke` hands over as a
+  // buffer. Empty, since a spec about what a file *shows* seeds its own.
+  attachment_read: () => new ArrayBuffer(0),
+  attachment_render: () => new ArrayBuffer(0),
+  attachment_thumbnail: () => new ArrayBuffer(0),
   attachment_delete: ({ id }) => {
     attachments = attachments.filter(file => file.id !== id)
   },

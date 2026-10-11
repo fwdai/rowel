@@ -2,7 +2,11 @@
 //! is sealed and revealed whole, so its bytes would reach the webview on every
 //! reveal. Each file is a row of its own beside the entry (`store::Attachment`),
 //! sealed by `crypto::AttachmentCipher`, read off disk and written back to disk
-//! here in Rust. The webview gets names and sizes, never the bytes.
+//! here in Rust. The webview lists names and sizes; it gets a file's bytes only
+//! when it asks for that one file (`attachment_read`), to show it — a preview,
+//! an image's thumbnail — and a save never passes through it at all. A picture
+//! the webview's engine cannot decode is re-encoded here as a PNG it can
+//! (`attachment_render`), so what an image shows does not depend on the OS.
 
 use std::path::{Path, PathBuf};
 
@@ -167,15 +171,71 @@ pub async fn attachment_save(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>> {
-    let (epoch, cipher, attachment) = begin_save(&state, &id)?;
-    let name = file_name(&attachment.meta.name);
-    let mut bytes =
-        super::blocking(move || cipher.unseal(&attachment.meta.id, &attachment.blob)).await?;
-    // Locked while the file was unsealed: the session that asked is gone, and
-    // the bytes are scrubbed as they drop.
-    super::same_session(&state, epoch)?;
+    let (name, mut bytes) = unseal(&state, &id).await?;
     let dest = save::save_export(&app, &name, "", std::mem::take(&mut *bytes)).await?;
     Ok(dest.map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// One attachment's bytes, for the webview to show: the preview, and an image
+/// row's thumbnail. Raw over the IPC rather than JSON — a 10 MB image is not
+/// something to base64 through `serde` — and only ever one file, on request,
+/// which is what keeps the list itself free of them. The copy the webview holds
+/// lives as long as the view that asked (see `useAttachmentUrl`).
+#[tauri::command]
+pub async fn attachment_read(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<tauri::ipc::Response> {
+    let (_, mut bytes) = unseal(&state, &id).await?;
+    Ok(tauri::ipc::Response::new(std::mem::take(&mut *bytes)))
+}
+
+/// The attachment as a PNG, for a picture the webview could not decode itself:
+/// WebKit on Apple platforms reads a TIFF or a BMP, Chromium on Windows and
+/// WebKitGTK on Linux do not. Decoded by the `image` crate from the codecs it
+/// is built with ([`render_png`]); a file it cannot read is `Unsupported`, and
+/// the webview says there is no preview. Asked for only after the plain bytes
+/// failed, so the common case costs nothing extra.
+#[tauri::command]
+pub async fn attachment_render(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<tauri::ipc::Response> {
+    let (_, bytes) = unseal(&state, &id).await?;
+    let png = super::blocking(move || render_png(&bytes, None)).await?;
+    Ok(tauri::ipc::Response::new(png))
+}
+
+/// A picture for the list's row: the image scaled to fit [`THUMBNAIL_SIDE`],
+/// as a PNG. A list of images used to hand the webview every file whole just
+/// to draw it at 40px, and hold them all — up to the vault's whole budget,
+/// plus the decoded bitmaps; now a row costs kilobytes, the file itself is
+/// read only when it is opened, and the rows ask one at a time as they come
+/// on screen (`useThumbnail`) while [`render_png`] decodes one picture at a
+/// time whoever asks. `Unsupported` for a picture the codecs here cannot read
+/// (HEIC), which the row answers with the kind's glyph.
+#[tauri::command]
+pub async fn attachment_thumbnail(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<tauri::ipc::Response> {
+    let (_, bytes) = unseal(&state, &id).await?;
+    let png = super::blocking(move || render_png(&bytes, Some(THUMBNAIL_SIDE))).await?;
+    Ok(tauri::ipc::Response::new(png))
+}
+
+/// What the three commands that open a file share: find it in the open vault,
+/// unseal it off the IPC thread, and refuse the result if the vault locked —
+/// or locked and reopened — while that ran, since the session that asked is
+/// gone and the bytes are scrubbed as they drop. Hands back the name a save
+/// offers along with the plaintext.
+async fn unseal(state: &AppState, id: &str) -> Result<(String, Zeroizing<Vec<u8>>)> {
+    let (epoch, cipher, attachment) = begin_unseal(state, id)?;
+    let name = file_name(&attachment.meta.name);
+    let bytes =
+        super::blocking(move || cipher.unseal(&attachment.meta.id, &attachment.blob)).await?;
+    super::same_session(state, epoch)?;
+    Ok((name, bytes))
 }
 
 /// How full the vault's attachment budget is, for the entry's list to say so
@@ -313,7 +373,7 @@ fn usage(state: &AppState) -> Result<AttachmentUsage> {
     })
 }
 
-fn begin_save(state: &AppState, id: &str) -> Result<(Epoch, AttachmentCipher, Attachment)> {
+fn begin_unseal(state: &AppState, id: &str) -> Result<(Epoch, AttachmentCipher, Attachment)> {
     let session = state.session.lock().unwrap();
     let cipher = cipher_of(&session)?;
     let attachment = session
@@ -360,8 +420,74 @@ fn file_name(name: &str) -> String {
         .unwrap_or_else(|| "attachment".into())
 }
 
-/// A best guess at the type from the name, for the list's glyph. `None` is
-/// simply "a file".
+/// Decode a picture and write it back as a PNG — turned the way its EXIF
+/// orientation says (a phone stores a photo as the sensor saw it and notes
+/// which way is up; a browser honours the note, the decoder here does not), and
+/// scaled down to fit `fit` a side first, when asked, keeping its proportions
+/// and never scaling up. The decoder is told how big an image it may build,
+/// since a small TIFF can describe an enormous one: a side past
+/// [`MAX_RENDER_SIDE`], or a decode past [`MAX_RENDER_BYTES`] of memory, is
+/// refused rather than attempted. One picture at a time, whoever asks: a list
+/// of photos opening at once used to decode them all at once, and the bitmaps
+/// together could take what a phone has. Pure, so it is tested without a vault.
+fn render_png(bytes: &[u8], fit: Option<u32>) -> Result<Vec<u8>> {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_RENDER_SIDE);
+    limits.max_image_height = Some(MAX_RENDER_SIDE);
+    limits.max_alloc = Some(MAX_RENDER_BYTES);
+    render_png_within(bytes, fit, limits)
+}
+
+/// [`render_png`] under the given `limits`, so a test can set a cap a small
+/// picture breaks. The cap is enforced here, not left to the codec: going
+/// through the decoder for its orientation skips the reservation
+/// `ImageReader::decode` makes against `max_alloc`, and the JPEG decoder among
+/// others does not check it on its own — so the pixels' size is reserved
+/// against the cap by hand, the way `decode` does it, before anything is read.
+fn render_png_within(bytes: &[u8], fit: Option<u32>, mut limits: image::Limits) -> Result<Vec<u8>> {
+    use image::ImageDecoder;
+
+    let _one_at_a_time = ONE_PICTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let unsupported = |e: image::ImageError| Error::Unsupported(e.to_string());
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| Error::Unsupported(e.to_string()))?;
+    reader.limits(limits.clone());
+    let mut decoder = reader.into_decoder().map_err(unsupported)?;
+    limits.reserve(decoder.total_bytes()).map_err(unsupported)?;
+    decoder.set_limits(limits).map_err(unsupported)?;
+    let orientation = decoder.orientation().map_err(unsupported)?;
+    let mut decoded = image::DynamicImage::from_decoder(decoder).map_err(unsupported)?;
+    decoded.apply_orientation(orientation);
+    if let Some(side) = fit {
+        if decoded.width() > side || decoded.height() > side {
+            decoded = decoded.thumbnail(side, side);
+        }
+    }
+    let mut png = std::io::Cursor::new(Vec::new());
+    decoded
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    Ok(png.into_inner())
+}
+
+/// What makes [`render_png`] decode one picture at a time.
+static ONE_PICTURE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The largest picture a rendition will decode: 12k a side, a quarter gigabyte
+/// of pixels — well past any photo, well short of what a crafted header asks.
+const MAX_RENDER_SIDE: u32 = 12_000;
+const MAX_RENDER_BYTES: u64 = 256 * 1024 * 1024;
+
+/// What a row's thumbnail is scaled to fit: a 40px tile at the sharpest phone
+/// density is 120px, with room for the crop `object-cover` makes.
+const THUMBNAIL_SIDE: u32 = 160;
+
+/// A best guess at the type from the name, for the list's glyph and for what
+/// the webview will try to show. `None` is simply "a file" — and a name the
+/// table does not know is guessed again from its extension in the webview
+/// (`Attachments/kind.ts`), which is what covers files attached before a
+/// format was added here.
 fn mime_of(name: &str) -> Option<String> {
     let ext = Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
     let mime = match ext.as_str() {
@@ -371,6 +497,11 @@ fn mime_of(name: &str) -> Option<String> {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "heic" => "image/heic",
+        "heif" => "image/heif",
+        "tiff" | "tif" => "image/tiff",
+        "bmp" => "image/bmp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
         "txt" | "md" => "text/plain",
         "csv" => "text/csv",
         "json" => "application/json",
@@ -444,7 +575,7 @@ mod tests {
             ("scan.pdf", 17, Some("application/pdf"))
         );
 
-        let (_, cipher, stored) = begin_save(&state, &dto.id).unwrap();
+        let (_, cipher, stored) = begin_unseal(&state, &dto.id).unwrap();
         assert_eq!(
             &**cipher.unseal(&stored.meta.id, &stored.blob).unwrap(),
             b"%PDF-1.7 the file"
@@ -469,7 +600,7 @@ mod tests {
             ("IMG_0042.heic", 9, Some("image/heic"))
         );
 
-        let (_, cipher, stored) = begin_save(&state, &dto.id).unwrap();
+        let (_, cipher, stored) = begin_unseal(&state, &dto.id).unwrap();
         assert_eq!(
             &**cipher.unseal(&stored.meta.id, &stored.blob).unwrap(),
             b"the photo"
@@ -581,7 +712,7 @@ mod tests {
             begin_add(&state, &grants, "e1", &path),
             Err(Error::Locked)
         ));
-        assert!(matches!(begin_save(&state, "a1"), Err(Error::Locked)));
+        assert!(matches!(begin_unseal(&state, "a1"), Err(Error::Locked)));
         // The refusal spent nothing: the user's choice is still there.
         assert!(grants.take(&path, Purpose::Attachment));
     }
@@ -717,7 +848,152 @@ mod tests {
             .unwrap()
             .remove_attachment(&dto.id)
             .unwrap();
-        assert!(matches!(begin_save(&state, &dto.id), Err(Error::NotFound)));
+        assert!(matches!(
+            begin_unseal(&state, &dto.id),
+            Err(Error::NotFound)
+        ));
+    }
+
+    // What the preview falls back on: a format the webview may not decode comes
+    // back as a PNG of the same picture, and a file that is no picture at all is
+    // refused as unsupported rather than failing some other way.
+    #[test]
+    fn a_picture_renders_as_a_png_and_a_non_picture_is_refused() {
+        let mut bmp = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(3, 2, image::Rgba([10, 20, 30, 255]))
+            .write_to(&mut bmp, image::ImageFormat::Bmp)
+            .unwrap();
+
+        let png = render_png(bmp.get_ref(), None).unwrap();
+        assert!(png.starts_with(b"\x89PNG"));
+        let back = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(back.dimensions(), (3, 2));
+        assert_eq!(back.get_pixel(2, 1).0, [10, 20, 30, 255]);
+
+        assert!(matches!(
+            render_png(b"%PDF-1.7 not a picture", None),
+            Err(Error::Unsupported(_))
+        ));
+    }
+
+    // A phone's JPEG says which way is up in its EXIF, and the rendition has to
+    // turn the pixels that way: a 16×8 picture, red on the left and blue on the
+    // right, tagged "rotate 90° clockwise" (orientation 6) comes out 8×16 with
+    // the red on top. The tag is spliced into the JPEG by hand — an APP1 segment
+    // holding the smallest TIFF that carries one Orientation entry — since the
+    // encoder here writes none.
+    #[test]
+    fn a_rendition_is_turned_the_way_its_exif_says() {
+        let mut picture = image::RgbImage::new(16, 8);
+        for (x, _, pixel) in picture.enumerate_pixels_mut() {
+            *pixel = if x < 8 {
+                image::Rgb([255, 0, 0])
+            } else {
+                image::Rgb([0, 0, 255])
+            };
+        }
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        picture
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let jpeg = jpeg.into_inner();
+
+        let tiff: Vec<u8> = [
+            &b"II"[..],
+            &42u16.to_le_bytes(),
+            &8u32.to_le_bytes(),      // the IFD follows the header
+            &1u16.to_le_bytes(),      // one entry:
+            &0x0112u16.to_le_bytes(), // Orientation,
+            &3u16.to_le_bytes(),      // a SHORT,
+            &1u32.to_le_bytes(),      // one of them,
+            &6u32.to_le_bytes(),      // = 6, rotate 90° clockwise
+            &0u32.to_le_bytes(),      // no next IFD
+        ]
+        .concat();
+        let payload = [&b"Exif\0\0"[..], &tiff].concat();
+        let mut app1 = vec![0xFF, 0xE1];
+        app1.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        app1.extend_from_slice(&payload);
+        // Right after SOI, before the encoder's own segments.
+        let tagged = [&jpeg[..2], &app1, &jpeg[2..]].concat();
+
+        let turned = image::load_from_memory(&render_png(&tagged, None).unwrap())
+            .unwrap()
+            .to_rgb8();
+        assert_eq!(turned.dimensions(), (8, 16));
+        let [r, _, b] = turned.get_pixel(4, 2).0;
+        assert!(
+            r > 200 && b < 60,
+            "top should be red, got {:?}",
+            turned.get_pixel(4, 2)
+        );
+        let [r, _, b] = turned.get_pixel(4, 13).0;
+        assert!(
+            b > 200 && r < 60,
+            "bottom should be blue, got {:?}",
+            turned.get_pixel(4, 13)
+        );
+
+        // Untagged, the same picture keeps its shape.
+        let plain = image::load_from_memory(&render_png(&jpeg, None).unwrap()).unwrap();
+        assert_eq!((plain.width(), plain.height()), (16, 8));
+    }
+
+    // The memory cap holds on the orientation-aware path too: a JPEG whose
+    // pixels would not fit the allowance is refused before they are decoded,
+    // the dimensions being within bounds notwithstanding (the JPEG decoder does
+    // not enforce the allowance itself — the reservation here is what does).
+    #[test]
+    fn a_picture_whose_pixels_exceed_the_cap_is_refused_before_decoding() {
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(64, 64, image::Rgb([7, 7, 7]))
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let jpeg = jpeg.into_inner();
+
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(MAX_RENDER_SIDE);
+        limits.max_image_height = Some(MAX_RENDER_SIDE);
+        limits.max_alloc = Some(64 * 64 * 3 - 1);
+        assert!(matches!(
+            render_png_within(&jpeg, None, limits.clone()),
+            Err(Error::Unsupported(_))
+        ));
+
+        limits.max_alloc = Some(64 * 64 * 3);
+        assert!(render_png_within(&jpeg, None, limits).is_ok());
+    }
+
+    // A thumbnail is bounded by its longer side and keeps the picture's shape;
+    // one already small enough is left at its own size rather than blown up.
+    #[test]
+    fn a_thumbnail_fits_its_side_and_never_scales_up() {
+        let encode = |w, h| {
+            let mut png = std::io::Cursor::new(Vec::new());
+            image::RgbaImage::from_pixel(w, h, image::Rgba([1, 2, 3, 255]))
+                .write_to(&mut png, image::ImageFormat::Png)
+                .unwrap();
+            png.into_inner()
+        };
+        let size = |png: &[u8]| {
+            image::load_from_memory(png)
+                .unwrap()
+                .to_rgba8()
+                .dimensions()
+        };
+
+        assert_eq!(
+            size(&render_png(&encode(800, 200), Some(160)).unwrap()),
+            (160, 40)
+        );
+        assert_eq!(
+            size(&render_png(&encode(200, 800), Some(160)).unwrap()),
+            (40, 160)
+        );
+        assert_eq!(
+            size(&render_png(&encode(30, 20), Some(160)).unwrap()),
+            (30, 20)
+        );
     }
 
     #[test]
