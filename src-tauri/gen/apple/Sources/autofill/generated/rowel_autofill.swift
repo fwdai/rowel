@@ -39,6 +39,52 @@ fileprivate extension ForeignBytes {
     init(bufferPointer: UnsafeBufferPointer<UInt8>) {
         self.init(len: Int32(bufferPointer.count), data: bufferPointer.baseAddress)
     }
+
+    init(rawBufferPointer: UnsafeRawBufferPointer) {
+        self.init(
+            len: Int32(rawBufferPointer.count),
+            data: rawBufferPointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
+        )
+    }
+}
+
+// Converter for `&[u8]` / `[ByRef] bytes` arguments.
+//
+// Conforms to `FfiConverter` so the compiler enforces the full converter
+// method set. Only the scope-bound `lower(_:_body:)` overload is sound —
+// zero-copy byte buffers only flow foreign -> Rust, and only in argument
+// position. The four protocol-witness methods (`lift`, `lower`, `read`,
+// `write`) `fatalError` at runtime if anyone reaches them.
+//
+// The scope-bound `lower` takes a closure because the `ForeignBytes`
+// pointer is only guaranteed valid for the duration of
+// `Data.withUnsafeBytes`. Callers must run the full FFI call inside
+// the closure body.
+fileprivate enum FfiConverterByRefBytes: FfiConverter {
+    typealias SwiftType = Data
+    typealias FfiType = ForeignBytes
+
+    static func lower<R>(_ value: Data, _ body: (ForeignBytes) throws -> R) rethrows -> R {
+        return try value.withUnsafeBytes { rawBuf in
+            try body(ForeignBytes(rawBufferPointer: rawBuf))
+        }
+    }
+
+    static func lower(_ value: Data) -> ForeignBytes {
+        fatalError("ByRef bytes cannot use the plain lower: returning ForeignBytes escapes the Data.withUnsafeBytes scope. Use the scope-bound lower(_:_body:) overload instead.")
+    }
+
+    static func lift(_ value: ForeignBytes) throws -> Data {
+        fatalError("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
+    }
+
+    static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        fatalError("ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+    }
+
+    static func write(_ value: Data, into buf: inout [UInt8]) {
+        fatalError("ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.")
+    }
 }
 
 // For every type used in the interface, we provide helper methods for conveniently
@@ -352,19 +398,29 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
+// Initial value and increment amount for handles. 
+// These ensure that SWIFT handles always have the lowest bit set
+fileprivate let UNIFFI_HANDLEMAP_INITIAL: UInt64 = 1
+fileprivate let UNIFFI_HANDLEMAP_DELTA: UInt64 = 2
+
 fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
     // All mutation happens with this lock held, which is why we implement @unchecked Sendable.
     private let lock = NSLock()
     private var map: [UInt64: T] = [:]
-    private var currentHandle: UInt64 = 1
+    private var currentHandle: UInt64 = UNIFFI_HANDLEMAP_INITIAL
 
     func insert(obj: T) -> UInt64 {
         lock.withLock {
-            let handle = currentHandle
-            currentHandle += 1
-            map[handle] = obj
-            return handle
+            return doInsert(obj)
         }
+    }
+
+    // Low-level insert function, this assumes `lock` is held.
+    private func doInsert(_ obj: T) -> UInt64 {
+        let handle = currentHandle
+        currentHandle += UNIFFI_HANDLEMAP_DELTA
+        map[handle] = obj
+        return handle
     }
 
      func get(handle: UInt64) throws -> T {
@@ -373,6 +429,15 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
                 throw UniffiInternalError.unexpectedStaleHandle
             }
             return obj
+        }
+    }
+
+     func clone(handle: UInt64) throws -> UInt64 {
+        try lock.withLock {
+            guard let obj = map[handle] else {
+                throw UniffiInternalError.unexpectedStaleHandle
+            }
+            return doInsert(obj)
         }
     }
 
@@ -428,7 +493,11 @@ fileprivate struct FfiConverterString: FfiConverter {
             return String()
         }
         let bytes = UnsafeBufferPointer<UInt8>(start: value.data!, count: Int(value.len))
-        return String(bytes: bytes, encoding: String.Encoding.utf8)!
+        // Use Swift's native UTF-8 decoder; `String(bytes:encoding:.utf8)` goes
+        // through Foundation's NSString and silently strips a leading U+FEFF BOM.
+        // Invalid UTF-8 substitutes U+FFFD instead of trapping (unreachable
+        // given Rust's `String` invariant).
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     public static func lower(_ value: String) -> RustBuffer {
@@ -444,7 +513,8 @@ fileprivate struct FfiConverterString: FfiConverter {
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> String {
         let len: Int32 = try readInt(&buf)
-        return String(bytes: try readBytes(&buf, count: Int(len)), encoding: String.Encoding.utf8)!
+        // See `lift` above for why we avoid Foundation's NSString-backed decoder here.
+        return String(decoding: try readBytes(&buf, count: Int(len)), as: UTF8.self)
     }
 
     public static func write(_ value: String, into buf: inout [UInt8]) {
@@ -533,13 +603,13 @@ public protocol VaultProtocol: AnyObject, Sendable {
  * An open vault. Lives as long as the extension's sheet.
  */
 open class Vault: VaultProtocol, @unchecked Sendable {
-    fileprivate let pointer: UnsafeMutableRawPointer!
+    fileprivate let handle: UInt64
 
-    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    public struct NoPointer {
+    public struct NoHandle {
         public init() {}
     }
 
@@ -549,36 +619,37 @@ open class Vault: VaultProtocol, @unchecked Sendable {
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
-        self.pointer = pointer
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
     }
 
     // This constructor can be used to instantiate a fake object.
-    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
     //
     // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    public init(noPointer: NoPointer) {
-        self.pointer = nil
+    public init(noHandle: NoHandle) {
+        self.handle = 0
     }
 
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
-        return try! rustCall { uniffi_rowel_autofill_fn_clone_vault(self.pointer, $0) }
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_rowel_autofill_fn_clone_vault(self.handle, $0) }
     }
     // No primary constructor declared for this class.
 
     deinit {
-        guard let pointer = pointer else {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
             return
         }
 
-        try! rustCall { uniffi_rowel_autofill_fn_free_vault(pointer, $0) }
+        try! rustCall { uniffi_rowel_autofill_fn_free_vault(handle, $0) }
     }
 
     
@@ -592,8 +663,10 @@ open class Vault: VaultProtocol, @unchecked Sendable {
      */
 open func assertPasskey(request: PasskeyAssertion)throws  -> AssertedPasskey  {
     return try  FfiConverterTypeAssertedPasskey_lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
-    uniffi_rowel_autofill_fn_method_vault_assert_passkey(self.uniffiClonePointer(),
-        FfiConverterTypePasskeyAssertion_lower(request),$0
+        uniffiCallStatus in
+    uniffi_rowel_autofill_fn_method_vault_assert_passkey(
+            self.uniffiCloneHandle(),
+        FfiConverterTypePasskeyAssertion_lower(request),uniffiCallStatus
     )
 })
 }
@@ -610,8 +683,10 @@ open func assertPasskey(request: PasskeyAssertion)throws  -> AssertedPasskey  {
      */
 open func credentialsFor(serviceIdentifiers: [String])throws  -> [Credential]  {
     return try  FfiConverterSequenceTypeCredential.lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
-    uniffi_rowel_autofill_fn_method_vault_credentials_for(self.uniffiClonePointer(),
-        FfiConverterSequenceString.lower(serviceIdentifiers),$0
+        uniffiCallStatus in
+    uniffi_rowel_autofill_fn_method_vault_credentials_for(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(serviceIdentifiers),uniffiCallStatus
     )
 })
 }
@@ -623,9 +698,11 @@ open func credentialsFor(serviceIdentifiers: [String])throws  -> [Credential]  {
      */
 open func passkeysFor(rpId: String, allowedCredentialIds: [Data])throws  -> [PasskeyAccount]  {
     return try  FfiConverterSequenceTypePasskeyAccount.lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
-    uniffi_rowel_autofill_fn_method_vault_passkeys_for(self.uniffiClonePointer(),
+        uniffiCallStatus in
+    uniffi_rowel_autofill_fn_method_vault_passkeys_for(
+            self.uniffiCloneHandle(),
         FfiConverterString.lower(rpId),
-        FfiConverterSequenceData.lower(allowedCredentialIds),$0
+        FfiConverterSequenceData.lower(allowedCredentialIds),uniffiCallStatus
     )
 })
 }
@@ -641,9 +718,11 @@ open func passkeysFor(rpId: String, allowedCredentialIds: [Data])throws  -> [Pas
      */
 open func password(record: String, serviceIdentifiers: [String])throws  -> Password  {
     return try  FfiConverterTypePassword_lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
-    uniffi_rowel_autofill_fn_method_vault_password(self.uniffiClonePointer(),
+        uniffiCallStatus in
+    uniffi_rowel_autofill_fn_method_vault_password(
+            self.uniffiCloneHandle(),
         FfiConverterString.lower(record),
-        FfiConverterSequenceString.lower(serviceIdentifiers),$0
+        FfiConverterSequenceString.lower(serviceIdentifiers),uniffiCallStatus
     )
 })
 }
@@ -658,13 +737,16 @@ open func password(record: String, serviceIdentifiers: [String])throws  -> Passw
      */
 open func registerPasskey(request: PasskeyRegistration)throws  -> RegisteredPasskey  {
     return try  FfiConverterTypeRegisteredPasskey_lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
-    uniffi_rowel_autofill_fn_method_vault_register_passkey(self.uniffiClonePointer(),
-        FfiConverterTypePasskeyRegistration_lower(request),$0
+        uniffiCallStatus in
+    uniffi_rowel_autofill_fn_method_vault_register_passkey(
+            self.uniffiCloneHandle(),
+        FfiConverterTypePasskeyRegistration_lower(request),uniffiCallStatus
     )
 })
 }
     
 
+    
 }
 
 
@@ -672,33 +754,24 @@ open func registerPasskey(request: PasskeyRegistration)throws  -> RegisteredPass
 @_documentation(visibility: private)
 #endif
 public struct FfiConverterTypeVault: FfiConverter {
-
-    typealias FfiType = UnsafeMutableRawPointer
+    typealias FfiType = UInt64
     typealias SwiftType = Vault
 
-    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> Vault {
-        return Vault(unsafeFromRawPointer: pointer)
+    public static func lift(_ handle: UInt64) throws -> Vault {
+        return Vault(unsafeFromHandle: handle)
     }
 
-    public static func lower(_ value: Vault) -> UnsafeMutableRawPointer {
-        return value.uniffiClonePointer()
+    public static func lower(_ value: Vault) -> UInt64 {
+        return value.uniffiCloneHandle()
     }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Vault {
-        let v: UInt64 = try readInt(&buf)
-        // The Rust code won't compile if a pointer won't fit in a UInt64.
-        // We have to go via `UInt` because that's the thing that's the size of a pointer.
-        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
-        if (ptr == nil) {
-            throw UniffiInternalError.unexpectedNullPointer
-        }
-        return try lift(ptr!)
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
     }
 
     public static func write(_ value: Vault, into buf: inout [UInt8]) {
-        // This fiddling is because `Int` is the thing that's the same size as a pointer.
-        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
-        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+        writeInt(&buf, lower(value))
     }
 }
 
@@ -706,14 +779,14 @@ public struct FfiConverterTypeVault: FfiConverter {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeVault_lift(_ pointer: UnsafeMutableRawPointer) throws -> Vault {
-    return try FfiConverterTypeVault.lift(pointer)
+public func FfiConverterTypeVault_lift(_ handle: UInt64) throws -> Vault {
+    return try FfiConverterTypeVault.lift(handle)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeVault_lower(_ value: Vault) -> UnsafeMutableRawPointer {
+public func FfiConverterTypeVault_lower(_ value: Vault) -> UInt64 {
     return FfiConverterTypeVault.lower(value)
 }
 
@@ -723,7 +796,7 @@ public func FfiConverterTypeVault_lower(_ value: Vault) -> UnsafeMutableRawPoint
 /**
  * What `ASPasskeyAssertionCredential` carries back besides what iOS sent.
  */
-public struct AssertedPasskey {
+public struct AssertedPasskey: Equatable, Hashable {
     public var credentialId: Data
     public var userHandle: Data
     public var authenticatorData: Data
@@ -743,39 +816,15 @@ public struct AssertedPasskey {
         self.authenticatorData = authenticatorData
         self.signature = signature
     }
+
+    
+
+    
 }
 
 #if compiler(>=6)
 extension AssertedPasskey: Sendable {}
 #endif
-
-
-extension AssertedPasskey: Equatable, Hashable {
-    public static func ==(lhs: AssertedPasskey, rhs: AssertedPasskey) -> Bool {
-        if lhs.credentialId != rhs.credentialId {
-            return false
-        }
-        if lhs.userHandle != rhs.userHandle {
-            return false
-        }
-        if lhs.authenticatorData != rhs.authenticatorData {
-            return false
-        }
-        if lhs.signature != rhs.signature {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(credentialId)
-        hasher.combine(userHandle)
-        hasher.combine(authenticatorData)
-        hasher.combine(signature)
-    }
-}
-
-
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -820,7 +869,7 @@ public func FfiConverterTypeAssertedPasskey_lower(_ value: AssertedPasskey) -> R
  * name it signs in with and its site. `record` is the credential identity's
  * `"<workspace id>/<entry id>"`, as the app publishes it to iOS.
  */
-public struct Credential {
+public struct Credential: Equatable, Hashable {
     public var record: String
     public var title: String
     public var user: String
@@ -834,39 +883,15 @@ public struct Credential {
         self.user = user
         self.host = host
     }
+
+    
+
+    
 }
 
 #if compiler(>=6)
 extension Credential: Sendable {}
 #endif
-
-
-extension Credential: Equatable, Hashable {
-    public static func ==(lhs: Credential, rhs: Credential) -> Bool {
-        if lhs.record != rhs.record {
-            return false
-        }
-        if lhs.title != rhs.title {
-            return false
-        }
-        if lhs.user != rhs.user {
-            return false
-        }
-        if lhs.host != rhs.host {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(record)
-        hasher.combine(title)
-        hasher.combine(user)
-        hasher.combine(host)
-    }
-}
-
-
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -913,7 +938,7 @@ public func FfiConverterTypeCredential_lower(_ value: Credential) -> RustBuffer 
  * `recordIdentifier` — one login can carry several passkeys, so the
  * credential id is what names the passkey itself.
  */
-public struct PasskeyAccount {
+public struct PasskeyAccount: Equatable, Hashable {
     public var record: String
     public var credentialId: Data
     public var userName: String
@@ -937,43 +962,15 @@ public struct PasskeyAccount {
         self.userDisplayName = userDisplayName
         self.createdAt = createdAt
     }
+
+    
+
+    
 }
 
 #if compiler(>=6)
 extension PasskeyAccount: Sendable {}
 #endif
-
-
-extension PasskeyAccount: Equatable, Hashable {
-    public static func ==(lhs: PasskeyAccount, rhs: PasskeyAccount) -> Bool {
-        if lhs.record != rhs.record {
-            return false
-        }
-        if lhs.credentialId != rhs.credentialId {
-            return false
-        }
-        if lhs.userName != rhs.userName {
-            return false
-        }
-        if lhs.userDisplayName != rhs.userDisplayName {
-            return false
-        }
-        if lhs.createdAt != rhs.createdAt {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(record)
-        hasher.combine(credentialId)
-        hasher.combine(userName)
-        hasher.combine(userDisplayName)
-        hasher.combine(createdAt)
-    }
-}
-
-
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1020,7 +1017,7 @@ public func FfiConverterTypePasskeyAccount_lower(_ value: PasskeyAccount) -> Rus
  * the list, `ASPasskeyCredentialRequest` for a QuickType identity), and the
  * account the user picked.
  */
-public struct PasskeyAssertion {
+public struct PasskeyAssertion: Equatable, Hashable {
     public var rpId: String
     /**
      * The SHA-256 of the `clientDataJSON` iOS wrote.
@@ -1058,39 +1055,15 @@ public struct PasskeyAssertion {
         self.allowedCredentialIds = allowedCredentialIds
         self.record = record
     }
+
+    
+
+    
 }
 
 #if compiler(>=6)
 extension PasskeyAssertion: Sendable {}
 #endif
-
-
-extension PasskeyAssertion: Equatable, Hashable {
-    public static func ==(lhs: PasskeyAssertion, rhs: PasskeyAssertion) -> Bool {
-        if lhs.rpId != rhs.rpId {
-            return false
-        }
-        if lhs.clientDataHash != rhs.clientDataHash {
-            return false
-        }
-        if lhs.allowedCredentialIds != rhs.allowedCredentialIds {
-            return false
-        }
-        if lhs.record != rhs.record {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(rpId)
-        hasher.combine(clientDataHash)
-        hasher.combine(allowedCredentialIds)
-        hasher.combine(record)
-    }
-}
-
-
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1133,7 +1106,7 @@ public func FfiConverterTypePasskeyAssertion_lower(_ value: PasskeyAssertion) ->
 /**
  * A registration, as iOS hands it over (`ASPasskeyCredentialRequest`).
  */
-public struct PasskeyRegistration {
+public struct PasskeyRegistration: Equatable, Hashable {
     public var rpId: String
     public var rpName: String?
     public var userName: String
@@ -1167,55 +1140,15 @@ public struct PasskeyRegistration {
         self.excludedCredentialIds = excludedCredentialIds
         self.supportedAlgorithms = supportedAlgorithms
     }
+
+    
+
+    
 }
 
 #if compiler(>=6)
 extension PasskeyRegistration: Sendable {}
 #endif
-
-
-extension PasskeyRegistration: Equatable, Hashable {
-    public static func ==(lhs: PasskeyRegistration, rhs: PasskeyRegistration) -> Bool {
-        if lhs.rpId != rhs.rpId {
-            return false
-        }
-        if lhs.rpName != rhs.rpName {
-            return false
-        }
-        if lhs.userName != rhs.userName {
-            return false
-        }
-        if lhs.userDisplayName != rhs.userDisplayName {
-            return false
-        }
-        if lhs.userHandle != rhs.userHandle {
-            return false
-        }
-        if lhs.clientDataHash != rhs.clientDataHash {
-            return false
-        }
-        if lhs.excludedCredentialIds != rhs.excludedCredentialIds {
-            return false
-        }
-        if lhs.supportedAlgorithms != rhs.supportedAlgorithms {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(rpId)
-        hasher.combine(rpName)
-        hasher.combine(userName)
-        hasher.combine(userDisplayName)
-        hasher.combine(userHandle)
-        hasher.combine(clientDataHash)
-        hasher.combine(excludedCredentialIds)
-        hasher.combine(supportedAlgorithms)
-    }
-}
-
-
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1266,7 +1199,7 @@ public func FfiConverterTypePasskeyRegistration_lower(_ value: PasskeyRegistrati
 /**
  * What a chosen login fills.
  */
-public struct Password {
+public struct Password: Equatable, Hashable {
     public var user: String
     public var password: String
 
@@ -1276,31 +1209,15 @@ public struct Password {
         self.user = user
         self.password = password
     }
+
+    
+
+    
 }
 
 #if compiler(>=6)
 extension Password: Sendable {}
 #endif
-
-
-extension Password: Equatable, Hashable {
-    public static func ==(lhs: Password, rhs: Password) -> Bool {
-        if lhs.user != rhs.user {
-            return false
-        }
-        if lhs.password != rhs.password {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(user)
-        hasher.combine(password)
-    }
-}
-
-
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1339,7 +1256,7 @@ public func FfiConverterTypePassword_lower(_ value: Password) -> RustBuffer {
 /**
  * What `ASPasskeyRegistrationCredential` carries back besides what iOS sent.
  */
-public struct RegisteredPasskey {
+public struct RegisteredPasskey: Equatable, Hashable {
     public var credentialId: Data
     /**
      * CBOR, "none" attestation.
@@ -1355,31 +1272,15 @@ public struct RegisteredPasskey {
         self.credentialId = credentialId
         self.attestationObject = attestationObject
     }
+
+    
+
+    
 }
 
 #if compiler(>=6)
 extension RegisteredPasskey: Sendable {}
 #endif
-
-
-extension RegisteredPasskey: Equatable, Hashable {
-    public static func ==(lhs: RegisteredPasskey, rhs: RegisteredPasskey) -> Bool {
-        if lhs.credentialId != rhs.credentialId {
-            return false
-        }
-        if lhs.attestationObject != rhs.attestationObject {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(credentialId)
-        hasher.combine(attestationObject)
-    }
-}
-
-
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1419,7 +1320,7 @@ public func FfiConverterTypeRegisteredPasskey_lower(_ value: RegisteredPasskey) 
  * The active vault's place, and the keychain item its key is in. Read
  * without the key: what Swift needs to know before it asks for Face ID.
  */
-public struct VaultLocation {
+public struct VaultLocation: Equatable, Hashable {
     /**
      * The data dir: `<container>/app.rowel.mobile`, and its `dev` subdir in a
      * debug build, as the app lays it out (`layout::app_group_root`).
@@ -1457,39 +1358,15 @@ public struct VaultLocation {
         self.keychainService = keychainService
         self.keychainAccount = keychainAccount
     }
+
+    
+
+    
 }
 
 #if compiler(>=6)
 extension VaultLocation: Sendable {}
 #endif
-
-
-extension VaultLocation: Equatable, Hashable {
-    public static func ==(lhs: VaultLocation, rhs: VaultLocation) -> Bool {
-        if lhs.root != rhs.root {
-            return false
-        }
-        if lhs.workspace != rhs.workspace {
-            return false
-        }
-        if lhs.keychainService != rhs.keychainService {
-            return false
-        }
-        if lhs.keychainAccount != rhs.keychainAccount {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(root)
-        hasher.combine(workspace)
-        hasher.combine(keychainService)
-        hasher.combine(keychainAccount)
-    }
-}
-
-
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1532,7 +1409,8 @@ public func FfiConverterTypeVaultLocation_lower(_ value: VaultLocation) -> RustB
 /**
  * Why the vault cannot be read. Each case is one thing the extension says.
  */
-public enum AutofillError: Swift.Error {
+public 
+enum AutofillError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
     
     
@@ -1580,8 +1458,21 @@ public enum AutofillError: Swift.Error {
     case Unsupported
     case Io(message: String
     )
+
+    
+
+    
+
+    
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+    
 }
 
+#if compiler(>=6)
+extension AutofillError: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1673,21 +1564,6 @@ public func FfiConverterTypeAutofillError_lift(_ buf: RustBuffer) throws -> Auto
 public func FfiConverterTypeAutofillError_lower(_ value: AutofillError) -> RustBuffer {
     return FfiConverterTypeAutofillError.lower(value)
 }
-
-
-extension AutofillError: Equatable, Hashable {}
-
-
-
-
-extension AutofillError: Foundation.LocalizedError {
-    public var errorDescription: String? {
-        String(reflecting: self)
-    }
-}
-
-
-
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1843,7 +1719,8 @@ fileprivate struct FfiConverterSequenceTypePasskeyAccount: FfiConverterRustBuffe
  */
 public func appGroup() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
-    uniffi_rowel_autofill_fn_func_app_group($0
+        uniffiCallStatus in
+    uniffi_rowel_autofill_fn_func_app_group(uniffiCallStatus
     )
 })
 }
@@ -1852,9 +1729,10 @@ public func appGroup() -> String  {
  */
 public func openVault(location: VaultLocation, key: Data)throws  -> Vault  {
     return try  FfiConverterTypeVault_lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
+        uniffiCallStatus in
     uniffi_rowel_autofill_fn_func_open_vault(
         FfiConverterTypeVaultLocation_lower(location),
-        FfiConverterData.lower(key),$0
+        FfiConverterData.lower(key),uniffiCallStatus
     )
 })
 }
@@ -1864,8 +1742,9 @@ public func openVault(location: VaultLocation, key: Data)throws  -> Vault  {
  */
 public func vaultLocation(container: String)throws  -> VaultLocation  {
     return try  FfiConverterTypeVaultLocation_lift(try rustCallWithError(FfiConverterTypeAutofillError_lift) {
+        uniffiCallStatus in
     uniffi_rowel_autofill_fn_func_vault_location(
-        FfiConverterString.lower(container),$0
+        FfiConverterString.lower(container),uniffiCallStatus
     )
 })
 }
@@ -1879,34 +1758,34 @@ private enum InitializationResult {
 // the code inside is only computed once.
 private let initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
-    let bindings_contract_version = 29
+    let bindings_contract_version = 30
     // Get the scaffolding contract version by calling the into the dylib
     let scaffolding_contract_version = ffi_rowel_autofill_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_rowel_autofill_checksum_func_app_group() != 42569) {
+    if (uniffi_rowel_autofill_checksum_func_app_group() != 14735) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_func_open_vault() != 21081) {
+    if (uniffi_rowel_autofill_checksum_func_open_vault() != 57544) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_func_vault_location() != 38345) {
+    if (uniffi_rowel_autofill_checksum_func_vault_location() != 60122) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_method_vault_assert_passkey() != 27995) {
+    if (uniffi_rowel_autofill_checksum_method_vault_assert_passkey() != 63665) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_method_vault_credentials_for() != 14547) {
+    if (uniffi_rowel_autofill_checksum_method_vault_credentials_for() != 42825) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_method_vault_passkeys_for() != 46537) {
+    if (uniffi_rowel_autofill_checksum_method_vault_passkeys_for() != 38598) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_method_vault_password() != 27197) {
+    if (uniffi_rowel_autofill_checksum_method_vault_password() != 17362) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rowel_autofill_checksum_method_vault_register_passkey() != 13741) {
+    if (uniffi_rowel_autofill_checksum_method_vault_register_passkey() != 17262) {
         return InitializationResult.apiChecksumMismatch
     }
 
