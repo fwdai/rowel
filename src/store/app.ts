@@ -90,6 +90,14 @@ export interface AppState {
    */
   remoteVaults: SetupDriveFile[]
   /**
+   * How many sessions have been dropped (`clearSession`): a stamp for work in
+   * the webview that awaits with nothing of the session in hand — a photo being
+   * read for a scan — so it can tell, on resuming, that the session that asked
+   * is gone and the one now open (this vault's or another workspace's) never
+   * asked for it. The Rust side keeps the same check around its own awaits.
+   */
+  locks: number
+  /**
    * A backup the OS asked the app to open (`file:opened`), waiting for a
    * screen that can take it: the restore step on a fresh install, Settings ›
    * Import once a vault is open. Kept across a lock — the vault has to be
@@ -131,6 +139,7 @@ export const initialApp: AppState = {
   },
   setupDrive: DRIVE_IDLE,
   remoteVaults: [],
+  locks: 0,
   openedFile: null,
   update: { readyVersion: null, readyNotes: null, status: null }
 }
@@ -249,7 +258,7 @@ export const clearSession = () => {
   resetUi()
   resetFavicons()
   cancelScheduledSync()
-  useApp.setState({ remoteVaults: [] })
+  useApp.setState(state => ({ remoteVaults: [], locks: state.locks + 1 }))
 }
 
 /** What the last sync run found in the account and not here. */

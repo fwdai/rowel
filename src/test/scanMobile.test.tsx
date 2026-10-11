@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
-import { useUi, useVault } from '@/store'
+import { clearSession, useUi, useVault } from '@/store'
 import { withEntries, loginMeta, seedApp } from './utils'
 import { calls, mockCommand } from './ipc'
 
@@ -106,6 +106,27 @@ describe('scanning on a phone', () => {
       expect(useUi.getState().scanBusy).toBe(false)
       closed()
       expect(calls('scan_image_bytes')).toHaveLength(0)
+    })
+
+    it('drops the photo when the session that took it ends during the read', async () => {
+      let finish: (bytes: ArrayBuffer) => void = () => {}
+      const slow = new File([BYTES], 'IMG_0044.jpg', { type: 'image/jpeg' })
+      Object.defineProperty(slow, 'arrayBuffer', {
+        value: () => new Promise<ArrayBuffer>(resolve => (finish = resolve))
+      })
+      mockCommand('scan_image_bytes', () => ({ kind: 'card', fields: CARD }))
+      await openSheet()
+      await userEvent.upload(screen.getByTestId('scan-source-capture'), slow)
+      expect(useUi.getState().scanBusy).toBe(true)
+
+      // A lock mid-read, and another workspace unlocked after it.
+      act(() => clearSession())
+      withEntries([loginMeta({ id: 'w2', title: 'Other workspace' })])
+      await act(async () => finish(BYTES.buffer))
+
+      expect(calls('scan_image_bytes')).toHaveLength(0)
+      expect(useVault.getState().creating).toBeNull()
+      expect(useUi.getState()).toMatchObject({ scanBusy: false, scanError: null })
     })
 
     it('reports a photo nothing could be read from', async () => {
