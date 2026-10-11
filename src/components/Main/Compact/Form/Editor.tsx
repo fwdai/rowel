@@ -3,6 +3,7 @@ import { kindOf } from '@/kinds'
 import Body from '../../Body/Aside/Show/Edit/Body'
 import Title from '../../Body/Aside/Show/Edit/Title'
 import { useDraft } from '../../Body/Aside/Show/Edit/useDraft'
+import { SCREEN_SCROLLER } from '../chrome'
 import NavRow from './NavRow'
 import { useHeading } from './useHeading'
 
@@ -36,7 +37,9 @@ export default function Editor({ entry, type, revealed }: Props) {
           fields/Row). One is also all it takes to keep a focused field visible:
           the shell around it is already sized to the visual viewport, so the
           keyboard shortens this box rather than covering it. */}
-      <div className="@container min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-1 pb-[calc(env(safe-area-inset-bottom)+40px)]">
+      <div
+        className={`@container ${SCREEN_SCROLLER} px-4 pt-1 pb-[calc(env(safe-area-inset-bottom)+40px)]`}
+      >
         {/* 56px of indent under the message: the 44px tile plus the row's gap. */}
         <Title
           draft={draft}
