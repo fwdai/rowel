@@ -548,7 +548,7 @@ mod tests {
             ("IMG_0042.heic", 9, Some("image/heic"))
         );
 
-        let (_, cipher, stored) = begin_save(&state, &dto.id).unwrap();
+        let (_, cipher, stored) = begin_unseal(&state, &dto.id).unwrap();
         assert_eq!(
             &**cipher.unseal(&stored.meta.id, &stored.blob).unwrap(),
             b"the photo"
