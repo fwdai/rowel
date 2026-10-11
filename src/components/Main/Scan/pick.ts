@@ -4,15 +4,12 @@ import { runScan } from './run'
 
 /**
  * Choose an image and scan it — the picked-file twin of dropping a photo on
- * the window, and on a phone the "from the library" half of the source sheet
- * (the camera half is `capture.ts`).
+ * the window. Desktop only: a phone goes through the system's sheet and scans
+ * what it hands back from its bytes (`capture.ts`).
  *
  * The dialog is opened in Rust, which also clears the picked path for the read
  * that follows (see `pickFileToRead`), and which owns the filter: all image
- * types, which is exactly what makes iOS show the Photos picker rather than the
- * Files browser, since the dialog plugin switches to `PHPickerViewController`
- * when no filter names a non-media type (`tauri-plugin-dialog` 2.7.2,
- * `ios/Sources/DialogPlugin.swift:82-114`). Only its name is ours to translate.
+ * types. Only its name is ours to translate.
  *
  * Resolves to whether a file was picked, so a caller can dismiss itself only
  * when the window is actually being handed over. Never throws: a dialog that

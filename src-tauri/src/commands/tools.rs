@@ -15,19 +15,17 @@ use crate::{favicon, scan};
 
 /// The OS file dialog, for a file the backend will then read: `kind` is
 /// `"image"` (filtered to what the scanner opens), `"env"` (any file, since
-/// an env file may be named anything), `"attachment"` (any file) or `"photo"`
-/// (an image to attach — the attachment pick under the image filter, which is
-/// what makes a phone offer its photo library rather than its file browser:
-/// the dialog plugin switches to the media picker when no filter names a
-/// non-media type). The path picked, or `None` when the dialog was dismissed.
+/// an env file may be named anything) or `"attachment"` (any file). The path
+/// picked, or `None` when the dialog was dismissed. Desktop only: a phone
+/// picks through the webview's own file input, whose photo or file arrives as
+/// bytes (`scan_image_bytes`, `attachment_add_bytes`).
 ///
 /// Run from Rust rather than through the dialog plugin's JS API so the choice
 /// is one the backend witnessed: the picked path is granted (see `grants`)
 /// before the webview hears of it, and `scan_image` / `read_env_file` read
 /// only granted paths. The grant carries the purpose the dialog was opened
 /// for, so a file chosen from the env picker cannot be spent on a scan
-/// instead — and a photo picked to attach is only ever attached, never
-/// scanned. `label` is the filter's name in the dialog's own chrome,
+/// instead. `label` is the filter's name in the dialog's own chrome,
 /// translated by the webview, which owns the catalogue.
 #[tauri::command]
 pub async fn pick_file(
@@ -45,11 +43,6 @@ pub async fn pick_file(
         }
         "env" => Purpose::Env,
         "attachment" => Purpose::Attachment,
-        "photo" => {
-            let label = label.unwrap_or_else(|| "Images".into());
-            dialog = dialog.add_filter(label, &scan::IMAGE_EXTENSIONS);
-            Purpose::Attachment
-        }
         other => return Err(Error::Unsupported(format!("no {other} picker"))),
     };
     // The dialog blocks its caller until the user answers, so it runs on the
@@ -94,8 +87,9 @@ pub async fn scan_image(
 }
 
 /// Read a card or an identity document out of a photo the webview holds as
-/// bytes — the one the phone's camera just took through the capture input,
-/// which exists nowhere on disk and so has no path to grant.
+/// bytes — the one the phone's system picker handed its file input, from the
+/// camera, the photo library or Files, which the webview has whole and which
+/// has no path to grant.
 ///
 /// No grant is needed, and none would mean anything: `grants` exists because a
 /// *path* is the webview naming a file on disk it never read, whereas these

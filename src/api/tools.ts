@@ -63,11 +63,11 @@ export const getAudit = (checkBreaches: boolean): Promise<Audit> =>
  *
  * `label` names the filter in the dialog's own chrome, so it comes from the
  * catalogue the webview owns. `'env'` takes any file — an env file may be
- * named anything — and so does `'attachment'`. `'photo'` is an attachment
- * pick under the image filter: on a phone that opens the photo library rather
- * than the file browser, and what it picks is readable only as an attachment.
+ * named anything — and so does `'attachment'`. Desktop only: a phone picks
+ * through the webview's own file input (`elements/FileInput`), and what that
+ * hands back travels as bytes.
  */
-export type PickKind = 'image' | 'env' | 'attachment' | 'photo'
+export type PickKind = 'image' | 'env' | 'attachment'
 
 export const pickFileToRead = (kind: PickKind, label?: string): Promise<string | null> =>
   call('pick_file', { kind, label: label ?? null })
@@ -89,9 +89,9 @@ export const scanImage = (path: string): Promise<ScanResult> => call('scan_image
 
 /**
  * Recognize a card or an identity document in a photo the webview holds —
- * the one the phone's camera just took through the capture input, which has
- * no path on disk. The bytes go over as the request's raw body, not as JSON.
- * No grant is involved: nothing on disk is read for them.
+ * what the phone's system picker handed its file input, which has no path on
+ * disk. The bytes go over as the request's raw body, not as JSON. No grant is
+ * involved: nothing on disk is read for them.
  */
 export const scanImageBytes = (image: Uint8Array): Promise<ScanResult> =>
   call('scan_image_bytes', image)

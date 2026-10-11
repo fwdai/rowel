@@ -7,7 +7,8 @@ import { withEntries, loginMeta, seedApp } from './utils'
 import { calls, mockCommand } from './ipc'
 
 // The whole module graph reads as a phone, so the picker's scan row is the
-// phone's: it asks where the photo comes from before anything opens.
+// phone's: it opens the system's own sheet through a file input, and scans
+// whatever that hands back from its bytes.
 vi.mock('@/lib/platform', () => ({
   isIOS: true,
   isAndroid: false,
@@ -21,147 +22,96 @@ const CARD = { number: '4242424242424242', month: '04', year: '27', name: 'ADA L
 const BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
 const PHOTO = new File([BYTES], 'IMG_0042.jpg', { type: 'image/jpeg' })
 
-// Open the Add picker and answer its scan row, which raises the source sheet.
-const openSheet = async () => {
+// Open the Add picker, with its scan row on screen.
+const openPicker = async () => {
   withEntries([loginMeta({ id: 'l1', title: 'Google' })])
   seedApp({ scanSupported: true })
   render(<Main />)
   await userEvent.click(screen.getByTestId('add-entry-button'))
-  await userEvent.click(screen.getByTestId('add-scan-image'))
 }
 
-const closed = () => {
-  expect(screen.queryByTestId('scan-source-sheet')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('add-secret-modal')).not.toBeInTheDocument()
-}
+const input = () => screen.getByTestId<HTMLInputElement>('add-scan-input')
 
-const stillOpen = () => {
-  expect(screen.getByTestId('scan-source-sheet')).toBeInTheDocument()
-  expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
-}
+const closed = () => expect(screen.queryByTestId('add-secret-modal')).not.toBeInTheDocument()
 
 beforeEach(() => vi.clearAllMocks())
 
 describe('scanning on a phone', () => {
-  it('asks where the photo comes from before opening anything', async () => {
-    await openSheet()
+  it('opens the system sheet through a file input, not a sheet of its own', async () => {
+    await openPicker()
+    const opened = vi.spyOn(input(), 'click')
 
-    const sheet = screen.getByTestId('scan-source-sheet')
-    expect(sheet).toHaveTextContent('Take Photo')
-    expect(sheet).toHaveTextContent('Photo Library')
-    // Over the picker, not instead of it.
+    await userEvent.click(screen.getByTestId('add-scan-image'))
+
+    expect(opened).toHaveBeenCalled()
+    // The system's sheet offers the camera itself: no `capture`, which would
+    // skip it and open the camera outright.
+    expect(input()).toHaveAttribute('accept', 'image/*')
+    expect(input()).not.toHaveAttribute('capture')
+    // Over the picker, not instead of it: a dismissed sheet lands back here.
     expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
     expect(calls('pick_file')).toHaveLength(0)
-    expect(screen.queryByTestId('scan-source-capture')).toHaveAttribute('capture', 'environment')
   })
 
-  it('backs out of the question to the picker', async () => {
-    await openSheet()
+  it('scans the photo from its bytes and hands over to the editor', async () => {
+    mockCommand('scan_image_bytes', () => ({ kind: 'card', fields: CARD }))
+    await openPicker()
 
-    await userEvent.keyboard('{Escape}')
+    await userEvent.upload(input(), PHOTO)
 
-    expect(screen.queryByTestId('scan-source-sheet')).not.toBeInTheDocument()
-    expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
+    await waitFor(() => expect(useVault.getState().creating).toBe('card'))
+    // The editor took the prefill: the number is in it, grouped as the card
+    // field prints it.
+    await waitFor(() =>
+      expect(document.querySelector('input[name="number"]')).toHaveValue('4242 4242 4242 4242')
+    )
+    closed()
+    expect(calls('scan_image')).toHaveLength(0)
+    expect(calls('scan_image_bytes')).toEqual([BYTES])
   })
 
-  describe('the camera', () => {
-    it('opens on the row', async () => {
-      await openSheet()
-      const input = screen.getByTestId<HTMLInputElement>('scan-source-capture')
-      const opened = vi.spyOn(input, 'click')
-
-      await userEvent.click(screen.getByTestId('scan-source-camera'))
-
-      expect(opened).toHaveBeenCalled()
-      expect(calls('pick_file')).toHaveLength(0)
+  it('reports a photo it could not even load, since the picker is gone', async () => {
+    const broken = new File([BYTES], 'IMG_0043.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(broken, 'arrayBuffer', {
+      value: () => Promise.reject(new Error('the file went away'))
     })
+    await openPicker()
 
-    it('scans the photo it took from its bytes and hands over to the editor', async () => {
-      mockCommand('scan_image_bytes', () => ({ kind: 'card', fields: CARD }))
-      await openSheet()
+    await userEvent.upload(input(), broken)
 
-      await userEvent.upload(screen.getByTestId('scan-source-capture'), PHOTO)
-
-      await waitFor(() => expect(useVault.getState().creating).toBe('card'))
-      // The editor took the prefill: the number is in it, grouped as the card
-      // field prints it.
-      await waitFor(() =>
-        expect(document.querySelector('input[name="number"]')).toHaveValue('4242 4242 4242 4242')
-      )
-      closed()
-      expect(calls('scan_image')).toHaveLength(0)
-      expect(calls('scan_image_bytes')).toEqual([BYTES])
-    })
-
-    it('reports a photo it could not even load, since the sheets are gone', async () => {
-      const broken = new File([BYTES], 'IMG_0043.jpg', { type: 'image/jpeg' })
-      Object.defineProperty(broken, 'arrayBuffer', {
-        value: () => Promise.reject(new Error('the file went away'))
-      })
-      await openSheet()
-
-      await userEvent.upload(screen.getByTestId('scan-source-capture'), broken)
-
-      await waitFor(() => expect(useUi.getState().scanError).toBe('failed'))
-      expect(useUi.getState().scanBusy).toBe(false)
-      closed()
-      expect(calls('scan_image_bytes')).toHaveLength(0)
-    })
-
-    it('drops the photo when the session that took it ends during the read', async () => {
-      let finish: (bytes: ArrayBuffer) => void = () => {}
-      const slow = new File([BYTES], 'IMG_0044.jpg', { type: 'image/jpeg' })
-      Object.defineProperty(slow, 'arrayBuffer', {
-        value: () => new Promise<ArrayBuffer>(resolve => (finish = resolve))
-      })
-      mockCommand('scan_image_bytes', () => ({ kind: 'card', fields: CARD }))
-      await openSheet()
-      await userEvent.upload(screen.getByTestId('scan-source-capture'), slow)
-      expect(useUi.getState().scanBusy).toBe(true)
-
-      // A lock mid-read, and another workspace unlocked after it.
-      act(() => clearSession())
-      withEntries([loginMeta({ id: 'w2', title: 'Other workspace' })])
-      await act(async () => finish(BYTES.buffer))
-
-      expect(calls('scan_image_bytes')).toHaveLength(0)
-      expect(useVault.getState().creating).toBeNull()
-      expect(useUi.getState()).toMatchObject({ scanBusy: false, scanError: null })
-    })
-
-    it('reports a photo nothing could be read from', async () => {
-      await openSheet()
-
-      await userEvent.upload(screen.getByTestId('scan-source-capture'), PHOTO)
-
-      await waitFor(() => expect(useUi.getState().scanError).toBe('unreadable'))
-      expect(useVault.getState().creating).toBeNull()
-    })
+    await waitFor(() => expect(useUi.getState().scanError).toBe('failed'))
+    expect(useUi.getState().scanBusy).toBe(false)
+    closed()
+    expect(calls('scan_image_bytes')).toHaveLength(0)
   })
 
-  describe('the library', () => {
-    it('is the same granted dialog as the desktop, run from Rust', async () => {
-      mockCommand('pick_file', () => '/var/mobile/tmp/IMG_0042.heic')
-      mockCommand('scan_image', () => ({ kind: 'card', fields: CARD }))
-      await openSheet()
-
-      await userEvent.click(screen.getByTestId('scan-source-library'))
-
-      await waitFor(() => expect(useVault.getState().creating).toBe('card'))
-      closed()
-      expect(calls('pick_file')).toContainEqual({ kind: 'image', label: 'Images' })
-      expect(calls('scan_image')).toContainEqual({ path: '/var/mobile/tmp/IMG_0042.heic' })
-      expect(calls('scan_image_bytes')).toHaveLength(0)
+  it('drops the photo when the session that took it ends during the read', async () => {
+    let finish: (bytes: ArrayBuffer) => void = () => {}
+    const slow = new File([BYTES], 'IMG_0044.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(slow, 'arrayBuffer', {
+      value: () => new Promise<ArrayBuffer>(resolve => (finish = resolve))
     })
+    mockCommand('scan_image_bytes', () => ({ kind: 'card', fields: CARD }))
+    await openPicker()
+    await userEvent.upload(input(), slow)
+    expect(useUi.getState().scanBusy).toBe(true)
 
-    it('leaves the question open when the picker is cancelled', async () => {
-      mockCommand('pick_file', () => null)
-      await openSheet()
+    // A lock mid-read, and another workspace unlocked after it.
+    act(() => clearSession())
+    withEntries([loginMeta({ id: 'w2', title: 'Other workspace' })])
+    await act(async () => finish(BYTES.buffer))
 
-      await userEvent.click(screen.getByTestId('scan-source-library'))
+    expect(calls('scan_image_bytes')).toHaveLength(0)
+    expect(useVault.getState().creating).toBeNull()
+    expect(useUi.getState()).toMatchObject({ scanBusy: false, scanError: null })
+  })
 
-      stillOpen()
-      expect(calls('scan_image')).toHaveLength(0)
-    })
+  it('reports a photo nothing could be read from', async () => {
+    await openPicker()
+
+    await userEvent.upload(input(), PHOTO)
+
+    await waitFor(() => expect(useUi.getState().scanError).toBe('unreadable'))
+    expect(useVault.getState().creating).toBeNull()
   })
 })
