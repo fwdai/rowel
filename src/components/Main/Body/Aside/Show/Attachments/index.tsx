@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import type { EntryMeta } from '@/api/types'
 import Panel from '@/components/elements/Panel'
-import { LABEL, META } from '@/components/elements/tokens'
+import { ACTION_ROW, META, SECTION_LABEL } from '@/components/elements/tokens'
+import { cx } from '@/utils/cx'
 import { humanSize } from '@/utils/size'
 import { useFileDrop } from '@/hooks/useFileDrop'
 import AttachButton from './AttachButton'
@@ -42,7 +43,7 @@ export default function Attachments({ entry }: { entry: EntryMeta }) {
     <div data-testid="attachments">
       {items.length > 0 && (
         <div className="mt-4" data-testid="attachments-section">
-          <span className={`mb-1.5 block ${LABEL}`}>{t('Attachments')}</span>
+          <span className={SECTION_LABEL}>{t('Attachments')}</span>
           <Panel>
             {items.map(item => (
               <AttachmentRow
@@ -66,7 +67,9 @@ export default function Attachments({ entry }: { entry: EntryMeta }) {
       <AttachButton
         busy={busy}
         onPick={from => void pick(from)}
-        className={items.length === 0 ? 'mt-4 px-1' : 'mt-2 px-1'}
+        // On the phone, a cell of its own — the same control the footer's "Add
+        // tag" is (see `ACTION_ROW`).
+        className={cx(items.length === 0 ? 'mt-4 px-1' : 'mt-2 px-1', ACTION_ROW)}
       />
       {error && (
         <p className="mt-2 px-1 text-base text-bad" role="alert">

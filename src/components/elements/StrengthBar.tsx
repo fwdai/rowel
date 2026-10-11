@@ -10,7 +10,7 @@ export default function StrengthBar({ password }: { password: string }) {
   if (!password) return null
   const score = strength?.score ?? null
   return (
-    <div className="flex items-center gap-2.5">
+    <div className="flex flex-none items-center gap-2.5">
       <Meter level={score} />
       <span className={META}>
         {score !== null ? t(LEVEL_LABELS[score]) : ''}

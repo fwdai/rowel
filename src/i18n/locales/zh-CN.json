@@ -359,6 +359,7 @@
   "Verifying": "正在验证",
   "Welcome": "欢迎使用 {{appName}}",
   "Add one-time code": "添加一次性验证码",
+  "One-time code": "一次性验证码",
   "Paste secret or link": "粘贴密钥或链接",
   "Changed just now": "刚刚修改",
   "Changed on {{date}}": "{{date}} 修改",

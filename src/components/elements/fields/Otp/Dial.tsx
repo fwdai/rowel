@@ -3,6 +3,7 @@ import { cx } from '@/utils/cx'
 import { useCopied } from '@/hooks/useCopied'
 import { CheckGlyph, CopyGlyph } from '@/components/Main/icons'
 import { META } from '../../tokens'
+import { groupDigits } from './secret'
 
 // A compact dial: the six usual digits at `text-md` need ~70px of clear space,
 // and the ring leaves ~80px inside its stroke, so it sits around them rather
@@ -37,10 +38,7 @@ export default function Dial({
 }) {
   const { t } = useTranslation()
   const { copied, copy } = useCopied()
-  // Split down the middle: three and three for the usual six, four and four
-  // for an 8-digit seed, rather than 3 + everything else.
-  const half = Math.ceil(code.length / 2)
-  const digits = `${code.slice(0, half)} ${code.slice(half)}`
+  const digits = groupDigits(code)
 
   const ring = (
     // The dash starts at 3 o'clock and runs clockwise. Mirroring the drawing

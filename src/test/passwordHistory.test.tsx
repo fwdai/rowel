@@ -118,6 +118,16 @@ describe('Password history', () => {
     expect(calls('copy_to_clipboard')).toContainEqual(
       expect.objectContaining({ value: 'first-old' })
     )
+
+    // On the phone the value is the row's only copy control: a press on it
+    // copies, and the copy button sits in the phone-hidden wrapper
+    // (`ROW_COPY`; jsdom applies no stylesheet, so the wrapper is the
+    // assertion), like every other row's.
+    await userEvent.click(first)
+    expect(calls('copy_to_clipboard')).toContainEqual(
+      expect.objectContaining({ value: 'second-old' })
+    )
+    expect(screen.getByTestId('password-history-copy-0').closest('.max-md\\:hidden')).not.toBeNull()
   })
 
   // Two presses, like the editor's Cancel: the first only asks.

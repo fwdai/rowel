@@ -36,10 +36,12 @@ export default function Fields() {
     <>
       <div
         className={
-          // The dial's column is a fixed 208px, so a container that cannot
-          // spare it puts the panel back on the full width and the dial under
-          // it — otherwise the rows would be read through a 140px window.
-          otp
+          // Editing, the dial's panel takes a fixed 208px column, so a
+          // container that cannot spare it puts the panel back on the full
+          // width and the dial under it — otherwise the rows would be read
+          // through a 140px window. Reading, the code is a row of the panel
+          // itself, under the password it goes with.
+          editing && otp
             ? 'grid grid-cols-[minmax(0,1fr)_208px] items-start gap-3 @max-[420px]:grid-cols-1'
             : 'grid gap-3'
         }
@@ -48,10 +50,11 @@ export default function Fields() {
           <UrlField />
           <UsernameField required />
           <PasswordField required={!passkeys} />
+          {!editing && <OtpField />}
           <EmailField />
           <NoteField label="Note" />
           {editing && !otp && (
-            <FieldRow label="OTP">
+            <FieldRow label="One-time code">
               {id => (
                 // The value line's height, so the row does not shift when the
                 // dial's field takes its place.
@@ -66,7 +69,7 @@ export default function Fields() {
             </FieldRow>
           )}
         </Panel>
-        {otp && <OtpField autoFocus={editing && !entry.otp} />}
+        {editing && otp && <OtpField autoFocus={!entry.otp} />}
       </div>
       <PasskeysField />
       <CustomFieldsField />

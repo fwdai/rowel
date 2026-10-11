@@ -359,6 +359,7 @@
   "Verifying": "Doğrulanıyor",
   "Welcome": "{{appName}} uygulamasına hoş geldiniz",
   "Add one-time code": "Tek kullanımlık kod ekle",
+  "One-time code": "Tek kullanımlık kod",
   "Paste secret or link": "Anahtarı veya bağlantıyı yapıştır",
   "Changed just now": "Az önce değişti",
   "Changed on {{date}}": "{{date}} tarihinde değişti",

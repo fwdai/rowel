@@ -122,6 +122,32 @@ for an edit asked for before the *first* reveal landed, and the held frame
 (`Form/Held`) carries a working Cancel so a reveal that never arrives is not a
 dead end.
 
+The read screen is laid out as the platform's grouped list, with Passwords and
+1Password as the references. The header is one row: a 44px tile, the title,
+and the star as a 44px header action, so the row's two ends weigh the same;
+under the title only what the kind has to add that no row says (`Eyebrow`
+`bare` — a document's type), never the kind's name or the host. Rows take the
+grouped list's geometry through `max-md:` in `fields/Row` and `tokens.ts`:
+sentence-case 12px captions (`ROW_LABEL`) 2px over the value, 8px over and
+under, and the rail pulled into the padding so a glyph sits 16px from the
+card's edge like the caption does. There is no copy button on a phone row —
+the value is the copy control (`fields/CopyValue`, the one element every
+row's value renders through: the typed fields, a custom pair, an env variable,
+a key's comment and fingerprint, a scope list), the toast confirms it, and the
+bottom button covers the main secret — so a rail holds only the eye and the
+open-link. Every row's copy button sits in `ROW_COPY`, which is what hides it
+there; the rows that draw their own geometry rather than rendering through
+`FieldRow` (a custom pair, an env variable) take the phone grid from the same
+exported classes, so one row on the phone is one row whatever it holds. The
+one-time code is a row under the password with a countdown ring in its rail
+(`fields/Otp/Countdown`, a conic gradient on a registered `--otp-left`), on
+both shells; the editor keeps the dial as the live preview. Under the rows,
+files, passkeys, custom fields and tags are sections (`SECTION_LABEL`: 12px
+uppercase, tracking pulled in, inset to the rows), every "add" is the same
+card-row cell (`ACTION_ROW`), and the dates are one centred meta line at the
+end — `Compact/Detail/Meta`, handed to `Show/Body` as its `Footer`, which
+reads the same facts the desktop's strip does.
+
 Overlays are not screens and do not live in the shell div. That div carries
 `viewportStyle`'s translate, which makes it the containing block of anything
 `fixed` inside it, so a sheet mounted there would take the keyboard offset

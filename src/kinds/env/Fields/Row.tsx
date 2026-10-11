@@ -1,10 +1,26 @@
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
-import { copy } from '@/services/copy'
 import CopyButton from '@/components/elements/CopyButton'
 import IconButton from '@/components/elements/IconButton'
-import { RAIL, STACK, STACK_LABEL, STACK_RAIL } from '@/components/elements/fields'
-import { HOVER_ONLY, MASK_DOTS, ROW_HAIRLINE, VALUE } from '@/components/elements/tokens'
+import {
+  CopyValue,
+  PHONE,
+  PHONE_LABEL,
+  PHONE_RAIL,
+  PHONE_VALUE,
+  RAIL,
+  ROW_PAD,
+  STACK,
+  STACK_LABEL,
+  STACK_RAIL
+} from '@/components/elements/fields'
+import {
+  HOVER_ONLY,
+  MASK_DOTS,
+  ROW_COPY,
+  ROW_HAIRLINE,
+  VALUE
+} from '@/components/elements/tokens'
 import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import type { EnvVar } from '../parse'
 import { KEY_COL, STACK_VALUE } from './styles'
@@ -25,32 +41,32 @@ export default function Row({ v, revealed, onReveal }: Props) {
   const masked = !revealed
 
   return (
-    <div className={cx('group flex items-center gap-3 px-3.5 py-3', ROW_HAIRLINE, STACK)}>
+    <div
+      className={cx('group flex items-center gap-3', ROW_PAD, ROW_HAIRLINE, STACK, PHONE)}
+    >
       <span
         data-testid={`env-key-${v.index}`}
-        className={cx(KEY_COL, 'truncate text-text2', STACK_LABEL)}
+        className={cx(KEY_COL, 'truncate text-text2', STACK_LABEL, PHONE_LABEL)}
       >
         {v.key}
       </span>
-      <div className="min-w-0 flex-1">
+      <div className={cx('min-w-0 flex-1', PHONE_VALUE)}>
         <span className="flex min-w-0 items-baseline gap-1.5">
-          {/* The value IS the copy affordance, as in Field: a finger cannot
-              hover a row to find the button. Masked, it hands over the real
-              value, exactly as the button beside it does. */}
-          <button
-            type="button"
-            aria-label={`${v.key} · ${t('Copy')}`}
-            onClick={() => copy(v.value)}
-            data-testid={`env-value-${v.index}`}
+          {/* Masked, it hands over the real value, exactly as the button
+              beside it does. */}
+          <CopyValue
+            value={v.value}
+            label={`${v.key} · ${t('Copy')}`}
+            testid={`env-value-${v.index}`}
             className={cx(
               VALUE,
-              'cursor-pointer text-left font-mono',
-              masked ? 'text-text2' : 'text-text',
+              'font-mono',
+              masked ? 'text-text2 max-md:text-text' : 'text-text',
               STACK_VALUE
             )}
           >
             {masked ? MASK_DOTS : v.value}
-          </button>
+          </CopyValue>
           {/* Comments come from the same encrypted body as the value and may
               themselves contain secrets, so the row's eye governs both. */}
           {revealed && v.comment && (
@@ -60,7 +76,7 @@ export default function Row({ v, revealed, onReveal }: Props) {
           )}
         </span>
       </div>
-      <div className={cx(RAIL, STACK_RAIL)}>
+      <div className={cx(RAIL, STACK_RAIL, PHONE_RAIL)}>
         <IconButton
           title={revealed ? t('Hide') : t('Reveal')}
           active={revealed}
@@ -69,7 +85,7 @@ export default function Row({ v, revealed, onReveal }: Props) {
         >
           {revealed ? <EyeOffGlyph /> : <EyeGlyph />}
         </IconButton>
-        <span className={HOVER_ONLY}>
+        <span className={cx(HOVER_ONLY, ROW_COPY)}>
           <CopyButton value={v.value} title={t('Copy')} />
         </span>
       </div>

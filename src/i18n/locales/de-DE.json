@@ -369,6 +369,7 @@
   "Verifying": "Wird geprüft",
   "Welcome": "Willkommen bei {{appName}}",
   "Add one-time code": "Einmalcode hinzufügen",
+  "One-time code": "Einmalcode",
   "Paste secret or link": "Secret oder Link einfügen",
   "Changed just now": "Gerade geändert",
   "Changed on {{date}}": "Geändert am {{date}}",

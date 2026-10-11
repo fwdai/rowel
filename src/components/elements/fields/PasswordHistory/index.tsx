@@ -41,13 +41,19 @@ export default function PasswordHistory({ id, history, stamp, toggleId }: Props)
         aria-expanded={open}
         data-testid="password-history-toggle"
         onClick={() => setOpen(!open)}
+        // On the phone it keeps to the meter's line as the bare stamp does
+        // (see PasswordField): a zero basis so it never breaks the line, the
+        // grow to fill it, and the words truncating before the chevron.
         className={cx(
           META,
-          'flex cursor-pointer items-center gap-1 text-left transition-colors hover:text-text any-pointer-coarse:min-h-11'
+          'flex cursor-pointer items-center gap-1 text-left transition-colors hover:text-text any-pointer-coarse:min-h-11',
+          'max-md:min-w-0 max-md:flex-1 max-md:basis-0 max-md:justify-end'
         )}
       >
-        {stamp ? `${stamp} · ${count}` : count}
-        <ChevronDownGlyph className={cx('transition-transform', open && 'rotate-180')} />
+        <span className="max-md:truncate">{stamp ? `${stamp} · ${count}` : count}</span>
+        <ChevronDownGlyph
+          className={cx('flex-none transition-transform', open && 'rotate-180')}
+        />
       </button>
       {open && (
         // A line of its own on the phone, where the slot is a wrapping row.

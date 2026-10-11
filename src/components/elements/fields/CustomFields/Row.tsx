@@ -8,14 +8,28 @@ import IconButton from '../../IconButton'
 import { verbatimInput } from '../../inputProps'
 import {
   HOVER_ONLY,
-  LABEL,
   LABEL_TYPE,
   MASK_DOTS,
   MASK_INPUT,
+  ROW_COPY,
   ROW_HAIRLINE,
+  ROW_LABEL,
   VALUE
 } from '../../tokens'
-import { RAIL, STACK, STACK_LABEL, STACK_RAIL, STACK_SIGIL } from '../Row'
+import CopyValue from '../CopyValue'
+import {
+  PHONE,
+  PHONE_LABEL,
+  PHONE_RAIL,
+  PHONE_SIGIL,
+  PHONE_VALUE,
+  RAIL,
+  ROW_PAD,
+  STACK,
+  STACK_LABEL,
+  STACK_RAIL,
+  STACK_SIGIL
+} from '../Row'
 
 interface Props {
   field: ExtraField
@@ -34,14 +48,16 @@ const BOX =
   'border-b border-line2 bg-transparent outline-none transition-colors placeholder:text-text2 focus:border-accent-line'
 
 // One label/value pair, in the detail row's geometry: the label takes the w-32
-// label column the fixed rows use, the value the rest. Reading, the value gets a
-// copy button like any other; editing, the label is typed too — it is the user's
+// label column the fixed rows use, the value the rest. Reading, the value is
+// the copy control like any other's, with a copy button beside it where there
+// is a pointer to hover; editing, the label is typed too — it is the user's
 // word for this field, not a translated one — and the row can be dropped.
 //
 // A concealed pair reads like a secure Field: dots until the eye is pressed,
 // its copy button always in sight. Editing, the eye is what conceals it, and
 // a concealed value is typed into dots like a password. In a narrow container
-// the row folds label-over-value as the fixed rows do (see FieldRow).
+// the row folds label-over-value as the fixed rows do, and on the phone it
+// takes their grid (see FieldRow for both).
 export default function CustomFieldRow({
   field,
   index,
@@ -65,8 +81,10 @@ export default function CustomFieldRow({
   return (
     <div
       className={cx(
-        'group flex items-center gap-3 px-3.5 py-3',
+        'group flex items-center gap-3',
+        ROW_PAD,
         STACK,
+        PHONE,
         !editing && ROW_HAIRLINE
       )}
     >
@@ -79,21 +97,21 @@ export default function CustomFieldRow({
           maxLength={60}
           {...verbatimInput}
           onChange={event => onChange({ ...field, label: event.target.value })}
-          className={cx('w-32 flex-none text-text', LABEL_TYPE, BOX, STACK_LABEL)}
+          className={cx('w-32 flex-none text-text', LABEL_TYPE, BOX, STACK_LABEL, PHONE_LABEL)}
         />
       ) : (
         <span
           data-testid={`entry-extra-label-${index}`}
-          className={cx('w-32 flex-none truncate', LABEL, STACK_LABEL)}
+          className={cx('w-32 flex-none truncate', ROW_LABEL, STACK_LABEL, PHONE_LABEL)}
         >
           {field.label}
         </span>
       )}
       {/* The fixed rows' sigil slot and actions slot (see FieldRow), held open
           so these values start and end where the rows above them do. */}
-      <span className={cx('w-4 flex-none', STACK_SIGIL)} />
+      <span className={cx('w-4 flex-none', STACK_SIGIL, PHONE_SIGIL)} />
 
-      <div className="min-w-0 flex-1">
+      <div className={cx('min-w-0 flex-1', PHONE_VALUE)}>
         {onChange ? (
           <input
             name={`extra-value-${index}`}
@@ -107,16 +125,18 @@ export default function CustomFieldRow({
             className={cx(INK, 'text-text', BOX)}
           />
         ) : (
-          <span
-            className={cx(INK, masked ? 'text-text2' : 'text-text')}
-            data-testid={`entry-extra-value-${index}`}
+          <CopyValue
+            value={field.value}
+            label={`${field.label} · ${t('Copy')}`}
+            testid={`entry-extra-value-${index}`}
+            className={cx(INK, masked ? 'text-text2 max-md:text-text' : 'text-text')}
           >
             {masked ? MASK_DOTS : field.value}
-          </span>
+          </CopyValue>
         )}
       </div>
 
-      <div className={cx(RAIL, STACK_RAIL)}>
+      <div className={cx(RAIL, STACK_RAIL, PHONE_RAIL)}>
         {editing ? (
           <>
             <IconButton
@@ -151,7 +171,7 @@ export default function CustomFieldRow({
             {/* Quiet until the row is under the cursor or the keyboard, like
                 the fixed rows' own copy button — bar a concealed one, which
                 has a control rail already, as a secure Field does. */}
-            <span className={cx(!field.secret && HOVER_ONLY)}>
+            <span className={cx(!field.secret && HOVER_ONLY, ROW_COPY)}>
               <CopyButton value={field.value} title={t('Copy')} />
             </span>
           </>

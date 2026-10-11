@@ -359,6 +359,7 @@
   "Verifying": "Проверка",
   "Welcome": "Добро пожаловать в {{appName}}",
   "Add one-time code": "Добавить одноразовый код",
+  "One-time code": "Одноразовый код",
   "Paste secret or link": "Вставьте секрет или ссылку",
   "Changed just now": "Изменён только что",
   "Changed on {{date}}": "Изменён {{date}}",
