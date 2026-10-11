@@ -6,7 +6,7 @@ import { SECTIONS } from '../../Sidebar/Settings/sections'
 import VaultFooter from '@/components/elements/VaultFooter'
 import SyncIndicator from '../../Header/SyncIndicator'
 import { LockGlyph } from '../../icons'
-import { ROOT_HEADER, TAB_BAR_CLEARANCE, TOUCH } from '../chrome'
+import { HEADER_ACTION, ROOT_HEADER, TAB_BAR_CLEARANCE } from '../chrome'
 import Heading from '../Heading'
 import Row from './Row'
 import ArchiveRow from './ArchiveRow'
@@ -30,7 +30,7 @@ export default function Root({ onSelect }: { onSelect: (section: Section) => voi
         {/* The chip deep-links here too, but through this screen's own
             navigation: the wide modal's section state is not what a pushed
             pane reads. */}
-        <SyncIndicator className={TOUCH} onClick={() => onSelect('sync')} />
+        <SyncIndicator className={HEADER_ACTION} onClick={() => onSelect('sync')} />
       </div>
 
       <div className={cx('min-h-0 flex-1 overflow-y-auto px-4 pt-5', TAB_BAR_CLEARANCE)}>

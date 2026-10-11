@@ -55,14 +55,17 @@ export default function SearchBox({
         // Holding the caret it switches on — the tint gives way to the detail
         // surface, a crisp accent stroke draws the edge and a wide, soft halo
         // of the same accent lifts it off the column. Hover stands down while
-        // focused so the lit surface never flickers under the pointer.
-        'border-transparent [&:hover:not(:focus-within)]:bg-text/10',
+        // focused so the lit surface never flickers under the pointer. It is
+        // the *input's* focus that lights it, not any focus within: the
+        // trailing controls (the clear button, a filter set into the field)
+        // take focus too, and pressing one is not searching.
+        'border-transparent [&:hover:not(:has(input:focus))]:bg-text/10',
         // On the phone the well is the one light thing on the grey ground —
         // the detail surface with a hairline edge, as the prototype draws its
         // field — not a tint darker than the screen, which left the ground the
         // brightest thing in view and made it read as white.
         'max-md:border-line max-md:bg-detail',
-        'focus-within:border-accent-line focus-within:bg-detail focus-within:ring-3 focus-within:ring-accent-soft',
+        'has-[input:focus]:border-accent-line has-[input:focus]:bg-detail has-[input:focus]:ring-3 has-[input:focus]:ring-accent-soft',
         // The slow tier: a field switching on should be seen doing it.
         'transition-[border-color,background-color,box-shadow] duration-300',
         className
@@ -70,7 +73,7 @@ export default function SearchBox({
     >
       {/* The glyph is the field's mood: muted at rest, ink under the pointer,
           accent while the field is listening. */}
-      <SearchGlyph className="flex-none transition-colors duration-300 group-hover:text-text2 group-focus-within:text-accent" />
+      <SearchGlyph className="flex-none transition-colors duration-300 group-hover:text-text2 group-has-[input:focus]:text-accent" />
       <input
         ref={inputRef}
         type="search"

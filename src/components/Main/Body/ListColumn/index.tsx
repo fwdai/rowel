@@ -36,6 +36,12 @@ interface Props {
    * 32px desktop field; the compact root sends the 44px touch one.
    */
   search?: string
+  /**
+   * A control set into the end of the search field, after the clear button:
+   * the compact root puts its tag filter there, beside the query it narrows
+   * the list with, since the phone has no rail to keep it on.
+   */
+  filter?: ReactNode
   /** Extra classes for the scroller, so a shell can reserve room under it. */
   scroller?: string
   /**
@@ -51,6 +57,7 @@ export default function ListColumn({
   heading,
   header = 'flex items-center gap-2.5 pt-4',
   search,
+  filter,
   scroller,
   footer
 }: Props) {
@@ -72,7 +79,10 @@ export default function ListColumn({
       // `useLayout`) so the list and the screens pushed over it share one.
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-list max-md:bg-screen"
     >
-      <div className="flex-none px-4 pb-2.5">
+      {/* The phone keeps the header short — the list is what the screen is
+          for — so the field's run-out before the first row is the row's own
+          caption height, not the desktop's 10px on top of it. */}
+      <div className="flex-none px-4 pb-2.5 max-md:pb-1">
         <div className={header}>
           {heading ?? <Title />}
           {/* The audit list has its own severity order — nothing to sort, and
@@ -83,7 +93,7 @@ export default function ListColumn({
             not apply to it. */}
         {!health && (
           <>
-            <Search className={search} />
+            <Search className={search} filter={filter} />
             <ActiveTag />
           </>
         )}

@@ -6,6 +6,27 @@
 export const TOUCH = 'h-11 w-11'
 
 /**
+ * A header's icon action on the phone — sort on the list root, regenerate on
+ * the generator's, the sync chip on settings', the menu and the star on the
+ * entry's: one tier for all of them, so no corner of the app has a bigger
+ * button than another. The 44px target over a 20px glyph is the nav bar's
+ * own proportion (a 24px icon in a 48px target on Android, 22px in 44 on
+ * iOS); the desktop's 14–16px glyphs are sized up here through the button
+ * rather than at each glyph, so a shared control needs no size prop to carry
+ * it. No box of its own: a bordered tile among bare ones is what made the
+ * generator's regenerate look twice the size of its neighbours.
+ */
+export const HEADER_ACTION = `${TOUCH} [&>svg]:size-5 [&>svg]:stroke-[1.75]`
+
+/**
+ * An action set into the end of the 44px search field, as the filter button
+ * sits in Mail's: a 36px tile, inset 4px so it reads as part of the field,
+ * whose hit area is still the field's full 44px — the pseudo-element around
+ * it is what the finger lands on.
+ */
+export const FIELD_ACTION = "h-9 w-9 before:absolute before:-inset-1 before:content-['']"
+
+/**
  * A tab root's header row: the title and its 44px actions centred on a 56px
  * row flush against the safe area — the very row a pushed screen's `NavBar`
  * puts its back control on (`BackButton` is `h-14`), so stepping from a root
