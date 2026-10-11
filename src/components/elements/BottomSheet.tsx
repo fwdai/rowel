@@ -87,14 +87,18 @@ export default function BottomSheet({ onClose, labelledBy, testid, ref, children
           pull === null && 'transition-[translate] duration-200 ease-out'
         )}
       >
-        {/* Only this row drags: one started in the content below is a scroll. */}
+        {/* Only this row drags: one started in the content below is a scroll.
+            32px tall, the grabber 6px in — the system's own proportion — so
+            the body's heading sits a line under the grabber, not a band of
+            ground under it. The close keeps its 44px target by standing 6px
+            proud of the card's top edge, over the scrim; its glyph is inside. */}
         <div
           data-testid="bottom-sheet-grabber"
           onPointerDown={grab}
           onPointerMove={drag}
           onPointerUp={release}
           onPointerCancel={cancel}
-          className="relative flex h-12 flex-none touch-none justify-center pt-2.5"
+          className="relative flex h-8 flex-none touch-none justify-center pt-1.5"
         >
           <span className="h-1 w-9 rounded-full bg-line2" />
           <IconButton
@@ -102,7 +106,7 @@ export default function BottomSheet({ onClose, labelledBy, testid, ref, children
             testid="modal-close"
             label={t('Close')}
             onClick={onClose}
-            className="absolute top-0.5 right-1 h-11 w-11"
+            className="absolute -top-1.5 right-1 h-11 w-11"
           >
             <CloseGlyph size={18} />
           </IconButton>

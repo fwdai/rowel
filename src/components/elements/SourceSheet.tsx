@@ -2,7 +2,6 @@ import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CameraGlyph, FolderGlyph, ImageGlyph } from '../Main/icons'
 import ActionRow from './ActionRow'
-import DialogHeader from './DialogHeader'
 import FileInput from './FileInput'
 import Frame from './Frame'
 import { CARD } from './tokens'
@@ -27,10 +26,12 @@ interface Props {
  * Where a photo or a file comes from, asked the way a phone asks it: a sheet
  * from the bottom edge, one row per source under the name the system gives
  * it — Take Photo, Photo Library, Choose File — each opening the system's own
- * picker for the answer. It is the Add picker's sheet, with the same header
- * and the same rows as its "other ways in", so the two read as one surface;
- * and it is never stacked on that picker: a row there that needs this closes
- * the picker and opens this in its place, as Receive does.
+ * picker for the answer. It is the Add picker's sheet — the same frame, the
+ * same heading type, the same rows as its "other ways in" — cut to the
+ * question: heading straight under the grabber, three rows, and the card's
+ * last row just above the home indicator. It is never stacked on that
+ * picker: a row there that needs this closes the picker and opens this in
+ * its place, as Receive does.
  *
  * The camera is the webview's own capture input (`FileInput`), which iOS opens
  * on the camera outright; what it takes is a `File` on no disk, and travels
@@ -70,14 +71,17 @@ export default function SourceSheet({
         capture
         onFile={onCapture}
       />
-      <DialogHeader
-        id={titleId}
-        title={title}
-        description={description}
-        onClose={onClose}
-        className="px-5"
-      />
-      <div className="px-5 pt-1 pb-3">
+      {/* One rhythm: the heading 8px under the grabber row, 16px from the
+          description to the card, 16px from the card to the home indicator
+          (8px here, 8px the frame's), 20px gutters at the sides. No hairline
+          under the heading — the card is the separation. */}
+      <div className="px-5 pt-2 pb-4">
+        <h1 id={titleId} className="truncate text-xl font-semibold tracking-display text-text">
+          {title}
+        </h1>
+        <p className="mt-0.5 text-sm text-text2">{description}</p>
+      </div>
+      <div className="px-5 pb-2">
         <div className={CARD}>
           <ActionRow
             testid={`${testid}-camera`}
