@@ -22,8 +22,9 @@ const NEARLY_FULL = 0.8
  * nothing here opens a file or shows one, because the bytes never come to the
  * webview at all. The vault's budget for files goes unmentioned until it is
  * nearly spent, and then only under a list of files. On a phone the attach
- * action first asks where from — the photo library or the file browser — since
- * the two are separate pickers there (see `AttachButton`).
+ * action first asks where from — the camera, the photo library or the file
+ * browser — since they are separate pickers there (see `AttachButton`); a
+ * photo from the camera arrives as bytes, the other two as a granted path.
  *
  * A file dropped on the window while this entry is open is attached to it,
  * unless the drop is the scanner's or the env flow's (see `drop.ts`). Both
@@ -32,7 +33,9 @@ const NEARLY_FULL = 0.8
  */
 export default function Attachments({ entry }: { entry: EntryMeta }) {
   const { t } = useTranslation()
-  const { items, usage, error, busy, add, pick, save, remove } = useAttachments(entry.id)
+  const { items, usage, error, busy, add, addFile, pick, save, remove } = useAttachments(
+    entry.id
+  )
 
   useFileDrop(paths => {
     const [path] = paths
@@ -66,7 +69,8 @@ export default function Attachments({ entry }: { entry: EntryMeta }) {
       )}
       <AttachButton
         busy={busy}
-        onPick={from => void pick(from)}
+        onPick={pick}
+        onFile={file => void addFile(file)}
         // On the phone, a cell of its own — the same control the footer's "Add
         // tag" is (see `ACTION_ROW`).
         className={cx(items.length === 0 ? 'mt-4 px-1' : 'mt-2 px-1', ACTION_ROW)}

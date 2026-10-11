@@ -1,9 +1,9 @@
 import { useTranslation } from 'react-i18next'
 import { useScanSupported, closeAddPicker, openScanSource } from '@/store'
 import { isMobile } from '@/lib/platform'
+import ActionRow from '@/components/elements/ActionRow'
 import { pickAndScan } from '../Scan/pick'
 import { ScanGlyph } from '../icons'
-import ActionRow from '@/components/elements/ActionRow'
 
 /**
  * "Scan a card or document…": the picked-file twin of dropping a photo on the
@@ -11,8 +11,9 @@ import ActionRow from '@/components/elements/ActionRow'
  *
  * On the desktop the row opens the OS file dialog from Rust. On a phone it is
  * the whole of the feature — nothing is ever dropped there — and the photo may
- * not exist yet, so the row first asks where it comes from: the camera or the
- * library, in a sheet over this one (`Scan/SourceSheet`).
+ * not exist yet, so the row first asks where it comes from: the camera, the
+ * library or Files, in the source sheet (`Scan`), which takes this picker's
+ * place rather than stacking on it — as Receive does.
  *
  * Deliberately outside the tile grid — the digits and arrows are bound to the
  * tiles, and this is not an nth kind. Where the OS cannot scan it is simply
@@ -30,6 +31,11 @@ export default function ScanAction() {
     if (await pickAndScan()) closeAddPicker()
   }
 
+  const ask = () => {
+    openScanSource()
+    closeAddPicker()
+  }
+
   return (
     <ActionRow
       testid="add-scan-image"
@@ -40,7 +46,7 @@ export default function ScanAction() {
           ? t('Take a photo or choose one from your library. It is read on this device.')
           : t('A photo or screenshot, read on this device.')
       }
-      onClick={() => (isMobile ? openScanSource() : void pick())}
+      onClick={() => (isMobile ? ask() : void pick())}
     />
   )
 }

@@ -3,9 +3,9 @@ import { runScan } from './run'
 
 /**
  * Scan a photo the phone's camera just took through the webview's capture
- * input (the "take a photo" half of `SourceSheet`). It is a `File` with no path
- * the backend could be pointed at — it was never written anywhere — so its
- * bytes are what travels.
+ * input (the "Take Photo" row of the source sheet). It is a `File` with no
+ * path the backend could be pointed at — it was never written anywhere — so
+ * its bytes are what travels.
  *
  * The read is an await with nothing of the session in hand, so it is stamped
  * like a Rust command's: a lock while it runs (and whatever unlock follows,
@@ -15,7 +15,7 @@ import { runScan } from './run'
  *
  * Resolves once the scan is under way; its outcome is the status in the store
  * (see `run.ts`). Never throws: a file that cannot be read reads as a failed
- * scan, through the same status — the sheets that asked have already closed
+ * scan, through the same status — the picker that asked has already closed
  * by now, so the status is the only place the user would hear of it.
  */
 export const scanCapture = async (file: File): Promise<void> => {
