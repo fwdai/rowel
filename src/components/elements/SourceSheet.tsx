@@ -1,8 +1,8 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CameraGlyph, FolderGlyph, ImageGlyph } from '../Main/icons'
-import ActionRow from './ActionRow'
 import FileInput from './FileInput'
+import MenuRow from './MenuRow'
 import Frame from './Frame'
 import { CARD } from './tokens'
 
@@ -27,9 +27,10 @@ interface Props {
  * from the bottom edge, one row per source under the name the system gives
  * it — Take Photo, Photo Library, Choose File — each opening the system's own
  * picker for the answer. It is the Add picker's sheet — the same frame, the
- * same heading type, the same rows as its "other ways in" — cut to the
- * question: heading straight under the grabber, three rows, and the card's
- * last row just above the home indicator. It is never stacked on that
+ * same heading type — cut to the question: heading straight under the
+ * grabber, three menu rows (`MenuRow`: label leading, symbol trailing, no
+ * chevron, since each does something rather than going somewhere), and the
+ * card's last row just above the home indicator. It is never stacked on that
  * picker: a row there that needs this closes the picker and opens this in
  * its place, as Receive does.
  *
@@ -83,21 +84,21 @@ export default function SourceSheet({
       </div>
       <div className="px-5 pb-2">
         <div className={CARD}>
-          <ActionRow
+          <MenuRow
             testid={`${testid}-camera`}
-            glyph={<CameraGlyph size={16} />}
+            glyph={<CameraGlyph size={20} />}
             label={t('Take Photo')}
             onClick={() => camera.current?.click()}
           />
-          <ActionRow
+          <MenuRow
             testid={`${testid}-library`}
-            glyph={<ImageGlyph size={16} />}
+            glyph={<ImageGlyph size={20} />}
             label={t('Photo Library')}
             onClick={onLibrary}
           />
-          <ActionRow
+          <MenuRow
             testid={`${testid}-browse`}
-            glyph={<FolderGlyph size={16} />}
+            glyph={<FolderGlyph size={20} />}
             label={t('Choose File…')}
             onClick={onBrowse}
           />

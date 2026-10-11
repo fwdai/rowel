@@ -20,21 +20,18 @@ const ROW = 'flex w-full items-center gap-3.5 px-4 py-2.5 text-left'
 
 /**
  * One way in, as a row of a card: the kind picker's "other ways in", the
- * phone's choice of where a photo or a file comes from (`SourceSheet`). The
- * whole row is the target — 52px tall, past the 44pt a finger needs, and on
- * the phone a 36px tile with an 18px mark makes it 56px, the grouped list's
- * row — and the chevron says it goes somewhere; the row that is only a hint
- * gets neither. The mark sits in the accent's soft tile, as a kind's does in
- * its own tint: a row here is a way in, not a setting.
+ * phone's choice of where an attachment comes from. The whole row is the
+ * target — 52px tall, past the 44pt a finger needs — and the chevron says it
+ * goes somewhere; the row that is only a hint gets neither.
  */
 export default function ActionRow({ testid, glyph, label, caption, onClick, children }: Props) {
   const body = (
     <>
-      <span className="grid h-8 w-8 flex-none place-items-center rounded-sm bg-accent-soft text-accent max-md:h-9 max-md:w-9 max-md:rounded-md max-md:[&>svg]:size-[18px]">
+      <span className="grid h-8 w-8 flex-none place-items-center rounded-sm bg-tile text-text2">
         {glyph}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-base font-medium text-text max-md:text-md">{label}</span>
+        <span className="block text-base font-medium text-text">{label}</span>
         {caption && (
           <span className="mt-0.5 block text-sm text-text2 max-md:hidden">{caption}</span>
         )}
