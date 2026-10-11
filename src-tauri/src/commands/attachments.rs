@@ -92,6 +92,61 @@ pub async fn attachment_add(
     finish_add(&state, epoch, &attachment)
 }
 
+/// The IPC headers `attachment_add_bytes` reads its arguments from: the body
+/// is the file, so everything else rides beside it. The name is
+/// percent-encoded by the webview, since a header carries ASCII and a file is
+/// named in anything.
+const ENTRY_ID_HEADER: &str = "x-entry-id";
+const FILE_NAME_HEADER: &str = "x-file-name";
+
+/// Attach a file the webview holds as bytes — the one the phone's system
+/// picker handed its file input, from the camera, the photo library or Files —
+/// to the entry named in the request's headers. The bytes are the request's
+/// raw body, so a photo is not spelled out as an array of numbers.
+///
+/// No grant is involved, and none would mean anything: `grants` exists because
+/// a *path* is the webview naming a file on disk it never read, whereas these
+/// bytes are already the webview's own. Nothing on disk is opened for them.
+/// Everything else is as for [`attachment_add`]: the per-file cap, the vault's
+/// budget, and a lock or a workspace switch while the file is sealed discards
+/// it rather than writing it into whatever vault is open by then.
+#[tauri::command]
+pub async fn attachment_add_bytes(
+    state: State<'_, AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<AttachmentDto> {
+    let entry_id = header(&request, ENTRY_ID_HEADER)?;
+    let name = header(&request, FILE_NAME_HEADER)?;
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+        return Err(Error::Unsupported(
+            "the file has to be sent as bytes".into(),
+        ));
+    };
+    // Sized before it is copied: a body past the cap is refused without a
+    // second copy of it being made. The copy that is made is scrubbed on the
+    // way out; the body Tauri holds is dropped with the request.
+    if body.len() as u64 > MAX_ATTACHMENT_BYTES {
+        return Err(Error::FileTooLarge);
+    }
+    let bytes = Zeroizing::new(body.clone());
+    let (epoch, cipher, room) = begin_add_bytes(&state, &entry_id)?;
+    let attachment =
+        super::blocking(move || seal_bytes(&cipher, &entry_id, &name, &bytes, room)).await?;
+    finish_add(&state, epoch, &attachment)
+}
+
+/// One of the request's headers, percent-decoded.
+fn header(request: &tauri::ipc::Request<'_>, name: &str) -> Result<String> {
+    let value = request
+        .headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| Error::Unsupported(format!("the request carries no {name}")))?;
+    Ok(percent_encoding::percent_decode_str(value)
+        .decode_utf8_lossy()
+        .into_owned())
+}
+
 /// The live attachments of one entry, oldest first.
 #[tauri::command]
 pub fn attachment_list(entry_id: String, state: State<'_, AppState>) -> Result<Vec<AttachmentDto>> {
@@ -193,15 +248,27 @@ fn begin_add(
     path: &Path,
 ) -> Result<(Epoch, AttachmentCipher, u64)> {
     let session = state.session.lock().unwrap();
-    let cipher = cipher_of(&session)?;
-    let store = session.store()?;
-    attachable(store, entry_id)?;
-    let used = store.attachment_bytes().map_err(store_err)?;
+    let (epoch, cipher, room) = begin_add_in(&session, entry_id)?;
     if !grants.take(path, Purpose::Attachment) {
         return Err(Error::Unsupported(
             "this file was not chosen in the app".into(),
         ));
     }
+    Ok((epoch, cipher, room))
+}
+
+/// The same checks for a file that arrives as bytes, which has no path and so
+/// no grant to spend.
+fn begin_add_bytes(state: &AppState, entry_id: &str) -> Result<(Epoch, AttachmentCipher, u64)> {
+    let session = state.session.lock().unwrap();
+    begin_add_in(&session, entry_id)
+}
+
+fn begin_add_in(session: &Session, entry_id: &str) -> Result<(Epoch, AttachmentCipher, u64)> {
+    let cipher = cipher_of(session)?;
+    let store = session.store()?;
+    attachable(store, entry_id)?;
+    let used = store.attachment_bytes().map_err(store_err)?;
     Ok((
         session.epoch(),
         cipher,
@@ -209,9 +276,8 @@ fn begin_add(
     ))
 }
 
-/// Read the file at `path` whole, refusing it past the cap or past the `room`
-/// left in the vault's budget, and seal it under a fresh id. The plaintext is
-/// scrubbed on the way out.
+/// Read the file at `path` whole, refusing it past the cap, and seal it under
+/// its own name (see `seal_bytes`). The plaintext is scrubbed on the way out.
 fn seal_file(
     cipher: &AttachmentCipher,
     entry_id: &str,
@@ -219,18 +285,33 @@ fn seal_file(
     room: u64,
 ) -> Result<Attachment> {
     let bytes = Zeroizing::new(read_regular_file_capped(path, MAX_ATTACHMENT_BYTES)?);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    seal_bytes(cipher, entry_id, &name, &bytes, room)
+}
+
+/// Seal `bytes` as a file called `name`, refusing them past the `room` left in
+/// the vault's budget, under a fresh id. The name is kept to its last path
+/// component: for a file read off disk that is all `seal_file` passes, and for
+/// one the webview named it is what keeps the name a name.
+fn seal_bytes(
+    cipher: &AttachmentCipher,
+    entry_id: &str,
+    name: &str,
+    bytes: &[u8],
+    room: u64,
+) -> Result<Attachment> {
     // Checked here, where the size is known and nothing is sealed yet. Two adds
     // racing can each fit on their own and overshoot together, by one file at
     // most — which the headroom under the pack cap absorbs.
     if bytes.len() as u64 > room {
         return Err(Error::VaultFull);
     }
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let name = file_name(name);
     let id = migrate::new_entry_id();
-    let blob = cipher.seal(&id, &bytes)?;
+    let blob = cipher.seal(&id, bytes)?;
     Ok(Attachment {
         meta: AttachmentMeta {
             id,
@@ -311,8 +392,9 @@ fn attachable(store: &SqliteStore, entry_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// The name a save offers: the last component of the stored one, so a name
-/// that arrived through sync cannot point the mobile staging anywhere else.
+/// A name kept to its last path component: the one a save offers, so a name
+/// that arrived through sync cannot point the mobile staging anywhere else,
+/// and the one a file sent as bytes is stored under, for the same reason.
 fn file_name(name: &str) -> String {
     Path::new(name)
         .file_name()
@@ -446,6 +528,59 @@ mod tests {
             &**cipher.unseal(&stored.meta.id, &stored.blob).unwrap(),
             b"%PDF-1.7 the file"
         );
+    }
+
+    // The phone's route: no path, no grant, the bytes themselves — sealed under
+    // the name the webview gave, kept to a file name.
+    #[test]
+    fn bytes_are_sealed_under_their_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _) = vault(&dir, &argon2_key(), "login");
+        let state = open_with(argon2_key(), store);
+
+        let (epoch, cipher, room) = begin_add_bytes(&state, "e1").unwrap();
+        let attachment =
+            seal_bytes(&cipher, "e1", "../../IMG_0042.heic", b"the photo", room).unwrap();
+        assert!(!attachment.blob.windows(9).any(|w| w == b"the photo"));
+        let dto = finish_add(&state, epoch, &attachment).unwrap();
+        assert_eq!(
+            (dto.name.as_str(), dto.size, dto.mime.as_deref()),
+            ("IMG_0042.heic", 9, Some("image/heic"))
+        );
+
+        let (_, cipher, stored) = begin_save(&state, &dto.id).unwrap();
+        assert_eq!(
+            &**cipher.unseal(&stored.meta.id, &stored.blob).unwrap(),
+            b"the photo"
+        );
+    }
+
+    // Bytes answer to the same guards as a path: the vault's state and budget.
+    #[test]
+    fn bytes_are_held_to_the_same_guards() {
+        assert!(matches!(
+            begin_add_bytes(&AppState::default(), "e1"),
+            Err(Error::Locked)
+        ));
+
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _) = vault(&dir, &argon2_key(), "env");
+        let state = open_with(argon2_key(), store);
+        assert!(matches!(
+            begin_add_bytes(&state, "e1"),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            begin_add_bytes(&state, "nope"),
+            Err(Error::NotFound)
+        ));
+
+        let cipher = argon2_key().attachment_cipher().unwrap();
+        assert!(seal_bytes(&cipher, "e1", "a.bin", b"1234", 4).is_ok());
+        assert!(matches!(
+            seal_bytes(&cipher, "e1", "a.bin", b"12345", 4),
+            Err(Error::VaultFull)
+        ));
     }
 
     #[test]

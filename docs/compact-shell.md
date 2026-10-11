@@ -233,7 +233,10 @@ flick) slides it the rest of the way out and runs the same handler its back
 control does (`Compact/useSwipeBack`, on the entry screen and both settings
 panes, under the same `settingsLocked`); short of that, both spring back. The
 form is not among them: it rose from the bottom and its only exit is the
-guarded Cancel.
+guarded Cancel. Every one of these screens scrolls through `SCREEN_SCROLLER`
+(`Compact/chrome`): its `overscroll-contain` is what stops the webview's own
+scroll gesture from taking the drag and cancelling the swipe — see the note on
+the token.
 
 ## iOS conventions to follow
 
@@ -266,8 +269,18 @@ guarded Cancel.
   with a ring of ground around it — a verb placed on the bar, not a fifth tab.
   Content scrolls underneath (the scroller reserves bottom padding; see
   `chrome.ts` for the geometry every piece of bottom chrome is measured from).
-- Bottom sheets carry a grabber and dismiss on scrim tap; full-screen forms
+- Bottom sheets carry a grabber and dismiss on scrim tap, swipe or Escape,
+  with no close icon (a screen-reader-only Close sits in the grabber row);
+  full-screen forms
   put Cancel on the left and Save on the right of the nav row.
+- Where a photo or a file comes from is one sheet, `elements/SourceSheet`:
+  Take Photo · Photo Library · Choose File, under the names the system gives
+  them, each row opening the system's own picker (the camera through the
+  webview's capture input, the other two through the Rust dialog). Attach and
+  Scan both ask with it. A sheet never stacks on a sheet: a row of the Add
+  picker that needs one closes the picker and opens it in its place, as
+  Receive does. A lock drops every sheet with the session (`resetUi`); a
+  system picker already up is the OS's and outlives it until dismissed.
 - The primary action of a detail screen is a bottom, thumb-reachable button.
 - Copy on tap for value rows; the feedback is the existing copy toast.
 - No hover-only UI. No tooltips as the sole label.

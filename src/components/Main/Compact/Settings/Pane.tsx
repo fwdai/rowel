@@ -14,7 +14,7 @@ import {
 import BackButton from '../BackButton'
 import NavBar from '../NavBar'
 import Stack from '../Stack'
-import { PUSHED_SCREEN, TAB_BAR_CLEARANCE } from '../chrome'
+import { PUSHED_SCREEN, SCREEN_SCROLLER, TAB_BAR_CLEARANCE } from '../chrome'
 import { useSwipeBack } from '../useSwipeBack'
 
 /**
@@ -56,7 +56,7 @@ export default function Pane({
             }
           />
 
-          <div className={cx('min-h-0 flex-1 overflow-y-auto px-4 pt-1', TAB_BAR_CLEARANCE)}>
+          <div className={cx(SCREEN_SCROLLER, 'px-4 pt-1', TAB_BAR_CLEARANCE)}>
             {/* The pane names itself the way a root does — there is no room for
                 a centred nav title beside a back control that already carries
                 one. */}

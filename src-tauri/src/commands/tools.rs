@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use tauri::{AppHandle, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, PickerMode};
 
 use crate::error::{Error, Result};
 use crate::grants::{PathGrants, Purpose};
@@ -16,10 +16,14 @@ use crate::{favicon, scan};
 /// The OS file dialog, for a file the backend will then read: `kind` is
 /// `"image"` (filtered to what the scanner opens), `"env"` (any file, since
 /// an env file may be named anything), `"attachment"` (any file) or `"photo"`
-/// (an image to attach — the attachment pick under the image filter, which is
-/// what makes a phone offer its photo library rather than its file browser:
-/// the dialog plugin switches to the media picker when no filter names a
-/// non-media type). The path picked, or `None` when the dialog was dismissed.
+/// (an image to attach — the attachment pick under the image filter). The
+/// path picked, or `None` when the dialog was dismissed.
+///
+/// On a phone an image filter makes the dialog plugin show the photo library
+/// rather than the file browser (it switches to the media picker when no
+/// filter names a non-media type); `browse` asks for the file browser anyway,
+/// under the same filter — the "Choose File" row of the phone's source sheet,
+/// for a photo kept in Files. The desktop has one dialog and ignores it.
 ///
 /// Run from Rust rather than through the dialog plugin's JS API so the choice
 /// is one the backend witnessed: the picked path is granted (see `grants`)
@@ -35,6 +39,7 @@ pub async fn pick_file(
     grants: State<'_, PathGrants>,
     kind: String,
     label: Option<String>,
+    browse: Option<bool>,
 ) -> Result<Option<String>> {
     let mut dialog = app.dialog().file();
     let purpose = match kind.as_str() {
@@ -52,6 +57,9 @@ pub async fn pick_file(
         }
         other => return Err(Error::Unsupported(format!("no {other} picker"))),
     };
+    if browse.unwrap_or(false) {
+        dialog = dialog.set_picker_mode(PickerMode::Document);
+    }
     // The dialog blocks its caller until the user answers, so it runs on the
     // blocking pool, not a runtime worker.
     let Some(picked) = super::blocking(move || Ok(dialog.blocking_pick_file())).await? else {
@@ -94,8 +102,9 @@ pub async fn scan_image(
 }
 
 /// Read a card or an identity document out of a photo the webview holds as
-/// bytes — the one the phone's camera just took through the capture input,
-/// which exists nowhere on disk and so has no path to grant.
+/// bytes — the one the phone's system picker handed its file input, from the
+/// camera, the photo library or Files, which the webview has whole and which
+/// has no path to grant.
 ///
 /// No grant is needed, and none would mean anything: `grants` exists because a
 /// *path* is the webview naming a file on disk it never read, whereas these

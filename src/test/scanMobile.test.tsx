@@ -21,7 +21,7 @@ const CARD = { number: '4242424242424242', month: '04', year: '27', name: 'ADA L
 const BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
 const PHOTO = new File([BYTES], 'IMG_0042.jpg', { type: 'image/jpeg' })
 
-// Open the Add picker and answer its scan row, which raises the source sheet.
+// Open the Add picker and answer its scan row, which swaps in the source sheet.
 const openSheet = async () => {
   withEntries([loginMeta({ id: 'l1', title: 'Google' })])
   seedApp({ scanSupported: true })
@@ -30,38 +30,43 @@ const openSheet = async () => {
   await userEvent.click(screen.getByTestId('add-scan-image'))
 }
 
-const closed = () => {
-  expect(screen.queryByTestId('scan-source-sheet')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('add-secret-modal')).not.toBeInTheDocument()
-}
+const closed = () => expect(screen.queryByTestId('scan-source-sheet')).not.toBeInTheDocument()
 
-const stillOpen = () => {
-  expect(screen.getByTestId('scan-source-sheet')).toBeInTheDocument()
-  expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
-}
+const stillOpen = () => expect(screen.getByTestId('scan-source-sheet')).toBeInTheDocument()
 
 beforeEach(() => vi.clearAllMocks())
 
 describe('scanning on a phone', () => {
-  it('asks where the photo comes from before opening anything', async () => {
+  it('asks where the photo comes from, in the picker’s place', async () => {
     await openSheet()
 
     const sheet = screen.getByTestId('scan-source-sheet')
     expect(sheet).toHaveTextContent('Take Photo')
     expect(sheet).toHaveTextContent('Photo Library')
-    // Over the picker, not instead of it.
-    expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
+    expect(sheet).toHaveTextContent('Choose File…')
+    // In place of the picker, not over it: a sheet never stacks on a sheet.
+    expect(screen.queryByTestId('add-secret-modal')).not.toBeInTheDocument()
     expect(calls('pick_file')).toHaveLength(0)
-    expect(screen.queryByTestId('scan-source-capture')).toHaveAttribute('capture', 'environment')
+    // The camera row opens the camera outright, not the system's own sheet.
+    expect(screen.getByTestId('scan-source-capture')).toHaveAttribute('capture', 'environment')
   })
 
-  it('backs out of the question to the picker', async () => {
+  it('backs out of the question to nothing', async () => {
     await openSheet()
 
     await userEvent.keyboard('{Escape}')
 
-    expect(screen.queryByTestId('scan-source-sheet')).not.toBeInTheDocument()
-    expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
+    closed()
+    expect(screen.queryByTestId('add-secret-modal')).not.toBeInTheDocument()
+  })
+
+  it('drops the question with the session it was asked in', async () => {
+    await openSheet()
+
+    act(() => clearSession())
+
+    closed()
+    expect(useUi.getState().scanSource).toBe(false)
   })
 
   describe('the camera', () => {
@@ -93,7 +98,7 @@ describe('scanning on a phone', () => {
       expect(calls('scan_image_bytes')).toEqual([BYTES])
     })
 
-    it('reports a photo it could not even load, since the sheets are gone', async () => {
+    it('reports a photo it could not even load, since the sheet is gone', async () => {
       const broken = new File([BYTES], 'IMG_0043.jpg', { type: 'image/jpeg' })
       Object.defineProperty(broken, 'arrayBuffer', {
         value: () => Promise.reject(new Error('the file went away'))
@@ -149,7 +154,7 @@ describe('scanning on a phone', () => {
 
       await waitFor(() => expect(useVault.getState().creating).toBe('card'))
       closed()
-      expect(calls('pick_file')).toContainEqual({ kind: 'image', label: 'Images' })
+      expect(calls('pick_file')).toEqual([{ kind: 'image', label: 'Images' }])
       expect(calls('scan_image')).toContainEqual({ path: '/var/mobile/tmp/IMG_0042.heic' })
       expect(calls('scan_image_bytes')).toHaveLength(0)
     })
@@ -162,6 +167,20 @@ describe('scanning on a phone', () => {
 
       stillOpen()
       expect(calls('scan_image')).toHaveLength(0)
+    })
+  })
+
+  describe('Files', () => {
+    it('is the same dialog, asked for the file browser under the image filter', async () => {
+      mockCommand('pick_file', () => '/private/var/mobile/Documents/passport.png')
+      mockCommand('scan_image', () => ({ kind: 'card', fields: CARD }))
+      await openSheet()
+
+      await userEvent.click(screen.getByTestId('scan-source-browse'))
+
+      await waitFor(() => expect(useVault.getState().creating).toBe('card'))
+      closed()
+      expect(calls('pick_file')).toEqual([{ kind: 'image', label: 'Images', browse: true }])
     })
   })
 })

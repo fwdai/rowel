@@ -4,7 +4,7 @@ import { cx } from '@/utils/cx'
 import { useLayout } from '@/hooks/useLayout'
 import Button from '@/components/elements/Button'
 import { META } from '@/components/elements/tokens'
-import { TAB_BAR_CLEARANCE } from '../../Compact/chrome'
+import { SCREEN_SCROLLER, TAB_BAR_CLEARANCE } from '../../Compact/chrome'
 import { useSubpage } from './sectionNav'
 
 export interface SubpageFooter {
@@ -88,7 +88,7 @@ export default function SubpageFrame({ children, footer, testid }: Props) {
     <div data-testid={testid} className="flex min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
       <div
         className={cx(
-          'min-h-0 flex-1 overflow-y-auto',
+          SCREEN_SCROLLER,
           compact ? cx('pt-1', TAB_BAR_CLEARANCE) : 'px-7 pt-3 pb-7'
         )}
       >

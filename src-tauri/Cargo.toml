@@ -71,6 +71,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "form", "query", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
 url = "2"
+percent-encoding = "2"
 # Only for `StreamExt::buffer_unordered`, which is what gives the HIBP breach
 # check its bounded fan-out (`hibp::check_all`). Already in the locked graph
 # under reqwest, and `std` is the single feature `buffer_unordered` needs — the

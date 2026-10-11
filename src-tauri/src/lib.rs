@@ -229,6 +229,7 @@ pub fn run() {
             commands::vault::export_vault,
             commands::vault::save_env_file,
             commands::attachments::attachment_add,
+            commands::attachments::attachment_add_bytes,
             commands::attachments::attachment_list,
             commands::attachments::attachment_save,
             commands::attachments::attachment_read,

@@ -42,9 +42,10 @@ pub trait Ocr {
     /// The image at a local path.
     fn recognize(&self, image_path: &Path) -> Result<Vec<String>>;
 
-    /// The image as its encoded bytes — a photo the camera just took, which
-    /// exists nowhere on disk. Only the phone's camera reaches here, and the
-    /// phone is Apple's, so the other backends keep the default: unsupported.
+    /// The image as its encoded bytes — a photo the phone's picker handed the
+    /// webview, which the backend has no path to. Only the phone reaches here,
+    /// and the phone is Apple's, so the other backends keep the default:
+    /// unsupported.
     fn recognize_data(&self, _image: &[u8]) -> Result<Vec<String>> {
         Err(Error::Unsupported(
             "scanning a captured photo is not available on this platform".into(),
@@ -123,9 +124,9 @@ pub async fn scan(path: String) -> Result<ScanResult> {
     .map_err(|e| Error::Other(e.to_string()))?
 }
 
-/// OCR a photo the webview holds as bytes — the one the phone's camera just
-/// took through the capture input, which was never written anywhere — and
-/// return the fields read out of it. The same recognizer and parsers as `scan`,
+/// OCR a photo the webview holds as bytes — the one the phone's system picker
+/// handed its file input, which the backend has no path to — and return the
+/// fields read out of it. The same recognizer and parsers as `scan`,
 /// off the UI thread. The bytes are a card in the clear, so this buffer is
 /// zeroized with the lines once parsed — best effort, since it is one copy of
 /// several: the IPC body the command cloned it from, the `NSData` the backend

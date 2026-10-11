@@ -85,8 +85,8 @@ export interface UiState {
   // the probe's answer, not session state (`useScanSupported` in `store/app`).
   scanBusy: boolean
   scanError: ScanError | null
-  // The phone's "where from?" sheet for a scan (camera or photo library) is up,
-  // over the Add picker that asked.
+  // The phone's "where from?" sheet for a scan (camera, photo library or
+  // Files) is up, in place of the Add picker that asked.
   scanSource: boolean
   // The app-level "Copied to Clipboard" pill is up. Raised by `flashCopied`
   // and lowered by it alone, so nothing else has to know the timing.

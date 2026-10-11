@@ -39,7 +39,10 @@ export default function DialogHeader({
   return (
     <div
       className={cx(
-        'flex flex-none items-start gap-3 pt-4 pb-3.5 inset-shadow-hairline',
+        'flex flex-none items-start gap-3 pb-3.5 inset-shadow-hairline',
+        // Under a frame's own bar (a sheet's grabber row, a page's close bar)
+        // the title sits 8px below it; a card has no bar, so it keeps 16px.
+        framed ? 'pt-2' : 'pt-4',
         className ?? 'px-7'
       )}
     >
