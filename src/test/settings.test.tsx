@@ -830,6 +830,36 @@ describe('Settings › import', () => {
       expect(within(menu).getByTestId(`import-tile-${key}`)).toBeInTheDocument()
   })
 
+  // A row that imported but left something behind (an Enpass attachment) is
+  // a note on the preview, apart from the rows that could not be read: the
+  // totals still say every row is coming in.
+  it('shows a warning row apart from the skipped count', async () => {
+    vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
+    mockCommand('import_entries', () => ({
+      total: 1,
+      imported: 0,
+      skipped: 0,
+      duplicates: 0,
+      dryRun: true,
+      errors: [],
+      warnings: [{ row: 1, message: '2 attachment(s) not imported; keep the export' }],
+      entries: []
+    }))
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-enpass'))
+    const result = await screen.findByTestId('import-result')
+    expect(result).toHaveTextContent('Ready to import: 1')
+    expect(result).not.toHaveTextContent('skipped')
+    expect(screen.queryByTestId('import-row-errors')).not.toBeInTheDocument()
+
+    const note = screen.getByTestId('import-row-warnings')
+    expect(note).toHaveTextContent('1 row imported with a note')
+    await userEvent.click(within(note).getByText(/imported with a note/))
+    expect(note).toHaveTextContent('Row 1: 2 attachment(s) not imported; keep the export')
+  })
+
   // A tile is a file picker: the dry run names the format rather than
   // sniffing it, and the tile stays lit as the source.
   it('imports an Enpass export from its tile', async () => {

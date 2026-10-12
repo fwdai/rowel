@@ -253,17 +253,28 @@ pub struct RowError {
     pub message: String,
 }
 
-/// The outcome of parsing a file: the entries that parsed plus the rows that
-/// didn't. One malformed row never aborts the batch.
+/// The outcome of parsing a file: the entries that parsed, the rows that
+/// didn't, and the rows that did but left something behind (an unusable
+/// passkey, an attachment). One malformed row never aborts the batch. A
+/// warning's row is in `entries`; an error's row is not — the report counts
+/// the two apart, so a note never makes an imported item look skipped.
 #[derive(Debug, Default, PartialEq)]
 pub struct ImportResult {
     pub entries: Vec<ImportedEntry>,
     pub errors: Vec<RowError>,
+    pub warnings: Vec<RowError>,
 }
 
 impl ImportResult {
     fn push_err(&mut self, row: usize, message: impl Into<String>) {
         self.errors.push(RowError {
+            row,
+            message: message.into(),
+        });
+    }
+
+    fn push_warn(&mut self, row: usize, message: impl Into<String>) {
+        self.warnings.push(RowError {
             row,
             message: message.into(),
         });

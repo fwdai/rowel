@@ -6,7 +6,7 @@
 //! nested by `parent_uuid` and become one path tag per folder the item sits in.
 //!
 //! Attachments are not read: an item that has any still imports, and the row
-//! is reported, so the user knows to keep the export file for them.
+//! carries a warning, so the user knows to keep the export file for them.
 //!
 //! The one exception is an ID document (`license.driving`, `travel.passport`):
 //! its fields are all plain `text`/`date`/`numeric`, so the template says what
@@ -322,7 +322,7 @@ impl Importer for Enpass {
             }
             result.entries.push(entry);
             if attachments > 0 {
-                result.push_err(
+                result.push_warn(
                     row,
                     format!("{attachments} attachment(s) not imported; keep the export"),
                 );

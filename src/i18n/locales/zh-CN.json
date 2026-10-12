@@ -384,6 +384,7 @@
   "{{count}} rows skipped_other": "已跳过 {{count}} 行",
   "{{count}} skipped_other": "已跳过 {{count}} 条",
   "{{count}} rows could not be read_other": "{{count}} 行无法读取",
+  "{{count}} rows imported with a note_other": "{{count}} 行已导入并附有备注",
   "{{count}} more_other": "还有 {{count}} 条",
   "{{count}} variables_other": "{{count}} 个变量",
   "{{count}} vars_other": "{{count}} 变量",

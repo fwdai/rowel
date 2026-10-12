@@ -256,7 +256,8 @@ fn bitwarden_maps_fido2_credentials_onto_passkeys() {
 }
 
 // An unusable credential — wrong algorithm, or missing its id / rp / key — is
-// dropped on its own, one error each; the login and its good passkey import.
+// dropped on its own, one warning each; the login and its good passkey import,
+// so the row is not an error.
 #[test]
 fn bitwarden_drops_unsupported_or_incomplete_passkeys() {
     let json = br#"{"items":[
@@ -273,9 +274,10 @@ fn bitwarden_drops_unsupported_or_incomplete_passkeys() {
     assert_eq!(r.entries[0].username.as_deref(), Some("alice"));
     assert_eq!(r.entries[0].passkeys.len(), 1);
     assert_eq!(r.entries[0].passkeys[0].credential_id, "b");
-    assert_eq!(r.errors.len(), 4);
+    assert!(r.errors.is_empty());
+    assert_eq!(r.warnings.len(), 4);
     assert!(r
-        .errors
+        .warnings
         .iter()
         .all(|e| e.row == 1 && e.message.contains("passkey")));
 }
@@ -650,9 +652,10 @@ fn cxf_skips_a_bad_passkey_but_imports_the_item() {
     assert_eq!(r.entries[0].username.as_deref(), Some("alice"));
     assert_eq!(r.entries[0].passkeys.len(), 1);
     assert_eq!(r.entries[0].passkeys[0].credential_id, "Y3JlZDI");
-    assert_eq!(r.errors.len(), 1);
-    assert_eq!(r.errors[0].row, 1);
-    assert!(r.errors[0].message.contains("passkey"));
+    assert!(r.errors.is_empty());
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].row, 1);
+    assert!(r.warnings[0].message.contains("passkey"));
 }
 
 // `creationAt` reaches us from JavaScript exporters as `1.5e9` — a whole number
@@ -1052,8 +1055,9 @@ fn enpass_maps_cards_notes_and_folders() {
     assert_eq!(odd.extra, vec![field("Expiry date", "sometime")]);
 }
 
-// An item's files are not brought over; the item is, and its row is reported,
-// so the user keeps the export rather than trusting a clean-looking import.
+// An item's files are not brought over; the item is, and its row carries a
+// warning — not an error, which would count it as skipped — so the user keeps
+// the export rather than trusting a clean-looking import.
 #[test]
 fn enpass_reports_an_item_whose_attachments_are_left_behind() {
     let json = br#"{"items":[
@@ -1066,9 +1070,10 @@ fn enpass_reports_an_item_whose_attachments_are_left_behind() {
     let r = parse(Format::Enpass, json);
     assert_eq!(r.entries.len(), 3);
     assert_eq!(r.entries[0].title, "Scan");
-    assert_eq!(r.errors.len(), 1);
-    assert_eq!(r.errors[0].row, 1);
-    assert!(r.errors[0]
+    assert!(r.errors.is_empty());
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].row, 1);
+    assert!(r.warnings[0]
         .message
         .starts_with("2 attachment(s) not imported"));
 }
@@ -1693,9 +1698,12 @@ fn cxf_skips_a_totp_with_parameters_it_cannot_generate_for() {
         assert_eq!(r.entries.len(), 1, "{member}");
         assert_eq!(r.entries[0].username.as_deref(), Some("alice"), "{member}");
         assert_eq!(r.entries[0].otp, None, "{member}");
-        assert_eq!(r.errors.len(), 1, "{member}: {:?}", r.errors);
-        assert_eq!(r.errors[0].row, 1);
-        let message = &r.errors[0].message;
+        // The login imports without its seed: a warning on the row, not a
+        // row lost.
+        assert!(r.errors.is_empty(), "{member}: {:?}", r.errors);
+        assert_eq!(r.warnings.len(), 1, "{member}: {:?}", r.warnings);
+        assert_eq!(r.warnings[0].row, 1);
+        let message = &r.warnings[0].message;
         assert!(message.contains("totp"), "{message}");
         assert!(message.contains(what), "{message}");
     }

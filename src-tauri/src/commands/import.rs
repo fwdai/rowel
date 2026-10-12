@@ -47,6 +47,8 @@ impl From<&RowError> for RowErrorDto {
 // `duplicates` the rows dropped because the vault already held them verbatim,
 // and `entries` the refreshed vault (empty on a preview, which wrote nothing).
 // A preview counts duplicates too, so what it shows is what a real run does.
+// `warnings` are rows that imported but left something behind (an attachment,
+// an unusable passkey): they are in `total`, never in `skipped`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportReport {
@@ -56,6 +58,7 @@ pub struct ImportReport {
     pub duplicates: usize,
     pub dry_run: bool,
     pub errors: Vec<RowErrorDto>,
+    pub warnings: Vec<RowErrorDto>,
     pub entries: Vec<EntryMetaDto>,
 }
 
@@ -66,6 +69,7 @@ pub struct ImportReport {
 struct Parsed {
     total: usize,
     errors: Vec<RowErrorDto>,
+    warnings: Vec<RowErrorDto>,
     entries: Vec<ImportedEntry>,
     records: Vec<Record>,
 }
@@ -123,6 +127,7 @@ pub async fn import_entries(
         }
         let total = parsed.entries.len();
         let errors: Vec<RowErrorDto> = parsed.errors.iter().map(RowErrorDto::from).collect();
+        let warnings: Vec<RowErrorDto> = parsed.warnings.iter().map(RowErrorDto::from).collect();
 
         // Seal every plaintext entry (seal payload + build a Record), emitting
         // progress — the same seal helper the rest of the app uses.
@@ -139,6 +144,7 @@ pub async fn import_entries(
         Ok(Parsed {
             total,
             errors,
+            warnings,
             entries: parsed.entries,
             records,
         })
@@ -169,6 +175,7 @@ pub async fn import_entries(
             duplicates,
             dry_run: true,
             errors: parsed.errors,
+            warnings: parsed.warnings,
             entries: Vec::new(),
         });
     }
@@ -201,6 +208,7 @@ pub async fn import_entries(
         duplicates: parsed.total - fresh.len(),
         dry_run: false,
         errors: parsed.errors,
+        warnings: parsed.warnings,
         entries: list_metas(store)?,
     })
 }

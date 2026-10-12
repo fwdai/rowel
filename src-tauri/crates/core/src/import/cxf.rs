@@ -211,7 +211,7 @@ fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
             }
             "passkey" => match passkey(&cred, created_at.clone()) {
                 Some(p) => passkeys.push(p),
-                None => result.push_err(row, "incomplete passkey"),
+                None => result.push_warn(row, "incomplete passkey"),
             },
             // The app keeps a single seed per entry, so the first usable one
             // wins. The parameters beside it are part of that seed — dropping
@@ -222,7 +222,7 @@ fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
             "totp" if otp.is_none() => match totp_params(&cred) {
                 Ok(Some(p)) => otp = Some(otp::to_stored(&p)),
                 Ok(None) => {}
-                Err(e) => result.push_err(row, format!("totp credential skipped: {e}")),
+                Err(e) => result.push_warn(row, format!("totp credential skipped: {e}")),
             },
             "note" => note = note.or_else(|| Some(text(&cred.content).unwrap_or_default())),
             _ => {}
