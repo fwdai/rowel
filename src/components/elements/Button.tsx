@@ -5,6 +5,8 @@ import { META_TYPE } from './tokens'
 type Variant = 'primary' | 'ghost' | 'pale' | 'danger' | 'pale-danger'
 // Two control heights, per the design system: md 28px (inline actions, pairs
 // with 28px icon buttons) and lg 36px (form/CTA tier, pairs with 36px inputs).
+// Where a finger is one of the pointers the inline tier steps up to the form
+// tier: a 28px button in a phone's settings row is not a target.
 type Size = 'md' | 'lg'
 
 interface Props {
@@ -29,7 +31,7 @@ const base =
   'relative inline-flex items-center justify-center gap-2 rounded-sm text-base font-medium cursor-pointer select-none transition-[filter,background,opacity,color] disabled:cursor-default'
 
 const sizes: Record<Size, string> = {
-  md: 'h-7 px-3',
+  md: 'h-7 px-3 any-pointer-coarse:h-9 any-pointer-coarse:px-3.5',
   lg: 'h-9 px-4'
 }
 

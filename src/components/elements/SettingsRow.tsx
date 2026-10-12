@@ -28,7 +28,10 @@ interface Props {
 // One row inside a SettingsGroup card: an optional icon tile, label (+ optional
 // grey description) on the left, one control on the right, hairline below. A
 // control too wide to sit beside the label wraps under it, and wraps itself
-// within the row's width.
+// within the row's width. On the phone the label and its note each step up a
+// tier, as every other phone row's text does (a list row's 16px title, a
+// detail row's 16px value) — the desktop's 13px was the one thing on that
+// screen set at desktop size.
 export default function SettingsRow({
   label,
   description,
@@ -53,8 +56,10 @@ export default function SettingsRow({
         )}
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3.5 gap-y-2.5">
           <div className="min-w-0 flex-1 basis-40">
-            <div className="text-base font-medium text-text">{label}</div>
-            {description && <div className="mt-0.5 text-sm text-text2">{description}</div>}
+            <div className="text-base font-medium text-text max-md:text-md">{label}</div>
+            {description && (
+              <div className="mt-0.5 text-sm text-text2 max-md:text-base">{description}</div>
+            )}
           </div>
           {control && <div className="max-w-full flex-none">{control}</div>}
         </div>
