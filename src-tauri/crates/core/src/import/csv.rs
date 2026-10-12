@@ -150,6 +150,18 @@ fn get_decoded(
         .filter(|v| !v.is_empty())
 }
 
+// A password cell, as typed: its spaces are part of the secret, so it is
+// never trimmed, and only an empty cell is absent. Rowel's own sheet still
+// has its formula escape undone.
+fn get_secret(
+    headers: &[String],
+    rec: &StringRecord,
+    aliases: &[&str],
+    rowel: bool,
+) -> Option<String> {
+    decoded(get_verbatim(headers, rec, aliases), rowel).filter(|v| !v.is_empty())
+}
+
 fn tag_vec(group: Option<String>) -> Vec<String> {
     group
         .map(|g| g.trim_start_matches("Root/").trim().to_string())
@@ -182,6 +194,7 @@ fn parse_aliased(bytes: &[u8]) -> ImportResult {
         // so an older Rowel export still comes back as what it was.
         let rowel = get(&rows.headers, rec, CSV_VERSION).is_some();
         let cell = |aliases| get_decoded(&rows.headers, rec, aliases, rowel);
+        let secret = |aliases| get_secret(&rows.headers, rec, aliases, rowel);
         let title = cell(TITLE).or_else(|| cell(URL)).or_else(|| cell(USERNAME));
         let Some(title) = title else {
             result.push_err(i + 2, "empty row");
@@ -238,7 +251,7 @@ fn parse_aliased(bytes: &[u8]) -> ImportResult {
             kind: EntryKind::Login,
             title,
             username: cell(USERNAME),
-            password: cell(PASSWORD),
+            password: secret(PASSWORD),
             url: cell(URL),
             notes: cell(NOTES),
             otp: cell(OTP),
@@ -258,6 +271,7 @@ fn rowel_row(
     title: String,
 ) -> ImportedEntry {
     let cell = |aliases| get_decoded(headers, rec, aliases, true);
+    let secret = |aliases| get_secret(headers, rec, aliases, true);
     let mut entry = ImportedEntry {
         kind,
         title,
@@ -278,7 +292,7 @@ fn rowel_row(
     match kind {
         EntryKind::Login => {
             entry.username = cell(OWN_USERNAME);
-            entry.password = cell(PASSWORD);
+            entry.password = secret(PASSWORD);
             entry.url = cell(URL);
             entry.otp = cell(OTP);
             entry.email = cell(EMAIL);
@@ -309,7 +323,7 @@ fn rowel_row(
             entry.ssh_private_key = cell(SSH_PRIVATE_KEY);
             entry.ssh_public_key = cell(SSH_PUBLIC_KEY);
             entry.ssh_fingerprint = cell(SSH_FINGERPRINT);
-            entry.ssh_passphrase = cell(SSH_PASSPHRASE);
+            entry.ssh_passphrase = secret(SSH_PASSPHRASE);
         }
         EntryKind::Env => {
             // The file is the secret and the canonical form, so it is the one
@@ -380,7 +394,7 @@ impl Importer for LastpassCsv {
                     kind: EntryKind::Login,
                     title,
                     username: get(h, rec, &["username"]),
-                    password: get(h, rec, &["password"]),
+                    password: get_verbatim(h, rec, &["password"]),
                     url,
                     otp: get(h, rec, &["totp"]),
                     notes,
@@ -413,7 +427,7 @@ impl Importer for KeepassCsv {
                 kind: EntryKind::Login,
                 title,
                 username: get(h, rec, &["username"]),
-                password: get(h, rec, &["password"]),
+                password: get_verbatim(h, rec, &["password"]),
                 url: get(h, rec, &["url"]),
                 notes: get(h, rec, &["notes"]),
                 otp: get(h, rec, &["totp"]),

@@ -823,6 +823,59 @@ fn detect_tells_enpass_from_bitwarden_json() {
     assert_eq!(Format::from_name("Enpass"), Some(Format::Enpass));
 }
 
+// A password's spaces are the password: no CSV dialect trims them, and one
+// made of spaces alone is still a password. Only an empty cell is absent.
+#[test]
+fn csv_passwords_keep_their_spaces() {
+    let generic = b"name,username,password\nA, octo , secret \nB,octo,   \nC,octo,\n";
+    for fmt in [
+        Format::GenericCsv,
+        Format::OnepasswordCsv,
+        Format::BrowserCsv,
+    ] {
+        let r = parse(fmt, generic);
+        assert_eq!(r.entries.len(), 3, "{fmt:?}");
+        assert_eq!(r.entries[0].username.as_deref(), Some("octo"), "{fmt:?}");
+        assert_eq!(
+            r.entries[0].password.as_deref(),
+            Some(" secret "),
+            "{fmt:?}"
+        );
+        assert_eq!(r.entries[1].password.as_deref(), Some("   "), "{fmt:?}");
+        assert_eq!(r.entries[2].password, None, "{fmt:?}");
+    }
+
+    let lastpass = b"url,username,password,totp,extra,name,grouping,fav\n\
+https://a.example,octo, secret ,,,A,,0\n";
+    let r = parse(Format::LastpassCsv, lastpass);
+    assert_eq!(r.entries[0].password.as_deref(), Some(" secret "));
+
+    let keepass = b"Group,Title,Username,Password,URL,Notes\nRoot,A,octo, secret ,,\n";
+    let r = parse(Format::KeepassCsv, keepass);
+    assert_eq!(r.entries[0].password.as_deref(), Some(" secret "));
+
+    // Rowel's own sheet, through the export and back.
+    let entries = vec![
+        ImportedEntry {
+            kind: EntryKind::Login,
+            title: "A".into(),
+            password: Some(" secret ".into()),
+            ..Default::default()
+        },
+        ImportedEntry {
+            kind: EntryKind::Ssh,
+            title: "K".into(),
+            ssh_private_key: Some("KEY".into()),
+            ssh_passphrase: Some(" pass ".into()),
+            ..Default::default()
+        },
+    ];
+    let r = parse(Format::GenericCsv, &to_generic_csv(&entries).unwrap());
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries[0].password.as_deref(), Some(" secret "));
+    assert_eq!(r.entries[1].ssh_passphrase.as_deref(), Some(" pass "));
+}
+
 // 1Password's CSV columns are all ones the generic aliases know, `OTPAuth`
 // included, so the tile reads it as a login sheet under its own name.
 #[test]
