@@ -61,7 +61,14 @@ export default function SettingsRow({
               <div className="mt-0.5 text-sm text-text2 max-md:text-base">{description}</div>
             )}
           </div>
-          {control && <div className="max-w-full flex-none">{control}</div>}
+          {/* On the phone the slot takes the line's spare width, so a control
+              that spans its row (a picker, a segmented switch) has a width to
+              span, while a small one keeps to the right edge. */}
+          {control && (
+            <div className="max-w-full flex-none max-md:flex max-md:grow max-md:justify-end">
+              {control}
+            </div>
+          )}
         </div>
       </div>
       {/* Unfolded content lines up under the label, past the tile. */}

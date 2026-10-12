@@ -75,8 +75,10 @@ export default function DriveRestoreForm({
     })
   }
 
+  // Not while an IME is composing: that Enter confirms the characters, and a
+  // restore started on it would carry a half-typed name across devices.
   const onEnter = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') submit()
+    if (event.key === 'Enter' && !event.nativeEvent.isComposing) submit()
   }
 
   return (

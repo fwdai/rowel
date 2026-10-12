@@ -72,9 +72,14 @@ export default function SubpageFrame({ children, footer, testid }: Props) {
             ACTION_BUTTON,
             footer.danger ? ACTION_FILL_DANGER : ACTION_FILL,
             ROOT_ACTION,
-            inert && 'opacity-50'
+            footer.disabled && !footer.loading && 'opacity-50'
           )}
         >
+          {/* Running is not the same as not ready: the slab keeps its ink and
+              spins, the way Button does. */}
+          {footer.loading && (
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-transparent border-t-current" />
+          )}
           {footer.cta}
         </button>
       </div>

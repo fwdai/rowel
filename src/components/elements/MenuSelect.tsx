@@ -53,7 +53,7 @@ export default function MenuSelect<T extends string>({
   }
 
   return (
-    <div className="relative">
+    <div className="relative max-md:w-full">
       <button
         ref={trigger}
         type="button"
