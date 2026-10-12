@@ -1,27 +1,32 @@
 import type { TFunction } from 'i18next'
 import type { Workspace } from '@/api/types'
-import { syncDeletedRemotely, type SyncStatus } from '@/api/sync'
+import { registeredProvider } from '@/lib/workspace'
+import { providerName, type Provider } from '@/api/provider'
+import { syncDeletedRemotely, syncProvider, type SyncStatus } from '@/api/sync'
 
 /**
- * Whether a workspace syncs, and so has a copy on Drive. The open one is
- * answered by its live connection — not once the account's copy is gone
- * (deleted from another device); a locked one by the connection the backend
- * found in its own directory when the list was built (`synced`) — not by its
- * vault id, which a disconnect leaves behind.
+ * Where a workspace syncs to, or null when it does not — and so whether it has
+ * a copy in an account. The open one is answered by its live connection — not
+ * once the account's copy is gone (deleted from another device); a locked one
+ * by the connection the backend found in its own directory when the list was
+ * built (`registeredProvider`) — not by its vault id, which a disconnect
+ * leaves behind.
  */
-export const workspaceSyncs = (
+export const workspaceProvider = (
   workspace: Workspace,
   { active, sync }: { active: string; sync: SyncStatus }
-): boolean =>
+): Provider | null =>
   workspace.id === active
-    ? sync.configured && !syncDeletedRemotely(sync)
-    : workspace.synced === true
+    ? syncDeletedRemotely(sync)
+      ? null
+      : syncProvider(sync)
+    : registeredProvider(workspace)
 
 interface Context {
   // The open workspace answers from its live session; a locked one only from
   // what the registry kept about it.
   current: boolean
-  syncs: boolean
+  provider: Provider | null
   liveCount: number
 }
 
@@ -33,10 +38,10 @@ interface Context {
  */
 export const workspaceAbout = (
   workspace: Workspace,
-  { current, syncs, liveCount }: Context,
+  { current, provider, liveCount }: Context,
   t: TFunction
 ): string => {
-  const home = syncs ? t('Google Drive') : t('This device')
+  const home = provider ? providerName(provider) : t('This device')
   const count = current ? liveCount : workspace.itemCount
   return count === undefined ? home : `${t('{{count}} items', { count })} · ${home}`
 }

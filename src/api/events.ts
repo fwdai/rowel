@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { PasskeyAsk } from './browser'
-import type { SetupDriveFile } from './setup'
+import type { RemotePack } from './setup'
 import type { SyncStatus } from './sync'
 import type { EntryMeta } from './types'
 
@@ -9,8 +9,8 @@ import type { EntryMeta } from './types'
  * background work (sync, auto-lock, a long import) that is not a direct
  * request/response command.
  *
- * `setup:drive:pending` → `setup:drive:probed` | `setup:drive:error` is a
- * consent flow out with the browser against an account there is no vault behind
+ * `setup:account:pending` → `setup:account:probed` | `setup:account:error` is
+ * a consent flow out with the browser against an account there is no vault behind
  * yet. The backend owns all three: it is what opens the browser and what hears
  * back from it, so the frontend mirrors these rather than guessing from a click
  * — the command itself resolves the moment the browser is on screen. An empty
@@ -32,17 +32,17 @@ export interface EventPayloads {
    */
   'sync:status': SyncStatus
   'import:progress': { done: number; total: number }
-  'setup:drive:pending': void
+  'setup:account:pending': void
   /** Every vault the account holds, newest first; empty is "nothing to restore". */
-  'setup:drive:probed': { files: SetupDriveFile[] }
-  'setup:drive:error': { error: string }
+  'setup:account:probed': { files: RemotePack[] }
+  'setup:account:error': { error: string }
   /**
    * After every sync run: the account's vaults that no workspace on this
    * device holds, newest first, in the probe's shape because Settings ›
    * Workspaces offers them through the same picker. Empty means every vault in
    * the account is already here.
    */
-  'workspaces:remote': { files: SetupDriveFile[] }
+  'workspaces:remote': { files: RemotePack[] }
   /**
    * A vault from the account was added as a workspace without being asked
    * for: the password that just opened a vault opened it too. Nothing has
@@ -98,9 +98,9 @@ export const EVENTS: { [K in EventName as Camel<K>]: K } = {
   vaultMerged: 'vault:merged',
   syncStatus: 'sync:status',
   importProgress: 'import:progress',
-  setupDrivePending: 'setup:drive:pending',
-  setupDriveProbed: 'setup:drive:probed',
-  setupDriveError: 'setup:drive:error',
+  setupAccountPending: 'setup:account:pending',
+  setupAccountProbed: 'setup:account:probed',
+  setupAccountError: 'setup:account:error',
   workspacesRemote: 'workspaces:remote',
   workspacesAdded: 'workspaces:added',
   workspacesRenamed: 'workspaces:renamed',

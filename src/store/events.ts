@@ -2,18 +2,21 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { on, EVENTS } from '@/api/events'
 import {
   setSyncStatus,
-  setupDrivePending,
-  setupDriveProbed,
-  setupDriveFailed,
+  setupAccountPending,
+  setupAccountProbed,
+  setupAccountFailed,
   setRemoteVaults,
   clearSession,
   refreshApp,
   showLockScreen,
-  fileOpened
+  fileOpened,
+  useApp
 } from './app'
 import { setEntries, loadArchive, runAudit } from './vault'
 import { useUi, showNotice, askBrowser, askPasskey, browserClientsChanged } from './ui'
 import { t } from '@/i18n'
+import { providerName } from '@/api/provider'
+import { syncProvider } from '@/api/sync'
 
 // A merge can add or drop tombstones as readily as live entries, but the Archive
 // only loads on entering the view — so an open Archive would sit stale until the
@@ -31,7 +34,11 @@ const refreshOpenArchive = () => {
  */
 export const workspaceAdded = (name: string) => {
   void refreshApp()
-  showNotice(t('Added “{{name}}” from your Google account', { name }))
+  // The open workspace's account is the one autojoin read it from.
+  const provider = syncProvider(useApp.getState().sync) ?? 'googleDrive'
+  showNotice(
+    t('Added “{{name}}” from your {{provider}} account', { name, provider: providerName(provider) })
+  )
 }
 
 // Wires backend events to store actions. Returns a cleanup function.
@@ -47,9 +54,9 @@ export const subscribeToEvents = (): (() => void) => {
     }),
     // The first run's own consent flow: the same pending/result/error trio as
     // sync, against an account there is no vault behind yet.
-    on(EVENTS.setupDrivePending, () => setupDrivePending()),
-    on(EVENTS.setupDriveProbed, payload => setupDriveProbed(payload.files)),
-    on(EVENTS.setupDriveError, payload => setupDriveFailed(payload.error)),
+    on(EVENTS.setupAccountPending, () => setupAccountPending()),
+    on(EVENTS.setupAccountProbed, payload => setupAccountProbed(payload.files)),
+    on(EVENTS.setupAccountError, payload => setupAccountFailed(payload.error)),
     on(EVENTS.workspacesRemote, payload => setRemoteVaults(payload.files)),
     on(EVENTS.workspacesAdded, payload => workspaceAdded(payload.name)),
     // This workspace was renamed on another device. The probe is what carries

@@ -3,11 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { useApp, restoreWorkspaceFromAccount } from '@/store'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
-import DriveRestoreForm from '@/components/elements/DriveRestoreForm'
+import AccountRestoreForm from '@/components/elements/AccountRestoreForm'
+import { providerName } from '@/api/provider'
 import { CloudGlyph } from '@/components/Main/icons'
 
 /**
- * The vaults the open workspace's Google account holds that are not on this
+ * The vaults the open workspace's account holds that are not on this
  * device — what every device on the account is meant to have. Reported by each
  * sync run (`workspaces:remote`), so a vault made on another device appears
  * here after the next sync, and restored with the account this workspace
@@ -38,7 +39,9 @@ export default function RemoteVaults() {
   }
 
   return (
-    <SettingsGroup label={t('In your Google account')}>
+    <SettingsGroup
+      label={t('In your {{provider}} account', { provider: providerName(files[0].provider) })}
+    >
       <SettingsRow
         label={t('Not on this device yet')}
         icon={<CloudGlyph size={16} />}
@@ -47,7 +50,7 @@ export default function RemoteVaults() {
         )}
         testid="workspace-remote-row"
       >
-        <DriveRestoreForm
+        <AccountRestoreForm
           files={files}
           selectedId={selectedId}
           onSelect={setPicked}

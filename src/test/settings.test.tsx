@@ -6,7 +6,7 @@ import i18n, { changeLocale } from '@/i18n'
 import { dates } from '@/utils/time'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import type { SyncStatus } from '@/api/sync'
-import type { SetupDriveFile } from '@/api/setup'
+import type { RemotePack } from '@/api/setup'
 import {
   auditDone,
   closeSettings,
@@ -18,9 +18,9 @@ import {
   setRemoteVaults,
   setSettingsSection,
   setSyncStatus,
-  setupDriveFailed,
-  setupDrivePending,
-  setupDriveProbed,
+  setupAccountFailed,
+  setupAccountPending,
+  setupAccountProbed,
   useApp,
   usePrefs,
   useUi
@@ -161,7 +161,38 @@ describe('Settings › sync', () => {
   it('connects Google Drive', async () => {
     await openSync()
     await userEvent.click(screen.getByTestId('settings-drive-connect'))
-    expect(calls('sync_connect')).toHaveLength(1)
+    expect(calls('sync_connect')).toEqual([{ provider: 'googleDrive' }])
+  })
+
+  // Not connected, the card is about no provider yet: it offers each, and the
+  // one pressed is the one the wait and the probe are about.
+  it('offers every provider, and connects the one picked', async () => {
+    await openSync()
+    expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Cloud sync')
+    expect(screen.getByTestId('settings-drive-connect')).toHaveTextContent('Connect Google Drive')
+
+    await userEvent.click(screen.getByTestId('settings-dropbox-connect'))
+
+    expect(calls('sync_connect')).toEqual([{ provider: 'dropbox' }])
+    expect(screen.getByText('Waiting for Dropbox…')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Dropbox')
+    expect(screen.queryByTestId('settings-drive-connect')).not.toBeInTheDocument()
+  })
+
+  // Connected, the card names the account's provider — and Sharing, which only
+  // Drive can hold yet, is left out for any other.
+  it('names a Dropbox connection and leaves Sharing out', async () => {
+    await openSync()
+    act(() => report({ configured: true, provider: 'dropbox' }))
+
+    expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Dropbox')
+    expect(screen.getByText('Connected')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-dropbox-connect')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('settings-shares-row')).not.toBeInTheDocument()
+
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Google Drive')
+    expect(screen.getByTestId('settings-shares-row')).toBeInTheDocument()
   })
 
   // Every workspace holds its own Drive connection and syncs its own pack now,
@@ -191,7 +222,7 @@ describe('Settings › sync', () => {
     expect(useApp.getState().sync.pending).toBe(false)
 
     report({ pending: true })
-    expect(await screen.findByText('Waiting for Google…')).toBeInTheDocument()
+    expect(await screen.findByText('Waiting for Google Drive…')).toBeInTheDocument()
 
     report({ configured: true })
     expect(await screen.findByText('Connected')).toBeInTheDocument()
@@ -240,15 +271,15 @@ describe('Settings › sync', () => {
     it('waits on the probe, then takes an empty account as this vault', async () => {
       await openSync()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
-      await act(async () => setupDrivePending())
-      expect(await screen.findByText('Waiting for Google…')).toBeInTheDocument()
+      await act(async () => setupAccountPending())
+      expect(await screen.findByText('Waiting for Google Drive…')).toBeInTheDocument()
 
-      await act(async () => setupDriveProbed([]))
+      await act(async () => setupAccountProbed([]))
 
       await waitFor(() => expect(calls('sync_adopt_pending')).toHaveLength(1))
       // The probe's state is spent once the account is this vault's; from here
       // on `sync:status` says the rest.
-      await waitFor(() => expect(useApp.getState().setupDrive.status).toBe('idle'))
+      await waitFor(() => expect(useApp.getState().setupAccount.status).toBe('idle'))
       report({ configured: true })
       expect(await screen.findByText('Connected')).toBeInTheDocument()
     })
@@ -258,10 +289,10 @@ describe('Settings › sync', () => {
     it('joins an account that already holds this vault, with no picker', async () => {
       await openSync()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
-      await act(async () => setupDriveProbed([VAULT, OTHER_VAULT]))
+      await act(async () => setupAccountProbed([VAULT, OTHER_VAULT]))
 
       await waitFor(() => expect(calls('sync_adopt_pending')).toHaveLength(1))
-      await waitFor(() => expect(useApp.getState().setupDrive.status).toBe('idle'))
+      await waitFor(() => expect(useApp.getState().setupAccount.status).toBe('idle'))
       expect(screen.queryByTestId('settings-drive-found')).not.toBeInTheDocument()
       report({ configured: true })
       expect(await screen.findByText('Connected')).toBeInTheDocument()
@@ -277,14 +308,14 @@ describe('Settings › sync', () => {
       )
       await openSync()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
-      await act(async () => setupDriveProbed([VAULT]))
+      await act(async () => setupAccountProbed([VAULT]))
 
       await waitFor(() => expect(calls('sync_adopt_pending')).toHaveLength(1))
-      expect(screen.getByText('Waiting for Google…')).toBeInTheDocument()
+      expect(screen.getByText('Waiting for Google Drive…')).toBeInTheDocument()
       expect(screen.queryByTestId('settings-drive-found')).not.toBeInTheDocument()
 
       await act(async () => decide())
-      await waitFor(() => expect(useApp.getState().setupDrive.status).toBe('idle'))
+      await waitFor(() => expect(useApp.getState().setupAccount.status).toBe('idle'))
     })
 
     // The account already says which vaults exist, so this vault does not add
@@ -294,14 +325,14 @@ describe('Settings › sync', () => {
       refuse()
       await openSync()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
-      await act(async () => setupDriveProbed([VAULT, OTHER_VAULT]))
+      await act(async () => setupAccountProbed([VAULT, OTHER_VAULT]))
 
       expect(await screen.findByTestId('settings-drive-found')).toBeInTheDocument()
       expect(screen.getByText('This account already holds a vault')).toBeInTheDocument()
       expect(screen.getByTestId(`drive-vault-${VAULT.id}`)).toBeInTheDocument()
       // Asked once, and refused; the tokens are still pending for the restore.
       expect(calls('sync_adopt_pending')).toHaveLength(1)
-      expect(useApp.getState().setupDrive.status).toBe('found')
+      expect(useApp.getState().setupAccount.status).toBe('found')
 
       await userEvent.click(screen.getByTestId(`drive-vault-${OTHER_VAULT.id}`))
       await userEvent.type(screen.getByTestId('workspace-restore-name'), 'Personal')
@@ -310,7 +341,7 @@ describe('Settings › sync', () => {
         await userEvent.click(screen.getByTestId('workspace-restore-submit'))
       })
 
-      expect(calls('workspace_restore_from_drive')).toContainEqual({
+      expect(calls('workspace_restore_from_pending')).toContainEqual({
         name: 'Personal',
         password: 'other-device-pass',
         fileId: OTHER_VAULT.id
@@ -321,11 +352,11 @@ describe('Settings › sync', () => {
       refuse()
       await openSync()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
-      await act(async () => setupDriveProbed([VAULT]))
+      await act(async () => setupAccountProbed([VAULT]))
 
       await userEvent.click(await screen.findByTestId('settings-drive-cancel'))
 
-      expect(calls('setup_drive_disconnect')).toHaveLength(1)
+      expect(calls('setup_disconnect')).toHaveLength(1)
       expect(screen.queryByTestId('settings-drive-found')).not.toBeInTheDocument()
       expect(screen.getByTestId('settings-drive-connect')).toBeInTheDocument()
     })
@@ -338,7 +369,7 @@ describe('Settings › sync', () => {
       )
       await openSync()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
-      await act(async () => setupDriveProbed([]))
+      await act(async () => setupAccountProbed([]))
 
       expect(await screen.findByTestId('settings-sync-error')).toHaveTextContent(
         'Google Drive did not answer'
@@ -350,7 +381,7 @@ describe('Settings › sync', () => {
     it('reports a probe that failed, and offers to try again', async () => {
       await openSync()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
-      await act(async () => setupDriveFailed('Google Drive did not answer'))
+      await act(async () => setupAccountFailed('Google Drive did not answer'))
 
       expect(await screen.findByTestId('settings-sync-error')).toHaveTextContent(
         'Google Drive did not answer'
@@ -1114,22 +1145,24 @@ describe('Settings › date format', () => {
 
 // What the probe reports for a vault in `Rowel/Vaults/` — the same payload the
 // first run's picker is built from, because it is the same probe.
-const VAULT: SetupDriveFile = {
+const VAULT: RemotePack = {
   id: 'drive-file-1',
   name: '9f3c1a2b4d5e6f708192a3b4c5d6e7f8.rowel',
   vaultId: '9f3c1a2b4d5e6f708192a3b4c5d6e7f8',
   size: 1_258_291,
-  modifiedTime: '2024-01-01T00:00:00.000Z'
+  modifiedTime: '2024-01-01T00:00:00.000Z',
+  provider: 'googleDrive'
 }
 
 // Another install's primary in the same account: a second pack, older, so the
 // probe lists it after the first.
-const OTHER_VAULT: SetupDriveFile = {
+const OTHER_VAULT: RemotePack = {
   id: 'drive-file-2',
   name: '11223344556677889900112233445566.rowel',
   vaultId: '11223344556677889900112233445566',
   size: 64_512,
-  modifiedTime: '2023-06-02T00:00:00.000Z'
+  modifiedTime: '2023-06-02T00:00:00.000Z',
+  provider: 'googleDrive'
 }
 
 // Every device on an account is meant to hold every vault in it. A sync run
@@ -1161,7 +1194,7 @@ describe('Settings › workspaces › vaults in the account', () => {
       { name: 'Personal', password: 'other-device-pass', fileId: 'drive-file-2' }
     ])
     // The open workspace's own tokens do the work: nothing is signed into.
-    expect(calls('workspace_drive_connect')).toHaveLength(0)
+    expect(calls('workspace_connect')).toHaveLength(0)
     expect(calls('sync_connect')).toHaveLength(0)
     // It lands like every restore: active, unlocked, re-probed, first sync run.
     await waitFor(() => expect(useApp.getState().flow).toBe('main'))
@@ -1245,6 +1278,20 @@ describe('Settings › workspaces › list', () => {
 
     await userEvent.click(screen.getByTestId('workspace-switch-w2'))
     expect(calls('workspace_select')).toEqual([{ id: 'w2' }])
+  })
+
+  it('names the provider a locked workspace syncs to', async () => {
+    seedApp({
+      workspaces: [
+        { id: 'default', name: null },
+        { id: 'w2', name: 'Work', synced: true, provider: 'dropbox', itemCount: 4 }
+      ],
+      activeWorkspace: 'default'
+    })
+    await open()
+    await go('workspaces')
+
+    expect(screen.getByTestId('workspace-row-w2')).toHaveTextContent('4 items · Dropbox')
   })
 
   it('keeps Edit and Delete behind the row’s menu', async () => {
@@ -1533,7 +1580,7 @@ describe('Settings › workspaces › delete', () => {
     expect(screen.getByTestId('workspace-delete-preview')).toHaveTextContent('Work')
     expect(screen.queryByTestId('workspace-new-row')).not.toBeInTheDocument()
     expect(
-      screen.getByText(/A copy on Google Drive is left where it is/)
+      screen.getByText('This removes the workspace and everything in it from this device.')
     ).toBeInTheDocument()
   })
 
@@ -1737,7 +1784,7 @@ describe('Settings › workspaces › delete', () => {
       screen.queryByTestId('workspace-delete-scope-everywhere')
     ).not.toBeInTheDocument()
     expect(
-      screen.getByText(/A copy on Google Drive is left where it is/)
+      screen.getByText('This removes the workspace and everything in it from this device.')
     ).toBeInTheDocument()
   })
 
@@ -1756,7 +1803,7 @@ describe('Settings › workspaces › delete', () => {
     )
 
     expect(screen.getByTestId('workspace-deleted-remotely')).toHaveTextContent(
-      'This vault was deleted from Google Drive on another device.'
+      'This vault was deleted from its account on another device.'
     )
     await userEvent.click(screen.getByTestId('workspace-delete-stranded'))
 
@@ -1767,20 +1814,20 @@ describe('Settings › workspaces › delete', () => {
   })
 })
 
-describe('Settings › workspaces › restore from Drive', () => {
+describe('Settings › workspaces › restore from an account', () => {
   // Consent, then the probe's answer — which arrives as an event, never through
   // the connect's promise.
-  const connect = async (files: SetupDriveFile[]) => {
+  const connect = async (files: RemotePack[]) => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-restore-connect'))
-    await act(async () => setupDriveProbed(files))
+    await userEvent.click(screen.getByTestId('workspace-restore-drive-connect'))
+    await act(async () => setupAccountProbed(files))
   }
 
   it('restores the vault the user picked as a workspace of its own', async () => {
     await connect([VAULT, OTHER_VAULT])
 
-    expect(calls('workspace_drive_connect')).toHaveLength(1)
+    expect(calls('workspace_connect')).toHaveLength(1)
     // Two vaults is a choice, so both are offered rather than one picked.
     expect(screen.getByTestId('drive-vault-drive-file-1')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('drive-vault-drive-file-2'))
@@ -1791,7 +1838,7 @@ describe('Settings › workspaces › restore from Drive', () => {
       await userEvent.click(screen.getByTestId('workspace-restore-submit'))
     })
 
-    expect(calls('workspace_restore_from_drive')).toEqual([
+    expect(calls('workspace_restore_from_pending')).toEqual([
       { name: 'Work', password: 'other-device-pass', fileId: 'drive-file-2' }
     ])
     // It arrives active and unlocked, so the app lands in main and re-probes —
@@ -1815,7 +1862,7 @@ describe('Settings › workspaces › restore from Drive', () => {
       await userEvent.click(screen.getByTestId('workspace-restore-submit'))
     })
 
-    expect(calls('workspace_restore_from_drive')).toEqual([
+    expect(calls('workspace_restore_from_pending')).toEqual([
       { name: '', password: 'other-device-pass', fileId: VAULT.id }
     ])
   })
@@ -1835,27 +1882,27 @@ describe('Settings › workspaces › restore from Drive', () => {
 
     await userEvent.click(screen.getByTestId('workspace-restore-cancel'))
 
-    expect(calls('setup_drive_disconnect')).toHaveLength(1)
-    expect(useApp.getState().setupDrive.status).toBe('idle')
-    expect(screen.getByTestId('workspace-restore-connect')).toBeInTheDocument()
+    expect(calls('setup_disconnect')).toHaveLength(1)
+    expect(useApp.getState().setupAccount.status).toBe('idle')
+    expect(screen.getByTestId('workspace-restore-drive-connect')).toBeInTheDocument()
   })
 
   // Once the restore is running the backend holds the account for its length
   // and would refuse to drop it, so nothing on screen may offer to: a Cancel
   // that did nothing would read as a cancellation that happened.
   it('withdraws Cancel and Switch account while the restore runs', async () => {
-    mockCommandOnce('workspace_restore_from_drive', () => new Promise(() => {}))
+    mockCommandOnce('workspace_restore_from_pending', () => new Promise(() => {}))
     await connect([VAULT])
 
     await userEvent.type(screen.getByTestId('workspace-restore-name'), 'Work')
     await userEvent.type(screen.getByTestId('workspace-restore-password'), 'pass')
     await userEvent.click(screen.getByTestId('workspace-restore-submit'))
 
-    expect(useApp.getState().setupDrive.status).toBe('restoring')
+    expect(useApp.getState().setupAccount.status).toBe('restoring')
     expect(screen.queryByTestId('workspace-restore-cancel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-restore-switch-account')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-restore-submit')).toHaveTextContent('Restoring…')
-    expect(calls('setup_drive_disconnect')).toHaveLength(0)
+    expect(calls('setup_disconnect')).toHaveLength(0)
   })
 
   // Leaving Settings would unmount the row and run the same refused disconnect,
@@ -1863,7 +1910,7 @@ describe('Settings › workspaces › restore from Drive', () => {
   // So Settings stays shut on its section — from the X, from the nav, and from
   // anything else that reaches the store — until the restore lands.
   it('holds Settings on the section while the restore runs', async () => {
-    mockCommandOnce('workspace_restore_from_drive', () => new Promise(() => {}))
+    mockCommandOnce('workspace_restore_from_pending', () => new Promise(() => {}))
     await connect([VAULT])
 
     await userEvent.type(screen.getByTestId('workspace-restore-name'), 'Work')
@@ -1881,7 +1928,7 @@ describe('Settings › workspaces › restore from Drive', () => {
 
   // A failed restore gives Settings back with the form.
   it('releases Settings when the restore fails', async () => {
-    mockCommandOnce('workspace_restore_from_drive', () =>
+    mockCommandOnce('workspace_restore_from_pending', () =>
       Promise.reject({ kind: 'invalidPassword', message: 'invalid master password' })
     )
     await connect([VAULT])
@@ -1899,7 +1946,7 @@ describe('Settings › workspaces › restore from Drive', () => {
   // A failed restore hands the form back: the list and the pick are still
   // there, and so are Cancel and Switch account.
   it('hands the form back when the restore fails', async () => {
-    mockCommandOnce('workspace_restore_from_drive', () =>
+    mockCommandOnce('workspace_restore_from_pending', () =>
       Promise.reject({ kind: 'invalidPassword', message: 'invalid master password' })
     )
     await connect([VAULT])
@@ -1908,13 +1955,13 @@ describe('Settings › workspaces › restore from Drive', () => {
     await userEvent.type(screen.getByTestId('workspace-restore-password'), 'wrong')
     await userEvent.click(screen.getByTestId('workspace-restore-submit'))
 
-    await waitFor(() => expect(useApp.getState().setupDrive.status).toBe('found'))
+    await waitFor(() => expect(useApp.getState().setupAccount.status).toBe('found'))
     expect(screen.getByTestId('workspace-restore-cancel')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-restore-switch-account')).toBeInTheDocument()
   })
 
   it('blames the password only when the backend does', async () => {
-    mockCommandOnce('workspace_restore_from_drive', () =>
+    mockCommandOnce('workspace_restore_from_pending', () =>
       Promise.reject({ kind: 'invalidPassword', message: 'invalid master password' })
     )
     await connect([VAULT])
@@ -1934,7 +1981,7 @@ describe('Settings › workspaces › restore from Drive', () => {
   // The pack is already a workspace here — the open one, or a locked one the
   // registry remembers; the backend says which is not the point, only that it is.
   it('says so when the chosen vault is already a workspace on this device', async () => {
-    mockCommandOnce('workspace_restore_from_drive', () =>
+    mockCommandOnce('workspace_restore_from_pending', () =>
       Promise.reject({
         kind: 'vaultAlreadyOpen',
         message: 'this vault is already a workspace on this device'
@@ -1954,15 +2001,38 @@ describe('Settings › workspaces › restore from Drive', () => {
   it('reports a consent that never came back', async () => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-restore-connect'))
+    await userEvent.click(screen.getByTestId('workspace-restore-drive-connect'))
     expect(screen.getByTestId('workspace-restore-waiting')).toBeInTheDocument()
 
-    await act(async () => setupDriveFailed('access_denied'))
+    await act(async () => setupAccountFailed('access_denied'))
 
     expect(await screen.findByTestId('workspace-restore-error')).toHaveTextContent(
       'access_denied'
     )
-    expect(calls('workspace_restore_from_drive')).toHaveLength(0)
+    expect(calls('workspace_restore_from_pending')).toHaveLength(0)
+  })
+
+  // The row starts with the choice of provider, and everything after the press
+  // names the one picked.
+  it('restores from Dropbox, naming it from the press on', async () => {
+    await open()
+    await go('workspaces')
+    expect(screen.getByTestId('workspace-restore-row')).toHaveTextContent(
+      'Restore from a cloud account'
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-restore-dropbox-connect'))
+
+    expect(calls('workspace_connect')).toEqual([{ provider: 'dropbox' }])
+    expect(screen.getByTestId('workspace-restore-row')).toHaveTextContent('Restore from Dropbox')
+    expect(screen.getByTestId('workspace-restore-waiting')).toHaveTextContent(
+      'Waiting for Dropbox…'
+    )
+
+    await act(async () => setupAccountProbed([]))
+    expect(screen.getByTestId('workspace-restore-empty')).toHaveTextContent(
+      'This Dropbox account has nothing to restore'
+    )
   })
 })
 

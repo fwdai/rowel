@@ -2,7 +2,9 @@ import { useEffect, useId, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useApp } from '@/store'
 import type { Workspace } from '@/api/types'
-import { workspaceLabel } from '@/lib/workspace'
+import { providerName } from '@/api/provider'
+import { syncProvider } from '@/api/sync'
+import { registeredProvider, workspaceLabel } from '@/lib/workspace'
 import { Dropdown } from '@/components/elements/Dropdown'
 import Row from './Row'
 import Search from './Search'
@@ -23,7 +25,7 @@ const SEARCH_FROM = 6
 // picks the one lit.
 export default function Menu({ list, active, onPick, onClose }: Props) {
   const { t } = useTranslation()
-  const configured = useApp(state => state.sync.configured)
+  const live = useApp(state => syncProvider(state.sync))
   const [query, setQuery] = useState('')
   // Element ids for the list and each row, so the search field can point at
   // the lit one; per row by workspace id, so an id holds while the list filters.
@@ -53,13 +55,11 @@ export default function Menu({ list, active, onPick, onClose }: Props) {
   // How big each vault is and where it lives, read off what is knowable while
   // it is locked: the count its last open here left, and the open one's live
   // connection or any other's the token file the backend found beside it
-  // (`synced`). A vault never opened on this device has no count yet, and
-  // says only where it is.
+  // (`registeredProvider`). A vault never opened on this device has no count
+  // yet, and says only where it is.
   const about = (workspace: Workspace) => {
-    const home =
-      (workspace.id === active ? configured : workspace.synced === true)
-        ? t('Google Drive')
-        : t('This device')
+    const provider = workspace.id === active ? live : registeredProvider(workspace)
+    const home = provider ? providerName(provider) : t('This device')
     return workspace.itemCount === undefined
       ? home
       : `${t('{{count}} items', { count: workspace.itemCount })} · ${home}`

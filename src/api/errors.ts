@@ -26,7 +26,7 @@ export type BackendErrorKind =
   | 'shareNeedsSync'
   | 'setupBusy'
   | 'syncBusy'
-  | 'driveNotConnected'
+  | 'accountNotConnected'
   | 'noRemoteVault'
   | 'alreadySetUp'
   | 'primaryWorkspaceOnly'
@@ -121,10 +121,10 @@ export const describeError = (error: unknown): string => {
       return t('Another setup step is still running')
     case 'syncBusy':
       return t('Wait for the sync in progress to finish')
-    case 'driveNotConnected':
-      return t('Connect a Google account first')
+    case 'accountNotConnected':
+      return t('Connect an account first')
     case 'noRemoteVault':
-      return t('This Google account has nothing to restore')
+      return t('This account has nothing to restore')
     case 'alreadySetUp':
       return t('This device is already set up')
     case 'primaryWorkspaceOnly':
@@ -138,9 +138,9 @@ export const describeError = (error: unknown): string => {
     case 'vaultAlreadyOpen':
       return t('This vault is already a workspace on this device')
     case 'vaultNotInAccount':
-      return t('This Google account holds other vaults')
+      return t('This account holds other vaults')
     case 'vaultDeletedRemotely':
-      return t('This vault was deleted from Google Drive on another device.')
+      return t('This vault was deleted from its account on another device.')
     case 'fileTooLarge':
       return t('This file is too large')
     case 'fileNotText':

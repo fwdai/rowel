@@ -1,5 +1,6 @@
 import { call } from './client'
 import { describeError, type BackendErrorKind } from './errors'
+import type { Provider } from './provider'
 
 /**
  * The whole of what the frontend knows about sync, carried by every
@@ -10,6 +11,8 @@ import { describeError, type BackendErrorKind } from './errors'
 export interface SyncStatus {
   /** This vault has a provider connected. */
   configured: boolean
+  /** Which one; null exactly when `configured` is false. */
+  provider: Provider | null
   /** A consent flow is out with the browser. */
   pending: boolean
   inProgress: boolean
@@ -51,17 +54,26 @@ export const syncDeletedRemotely = (sync: SyncStatus): boolean =>
   sync.errorKind === 'vaultDeletedRemotely'
 
 /**
- * Start the Google consent flow for the open vault. Returns immediately on
+ * The provider this vault syncs through, or null when it does not. A backend
+ * from before there was a choice reports a connection with no provider, and
+ * the only one it ever spoke to was Google Drive.
+ */
+export const syncProvider = (sync: SyncStatus): Provider | null =>
+  sync.configured ? (sync.provider ?? 'googleDrive') : null
+
+/**
+ * Start `provider`'s consent flow for the open vault. Returns immediately on
  * every platform: the backend probes the account first and reports on
- * `setup:drive:pending`, then one of `setup:drive:probed` / `setup:drive:error`
- * — the same events the first run and Settings › Workspaces listen to. A
- * rejection here is an immediate guard failure (another setup step running)
- * and has already been reported as `sync:status`.
+ * `setup:account:pending`, then one of `setup:account:probed` /
+ * `setup:account:error` — the same events the first run and Settings ›
+ * Workspaces listen to. A rejection here is an immediate guard failure
+ * (another setup step running) and has already been reported as `sync:status`.
  *
  * A probe leaves the account's tokens pending and its vaults listed; whether
  * this vault may join the account is then `syncAdoptPending`'s to say.
  */
-export const syncConnect = (): Promise<void> => call('sync_connect')
+export const syncConnect = (provider: Provider): Promise<void> =>
+  call('sync_connect', { provider })
 
 export const syncDisconnect = (): Promise<void> => call('sync_disconnect')
 
@@ -75,7 +87,7 @@ export const syncNow = (): Promise<void> => call('sync_now')
  * open vault's key and the first sync runs, reporting through `sync:status`
  * like a connect. An account holding only *other* vaults rejects with
  * `vaultNotInAccount` and leaves the tokens pending, so the caller offers those
- * vaults to restore (`workspaceRestoreFromDrive`) instead of adding a pack
+ * vaults to restore (`workspaceRestoreFromPending`) instead of adding a pack
  * beside them.
  */
 export const syncAdoptPending = (): Promise<void> => call('sync_adopt_pending')

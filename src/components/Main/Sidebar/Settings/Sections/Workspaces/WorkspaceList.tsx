@@ -13,7 +13,7 @@ import { syncDeletedRemotely, syncErrorText } from '@/api/sync'
 import Button from '@/components/elements/Button'
 import { useSubpage } from '../../sectionNav'
 import WorkspaceRow from './WorkspaceRow'
-import { workspaceAbout, workspaceSyncs } from './about'
+import { workspaceAbout, workspaceProvider } from './about'
 
 export default function WorkspaceList() {
   const { t } = useTranslation()
@@ -35,11 +35,11 @@ export default function WorkspaceList() {
 
   // The account's copy of *this* vault is gone — deleted from another device —
   // so its runs stop here until this workspace goes too. The delete offered for
-  // it is the local one: there is nothing left on Drive to remove.
+  // it is the local one: there is nothing left in the account to remove.
   const strandedHere = syncDeletedRemotely(sync)
 
-  // Whether it has a copy on Drive to delete along with it.
-  const syncs = (workspace: Workspace) => workspaceSyncs(workspace, { active, sync })
+  // Where its copy lives, if it has one to delete along with it.
+  const provider = (workspace: Workspace) => workspaceProvider(workspace, { active, sync })
 
   return (
     <>
@@ -53,7 +53,7 @@ export default function WorkspaceList() {
             last={last}
             about={workspaceAbout(
               workspace,
-              { current, syncs: syncs(workspace), liveCount },
+              { current, provider: provider(workspace), liveCount },
               t
             )}
             onSwitch={() =>

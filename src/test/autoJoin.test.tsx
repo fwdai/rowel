@@ -24,7 +24,7 @@ describe('a vault added from the account', () => {
     await act(async () => workspaceAdded('Vault 9f3c1a'))
 
     expect(screen.getByTestId('notice-toast')).toHaveTextContent(
-      'Added “Vault 9f3c1a” from your Google account'
+      'Added “Vault 9f3c1a” from your Google Drive account'
     )
     await waitFor(() => expect(calls('app_status').length).toBeGreaterThan(probes))
     // The notice is not state the shell keeps: it clears on its own.

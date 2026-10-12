@@ -1,10 +1,11 @@
 import { useTranslation } from 'react-i18next'
 import Button from '@/components/elements/Button'
 import FoundFileCard from '@/components/elements/FoundFileCard'
-import { selectedDriveFile, useApp } from '@/store'
+import { selectedRemotePack, useApp } from '@/store'
+import { providerName } from '@/api/provider'
 import StepHeader from '../shared/StepHeader'
 import { COLUMN, ACTIONS } from '../shared/layout'
-import { describeDriveFile } from '@/utils/drivePack'
+import { describeRemotePack } from '@/utils/remotePack'
 import { useDates } from '@/hooks/useDates'
 
 interface Props {
@@ -21,14 +22,15 @@ interface Props {
 export default function Conflict({ onUnlockExisting }: Props) {
   const { t } = useTranslation()
   const dates = useDates()
-  const file = useApp(selectedDriveFile)
+  const file = useApp(selectedRemotePack)
+  const provider = useApp(state => state.setupAccount.provider) ?? 'googleDrive'
 
   return (
     <>
       <StepHeader
         eyebrow={t('Hold on')}
         tone="warn"
-        title={t('This Drive already has Rowel data')}
+        title={t('This {{provider}} already has Rowel data', { provider: providerName(provider) })}
         body={t(
           "It's sealed with its own master password. Unlock that vault here and this device will sync the same data as your others."
         )}
@@ -37,10 +39,10 @@ export default function Conflict({ onUnlockExisting }: Props) {
       {file && (
         <div className={`${COLUMN} mt-9`}>
           <FoundFileCard
-            where="drive"
+            where="cloud"
             testid="setup-conflict-file"
             name={t('Rowel vault')}
-            meta={describeDriveFile(file, dates)}
+            meta={describeRemotePack(file, dates)}
             encrypted
           />
         </div>

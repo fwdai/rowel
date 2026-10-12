@@ -7,7 +7,7 @@ import WorkspaceList from './WorkspaceList'
 import NewWorkspace from './NewWorkspace'
 import InfoTiles from './InfoTiles'
 import RemoteVaults from './RemoteVaults'
-import RestoreFromDrive from './RestoreFromDrive'
+import RestoreFromAccount from './RestoreFromAccount'
 
 export default function Workspaces() {
   const { t } = useTranslation()
@@ -29,8 +29,8 @@ export default function Workspaces() {
         <InfoTiles />
       </section>
       <RemoteVaults />
-      <SettingsGroup label={t('Google Drive')}>
-        <RestoreFromDrive />
+      <SettingsGroup label={t('Cloud sync')}>
+        <RestoreFromAccount />
       </SettingsGroup>
     </>
   )

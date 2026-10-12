@@ -112,6 +112,7 @@ describe('sync:status', () => {
   it('is adopted as-is', () => {
     const status = {
       configured: true,
+      provider: 'dropbox' as const,
       pending: false,
       inProgress: false,
       error: 'Drive API 403',
