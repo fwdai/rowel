@@ -26,21 +26,21 @@ use tauri::async_runtime::block_on;
 
 use super::account::{Auth, Tokens};
 use super::engine::{Remote, RemoteFile};
-use super::providers::gdrive;
+use super::providers::{dropbox, gdrive};
 use super::{layout, pack, Provider};
 use crate::error::{Error, Result};
 
 /// One object directly inside `Vaults/`, as a listing or a `stat` reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteEntry {
-    /// Opaque, provider-specific: a Drive file id. Round-trips through the
-    /// frontend as `PackInfo.id`.
+    /// Opaque, provider-specific: a Drive file id, a Dropbox `id:` value.
+    /// Round-trips through the frontend as `PackInfo.id`.
     pub handle: String,
     pub name: String,
     pub size: Option<u64>,
     /// RFC 3339 UTC; the probe orders by it. Empty when the provider gave none.
     pub modified: String,
-    /// Drive's `headRevisionId`. `None` is unknown.
+    /// Drive's `headRevisionId`, Dropbox's `rev`. `None` is unknown.
     pub revision: Option<String>,
 }
 
@@ -79,13 +79,14 @@ pub trait VaultStore {
 /// Every adapter, behind one type: match and forward.
 pub enum AnyStore {
     GoogleDrive(gdrive::Store),
+    Dropbox(dropbox::Store),
 }
 
 /// The store for `auth`'s account, picked by its provider.
 pub fn store_for(auth: Auth) -> AnyStore {
     match auth.provider() {
         Provider::GoogleDrive => AnyStore::GoogleDrive(gdrive::Store::new(auth)),
-        Provider::Dropbox => unimplemented!("PR 2: the Dropbox adapter"),
+        Provider::Dropbox => AnyStore::Dropbox(dropbox::Store::new(auth)),
     }
 }
 
@@ -97,6 +98,7 @@ impl AnyStore {
     pub fn into_tokens(self) -> Option<Tokens> {
         match self {
             AnyStore::GoogleDrive(store) => store.into_auth().into_tokens(),
+            AnyStore::Dropbox(store) => store.into_auth().into_tokens(),
         }
     }
 }
@@ -105,42 +107,49 @@ impl VaultStore for AnyStore {
     fn provider(&self) -> Provider {
         match self {
             AnyStore::GoogleDrive(store) => store.provider(),
+            AnyStore::Dropbox(store) => store.provider(),
         }
     }
 
     async fn list_vaults(&self) -> Result<Vec<RemoteEntry>> {
         match self {
             AnyStore::GoogleDrive(store) => store.list_vaults().await,
+            AnyStore::Dropbox(store) => store.list_vaults().await,
         }
     }
 
     async fn stat(&self, name: &str) -> Result<Option<RemoteEntry>> {
         match self {
             AnyStore::GoogleDrive(store) => store.stat(name).await,
+            AnyStore::Dropbox(store) => store.stat(name).await,
         }
     }
 
     async fn read(&self, handle: &str, max_bytes: usize) -> Result<Vec<u8>> {
         match self {
             AnyStore::GoogleDrive(store) => store.read(handle, max_bytes).await,
+            AnyStore::Dropbox(store) => store.read(handle, max_bytes).await,
         }
     }
 
     async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
         match self {
             AnyStore::GoogleDrive(store) => store.create(name, bytes).await,
+            AnyStore::Dropbox(store) => store.create(name, bytes).await,
         }
     }
 
     async fn update(&self, handle: &str, bytes: &[u8]) -> Result<Option<String>> {
         match self {
             AnyStore::GoogleDrive(store) => store.update(handle, bytes).await,
+            AnyStore::Dropbox(store) => store.update(handle, bytes).await,
         }
     }
 
     async fn delete(&self, handle: &str) -> Result<()> {
         match self {
             AnyStore::GoogleDrive(store) => store.delete(handle).await,
+            AnyStore::Dropbox(store) => store.delete(handle).await,
         }
     }
 }

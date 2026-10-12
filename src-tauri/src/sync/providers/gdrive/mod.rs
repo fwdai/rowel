@@ -42,6 +42,9 @@ pub static OAUTH: OAuthConfig = OAuthConfig {
     no_client: "Google OAuth client not configured; set GOOGLE_OAUTH_CLIENT_ID",
     #[cfg(mobile)]
     mobile_client,
+    // A refusal comes back on the redirect itself, as `?error=...`.
+    #[cfg(mobile)]
+    mobile_cancel_uri: |_| None,
 };
 
 fn env_client_id() -> Option<String> {
@@ -101,25 +104,12 @@ fn scheme_from_client_id(client_id: &str) -> Option<String> {
 }
 
 /// The reversed-client-id scheme out of `plugins.deep-link.mobile` (see
-/// `tauri.ios.conf.json`). Other schemes may be configured for other purposes,
-/// so this picks the one that looks like a Google client rather than the first.
+/// `tauri.ios.conf.json`). Other schemes may be configured for other purposes
+/// (Dropbox's among them), so this picks the one that looks like a Google
+/// client rather than the first.
 #[cfg(mobile)]
 fn deep_link_scheme(app: &AppHandle) -> Result<String> {
-    app.config()
-        .plugins
-        .0
-        .get("deep-link")
-        .and_then(|c| c.get("mobile")?.as_array())
-        .and_then(|domains| {
-            domains.iter().find_map(|d| {
-                d.get("scheme")?
-                    .as_array()?
-                    .iter()
-                    .filter_map(|s| s.as_str())
-                    .find(|s| s.starts_with(IOS_SCHEME_PREFIX))
-                    .map(str::to_owned)
-            })
-        })
+    super::deep_link_scheme(app, IOS_SCHEME_PREFIX)
         .ok_or_else(|| crate::sync::account::no_client(&OAUTH))
 }
 

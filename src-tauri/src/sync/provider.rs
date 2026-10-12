@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::account::OAuthConfig;
-use super::providers::gdrive;
+use super::providers::{dropbox, gdrive};
 use crate::storage;
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -58,29 +58,9 @@ impl Provider {
 pub fn oauth_config(provider: Provider) -> &'static OAuthConfig {
     match provider {
         Provider::GoogleDrive => &gdrive::OAUTH,
-        Provider::Dropbox => &DROPBOX_OAUTH,
+        Provider::Dropbox => &dropbox::OAUTH,
     }
 }
-
-/// Dropbox's client, until its adapter lands (PR 2). Nothing reachable asks for
-/// it yet; if something did, the sign-in fails with "not available" rather than
-/// opening a consent page for a client this build does not have.
-static DROPBOX_OAUTH: OAuthConfig = OAuthConfig {
-    provider: Provider::Dropbox,
-    auth_url: "https://www.dropbox.com/oauth2/authorize",
-    token_url: "https://api.dropboxapi.com/oauth2/token",
-    consent_params: &[("token_access_type", "offline")],
-    loopback_ports: &[53682, 53683, 53684],
-    client_id: || None,
-    client_secret: || None,
-    no_client: "Dropbox sync is not available in this build",
-    #[cfg(mobile)]
-    mobile_client: |_| {
-        Err(crate::error::Error::Other(
-            "Dropbox sync is not available in this build".into(),
-        ))
-    },
-};
 
 #[cfg(test)]
 mod tests {

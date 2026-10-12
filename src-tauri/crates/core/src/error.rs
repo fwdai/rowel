@@ -90,7 +90,9 @@ pub enum Error {
     #[error("wait for the sync in progress to finish")]
     SyncBusy,
 
-    #[error("connect a Google account first")]
+    // Provider-neutral: the pending account may be Google's or Dropbox's, and
+    // this error has no way to know which.
+    #[error("connect a cloud account first")]
     DriveNotConnected,
 
     #[error("this Google account has no data to restore")]

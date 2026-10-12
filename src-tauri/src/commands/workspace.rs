@@ -491,23 +491,30 @@ fn disconnected_mid_restore_error(provider: sync::Provider) -> String {
     )
 }
 
-/// Connect a Google account for a workspace that does not exist yet.
+/// Connect an account for a workspace that does not exist yet.
 ///
 /// Onboarding's connect, reached from Settings instead of from the first run:
 /// the tokens are held in memory rather than sealed, because the vault they
-/// belong to is still a pack on Drive. Exactly the same events report it, so
-/// the picker the first run draws is the picker this draws.
+/// belong to is still a pack in the account. Exactly the same events report
+/// it, so the picker the first run draws is the picker this draws.
+///
+/// `provider` is optional and defaults to Google Drive, so a frontend that
+/// does not send it connects Drive as it always did.
 #[cfg(desktop)]
 #[tauri::command]
-pub fn workspace_drive_connect(app: AppHandle) -> Result<()> {
-    setup::connect_pending(&app)
+pub fn workspace_drive_connect(app: AppHandle, provider: Option<sync::Provider>) -> Result<()> {
+    setup::connect_pending(&app, provider.unwrap_or_default())
 }
 
 /// The mobile twin of [`workspace_drive_connect`].
 #[cfg(mobile)]
 #[tauri::command]
-pub fn workspace_drive_connect(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
-    setup::connect_pending(&app, &state)
+pub fn workspace_drive_connect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: Option<sync::Provider>,
+) -> Result<()> {
+    setup::connect_pending(&app, &state, provider.unwrap_or_default())
 }
 
 /// Add a workspace by restoring one of the connected account's vaults into it.

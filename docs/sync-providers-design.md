@@ -94,7 +94,8 @@ Token file on disk: `auth/<provider>.swftx`, at most one per workspace. The
 existing `auth/gdrive.swftx` is Google's, so nothing migrates, and the
 provider of a *locked* workspace is readable from the file name alone (the
 lock screen and `WorkspaceStatus.synced` already read only the file's
-presence). `sync_configured_in(dir)` becomes "any provider's file is present".
+presence). `sync_configured_in(dir)` becomes "any provider's file is present"
+(as implemented: `storage::sync_provider_in(dir)`, which also says whose).
 
 Refresh differences the config absorbs: Google may rotate the refresh token
 (already handled: keep the old one when none comes back); Dropbox never
@@ -387,6 +388,25 @@ Acceptance: unit tests for listing/metadata/error parsing and the
 `Dropbox-API-Result` header; `FakeStore` contract tests reused; manual
 two-device Dropbox run of the same checklist as PR 1 minus shares; a Drive
 workspace and a Dropbox workspace side by side on one device.
+
+As implemented (PR 2b, the wiring):
+
+- Connect commands take `provider: Option<Provider>`: a Tauri command
+  argument can only be omitted when it is an `Option`, so `None` stands in for
+  `#[serde(default)]` and means Google Drive.
+- One token file per workspace: a connect's write removes every other
+  provider's file first, under the generation guard, and moves the generation
+  only when it actually removed one (a refresh of the displaced connection
+  must not write it back). Reconnecting the same provider moves nothing, as
+  before: autojoin and a workspace restore read a moved generation as "the
+  account was disconnected".
+- iOS: `db-<DROPBOX_APP_KEY>` is injected by the release build beside Google's
+  scheme, never committed (a placeholder is an illegal scheme); the app reads
+  the key back off the scheme. `db-<key>://2/cancel` ends a pending consent as
+  denied.
+- `update` overwrites by `id:` (no `update <rev>` mode in `api.rs` yet);
+  `create` uploads in `overwrite` mode, so two first pushes racing leave the
+  later one, which the other device's next full-state merge absorbs.
 
 ### PR 3 — Frontend provider choice and neutral naming
 

@@ -84,14 +84,32 @@ else
   echo "warning: GOOGLE_OAUTH_IOS_CLIENT_ID is not set — building without Drive sync." >&2
 fi
 
+# Dropbox the same way: its redirect comes back on `db-<DROPBOX_APP_KEY>`
+# (src-tauri/src/sync/providers/dropbox/oauth.rs), and the app reads the key
+# back off that scheme. Several schemes are one space-separated list here, in
+# the order they are registered — which is also the order
+# check-ipa-url-schemes.sh expects to find them in.
+if [[ -n ${DROPBOX_APP_KEY:-} ]]; then
+  # Dropbox app keys are lowercase alphanumeric; anything else would not be a
+  # legal scheme suffix (90158).
+  if [[ ! $DROPBOX_APP_KEY =~ ^[A-Za-z0-9]+$ ]]; then
+    echo "error: DROPBOX_APP_KEY is not a Dropbox app key (letters and digits only)." >&2
+    exit 1
+  fi
+  SCHEME="${SCHEME:+$SCHEME }db-${DROPBOX_APP_KEY}"
+else
+  echo "warning: DROPBOX_APP_KEY is not set — building without Dropbox sync." >&2
+fi
+
 # The build number is set as a config value rather than with `tauri ios build
 # --build-number`: that flag *appends* to the app version, producing a
 # CFBundleVersion like `1.0.0.1.29822658`, and App Store Connect rejects
 # anything longer than three period-separated integers (ITMS-90060). Setting
 # it outright makes CFBundleVersion exactly the build number.
-BUILD_CONFIG=$(bun -e 'const [build, scheme] = process.argv.slice(1)
+BUILD_CONFIG=$(bun -e 'const [build, schemes] = process.argv.slice(1)
 const config = { bundle: { iOS: { bundleVersion: build } } }
-if (scheme) config.plugins = { "deep-link": { mobile: [{ scheme: [scheme] }] } }
+const scheme = schemes.split(" ").filter(Boolean)
+if (scheme.length) config.plugins = { "deep-link": { mobile: [{ scheme }] } }
 console.log(JSON.stringify(config))' "$BUILD_NUMBER" "$SCHEME")
 
 export APPLE_DEVELOPMENT_TEAM="${APPLE_TEAM_ID:-UFBL3F444A}"

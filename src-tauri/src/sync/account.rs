@@ -81,6 +81,11 @@ pub struct OAuthConfig {
     /// differently.
     #[cfg(mobile)]
     pub mobile_client: fn(&AppHandle) -> Result<(String, String)>,
+    /// Where the provider sends a phone back when the user cancels consent, if
+    /// that is not the redirect itself (Dropbox: `db-<APP_KEY>://2/cancel`).
+    /// `None` when a refusal arrives on the redirect as `?error=...` (Google).
+    #[cfg(mobile)]
+    pub mobile_cancel_uri: fn(&AppHandle) -> Option<String>,
 }
 
 #[cfg(desktop)]
@@ -220,14 +225,26 @@ pub fn redirect_matches(app: &AppHandle, provider: Provider, url: &Url) -> bool 
         .is_ok_and(|c| matches_redirect_uri(url, &c.redirect_uri))
 }
 
+/// Whether a deep link is `provider`'s "the user cancelled" landing for this
+/// build (see [`OAuthConfig::mobile_cancel_uri`]). Like [`redirect_matches`],
+/// it says nothing about which request it ends; the caller decides that.
+#[cfg(mobile)]
+pub fn cancel_matches(app: &AppHandle, provider: Provider, url: &Url) -> bool {
+    (oauth_config(provider).mobile_cancel_uri)(app)
+        .is_some_and(|uri| matches_redirect_uri(url, &uri))
+}
+
 /// `url` is `redirect_uri` plus, at most, a query: same scheme (schemes are
-/// case-insensitive, and the `url` crate lowercases the parsed one) and the same
-/// path. A prefix match on the scheme would accept every Google client's
-/// redirect, not just ours.
+/// case-insensitive, and the `url` crate lowercases the parsed one), the same
+/// host where the URI has one (Dropbox's `db-<key>://2/token`; Google's has
+/// none) and the same path. A prefix match on the scheme would accept every
+/// Google client's redirect, not just ours.
 #[cfg(any(mobile, test))]
 fn matches_redirect_uri(url: &Url, redirect_uri: &str) -> bool {
     Url::parse(redirect_uri).is_ok_and(|expected| {
-        url.scheme().eq_ignore_ascii_case(expected.scheme()) && url.path() == expected.path()
+        url.scheme().eq_ignore_ascii_case(expected.scheme())
+            && url.host_str() == expected.host_str()
+            && url.path() == expected.path()
     })
 }
 
@@ -244,22 +261,36 @@ fn matches_redirect_uri(url: &Url, redirect_uri: &str) -> bool {
 /// disconnect to land in. On a plain path rather than an `AppHandle`, so the
 /// transitions can be exercised against a scratch directory.
 struct TokenFile<'a> {
-    path: std::path::PathBuf,
+    /// The workspace directory the file lives in.
+    dir: std::path::PathBuf,
+    /// Whose file this is, which names it ([`Provider::token_file_name`]).
+    provider: Provider,
     /// `AppState::sync_generation` in the app; a bare mutex in a test.
     generation: &'a std::sync::Mutex<u64>,
 }
 
 impl<'a> TokenFile<'a> {
-    fn new(path: std::path::PathBuf, generation: &'a std::sync::Mutex<u64>) -> Self {
-        Self { path, generation }
+    fn new(
+        dir: std::path::PathBuf,
+        provider: Provider,
+        generation: &'a std::sync::Mutex<u64>,
+    ) -> Self {
+        Self {
+            dir,
+            provider,
+            generation,
+        }
     }
 
     /// The active workspace's token file — whichever provider's it holds, at
     /// most one — and the app's connection generation. For the transitions
     /// that act on the file that is there: read, re-seal, disconnect.
     fn of(app: &'a AppHandle) -> Result<Self> {
+        let dir = storage::workspace_dir(app)?;
+        let provider = storage::token_file_in(&dir).unwrap_or_default();
         Ok(Self::new(
-            storage::token_path(app)?,
+            dir,
+            provider,
             &app_state(app).inner().sync_generation,
         ))
     }
@@ -268,21 +299,47 @@ impl<'a> TokenFile<'a> {
     /// tokens go is named by the tokens, not by whatever file was there.
     fn for_provider(app: &'a AppHandle, provider: Provider) -> Result<Self> {
         Ok(Self::new(
-            storage::token_path_for(app, provider)?,
+            storage::workspace_dir(app)?,
+            provider,
             &app_state(app).inner().sync_generation,
         ))
     }
 
-    fn read(&self, cryptor: &Cryptor) -> Option<Tokens> {
-        read_sealed(&self.path, cryptor)
+    fn path(&self) -> std::path::PathBuf {
+        self.dir.join(self.provider.token_file_name())
     }
 
-    /// Seal the tokens under `cryptor` and write them. Atomic, so a crash
-    /// mid-write leaves the previous grant rather than a truncated file that
-    /// reads as "not connected" — and owner-only from creation.
+    fn read(&self, cryptor: &Cryptor) -> Option<Tokens> {
+        read_sealed(&self.path(), cryptor)
+    }
+
+    /// Seal the tokens under `cryptor` and write them over this provider's
+    /// file. Atomic, so a crash mid-write leaves the previous grant rather than
+    /// a truncated file that reads as "not connected" — and owner-only from
+    /// creation. The caller holds the generation guard.
     fn write(&self, cryptor: &Cryptor, tokens: &Tokens) -> Result<()> {
-        let json = serde_json::to_string(tokens)?;
-        storage::atomic_write_private(&self.path, cryptor.encrypt(&json)?.as_bytes())
+        storage::atomic_write_private(&self.path(), seal(cryptor, tokens)?.as_bytes())
+    }
+
+    /// Write a connection's tokens — a fresh consent's, not a refresh — making
+    /// this provider's file the workspace's only one.
+    ///
+    /// Any other provider's file goes in the same step, under the guard, and
+    /// *before* the write: a crash between the two leaves no connection rather
+    /// than two, and the file's name is what says which provider a locked
+    /// workspace syncs through. When one did go, the generation moves exactly
+    /// as [`TokenFile::disconnect`] moves it — that file's connection has ended,
+    /// and a refresh of it still in flight must not write it back beside this
+    /// one. Replacing this provider's own file moves nothing, as it never did:
+    /// the generation is what autojoin and a workspace restore read as "the
+    /// account was disconnected".
+    fn connect(&self, cryptor: &Cryptor, tokens: &Tokens) -> Result<()> {
+        let sealed = seal(cryptor, tokens)?;
+        let mut generation = self.generation.lock().unwrap();
+        if storage::remove_other_token_files_in(&self.dir, self.provider)? {
+            *generation += 1;
+        }
+        storage::atomic_write_private(&self.path(), sealed.as_bytes())
     }
 
     /// The tokens together with the generation they belong to, read as one:
@@ -302,7 +359,7 @@ impl<'a> TokenFile<'a> {
     fn disconnect(&self) -> Result<()> {
         let mut generation = self.generation.lock().unwrap();
         *generation += 1;
-        storage::remove_if_present(&self.path)
+        storage::remove_if_present(&self.path())
     }
 
     /// Read with `old` and write back with `new`, under the guard so a
@@ -347,6 +404,11 @@ impl<'a> TokenFile<'a> {
         self.write(cryptor, tokens)?;
         Ok(true)
     }
+}
+
+/// `tokens` as the token file holds them: JSON, sealed under the vault key.
+fn seal(cryptor: &Cryptor, tokens: &Tokens) -> Result<String> {
+    cryptor.encrypt(&serde_json::to_string(tokens)?)
 }
 
 /// The tokens sealed in the file at `path`, if there are any to read. An
@@ -408,20 +470,22 @@ fn unreadable_tokens_error(provider: Provider) -> String {
 }
 
 /// Seal the tokens under `cryptor` and write them, to the file their provider
-/// names.
+/// names — the workspace's only token file from then on
+/// ([`TokenFile::connect`]).
 ///
 /// Crate-visible because first-run onboarding holds tokens in memory long
 /// before a vault key exists to seal them with, and persists them only once the
 /// restore or create it is driving has produced one.
 pub fn write_tokens(app: &AppHandle, cryptor: &Cryptor, tokens: &Tokens) -> Result<()> {
-    TokenFile::for_provider(app, tokens.provider)?.write(cryptor, tokens)
+    TokenFile::for_provider(app, tokens.provider)?.connect(cryptor, tokens)
 }
 
 /// [`write_tokens`] into a named workspace directory rather than the active
-/// workspace's, for a vault being added beside the open one.
+/// workspace's, for a vault being added beside the open one. Exclusive the same
+/// way ([`storage::write_token_file_in`]); no generation to move, since no
+/// refresh runs against a workspace that is not the active one.
 pub fn write_tokens_in(dir: &std::path::Path, cryptor: &Cryptor, tokens: &Tokens) -> Result<()> {
-    let json = serde_json::to_string(tokens)?;
-    storage::write_token_file_in(dir, tokens.provider, &cryptor.encrypt(&json)?)
+    storage::write_token_file_in(dir, tokens.provider, &seal(cryptor, tokens)?)
 }
 
 /// Which provider the active workspace syncs through, read off its token
@@ -1258,10 +1322,6 @@ mod tests {
         dir
     }
 
-    fn tmp_token_path() -> PathBuf {
-        tmp_dir().join("gdrive.swftx")
-    }
-
     // A workspace directory, with the subfolder the token file lives in — as
     // `workspace::dir_of` hands one to a delete.
     fn tmp_workspace_dir() -> PathBuf {
@@ -1269,6 +1329,11 @@ mod tests {
         let file = Provider::GoogleDrive.token_file_name();
         std::fs::create_dir_all(dir.join(file).parent().unwrap()).unwrap();
         dir
+    }
+
+    // Google's token file in a scratch workspace, under `generation`.
+    fn google_file(generation: &Mutex<u64>) -> TokenFile<'_> {
+        TokenFile::new(tmp_workspace_dir(), Provider::GoogleDrive, generation)
     }
 
     fn cryptor(password: &str) -> Cryptor {
@@ -1292,7 +1357,7 @@ mod tests {
     fn a_refresh_holding_the_old_generation_cannot_write_after_a_reseal() {
         let (old, new) = (cryptor("old-pw"), cryptor("new-pw"));
         let generation = Mutex::new(7);
-        let file = TokenFile::new(tmp_token_path(), &generation);
+        let file = google_file(&generation);
         file.write(&old, &tokens("access-1")).unwrap();
 
         let (held_generation, mut held) = file.snapshot(&old).unwrap();
@@ -1313,7 +1378,7 @@ mod tests {
     fn a_refresh_holding_the_old_generation_cannot_resurrect_a_disconnected_file() {
         let cryptor = cryptor("pw");
         let generation = Mutex::new(0);
-        let file = TokenFile::new(tmp_token_path(), &generation);
+        let file = google_file(&generation);
         file.write(&cryptor, &tokens("access-1")).unwrap();
 
         let (held_generation, mut held) = file.snapshot(&cryptor).unwrap();
@@ -1323,7 +1388,7 @@ mod tests {
         assert!(!file
             .persist_if_current(&cryptor, &held, held_generation)
             .unwrap());
-        assert!(!file.path.exists());
+        assert!(!file.path().exists());
     }
 
     // Nothing moved in the meantime, so the refreshed tokens land — otherwise
@@ -1332,7 +1397,7 @@ mod tests {
     fn a_refresh_holding_the_current_generation_writes_back() {
         let cryptor = cryptor("pw");
         let generation = Mutex::new(3);
-        let file = TokenFile::new(tmp_token_path(), &generation);
+        let file = google_file(&generation);
         file.write(&cryptor, &tokens("access-1")).unwrap();
 
         let (held_generation, mut held) = file.snapshot(&cryptor).unwrap();
@@ -1379,12 +1444,12 @@ mod tests {
     fn a_reseal_with_no_token_file_moves_nothing() {
         let (old, new) = (cryptor("old-pw"), cryptor("new-pw"));
         let generation = Mutex::new(5);
-        let file = TokenFile::new(tmp_token_path(), &generation);
+        let file = google_file(&generation);
 
         file.reseal(&old, &new).unwrap();
 
         assert_eq!(*generation.lock().unwrap(), 5);
-        assert!(!file.path.exists());
+        assert!(!file.path().exists());
     }
 
     // A token file sealed before providers existed names none, and is Google's:
@@ -1406,5 +1471,153 @@ mod tests {
             unreadable_tokens_error(Provider::GoogleDrive),
             "this workspace's saved Google account could not be read"
         );
+        assert_eq!(
+            unreadable_tokens_error(Provider::Dropbox),
+            "this workspace's saved Dropbox account could not be read"
+        );
+    }
+
+    // --- one token file per workspace ---
+
+    fn dropbox_tokens(access: &str) -> Tokens {
+        Tokens {
+            provider: Provider::Dropbox,
+            ..tokens(access)
+        }
+    }
+
+    // Connecting Dropbox where Google was connected ends Google's connection
+    // in the same step: its file goes, and the generation moves exactly as a
+    // disconnect would move it — so a Google refresh still in flight cannot
+    // write its file back beside Dropbox's.
+    #[test]
+    fn connecting_one_provider_retires_the_others_file_and_its_refreshes() {
+        let key = cryptor("pw");
+        let generation = Mutex::new(4);
+        let google = google_file(&generation);
+        let dropbox = TokenFile::new(google.dir.clone(), Provider::Dropbox, &generation);
+        google.connect(&key, &tokens("g-1")).unwrap();
+        assert_eq!(*generation.lock().unwrap(), 4, "nothing was displaced");
+
+        let (held_generation, mut held) = google.snapshot(&key).unwrap();
+        dropbox.connect(&key, &dropbox_tokens("d-1")).unwrap();
+
+        assert!(!google.path().exists());
+        assert_eq!(storage::token_file_in(&google.dir), Some(Provider::Dropbox));
+        assert_eq!(*generation.lock().unwrap(), 5);
+        held.access_token = Some("g-2-refreshed".into());
+        assert!(!google
+            .persist_if_current(&key, &held, held_generation)
+            .unwrap());
+        assert!(!google.path().exists(), "the stale refresh wrote nothing");
+        let read = read_tokens_in(&google.dir, &key).unwrap().unwrap();
+        assert_eq!(read.provider, Provider::Dropbox);
+        assert_eq!(read.access_token.as_deref(), Some("d-1"));
+    }
+
+    // Reconnecting the same provider replaces its file and moves nothing: the
+    // generation is what autojoin and a restore read as "disconnected".
+    #[test]
+    fn reconnecting_the_same_provider_keeps_the_generation() {
+        let key = cryptor("pw");
+        let generation = Mutex::new(9);
+        let file = google_file(&generation);
+        file.connect(&key, &tokens("g-1")).unwrap();
+        file.connect(&key, &tokens("g-2")).unwrap();
+        assert_eq!(*generation.lock().unwrap(), 9);
+        assert_eq!(
+            file.read(&key).unwrap().access_token.as_deref(),
+            Some("g-2")
+        );
+    }
+
+    // The same rule for a workspace beside the open one.
+    #[test]
+    fn writing_into_a_workspace_leaves_one_token_file() {
+        let dir = tmp_workspace_dir();
+        let key = cryptor("pw");
+        write_tokens_in(&dir, &key, &tokens("g-1")).unwrap();
+        write_tokens_in(&dir, &key, &dropbox_tokens("d-1")).unwrap();
+        assert!(!dir.join(Provider::GoogleDrive.token_file_name()).exists());
+        assert_eq!(storage::sync_provider_in(&dir), Some(Provider::Dropbox));
+
+        write_tokens_in(&dir, &key, &tokens("g-2")).unwrap();
+        assert!(!dir.join(Provider::Dropbox.token_file_name()).exists());
+        assert_eq!(storage::sync_provider_in(&dir), Some(Provider::GoogleDrive));
+    }
+
+    // --- Dropbox's client through the shared flow ---
+
+    // What the desktop flow sends is exactly the URI the App Console has
+    // registered for that port.
+    #[cfg(desktop)]
+    #[test]
+    fn the_desktop_redirect_is_what_dropbox_has_registered() {
+        use crate::sync::providers::dropbox::oauth;
+        for port in oauth::LOOPBACK_PORTS {
+            let credentials = Credentials {
+                client_id: "key".into(),
+                redirect_uri: String::new(),
+                secret: None,
+            }
+            .with_loopback(port);
+            assert_eq!(credentials.redirect_uri, oauth::loopback_redirect_uri(port));
+        }
+    }
+
+    #[test]
+    fn the_dropbox_consent_url_asks_for_an_offline_grant() {
+        let credentials = Credentials {
+            client_id: "abc123".into(),
+            redirect_uri: "http://127.0.0.1:53682/auth/callback".into(),
+            secret: None,
+        };
+        let config = oauth_config(Provider::Dropbox);
+        let url = Url::parse(&auth_url(config, &credentials, "chal", "n").unwrap()).unwrap();
+        assert!(url
+            .as_str()
+            .starts_with("https://www.dropbox.com/oauth2/authorize?"));
+        let pairs: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+        let has = |k: &str, v: &str| pairs.iter().any(|(pk, pv)| pk == k && pv == v);
+        assert!(has("client_id", "abc123"));
+        assert!(has("token_access_type", "offline"));
+        assert!(has(
+            "scope",
+            "files.metadata.read files.content.read files.content.write"
+        ));
+        assert!(has("code_challenge_method", "S256"));
+        assert!(has("state", "n"));
+    }
+
+    // Dropbox's redirect has a host (`2`), and the cancel landing differs from
+    // it only by path: each is matched exactly, never mistaken for the other.
+    #[test]
+    fn the_dropbox_redirect_and_cancel_are_told_apart() {
+        use crate::sync::providers::dropbox::oauth;
+        let redirect = oauth::mobile_redirect_uri("abc123");
+        let cancel = oauth::mobile_cancel_uri("abc123");
+        let url = |s: &str| Url::parse(s).unwrap();
+
+        let answer = url("db-abc123://2/token?code=c&state=s");
+        assert!(matches_redirect_uri(&answer, &redirect));
+        assert!(!matches_redirect_uri(&answer, &cancel));
+
+        let cancelled = url("db-abc123://2/cancel");
+        assert!(matches_redirect_uri(&cancelled, &cancel));
+        assert!(!matches_redirect_uri(&cancelled, &redirect));
+
+        // Another app's key, another host, another path.
+        assert!(!matches_redirect_uri(
+            &url("db-other://2/token?code=c"),
+            &redirect
+        ));
+        assert!(!matches_redirect_uri(
+            &url("db-abc123://3/token?code=c"),
+            &redirect
+        ));
+        assert!(!matches_redirect_uri(
+            &url("db-abc123://2/other"),
+            &redirect
+        ));
     }
 }

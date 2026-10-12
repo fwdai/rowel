@@ -22,7 +22,8 @@ use crate::error::{Error, Result};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackInfo {
-    /// The provider's handle for the file (a Drive file id). The frontend
+    /// The provider's handle for the file (a Drive file id, a Dropbox `id:`
+    /// value). The frontend
     /// hands it back to name which of several vaults the user chose to restore.
     pub id: String,
     pub name: String,

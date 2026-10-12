@@ -38,19 +38,26 @@ use crate::sync::{self, restore, setup::PackInfo, Provider};
 // --- connect ---------------------------------------------------------------
 
 /// Connect an account and report what it holds. Onboarding only.
+///
+/// `provider` is optional and defaults to Google Drive, so a frontend that
+/// does not send it connects Drive as it always did.
 #[cfg(desktop)]
 #[tauri::command]
-pub fn setup_drive_connect(app: AppHandle) -> Result<()> {
+pub fn setup_drive_connect(app: AppHandle, provider: Option<Provider>) -> Result<()> {
     guard_no_vault(&app)?;
-    connect_pending(&app)
+    connect_pending(&app, provider.unwrap_or_default())
 }
 
 /// The mobile twin of [`setup_drive_connect`].
 #[cfg(mobile)]
 #[tauri::command]
-pub fn setup_drive_connect(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
+pub fn setup_drive_connect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: Option<Provider>,
+) -> Result<()> {
     guard_no_vault(&app)?;
-    connect_pending(&app, &state)
+    connect_pending(&app, &state, provider.unwrap_or_default())
 }
 
 /// Consent, probe, report — the whole of connecting an account whose tokens
@@ -69,14 +76,14 @@ pub fn setup_drive_connect(app: AppHandle, state: State<'_, AppState>) -> Result
 /// network round trip, so both go to the blocking pool — the command returns as
 /// soon as its guards have passed, and the frontend listens for the events.
 #[cfg(desktop)]
-pub(crate) fn connect_pending(app: &AppHandle) -> Result<()> {
+pub(crate) fn connect_pending(app: &AppHandle, provider: Provider) -> Result<()> {
     ensure_idle(&app.state::<AppState>())?;
     let attempt = begin_attempt(&app.state::<AppState>());
     events::setup_drive_pending(app);
 
     let app = app.clone();
     super::detached(move || {
-        let probed = sync::obtain_tokens(&app, Provider::GoogleDrive).and_then(|mut tokens| {
+        let probed = sync::obtain_tokens(&app, provider).and_then(|mut tokens| {
             // `block_on` is legal here because a blocking-pool thread is not one
             // of the async runtime's workers. Same rule as a sync run.
             let files = tauri::async_runtime::block_on(probe(&app, &mut tokens))?;
@@ -95,20 +102,21 @@ pub(crate) fn connect_pending(app: &AppHandle) -> Result<()> {
 /// code, probe, and leave the tokens pending. Which flow asked is the
 /// frontend's to remember, not the deep-link handler's.
 #[cfg(mobile)]
-pub(crate) fn connect_pending(app: &AppHandle, state: &AppState) -> Result<()> {
+pub(crate) fn connect_pending(app: &AppHandle, state: &AppState, provider: Provider) -> Result<()> {
     ensure_idle(state)?;
     begin_attempt(state);
-    crate::commands::sync::start_consent(app, state, crate::state::AuthPurpose::Setup)
+    crate::commands::sync::start_consent(app, state, crate::state::AuthPurpose::Setup, provider)
 }
 
-/// Mobile, second half: redeem the code the deep-link handler accepted, then
-/// probe — reported through the same two events as desktop. The redirect was
-/// matched against `pending_auth`, which a disconnect clears, so an attempt
-/// that gets this far is still the current one.
+/// Mobile, second half: redeem the code the deep-link handler accepted, with
+/// the client of the `provider` whose consent page was opened, then probe —
+/// reported through the same two events as desktop. The redirect was matched
+/// against `pending_auth`, which a disconnect clears, so an attempt that gets
+/// this far is still the current one.
 #[cfg(mobile)]
-pub(crate) async fn on_consent(app: &AppHandle, code: &str, verifier: &str) {
+pub(crate) async fn on_consent(app: &AppHandle, provider: Provider, code: &str, verifier: &str) {
     let attempt = current_attempt(&app.state::<AppState>());
-    let probed = match sync::exchange_for_tokens(app, Provider::GoogleDrive, code, verifier).await {
+    let probed = match sync::exchange_for_tokens(app, provider, code, verifier).await {
         Ok(mut tokens) => probe(app, &mut tokens).await.map(|files| (tokens, files)),
         Err(e) => Err(e),
     };

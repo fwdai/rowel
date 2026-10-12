@@ -394,24 +394,6 @@ pub fn db_exists(app: &AppHandle) -> bool {
         .is_some_and(|m| m.len() > 0)
 }
 
-// Public to the crate because the sync token file's guarded transitions are
-// built on a plain path (`sync::account::TokenFile`) so they can be exercised
-// without an `AppHandle`.
-//
-// The active workspace's token file: whichever provider's is there, or — when
-// none is — Google's, which every caller then reads as "not connected" exactly
-// as it always did.
-pub(crate) fn token_path(app: &AppHandle) -> Result<PathBuf> {
-    let dir = workspace_dir(app)?;
-    let provider = token_file_in(&dir).unwrap_or_default();
-    Ok(dir.join(provider.token_file_name()))
-}
-
-// `provider`'s token file in the active workspace, for a write.
-pub(crate) fn token_path_for(app: &AppHandle, provider: Provider) -> Result<PathBuf> {
-    Ok(workspace_dir(app)?.join(provider.token_file_name()))
-}
-
 // Which provider's token file the workspace at `dir` holds, present at all —
 // empty included, since an empty file is a write that did not finish rather
 // than no connection (`sync::read_tokens_in`). A name alone, no key needed.
@@ -676,8 +658,31 @@ pub fn read_backup(path: &str) -> Result<String> {
 // truncated file that reads as "not connected" — and owner-only from creation,
 // like every other secret the app writes: the seal is the real protection, the
 // mode is the second line.
+//
+// Exclusive: a workspace syncs through one account, so every other provider's
+// token file goes first ([`remove_other_token_files_in`]). The active
+// workspace's own write does the same under the connection generation
+// (`sync::account::TokenFile::connect`).
 pub fn write_token_file_in(dir: &Path, provider: Provider, data: &str) -> Result<()> {
+    remove_other_token_files_in(dir, provider)?;
     atomic_write_private(&dir.join(provider.token_file_name()), data.as_bytes())
+}
+
+// Remove every token file in the workspace at `dir` except `keep`'s, and say
+// whether there was one to remove. Before the write that makes `keep` the
+// connection, never after: a crash between the two then leaves no account
+// rather than two, and "at most one" is what lets the file's name say which
+// provider a locked workspace syncs through.
+pub(crate) fn remove_other_token_files_in(dir: &Path, keep: Provider) -> Result<bool> {
+    let mut removed = false;
+    for provider in Provider::ALL.into_iter().filter(|p| *p != keep) {
+        let path = dir.join(provider.token_file_name());
+        if path.exists() {
+            remove_if_present(&path)?;
+            removed = true;
+        }
+    }
+    Ok(removed)
 }
 
 // Remove the token file, whatever state a failed write left it in — every
@@ -736,17 +741,26 @@ pub fn set_biometric_marker(app: &AppHandle, marker: Option<&str>) -> Result<()>
 }
 
 pub fn sync_configured(app: &AppHandle) -> bool {
-    workspace_dir(app).is_ok_and(|dir| sync_configured_in(&dir))
+    sync_provider(app).is_some()
 }
 
-/// Whether the workspace at `dir` holds an account connection: some provider's
-/// token file is there and non-empty. The one fact about a *locked* workspace's
-/// sync that is readable from outside it — the registry's vault id says a pack
-/// exists in the account, which outlives a disconnect, not that anything still
-/// syncs to it.
-pub fn sync_configured_in(dir: &Path) -> bool {
+/// [`sync_provider_in`] for the active workspace.
+pub fn sync_provider(app: &AppHandle) -> Option<Provider> {
+    workspace_dir(app)
+        .ok()
+        .and_then(|dir| sync_provider_in(&dir))
+}
+
+/// Which provider the workspace at `dir` syncs through: the one whose token
+/// file is there and non-empty, read off the file's name alone. `None` is no
+/// account connection.
+///
+/// The one fact about a *locked* workspace's sync that is readable from outside
+/// it — no key needed. The registry's vault id says a pack exists in the
+/// account, which outlives a disconnect, not that anything still syncs to it.
+pub fn sync_provider_in(dir: &Path) -> Option<Provider> {
     // A single metadata call per file answers both "exists" and "non-empty".
-    Provider::ALL.into_iter().any(|provider| {
+    Provider::ALL.into_iter().find(|provider| {
         fs::metadata(dir.join(provider.token_file_name())).is_ok_and(|m| m.len() > 0)
     })
 }

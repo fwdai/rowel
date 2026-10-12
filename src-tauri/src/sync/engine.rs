@@ -1009,6 +1009,10 @@ mod tests {
             foreign_vault_error(Provider::GoogleDrive),
             format!("Google Drive holds a vault from a different {APP_NAME} install")
         );
+        assert_eq!(
+            foreign_vault_error(Provider::Dropbox),
+            format!("Dropbox holds a vault from a different {APP_NAME} install")
+        );
     }
 
     #[test]

@@ -228,7 +228,7 @@ pub fn is_configured(app: &AppHandle, cryptor: &Cryptor) -> bool {
 // the second half is `exchange_for_tokens` — every connect is keyless now, so
 // the tokens are handed back rather than written.
 #[cfg(mobile)]
-pub use account::{begin, parse_redirect, redirect_matches, Redirect};
+pub use account::{begin, cancel_matches, parse_redirect, redirect_matches, Redirect};
 
 /// Drop the account locally. An error means the token file is still on disk
 /// and the account is therefore still connected.
@@ -615,5 +615,7 @@ mod tests {
                 crate::app::APP_NAME
             )
         );
+        assert!(account_has_vaults_error(Provider::Dropbox)
+            .starts_with("this Dropbox account already holds a "));
     }
 }

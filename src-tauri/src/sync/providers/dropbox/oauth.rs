@@ -54,15 +54,16 @@ pub fn app_key() -> Option<String> {
 /// `http://127.0.0.1:<port>/auth/callback`, or consent fails with an
 /// "invalid redirect_uri" page.
 pub const LOOPBACK_PORTS: [u16; 3] = [53682, 53683, 53684];
-/// The loopback host. An IP literal, not `localhost`, so the redirect cannot
-/// resolve to IPv6 while the listener is on IPv4 (or the other way round).
-pub const LOOPBACK_HOST: &str = "127.0.0.1";
-/// The callback path on the loopback listener.
-pub const LOOPBACK_CALLBACK: &str = "/auth/callback";
 
-/// `http://127.0.0.1:<port>/auth/callback`, for one of [`LOOPBACK_PORTS`].
+/// `http://127.0.0.1:<port>/auth/callback`, for one of [`LOOPBACK_PORTS`]: the
+/// exact URI to register in the App Console. The shared flow builds the one it
+/// sends (`sync::account`); this is the spec that is pinned against.
+///
+/// An IP literal, not `localhost`, so the redirect cannot resolve to IPv6 while
+/// the listener is on IPv4 (or the other way round).
+#[cfg(test)]
 pub fn loopback_redirect_uri(port: u16) -> String {
-    format!("http://{LOOPBACK_HOST}:{port}{LOOPBACK_CALLBACK}")
+    format!("http://127.0.0.1:{port}/auth/callback")
 }
 
 // --- mobile: custom-scheme redirect ---
@@ -72,27 +73,41 @@ pub fn loopback_redirect_uri(port: u16) -> String {
 /// lands on ours. Only the OS-level scheme needs registering (in
 /// `tauri.ios.conf.json`'s deep-link schemes); that Dropbox accepts it without
 /// an App Console entry is inferred from the SDK working, not documented.
+#[cfg(any(mobile, test))]
 pub const MOBILE_SCHEME_PREFIX: &str = "db-";
 
 /// What follows the scheme in the mobile redirect URI. SwiftyDropbox sends
 /// `db-<APP_KEY>://2/token` as `redirect_uri` on both the authorize call and
 /// the code exchange.
+#[cfg(any(mobile, test))]
 pub const MOBILE_REDIRECT_PATH: &str = "://2/token";
 
 /// Where SwiftyDropbox lands a cancelled consent: `db-<APP_KEY>://2/cancel`.
 /// A deep link on our scheme with this path is "the user said no".
+#[cfg(any(mobile, test))]
 pub const MOBILE_CANCEL_PATH: &str = "://2/cancel";
 
-/// `db-<APP_KEY>`, the scheme to list in `tauri.ios.conf.json`'s deep-link
-/// schemes.
+/// `db-<APP_KEY>`, the deep-link scheme the iOS build registers. It is not
+/// committed in `tauri.ios.conf.json` (a placeholder is an illegal scheme and
+/// fails the upload); the release build injects it from `DROPBOX_APP_KEY`
+/// beside Google's (`scripts/release-ios.sh`).
+#[cfg(any(mobile, test))]
 pub fn mobile_scheme(app_key: &str) -> String {
     format!("{MOBILE_SCHEME_PREFIX}{app_key}")
 }
 
 /// `db-<APP_KEY>://2/token`, the `redirect_uri` the mobile consent request
 /// sends and the code exchange repeats.
+#[cfg(any(mobile, test))]
 pub fn mobile_redirect_uri(app_key: &str) -> String {
     format!("{}{MOBILE_REDIRECT_PATH}", mobile_scheme(app_key))
+}
+
+/// `db-<APP_KEY>://2/cancel`: a deep link here ends the pending consent as
+/// denied.
+#[cfg(any(mobile, test))]
+pub fn mobile_cancel_uri(app_key: &str) -> String {
+    format!("{}{MOBILE_CANCEL_PATH}", mobile_scheme(app_key))
 }
 
 #[cfg(test)]

@@ -146,23 +146,37 @@ jobs:
           # iOS clients are public: there is no client secret to set.
           GOOGLE_OAUTH_IOS_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_IOS_CLIENT_ID }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          # Public, like the iOS client id: it names the app, it is no secret.
+          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
           BUILD_NUMBER: ${{ github.run_number }}
         # The OAuth client cannot be exported into the build: the Tauri CLI
         # compiles inside xcodebuild with a replaced environment that carries
         # only its own TAURI_* variables, so option_env! never sees it. The
         # --config patch does get through, so the id goes in as the deep-link
-        # scheme (its reverse), same as scripts/release-ios.sh does.
+        # scheme (its reverse), and the Dropbox app key as `db-<key>`, same as
+        # scripts/release-ios.sh does. SCHEME is the space-separated list, in
+        # registration order, that check-ipa-url-schemes.sh compares against.
         run: |
           set -euo pipefail
+          SCHEME=""
           # Anything else would ship as an illegal URL scheme and be rejected at upload (90158).
-          if [ -n "$GOOGLE_OAUTH_IOS_CLIENT_ID" ] && ! [[ $GOOGLE_OAUTH_IOS_CLIENT_ID =~ ^[A-Za-z0-9.+-]+\.apps\.googleusercontent\.com$ ]]; then
-            echo "::error::GOOGLE_OAUTH_IOS_CLIENT_ID is not an iOS OAuth client id (<id>.apps.googleusercontent.com)" >&2
-            exit 1
+          if [ -n "$GOOGLE_OAUTH_IOS_CLIENT_ID" ]; then
+            if ! [[ $GOOGLE_OAUTH_IOS_CLIENT_ID =~ ^[A-Za-z0-9.+-]+\.apps\.googleusercontent\.com$ ]]; then
+              echo "::error::GOOGLE_OAUTH_IOS_CLIENT_ID is not an iOS OAuth client id (<id>.apps.googleusercontent.com)" >&2
+              exit 1
+            fi
+            SCHEME="com.googleusercontent.apps.${GOOGLE_OAUTH_IOS_CLIENT_ID%.apps.googleusercontent.com}"
           fi
-          SCHEME="com.googleusercontent.apps.${GOOGLE_OAUTH_IOS_CLIENT_ID%.apps.googleusercontent.com}"
-          CONFIG=$(jq -cn --arg build "$BUILD_NUMBER" --arg scheme "$SCHEME" --arg id "$GOOGLE_OAUTH_IOS_CLIENT_ID" \
+          if [ -n "$DROPBOX_APP_KEY" ]; then
+            if ! [[ $DROPBOX_APP_KEY =~ ^[A-Za-z0-9]+$ ]]; then
+              echo "::error::DROPBOX_APP_KEY is not a Dropbox app key (letters and digits only)" >&2
+              exit 1
+            fi
+            SCHEME="${SCHEME:+$SCHEME }db-${DROPBOX_APP_KEY}"
+          fi
+          CONFIG=$(jq -cn --arg build "$BUILD_NUMBER" --arg schemes "$SCHEME" \
             '{bundle:{iOS:{bundleVersion:$build}}}
-             + (if $id == "" then {} else {plugins:{"deep-link":{mobile:[{scheme:[$scheme]}]}}} end)')
+             + (if $schemes == "" then {} else {plugins:{"deep-link":{mobile:[{scheme:($schemes | split(" "))}]}}} end)')
           # The scheme reaches Info.plist through tauri-plugin-deep-link's build
           # script, and cargo will not rerun it on its own once rust-cache has
           # restored a run that saw no config (the plugin only declares
