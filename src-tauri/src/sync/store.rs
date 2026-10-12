@@ -69,14 +69,14 @@ pub trait VaultStore {
     /// A new object named `name` in `Vaults/`, creating folders as needed.
     /// Returns its revision.
     async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>>;
-    /// Overwrite `entry`, as the core's `stat` just located it. Returns its
-    /// new revision.
+    /// Overwrite `entry`, as the core's `stat` just located it but carrying
+    /// the revision the run pulled. Returns its new revision.
     ///
     /// An object that is gone is an error, never a create. An adapter whose
     /// API can make the write conditional on `entry.revision` should (Dropbox
-    /// does): then an object another device rewrote since the `stat` is an
+    /// does): then an object another device rewrote since the pull is an
     /// error too, and the run fails rather than overwrite a write it never
-    /// pulled. One that cannot ignores the revision (Drive).
+    /// merged. One that cannot ignores the revision (Drive).
     async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>>;
     /// Delete by handle. Already gone counts as deleted.
     async fn delete(&self, handle: &str) -> Result<()>;
@@ -255,13 +255,38 @@ impl<S: VaultStore> Remote for PackRemote<S> {
         })
     }
 
-    fn upload(&self, bytes: &[u8]) -> Result<String> {
+    // The `stat` here only finds the handle and decides update-or-create. The
+    // revision a write is conditional on is the engine's `base_revision`, the
+    // one the run *pulled*, never this `stat`'s: a push landing between the
+    // engine's head check and this call would otherwise be the revision
+    // compared against, and be overwritten without ever being merged.
+    fn upload(&self, bytes: &[u8], base_revision: Option<&str>) -> Result<String> {
         block_on(async {
-            let revision = match self.locate().await? {
-                // The entry whole, revision included, so an adapter that can
-                // make the write conditional on it does.
-                Some(entry) => self.store.update(&entry, bytes).await?,
-                None => {
+            let revision = match (self.locate().await?, base_revision) {
+                // Over the pulled revision, so an adapter that can make the
+                // write conditional on it (Dropbox) fails on a mismatch. Drive
+                // ignores it. An empty base is the engine's "unknown", which an
+                // entry spells `None`.
+                (Some(entry), Some(base)) => {
+                    let entry = RemoteEntry {
+                        revision: Some(base.to_string()).filter(|rev| !rev.is_empty()),
+                        ..entry
+                    };
+                    self.store.update(&entry, bytes).await?
+                }
+                // The run pulled nothing, yet a pack is there now: another
+                // device created it since. Writing over it would drop that
+                // device's first push, so the run fails instead and the next
+                // one pulls and merges it. This holds for every provider,
+                // Drive included, since no revision is needed to see it.
+                (Some(_), None) => {
+                    return Err(Error::Other(
+                        "another device created the vault file while this one was syncing; \
+                         sync will retry"
+                            .into(),
+                    ));
+                }
+                (None, _) => {
                     may_create_pack(self.marker().await?)?;
                     let name = layout::vault_file_name(&self.vault_id);
                     self.store.create(&name, bytes).await?
@@ -509,7 +534,7 @@ mod tests {
         let remote = remote();
         remote.store.put(&marker_name(), &[]);
         assert!(matches!(
-            remote.upload(b"pack"),
+            remote.upload(b"pack", None),
             Err(Error::VaultDeletedRemotely)
         ));
         assert!(!remote.store.has(&pack_name()));
@@ -523,7 +548,8 @@ mod tests {
         let remote = remote();
         remote.store.put(&pack_name(), b"old");
         remote.store.put(&marker_name(), &[]);
-        remote.upload(b"new").unwrap();
+        let base = remote.head_revision().unwrap();
+        remote.upload(b"new", base.as_deref()).unwrap();
         assert_eq!(remote.store.bytes(&pack_name()).unwrap(), b"new");
 
         // And a fetch reads it rather than consulting the marker.
@@ -534,8 +560,8 @@ mod tests {
     #[test]
     fn the_first_push_creates_and_the_next_updates() {
         let remote = remote();
-        remote.upload(b"one").unwrap();
-        remote.upload(b"two").unwrap();
+        let first = remote.upload(b"one", None).unwrap();
+        remote.upload(b"two", Some(&first)).unwrap();
         assert_eq!(
             *remote.store.log.lock().unwrap(),
             [
@@ -545,20 +571,64 @@ mod tests {
         );
     }
 
-    // A push over an existing pack hands the store the entry its `stat` found,
-    // revision and all, so an adapter that can compare-and-swap on it does.
+    // A push over an existing pack hands the store the revision the run
+    // pulled, so an adapter that can compare-and-swap on it does.
     #[test]
-    fn a_push_updates_with_the_revision_the_stat_returned() {
+    fn a_push_updates_with_the_revision_the_run_pulled() {
         let remote = remote();
         remote.store.put(&pack_name(), b"old");
-        let seen = block_on(remote.store.stat(&pack_name()))
-            .unwrap()
-            .unwrap()
-            .revision;
-        assert!(seen.is_some());
+        let pulled = remote.fetch().unwrap().unwrap().revision;
 
-        remote.upload(b"new").unwrap();
-        assert_eq!(*remote.store.update_revisions.lock().unwrap(), [seen]);
+        remote.upload(b"new", Some(&pulled)).unwrap();
+        assert_eq!(
+            *remote.store.update_revisions.lock().unwrap(),
+            [Some(pulled)]
+        );
+    }
+
+    // The engine's "unknown" revision is an empty string; the store is handed
+    // `None`, which every adapter already reads as "nothing to compare".
+    #[test]
+    fn an_unknown_pulled_revision_reaches_the_store_as_none() {
+        let remote = remote();
+        remote.store.put(&pack_name(), b"old");
+        remote.upload(b"new", Some("")).unwrap();
+        assert_eq!(*remote.store.update_revisions.lock().unwrap(), [None]);
+        assert_eq!(remote.store.bytes(&pack_name()).unwrap(), b"new");
+    }
+
+    // Another device's push landing after the engine's head check, before
+    // this upload: the `stat` in `upload` sees the new revision, but the write
+    // is conditional on the pulled one, so a compare-and-swap store (Dropbox,
+    // the fake) refuses it and the other write stands.
+    #[test]
+    fn a_push_landing_after_the_head_check_fails_the_upload_rather_than_being_overwritten() {
+        let remote = remote();
+        remote.store.put(&pack_name(), b"old");
+        let pulled = remote.fetch().unwrap().unwrap().revision;
+        assert_eq!(remote.head_revision().unwrap().as_ref(), Some(&pulled));
+
+        remote.store.put(&pack_name(), b"theirs");
+        assert!(remote.upload(b"mine", Some(&pulled)).is_err());
+        assert_eq!(remote.store.bytes(&pack_name()).unwrap(), b"theirs");
+        assert!(remote.store.log.lock().unwrap().is_empty());
+    }
+
+    // The run pulled nothing, and by the time it pushes another device has
+    // created the pack. Overwriting it would drop that device's first push, on
+    // any provider, so the upload fails and the next run merges it.
+    #[test]
+    fn a_pack_that_appeared_after_an_empty_pull_fails_the_upload() {
+        let remote = remote();
+        assert!(remote.fetch().unwrap().is_none());
+
+        remote.store.put(&pack_name(), b"theirs");
+        match remote.upload(b"mine", None) {
+            Err(Error::Other(msg)) => assert!(msg.contains("another device created")),
+            other => panic!("expected the readable race error, got {other:?}"),
+        }
+        assert_eq!(remote.store.bytes(&pack_name()).unwrap(), b"theirs");
+        assert!(remote.store.log.lock().unwrap().is_empty());
     }
 
     // The fake holds adapters to the contract: an update of an entry rewritten
@@ -592,7 +662,7 @@ mod tests {
     #[test]
     fn revisions_pass_through_from_the_store() {
         let remote = remote();
-        let pushed = remote.upload(b"pack").unwrap();
+        let pushed = remote.upload(b"pack", None).unwrap();
         let head = remote.head_revision().unwrap().unwrap();
         let fetched = remote.fetch().unwrap().unwrap().revision;
         assert_eq!(pushed, head);

@@ -76,7 +76,13 @@ pub trait Remote {
     /// The current revision id without downloading the body.
     fn head_revision(&self) -> Result<Option<String>>;
     /// Replace the contents, returning the resulting revision id.
-    fn upload(&self, bytes: &[u8]) -> Result<String>;
+    ///
+    /// `base_revision` is the revision this run pulled (`None`: it pulled
+    /// nothing). The write is conditional on it as far as the backend allows:
+    /// a remote that has moved past it, or that holds a pack when the run
+    /// pulled none, is an error rather than an overwrite of a write this run
+    /// never merged.
+    fn upload(&self, bytes: &[u8], base_revision: Option<&str>) -> Result<String>;
 }
 
 /// This device's vault, as the engine needs it.
@@ -273,7 +279,10 @@ pub fn sync<R: Remote, L: LocalVault>(
         if bytes.len() > pack::MAX_PACK_BYTES {
             return Err(Error::Other(too_large_to_sync_error()));
         }
-        let revision = remote.upload(&bytes)?;
+        // The pre-flight above narrows the race; the revision passed here
+        // closes it wherever the backend can compare-and-swap, so a push that
+        // lands between the head check and this write is not overwritten.
+        let revision = remote.upload(&bytes, base_revision.as_deref())?;
         local.note_push(&revision, now_ms)?;
         outcome.pushed = true;
         return Ok(outcome);
@@ -690,6 +699,10 @@ mod tests {
         // Bumped by the test between a pull and the push that follows it, to
         // stand in for another device landing a snapshot mid-run.
         interlopers: Vec<Vec<u8>>,
+        // Landed at the start of the next upload instead: after the head
+        // check has passed, in the window only the upload's own
+        // compare-and-swap can see.
+        upload_interlopers: Vec<Vec<u8>>,
         // Every upload fails: the link dropped, Drive said no. The pull side
         // keeps working, as it would.
         refuse_uploads: bool,
@@ -718,6 +731,12 @@ mod tests {
         // i.e. exactly in the pull/push window.
         fn interlope(&self, bytes: Vec<u8>) {
             self.state.lock().unwrap().interlopers.push(bytes);
+        }
+
+        // Land `bytes` on the drive the next time the engine uploads — after
+        // its head check passed, before its write.
+        fn interlope_at_upload(&self, bytes: Vec<u8>) {
+            self.state.lock().unwrap().upload_interlopers.push(bytes);
         }
 
         fn uploads(&self) -> usize {
@@ -752,10 +771,21 @@ mod tests {
             Ok(state.content.is_some().then(|| state.revision.to_string()))
         }
 
-        fn upload(&self, bytes: &[u8]) -> Result<String> {
+        // A compare-and-swap on the revision the run pulled, as `PackRemote`
+        // over Dropbox is: a remote that moved since is an error, never an
+        // overwrite.
+        fn upload(&self, bytes: &[u8], base_revision: Option<&str>) -> Result<String> {
             let mut state = self.state.lock().unwrap();
             if state.refuse_uploads {
                 return Err(Error::Other("the upload failed".into()));
+            }
+            if let Some(bytes) = state.upload_interlopers.pop() {
+                state.revision += 1;
+                state.content = Some(bytes);
+            }
+            let head = state.content.is_some().then(|| state.revision.to_string());
+            if head.as_deref() != base_revision {
+                return Err(Error::Other("the remote changed since it was read".into()));
             }
             state.revision += 1;
             state.uploads += 1;
@@ -955,6 +985,30 @@ mod tests {
 
         assert!(sync(&remote, &a, NOW).is_err());
         assert_eq!(remote.uploads(), 1, "only the very first push ever landed");
+    }
+
+    // A push that lands after the head check passed is past what the
+    // pre-flight can see. The upload is conditional on the revision the run
+    // pulled, so it fails rather than overwrite C's work, and the next run
+    // pulls C's snapshot and pushes the union.
+    #[test]
+    fn a_push_landing_after_the_head_check_fails_the_upload_rather_than_being_overwritten() {
+        let a = Device::seeded(&[record("1", 200, b"one")]);
+        let remote = FakeRemote::default();
+        sync(&remote, &a, NOW).unwrap();
+        a.store.import(&[record("2", 400, b"two")]).unwrap();
+
+        let c = Device::seeded(&[record("1", 200, b"one"), record("3", 500, b"three")]);
+        let theirs = c.pack_bytes();
+        remote.interlope_at_upload(theirs.clone());
+
+        assert!(sync(&remote, &a, NOW).is_err());
+        assert_eq!(remote.uploads(), 1, "the second push never landed");
+        assert_eq!(remote.content().unwrap(), theirs, "C's push stands");
+
+        assert!(sync(&remote, &a, NOW).unwrap().pushed);
+        let published: Vec<String> = remote_records(&remote).into_iter().map(|r| r.id).collect();
+        assert_eq!(published, vec!["1", "2", "3"]);
     }
 
     #[test]
