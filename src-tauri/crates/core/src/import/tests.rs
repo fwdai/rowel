@@ -2580,7 +2580,7 @@ fn onepux_maps_cards_documents_keys_and_notes() {
     assert_eq!(r.warnings[0].row, 5);
     assert_eq!(
         r.warnings[0].message,
-        "private key kept in PKCS#8 form: not an Ed25519, RSA or ECDSA key, the kinds OpenSSH names"
+        "private key kept in PKCS#8 form: not a PKCS#8 key"
     );
 
     let api = &r.entries[5];

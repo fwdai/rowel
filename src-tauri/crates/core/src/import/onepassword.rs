@@ -283,7 +283,8 @@ fn ssh_private_key(payload: &Value) -> Option<String> {
 
 /// An SSH entry's key in the form the kind holds: a PKCS#8 block is
 /// converted to OpenSSH, and the public line and fingerprint 1Password did
-/// not supply come from the conversion. `Err` says why a key stays PKCS#8.
+/// not supply come from the conversion. An RSA key stays as it came, which
+/// OpenSSH reads; `Err` says why any other key stays PKCS#8.
 fn openssh_key(entry: &mut ImportedEntry) -> Result<(), String> {
     let Some(key) = entry.ssh_private_key.as_deref() else {
         return Ok(());
@@ -291,7 +292,9 @@ fn openssh_key(entry: &mut ImportedEntry) -> Result<(), String> {
     if !crate::ssh::is_pkcs8(key) {
         return Ok(());
     }
-    let converted = crate::ssh::from_pkcs8(key)?;
+    let Some(converted) = crate::ssh::from_pkcs8(key)? else {
+        return Ok(());
+    };
     entry.ssh_private_key = Some(converted.private_key);
     entry.ssh_public_key.get_or_insert(converted.public_key);
     entry.ssh_fingerprint.get_or_insert(converted.fingerprint);

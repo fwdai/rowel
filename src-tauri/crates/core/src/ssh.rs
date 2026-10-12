@@ -6,17 +6,23 @@
 //! most such keys are (`ssh-keygen -y` on one says "invalid format"). So a
 //! PKCS#8 key is converted on the way in, and its public line and fingerprint
 //! come with it, as the generator derives them for a key made here.
+//!
+//! An RSA key is the one left as it came: OpenSSH reads it in PKCS#8 form,
+//! and the one Rust crate that would decode it carries an open timing
+//! advisory (RUSTSEC-2023-0071) that keeps it out of the build.
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
-use p256::pkcs8::DecodePrivateKey;
-use ssh_key::private::{EcdsaKeypair, Ed25519Keypair, KeypairData, RsaKeypair};
+use p256::pkcs8::{DecodePrivateKey, ObjectIdentifier, PrivateKeyInfo};
+use ssh_key::private::{EcdsaKeypair, Ed25519Keypair, KeypairData};
 use ssh_key::{HashAlg, LineEnding, PrivateKey};
 
 pub const OPENSSH_HEADER: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
 const PKCS8_HEADER: &str = "-----BEGIN PRIVATE KEY-----";
 const PKCS8_FOOTER: &str = "-----END PRIVATE KEY-----";
+/// `rsaEncryption`, the algorithm a PKCS#8 RSA key names.
+const RSA_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
 
 /// A key in the form the `ssh` kind holds, with what is derived from it: the
 /// one-line public key and its `SHA256:…` fingerprint.
@@ -37,20 +43,24 @@ pub fn is_pkcs8(block: &str) -> bool {
     block.trim_start().starts_with(PKCS8_HEADER)
 }
 
-/// A PKCS#8 PEM block as an OpenSSH one. `Err` names what stood in the way:
-/// a block that is not plain PKCS#8, one that does not decode, or a key of an
-/// algorithm OpenSSH has no name for.
-pub fn from_pkcs8(pem: &str) -> Result<OpenSsh, String> {
+/// A PKCS#8 PEM block as an OpenSSH one. `Ok(None)` is an RSA key, which
+/// stays as it came (see the module note). `Err` names what stood in the
+/// way: a block that is not plain PKCS#8, one that does not decode, or a key
+/// of an algorithm OpenSSH has no name for.
+pub fn from_pkcs8(pem: &str) -> Result<Option<OpenSsh>, String> {
     let der = pkcs8_der(pem)?;
-    let key = PrivateKey::new(keypair(&der)?, "").map_err(|e| e.to_string())?;
-    Ok(OpenSsh {
+    let Some(data) = keypair(&der)? else {
+        return Ok(None);
+    };
+    let key = PrivateKey::new(data, "").map_err(|e| e.to_string())?;
+    Ok(Some(OpenSsh {
         private_key: key
             .to_openssh(LineEnding::LF)
             .map_err(|e| e.to_string())?
             .to_string(),
         public_key: key.public_key().to_openssh().map_err(|e| e.to_string())?,
         fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
-    })
+    }))
 }
 
 fn pkcs8_der(pem: &str) -> Result<Vec<u8>, String> {
@@ -69,38 +79,44 @@ fn pkcs8_der(pem: &str) -> Result<Vec<u8>, String> {
 // The algorithm is named inside the DER, and each decoder refuses every
 // other's, so they are tried in turn — Ed25519 first, being what most keys
 // are. The public point of an ECDSA key is derived here; OpenSSH's form
-// carries it beside the scalar, where PKCS#8 may leave it out.
-fn keypair(der: &[u8]) -> Result<KeypairData, String> {
-    if let Ok(key) = ed25519_dalek::SigningKey::from_pkcs8_der(der) {
-        return Ok(Ed25519Keypair::from(key).into());
+// carries it beside the scalar, where PKCS#8 may leave it out. `None` is an
+// RSA key, told by its algorithm's own id, since nothing here decodes one.
+fn keypair(der: &[u8]) -> Result<Option<KeypairData>, String> {
+    let info = PrivateKeyInfo::try_from(der).map_err(|_| "not a PKCS#8 key".to_owned())?;
+    if info.algorithm.oid == RSA_OID {
+        return Ok(None);
     }
-    if let Ok(key) = rsa::RsaPrivateKey::from_pkcs8_der(der) {
-        return RsaKeypair::try_from(key)
-            .map(Into::into)
-            .map_err(|e| e.to_string());
+    if let Ok(key) = ed25519_dalek::SigningKey::from_pkcs8_der(der) {
+        return Ok(Some(Ed25519Keypair::from(key).into()));
     }
     if let Ok(key) = p256::SecretKey::from_pkcs8_der(der) {
-        return Ok(EcdsaKeypair::NistP256 {
-            public: key.public_key().to_encoded_point(false),
-            private: key.into(),
-        }
-        .into());
+        return Ok(Some(
+            EcdsaKeypair::NistP256 {
+                public: key.public_key().to_encoded_point(false),
+                private: key.into(),
+            }
+            .into(),
+        ));
     }
     if let Ok(key) = p384::SecretKey::from_pkcs8_der(der) {
-        return Ok(EcdsaKeypair::NistP384 {
-            public: key.public_key().to_encoded_point(false),
-            private: key.into(),
-        }
-        .into());
+        return Ok(Some(
+            EcdsaKeypair::NistP384 {
+                public: key.public_key().to_encoded_point(false),
+                private: key.into(),
+            }
+            .into(),
+        ));
     }
     if let Ok(key) = p521::SecretKey::from_pkcs8_der(der) {
-        return Ok(EcdsaKeypair::NistP521 {
-            public: key.public_key().to_encoded_point(false),
-            private: key.into(),
-        }
-        .into());
+        return Ok(Some(
+            EcdsaKeypair::NistP521 {
+                public: key.public_key().to_encoded_point(false),
+                private: key.into(),
+            }
+            .into(),
+        ));
     }
-    Err("not an Ed25519, RSA or ECDSA key, the kinds OpenSSH names".to_owned())
+    Err("not an Ed25519 or ECDSA key".to_owned())
 }
 
 #[cfg(test)]
@@ -108,9 +124,9 @@ mod tests {
     use super::*;
 
     // Three keys `openssl genpkey` wrote, with the public line and fingerprint
-    // `ssh-keygen -y` / `-l` print for the RSA and ECDSA ones (OpenSSH reads
-    // those two in PKCS#8) and, for the Ed25519 one it refuses, the same two
-    // computed by hand from the seed.
+    // `ssh-keygen -y` / `-l` print for the ECDSA one (OpenSSH reads it, and
+    // the RSA one, in PKCS#8) and, for the Ed25519 one it refuses, the same
+    // two computed by hand from the seed.
     const ED25519: &str = "-----BEGIN PRIVATE KEY-----\n\
 MC4CAQAwBQYDK2VwBCIEIFYAdBe0wA2kXej4h4SX8AGsC/kjI4TKWEcivS/EC8Rb\n\
 -----END PRIVATE KEY-----\n";
@@ -137,7 +153,7 @@ aaCAATJ9YwXsBBP9K3kLDy3+474w67jM8vIp310yl3WZlyCXLreyk0cp\n\
 -----END PRIVATE KEY-----\n";
 
     fn convert(pem: &str) -> OpenSsh {
-        let key = from_pkcs8(pem).unwrap();
+        let key = from_pkcs8(pem).unwrap().unwrap();
         assert!(is_openssh(&key.private_key));
         // What came out is a key OpenSSH's own reader takes back, and the
         // same key: its public half matches the line beside it.
@@ -159,17 +175,11 @@ aaCAATJ9YwXsBBP9K3kLDy3+474w67jM8vIp310yl3WZlyCXLreyk0cp\n\
         );
     }
 
+    // OpenSSH reads it as it is, and the crate that would convert it is kept
+    // out of the build: an RSA key is recognised and left alone, not refused.
     #[test]
-    fn an_rsa_pkcs8_key_becomes_an_openssh_one() {
-        let key = convert(RSA);
-        assert_eq!(
-            key.public_key,
-            "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQCY1sgMerF9dnWhS0XT32QmB+A5wclS0273uaoR+Wedpm79p2RLtv1y0WTU6xAZFb2YvQQQJVe5fgbQXUK4lYfNX93aBe3ekS639kkV2C9AbFG9JKVbZVT2xSOzzSttSna4lU61kBntHcReJfVct5ABLr8AlrZ5LJRnIQwGVgDflw=="
-        );
-        assert_eq!(
-            key.fingerprint,
-            "SHA256:uQp0yWUUFGn6QkJMYHDqsJ0vClGrTUmNw8s5oz+oXm4"
-        );
+    fn an_rsa_pkcs8_key_is_left_as_it_came() {
+        assert!(from_pkcs8(RSA).unwrap().is_none());
     }
 
     #[test]
@@ -206,7 +216,7 @@ aaCAATJ9YwXsBBP9K3kLDy3+474w67jM8vIp310yl3WZlyCXLreyk0cp\n\
         // Valid base64, but no key of any kind inside.
         assert_eq!(
             from_pkcs8("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----").unwrap_err(),
-            "not an Ed25519, RSA or ECDSA key, the kinds OpenSSH names"
+            "not a PKCS#8 key"
         );
     }
 }
