@@ -42,7 +42,7 @@ function Strip({ onDrop }: Omit<Props, 'variant'>) {
           {isMobile ? t('Or choose an export file') : t('Or drop an export file here')}
         </div>
         <div className={META_TYPE}>
-          {t('csv, json — parsed locally, never uploaded')}
+          {t('csv, json, 1pux — parsed locally, never uploaded')}
         </div>
       </div>
     </>

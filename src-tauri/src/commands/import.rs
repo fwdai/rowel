@@ -107,19 +107,12 @@ pub async fn import_entries(
 
     let emitter = app.clone();
     let parsed = super::blocking(move || -> Result<Parsed> {
-        let bytes = storage::read_regular_file_capped(Path::new(&path), MAX_BYTES)?;
-
-        let fmt = if format.eq_ignore_ascii_case("auto") {
-            let name = Path::new(&path)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            import::detect(&name, &bytes)
-                .ok_or_else(|| Error::Other("could not detect format".into()))?
-        } else {
-            Format::from_name(&format)
-                .ok_or_else(|| Error::Other(format!("unknown format: {format}")))?
-        };
+        let (bytes, unpacked) = read_import_file(Path::new(&path))?;
+        let name = Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let fmt = resolve_format(&format, unpacked, &name, &bytes)?;
 
         let parsed = fmt.importer().parse(&bytes);
         if parsed.entries.len() > MAX_ENTRIES {
@@ -211,6 +204,56 @@ pub async fn import_entries(
         warnings: parsed.warnings,
         entries: list_metas(store)?,
     })
+}
+
+// Which adapter reads `bytes`: the one the tile named, or the one the file's
+// name and content suggest under "auto". What came out of an archive is
+// `export.data` alone, which only the 1Password adapter reads — so it is that
+// adapter under "auto" or a 1Password choice, and under any other choice the
+// file is turned away rather than read as something the user did not pick:
+// every tile shares one picker, and the tile is what says which reader runs.
+fn resolve_format(format: &str, unpacked: bool, name: &str, bytes: &[u8]) -> Result<Format> {
+    let auto = format.eq_ignore_ascii_case("auto");
+    if unpacked {
+        return match Format::from_name(format) {
+            _ if auto => Ok(Format::Onepux),
+            Some(Format::Onepux | Format::Onepassword) => Ok(Format::Onepux),
+            _ => Err(Error::Other(
+                "that file is a 1Password export; import it from the 1Password tile".into(),
+            )),
+        };
+    }
+    if auto {
+        return import::detect(name, bytes)
+            .ok_or_else(|| Error::Other("could not detect format".into()));
+    }
+    Format::from_name(format).ok_or_else(|| Error::Other(format!("unknown format: {format}")))
+}
+
+// The bytes an import parses, and whether they were taken out of an archive.
+// A 1Password `.1pux` is a zip with every attachment in the vault beside the
+// one JSON member the import reads, so it is not read whole — a vault of a
+// few documents would pass `MAX_BYTES` and be refused for files the import
+// leaves behind anyway. The archive stays on disk, only `export.data` comes
+// out of it (under the adapter's own cap on that member), and the attachments
+// never pass through memory. Any other file is read whole, under the cap.
+//
+// The archive is told by its signature on the same handle that is then read,
+// not by its name: the `.1pux` suffix is a convention, and a renamed one is
+// the same file.
+fn read_import_file(path: &Path) -> Result<(Vec<u8>, bool)> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = storage::open_regular_file(path)?;
+    let mut head = [0u8; 4];
+    let n = file.read(&mut head)?;
+    file.seek(SeekFrom::Start(0))?;
+    if import::is_zip(&head[..n]) {
+        let data = import::unpack_1pux(file)
+            .map_err(|e| Error::Other(format!("not a 1Password export: {e}")))?;
+        return Ok((data, true));
+    }
+    Ok((storage::read_capped(file, MAX_BYTES)?, false))
 }
 
 // Which of `entries` the vault already holds, verbatim. Re-running an import —
@@ -550,6 +593,83 @@ mod tests {
         assert!(!explicit_path_allowed(true, false));
         assert!(!explicit_path_allowed(false, true));
         assert!(!explicit_path_allowed(false, false));
+    }
+
+    // The tile picks the reader. An archive's JSON goes to the 1Password
+    // adapter under "auto" or that tile, and is refused under any other tile
+    // rather than read as something the user did not choose; a plain file is
+    // read by the tile's adapter, or detected under "auto".
+    #[test]
+    fn an_archive_is_read_as_1password_only_when_that_is_the_choice_or_none_was_made() {
+        let data = br#"{"accounts":[]}"#;
+        assert_eq!(
+            resolve_format("auto", true, "x.1pux", data).unwrap(),
+            Format::Onepux
+        );
+        assert_eq!(
+            resolve_format("1password", true, "x.1pux", data).unwrap(),
+            Format::Onepux
+        );
+        assert_eq!(
+            resolve_format("1pux", true, "x.1pux", data).unwrap(),
+            Format::Onepux
+        );
+        let err = resolve_format("bitwarden", true, "x.1pux", data).unwrap_err();
+        assert!(err.to_string().contains("1Password tile"), "{err}");
+        let err = resolve_format("nonsense", true, "x.1pux", data).unwrap_err();
+        assert!(err.to_string().contains("1Password tile"), "{err}");
+
+        assert_eq!(
+            resolve_format("bitwarden", false, "x.json", data).unwrap(),
+            Format::Bitwarden
+        );
+        assert_eq!(
+            resolve_format("auto", false, "x.csv", b"Title,Password\nA,p\n").unwrap(),
+            Format::GenericCsv
+        );
+        assert!(resolve_format("nonsense", false, "x.json", data).is_err());
+    }
+
+    // A `.1pux` is read for its one JSON member, however much sits beside it:
+    // an archive past the cap on a whole file still imports, and what comes
+    // out is `export.data` alone, read by that format whatever the file was
+    // called. A plain file past the cap is still refused.
+    #[test]
+    fn an_archive_larger_than_the_cap_gives_up_its_export_data_alone() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("export.data", stored).unwrap();
+        zip.write_all(br#"{"accounts":[]}"#).unwrap();
+        zip.start_file("files/scan.pdf", stored).unwrap();
+        let chunk = vec![0u8; 1024 * 1024];
+        for _ in 0..(MAX_BYTES / chunk.len() as u64 + 1) {
+            zip.write_all(&chunk).unwrap();
+        }
+        zip.finish().unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() > MAX_BYTES);
+
+        let (bytes, unpacked) = read_import_file(&path).unwrap();
+        assert!(unpacked);
+        assert_eq!(bytes, br#"{"accounts":[]}"#);
+        let r = Format::Onepux.importer().parse(&bytes);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+
+        let plain = dir.path().join("export.json");
+        std::fs::write(&plain, vec![b' '; MAX_BYTES as usize + 1]).unwrap();
+        assert!(matches!(
+            read_import_file(&plain).unwrap_err(),
+            Error::FileTooLarge
+        ));
+        let small = dir.path().join("small.csv");
+        std::fs::write(&small, b"Title,Password\nA,p\n").unwrap();
+        assert_eq!(
+            read_import_file(&small).unwrap(),
+            (b"Title,Password\nA,p\n".to_vec(), false)
+        );
     }
 
     fn tmp_db() -> std::path::PathBuf {

@@ -908,7 +908,14 @@ fn onepassword_csv_reads_logins_with_tags_and_the_star() {
 GitHub,https://github.com,octo,pw,otpauth://totp/GitHub?secret=ABC,true,,\"dev, work\",hello\n\
 Old,https://old.example,octo,pw2,,,true,,\n\
 ,https://untitled.example,,pw3,,false,,one;two,\n";
-    assert_eq!(Format::from_name("1password"), Some(Format::OnepasswordCsv));
+    // The tile's one format takes the CSV as well as the archive, and a
+    // dropped sheet is told by the column only 1Password writes.
+    assert_eq!(Format::from_name("1password"), Some(Format::Onepassword));
+    assert_eq!(detect("export.csv", csv), Some(Format::OnepasswordCsv));
+    assert_eq!(
+        parse(Format::Onepassword, csv),
+        parse(Format::OnepasswordCsv, csv)
+    );
     let r = parse(Format::OnepasswordCsv, csv);
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     assert_eq!(r.entries.len(), 3);
@@ -1274,6 +1281,12 @@ fn detect_by_extension_and_content() {
     );
     assert_eq!(
         detect("x.csv", b"name,url,username,password\n"),
+        Some(Format::GenericCsv)
+    );
+    // An `otpauth` column alone is not 1Password's sheet: the rest of this
+    // header only the generic aliases read.
+    assert_eq!(
+        detect("x.csv", b"name,website,login,pass,otpauth\n"),
         Some(Format::GenericCsv)
     );
     assert_eq!(
@@ -2226,4 +2239,448 @@ fn a_third_party_cxf_field_sharing_our_label_stays_the_users() {
     let key = &back.entries[1];
     assert_eq!(key.ssh_passphrase, None);
     assert_eq!(key.extra, vec![concealed("Passphrase", "hunter2")]);
+}
+
+// A `.1pux` as 1Password writes one: `export.data` beside its attributes file
+// and the attachments folder, all deflated.
+fn onepux(export_data: &str) -> Vec<u8> {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let deflated = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    zip.start_file("export.attributes", deflated).unwrap();
+    zip.write_all(br#"{"version":3,"description":"1Password Unencrypted Export"}"#)
+        .unwrap();
+    zip.start_file("export.data", deflated).unwrap();
+    zip.write_all(export_data.as_bytes()).unwrap();
+    zip.start_file("files/photo.png", deflated).unwrap();
+    zip.write_all(b"not a png").unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
+fn one_vault(items: &str) -> String {
+    format!(
+        r#"{{"accounts":[{{"attrs":{{"name":"Me"}},"vaults":[{{"attrs":{{"name":"Personal"}},"items":[{}]}}]}}]}}"#,
+        items
+    )
+}
+
+// The archive is told by its name or its signature, whatever the extension;
+// the tile's format reads it or the CSV by content; an archive without the
+// export in it, or a file that is no archive, is one error for the file.
+#[test]
+fn detect_tells_a_1pux_by_its_name_or_its_signature() {
+    let file = onepux(&one_vault(""));
+    assert_eq!(detect("Export.1pux", b"{}"), Some(Format::Onepux));
+    assert_eq!(detect("export.zip", &file), Some(Format::Onepux));
+    assert_eq!(detect("noext", &file), Some(Format::Onepux));
+    assert_eq!(Format::from_name("1pux"), Some(Format::Onepux));
+
+    let r = parse(Format::Onepassword, &file);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert!(r.entries.is_empty());
+
+    // `export.data` on its own, as the command hands it over after taking it
+    // out of the file on disk, reads the same under either format.
+    let data = one_vault(r#"{"categoryUuid":"003","overview":{"title":"Bare"},"details":{}}"#);
+    let r = parse(Format::Onepux, data.as_bytes());
+    assert_eq!(r.entries[0].title, "Bare");
+    assert_eq!(parse(Format::Onepassword, data.as_bytes()), r);
+
+    // Neither an archive nor its JSON: one error for the file.
+    let r = parse(Format::Onepux, b"Title,Url,Username,Password\nA,,u,p\n");
+    assert_eq!(r.errors.len(), 1);
+    assert_eq!(r.errors[0].row, 0);
+    assert!(r.errors[0].message.starts_with("invalid 1Password export"));
+
+    let mut empty = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    empty
+        .start_file(
+            "export.attributes",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+    let empty = empty.finish().unwrap().into_inner();
+    let r = parse(Format::Onepux, &empty);
+    assert_eq!(
+        r.errors[0].message,
+        "not a 1Password export: no export.data in the archive"
+    );
+
+    let r = parse(Format::Onepux, &onepux("[1,2"));
+    assert!(r.errors[0].message.starts_with("invalid 1Password export"));
+
+    // A codec this build does not read is named as such, not as a missing
+    // file. The writer cannot produce one, so a plain entry is relabelled as
+    // bzip2 (method 12) in its local header and in the central directory.
+    let mut odd = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let method =
+        |m: zip::CompressionMethod| zip::write::SimpleFileOptions::default().compression_method(m);
+    odd.start_file("export.data", method(zip::CompressionMethod::Stored))
+        .unwrap();
+    std::io::Write::write_all(&mut odd, b"{}").unwrap();
+    let mut odd = odd.finish().unwrap().into_inner();
+    for (signature, at) in [(b"PK\x03\x04", 8), (b"PK\x01\x02", 10)] {
+        let start = odd.windows(4).position(|w| w == signature).unwrap();
+        odd[start + at..start + at + 2].copy_from_slice(&12u16.to_le_bytes());
+    }
+    let r = parse(Format::Onepux, &odd);
+    assert!(
+        r.errors[0].message.contains("ompression"),
+        "{}",
+        r.errors[0].message
+    );
+    let mut stored = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    stored
+        .start_file("export.data", method(zip::CompressionMethod::Stored))
+        .unwrap();
+    std::io::Write::write_all(
+        &mut stored,
+        one_vault(r#"{"categoryUuid":"003","overview":{"title":"Plain"},"details":{}}"#).as_bytes(),
+    )
+    .unwrap();
+    let r = parse(Format::Onepux, &stored.finish().unwrap().into_inner());
+    assert_eq!(r.entries[0].title, "Plain");
+}
+
+// A login signs in with its designated form fields; the sections hold the
+// one-time code, a mail address and whatever else, each by its kind.
+#[test]
+fn onepux_maps_a_login_by_designation_and_field_kind() {
+    let file = onepux(&one_vault(
+        r#"{"uuid":"a","favIndex":1,"createdAt":1650000000,"updatedAt":1660000000,"state":"active",
+            "categoryUuid":"001",
+            "details":{
+              "loginFields":[
+                {"value":"octo","name":"login","fieldType":"T","designation":"username"},
+                {"value":"pw","name":"pass","fieldType":"P","designation":"password"},
+                {"value":"✓","name":"remember","fieldType":"C","designation":""},
+                {"value":"42","name":"tenant","fieldType":"T","designation":""},
+                {"value":"","name":"terms","fieldType":"C","designation":""},
+                {"value":"","name":"","fieldType":"C","designation":""}],
+              "notesPlain":"hello",
+              "sections":[{"title":"","fields":[
+                {"title":"one-time password","id":"TOTP_x","value":{"totp":"otpauth://totp/GitHub?secret=ABC"}},
+                {"title":"E-Mail","id":"mail","value":{"email":{"email_address":"octo@example.com","provider":"gmail"}}},
+                {"title":"security question","id":"q1","value":{"concealed":"blue"}},
+                {"title":"blank","id":"b","value":{"string":""}},
+                {"title":"linked","id":"l","value":{"reference":"some-uuid"}}]}],
+              "passwordHistory":[{"value":"old","time":1600000000},{"value":"older","time":1500000000},{"value":"","time":1400000000}]},
+            "overview":{"title":"GitHub","url":"https://github.com",
+              "urls":[{"label":"website","url":"https://github.com"},{"label":"API","url":"https://api.github.com"}],
+              "tags":["dev","work/oss"]}}"#,
+    ));
+    let r = parse(Format::Onepux, &file);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    // The link to another item cannot come along, and the row says so.
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].row, 1);
+    assert_eq!(
+        r.warnings[0].message,
+        "1 link(s) to other items not imported; keep the export"
+    );
+    assert_eq!(r.entries.len(), 1);
+    let e = &r.entries[0];
+    assert_eq!(e.kind, EntryKind::Login);
+    assert_eq!(e.title, "GitHub");
+    assert_eq!(e.username.as_deref(), Some("octo"));
+    assert_eq!(e.password.as_deref(), Some("pw"));
+    assert_eq!(e.url.as_deref(), Some("https://github.com"));
+    assert_eq!(e.otp.as_deref(), Some("otpauth://totp/GitHub?secret=ABC"));
+    assert_eq!(e.email.as_deref(), Some("octo@example.com"));
+    assert_eq!(e.notes.as_deref(), Some("hello"));
+    assert!(e.favorite);
+    assert_eq!(e.tags, vec!["dev".to_string(), "work/oss".to_string()]);
+    assert_eq!(e.created_at.as_deref(), Some("2022-04-15T05:20:00+00:00"));
+    assert_eq!(e.updated_at.as_deref(), Some("2022-08-08T23:06:40+00:00"));
+    assert_eq!(
+        e.extra,
+        vec![
+            field("remember", "true"),
+            field("tenant", "42"),
+            field("terms", "false"),
+            concealed("security question", "blue"),
+            field("API", "https://api.github.com"),
+            field("E-Mail provider", "gmail"),
+        ]
+    );
+    let history: Vec<&str> = e
+        .password_history
+        .iter()
+        .map(|h| h.password.as_str())
+        .collect();
+    assert_eq!(history, ["old", "older"]);
+    assert_eq!(
+        e.password_history[0].replaced_at,
+        "2020-09-13T12:26:40+00:00"
+    );
+}
+
+// Every category the app has a kind for lands in it, by the fixed field ids
+// 1Password writes whatever the UI language; dates become the day the slots
+// hold, and a month alone stays the labelled extra it was.
+#[test]
+fn onepux_maps_cards_documents_keys_and_notes() {
+    let file = onepux(&one_vault(
+        r#"{"categoryUuid":"002","overview":{"title":"Visa"},"details":{"sections":[{"fields":[
+            {"title":"Karteninhaber","id":"cardholder","value":{"string":"Octo Cat"}},
+            {"title":"Typ","id":"type","value":{"creditCardType":"visa"}},
+            {"title":"Nummer","id":"ccnum","value":{"creditCardNumber":"4111 1111 1111 1111"}},
+            {"title":"CVV","id":"cvv","value":{"concealed":"123"}},
+            {"title":"Ablauf","id":"expiry","value":{"monthYear":202605}},
+            {"title":"PIN","id":"pin","value":{"concealed":"9876"}},
+            {"title":"Bank","id":"bank","value":{"string":""}}]}]}},
+          {"categoryUuid":"106","overview":{"title":"Passport"},"details":{"sections":[{"fields":[
+            {"title":"type","id":"type","value":{"string":"P"}},
+            {"title":"issuing country","id":"issuing_country","value":{"string":"Sweden"}},
+            {"title":"number","id":"number","value":{"string":"X123"}},
+            {"title":"full name","id":"fullname","value":{"string":"Octo Cat"}},
+            {"title":"sex","id":"sex","value":{"gender":"female"}},
+            {"title":"nationality","id":"nationality","value":{"string":"Swedish"}},
+            {"title":"date of birth","id":"birthdate","value":{"date":551577600}},
+            {"title":"place of birth","id":"birthplace","value":{"string":"Lund"}},
+            {"title":"issued on","id":"issue_date","value":{"date":1590969600}},
+            {"title":"expiry date","id":"expiry_date","value":{"date":1906588800}},
+            {"title":"issuing authority","id":"issuing_authority","value":{"string":"Polisen"}}]}]}},
+          {"categoryUuid":"103","overview":{"title":"Licence"},"details":{"sections":[{"fields":[
+            {"title":"full name","id":"fullname","value":{"string":"Octo Cat"}},
+            {"title":"address","id":"address","value":{"address":{"street":"1 Main St","city":"Lund","country":"se","zip":"","state":""}}},
+            {"title":"date of birth","id":"birthdate","value":{"date":-86400}},
+            {"title":"number","id":"number","value":{"string":"DL-9"}},
+            {"title":"country","id":"country","value":{"string":"Sweden"}},
+            {"title":"expiry date","id":"expiry_date","value":{"monthYear":203005}}]}]}},
+          {"categoryUuid":"114","overview":{"title":"Deploy key"},"details":{"sections":[{"fields":[
+            {"title":"private key","id":"private_key","value":{"sshKey":{"privateKey":"-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIFYAdBe0wA2kXej4h4SX8AGsC/kjI4TKWEcivS/EC8Rb\n-----END PRIVATE KEY-----\n",
+              "metadata":{"privateKey":"-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIFYAdBe0wA2kXej4h4SX8AGsC/kjI4TKWEcivS/EC8Rb\n-----END PRIVATE KEY-----\n","publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJWRyIiw75kU1Wo8Pmls6ZtTKfHn58UsSI84WIrPiVNB octo","fingerprint":"SHA256:NVYSMnDilri+HeSJWIVb9W6V043z6EzNZcY3Tp0hVQo","keyType":"ed25519"}}}},
+            {"title":"spare","id":"spare","value":{"sshKey":{"privateKey":"-----BEGIN PRIVATE KEY-----\nonly\n-----END PRIVATE KEY-----\n"}}}]}]}},
+          {"categoryUuid":"114","overview":{"title":"Odd key"},"details":{"sections":[{"fields":[
+            {"title":"private key","id":"private_key","value":{"sshKey":{"privateKey":"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"}}}]}]}},
+          {"categoryUuid":"112","overview":{"title":"Stripe","url":"https://api.stripe.com"},"details":{"sections":[{"fields":[
+            {"title":"username","id":"username","value":{"string":"octo"}},
+            {"title":"credential","id":"credential","value":{"concealed":"sk_live_1"}},
+            {"title":"type","id":"type","value":{"menu":"bearer"}},
+            {"title":"valid from","id":"validFrom","value":{"date":1590969600}},
+            {"title":"expires","id":"expires","value":{"date":1906588800}},
+            {"title":"hostname","id":"hostname","value":{"string":""}}]}]}},
+          {"categoryUuid":"005","overview":{"title":"Wifi"},"details":{"password":"hunter2"}},
+          {"categoryUuid":"110","overview":{"title":"Box","url":"ssh://box"},"details":{"sections":[{"fields":[
+            {"title":"URL","id":"url","value":{"url":"https://box.example"}},
+            {"title":"username","id":"username","value":{"string":"root"}},
+            {"title":"password","id":"password","value":{"concealed":"toor"}}]}]}},
+          {"categoryUuid":"004","overview":{"title":"Octo Cat","url":"https://octo.example",
+            "urls":[{"label":"blog","url":"https://blog.octo.example"},{"label":"","url":"https://octo.example"}]},"details":{"sections":[{"fields":[
+            {"title":"first name","id":"firstname","value":{"string":"Octo"}},
+            {"title":"birth date","id":"birthdate","value":{"date":551577600}}]}]}},
+          {"categoryUuid":"003","overview":{"title":"Note"},"details":{"notesPlain":"body","sections":[{"fields":[
+            {"title":"code","id":"c","value":{"concealed":"1234"}},
+            {"title":"key","id":"k","value":{"sshKey":{"privateKey":"-----BEGIN KEY-----"}}},
+            {"title":"card","id":"n","value":{"creditCardNumber":"4111"}}]}]}}"#,
+    ));
+    let r = parse(Format::Onepux, &file);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 10);
+
+    let card = &r.entries[0];
+    assert_eq!(card.kind, EntryKind::Card);
+    assert_eq!(card.cardholder.as_deref(), Some("Octo Cat"));
+    assert_eq!(card.card_number.as_deref(), Some("4111 1111 1111 1111"));
+    assert_eq!(card.card_cvc.as_deref(), Some("123"));
+    assert_eq!(card.card_pin.as_deref(), Some("9876"));
+    assert_eq!(card.card_month.as_deref(), Some("05"));
+    assert_eq!(card.card_year.as_deref(), Some("2026"));
+    assert_eq!(card.extra, vec![field("Typ", "visa")]);
+
+    let passport = &r.entries[1];
+    assert_eq!(passport.kind, EntryKind::Identity);
+    assert_eq!(passport.doc_type.as_deref(), Some("passport"));
+    assert_eq!(passport.doc_number.as_deref(), Some("X123"));
+    assert_eq!(passport.holder_name.as_deref(), Some("Octo Cat"));
+    assert_eq!(passport.doc_sex.as_deref(), Some("female"));
+    assert_eq!(passport.doc_nationality.as_deref(), Some("Swedish"));
+    assert_eq!(passport.doc_country.as_deref(), Some("Sweden"));
+    assert_eq!(passport.doc_birth_date.as_deref(), Some("1987-06-25"));
+    assert_eq!(passport.doc_issue_date.as_deref(), Some("2020-06-01"));
+    assert_eq!(passport.doc_expiry_date.as_deref(), Some("2030-06-02"));
+    assert_eq!(passport.doc_authority.as_deref(), Some("Polisen"));
+    assert_eq!(
+        passport.extra,
+        vec![field("type", "P"), field("place of birth", "Lund")]
+    );
+
+    let licence = &r.entries[2];
+    assert_eq!(licence.doc_type.as_deref(), Some("driver_license"));
+    assert_eq!(licence.doc_birth_date.as_deref(), Some("1969-12-31"));
+    assert_eq!(licence.doc_number.as_deref(), Some("DL-9"));
+    assert_eq!(licence.doc_expiry_date, None);
+    assert_eq!(
+        licence.extra,
+        vec![
+            field("address", "1 Main St, Lund, se"),
+            field("expiry date", "2030-05"),
+        ]
+    );
+
+    let key = &r.entries[3];
+    assert_eq!(key.kind, EntryKind::Ssh);
+    assert!(key
+        .ssh_private_key
+        .as_deref()
+        .unwrap()
+        .starts_with("-----BEGIN OPENSSH"));
+    assert_eq!(
+        key.ssh_public_key.as_deref(),
+        Some(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJWRyIiw75kU1Wo8Pmls6ZtTKfHn58UsSI84WIrPiVNB octo"
+        )
+    );
+    assert_eq!(
+        key.ssh_fingerprint.as_deref(),
+        Some("SHA256:NVYSMnDilri+HeSJWIVb9W6V043z6EzNZcY3Tp0hVQo")
+    );
+    // 1Password writes the key in PKCS#8, which OpenSSH will not read for an
+    // Ed25519 key: it comes in as the OpenSSH block the kind holds, the same
+    // key (its public line is the one 1Password wrote beside it), and the
+    // public line and fingerprint are 1Password's own where it gave them. A
+    // second key on the item is an extra and stays as it came.
+    let block = key.ssh_private_key.as_deref().unwrap();
+    assert!(
+        block.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"),
+        "{block}"
+    );
+    assert_eq!(
+        key.ssh_public_key.as_deref(),
+        Some(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJWRyIiw75kU1Wo8Pmls6ZtTKfHn58UsSI84WIrPiVNB octo"
+        )
+    );
+    assert_eq!(
+        key.ssh_fingerprint.as_deref(),
+        Some("SHA256:NVYSMnDilri+HeSJWIVb9W6V043z6EzNZcY3Tp0hVQo")
+    );
+    assert_eq!(
+        key.extra,
+        vec![
+            field("Key type", "ed25519"),
+            concealed(
+                "spare",
+                "-----BEGIN PRIVATE KEY-----\nonly\n-----END PRIVATE KEY-----\n"
+            ),
+        ]
+    );
+    // A PKCS#8 block with no key OpenSSH names inside is kept as it came,
+    // and the row says so; the public line is then not made up either.
+    let odd = &r.entries[4];
+    assert_eq!(odd.kind, EntryKind::Ssh);
+    assert_eq!(
+        odd.ssh_private_key.as_deref(),
+        Some("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n")
+    );
+    assert_eq!(odd.ssh_public_key, None);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].row, 5);
+    assert_eq!(
+        r.warnings[0].message,
+        "private key kept in PKCS#8 form: not a PKCS#8 key"
+    );
+
+    let api = &r.entries[5];
+    assert_eq!(api.kind, EntryKind::ApiKey);
+    assert_eq!(api.api_key.as_deref(), Some("sk_live_1"));
+    assert_eq!(api.url.as_deref(), Some("https://api.stripe.com"));
+    assert_eq!(api.api_expires.as_deref(), Some("2030-06-02"));
+    assert_eq!(
+        api.extra,
+        vec![
+            field("username", "octo"),
+            field("type", "bearer"),
+            field("valid from", "2020-06-01"),
+        ]
+    );
+
+    let wifi = &r.entries[6];
+    assert_eq!(wifi.kind, EntryKind::Login);
+    assert_eq!(wifi.password.as_deref(), Some("hunter2"));
+
+    let server = &r.entries[7];
+    assert_eq!(server.kind, EntryKind::Login);
+    assert_eq!(server.url.as_deref(), Some("ssh://box"));
+    assert_eq!(server.username.as_deref(), Some("root"));
+    assert_eq!(server.password.as_deref(), Some("toor"));
+    assert_eq!(server.extra, vec![field("URL", "https://box.example")]);
+
+    let person = &r.entries[8];
+    assert_eq!(person.kind, EntryKind::Note);
+    // A note has no slot for a site, so every one the item named is kept.
+    assert_eq!(
+        person.extra,
+        vec![
+            field("first name", "Octo"),
+            field("birth date", "1987-06-25"),
+            field("blog", "https://blog.octo.example"),
+            field("website", "https://octo.example"),
+        ]
+    );
+
+    let note = &r.entries[9];
+    assert_eq!(note.kind, EntryKind::Note);
+    assert_eq!(note.notes.as_deref(), Some("body"));
+    // A private key or a card number is a secret on a note as well.
+    assert_eq!(
+        note.extra,
+        vec![
+            concealed("code", "1234"),
+            concealed("key", "-----BEGIN KEY-----"),
+            concealed("card", "4111"),
+        ]
+    );
+}
+
+// Across vaults the rows keep counting and each item wears its vault's name;
+// the trash stays behind, the archive comes in, and an item with files says
+// so without reading as skipped. A null list is an empty one, and a null
+// object (a vault without attributes, an item without details) is a blank one.
+#[test]
+fn onepux_reads_several_vaults_the_archive_and_the_files_left_behind() {
+    let file = onepux(
+        r#"{"accounts":[{"vaults":[
+          {"attrs":{"name":"Personal"},"items":[
+            {"categoryUuid":"001","state":"trashed","overview":{"title":"Gone"},"details":{"loginFields":[{"value":"p","designation":"password"}]}},
+            {"categoryUuid":"001","state":"archived","overview":{"title":"Kept","tags":null,"urls":null},
+              "details":{"loginFields":null,"sections":null,"passwordHistory":null,"password":"p"}}]},
+          {"attrs":{"name":"Work"},"items":[
+            {"categoryUuid":"006","overview":{"title":"Scan"},"details":{"documentAttributes":{"fileName":"scan.pdf","documentId":"d","decryptedSize":10},
+              "sections":[{"fields":[{"title":"photo","id":"f","value":{"file":{"fileName":"photo.png","documentId":"p","decryptedSize":5}}}]}]}},
+            {"categoryUuid":"001","overview":{"title":""},"details":{}}]},
+          {"attrs":null,"items":[{"categoryUuid":"003","overview":{"title":"Bare"},"details":null}]}]},
+          {"vaults":null}]}"#,
+    );
+    let r = parse(Format::Onepux, &file);
+    assert_eq!(r.entries.len(), 3);
+    assert_eq!(r.entries[0].title, "Kept");
+    assert_eq!(r.entries[0].password.as_deref(), Some("p"));
+    assert_eq!(r.entries[0].tags, vec!["Personal".to_string()]);
+    assert_eq!(r.entries[1].title, "Scan");
+    assert_eq!(r.entries[1].kind, EntryKind::Note);
+    assert_eq!(r.entries[1].tags, vec!["Work".to_string()]);
+    assert!(r.entries[1].extra.is_empty());
+    assert_eq!(r.entries[2].title, "Bare");
+    assert!(r.entries[2].tags.is_empty());
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].row, 3);
+    assert_eq!(
+        r.warnings[0].message,
+        "2 attachment(s) not imported; keep the export"
+    );
+    assert_eq!(r.errors.len(), 1);
+    assert_eq!(r.errors[0].row, 4);
+    assert_eq!(r.errors[0].message, "item has no title");
+
+    // One vault: its name says nothing and is not a tag.
+    let r = parse(
+        Format::Onepux,
+        &onepux(&one_vault(
+            r#"{"categoryUuid":"003","overview":{"title":"N"},"details":{}}"#,
+        )),
+    );
+    assert!(r.entries[0].tags.is_empty());
 }

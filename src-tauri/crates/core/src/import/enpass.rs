@@ -16,8 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use serde::{Deserialize, Deserializer};
-use serde_json::Value;
+use serde::Deserialize;
 
 use super::{non_empty, rfc3339, EntryKind, ImportResult, ImportedEntry, Importer};
 use crate::models::{ExtraField, PasswordHistoryItem, PASSWORD_HISTORY_CAP};
@@ -83,7 +82,7 @@ struct Field {
     label: Option<String>,
     #[serde(default, rename = "type")]
     kind: Option<String>,
-    #[serde(default, deserialize_with = "lenient_string")]
+    #[serde(default, deserialize_with = "super::lenient_string")]
     value: Option<String>,
     #[serde(default, deserialize_with = "super::lenient_u64")]
     sensitive: Option<u64>,
@@ -98,24 +97,10 @@ struct Field {
 
 #[derive(Deserialize)]
 struct History {
-    #[serde(default, deserialize_with = "lenient_string")]
+    #[serde(default, deserialize_with = "super::lenient_string")]
     value: Option<String>,
     #[serde(default, deserialize_with = "super::lenient_u64")]
     updated_at: Option<u64>,
-}
-
-/// A field value is a string, but a numeric field may be written as a number;
-/// anything else reads as absent rather than failing the document.
-fn lenient_string<'de, D>(d: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(match Value::deserialize(d)? {
-        Value::String(s) => Some(s),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        _ => None,
-    })
 }
 
 const ON: Option<u64> = Some(1);

@@ -25,5 +25,8 @@ pub mod otp;
 pub mod owner_only;
 // The WebAuthn authenticator core.
 pub mod passkey;
+// SSH private keys in the one form the `ssh` kind holds, from the PKCS#8 an
+// exporter may write instead.
+pub mod ssh;
 pub mod store;
 pub mod workspace;
