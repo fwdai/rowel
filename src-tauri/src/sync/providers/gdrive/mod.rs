@@ -251,9 +251,13 @@ impl VaultStore for Store {
             .head_revision)
     }
 
-    async fn update(&self, handle: &str, bytes: &[u8]) -> Result<Option<String>> {
+    // By file id alone; the revision is not checked. A Drive file id is never
+    // reused, so a pack deleted since the `stat` fails the update rather than
+    // coming back, and a write another device made in between is left to the
+    // engine's head check, as it always has been.
+    async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>> {
         let token = self.token().await?;
-        api::update_file(&self.client, &token, handle, bytes).await
+        api::update_file(&self.client, &token, &entry.handle, bytes).await
     }
 
     async fn delete(&self, handle: &str) -> Result<()> {

@@ -106,6 +106,21 @@ fn tag_prefix(summary: &str, tag: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
+/// Whether an upload's `error_summary` says the write lost a race: in `update`
+/// mode, the file's rev is no longer the one the upload named (another device
+/// wrote it, or it was deleted). `files/upload` reports it as
+/// `path/conflict/file/..`; matched by tag prefix like [`is_not_found`].
+fn is_conflict(summary: &str) -> bool {
+    tag_prefix(summary, "path/conflict")
+}
+
+/// What an upload that lost the compare-and-swap fails with. An error, so the
+/// run fails and its next scheduled attempt pulls the other write first; worded
+/// for the sync status line, since this is the one Dropbox failure an ordinary
+/// two-device setup will actually hit.
+const CONFLICT_MESSAGE: &str =
+    "the vault file changed on Dropbox during the upload; sync will retry";
+
 /// The `error_summary` of an error body, if it is Dropbox's JSON error shape.
 fn error_summary(body: &[u8]) -> Option<String> {
     serde_json::from_slice::<Value>(body)
@@ -156,14 +171,23 @@ impl Failure {
         }
     }
 
-    fn is_not_found(&self) -> bool {
+    // A 409 whose `error_summary` passes `matches`.
+    fn is_409(&self, matches: fn(&str) -> bool) -> bool {
         self.status == StatusCode::CONFLICT
             && self
                 .body
                 .as_ref()
                 .ok()
                 .and_then(|b| error_summary(b))
-                .is_some_and(|s| is_not_found(&s))
+                .is_some_and(|s| matches(&s))
+    }
+
+    fn is_not_found(&self) -> bool {
+        self.is_409(is_not_found)
+    }
+
+    fn is_conflict(&self) -> bool {
+        self.is_409(is_conflict)
     }
 
     fn into_error(self) -> Error {
@@ -394,9 +418,35 @@ fn check_upload_size(len: usize) -> Result<()> {
     Ok(())
 }
 
-/// Create or overwrite the file at `path`, returning its new `rev`. Parent
-/// folders are created by Dropbox as needed. `mute` keeps the desktop client
-/// from notifying the user about every sync push.
+/// How an upload treats a file already at its path (`files/upload`'s `mode`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteMode {
+    /// Replace whatever is there, or create it.
+    Overwrite,
+    /// Replace the file only if its current rev is this one: a server-side
+    /// compare-and-swap. Anything else — a newer rev, or no live file — fails
+    /// with a 409 `path/conflict` (autorename is off), never a create.
+    Update(String),
+}
+
+impl WriteMode {
+    fn to_json(&self) -> Value {
+        match self {
+            WriteMode::Overwrite => json!("overwrite"),
+            WriteMode::Update(rev) => json!({ ".tag": "update", "update": rev }),
+        }
+    }
+}
+
+/// The `Dropbox-API-Arg` of an upload. `mute` keeps the desktop client from
+/// notifying the user about every sync push.
+fn upload_arg(path: &str, mode: &WriteMode) -> Value {
+    json!({ "path": path, "mode": mode.to_json(), "mute": true })
+}
+
+/// Write the file at `path` as `mode` says, returning its new `rev`. Parent
+/// folders are created by Dropbox as needed. A lost [`WriteMode::Update`] is an
+/// [`Error::Other`] carrying [`CONFLICT_MESSAGE`].
 ///
 /// Single-call upload only, so bodies over [`MAX_UPLOAD_BYTES`] are refused
 /// before sending. TODO(follow-up): upload sessions for larger packs.
@@ -404,10 +454,11 @@ pub async fn upload(
     client: &Client,
     token: &str,
     path: &str,
+    mode: &WriteMode,
     bytes: &[u8],
 ) -> Result<Option<String>> {
     check_upload_size(bytes.len())?;
-    let arg = json!({ "path": path, "mode": "overwrite", "mute": true });
+    let arg = upload_arg(path, mode);
     let resp = client
         .post(format!("{CONTENT}/files/upload"))
         .bearer_auth(token)
@@ -418,7 +469,11 @@ pub async fn upload(
         .await
         .map_err(other)?;
     if !resp.status().is_success() {
-        return Err(Failure::read(resp).await.into_error());
+        let failure = Failure::read(resp).await;
+        if failure.is_conflict() {
+            return Err(Error::Other(CONFLICT_MESSAGE.into()));
+        }
+        return Err(failure.into_error());
     }
     Ok(json_body(resp)
         .await?
@@ -624,6 +679,69 @@ mod tests {
         assert!(!is_not_found("path/not_found_extra/.."));
         assert!(!is_not_found("other/path/not_found/.."));
         assert!(!is_not_found(""));
+    }
+
+    // A lost compare-and-swap, however many dots trail it, and nothing that
+    // merely shares a prefix with it.
+    #[test]
+    fn a_conflict_is_read_from_the_error_summary_prefix() {
+        assert!(is_conflict("path/conflict/file/.."));
+        assert!(is_conflict("path/conflict/file/......"));
+        assert!(is_conflict("path/conflict/folder/."));
+        assert!(is_conflict("path/conflict"));
+
+        assert!(!is_conflict("path/not_found/.."));
+        assert!(!is_conflict("path/conflicted/.."));
+        assert!(!is_conflict("path_write/conflict/file/.."));
+        assert!(!is_conflict("other/path/conflict/.."));
+        assert!(!is_conflict(""));
+    }
+
+    // Only a 409 carrying the conflict summary is a conflict; the message is
+    // the one the sync status shows.
+    #[test]
+    fn a_conflict_is_a_409_with_the_conflict_summary() {
+        let failure = |status, body: &[u8]| Failure {
+            status,
+            retry_after: None,
+            body: Ok(body.to_vec()),
+        };
+        let summary = br#"{"error_summary": "path/conflict/file/.."}"#;
+        assert!(failure(StatusCode::CONFLICT, summary).is_conflict());
+        assert!(!failure(StatusCode::BAD_REQUEST, summary).is_conflict());
+        assert!(!failure(
+            StatusCode::CONFLICT,
+            br#"{"error_summary": "path/not_found/.."}"#
+        )
+        .is_conflict());
+        assert!(CONFLICT_MESSAGE.contains("changed on Dropbox"));
+        assert!(CONFLICT_MESSAGE.contains("retry"));
+    }
+
+    // The two modes as Dropbox spells them: a bare tag for `overwrite`, a
+    // tagged union carrying the rev for `update`. Compared as parsed JSON, so
+    // key order is not what is being pinned.
+    #[test]
+    fn the_upload_arg_spells_each_write_mode_as_dropbox_expects() {
+        let overwrite = header_json(&upload_arg("/Vaults/a1b2.rowel", &WriteMode::Overwrite));
+        assert_eq!(
+            serde_json::from_str::<Value>(&overwrite).unwrap(),
+            json!({ "path": "/Vaults/a1b2.rowel", "mode": "overwrite", "mute": true })
+        );
+
+        let update = header_json(&upload_arg(
+            "id:a4ayc_80_OEAAAAAAAAAXw",
+            &WriteMode::Update("015f9d2a3c1e".into()),
+        ));
+        assert_eq!(
+            serde_json::from_str::<Value>(&update).unwrap(),
+            json!({
+                "path": "id:a4ayc_80_OEAAAAAAAAAXw",
+                "mode": { ".tag": "update", "update": "015f9d2a3c1e" },
+                "mute": true,
+            })
+        );
+        assert!(update.contains(r#""update":"015f9d2a3c1e""#), "{update}");
     }
 
     #[test]

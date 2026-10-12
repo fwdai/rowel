@@ -51,7 +51,7 @@ pub struct RemoteEntry {
 /// and only the create path asks whether the vault was deleted everywhere
 /// ([`may_create_pack`]); an overwrite by name would let a delete landing
 /// between that `stat` and the write re-create the pack without the question
-/// ever being asked. An update by handle fails instead, as it always has.
+/// ever being asked. An update of the entry that `stat` returned fails instead.
 pub trait VaultStore {
     fn provider(&self) -> Provider;
     /// Everything directly inside `<root>/Vaults/`. A missing folder is `[]`.
@@ -69,9 +69,15 @@ pub trait VaultStore {
     /// A new object named `name` in `Vaults/`, creating folders as needed.
     /// Returns its revision.
     async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>>;
-    /// Overwrite the object `handle` names. Returns its new revision; an
-    /// object that is gone is an error, never a create.
-    async fn update(&self, handle: &str, bytes: &[u8]) -> Result<Option<String>>;
+    /// Overwrite `entry`, as the core's `stat` just located it. Returns its
+    /// new revision.
+    ///
+    /// An object that is gone is an error, never a create. An adapter whose
+    /// API can make the write conditional on `entry.revision` should (Dropbox
+    /// does): then an object another device rewrote since the `stat` is an
+    /// error too, and the run fails rather than overwrite a write it never
+    /// pulled. One that cannot ignores the revision (Drive).
+    async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>>;
     /// Delete by handle. Already gone counts as deleted.
     async fn delete(&self, handle: &str) -> Result<()>;
 }
@@ -139,10 +145,10 @@ impl VaultStore for AnyStore {
         }
     }
 
-    async fn update(&self, handle: &str, bytes: &[u8]) -> Result<Option<String>> {
+    async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>> {
         match self {
-            AnyStore::GoogleDrive(store) => store.update(handle, bytes).await,
-            AnyStore::Dropbox(store) => store.update(handle, bytes).await,
+            AnyStore::GoogleDrive(store) => store.update(entry, bytes).await,
+            AnyStore::Dropbox(store) => store.update(entry, bytes).await,
         }
     }
 
@@ -252,7 +258,9 @@ impl<S: VaultStore> Remote for PackRemote<S> {
     fn upload(&self, bytes: &[u8]) -> Result<String> {
         block_on(async {
             let revision = match self.locate().await? {
-                Some(entry) => self.store.update(&entry.handle, bytes).await?,
+                // The entry whole, revision included, so an adapter that can
+                // make the write conditional on it does.
+                Some(entry) => self.store.update(&entry, bytes).await?,
                 None => {
                     may_create_pack(self.marker().await?)?;
                     let name = layout::vault_file_name(&self.vault_id);
@@ -291,16 +299,23 @@ pub(crate) mod fake {
         /// Every write and delete, in order, as "create <name>", "update
         /// <name>" or "delete <name>" — for the tests that pin an ordering.
         pub(crate) log: Mutex<Vec<String>>,
+        /// The revision every `update` was asked to write over, in order.
+        pub(crate) update_revisions: Mutex<Vec<Option<String>>>,
     }
 
     impl FakeStore {
-        /// Put `name` there directly, as another device's write would.
+        /// Put `name` there directly, as another device's write would: a new
+        /// revision, under the handle it already had if it was there.
         pub(crate) fn put(&self, name: &str, bytes: &[u8]) {
             let id = self.tick();
-            self.objects.lock().unwrap().insert(
+            let mut objects = self.objects.lock().unwrap();
+            let handle = objects
+                .get(name)
+                .map_or_else(|| format!("h{id}"), |o| o.handle.clone());
+            objects.insert(
                 name.to_string(),
                 Object {
-                    handle: format!("h{id}"),
+                    handle,
                     bytes: bytes.to_vec(),
                     revision: id,
                 },
@@ -395,11 +410,23 @@ pub(crate) mod fake {
                 .map(|o| o.revision.to_string()))
         }
 
-        async fn update(&self, handle: &str, bytes: &[u8]) -> Result<Option<String>> {
-            let name = self.name_of(handle).ok_or(Error::NotFound)?;
+        // A compare-and-swap, as Dropbox's is: an object deleted since the
+        // `stat` that found it fails (and is not re-created), and so does one
+        // rewritten since, whenever the entry carries the revision it had.
+        async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>> {
+            self.update_revisions
+                .lock()
+                .unwrap()
+                .push(entry.revision.clone());
+            let name = self.name_of(&entry.handle).ok_or(Error::NotFound)?;
             let revision = self.tick();
             let mut objects = self.objects.lock().unwrap();
             let object = objects.get_mut(&name).ok_or(Error::NotFound)?;
+            if let Some(expected) = &entry.revision {
+                if *expected != object.revision.to_string() {
+                    return Err(Error::Other(format!("{name} changed since it was read")));
+                }
+            }
             object.bytes = bytes.to_vec();
             object.revision = revision;
             self.log.lock().unwrap().push(format!("update {name}"));
@@ -515,6 +542,47 @@ mod tests {
                 format!("create {}", pack_name()),
                 format!("update {}", pack_name())
             ]
+        );
+    }
+
+    // A push over an existing pack hands the store the entry its `stat` found,
+    // revision and all, so an adapter that can compare-and-swap on it does.
+    #[test]
+    fn a_push_updates_with_the_revision_the_stat_returned() {
+        let remote = remote();
+        remote.store.put(&pack_name(), b"old");
+        let seen = block_on(remote.store.stat(&pack_name()))
+            .unwrap()
+            .unwrap()
+            .revision;
+        assert!(seen.is_some());
+
+        remote.upload(b"new").unwrap();
+        assert_eq!(*remote.store.update_revisions.lock().unwrap(), [seen]);
+    }
+
+    // The fake holds adapters to the contract: an update of an entry rewritten
+    // since its `stat` fails and leaves the other write in place, and one of an
+    // entry deleted since fails without putting it back.
+    #[test]
+    fn an_update_over_a_stale_or_deleted_entry_fails_rather_than_writes() {
+        let store = FakeStore::default();
+        store.put(&pack_name(), b"ours");
+        let entry = block_on(store.stat(&pack_name())).unwrap().unwrap();
+
+        store.put(&pack_name(), b"theirs");
+        assert!(block_on(store.update(&entry, b"mine")).is_err());
+        assert_eq!(store.bytes(&pack_name()).unwrap(), b"theirs");
+
+        let entry = block_on(store.stat(&pack_name())).unwrap().unwrap();
+        block_on(store.delete(&entry.handle)).unwrap();
+        assert!(block_on(store.update(&entry, b"mine")).is_err());
+        assert!(!store.has(&pack_name()));
+
+        // Neither failure was logged as a write.
+        assert_eq!(
+            *store.log.lock().unwrap(),
+            [format!("delete {}", pack_name())]
         );
     }
 

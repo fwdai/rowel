@@ -29,7 +29,7 @@ use crate::error::{Error, Result};
 use crate::sync::account::{Auth, OAuthConfig};
 use crate::sync::store::{RemoteEntry, VaultStore};
 use crate::sync::{http_client, Provider};
-use api::DropboxEntry;
+use api::{DropboxEntry, WriteMode};
 
 /// Dropbox's OAuth client, as the shared flow in `sync::account` drives it.
 /// A public client: an app key, PKCE, and never a secret.
@@ -146,6 +146,27 @@ fn file_entries(listing: Vec<DropboxEntry>) -> Vec<RemoteEntry> {
         .collect()
 }
 
+/// How an update writes over the entry the core located.
+///
+/// With its rev, a server-side compare-and-swap ([`WriteMode::Update`]): the
+/// upload lands only if the file is still exactly what the `stat` saw. A plain
+/// overwrite would not do, even by `id:` — Dropbox keeps a deleted file's id,
+/// so an overwrite racing a "delete everywhere" (marker written, pack deleted)
+/// would put the pack back beside its marker, and a fetch only consults the
+/// marker when the pack is missing: the deleted vault would come back on every
+/// device. It would also let another device's write between the `stat` and
+/// this upload be lost, a window the engine's head check cannot close.
+///
+/// Without one (the listing gave none, which Dropbox does not do for a file)
+/// there is nothing to compare against, so the overwrite by `id:` is the best
+/// left: still never a new file under a new name.
+fn update_mode(revision: Option<&str>) -> WriteMode {
+    match revision.filter(|rev| !rev.is_empty()) {
+        Some(rev) => WriteMode::Update(rev.to_string()),
+        None => WriteMode::Overwrite,
+    }
+}
+
 impl VaultStore for Store {
     fn provider(&self) -> Provider {
         Provider::Dropbox
@@ -181,17 +202,23 @@ impl VaultStore for Store {
     // made a same-name sibling instead.
     async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
         let token = self.token().await?;
-        api::upload(&self.client, &token, &api::vault_entry_path(name), bytes).await
+        api::upload(
+            &self.client,
+            &token,
+            &api::vault_entry_path(name),
+            &WriteMode::Overwrite,
+            bytes,
+        )
+        .await
     }
 
-    // Addressed by `id:`, so an entry deleted since the `stat` fails the upload
-    // instead of being re-created (an id cannot name a new file). A plain
-    // overwrite: `api::upload` has no `update <rev>` mode yet. With one, this
-    // would become a server-side compare-and-swap against the rev the engine
-    // last saw (design doc §3, "Hardening available later").
-    async fn update(&self, handle: &str, bytes: &[u8]) -> Result<Option<String>> {
+    // A compare-and-swap on the rev the core's `stat` just saw
+    // ([`update_mode`]), addressed by `id:`.
+    async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>> {
+        let path = id_path(&entry.handle)?;
         let token = self.token().await?;
-        api::upload(&self.client, &token, id_path(handle)?, bytes).await
+        let mode = update_mode(entry.revision.as_deref());
+        api::upload(&self.client, &token, path, &mode, bytes).await
     }
 
     async fn delete(&self, handle: &str) -> Result<()> {
@@ -278,6 +305,18 @@ mod tests {
         assert!(id_path("id:").is_err());
         assert!(id_path("/Vaults/a1b2.rowel").is_err());
         assert!(id_path("").is_err());
+    }
+
+    // An update is conditional on the rev the `stat` saw whenever there is
+    // one; only an unknown rev falls back to a plain overwrite.
+    #[test]
+    fn an_update_is_a_compare_and_swap_on_the_known_rev() {
+        assert_eq!(
+            update_mode(Some("015f9d2a3c1e")),
+            WriteMode::Update("015f9d2a3c1e".into())
+        );
+        assert_eq!(update_mode(None), WriteMode::Overwrite);
+        assert_eq!(update_mode(Some("")), WriteMode::Overwrite);
     }
 
     #[test]
