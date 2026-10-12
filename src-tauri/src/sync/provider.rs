@@ -70,8 +70,11 @@ static DROPBOX_OAUTH: OAuthConfig = OAuthConfig {
     auth_url: "https://www.dropbox.com/oauth2/authorize",
     token_url: "https://api.dropboxapi.com/oauth2/token",
     consent_params: &[("token_access_type", "offline")],
+    #[cfg(desktop)]
     loopback_ports: &[53682, 53683, 53684],
+    #[cfg(desktop)]
     client_id: || None,
+    #[cfg(desktop)]
     client_secret: || None,
     no_client: "Dropbox sync is not available in this build",
     #[cfg(mobile)]
