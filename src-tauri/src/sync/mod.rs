@@ -142,10 +142,11 @@ pub(crate) fn pending_store(app: &AppHandle, tokens: Tokens) -> AnyStore {
 }
 
 /// The desktop consent flow without the persisting: onboarding's half of
-/// [`setup`], for an install that has no vault key yet.
+/// [`setup`], for an install that has no vault key yet. `attempt` is the setup
+/// attempt the caller began; the flow gives up once it is superseded.
 #[cfg(desktop)]
-pub(crate) fn obtain_tokens(app: &AppHandle, provider: Provider) -> Result<Tokens> {
-    account::obtain_tokens(app, provider)
+pub(crate) fn obtain_tokens(app: &AppHandle, provider: Provider, attempt: u64) -> Result<Tokens> {
+    account::obtain_tokens(app, provider, attempt)
 }
 
 /// The mobile twin of [`obtain_tokens`]: redeem a code the deep-link handler

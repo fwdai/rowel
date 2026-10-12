@@ -83,7 +83,10 @@ pub(crate) fn connect_pending(app: &AppHandle, provider: Provider) -> Result<()>
 
     let app = app.clone();
     super::detached(move || {
-        let probed = sync::obtain_tokens(&app, provider).and_then(|mut tokens| {
+        // The attempt begun above, not whatever is current once this thread
+        // runs: a cancel in between must reach the flow before it opens the
+        // browser or holds a port.
+        let probed = sync::obtain_tokens(&app, provider, attempt).and_then(|mut tokens| {
             // `block_on` is legal here because a blocking-pool thread is not one
             // of the async runtime's workers. Same rule as a sync run.
             let files = tauri::async_runtime::block_on(probe(&app, &mut tokens))?;
