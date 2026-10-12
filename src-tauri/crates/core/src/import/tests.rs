@@ -913,7 +913,9 @@ fn enpass_maps_cards_notes_and_folders() {
       "folders":[
         {"title":"Work","uuid":"f1","parent_uuid":""},
         {"title":"Banks","uuid":"f2","parent_uuid":"f1"},
-        {"title":"Orphan","uuid":"f3","parent_uuid":"ghost"}
+        {"title":"Orphan","uuid":"f3","parent_uuid":"ghost"},
+        {"title":"Ping","uuid":"f4","parent_uuid":"f5"},
+        {"title":"Pong","uuid":"f5","parent_uuid":"f4"}
       ],
       "items":[
         {"category":"creditcard","title":"Visa","folders":["f2","missing"],"fields":[
@@ -926,7 +928,7 @@ fn enpass_maps_cards_notes_and_folders() {
           {"label":"Valid from","type":"ccValidfrom","value":"09/23"},
           {"label":"Bank","type":"ccBankname","value":"Lloyds"}
         ]},
-        {"category":"note","title":"Wifi","note":"body","folders":["f1","f3"],"fields":[
+        {"category":"note","title":"Wifi","note":"body","folders":["f1","f3","f4"],"fields":[
           {"label":"SSID","type":"text","value":"home"},
           {"label":"Key","type":"password","value":"hunter2","sensitive":1}
         ]},
@@ -959,8 +961,16 @@ fn enpass_maps_cards_notes_and_folders() {
     let note = &r.entries[1];
     assert_eq!(note.kind, EntryKind::Note);
     assert_eq!(note.notes.as_deref(), Some("body"));
-    // A parent the file never lists ends the path; the child keeps its name.
-    assert_eq!(note.tags, vec!["Work".to_string(), "Orphan".to_string()]);
+    // A parent the file never lists ends the path, and so does one already on
+    // it (a two-folder cycle): the child keeps its name either way.
+    assert_eq!(
+        note.tags,
+        vec![
+            "Work".to_string(),
+            "Orphan".to_string(),
+            "Pong/Ping".to_string()
+        ]
+    );
     assert_eq!(
         note.extra,
         vec![field("SSID", "home"), concealed("Key", "hunter2")]
@@ -970,6 +980,30 @@ fn enpass_maps_cards_notes_and_folders() {
     let odd = &r.entries[2];
     assert!(odd.card_month.is_none());
     assert_eq!(odd.extra, vec![field("Expiry date", "sometime")]);
+}
+
+// Enpass migration tooling writes `null` where a list is empty — `fields`,
+// an item's `folders`, a password's `history`, even the top-level `folders`.
+// One such member reads as empty; it never costs the other items.
+#[test]
+fn enpass_reads_a_null_list_as_empty() {
+    let json = br#"{"folders":null,"items":[
+      {"category":"login","title":"GitHub","folders":null,"fields":[
+        {"label":"Username","type":"username","value":"octo"},
+        {"label":"Password","type":"password","value":"pw","history":null}]},
+      {"category":"note","title":"Blank","note":"body","fields":null},
+      {"category":"login","title":"Also fine","fields":[
+        {"label":"Password","type":"password","value":"pw2"}]}
+    ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 3);
+    assert_eq!(r.entries[0].username.as_deref(), Some("octo"));
+    assert!(r.entries[0].password_history.is_empty());
+    assert_eq!(r.entries[1].kind, EntryKind::Note);
+    assert!(r.entries[1].extra.is_empty());
+    assert_eq!(r.entries[2].password.as_deref(), Some("pw2"));
+    assert_eq!(parse(Format::Enpass, br#"{"items":null}"#).entries.len(), 0);
 }
 
 // Enpass writes a document date in the user's own pattern. It is stored only

@@ -11,7 +11,7 @@
 //! export still comes back as the right document kind, with its fields as
 //! extras rather than in the slots.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -21,11 +21,14 @@ use crate::models::{ExtraField, PasswordHistoryItem, PASSWORD_HISTORY_CAP};
 
 pub struct Enpass;
 
+// Every list is read leniently: the Enpass tooling that writes these files is
+// known to put `null` where an empty list belongs, and one such member must
+// not cost every item in the file.
 #[derive(Deserialize)]
 struct Export {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::null_to_default")]
     folders: Vec<Folder>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::null_to_default")]
     items: Vec<Item>,
 }
 
@@ -49,10 +52,10 @@ struct Item {
     template_type: Option<String>,
     #[serde(default)]
     note: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::null_to_default")]
     fields: Vec<Field>,
     /// The uuids of the folders the item is filed in.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::null_to_default")]
     folders: Vec<String>,
     // Flags are 0/1 integers; timestamps are epoch seconds. All lenient: one
     // odd value must not cost the whole file.
@@ -81,7 +84,7 @@ struct Field {
     #[serde(default, deserialize_with = "super::lenient_u64")]
     value_updated_at: Option<u64>,
     /// Previous values of a password field, with when each was replaced.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::null_to_default")]
     history: Vec<History>,
 }
 
@@ -198,21 +201,22 @@ impl Folders {
     }
 
     // `Parent/Child` for a nested folder. A parent the file does not list, or
-    // a cycle in parents, ends the path where it is rather than losing the
-    // folders already named; only a starting folder the file does not list
-    // yields nothing.
+    // one already on the path (a cycle, of any length), ends the path where it
+    // is rather than losing the folders already named; only a starting folder
+    // the file does not list yields nothing.
     fn path(&self, uuid: &str) -> Option<String> {
         let mut parts = Vec::new();
-        let mut next = Some(uuid.to_owned());
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut next = Some(uuid);
         while let Some(id) = next.take() {
-            let Some(folder) = self.0.get(&id) else {
+            let Some(folder) = self.0.get(id) else {
                 break;
             };
-            parts.push(folder.title.clone().unwrap_or_default());
-            if parts.len() > 32 {
+            if !seen.insert(id) {
                 break;
             }
-            next = non_empty(folder.parent_uuid.clone()).filter(|p| p != &id);
+            parts.push(folder.title.clone().unwrap_or_default());
+            next = folder.parent_uuid.as_deref().filter(|p| !p.is_empty());
         }
         parts.reverse();
         let path = parts.join("/");
@@ -260,7 +264,10 @@ impl Importer for Enpass {
         for (i, item) in export.items.into_iter().enumerate() {
             let row = i + 1;
             // What is in the trash was deleted by the user; it is not brought
-            // back by an import, and it is not an error either.
+            // back by an import, and it is not an error either. An *archived*
+            // item is different: in Enpass it is a live record kept out of
+            // the main list, whereas the app's Archive holds deleted entries,
+            // so it comes in as an ordinary entry rather than as a tombstone.
             if item.trashed == ON {
                 continue;
             }

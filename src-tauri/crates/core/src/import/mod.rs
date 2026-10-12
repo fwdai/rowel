@@ -56,6 +56,17 @@ where
     Ok(lenient_u64(d)?.and_then(|n| u8::try_from(n).ok()))
 }
 
+/// A member a producer writes as `null` where a list belongs: read as empty.
+/// `#[serde(default)]` covers an absent member only; an explicit `null` would
+/// otherwise fail `from_slice` for the whole document.
+pub(crate) fn null_to_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
 /// An epoch second, as CXF and Enpass date things, to the RFC 3339 string the
 /// app stores. `None` for a second no calendar has.
 pub(crate) fn rfc3339(secs: u64) -> Option<String> {
