@@ -1,14 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { PlusGlyph } from '@/components/Main/icons'
 import { useTagCounts } from '@/components/Main/Sidebar/Tags/useTagCounts'
-import { cx } from '@/utils/cx'
 import Frame from '../Frame'
-import MenuRow from '../MenuRow'
-import SearchBox from '../SearchBox'
-import { CARD, META } from '../tokens'
-import Row from './Row'
+import TagChip from '../TagChip'
+import { META } from '../tokens'
 
 interface Props {
   /** What is being filed, under the title: the entry's name. */
@@ -25,17 +21,18 @@ const fold = (tag: string) => tag.trim().toLocaleLowerCase()
 
 /**
  * Where an entry's tags are chosen, on a phone: a sheet from the bottom edge
- * with one field and the vault's tags under it, each a row with a check — the
- * way Reminders, Files and Things ask the same question. The field does both
- * things a tag field can: it narrows the rows as it is typed into, and when
- * no row answers to what was typed the first row offers to create it, which
- * Return also does. A name that only differs by case from a tag already there
- * is that tag, not a second one.
+ * holding one token field — the entry's tags as chips inside it, the caret
+ * after them — and, floating under it, the rest of the vault's tags as chips
+ * to tap into the field, the way Notion, Linear and Mail's recipients field
+ * take their tokens. Typing narrows the floating chips; when nothing answers
+ * to what was typed, a dashed "Create …" chip stands first, and Return does
+ * the same. A name that only differs by case from a tag already there is
+ * that tag, not a second one. Backspace in an empty field takes the last tag
+ * off, as in any token field. Nothing here is a card: the chips are the
+ * content, and a tag looks the same here as it does on the entry.
  *
- * The rows are the vault's, busiest first (`useTagCounts`), under any the
- * entry carries that the vault does not know yet — the ones just made in this
- * sheet, which stay at the top where they were made rather than jumping into
- * the order once they are counted.
+ * The floating chips are the vault's, busiest first (`useTagCounts`), less
+ * those already in the field — a tag is in one place or the other.
  *
  * Mounted on `document.body`: the compact shell carries `viewportStyle`'s
  * translate, which makes it the containing block of anything `fixed` inside
@@ -44,82 +41,118 @@ const fold = (tag: string) => tag.trim().toLocaleLowerCase()
 export default function TagPicker({ subject, value, onChange, onClose }: Props) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
+  const input = useRef<HTMLInputElement>(null)
   const counts = useTagCounts()
   const titleId = 'tag-picker-title'
 
-  const known = new Set(counts.map(row => row.tag))
-  const rows = [
-    ...value.filter(tag => !known.has(tag)).map(tag => ({ tag, count: 0 })),
-    ...counts
-  ]
   const needle = query.trim()
-  const shown = needle ? rows.filter(row => fold(row.tag).includes(fold(needle))) : rows
+  const options = counts.filter(
+    row => !value.includes(row.tag) && (!needle || fold(row.tag).includes(fold(needle)))
+  )
   // What Return means: the tag already there under that name, or a new one.
-  const match = needle ? rows.find(row => fold(row.tag) === fold(needle))?.tag : undefined
+  const match = needle
+    ? [...value, ...counts.map(row => row.tag)].find(tag => fold(tag) === fold(needle))
+    : undefined
   const creatable = needle !== '' && match === undefined
+  const bare = counts.length === 0 && value.length === 0 && needle === ''
 
-  const toggle = (tag: string, on: boolean) =>
-    onChange(on ? [...value, tag] : value.filter(held => held !== tag))
-
-  const create = () => {
-    onChange([...value, needle])
+  // The caret stays in the field through every press on a chip: the next tag
+  // is typed, not re-aimed at.
+  const add = (tag: string) => {
+    onChange([...value, tag])
     setQuery('')
+    input.current?.focus()
+  }
+  const remove = (tag: string) => {
+    onChange(value.filter(held => held !== tag))
+    input.current?.focus()
   }
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    if (!needle) return
-    if (creatable) return create()
-    if (match && !value.includes(match)) toggle(match, true)
-    setQuery('')
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (!needle) return
+      if (creatable) return add(needle)
+      if (match && !value.includes(match)) return add(match)
+      setQuery('')
+    } else if (event.key === 'Backspace' && query === '' && value.length > 0) {
+      remove(value[value.length - 1])
+    } else if (event.key === 'Escape' && query !== '') {
+      // Clears what was typed; the dialog's own Escape (which closes) reads
+      // `defaultPrevented` and stands down.
+      event.preventDefault()
+      setQuery('')
+    }
   }
 
   return createPortal(
     <Frame onClose={onClose} labelledBy={titleId} testid="tag-picker" fit="content" hideClose>
-      {/* The source sheet's rhythm: heading 8px under the grabber, the field
-          and the card 12px apart, 20px gutters, the card's last row just above
-          the home indicator. */}
       <div className="px-5 pt-2 pb-3">
         <h1 id={titleId} className="truncate text-xl font-semibold tracking-display text-text">
           {t('Tags')}
         </h1>
         {subject && <p className="mt-0.5 truncate text-sm text-text2">{subject}</p>}
       </div>
-      {/* A form, so Return in the field is the submit the field has no handler
-          for — and nothing else: the editor under the sheet only saves on ⌘⏎. */}
-      <form onSubmit={submit} className="px-5 pb-3">
-        <SearchBox
-          value={query}
-          onChange={setQuery}
-          placeholder={t('Search or add a tag')}
-          testid="tag-picker-input"
-          autoFocus
-          className="h-11 gap-2.5 rounded-lg pl-3.5 pr-3 [&_input]:text-md"
-        />
-      </form>
-      <div className="px-5 pb-2">
-        {rows.length === 0 && !creatable ? (
-          <p className={cx('px-1', META)} data-testid="tag-picker-empty">
+      {/* The field: the search field's well, holding chips. A press on its
+          ground (not on a chip) puts the caret back in it. */}
+      <div className="px-5">
+        <div
+          data-testid="tag-picker-field"
+          onClick={event => {
+            if (event.target === event.currentTarget) input.current?.focus()
+          }}
+          className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-2 rounded-lg border border-line bg-detail px-2.5 py-1.5 transition-[border-color,box-shadow] duration-300 has-[input:focus]:border-accent-line has-[input:focus]:ring-3 has-[input:focus]:ring-accent-soft"
+        >
+          {value.map(tag => (
+            <TagChip
+              key={tag}
+              removes
+              testid={`tag-applied-${tag}`}
+              label={t('Remove tag {{tag}}', { tag })}
+              onClick={() => remove(tag)}
+            >
+              {tag}
+            </TagChip>
+          ))}
+          <input
+            ref={input}
+            data-testid="tag-picker-input"
+            value={query}
+            placeholder={t('Add tag')}
+            autoFocus
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="done"
+            onChange={event => setQuery(event.target.value)}
+            onKeyDown={onKeyDown}
+            className="h-8 min-w-[8ch] flex-1 bg-transparent px-1 text-md text-text caret-accent outline-none placeholder:text-text2"
+          />
+        </div>
+      </div>
+      {/* 12px between rows of chips, for the chips' hit slop (see TagChip). */}
+      <div className="px-5 pt-4 pb-3">
+        {bare ? (
+          <p className={META} data-testid="tag-picker-empty">
             {t('Type a name to make your first tag.')}
           </p>
         ) : (
-          <div className={CARD}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-3">
             {creatable && (
-              <MenuRow
-                testid="tag-picker-create"
-                label={t('Create “{{tag}}”', { tag: needle })}
-                glyph={<PlusGlyph />}
-                onClick={create}
-              />
+              <TagChip tone="add" testid="tag-picker-create" onClick={() => add(needle)}>
+                {t('Create “{{tag}}”', { tag: needle })}
+              </TagChip>
             )}
-            {shown.map(row => (
-              <Row
+            {options.map(row => (
+              <TagChip
                 key={row.tag}
-                tag={row.tag}
-                count={row.count}
-                on={value.includes(row.tag)}
-                onToggle={on => toggle(row.tag, on)}
-              />
+                tone="outline"
+                testid={`tag-suggest-${row.tag}`}
+                meta={row.count}
+                onClick={() => add(row.tag)}
+              >
+                {row.tag}
+              </TagChip>
             ))}
           </div>
         )}

@@ -34,7 +34,14 @@ const openPicker = async () => {
 // finger's ways.
 const closePicker = () => userEvent.click(screen.getByTestId('modal-close'))
 
-const checked = (tag: string) => screen.getByTestId(`tag-pick-${tag}`).getAttribute('aria-checked')
+// The chips in the field, and the chips floating under it, by name.
+const applied = () =>
+  within(screen.getByTestId('tag-picker-field'))
+    .queryAllByRole('button', { name: /^Remove tag / })
+    .map(chip => chip.textContent)
+const suggested = () =>
+  screen.queryAllByTestId(/^tag-suggest-/).map(chip => chip.textContent)
+const field = () => screen.getByTestId('tag-picker-input')
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -73,21 +80,19 @@ describe('tags on the entry screen', () => {
     expect(screen.getByTestId('active-tag')).toHaveTextContent(/^work$/)
   })
 
-  it('offers the vault’s tags in a sheet, busiest first, with the entry’s checked', async () => {
+  it('opens a sheet with the entry’s tags in the field and the rest floating under it', async () => {
     seed()
     const sheet = await openPicker()
 
     expect(sheet).toHaveAttribute('data-frame', 'bottom-sheet')
     expect(screen.getByRole('heading', { name: 'Tags' })).toBeInTheDocument()
     expect(sheet).toHaveTextContent('Google')
-    expect(screen.getAllByRole('checkbox').map(row => row.textContent)).toEqual([
-      'work2',
-      'money1',
-      'travel1'
-    ])
-    expect(checked('work')).toBe('true')
-    expect(checked('money')).toBe('false')
-    expect(screen.getByTestId('tag-picker-input')).toHaveFocus()
+    expect(applied()).toEqual(['work'])
+    // Busiest first, with the count, and never a tag already in the field.
+    expect(suggested()).toEqual(['money1', 'travel1'])
+    expect(field()).toHaveFocus()
+    // No card around either: chips are the content.
+    expect(sheet.querySelector('.shadow-card')).toBeNull()
     // Nothing is opened, and nothing is written, by opening the sheet.
     expect(useVault.getState().editing).toBe(false)
     expect(calls('save_entry')).toHaveLength(0)
@@ -97,18 +102,20 @@ describe('tags on the entry screen', () => {
     seed()
     await openPicker()
 
-    await userEvent.type(screen.getByTestId('tag-picker-input'), 'legacy')
-    // Nothing is called that, so the first row offers to make it.
+    await userEvent.type(field(), 'legacy')
+    // Nothing is called that, so a dashed chip offers to make it; the rest
+    // are narrowed to nothing.
     expect(screen.getByTestId('tag-picker-create')).toHaveTextContent('Create “legacy”')
-    expect(screen.queryByTestId('tag-pick-work')).not.toBeInTheDocument()
+    expect(suggested()).toEqual([])
 
     await userEvent.keyboard('{Enter}')
 
-    // Made, checked, at the top, and the field cleared for the next one.
-    expect(screen.getAllByRole('checkbox')[0]).toHaveTextContent(/^legacy$/)
-    expect(checked('legacy')).toBe('true')
-    expect(screen.getByTestId('tag-picker-input')).toHaveValue('')
+    // Made, in the field after the others, and the caret cleared for the next.
+    expect(applied()).toEqual(['work', 'legacy'])
+    expect(field()).toHaveValue('')
+    expect(field()).toHaveFocus()
     expect(screen.queryByTestId('tag-picker-create')).not.toBeInTheDocument()
+    expect(suggested()).toEqual(['money1', 'travel1'])
     // Still nothing written: the sheet commits on the way out.
     expect(calls('save_entry')).toHaveLength(0)
 
@@ -130,14 +137,20 @@ describe('tags on the entry screen', () => {
     )
   })
 
-  it('takes a tag off by unchecking it, and saves once on the way out', async () => {
+  it('moves a tag between the field and the floating chips, and saves once on the way out', async () => {
     seed()
     await openPicker()
 
-    await userEvent.click(screen.getByTestId('tag-pick-work'))
-    expect(checked('work')).toBe('false')
-    await userEvent.click(screen.getByTestId('tag-pick-money'))
-    expect(checked('money')).toBe('true')
+    // Off the entry: the chip leaves the field and floats with the others.
+    await userEvent.click(screen.getByLabelText('Remove tag work'))
+    expect(applied()).toEqual([])
+    expect(suggested()).toEqual(['work2', 'money1', 'travel1'])
+
+    // Onto it: a floating chip tapped goes into the field.
+    await userEvent.click(screen.getByTestId('tag-suggest-money'))
+    expect(applied()).toEqual(['money'])
+    expect(suggested()).toEqual(['work2', 'travel1'])
+    expect(field()).toHaveFocus()
 
     await closePicker()
 
@@ -147,12 +160,25 @@ describe('tags on the entry screen', () => {
     })
   })
 
+  it('takes the last tag off with Backspace in the empty field', async () => {
+    seed()
+    await openPicker()
+
+    await userEvent.click(screen.getByTestId('tag-suggest-money'))
+    await userEvent.keyboard('{Backspace}')
+    expect(applied()).toEqual(['work'])
+
+    // Only the empty field does: a Backspace through typed text is editing.
+    await userEvent.type(field(), 'x{Backspace}')
+    expect(applied()).toEqual(['work'])
+  })
+
   it('writes nothing when the sheet is closed as it was opened', async () => {
     seed()
     await openPicker()
 
-    await userEvent.click(screen.getByTestId('tag-pick-money'))
-    await userEvent.click(screen.getByTestId('tag-pick-money'))
+    await userEvent.click(screen.getByTestId('tag-suggest-money'))
+    await userEvent.click(screen.getByLabelText('Remove tag money'))
     await closePicker()
 
     await waitFor(() => expect(screen.queryByTestId('tag-picker')).not.toBeInTheDocument())
@@ -163,13 +189,13 @@ describe('tags on the entry screen', () => {
     seed()
     await openPicker()
 
-    await userEvent.type(screen.getByTestId('tag-picker-input'), 'MONEY')
+    await userEvent.type(field(), 'MONEY')
     expect(screen.queryByTestId('tag-picker-create')).not.toBeInTheDocument()
-    expect(screen.getByTestId('tag-pick-money')).toBeInTheDocument()
+    expect(suggested()).toEqual(['money1'])
 
     await userEvent.keyboard('{Enter}')
-    expect(checked('money')).toBe('true')
-    expect(screen.getByTestId('tag-picker-input')).toHaveValue('')
+    expect(applied()).toEqual(['work', 'money'])
+    expect(field()).toHaveValue('')
     await closePicker()
 
     await waitFor(() => expect(calls('save_entry')).toHaveLength(1))
@@ -184,7 +210,7 @@ describe('tags on the entry screen', () => {
     await openPicker()
 
     expect(screen.getByTestId('tag-picker-empty')).toHaveTextContent('first tag')
-    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    expect(suggested()).toEqual([])
   })
 
   it('reports a save the backend refused, and keeps the entry where it was', async () => {
@@ -194,7 +220,7 @@ describe('tags on the entry screen', () => {
     seed()
     await openPicker()
 
-    await userEvent.click(screen.getByTestId('tag-pick-money'))
+    await userEvent.click(screen.getByTestId('tag-suggest-money'))
     await closePicker()
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not save')
@@ -217,7 +243,7 @@ describe('tags in the editor', () => {
 
     // The same chip, now with its ×, and the same sheet writing the draft.
     await userEvent.click(screen.getByTestId('add-tag-button'))
-    await userEvent.click(await screen.findByTestId('tag-pick-money'))
+    await userEvent.click(await screen.findByTestId('tag-suggest-money'))
     await closePicker()
 
     expect(screen.getByLabelText('Remove tag money')).toBeInTheDocument()

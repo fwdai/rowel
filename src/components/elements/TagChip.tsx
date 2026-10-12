@@ -4,25 +4,30 @@ import { CloseGlyph, PlusGlyph } from '../Main/icons'
 
 /**
  * The one way a tag is drawn, wherever it turns up: on an entry, in the
- * editor, under the search field as the list's filter, and as the way to add
- * one. A pill with a soft fill and no edge of its own — nothing else in the
- * app is that shape on that surface, which is what makes a tag recognisable
- * as one without a `#` in front of it. 24px on the desktop, 32px on the phone
- * with a hit area that reaches the platform's 44px (the pseudo-element; the
- * row around the chips gives the vertical room for it).
+ * editor, inside the picker's field and floating under it, under the search
+ * field as the list's filter, and as the way to add one. A pill with a soft
+ * fill and no edge of its own — nothing else in the app is that shape on that
+ * surface, which is what makes a tag recognisable as one without a `#` in
+ * front of it. 24px on the desktop, 32px on the phone with a hit area that
+ * reaches the platform's 44px (the pseudo-element; the row around the chips
+ * gives the vertical room for it).
  *
- * Three tones for the three things a tag can be doing: resting on an entry
- * (press it to see everything filed under it), standing as the one filter the
- * list is narrowed by (the accent, with the × that lifts it), and the dashed
- * outline of a tag not yet there — the add control, which is the same shape so
- * that the thing it adds is what it looks like.
+ * Four tones for the four things a tag can be doing: resting on an entry or
+ * in a field (press it to see everything filed under it, or × to take it
+ * off), standing as the one filter the list is narrowed by (the accent, with
+ * the × that lifts it), waiting to be picked (a hairline outline — the same
+ * pill, not yet filled in), and the dashed outline of a tag not yet there —
+ * the add and create controls, which are the same shape so that the thing
+ * they add is what they look like.
  */
-export type TagTone = 'rest' | 'active' | 'add'
+export type TagTone = 'rest' | 'active' | 'outline' | 'add'
 
 interface Props {
   tone?: TagTone
   /** A trailing ×: pressing the chip takes something away — a tag from the draft, the filter from the list. */
   removes?: boolean
+  /** A quiet figure after the name: how many entries carry the tag. */
+  meta?: ReactNode
   /** The accessible name, when the visible text is not the whole story ("Filter by tag work"). */
   label?: string
   title?: string
@@ -38,12 +43,14 @@ const PILL =
 const TONE: Record<TagTone, string> = {
   rest: 'bg-tile text-text hover:bg-text/10 active:bg-text/15',
   active: 'bg-accent text-accent-fg hover:brightness-110',
+  outline: 'border border-line2 text-text hover:bg-hover active:bg-sel',
   add: 'border border-dashed border-line2 text-text2 hover:border-text3 hover:text-text active:bg-hover'
 }
 
 export default function TagChip({
   tone = 'rest',
   removes,
+  meta,
   label,
   title,
   testid,
@@ -62,6 +69,11 @@ export default function TagChip({
     >
       {tone === 'add' && <PlusGlyph size={12} className="flex-none max-md:size-3.5" />}
       <span className="min-w-0 truncate">{children}</span>
+      {meta !== undefined && (
+        <span className="flex-none text-text3 tabular-nums" aria-hidden>
+          {meta}
+        </span>
+      )}
       {removes && <CloseGlyph size={11} className="flex-none opacity-60 max-md:size-3" />}
     </button>
   )

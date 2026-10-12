@@ -192,10 +192,15 @@ soft fill and no edge, no `#` in front of it (a tag is not a hashtag; the
 list's title names the tag bare too), and a hit area reaching the 44px the
 platform asks for. Pressing a tag while reading goes to everything filed
 under it. Adding or taking one off never needs the editor: the add chip opens
-`elements/TagPicker`, a bottom sheet with one field over the vault's tags as
-checkbox rows (busiest first, with counts), the field narrowing the rows and,
-when nothing answers to it, offering "Create …" as the first row — Return does
-the same, and a name that differs only by case is the tag already there.
+`elements/TagPicker`, a bottom sheet holding one token field — the entry's
+tags as chips inside it, the caret after them, as Mail's recipients field and
+Notion's multi-select hold theirs — and, floating under it, the rest of the
+vault's tags as outlined chips (busiest first, with counts) to tap into the
+field. Typing narrows the floating chips; when nothing answers to it, a
+dashed "Create …" chip stands first, and Return does the same; a name that
+differs only by case is the tag already there; Backspace in the empty field
+takes the last tag off. Nothing in the sheet is a card or a list: the chips
+are the content, and a tag looks there as it does on the entry.
 While reading, the sheet's choices are held in `Meta` and written back once
 when it closes, if they changed (`saveTags`: the revealed entry saved with the
 new list, so the secrets go back as they came and the row restamps like any
