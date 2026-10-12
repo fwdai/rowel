@@ -74,26 +74,33 @@ export const ROW_LABEL = `${LABEL} max-md:text-sm max-md:normal-case max-md:trac
 // cannot drift apart from each other.
 export const EDGE_GUTTER = 'px-1'
 
-// A section's heading over plain rows (the files): the label face, set off
+// A section's heading over plain rows (the files, the tags): the label face, set off
 // what it heads by its own gap. On the phone it is the grouped list's section
 // header — still uppercase, as iOS sets them, but at 12px with the tracking
 // pulled in. It carries no inset of its own: it stands inside `EDGE_GUTTER`
 // with the rows it heads.
 export const SECTION_LABEL_FLUSH = `mb-1.5 block ${LABEL} max-md:mb-2 max-md:text-sm max-md:tracking-[0.06em]`
 
-// The same heading over a card (passkeys, custom fields, tags): inset to the
+// The same heading over a card (passkeys, custom fields): inset to the
 // card's own 16px, so it lines up with the captions inside, as iOS aligns a
 // group's header with its cells' text.
 export const SECTION_LABEL = `${SECTION_LABEL_FLUSH} max-md:px-4`
 
-// An "add" action standing under a section ("Attach file", "Add tag"): the
-// accent text line `AddAction` draws, on both shells. On the phone it takes a
-// 44px row with the row tier's type and an 18px mark, so it is a finger's
-// target without becoming a thing; it stands inside `EDGE_GUTTER` and carries
-// no inset of its own. It used to be a card cell of its own, which put a
-// boxed button under every section and made the screen read as a stack of
-// cards rather than as content with quiet verbs.
-export const ACTION_ROW = 'max-md:h-11 max-md:gap-2.5 max-md:text-md max-md:[&>svg]:size-[18px]'
+// The dashed pill of a thing not yet there: the "add" control under the
+// tags ("Add tag", `TagChip`'s add tone) and under the files ("Attach file").
+// The outline of a chip with nothing in it yet, so what it adds is what it
+// looks like, and the two verbs on the screen are visibly the same control.
+// At the chip's measure: 24px on the desktop, 32px on the phone with the hit
+// slop that reaches 44px. The desktop's attach keeps the accent text line
+// `AddAction` draws on its own; only the phone takes this (`ACTION_ROW`).
+export const ADD_PILL =
+  'rounded-full border border-dashed border-line2 text-text2 transition-colors hover:border-text3 hover:text-text active:bg-hover'
+
+// `ADD_PILL` for an `AddAction` on the phone — the same classes under
+// `max-md:`, spelled out because Tailwind reads class names off the source
+// (a built string would compile to nothing). Keep the two in step.
+export const ACTION_ROW =
+  "max-md:relative max-md:h-8 max-md:gap-1.5 max-md:rounded-full max-md:border max-md:border-dashed max-md:border-line2 max-md:px-3 max-md:text-base max-md:font-medium max-md:text-text2 max-md:transition-colors max-md:[&>svg]:size-3.5 max-md:hover:border-text3 max-md:hover:text-text max-md:active:bg-hover max-md:before:absolute max-md:before:inset-x-0 max-md:before:-inset-y-1.5 max-md:before:content-['']"
 
 // The meta face, without an ink: counts, timestamps, hints, shortcuts, chips —
 // the same 11px as the label tier, set as ordinary text rather than a tracked

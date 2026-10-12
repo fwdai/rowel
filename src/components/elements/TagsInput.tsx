@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent } from 'react'
-import { TAG_CHIP } from './fields/chip'
+import { useTranslation } from 'react-i18next'
+import TagChip from './TagChip'
 import { META_TYPE } from './tokens'
 
 interface Props {
@@ -9,9 +10,11 @@ interface Props {
   placeholder?: string
 }
 
-// Minimal tags input: type + Enter to add, click a tag to remove it. The chips
-// are the read view's chips, so committing a tag doesn't restyle it.
+// The desktop editor's tags: type + Enter to add, press a chip to remove it.
+// The chips are the read view's chips, so committing a tag doesn't restyle it.
+// The phone does not type tags into a line; it picks them (`TagPicker`).
 export default function TagsInput({ value, onChange, placeholder }: Props) {
+  const { t } = useTranslation()
   const [input, setInput] = useState('')
 
   const addTag = () => {
@@ -23,6 +26,8 @@ export default function TagsInput({ value, onChange, placeholder }: Props) {
   const removeTag = (tag: string) => onChange(value.filter(t => t !== tag))
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // An input method still composing owns the key (see TagPicker).
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Enter') {
       event.preventDefault()
       addTag()
@@ -34,15 +39,15 @@ export default function TagsInput({ value, onChange, placeholder }: Props) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       {value.map(tag => (
-        <button
+        <TagChip
           key={tag}
-          type="button"
+          tone="field"
+          removes
+          label={t('Remove tag {{tag}}', { tag })}
           onClick={() => removeTag(tag)}
-          className={`${TAG_CHIP} gap-1 hover:border-bad hover:text-bad`}
         >
           {tag}
-          <span className="opacity-60">×</span>
-        </button>
+        </TagChip>
       ))}
       <input
         // The one input in the entry editor with no `name` — specs address it here.

@@ -3,21 +3,30 @@ import { useTranslation } from 'react-i18next'
 import type { TKey } from '@/i18n'
 import { setFilterQuery } from '@/store'
 import { PlusGlyph } from '@/components/Main/icons'
+import TagChip from '@/components/elements/TagChip'
 import TagsInput from '@/components/elements/TagsInput'
-import { TAG_CHIP } from '@/components/elements/fields/chip'
 import { LABEL, META, META_TYPE } from '@/components/elements/tokens'
 import { useDates } from '@/hooks/useDates'
 import { toTime } from '@/utils/time'
 
 export interface FooterProps {
   tags: string[]
-  /** Editing: writes the tags back. Absent while reading. */
+  /** Editing: writes the tags back to the draft. Absent while reading. */
   onTags?: (next: string[]) => void
   /**
    * Reading an entry that can still be edited: opens the editor from the empty
    * tags cell. Absent for a tombstone, which has nothing left to file.
    */
   onAdd?: () => void
+  /**
+   * Reading, with the secrets in hand: writes the tags straight back to the
+   * vault, no editor. The phone's picker takes it (`Compact/Detail/Meta`); the
+   * desktop's strip keeps `onAdd`. Absent for a tombstone and until the reveal
+   * lands.
+   */
+  onSave?: (next: string[]) => Promise<void>
+  /** What is being filed, for a picker to name: the entry's title. */
+  subject?: string
   createdAt?: string
   updatedAt?: string
   deletedAt?: string
@@ -92,15 +101,13 @@ export default function Footer({
           ) : (
             <div className="flex flex-wrap gap-2">
               {tags.map(tag => (
-                <button
+                <TagChip
                   key={tag}
-                  type="button"
+                  label={t('Filter by tag {{tag}}', { tag })}
                   onClick={() => setFilterQuery(tag)}
-                  aria-label={t('Filter by tag {{tag}}', { tag })}
-                  className={`${TAG_CHIP} hover:text-text`}
                 >
                   {tag}
-                </button>
+                </TagChip>
               ))}
             </div>
           )}

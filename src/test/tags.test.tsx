@@ -86,8 +86,10 @@ describe('the tags view', () => {
     expect(screen.getByTestId('tags-button')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('view-favorites')).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByTestId('view-items')).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByTestId('list-title')).toHaveTextContent('#work')
-    expect(screen.getByTestId('active-tag')).toHaveTextContent('#work')
+    // The tag as the entry wears it: no `#`, a tag is not a hashtag.
+    expect(screen.getByTestId('list-title')).toHaveTextContent('work')
+    expect(screen.getByTestId('active-tag')).toHaveTextContent('work')
+    expect(screen.getByTestId('list-title')).not.toHaveTextContent('#')
     // Picking is also what closes the menu.
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
@@ -157,6 +159,7 @@ describe('the tags view', () => {
     await open()
     await pick('money')
 
-    expect(screen.getByTestId('list-title')).toHaveTextContent('#money')
+    expect(screen.getByTestId('list-title')).toHaveTextContent('money')
+    expect(screen.getByTestId('active-tag')).not.toHaveTextContent('#')
   })
 })

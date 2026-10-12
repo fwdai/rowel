@@ -144,10 +144,11 @@ one-time code is a row under the password with a countdown ring in its rail
 (`fields/Otp/Countdown`, a conic gradient on a registered `--otp-left`), on
 both shells; the editor keeps the dial as the live preview. Under the rows,
 files, passkeys, custom fields and tags are sections (`SECTION_LABEL`: 12px
-uppercase, tracking pulled in, inset to the rows), every "add" is the same
-quiet accent line (`ACTION_ROW`), and the dates are one centred meta line at the
-end — `Compact/Detail/Meta`, handed to `Show/Body` as its `Footer`, which
-reads the same facts the desktop's strip does. Files are a plain list, not
+uppercase, tracking pulled in, inset to the rows), every "add" under the rows
+is the same dashed pill (`ADD_PILL`, `ACTION_ROW`), and the dates are one centred
+meta line at the end — `Compact/Detail/Meta`, handed to `Show/Body` as its
+`Footer` and to `Edit/Body` as the editor's, which reads the same facts the
+desktop's strip does. Files are a plain list, not
 a card and not a gallery (`Show/Attachments/Row`): each a line with a 40px
 thumbnail — the picture for an image, the kind's page for anything else —
 beside its name and "670 KB · PNG", hairlines between the lines, on the
@@ -176,17 +177,54 @@ one picture at a time, so a list of images costs kilobytes whatever the files
 weigh and never a burst of decodes; a picture the
 engine cannot decode (a TIFF or a BMP off Apple platforms) is fetched again as
 the backend's PNG of it (`attachment_render`), so what an image shows does
-not depend on the OS. Under the list, and alone on an entry with no files, one quiet line:
-"Attach file" behind a paperclip in the accent. "Add tag" is the same line:
-the "add" verbs under the sections are text (`ACTION_ROW`, a 44px row), not
-card cells — a boxed button under every section made the
-screen a stack of cards rather than content with quiet verbs.
+not depend on the OS. Under the list, and alone on an entry with no files,
+"Attach file" behind a paperclip: on the phone the same dashed pill "Add tag"
+is (`ACTION_ROW`, the `max-md:` twin of `TagChip`'s `ADD_PILL`) — the
+outline of a thing not yet there, 32px with a 44px hit area — so the two
+verbs under the rows are visibly one control; on the desktop the accent text
+line `AddAction` draws. Not a card cell: a boxed button under every section
+made the screen a stack of cards rather than content with quiet verbs.
+
+Tags stand in the same gutter as the files, under a `SECTION_LABEL_FLUSH`
+heading, and are no more a card than they are: the chips themselves are the
+content, with a dashed "Add tag" chip at
+their end. One element draws a tag wherever it appears — on the entry, in the
+editor with its ×, under the search field as the list's filter, and as the
+add control — `elements/TagChip`: a 32px pill (24 on the desktop), no `#`
+in front of it (a tag is not a hashtag; the list's title names the tag bare
+too), and a hit area reaching the 44px the platform asks for. At rest it is
+the cards' own white on the screen's grey ground, in an edge tinted with the
+accent at a quarter — a step firmer than a card's hairline, so the pill holds
+its shape beside the content without colouring it. Inside the picker's field,
+which is itself the white detail surface, the same chip takes the tile grey
+(`tone="field"`), since white on white would be no chip at all. The list's
+filter chip is the one heavy one — the accent, solid — because there the tag
+is what the screen is about; the picker's waiting chips are bare outlines in
+the secondary ink. Pressing a tag while reading goes to everything filed
+under it. Adding or taking one off never needs the editor: the add chip opens
+`elements/TagPicker`, a bottom sheet holding one token field — the entry's
+tags as chips inside it, the caret after them, as Mail's recipients field and
+Notion's multi-select hold theirs — and, floating under it, the rest of the
+vault's tags as outlined chips (busiest first, with counts) to tap into the
+field. Typing narrows the floating chips; when nothing answers to it, a
+dashed "Create …" chip stands first, and Return does the same; a name that
+differs only by case is the tag already there; Backspace in the empty field
+takes the last tag off. Nothing in the sheet is a card or a list: the chips
+are the content, and a tag looks there as it does on the entry.
+While reading, the sheet's choices are held in `Meta` and written back once
+when it closes, if they changed (`saveTags`: the revealed entry saved with the
+new list, so the secrets go back as they came and the row restamps like any
+save); in the editor the sheet writes the draft directly and each chip's ×
+takes a tag off. The picker is mounted on `document.body` — see the note on
+overlays below — and takes the caret as it opens, which `useDialogFocus`
+leaves where it is.
 
 Overlays are not screens and do not live in the shell div. That div carries
 `viewportStyle`'s translate, which makes it the containing block of anything
 `fixed` inside it, so a sheet mounted there would take the keyboard offset
 twice. `Generator/Attached`, and every fixed overlay after it, is a sibling of
-the shell.
+the shell; one opened from inside a screen (the tag picker, which has a field
+to type into) portals itself to `document.body` for the same reason.
 
 Before any of that there is the lock, which is not a screen of the vault but a
 flow of its own: `App` renders `Auth/LockScreen` on compact and `Auth` on wide,

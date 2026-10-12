@@ -4,6 +4,7 @@ import Body from '../../Body/Aside/Show/Edit/Body'
 import Title from '../../Body/Aside/Show/Edit/Title'
 import { useDraft } from '../../Body/Aside/Show/Edit/useDraft'
 import { SCREEN_SCROLLER } from '../chrome'
+import Meta from '../Detail/Meta'
 import NavRow from './NavRow'
 import { useHeading } from './useHeading'
 
@@ -50,7 +51,9 @@ export default function Editor({ entry, type, revealed }: Props) {
           message="pl-14"
         />
 
-        <Body draft={draft} type={type} revealed={revealed} />
+        {/* The read screen's footer, so a tag is picked and drawn the same way
+            in both faces. */}
+        <Body draft={draft} type={type} revealed={revealed} Footer={Meta} />
       </div>
     </div>
   )

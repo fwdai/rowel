@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import { useDialogPresence } from './useDialogPresence'
 
 const TABBABLE =
@@ -26,12 +26,23 @@ const tabbables = (root: HTMLElement | null) =>
 export function useDialogFocus(dialog: RefObject<HTMLElement | null>, onClose: () => void) {
   useDialogPresence()
 
+  // What opened the dialog, read on the first render rather than in the mount
+  // effect: a body that takes the caret itself as it mounts (a field with
+  // `autoFocus`, the tag picker's) has moved focus by the time an effect runs,
+  // and the opener would be lost.
+  const trigger = useRef<HTMLElement | null | undefined>(undefined)
+  if (trigger.current === undefined) trigger.current = document.activeElement as HTMLElement | null
+
   useEffect(() => {
-    const trigger = document.activeElement as HTMLElement | null
-    const first = tabbables(dialog.current)[0]
-    if (first) first.focus()
-    else dialog.current?.focus()
-    return () => trigger?.focus()
+    const opener = trigger.current ?? null
+    // A body that took the caret itself keeps it; otherwise focus starts on
+    // the first control.
+    if (!dialog.current?.contains(document.activeElement)) {
+      const first = tabbables(dialog.current)[0]
+      if (first) first.focus()
+      else dialog.current?.focus()
+    }
+    return () => opener?.focus()
   }, [dialog])
 
   useEffect(() => {

@@ -74,7 +74,9 @@ export default function Attachments({ entry }: { entry: EntryMeta }) {
         busy={busy}
         onPick={pick}
         onFile={file => void addFile(file)}
-        className={`${items.length === 0 ? 'mt-4' : 'mt-1'} ${ACTION_ROW}`}
+        // Under a list the pill wants a row's worth of air, as the tags'
+        // chips have under their label.
+        className={`${items.length === 0 ? 'mt-4' : 'mt-3'} ${ACTION_ROW}`}
       />
       {error && (
         <p className="mt-2 text-base text-bad" role="alert">
