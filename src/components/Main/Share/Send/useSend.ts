@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { shareCreate, shareRevoke, type ShareCreated } from '@/api/share'
 import { describeError } from '@/api/errors'
+import { providerShares } from '@/api/provider'
+import { syncProvider } from '@/api/sync'
 import { useApp, closeSend, queueOrphan } from '@/store'
 import { revokeOrphans } from '@/services/shares'
 import { useCopied } from '@/hooks/useCopied'
@@ -17,7 +19,10 @@ export interface Failure {
 }
 
 export interface Send {
-  /** Without Drive there is nowhere to put the file, so the dialog explains. */
+  /**
+   * Without Drive there is nowhere to put the file, so the dialog explains —
+   * a vault on another provider included, until it can hold shares too.
+   */
   connected: boolean
   share: ShareCreated | null
   failed: Failure | null
@@ -40,7 +45,7 @@ export interface Send {
  * the one thing this dialog does.
  */
 export function useSend(entryId: string): Send {
-  const connected = useApp(state => state.sync.configured)
+  const connected = useApp(state => providerShares(syncProvider(state.sync)))
   const [share, setShare] = useState<ShareCreated | null>(null)
   const [failed, setFailed] = useState<Failure | null>(null)
   const [busy, setBusy] = useState(false)

@@ -82,6 +82,7 @@ export const appStatusDefault = (): AppStatus => ({
   settings,
   sync: {
     configured: false,
+    provider: null,
     pending: false,
     inProgress: false,
     error: null,
@@ -130,11 +131,11 @@ const DEFAULTS: Record<string, Handler> = {
   // A new workspace arrives active and unlocked, so it answers like an unlock.
   workspace_create: () => session,
   // Onboarding's connect, reached from Settings: the probe's answer comes back
-  // as `setup:drive:*`, never through this promise.
-  workspace_drive_connect: () => undefined,
+  // as `setup:account:*`, never through this promise.
+  workspace_connect: () => undefined,
   // A restored one arrives the same way, but connected — its account was sealed
   // under the restored vault's key on the way in.
-  workspace_restore_from_drive: () => ({ entries: [], syncConfigured: true }),
+  workspace_restore_from_pending: () => ({ entries: [], syncConfigured: true }),
   // The same landing from the open workspace's own account: no sign-in first.
   workspace_restore_from_account: () => ({ entries: [], syncConfigured: true }),
   // A switch to a workspace Rust holds no key for: it ends as the lock it is,
@@ -147,11 +148,11 @@ const DEFAULTS: Record<string, Handler> = {
   workspace_set_color: () => undefined,
 
   // First run. The probe's result never comes back through these promises —
-  // it arrives as `setup:drive:*`, which a spec drives through the store.
-  setup_drive_connect: () => undefined,
-  setup_drive_disconnect: () => undefined,
+  // it arrives as `setup:account:*`, which a spec drives through the store.
+  setup_connect: () => undefined,
+  setup_disconnect: () => undefined,
   setup_create: () => session,
-  setup_restore_from_drive: () => ({ entries: [], syncConfigured: true }),
+  setup_restore_from_account: () => ({ entries: [], syncConfigured: true }),
   setup_restore_from_file: () => session,
 
   reveal_entry: ({ id }) => ({ id, type: 'login', title: '' }),

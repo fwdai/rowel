@@ -56,6 +56,19 @@ describe('sharing an entry', () => {
     expect(calls('share_create')).toHaveLength(0)
   })
 
+  // Shares are Drive files; a vault on Dropbox has nowhere to put one yet, so
+  // it gets the same explanation rather than a create the backend would refuse.
+  it('asks for Drive from a vault that syncs to Dropbox', async () => {
+    withEntries([loginMeta({ id: 'l1', title: 'Google' })])
+    setSyncStatus({ ...initialApp.sync, configured: true, provider: 'dropbox' })
+    render(<Main />)
+
+    openSend('l1')
+
+    expect(await screen.findByTestId('share-needs-drive')).toBeInTheDocument()
+    expect(calls('share_create')).toHaveLength(0)
+  })
+
   it('seals on open and shows the link', async () => {
     seed()
     render(<Main />)

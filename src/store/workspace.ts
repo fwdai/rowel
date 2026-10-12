@@ -3,7 +3,7 @@ import {
   workspaceCreate,
   workspaceDelete,
   workspaceRestoreFromAccount,
-  workspaceRestoreFromDrive,
+  workspaceRestoreFromPending,
   workspaceSelect
 } from '@/api/workspace'
 import { PRIMARY_WORKSPACE } from '@/lib/workspace'
@@ -14,8 +14,8 @@ import {
   forgetBiometricGate,
   setSwitching,
   useApp,
-  setupDriveRestoring,
-  setupDriveRestoreFailed,
+  setupAccountRestoring,
+  setupAccountRestoreFailed,
   type AppState
 } from './app'
 import { lockSettings } from './ui'
@@ -81,7 +81,7 @@ export const deleteWorkspace = async (
   password: string,
   everywhere: boolean
 ) => {
-  // A delete may finish after an Argon2id proof and a Drive request. Hold every
+  // A delete may finish after an Argon2id proof and a request to the account. Hold every
   // way out of Settings until it has landed, or backing out only hides work that
   // is still going to remove the workspace.
   lockSettings(true)
@@ -123,18 +123,18 @@ export const createWorkspace = async (
 // its section for the same reason: closing it or moving away would have run the
 // same refused disconnect and then let the restore finish and switch
 // workspaces behind the user's back.
-export const restoreWorkspaceFromDrive = async (
+export const restoreWorkspaceFromPending = async (
   name: string,
   password: string,
   fileId: string
 ) => {
-  setupDriveRestoring()
+  setupAccountRestoring()
   lockSettings(true)
   let result
   try {
-    result = await workspaceRestoreFromDrive(name, password, fileId)
+    result = await workspaceRestoreFromPending(name, password, fileId)
   } catch (error) {
-    setupDriveRestoreFailed()
+    setupAccountRestoreFailed()
     throw error
   } finally {
     lockSettings(false)

@@ -113,6 +113,7 @@ describe("first-run setup", () => {
     await waitFor("start-setup-button");
 
     await expect($('[data-testid="start-drive-button"]')).toBeDisplayed();
+    await expect($('[data-testid="start-dropbox-button"]')).toBeDisplayed();
     await expect($('[data-testid="start-restore-button"]')).toBeDisplayed();
   });
 });

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useApp, forgetDrive, setupDriveFailed, setupDriveReset } from '@/store'
-import { syncAdoptPending, syncErrorText } from '@/api/sync'
+import { useApp, forgetAccount, setupAccountFailed, setupAccountReset } from '@/store'
+import { syncAdoptPending, syncErrorText, syncProvider } from '@/api/sync'
+import { providerShares } from '@/api/provider'
 import { describeError, errorKind } from '@/api/errors'
 import SettingsGroup from '@/components/elements/SettingsGroup'
-import DriveCard from './DriveCard'
+import AccountCard from './AccountCard'
 import BackupRow from './BackupRow'
 import SharesRow from './SharesRow'
 
@@ -20,7 +21,7 @@ export default function Sync() {
   // A connect answers here rather than on `sync` (see `syncConnect`): the
   // account is probed first, and whether this vault may join it is the
   // backend's to say (`syncAdoptPending`).
-  const drive = useApp(state => state.setupDrive)
+  const account = useApp(state => state.setupAccount)
   // The last failure as copy: said from the catalogue where Rust named a kind
   // the frontend has words for, and in Rust's own words otherwise.
   const syncFailure = syncErrorText(sync)
@@ -31,7 +32,7 @@ export default function Sync() {
   // so every visit to another section would otherwise cost a backend call.
   useEffect(
     () => () => {
-      if (useApp.getState().setupDrive.status !== 'idle') forgetDrive()
+      if (useApp.getState().setupAccount.status !== 'idle') forgetAccount()
     },
     []
   )
@@ -43,10 +44,10 @@ export default function Sync() {
   const asked = useRef(false)
   const [refused, setRefused] = useState(false)
   useEffect(() => {
-    if (drive.status !== 'empty' && drive.status !== 'found') {
+    if (account.status !== 'empty' && account.status !== 'found') {
       // A restore in flight keeps the offer it was made from; a restore that
       // failed comes back as 'found' and finds the offer still standing.
-      if (drive.status !== 'restoring') {
+      if (account.status !== 'restoring') {
         asked.current = false
         setRefused(false)
       }
@@ -54,28 +55,29 @@ export default function Sync() {
     }
     if (asked.current) return
     asked.current = true
-    syncAdoptPending().then(setupDriveReset, (error: unknown) => {
+    syncAdoptPending().then(setupAccountReset, (error: unknown) => {
       if (errorKind(error) === 'vaultNotInAccount') setRefused(true)
-      else setupDriveFailed(describeError(error))
+      else setupAccountFailed(describeError(error))
     })
-  }, [drive.status])
+  }, [account.status])
 
-  const deciding = (drive.status === 'empty' || drive.status === 'found') && !refused
-  const probing = drive.status === 'pending' || deciding
-  const offered = refused && (drive.status === 'found' || drive.status === 'restoring')
-  const restoring = drive.status === 'restoring'
+  const deciding = (account.status === 'empty' || account.status === 'found') && !refused
+  const probing = account.status === 'pending' || deciding
+  const offered = refused && (account.status === 'found' || account.status === 'restoring')
+  const restoring = account.status === 'restoring'
 
   return (
     <>
       <section className="mb-7">
-        <DriveCard probing={probing} offered={offered} restoring={restoring} />
+        <AccountCard probing={probing} offered={offered} restoring={restoring} />
         {syncFailure && <ErrorNote message={syncFailure} />}
-        {drive.status === 'error' && (
-          <ErrorNote message={drive.error || t('Something went wrong')} />
+        {account.status === 'error' && (
+          <ErrorNote message={account.error || t('Something went wrong')} />
         )}
       </section>
 
-      {sync.configured && (
+      {/* Shares are Drive files: another provider has nowhere to put one yet. */}
+      {providerShares(syncProvider(sync)) && (
         <SettingsGroup label={t('Sharing')}>
           <SharesRow />
         </SettingsGroup>

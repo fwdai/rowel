@@ -1,14 +1,14 @@
 import { useState, type ChangeEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { SetupDriveFile } from '@/api/setup'
-import DriveVaults from './DriveVaults'
+import type { RemotePack } from '@/api/setup'
+import AccountVaults from './AccountVaults'
 import Masterpass from './Masterpass'
 import Button from './Button'
 import { inputClass } from './formStyles'
 import { unsealError } from '@/components/Start/shared/errors'
 
 interface Props {
-  files: SetupDriveFile[]
+  files: RemotePack[]
   selectedId: string | null
   onSelect: (id: string) => void
   /** A restore is in flight; every control stands down. */
@@ -32,14 +32,14 @@ interface Props {
 
 /**
  * Name, password, Restore: the last step of every "make a workspace out of a
- * vault on Drive" flow, whichever account the vault came from. The list and
+ * vault in an account" flow, whichever account the vault came from. The list and
  * the pick are the caller's — they outlive a wrong password — so this only
  * draws them.
  *
  * The name is optional: a vault carries its own, given wherever it was made,
  * and most restores want exactly that one. Typing one renames it everywhere.
  */
-export default function DriveRestoreForm({
+export default function AccountRestoreForm({
   files,
   selectedId,
   onSelect,
@@ -75,7 +75,12 @@ export default function DriveRestoreForm({
 
   return (
     <div className="flex max-w-xs flex-col gap-3">
-      <DriveVaults files={files} selectedId={selectedId} onSelect={onSelect} testid={pickerTestid} />
+      <AccountVaults
+        files={files}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        testid={pickerTestid}
+      />
       <input
         type="text"
         className={inputClass}

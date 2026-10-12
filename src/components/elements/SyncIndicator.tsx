@@ -1,10 +1,11 @@
 import { useTranslation } from 'react-i18next'
 import { useApp } from '@/store'
-import { syncErrorText } from '@/api/sync'
+import { syncErrorText, syncProvider } from '@/api/sync'
+import { providerName } from '@/api/provider'
 import { useDates } from '@/hooks/useDates'
 import { cx } from '@/utils/cx'
 import { DiskGlyph } from '@/components/Main/icons'
-import GoogleDriveMark from './GoogleDriveMark'
+import ProviderMark from './ProviderMark'
 import Tooltip from './Tooltip'
 
 interface Props {
@@ -21,14 +22,16 @@ export default function SyncIndicator({ side = 'bottom' }: Props) {
   const { relativeLong } = useDates()
   const sync = useApp(state => state.sync)
 
+  const provider = syncProvider(sync)
+  const name = provider && providerName(provider)
   const failed = sync.configured && sync.error !== null
-  const title = !sync.configured
+  const title = !name
     ? t('Stored on this device')
     : sync.inProgress
       ? t('Syncing…')
       : failed
-        ? t('Google Drive sync failed')
-        : t('Synced with Google Drive')
+        ? t('{{provider}} sync failed', { provider: name })
+        : t('Synced with {{provider}}', { provider: name })
   const detail = !sync.configured
     ? null
     : failed
@@ -54,9 +57,9 @@ export default function SyncIndicator({ side = 'bottom' }: Props) {
         data-state={!sync.configured ? 'off' : failed ? 'error' : sync.inProgress ? 'busy' : 'on'}
         className="relative grid h-7 w-7 place-items-center rounded-sm text-text3 transition-colors hover:bg-hover hover:text-text2"
       >
-        {sync.configured ? (
+        {provider ? (
           <>
-            <GoogleDriveMark size={15} />
+            <ProviderMark provider={provider} size={15} />
             <span
               aria-hidden
               className={cx(

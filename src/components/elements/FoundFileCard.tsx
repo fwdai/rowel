@@ -4,7 +4,7 @@ import { CloudGlyph, DiskGlyph } from '@/components/Main/icons'
 
 interface Props {
   /** Where the file is: the cloud it syncs through, or the disk it sits on. */
-  where: 'drive' | 'disk'
+  where: 'cloud' | 'disk'
   name: string
   /** The line under the name — how old it is, how big. */
   meta?: string
@@ -17,7 +17,7 @@ interface Props {
 // one: the Drive pack the probe came back with, or the backup just picked.
 export default function FoundFileCard({ where, name, meta, encrypted, testid }: Props) {
   const { t } = useTranslation()
-  const drive = where === 'drive'
+  const cloud = where === 'cloud'
 
   return (
     <div
@@ -26,10 +26,10 @@ export default function FoundFileCard({ where, name, meta, encrypted, testid }: 
     >
       <span
         className={`grid h-9 w-9 flex-none place-items-center rounded-sm bg-tile ${
-          drive ? 'text-accent' : 'text-text2'
+          cloud ? 'text-accent' : 'text-text2'
         }`}
       >
-        {drive ? <CloudGlyph size={18} /> : <DiskGlyph size={18} />}
+        {cloud ? <CloudGlyph size={18} /> : <DiskGlyph size={18} />}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-base font-medium text-text">{name}</span>

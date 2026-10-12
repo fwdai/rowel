@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Button from '@/components/elements/Button'
 import { META_TYPE } from '@/components/elements/tokens'
-import { useApp, setupDriveReset, connectDrive } from '@/store'
+import ProviderButtons from '@/components/elements/ProviderButtons'
+import { useApp, setupAccountReset, connectAccount } from '@/store'
+import { providerName, type Provider } from '@/api/provider'
 import StepHeader from '../shared/StepHeader'
 import SpinnerCard from '../shared/SpinnerCard'
 import { COLUMN, STACK, FOOTNOTE } from '../shared/layout'
@@ -11,18 +13,18 @@ import { describeError } from '@/api/errors'
 interface Props {
   /** Create the data here and now, with sync on if consent already landed. */
   onCreate: () => Promise<void>
-  /** The probe found data in this Drive: that is a decision, not a step. */
+  /** The probe found data in this account: that is a decision, not a step. */
   onConflict: () => void
 }
 
 // Step two of a fresh start: where the backup lives. One question, two
 // answers, and nothing else on screen that could be mistaken for a third.
-// Connecting is also how we find out whether this Google account already
-// holds data — so the answer to the probe, not the press, is what decides
-// where this goes next.
+// Connecting is also how we find out whether the account already holds data
+// — so the answer to the probe, not the press, is what decides where this goes
+// next. One connect per provider; whichever is pressed is the one probed.
 export default function Sync({ onCreate, onConflict }: Props) {
   const { t } = useTranslation()
-  const drive = useApp(state => state.setupDrive)
+  const account = useApp(state => state.setupAccount)
   const [error, setError] = useState<string | null>(null)
   // Creating is in flight. Both buttons go inert on it: a second press would
   // ask the backend to create again, and while the backend now refuses the
@@ -35,7 +37,7 @@ export default function Sync({ onCreate, onConflict }: Props) {
 
   const fail = (message: string) => {
     setError(message)
-    setupDriveReset()
+    setupAccountReset()
   }
 
   // One entry point for both ways a create starts (a press, or the probe
@@ -56,34 +58,36 @@ export default function Sync({ onCreate, onConflict }: Props) {
   useEffect(() => {
     if (settled.current) return
 
-    if (drive.status === 'empty') {
+    if (account.status === 'empty') {
       // A bare account: nothing to weigh up, so this is the last step.
       settled.current = true
       create(message => {
         settled.current = false
         fail(message)
       })
-    } else if (drive.status === 'found') {
+    } else if (account.status === 'found') {
       settled.current = true
       onConflict()
-    } else if (drive.status === 'error') {
-      fail(drive.error || t('Something went wrong'))
+    } else if (account.status === 'error') {
+      fail(account.error || t('Something went wrong'))
     }
-  }, [drive.status, drive.error, create, onConflict, t])
+  }, [account.status, account.error, create, onConflict, t])
 
-  const connect = () => {
+  const connect = (provider: Provider) => {
     if (busy) return
     setError(null)
-    connectDrive()
+    connectAccount(provider)
   }
 
-  if (drive.status === 'pending')
+  if (account.status === 'pending')
     return (
       <>
         <StepHeader
           eyebrow={t('Get started · 2 of 2')}
           busy
-          title={t('Connecting to Google Drive…')}
+          title={t('Connecting to {{provider}}…', {
+            provider: providerName(account.provider ?? 'googleDrive')
+          })}
         />
         <div className={`${COLUMN} mt-8`}>
           <SpinnerCard
@@ -98,14 +102,19 @@ export default function Sync({ onCreate, onConflict }: Props) {
     <>
       <StepHeader
         eyebrow={t('Get started · 2 of 2')}
-        title={t('Back up to Google Drive')}
-        body={t("Your data syncs to Google Drive, so a lost device isn't lost secrets.")}
+        title={t('Back up to the cloud')}
+        body={t("Your data syncs to your own cloud storage, so a lost device isn't lost secrets.")}
       />
 
       <div className={`${COLUMN} mt-8 ${STACK}`}>
-        <Button block testid="setup-connect-drive-button" disabled={busy} onClick={connect}>
-          {t('Connect Google Drive')}
-        </Button>
+        <ProviderButtons
+          variant="primary"
+          block
+          disabled={busy}
+          onPick={connect}
+          testid="setup"
+          className={STACK}
+        />
         <Button
           block
           variant="pale"
