@@ -416,8 +416,10 @@ fn detect_csv(bytes: &[u8]) -> Format {
         Format::LastpassCsv
     } else if has("group") && has("title") {
         Format::KeepassCsv
-    } else if has("otpauth") {
-        // The column only 1Password's CSV has; its tags and star are read too.
+    } else if has("otpauth") && has("title") {
+        // The columns as 1Password names them: its tags and star are read too.
+        // A sheet that merely has an `otpauth` column keeps the generic
+        // mapper, whose aliases it may need for the rest of its header.
         Format::OnepasswordCsv
     } else {
         Format::GenericCsv

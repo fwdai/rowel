@@ -55,7 +55,7 @@ struct Account {
 
 #[derive(Deserialize)]
 struct Vault {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::null_to_default")]
     attrs: VaultAttrs,
     #[serde(default, deserialize_with = "super::null_to_default")]
     items: Vec<Item>,
@@ -80,9 +80,9 @@ struct Item {
     created_at: Option<u64>,
     #[serde(default, rename = "updatedAt", deserialize_with = "super::lenient_u64")]
     updated_at: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::null_to_default")]
     overview: Overview,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::null_to_default")]
     details: Details,
 }
 
@@ -194,8 +194,13 @@ impl Field {
             .unwrap_or_default()
     }
 
+    // A kind that is a secret wherever it sits: a private key or a card
+    // number on a note is still one, and lands concealed.
     fn is_secret(&self) -> bool {
-        matches!(self.kind(), "concealed" | "totp")
+        matches!(
+            self.kind(),
+            "concealed" | "totp" | "sshKey" | "creditCardNumber"
+        )
     }
 
     fn is_file(&self) -> bool {
@@ -299,9 +304,11 @@ fn password_history(history: Vec<History>) -> Vec<PasswordHistoryItem> {
 /// `export.data` out of the archive, or why it could not be read.
 fn export_data(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
-    let file = archive
-        .by_name("export.data")
-        .map_err(|_| "no export.data in the archive".to_owned())?;
+    let file = archive.by_name("export.data").map_err(|e| match e {
+        zip::result::ZipError::FileNotFound => "no export.data in the archive".to_owned(),
+        // A codec this build does not read, say — not a missing file.
+        other => other.to_string(),
+    })?;
     let mut data = Vec::new();
     file.take(MAX_DATA_BYTES + 1)
         .read_to_end(&mut data)

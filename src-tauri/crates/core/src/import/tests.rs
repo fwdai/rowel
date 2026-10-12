@@ -1283,6 +1283,12 @@ fn detect_by_extension_and_content() {
         detect("x.csv", b"name,url,username,password\n"),
         Some(Format::GenericCsv)
     );
+    // An `otpauth` column alone is not 1Password's sheet: the rest of this
+    // header only the generic aliases read.
+    assert_eq!(
+        detect("x.csv", b"name,website,login,pass,otpauth\n"),
+        Some(Format::GenericCsv)
+    );
     assert_eq!(
         detect("noext", b"  {\"items\":[]}"),
         Some(Format::Bitwarden)
@@ -2295,6 +2301,38 @@ fn detect_tells_a_1pux_by_its_name_or_its_signature() {
 
     let r = parse(Format::Onepux, &onepux("[1,2"));
     assert!(r.errors[0].message.starts_with("invalid 1Password export"));
+
+    // A codec this build does not read is named as such, not as a missing
+    // file. The writer cannot produce one, so a plain entry is relabelled as
+    // bzip2 (method 12) in its local header and in the central directory.
+    let mut odd = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let method =
+        |m: zip::CompressionMethod| zip::write::SimpleFileOptions::default().compression_method(m);
+    odd.start_file("export.data", method(zip::CompressionMethod::Stored))
+        .unwrap();
+    std::io::Write::write_all(&mut odd, b"{}").unwrap();
+    let mut odd = odd.finish().unwrap().into_inner();
+    for (signature, at) in [(b"PK\x03\x04", 8), (b"PK\x01\x02", 10)] {
+        let start = odd.windows(4).position(|w| w == signature).unwrap();
+        odd[start + at..start + at + 2].copy_from_slice(&12u16.to_le_bytes());
+    }
+    let r = parse(Format::Onepux, &odd);
+    assert!(
+        r.errors[0].message.contains("ompression"),
+        "{}",
+        r.errors[0].message
+    );
+    let mut stored = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    stored
+        .start_file("export.data", method(zip::CompressionMethod::Stored))
+        .unwrap();
+    std::io::Write::write_all(
+        &mut stored,
+        one_vault(r#"{"categoryUuid":"003","overview":{"title":"Plain"},"details":{}}"#).as_bytes(),
+    )
+    .unwrap();
+    let r = parse(Format::Onepux, &stored.finish().unwrap().into_inner());
+    assert_eq!(r.entries[0].title, "Plain");
 }
 
 // A login signs in with its designated form fields; the sections hold the
@@ -2411,7 +2449,9 @@ fn onepux_maps_cards_documents_keys_and_notes() {
             {"title":"first name","id":"firstname","value":{"string":"Octo"}},
             {"title":"birth date","id":"birthdate","value":{"date":551577600}}]}]}},
           {"categoryUuid":"003","overview":{"title":"Note"},"details":{"notesPlain":"body","sections":[{"fields":[
-            {"title":"code","id":"c","value":{"concealed":"1234"}}]}]}}"#,
+            {"title":"code","id":"c","value":{"concealed":"1234"}},
+            {"title":"key","id":"k","value":{"sshKey":{"privateKey":"-----BEGIN KEY-----"}}},
+            {"title":"card","id":"n","value":{"creditCardNumber":"4111"}}]}]}}"#,
     ));
     let r = parse(Format::Onepux, &file);
     assert!(r.errors.is_empty(), "{:?}", r.errors);
@@ -2506,12 +2546,21 @@ fn onepux_maps_cards_documents_keys_and_notes() {
     let note = &r.entries[8];
     assert_eq!(note.kind, EntryKind::Note);
     assert_eq!(note.notes.as_deref(), Some("body"));
-    assert_eq!(note.extra, vec![concealed("code", "1234")]);
+    // A private key or a card number is a secret on a note as well.
+    assert_eq!(
+        note.extra,
+        vec![
+            concealed("code", "1234"),
+            concealed("key", "-----BEGIN KEY-----"),
+            concealed("card", "4111"),
+        ]
+    );
 }
 
 // Across vaults the rows keep counting and each item wears its vault's name;
 // the trash stays behind, the archive comes in, and an item with files says
-// so without reading as skipped. Null lists are empty ones.
+// so without reading as skipped. A null list is an empty one, and a null
+// object (a vault without attributes, an item without details) is a blank one.
 #[test]
 fn onepux_reads_several_vaults_the_archive_and_the_files_left_behind() {
     let file = onepux(
@@ -2523,11 +2572,12 @@ fn onepux_reads_several_vaults_the_archive_and_the_files_left_behind() {
           {"attrs":{"name":"Work"},"items":[
             {"categoryUuid":"006","overview":{"title":"Scan"},"details":{"documentAttributes":{"fileName":"scan.pdf","documentId":"d","decryptedSize":10},
               "sections":[{"fields":[{"title":"photo","id":"f","value":{"file":{"fileName":"photo.png","documentId":"p","decryptedSize":5}}}]}]}},
-            {"categoryUuid":"001","overview":{"title":""},"details":{}}]}]},
+            {"categoryUuid":"001","overview":{"title":""},"details":{}}]},
+          {"attrs":null,"items":[{"categoryUuid":"003","overview":{"title":"Bare"},"details":null}]}]},
           {"vaults":null}]}"#,
     );
     let r = parse(Format::Onepux, &file);
-    assert_eq!(r.entries.len(), 2);
+    assert_eq!(r.entries.len(), 3);
     assert_eq!(r.entries[0].title, "Kept");
     assert_eq!(r.entries[0].password.as_deref(), Some("p"));
     assert_eq!(r.entries[0].tags, vec!["Personal".to_string()]);
@@ -2535,6 +2585,8 @@ fn onepux_reads_several_vaults_the_archive_and_the_files_left_behind() {
     assert_eq!(r.entries[1].kind, EntryKind::Note);
     assert_eq!(r.entries[1].tags, vec!["Work".to_string()]);
     assert!(r.entries[1].extra.is_empty());
+    assert_eq!(r.entries[2].title, "Bare");
+    assert!(r.entries[2].tags.is_empty());
     assert_eq!(r.warnings.len(), 1);
     assert_eq!(r.warnings[0].row, 3);
     assert_eq!(
