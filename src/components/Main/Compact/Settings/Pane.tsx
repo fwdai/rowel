@@ -44,7 +44,7 @@ export default function Pane({
   return (
     <Stack
       under={
-        <div {...swipe} data-testid="settings-pane" className={PUSHED_SCREEN}>
+        <div {...swipe.screen} data-testid="settings-pane" className={PUSHED_SCREEN}>
           <NavBar
             leading={
               <BackButton
@@ -66,6 +66,7 @@ export default function Pane({
             <p className="mt-1 mb-5 text-sm text-text2">{descriptionOf(section)}</p>
             <Section section={section} />
           </div>
+          <div {...swipe.edge} />
         </div>
       }
       over={subpage && <SubpagePane subpage={subpage} locked={locked} />}
@@ -80,7 +81,7 @@ function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean })
   const swipe = useSwipeBack(close, locked)
 
   return (
-    <div {...swipe} data-testid="settings-subpage" className={PUSHED_SCREEN}>
+    <div {...swipe.screen} data-testid="settings-subpage" className={PUSHED_SCREEN}>
       <NavBar
         leading={
           <BackButton
@@ -100,6 +101,7 @@ function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean })
       <div className="flex min-h-0 flex-1 flex-col">
         <SubpageBody subpage={subpage} />
       </div>
+      <div {...swipe.edge} />
     </div>
   )
 }

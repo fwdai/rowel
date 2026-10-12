@@ -70,9 +70,11 @@ export const TAB_BAR_NOTCH =
  * sub-page. It arrives across the whole width as the `Stack` layer under it
  * recedes, and throws a shadow off its left edge onto that layer: unseen at
  * rest, where it lies past the screen's edge, and the seam between the two
- * screens while an edge swipe holds them apart.
+ * screens while an edge swipe holds them apart. `relative`: what the swipe's
+ * edge strip, and a bottom action and its fade, are pinned to.
  */
-export const PUSHED_SCREEN = 'flex min-h-0 flex-1 flex-col animate-push bg-screen shadow-push'
+export const PUSHED_SCREEN =
+  'relative flex min-h-0 flex-1 flex-col animate-push bg-screen shadow-push'
 
 /**
  * What a root screen's scroller reserves under its content so the last row can
@@ -102,12 +104,10 @@ export const PRIMARY_ACTION = `${EDGE} h-[54px]`
 export const PRIMARY_CLEARANCE = 'pb-[102px]'
 
 /**
- * A pushed screen's scroller. `overscroll-contain` is what keeps the edge swipe
- * alive, not a scroll nicety: WebKit resets the used `touch-action` at a scroll
- * container, so the `pan-y` `useSwipeBack` puts on the screen does not reach a
- * touch that starts in here — and a drag the native scroller may hand to its
- * parent begins a pan that cancels the pointer under the swipe. Contained, a
- * sideways drag has nowhere to go, no pan begins, and the swipe keeps it.
+ * A pushed screen's scroller. The edge swipe never starts in here — its strip
+ * lies over the scroller's left edge (`useSwipeBack`) — so a touch that does is
+ * the scroller's alone. `overscroll-contain` keeps a drag it cannot use from
+ * being handed up to the shell.
  */
 export const SCREEN_SCROLLER = 'min-h-0 flex-1 overflow-y-auto overscroll-contain'
 

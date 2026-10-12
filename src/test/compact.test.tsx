@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
 import AuthShell from '@/components/elements/AuthShell'
@@ -895,6 +895,34 @@ describe('swipe back', () => {
       expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
     )
     swipe(screen.getByTestId('settings-pane'), { dx: 200 })
+    await waitFor(() => expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument())
+  })
+
+  // The strip the drag starts on lies over the scroller's first points, so a
+  // tap there is handed to what it covers: the row, or the back control.
+  it('lays a strip on the edge and passes a tap on it to the control under', async () => {
+    seed()
+    render(<Main />)
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    const pane = screen.getByTestId('settings-pane')
+    const strip = within(pane).getByTestId('swipe-edge')
+    expect(pane).toContainElement(strip)
+    expect(strip).toHaveClass('touch-none')
+
+    const back = screen.getByTestId('settings-back')
+    const found: number[][] = []
+    document.elementFromPoint = (x, y) => {
+      found.push([x, y, strip.style.pointerEvents === 'none' ? 1 : 0])
+      return back
+    }
+    pane.getBoundingClientRect = () => ({ left: 0, width: 390 }) as DOMRect
+    const touch = { pointerId: 1, pointerType: 'touch' }
+    fireEvent.pointerDown(strip, { ...touch, clientX: 8, clientY: 30 })
+    fireEvent.pointerUp(strip, { ...touch, clientX: 8, clientY: 30 })
+    // Looked up with the strip out of the way, and once.
+    expect(found).toEqual([[8, 30, 1]])
+    expect(strip.style.pointerEvents).toBe('')
     await waitFor(() => expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument())
   })
 })
