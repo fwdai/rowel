@@ -25,8 +25,8 @@ const fold = (tag: string) => tag.trim().toLocaleLowerCase()
  * after them — and, floating under it, the rest of the vault's tags as chips
  * to tap into the field, the way Notion, Linear and Mail's recipients field
  * take their tokens. Typing narrows the floating chips; when nothing answers
- * to what was typed, a "Create …" verb stands first, and Return does the
- * same. A name that only differs by case from a tag already there is
+ * to what was typed, a dashed "Create …" chip stands first, and Return does
+ * the same. A name that only differs by case from a tag already there is
  * that tag, not a second one. Backspace in an empty field takes the last tag
  * off, as in any token field. Nothing here is a card: the chips are the
  * content, and a tag looks the same here as it does on the entry.
@@ -54,9 +54,7 @@ export default function TagPicker({ subject, value, onChange, onClose }: Props) 
     ? [...value, ...counts.map(row => row.tag)].find(tag => fold(tag) === fold(needle))
     : undefined
   const creatable = needle !== '' && match === undefined
-  // Nothing floating and nothing typed — a vault with no tags, or an entry
-  // that already carries every one — so the field says what it is for.
-  const bare = options.length === 0 && !creatable && needle === ''
+  const bare = counts.length === 0 && value.length === 0 && needle === ''
 
   // The caret stays in the field through every press on a chip: the next tag
   // is typed, not re-aimed at.
@@ -137,7 +135,7 @@ export default function TagPicker({ subject, value, onChange, onClose }: Props) 
       <div className="px-5 pt-4 pb-3">
         {bare ? (
           <p className={META} data-testid="tag-picker-empty">
-            {t('Type a name to add a new tag.')}
+            {t('Type a name to make your first tag.')}
           </p>
         ) : (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-3">
