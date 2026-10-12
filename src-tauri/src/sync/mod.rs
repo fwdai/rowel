@@ -25,6 +25,8 @@ pub mod engine;
 // sharing and the backup export spell them the same way.
 pub mod layout;
 pub mod pack;
+#[allow(dead_code)]
+pub(crate) mod providers;
 pub mod restore;
 // First-run onboarding's keyless view of the account. Named for the flow, not
 // for `setup` below — modules and functions live in separate namespaces.
