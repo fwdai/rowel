@@ -63,8 +63,11 @@ describe('tags on the entry screen', () => {
     const chip = within(section).getByLabelText('Filter by tag work')
     expect(chip).toHaveTextContent('work')
     expect(chip).not.toHaveTextContent('#')
-    // The cards' own white on the screen's ground, edged — not a grey tile.
-    expect(chip).toHaveClass('bg-detail')
+    // The cards' own material on the screen's ground — not a grey tile.
+    expect(chip).toHaveClass('bg-card', 'shadow-card')
+    // The add control is the screen's quiet verb, not a chip-shaped thing.
+    expect(within(section).getByTestId('add-tag-button')).toHaveClass('text-accent')
+    expect(within(section).getByTestId('add-tag-button')).not.toHaveClass('border')
     // No card under the chips: they are the content.
     expect(section.querySelector('.shadow-card')).toBeNull()
     expect(within(section).getByTestId('add-tag-button')).toHaveTextContent('Add tag')
@@ -210,13 +213,22 @@ describe('tags on the entry screen', () => {
     })
   })
 
-  it('says how to start when the vault carries no tags at all', async () => {
+  it('says what the field is for when there is nothing left to float', async () => {
     withEntries([loginMeta({ id: 'l1', title: 'Google' })])
     mockCommand('reveal_entry', () => loginEntry({ id: 'l1', title: 'Google' }))
     await openPicker()
 
-    expect(screen.getByTestId('tag-picker-empty')).toHaveTextContent('first tag')
+    // A vault with no tags at all…
+    expect(screen.getByTestId('tag-picker-empty')).toHaveTextContent('add a new tag')
     expect(suggested()).toEqual([])
+
+    // …and, once one is made, an entry that carries every tag there is.
+    await userEvent.type(field(), 'work{Enter}')
+    expect(applied()).toEqual(['work'])
+    expect(screen.getByTestId('tag-picker-empty')).toBeInTheDocument()
+    // Typing takes the hint away: the floating row is for what is typed.
+    await userEvent.type(field(), 'w')
+    expect(screen.queryByTestId('tag-picker-empty')).not.toBeInTheDocument()
   })
 
   it('reports a save the backend refused, and keeps the entry where it was', async () => {

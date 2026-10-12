@@ -83,7 +83,7 @@
   "Add tag": "Etiket ekle",
   "Create “{{tag}}”": "“{{tag}}” oluştur",
   "Remove tag {{tag}}": "{{tag}} etiketini kaldır",
-  "Type a name to make your first tag.": "İlk etiketini oluşturmak için bir ad yaz.",
+  "Type a name to add a new tag.": "Yeni bir etiket eklemek için bir ad yaz.",
   "Loading Results..": "Sonuçlar yükleniyor..",
   "Old": "Eski",
   "Overall Score": "Genel puan",

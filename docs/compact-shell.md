@@ -190,21 +190,24 @@ editor with its ×, under the search field as the list's filter, and as the
 add control — `elements/TagChip`: a 32px pill (24 on the desktop), no `#`
 in front of it (a tag is not a hashtag; the list's title names the tag bare
 too), and a hit area reaching the 44px the platform asks for. At rest it is
-the cards' own white on the screen's grey ground, in an edge tinted with the
-accent at a quarter — a step firmer than a card's hairline, so the pill holds
-its shape beside the content without colouring it. Inside the picker's field,
-which is itself the white detail surface, the same chip takes the tile grey
-(`tone="field"`), since white on white would be no chip at all. The list's
-filter chip is the one heavy one — the accent, solid — because there the tag
-is what the screen is about; the picker's waiting chips are bare outlines in
-the secondary ink. Pressing a tag while reading goes to everything filed
+the cards' own material — the card surface, its hairline, its white top edge
+and faint drop (`shadow-card`) — so a tag is a small card of the same stuff
+as the rows above it, lifted off the screen's ground by depth rather than by
+a heavy edge or a colour. Inside the picker's field, which is itself the card
+surface, the same chip is a flat tint with an inset hairline (`tone="field"`),
+the token a recipients field holds. The list's filter chip is the one heavy
+one — the accent, solid — because there the tag is what the screen is about;
+the picker's waiting chips are bare outlines in the secondary ink. "Add tag"
+and "Create …" are not chips but the screen's quiet accent verb, the one
+"Attach file" is, at chip height so they sit in the row: a verb beside the
+tags, not a tag-shaped thing that is not a tag. Pressing a tag while reading goes to everything filed
 under it. Adding or taking one off never needs the editor: the add chip opens
 `elements/TagPicker`, a bottom sheet holding one token field — the entry's
 tags as chips inside it, the caret after them, as Mail's recipients field and
 Notion's multi-select hold theirs — and, floating under it, the rest of the
 vault's tags as outlined chips (busiest first, with counts) to tap into the
 field. Typing narrows the floating chips; when nothing answers to it, a
-dashed "Create …" chip stands first, and Return does the same; a name that
+"Create …" verb stands first, and Return does the same; a name that
 differs only by case is the tag already there; Backspace in the empty field
 takes the last tag off. Nothing in the sheet is a card or a list: the chips
 are the content, and a tag looks there as it does on the entry.

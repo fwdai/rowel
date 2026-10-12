@@ -83,7 +83,7 @@
   "Add tag": "Додати тег",
   "Create “{{tag}}”": "Створити «{{tag}}»",
   "Remove tag {{tag}}": "Прибрати тег {{tag}}",
-  "Type a name to make your first tag.": "Введіть назву, щоб створити перший тег.",
+  "Type a name to add a new tag.": "Введіть назву, щоб додати новий тег.",
   "Loading Results..": "Завантаження результатів..",
   "Old": "Застарілі",
   "Overall Score": "Оцінка",
