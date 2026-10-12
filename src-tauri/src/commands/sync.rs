@@ -153,7 +153,7 @@ pub async fn sync_adopt_pending(app: AppHandle, state: State<'_, AppState>) -> R
         // guard through the local write keeps a newer report from being
         // mistaken for this account, while the post-write generation check
         // catches a cancel that arrived during the write itself.
-        let mut pending = state.pending_drive.lock().unwrap();
+        let mut pending = state.pending_account.lock().unwrap();
         let Some(current) = pending.as_mut() else {
             return Err(Error::DriveNotConnected);
         };
@@ -339,7 +339,7 @@ pub(crate) fn start_consent(app: &AppHandle, state: &AppState, purpose: AuthPurp
                 .into(),
         ));
     }
-    let started = sync::begin(app)?;
+    let started = sync::begin(app, sync::Provider::GoogleDrive)?;
     *state.pending_auth.lock().unwrap() = Some(crate::state::PendingAuth {
         verifier: started.verifier,
         state: started.state,
@@ -360,7 +360,7 @@ pub(crate) fn start_consent(app: &AppHandle, state: &AppState, purpose: AuthPurp
 /// is a network round trip and must not run on the URL-open callback.
 #[cfg(mobile)]
 pub fn on_redirect(app: &AppHandle, url: &url::Url) {
-    if !sync::redirect_matches(app, url) {
+    if !sync::redirect_matches(app, sync::Provider::GoogleDrive, url) {
         return;
     }
     let state = app.state::<AppState>();
@@ -810,6 +810,7 @@ mod tests {
             vault_id: vault_id.into(),
             size: 0,
             modified_time: String::new(),
+            provider: sync::Provider::GoogleDrive,
         }
     }
 

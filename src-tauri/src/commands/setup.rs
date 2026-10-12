@@ -3,7 +3,7 @@
 //! Every other path through `sync` needs an unlocked session, because the OAuth
 //! tokens live in a file sealed under the vault key. On a fresh install there is
 //! no key and no vault, so the order has to be inverted: consent first, tokens
-//! held in memory ([`AppState::pending_drive`]), and the account only written
+//! held in memory ([`AppState::pending_account`]), and the account only written
 //! down once the user's choice — restore what is up there, or start over — has
 //! produced a key to seal it with.
 //!
@@ -30,10 +30,10 @@ use crate::error::{Error, Result};
 use crate::events;
 use crate::models::UnlockResult;
 use crate::session::{create_vault, list_metas, store_err};
-use crate::state::{AppState, PendingDrive};
+use crate::state::{AppState, PendingAccount};
 use crate::storage;
 use crate::store::SqliteStore;
-use crate::sync::{self, restore, setup::PackInfo};
+use crate::sync::{self, restore, setup::PackInfo, Provider};
 
 // --- connect ---------------------------------------------------------------
 
@@ -61,7 +61,7 @@ pub fn setup_drive_connect(app: AppHandle, state: State<'_, AppState>) -> Result
 /// precondition is the only difference between the two callers, and it is the
 /// opposite one: onboarding refuses to run once a vault exists, and a workspace
 /// restore is the case where one already does. Everything after it is the same
-/// — the tokens wait in [`AppState::pending_drive`] until whichever flow
+/// — the tokens wait in [`AppState::pending_account`] until whichever flow
 /// follows produces a key to seal them under, and the same probe answers on the
 /// same `setup:drive:*` events, so one screen's picker serves both.
 ///
@@ -76,7 +76,7 @@ pub(crate) fn connect_pending(app: &AppHandle) -> Result<()> {
 
     let app = app.clone();
     super::detached(move || {
-        let probed = sync::obtain_tokens(&app).and_then(|mut tokens| {
+        let probed = sync::obtain_tokens(&app, Provider::GoogleDrive).and_then(|mut tokens| {
             // `block_on` is legal here because a blocking-pool thread is not one
             // of the async runtime's workers. Same rule as a sync run.
             let files = tauri::async_runtime::block_on(probe(&app, &mut tokens))?;
@@ -108,7 +108,7 @@ pub(crate) fn connect_pending(app: &AppHandle, state: &AppState) -> Result<()> {
 #[cfg(mobile)]
 pub(crate) async fn on_consent(app: &AppHandle, code: &str, verifier: &str) {
     let attempt = current_attempt(&app.state::<AppState>());
-    let probed = match sync::exchange_for_tokens(app, code, verifier).await {
+    let probed = match sync::exchange_for_tokens(app, Provider::GoogleDrive, code, verifier).await {
         Ok(mut tokens) => probe(app, &mut tokens).await.map(|files| (tokens, files)),
         Err(e) => Err(e),
     };
@@ -118,7 +118,7 @@ pub(crate) async fn on_consent(app: &AppHandle, code: &str, verifier: &str) {
 /// Forget the connected account. "Go back" and "switch account" are the same
 /// thing to the backend: nothing was written, so nothing needs undoing — but a
 /// consent still out with the browser has to be disowned too, or its tokens
-/// would land in `pending_drive` after the user had already moved on.
+/// would land in `pending_account` after the user had already moved on.
 ///
 /// Not onboarding's alone: cancelling the Settings dialog that restores a
 /// workspace from Drive means exactly this, so it calls the same command rather
@@ -157,9 +157,13 @@ pub fn setup_drive_disconnect(state: State<'_, AppState>) -> Result<()> {
 /// Crate-visible: `commands::sync::sync_adopt_pending` asks the same question
 /// of the pending account before deciding whether the open vault may join it.
 pub(crate) async fn probe(app: &AppHandle, tokens: &mut sync::Tokens) -> Result<Vec<PackInfo>> {
-    let client = sync::http_client();
-    let token = sync::fresh_access_token(&client, app, tokens).await?;
-    sync::setup::find_packs(&client, &token).await
+    let store = sync::pending_store(app, tokens.clone());
+    let packs = sync::setup::find_packs(&store).await;
+    // Whatever the listing's refresh produced is kept, succeeded or not.
+    if let Some(refreshed) = store.into_tokens() {
+        *tokens = refreshed;
+    }
+    packs
 }
 
 /// The one ending for a connect attempt, so the frontend always hears exactly
@@ -174,14 +178,14 @@ fn report(app: &AppHandle, attempt: u64, probed: Result<(sync::Tokens, Vec<PackI
     // makes publication and the corresponding event one ordered operation: an
     // old callback can finish before a replacement announces "pending", or be
     // discarded after it starts, but can never publish over the newer attempt.
-    let mut pending = state.pending_drive.lock().unwrap();
+    let mut pending = state.pending_account.lock().unwrap();
     if current_attempt(&state) != attempt {
         log::info!("drive setup: dropping a consent the user already abandoned");
         return;
     }
     match probed {
         Ok((tokens, files)) => {
-            *pending = Some(PendingDrive { attempt, tokens });
+            *pending = Some(PendingAccount { attempt, tokens });
             events::setup_drive_probed(app, files);
         }
         Err(e) => {
@@ -283,11 +287,23 @@ pub(crate) async fn download(
     file_id: &str,
     accept: impl FnOnce(&str) -> Result<()>,
 ) -> Result<(Vec<u8>, String)> {
-    let client = sync::http_client();
-    let token = sync::fresh_access_token(&client, app, tokens).await?;
-    let file = sync::setup::find_pack_by_id(&client, &token, file_id).await?;
+    let store = sync::pending_store(app, tokens.clone());
+    let downloaded = fetch_pack(&store, file_id, accept).await;
+    // Whatever the round trips' refresh produced is kept, succeeded or not.
+    if let Some(refreshed) = store.into_tokens() {
+        *tokens = refreshed;
+    }
+    downloaded
+}
+
+async fn fetch_pack(
+    store: &impl sync::VaultStore,
+    file_id: &str,
+    accept: impl FnOnce(&str) -> Result<()>,
+) -> Result<(Vec<u8>, String)> {
+    let file = sync::setup::find_pack_by_id(store, file_id).await?;
     accept(&file.vault_id)?;
-    let bytes = sync::setup::download_pack(&client, &token, &file.id).await?;
+    let bytes = sync::setup::download_pack(store, &file.id).await?;
     Ok((bytes, file.vault_id))
 }
 
@@ -450,7 +466,7 @@ fn discard_fresh_vault(app: &AppHandle) {
     // Best effort, unlike the disconnect path: this is already the cleanup of a
     // failed setup, and there is no vault left for a surviving token file to
     // sync — the next create or restore overwrites it before anything reads it.
-    let _ = storage::remove_gdrive(app);
+    let _ = storage::remove_token_files(app);
 }
 
 /// Refuse to touch the pending account while a create or restore is using it.
@@ -492,12 +508,12 @@ impl Drop for SetupStep<'_> {
 
 /// Start a connect attempt; the number identifies it to [`report`].
 fn begin_attempt(state: &AppState) -> u64 {
-    // Advance first so an adoption holding `pending_drive` can observe the
+    // Advance first so an adoption holding `pending_account` can observe the
     // replacement and roll back its write. Waiting for that same lock before
     // returning also orders the old callback's event before the new caller's
     // "pending" event, and retires credentials from the previous attempt.
     let attempt = state.setup_attempt.fetch_add(1, Ordering::SeqCst) + 1;
-    *state.pending_drive.lock().unwrap() = None;
+    *state.pending_account.lock().unwrap() = None;
     attempt
 }
 
@@ -548,7 +564,7 @@ pub(crate) fn peek_pending(state: &AppState) -> Result<sync::Tokens> {
 /// again before writing, so a cancel or replacement account cannot be mistaken
 /// for the account they originally probed.
 pub(crate) fn peek_pending_attempt(state: &AppState) -> Result<(u64, sync::Tokens)> {
-    let pending = state.pending_drive.lock().unwrap();
+    let pending = state.pending_account.lock().unwrap();
     let pending = pending.as_ref().ok_or(Error::DriveNotConnected)?;
     if current_attempt(state) != pending.attempt {
         return Err(Error::DriveNotConnected);
@@ -558,7 +574,7 @@ pub(crate) fn peek_pending_attempt(state: &AppState) -> Result<(u64, sync::Token
 
 /// Keep a refresh-token rotation only for the account that is still pending.
 pub(crate) fn replace_pending_tokens(state: &AppState, tokens: sync::Tokens) -> Result<()> {
-    let mut pending = state.pending_drive.lock().unwrap();
+    let mut pending = state.pending_account.lock().unwrap();
     let pending = pending.as_mut().ok_or(Error::DriveNotConnected)?;
     if current_attempt(state) != pending.attempt {
         return Err(Error::DriveNotConnected);
@@ -570,7 +586,7 @@ pub(crate) fn replace_pending_tokens(state: &AppState, tokens: sync::Tokens) -> 
 /// Forget the connected account, if there is one.
 pub(crate) fn take_pending(state: &AppState) -> Option<sync::Tokens> {
     state
-        .pending_drive
+        .pending_account
         .lock()
         .unwrap()
         .take()
@@ -579,7 +595,7 @@ pub(crate) fn take_pending(state: &AppState) -> Option<sync::Tokens> {
 
 /// Forget one particular consent result without disturbing a newer account.
 pub(crate) fn take_pending_attempt(state: &AppState, attempt: u64) -> Option<sync::Tokens> {
-    let mut pending = state.pending_drive.lock().unwrap();
+    let mut pending = state.pending_account.lock().unwrap();
     if pending
         .as_ref()
         .is_some_and(|pending| pending.attempt == attempt)
@@ -596,6 +612,7 @@ mod tests {
 
     fn tokens(access: &str) -> sync::Tokens {
         sync::Tokens {
+            provider: Provider::GoogleDrive,
             access_token: Some(access.into()),
             refresh_token: Some("refresh".into()),
             expires_at: Some(4_102_444_800),
@@ -604,7 +621,7 @@ mod tests {
 
     fn set_pending(state: &AppState, access: &str) -> u64 {
         let attempt = begin_attempt(state);
-        *state.pending_drive.lock().unwrap() = Some(PendingDrive {
+        *state.pending_account.lock().unwrap() = Some(PendingAccount {
             attempt,
             tokens: tokens(access),
         });

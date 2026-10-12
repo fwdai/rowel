@@ -23,11 +23,12 @@ use tauri::AppHandle;
 use crate::crypto::Cryptor;
 use crate::error::{Error, Result};
 use crate::models::Entry;
-use crate::sync::layout;
+use crate::sync::providers::gdrive::share::{DrivePublicFetch, DriveShareRemote};
+use crate::sync::{layout, Provider};
 use envelope::{Link, ShareKey, SHARE_TTL_MS};
 use remote::{
-    DriveShareRemote, PublicFetch, ShareFile, ShareRemote, PROP_ENTRY_ID, PROP_EXPIRES_AT,
-    PROP_KIND, PROP_SHARE, PROP_SHARE_VALUE, PROP_VAULT_ID,
+    AnyShareRemote, PublicFetch, ShareFile, ShareRemote, PROP_ENTRY_ID, PROP_EXPIRES_AT, PROP_KIND,
+    PROP_SHARE, PROP_SHARE_VALUE, PROP_VAULT_ID,
 };
 
 /// A freshly published share, as the send dialog needs it.
@@ -227,11 +228,30 @@ pub(crate) fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-pub fn drive_remote(app: &AppHandle, cryptor: Cryptor) -> DriveShareRemote {
-    DriveShareRemote::new(app.clone(), cryptor)
+/// The open workspace's share remote, or `None` when its provider has no share
+/// support. Shares are Drive-only until a link can say which provider to fetch
+/// from.
+pub fn remote_for(app: &AppHandle, cryptor: Cryptor) -> Option<AnyShareRemote> {
+    match crate::sync::sealed_provider(app) {
+        Provider::GoogleDrive => Some(AnyShareRemote::GoogleDrive(DriveShareRemote::new(
+            app.clone(),
+            cryptor,
+        ))),
+        Provider::Dropbox => None,
+    }
 }
 
-/// The sweep as the end of a sync run calls it.
-pub fn sweep_drive(app: &AppHandle, cryptor: Cryptor) -> Result<usize> {
-    sweep(&drive_remote(app, cryptor), now_ms())
+/// What a recipient downloads a link with. Drive's, while every link is a
+/// Drive link: the format names no provider yet.
+pub fn public_fetch() -> impl PublicFetch {
+    DrivePublicFetch
+}
+
+/// The sweep as the end of a sync run calls it. A provider without shares has
+/// nothing to sweep.
+pub fn sweep_account(app: &AppHandle, cryptor: Cryptor) -> Result<usize> {
+    match remote_for(app, cryptor) {
+        Some(remote) => sweep(&remote, now_ms()),
+        None => Ok(0),
+    }
 }

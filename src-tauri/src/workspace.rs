@@ -526,7 +526,10 @@ mod tests {
             (storage::KDF_SIDECAR_FILE, "kdf"),
             (storage::KDF_SIDECAR_REKEY_BACKUP_FILE, "kdf-backup"),
             (storage::LOCKOUT_SIDECAR_FILE, "lockout"),
-            (storage::GDRIVE_FILE, "token"),
+            (
+                crate::sync::Provider::GoogleDrive.token_file_name(),
+                "token",
+            ),
         ] {
             fs::write(dir.join(file), format!("{tag}-{what}")).unwrap();
         }
@@ -592,7 +595,10 @@ mod tests {
         assert_eq!(read(root.join(storage::DB_FILE)), "work-db");
         assert_eq!(read(wal_of(&root.join(storage::DB_FILE))), "work-wal");
         assert_eq!(read(root.join(storage::KDF_SIDECAR_FILE)), "work-kdf");
-        assert_eq!(read(root.join(storage::GDRIVE_FILE)), "work-token");
+        assert_eq!(
+            read(root.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "work-token"
+        );
         // Left behind, these would strand the promoted vault: the next unlock's
         // recovery would find a snapshot with no pair to roll back to, and the
         // backoff the survivor had earned would be reset.
@@ -636,7 +642,10 @@ mod tests {
 
         assert!(!gone.exists());
         assert_eq!(read(root.join(storage::DB_FILE)), "primary-db");
-        assert_eq!(read(root.join(storage::GDRIVE_FILE)), "primary-token");
+        assert_eq!(
+            read(root.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "primary-token"
+        );
         assert_eq!(Registry::load(&root).workspaces.len(), 1);
         assert!(!staging(&root).exists());
         assert!(!DeleteJournal::path(&root).exists());
@@ -663,7 +672,10 @@ mod tests {
         assert_eq!(read(root.join(storage::DB_FILE)), "primary-db");
         assert_eq!(read(wal_of(&root.join(storage::DB_FILE))), "primary-wal");
         assert_eq!(read(root.join(storage::KDF_SIDECAR_FILE)), "primary-kdf");
-        assert_eq!(read(root.join(storage::GDRIVE_FILE)), "primary-token");
+        assert_eq!(
+            read(root.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "primary-token"
+        );
         assert_eq!(read(root.join(storage::BIOMETRIC_FILE)), "protected");
         assert_eq!(read(from.join(storage::DB_FILE)), "work-db");
         assert_eq!(
@@ -716,7 +728,10 @@ mod tests {
 
         assert_eq!(read(root.join(storage::DB_FILE)), "primary-db");
         assert_eq!(read(wal_of(&root.join(storage::DB_FILE))), "primary-wal");
-        assert_eq!(read(root.join(storage::GDRIVE_FILE)), "primary-token");
+        assert_eq!(
+            read(root.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "primary-token"
+        );
         assert_eq!(read(from.join(storage::DB_FILE)), "work-db");
         assert_eq!(
             read(from.join(storage::DB_REKEY_BACKUP_FILE)),
@@ -749,7 +764,10 @@ mod tests {
 
         assert_eq!(read(from.join(storage::DB_FILE)), "work-db");
         assert_eq!(read(wal_of(&from.join(storage::DB_FILE))), "work-wal");
-        assert_eq!(read(from.join(storage::GDRIVE_FILE)), "work-token");
+        assert_eq!(
+            read(from.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "work-token"
+        );
         assert_eq!(read(root.join(storage::DB_FILE)), "primary-db");
         assert_eq!(read(wal_of(&root.join(storage::DB_FILE))), "primary-wal");
         assert_eq!(
@@ -809,7 +827,7 @@ mod tests {
                 },
             ],
         };
-        let token = dir_of(&root, "w2").join(storage::GDRIVE_FILE);
+        let token = dir_of(&root, "w2").join(crate::sync::Provider::GoogleDrive.token_file_name());
         fs::create_dir_all(token.parent().unwrap()).unwrap();
         fs::write(&token, b"sealed").unwrap();
 

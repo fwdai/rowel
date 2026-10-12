@@ -713,7 +713,7 @@ mod tests {
 
     // --- the change a workspace beside the open one gets ------------------------
 
-    use crate::sync::Tokens;
+    use crate::sync::{Provider, Tokens};
 
     fn workspace_under(old: &VaultKey) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -731,6 +731,7 @@ mod tests {
         let old = VaultKey::legacy_from_password("old-pw");
         let dir = workspace_under(&old);
         let tokens = Tokens {
+            provider: Provider::GoogleDrive,
             access_token: None,
             refresh_token: Some("refresh".into()),
             expires_at: None,
@@ -756,7 +757,8 @@ mod tests {
     fn a_workspace_whose_drive_token_will_not_read_keeps_its_password() {
         let old = VaultKey::legacy_from_password("old-pw");
         let dir = workspace_under(&old);
-        storage::write_gdrive_in(dir.path(), "not a sealed token file").unwrap();
+        storage::write_token_file_in(dir.path(), Provider::GoogleDrive, "not a sealed token file")
+            .unwrap();
 
         let held = Zeroizing::new(old.biometric_material().to_vec());
         assert!(rekey_one(dir.path(), Some(held), "old-pw", "new-pw").is_err());
@@ -764,7 +766,8 @@ mod tests {
         assert!(opens_under(dir.path(), &old), "nothing was changed");
         assert!(!dir.path().join(storage::KDF_SIDECAR_FILE).exists());
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(storage::GDRIVE_FILE)).unwrap(),
+            std::fs::read_to_string(dir.path().join(Provider::GoogleDrive.token_file_name()))
+                .unwrap(),
             "not a sealed token file"
         );
     }

@@ -1,6 +1,7 @@
-//! Google Drive sync provider. Finds (or creates) `Rowel/Vaults/` and the
-//! `<vault-id>.rowel` pack inside it, and reads/writes that one file. Every
-//! name it uses comes from [`layout`].
+//! Sync: one engine and one set of rules about vault identity, over whichever
+//! cloud provider the workspace is connected to. Finds (or creates)
+//! `Rowel/Vaults/` and the `<vault-id>.rowel` pack inside it, and reads/writes
+//! that one file. Every name it uses comes from [`layout`].
 //!
 //! Which pack is *this* vault's is settled once per run, before the engine
 //! starts: see [`resolve_vault_id`].
@@ -9,29 +10,33 @@
 //! the run it was settled for (see [`run`]), never at either end: after the
 //! remote pack has been fetched, decoded and merged — until then nothing has
 //! proved it is this vault's — and before anything is packed or uploaded, so
-//! Drive is never changed under an id this vault does not yet answer to.
+//! the account is never changed under an id this vault does not yet answer to.
 //!
-//! This module is only the *transport*: the sync algorithm lives in [`engine`],
-//! behind the [`engine::Remote`] trait that [`DriveRemote`] implements. Drive's
-//! REST calls are async and are driven with `block_on` here, which is safe
-//! because a run always executes on its own thread (see `commands::sync`) —
-//! never on a command thread, and never on a runtime worker.
+//! The sync algorithm lives in [`engine`], behind the [`engine::Remote`] trait
+//! that [`store::PackRemote`] implements over any [`VaultStore`]. A provider is
+//! an adapter under [`providers`] and nothing else; its REST calls are async
+//! and are driven with `block_on`, which is safe because a run always executes
+//! on its own thread (see `commands::sync`) — never on a command thread, and
+//! never on a runtime worker.
 
-mod auth;
-// Crate-visible: `share::remote` drives the same Drive REST surface.
-pub(crate) mod drive;
+// The OAuth flow and the sealed token file, generic over the provider.
+pub(crate) mod account;
 pub mod engine;
-// Every name Drive sees: folders, file names, extensions. Crate-visible so
-// sharing and the backup export spell them the same way.
+// Every name the account sees: folders, file names, extensions. Crate-visible
+// so sharing and the backup export spell them the same way.
 pub mod layout;
 pub mod pack;
+mod provider;
+// One directory per provider. Crate-visible: `share` reaches Drive's share
+// transport through it.
+pub(crate) mod providers;
 pub mod restore;
 // First-run onboarding's keyless view of the account. Named for the flow, not
 // for `setup` below — modules and functions live in separate namespaces.
 pub mod setup;
+pub(crate) mod store;
 
 use std::collections::HashSet;
-use std::sync::Mutex;
 use std::time::Duration;
 
 use reqwest::Client;
@@ -40,27 +45,30 @@ use tauri::{async_runtime::block_on, AppHandle, Manager};
 use crate::crypto::Cryptor;
 use crate::error::{Error, Result};
 use crate::state::AppState;
-use engine::{LocalVault, Remote, RemoteFile, SessionVault, SyncOutcome};
+pub(crate) use account::{sealed_provider, Auth};
+use engine::{LocalVault, SessionVault, SyncOutcome};
+pub(crate) use provider::Provider;
+pub(crate) use store::{store_for, AnyStore, PackRemote, VaultStore};
 
-/// A valid Drive access token for the connected account, refreshed if needed.
-/// Crate-visible so `share::remote` can act on the same account.
+/// A valid access token for the open workspace's account, refreshed if needed.
+/// Crate-visible so a provider's share transport can act on the same account.
 pub(crate) async fn access_token(
     client: &Client,
     app: &AppHandle,
     cryptor: &Cryptor,
 ) -> Result<String> {
-    auth::access_token(client, app, cryptor).await
+    account::access_token(client, app, cryptor).await
 }
 
 /// The OAuth tokens for one account, as onboarding holds them: in memory, for
 /// the stretch between the user approving consent and a vault key existing to
 /// seal them under.
-pub(crate) use auth::Tokens;
+pub(crate) use account::Tokens;
 
 /// Seal `tokens` under `cryptor` and write them where a later unlock will find
 /// them — the step [`setup`] does for itself and onboarding defers.
 pub(crate) fn persist_tokens(app: &AppHandle, cryptor: &Cryptor, tokens: &Tokens) -> Result<()> {
-    auth::write_tokens(app, cryptor, tokens)
+    account::write_tokens(app, cryptor, tokens)
 }
 
 /// The open workspace's account, unsealed, with the connection generation it
@@ -73,12 +81,12 @@ pub(crate) fn persist_tokens(app: &AppHandle, cryptor: &Cryptor, tokens: &Tokens
 /// own and write them back with [`persist_tokens_if_current`]. Read apart, a
 /// disconnect landing between the reads would hand back the dropped
 /// credentials under the generation that replaced them, and the write-back
-/// would undo it. The same pairing `auth::access_token` makes for the sync
+/// would undo it. The same pairing `account::access_token` makes for the sync
 /// engine's own refresh.
 pub(crate) fn current_account(app: &AppHandle, cryptor: &Cryptor) -> Option<(Tokens, u64)> {
     let state = app.state::<AppState>();
     let generation = state.sync_generation.lock().unwrap();
-    let tokens = auth::read_tokens(app, cryptor)?;
+    let tokens = account::read_tokens(app, cryptor)?;
     Some((tokens, *generation))
 }
 
@@ -91,7 +99,7 @@ pub(crate) fn persist_tokens_in(
     cryptor: &Cryptor,
     tokens: &Tokens,
 ) -> Result<()> {
-    auth::write_tokens_in(dir, cryptor, tokens)
+    account::write_tokens_in(dir, cryptor, tokens)
 }
 
 /// The account sealed in the workspace directory `dir`, unsealed with that
@@ -101,7 +109,7 @@ pub(crate) fn persist_tokens_in(
 /// No connection generation, unlike [`current_account`]: the caller of this is
 /// a delete, which spends the tokens once and never writes them back.
 pub(crate) fn read_tokens_in(dir: &std::path::Path, cryptor: &Cryptor) -> Result<Option<Tokens>> {
-    auth::read_tokens_in(dir, cryptor)
+    account::read_tokens_in(dir, cryptor)
 }
 
 /// [`persist_tokens`], unless a disconnect has ended the connection `generation`
@@ -115,36 +123,35 @@ pub(crate) fn persist_tokens_if_current(
     tokens: &Tokens,
     generation: u64,
 ) -> Result<bool> {
-    auth::persisted_if_current(app, cryptor, tokens, generation)
+    account::persisted_if_current(app, cryptor, tokens, generation)
 }
 
-/// Which Drive connection is current — see [`AppState::sync_generation`]. Read
-/// before a network round trip whose refreshed tokens may be written back, so
-/// [`persist_tokens_if_current`] can reject a result from a disconnected account.
+/// Which account connection is current — see [`AppState::sync_generation`].
+/// Read before a network round trip whose refreshed tokens may be written back,
+/// so [`persist_tokens_if_current`] can reject a result from a disconnected
+/// account.
 pub(crate) fn connection_generation(app: &AppHandle) -> u64 {
     *app.state::<AppState>().sync_generation.lock().unwrap()
 }
 
-/// A valid access token for in-memory `tokens`, refreshed in place if expired.
-pub(crate) async fn fresh_access_token(
-    client: &Client,
-    app: &AppHandle,
-    tokens: &mut Tokens,
-) -> Result<String> {
-    auth::fresh_access_token(client, app, tokens).await
+/// A store over in-memory `tokens` — consent's result, or an account a caller
+/// unsealed for itself — whose refreshes stay in memory. Hand the store to
+/// [`AnyStore::into_tokens`] afterwards to keep them.
+pub(crate) fn pending_store(app: &AppHandle, tokens: Tokens) -> AnyStore {
+    store_for(Auth::pending(app, tokens))
 }
 
 /// The desktop consent flow without the persisting: onboarding's half of
 /// [`setup`], for an install that has no vault key yet.
 #[cfg(desktop)]
-pub(crate) fn obtain_tokens(app: &AppHandle) -> Result<Tokens> {
-    auth::obtain_tokens(app)
+pub(crate) fn obtain_tokens(app: &AppHandle, provider: Provider) -> Result<Tokens> {
+    account::obtain_tokens(app, provider)
 }
 
 /// The mobile twin of [`obtain_tokens`]: redeem a code the deep-link handler
 /// accepted, and hand the tokens back rather than writing them.
 #[cfg(mobile)]
-pub(crate) use auth::exchange_for_tokens;
+pub(crate) use account::exchange_for_tokens;
 
 /// Install the ring rustls provider, once per process.
 ///
@@ -182,6 +189,26 @@ pub(crate) fn http_client_builder() -> reqwest::ClientBuilder {
         .read_timeout(READ_TIMEOUT)
 }
 
+/// Read a response body, failing with [`Error::FileTooLarge`] the moment it
+/// exceeds `max_bytes` — before the excess is ever held in memory. The check
+/// is on what arrives, not on `Content-Length`, so a body that lies about its
+/// size (or sends none) is bounded the same. Crate-visible: every download in
+/// the app has a cap, and this is the one loop that enforces one.
+pub(crate) async fn read_capped(resp: &mut reqwest::Response, max_bytes: usize) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| Error::Other(e.to_string()))?
+    {
+        if body.len() + chunk.len() > max_bytes {
+            return Err(Error::FileTooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 // Build the shared HTTPS client.
 pub(crate) fn http_client() -> Client {
     // Same failure mode as `Client::new`, which also panics: the builder only
@@ -193,39 +220,46 @@ pub(crate) fn http_client() -> Client {
 }
 
 pub fn is_configured(app: &AppHandle, cryptor: &Cryptor) -> bool {
-    auth::is_configured(app, cryptor)
+    account::is_configured(app, cryptor)
 }
 
 // The mobile consent flow, cut in two around the browser hand-off. See
-// `auth.rs`; the halves are joined by the deep-link handler in `lib.rs`, and
+// `account.rs`; the halves are joined by the deep-link handler in `lib.rs`, and
 // the second half is `exchange_for_tokens` — every connect is keyless now, so
 // the tokens are handed back rather than written.
 #[cfg(mobile)]
-pub use auth::{begin, parse_redirect, redirect_matches, Redirect};
+pub use account::{begin, parse_redirect, redirect_matches, Redirect};
 
 /// Drop the account locally. An error means the token file is still on disk
 /// and the account is therefore still connected.
 pub fn disconnect(app: &AppHandle) -> Result<()> {
-    auth::disconnect(app)
+    account::disconnect(app)
 }
 
 /// Re-seal the stored tokens under a new vault key (a password change). A
 /// missing token file is a no-op, not an error.
 pub fn reseal_tokens(app: &AppHandle, old: &Cryptor, new: &Cryptor) -> Result<()> {
-    auth::reseal_tokens(app, old, new)
+    account::reseal_tokens(app, old, new)
 }
 
-/// One full sync against Drive. Blocking: call it on a dedicated thread.
+/// One full sync against the workspace's account. Blocking: call it on a
+/// dedicated thread.
 pub fn run(app: &AppHandle, cryptor: Cryptor) -> Result<SyncOutcome> {
     if !is_configured(app, &cryptor) {
         return Err(Error::SyncNotConfigured);
     }
-    let local = SessionVault::capture(app)?;
-    // Which pack on Drive is this vault's, decided before a byte is pulled. A
-    // failure here is a sync failure like any other: addressing the wrong pack
-    // — or a second one — is the one mistake the merge cannot undo.
-    let resolved = block_on(resolve_vault_id(app, &cryptor, &local))?;
-    let remote = DriveRemote::new(app.clone(), cryptor, resolved.id.clone());
+    // One store for the whole run: the resolution below and every pull and push
+    // after it share its folder lookups.
+    let store = store_for(Auth::Sealed {
+        app: app.clone(),
+        cryptor,
+    });
+    let local = SessionVault::capture(app, store.provider())?;
+    // Which pack in the account is this vault's, decided before a byte is
+    // pulled. A failure here is a sync failure like any other: addressing the
+    // wrong pack — or a second one — is the one mistake the merge cannot undo.
+    let resolved = block_on(resolve_vault_id(&store, &local))?;
+    let remote = PackRemote::new(store, resolved.id.clone());
 
     // The id is written from inside the run, at the one moment that satisfies
     // both of the things this ordering has to guarantee (see [`engine::sync`],
@@ -324,15 +358,16 @@ pub(crate) fn remote_only(
 
 /// Drop expired one-time shares, riding along on a run that has just proved the
 /// account reachable. Best effort: a locked vault or a failed listing is not a
-/// sync failure, and the next run sweeps again.
+/// sync failure, and the next run sweeps again. A provider without shares has
+/// nothing to sweep.
 fn sweep_shares(app: &AppHandle) {
-    // `run` moved its own cryptor into the remote and `Cryptor` is not `Clone`,
+    // `run` moved its own cryptor into the store and `Cryptor` is not `Clone`,
     // so take a second from the session — which is also how we notice the vault
     // locked while the sync was in flight.
     let Ok(cryptor) = app.state::<AppState>().session.lock().unwrap().cryptor() else {
         return;
     };
-    if let Err(e) = crate::share::sweep_drive(app, cryptor) {
+    if let Err(e) = crate::share::sweep_account(app, cryptor) {
         log::warn!("share sweep failed: {e}");
     }
 }
@@ -345,7 +380,7 @@ fn now_ms() -> i64 {
 
 /// What the vault-id resolution has to do before a run can address a pack.
 ///
-/// Split out from the Drive calls so the decision — the part with the first-run
+/// Split out from the account calls so the decision — the part with the first-run
 /// case in it — is a pure function over two facts and can be read, and tested,
 /// on its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -384,10 +419,11 @@ fn plan_vault_id(local: Option<&str>, live: &[&str]) -> VaultIdPlan {
 // Ordinarily unreachable: a connect on a vault that has never synced goes
 // through the account's vaults first (`commands::sync::sync_connect`) and
 // restores one of them instead of syncing this vault to the account.
-fn account_has_vaults_error() -> String {
+fn account_has_vaults_error(provider: Provider) -> String {
     format!(
-        "this Google account already holds a {} vault; disconnect, then connect again to \
+        "this {} account already holds a {} vault; disconnect, then connect again to \
          restore it on this device instead of syncing a second vault beside it",
+        provider.account_name(),
         crate::app::APP_NAME
     )
 }
@@ -409,31 +445,26 @@ struct Resolved {
     packs: Vec<setup::PackInfo>,
 }
 
-/// Settle the vault id for this run, doing whatever Drive work [`plan_vault_id`]
-/// calls for.
+/// Settle the vault id for this run, doing whatever account work
+/// [`plan_vault_id`] calls for.
 ///
 /// The *local* vault is not touched here at all — an id this function minted
 /// lives in memory until the run's own pull has proved it (see [`run`]), which
 /// is what keeps a failed run from leaving a vault pointed at a pack it never
 /// read.
-async fn resolve_vault_id(
-    app: &AppHandle,
-    cryptor: &Cryptor,
-    local: &impl LocalVault,
-) -> Result<Resolved> {
-    let client = http_client();
-    let token = auth::access_token(&client, app, cryptor).await?;
-
+async fn resolve_vault_id(store: &impl VaultStore, local: &impl LocalVault) -> Result<Resolved> {
     // The same listing onboarding's probe makes: a missing `Rowel/` or
     // `Vaults/` is an account nothing has ever synced to, which is the same
     // answer as an empty folder.
-    let packs = setup::find_packs(&client, &token).await?;
+    let packs = setup::find_packs(store).await?;
     let live: Vec<&str> = packs.iter().map(|pack| pack.vault_id.as_str()).collect();
 
     let (id, persist) = match plan_vault_id(local.vault_id()?.as_deref(), &live) {
         VaultIdPlan::Use(id) => (id, false),
         VaultIdPlan::Assign => (crate::crypto::random_hex_id(), true),
-        VaultIdPlan::Refuse => return Err(Error::Other(account_has_vaults_error())),
+        VaultIdPlan::Refuse => {
+            return Err(Error::Other(account_has_vaults_error(store.provider())))
+        }
     };
     Ok(Resolved { id, persist, packs })
 }
@@ -444,245 +475,43 @@ async fn resolve_vault_id(
 /// Both halves matter. Deleting the pack alone would leave every other device
 /// seeing an account with no pack for a vault it holds — which reads as a first
 /// sync, and the next run would upload the vault straight back. The marker is
-/// what [`DriveRemote::fetch`] recognises; it is not a `.rowel` name, so no
-/// listing counts it as a vault (see [`layout::deleted_marker_name`]).
+/// what [`PackRemote::fetch`](engine::Remote::fetch) recognises; it is not a
+/// `.rowel` name, so no listing counts it as a vault (see
+/// [`layout::deleted_marker_name`]).
 ///
 /// The order is the invariant here, and it is the marker first. These are two
-/// Drive calls with a window between them, and a run — on this device or
-/// another — that looks into that window must never find "no pack, no marker":
-/// that is exactly the first-sync reading that puts the pack back. A marker
-/// beside a still-live pack is the harmless half-state instead:
-/// [`DriveRemote::fetch`] only consults it when the pack is missing, and
-/// [`may_create_pack`] stops a run that pulled before the delete from
-/// re-creating one after it.
+/// calls to the account with a window between them, and a run — on this device
+/// or another — that looks into that window must never find "no pack, no
+/// marker": that is exactly the first-sync reading that puts the pack back. A
+/// marker beside a still-live pack is the harmless half-state instead:
+/// [`PackRemote`]'s fetch only consults it when the pack is missing, and its
+/// create path (`store::may_create_pack`) stops a run that pulled before the
+/// delete from re-creating one after it.
 ///
-/// The folders are created when the account has none ([`ensure_vaults_path`]).
-/// A vault whose id is settled has a pack up there or had one, and leaving an
-/// unmarked empty account behind — `Rowel/` deleted by hand, say — is leaving
-/// another device's ordinary push to recreate the folders and the pack. A pack
-/// that is not there needs no deleting, and a marker already there is another
-/// device having done this.
-pub(crate) async fn delete_pack(
-    app: &AppHandle,
-    tokens: &mut Tokens,
-    vault_id: &str,
-) -> Result<()> {
-    let client = http_client();
-    let token = fresh_access_token(&client, app, tokens).await?;
-    let (_, vaults) = ensure_vaults_path(&client, &token).await?;
-
+/// The folders are created when the account has none (the marker's create
+/// makes them). A vault whose id is settled has a pack up there or had one, and
+/// leaving an unmarked empty account behind — `Rowel/` deleted by hand, say — is
+/// leaving another device's ordinary push to recreate the folders and the pack.
+/// A pack that is not there needs no deleting, and a marker already there is
+/// another device having done this.
+pub(crate) async fn delete_pack(store: &impl VaultStore, vault_id: &str) -> Result<()> {
     let marker = layout::deleted_marker_name(vault_id);
-    if drive::find_file(&client, &token, &marker, &vaults)
-        .await?
-        .is_none()
-    {
-        drive::create_file(&client, &token, &marker, &vaults, &[]).await?;
+    if store.stat(&marker).await?.is_none() {
+        store.create(&marker, &[]).await?;
     }
 
     let pack = layout::vault_file_name(vault_id);
-    if let Some(file) = drive::find_file(&client, &token, &pack, &vaults).await? {
-        drive::delete_file(&client, &token, &file.id).await?;
+    if let Some(entry) = store.stat(&pack).await? {
+        store.delete(&entry.handle).await?;
     }
     Ok(())
-}
-
-/// `Rowel/Vaults`, with either folder created if this account has never had it.
-/// The root id comes back too, so a caller that caches the pair
-/// ([`DriveRemote::ensure_vaults`]) does not list it a second time.
-async fn ensure_vaults_path(client: &Client, token: &str) -> Result<(String, String)> {
-    let root = match drive::folder_id(client, token, layout::ROOT_FOLDER).await? {
-        Some(id) => id,
-        None => drive::create_folder(client, token, layout::ROOT_FOLDER).await?,
-    };
-    let vaults = match drive::folder_id_in(client, token, layout::VAULTS_FOLDER, &root).await? {
-        Some(id) => id,
-        None => drive::create_folder_in(client, token, layout::VAULTS_FOLDER, Some(&root)).await?,
-    };
-    Ok((root, vaults))
-}
-
-/// [`Remote`] over one vault's pack, `Rowel/Vaults/<vault-id>.rowel`.
-///
-/// Both folder ids are resolved once per instance (one instance per run)
-/// because the selection rule is deterministic and re-listing them would only
-/// cost round trips. The *file* is re-listed on every call: `head_revision`
-/// exists precisely to observe a change another device made, so it must never
-/// answer from a cache.
-struct DriveRemote {
-    app: AppHandle,
-    cryptor: Cryptor,
-    /// Settled by [`resolve_vault_id`] before the run starts, so every call
-    /// below knows the file name it is after without asking again.
-    vault_id: String,
-    root: Mutex<Option<String>>,
-    vaults: Mutex<Option<String>>,
-}
-
-impl DriveRemote {
-    fn new(app: AppHandle, cryptor: Cryptor, vault_id: String) -> Self {
-        Self {
-            app,
-            cryptor,
-            vault_id,
-            root: Mutex::new(None),
-            vaults: Mutex::new(None),
-        }
-    }
-
-    // Resolve the Rowel folder, remembering it for the rest of the run.
-    // `None` means it does not exist yet — which is also "no remote vault".
-    async fn root(&self, client: &Client, token: &str) -> Result<Option<String>> {
-        if let Some(id) = self.root.lock().unwrap().clone() {
-            return Ok(Some(id));
-        }
-        let found = drive::folder_id(client, token, layout::ROOT_FOLDER).await?;
-        if let Some(id) = &found {
-            *self.root.lock().unwrap() = Some(id.clone());
-        }
-        Ok(found)
-    }
-
-    // `Rowel/Vaults`, the same way.
-    async fn vaults(&self, client: &Client, token: &str) -> Result<Option<String>> {
-        if let Some(id) = self.vaults.lock().unwrap().clone() {
-            return Ok(Some(id));
-        }
-        let Some(root) = self.root(client, token).await? else {
-            return Ok(None);
-        };
-        let found = drive::folder_id_in(client, token, layout::VAULTS_FOLDER, &root).await?;
-        if let Some(id) = &found {
-            *self.vaults.lock().unwrap() = Some(id.clone());
-        }
-        Ok(found)
-    }
-
-    // [`vaults`], for the push: both folders are created when this is the first
-    // thing this account has ever had put in it.
-    async fn ensure_vaults(&self, client: &Client, token: &str) -> Result<String> {
-        if let Some(id) = self.vaults(client, token).await? {
-            return Ok(id);
-        }
-        let (root, vaults) = ensure_vaults_path(client, token).await?;
-        *self.root.lock().unwrap() = Some(root);
-        *self.vaults.lock().unwrap() = Some(vaults.clone());
-        Ok(vaults)
-    }
-
-    async fn locate(&self, client: &Client, token: &str) -> Result<Option<drive::DriveFile>> {
-        let Some(vaults) = self.vaults(client, token).await? else {
-            return Ok(None);
-        };
-        let name = layout::vault_file_name(&self.vault_id);
-        drive::find_file(client, token, &name, &vaults).await
-    }
-
-    // Is there a marker where this vault's pack would be? Asked only when the
-    // pack is missing, so an ordinary run never pays for it.
-    async fn marker(&self, client: &Client, token: &str) -> Result<bool> {
-        let Some(vaults) = self.vaults(client, token).await? else {
-            return Ok(false);
-        };
-        let name = layout::deleted_marker_name(&self.vault_id);
-        Ok(drive::find_file(client, token, &name, &vaults)
-            .await?
-            .is_some())
-    }
-
-    async fn token(&self, client: &Client) -> Result<String> {
-        auth::access_token(client, &self.app, &self.cryptor).await
-    }
-}
-
-/// What a run makes of finding no pack for its vault.
-///
-/// With no marker beside where the pack would be, this is simply a vault whose
-/// first push has not happened yet, and the engine treats the account as empty.
-/// With one, another device deleted this vault everywhere ([`delete_pack`]) —
-/// and "the account is empty" would have this run upload the pack again and undo
-/// that delete on every device, so the run stops instead.
-fn pack_missing(marker: bool) -> Result<Option<RemoteFile>> {
-    if marker {
-        return Err(Error::VaultDeletedRemotely);
-    }
-    Ok(None)
-}
-
-/// Whether a push may *create* this vault's pack, given whether a deletion
-/// marker sits where it would go.
-///
-/// A run that pulled before a [`delete_pack`] and pushes after it would
-/// otherwise put the pack back — this run read an account that still held the
-/// vault, so nothing earlier in it has any reason to stop. The marker is the
-/// one thing that outlives the pack, so the create path asks for it.
-///
-/// Only the create path. Finding the pack there means the delete has not
-/// reached it (or never will), and an update is the ordinary push every run
-/// makes — it pays no extra listing for this.
-fn may_create_pack(marker: bool) -> Result<()> {
-    if marker {
-        return Err(Error::VaultDeletedRemotely);
-    }
-    Ok(())
-}
-
-impl Remote for DriveRemote {
-    fn fetch(&self) -> Result<Option<RemoteFile>> {
-        block_on(async {
-            let client = http_client();
-            let token = self.token(&client).await?;
-            let Some(file) = self.locate(&client, &token).await? else {
-                return pack_missing(self.marker(&client, &token).await?);
-            };
-            let bytes = drive::read_file(&client, &token, &file.id, pack::MAX_PACK_BYTES).await?;
-            Ok(Some(RemoteFile {
-                bytes,
-                revision: file.head_revision.unwrap_or_default(),
-            }))
-        })
-    }
-
-    fn head_revision(&self) -> Result<Option<String>> {
-        block_on(async {
-            let client = http_client();
-            let token = self.token(&client).await?;
-            let Some(file) = self.locate(&client, &token).await? else {
-                return Ok(None);
-            };
-            // Read from the listing, exactly like `fetch` — the pre-flight
-            // compares this against `fetch`'s value, so the two must degrade
-            // identically. A `files.get` fallback here once made a missing
-            // listing field compare `Some(real)` against `fetch`'s `Some("")`,
-            // which would burn every retry and fail the run.
-            Ok(Some(file.head_revision.unwrap_or_default()))
-        })
-    }
-
-    fn upload(&self, bytes: &[u8]) -> Result<String> {
-        block_on(async {
-            let client = http_client();
-            let token = self.token(&client).await?;
-            let vaults = self.ensure_vaults(&client, &token).await?;
-            let name = layout::vault_file_name(&self.vault_id);
-            let revision = match drive::find_file(&client, &token, &name, &vaults).await? {
-                Some(file) => drive::update_file(&client, &token, &file.id, bytes).await?,
-                None => {
-                    may_create_pack(self.marker(&client, &token).await?)?;
-                    drive::create_file(&client, &token, &name, &vaults, bytes)
-                        .await?
-                        .head_revision
-                }
-            };
-            Ok(revision.unwrap_or_default())
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        may_create_pack, pack_missing, plan_vault_id, remote_only, setup::PackInfo, Error,
-        VaultIdPlan,
+        account_has_vaults_error, delete_pack, layout, plan_vault_id, remote_only, setup::PackInfo,
+        store::fake::FakeStore, Provider, VaultIdPlan,
     };
     use std::collections::HashSet;
 
@@ -696,6 +525,7 @@ mod tests {
             vault_id: vault_id.into(),
             size: 0,
             modified_time: String::new(),
+            provider: Provider::GoogleDrive,
         }
     }
 
@@ -741,28 +571,49 @@ mod tests {
         assert_eq!(plan_vault_id(None, &[OTHER, "eeee"]), VaultIdPlan::Refuse);
     }
 
-    // No pack is the first push not having happened yet — unless the marker
-    // says the vault was deleted from the account, in which case pushing is
-    // exactly what must not happen.
-    #[test]
-    fn a_missing_pack_is_a_delete_only_when_the_marker_is_there() {
-        assert!(matches!(pack_missing(false), Ok(None)));
-        assert!(matches!(
-            pack_missing(true),
-            Err(Error::VaultDeletedRemotely)
-        ));
+    // "Delete everywhere" leaves the marker before it takes the pack: a run
+    // looking in between must never find neither.
+    #[tokio::test]
+    async fn a_delete_marks_the_vault_before_it_removes_the_pack() {
+        let store = FakeStore::default();
+        store.put(&layout::vault_file_name(ID), b"pack");
+
+        delete_pack(&store, ID).await.unwrap();
+
+        assert_eq!(
+            *store.log.lock().unwrap(),
+            [
+                format!("create {}", layout::deleted_marker_name(ID)),
+                format!("delete {}", layout::vault_file_name(ID)),
+            ]
+        );
+        assert!(!store.has(&layout::vault_file_name(ID)));
+        assert!(store.has(&layout::deleted_marker_name(ID)));
     }
 
-    // The other half of the same marker, on the way out: a run that pulled
-    // before a "delete everywhere" and pushes after it finds no pack to update,
-    // and creating one there would undo the delete on every device. The run
-    // that simply has not pushed yet still may.
+    // Another device got there first, or the pack never existed: nothing is
+    // written twice and nothing fails.
+    #[tokio::test]
+    async fn a_delete_someone_else_already_made_changes_nothing() {
+        let store = FakeStore::default();
+        store.put(&layout::deleted_marker_name(ID), &[]);
+
+        delete_pack(&store, ID).await.unwrap();
+
+        assert!(store.log.lock().unwrap().is_empty());
+    }
+
+    // The sentence the sync indicator shows names the provider's account in the
+    // words the Google copy always used.
     #[test]
-    fn a_push_may_not_create_a_pack_the_marker_says_was_deleted() {
-        assert!(may_create_pack(false).is_ok());
-        assert!(matches!(
-            may_create_pack(true),
-            Err(Error::VaultDeletedRemotely)
-        ));
+    fn the_account_has_vaults_error_reads_as_it_always_did_for_google() {
+        assert_eq!(
+            account_has_vaults_error(Provider::GoogleDrive),
+            format!(
+                "this Google account already holds a {} vault; disconnect, then connect again \
+                 to restore it on this device instead of syncing a second vault beside it",
+                crate::app::APP_NAME
+            )
+        );
     }
 }
