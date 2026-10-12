@@ -256,7 +256,8 @@ fn bitwarden_maps_fido2_credentials_onto_passkeys() {
 }
 
 // An unusable credential — wrong algorithm, or missing its id / rp / key — is
-// dropped on its own, one error each; the login and its good passkey import.
+// dropped on its own, one warning each; the login and its good passkey import,
+// so the row is not an error.
 #[test]
 fn bitwarden_drops_unsupported_or_incomplete_passkeys() {
     let json = br#"{"items":[
@@ -273,9 +274,10 @@ fn bitwarden_drops_unsupported_or_incomplete_passkeys() {
     assert_eq!(r.entries[0].username.as_deref(), Some("alice"));
     assert_eq!(r.entries[0].passkeys.len(), 1);
     assert_eq!(r.entries[0].passkeys[0].credential_id, "b");
-    assert_eq!(r.errors.len(), 4);
+    assert!(r.errors.is_empty());
+    assert_eq!(r.warnings.len(), 4);
     assert!(r
-        .errors
+        .warnings
         .iter()
         .all(|e| e.row == 1 && e.message.contains("passkey")));
 }
@@ -634,6 +636,23 @@ fn cxf_maps_note_only_items_and_flags_unmappable_ones() {
     assert_eq!(r.errors[0].row, 2); // second item overall
 }
 
+// An item whose only credential is a passkey that cannot sign has nothing to
+// import: one error for the row, and no warning left over to list it as
+// imported as well.
+#[test]
+fn cxf_rejects_an_item_whose_only_passkey_is_incomplete_without_a_warning() {
+    let json = br#"{"version":{"major":1,"minor":0},"accounts":[{"items":[
+      {"id":"aQ","title":"Acme","credentials":[
+        {"type":"passkey","rpId":"acme.test","username":"alice","key":"cGsx"}
+      ]}
+    ]}]}"#;
+    let r = parse(Format::Cxf, json);
+    assert!(r.entries.is_empty());
+    assert_eq!(r.errors.len(), 1);
+    assert_eq!(r.errors[0].row, 1);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+}
+
 // A passkey without an id, relying party or key cannot sign; it is dropped on
 // its own and the item still imports.
 #[test]
@@ -650,9 +669,10 @@ fn cxf_skips_a_bad_passkey_but_imports_the_item() {
     assert_eq!(r.entries[0].username.as_deref(), Some("alice"));
     assert_eq!(r.entries[0].passkeys.len(), 1);
     assert_eq!(r.entries[0].passkeys[0].credential_id, "Y3JlZDI");
-    assert_eq!(r.errors.len(), 1);
-    assert_eq!(r.errors[0].row, 1);
-    assert!(r.errors[0].message.contains("passkey"));
+    assert!(r.errors.is_empty());
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].row, 1);
+    assert!(r.warnings[0].message.contains("passkey"));
 }
 
 // `creationAt` reaches us from JavaScript exporters as `1.5e9` — a whole number
@@ -804,6 +824,438 @@ fn detect_tells_cxf_from_bitwarden_json() {
         Some(Format::Bitwarden)
     );
     assert_eq!(detect("broken.json", b"{not json"), Some(Format::Bitwarden));
+}
+
+// Enpass and Bitwarden both write `items` and `folders`; an Enpass item is told
+// by the `category` (or `template_type`) it names, which no Bitwarden item has.
+#[test]
+fn detect_tells_enpass_from_bitwarden_json() {
+    let enpass = br#"{"folders":[],"items":[{"category":"login","title":"x","fields":[]}]}"#;
+    assert_eq!(detect("export.json", enpass), Some(Format::Enpass));
+    assert_eq!(detect("noext", enpass), Some(Format::Enpass));
+    let templated = br#"{"items":[{"template_type":"login.default","title":"x"}]}"#;
+    assert_eq!(detect("export.json", templated), Some(Format::Enpass));
+    assert_eq!(
+        detect("bw.json", br#"{"items":[{"type":1,"name":"x"}]}"#),
+        Some(Format::Bitwarden)
+    );
+    assert_eq!(Format::from_name("enpass"), Some(Format::Enpass));
+    assert_eq!(Format::from_name("Enpass"), Some(Format::Enpass));
+}
+
+// A password's spaces are the password: no CSV dialect trims them, and one
+// made of spaces alone is still a password. Only an empty cell is absent.
+#[test]
+fn csv_passwords_keep_their_spaces() {
+    let generic = b"name,username,password\nA, octo , secret \nB,octo,   \nC,octo,\n";
+    for fmt in [Format::GenericCsv, Format::BrowserCsv] {
+        let r = parse(fmt, generic);
+        assert_eq!(r.entries.len(), 3, "{fmt:?}");
+        assert_eq!(r.entries[0].username.as_deref(), Some("octo"), "{fmt:?}");
+        assert_eq!(
+            r.entries[0].password.as_deref(),
+            Some(" secret "),
+            "{fmt:?}"
+        );
+        assert_eq!(r.entries[1].password.as_deref(), Some("   "), "{fmt:?}");
+        assert_eq!(r.entries[2].password, None, "{fmt:?}");
+    }
+
+    let onepassword = b"Title,Url,Username,Password\nA,, octo , secret \nB,,octo,   \nC,,octo,\n";
+    let r = parse(Format::OnepasswordCsv, onepassword);
+    assert_eq!(r.entries.len(), 3);
+    assert_eq!(r.entries[0].username.as_deref(), Some("octo"));
+    assert_eq!(r.entries[0].password.as_deref(), Some(" secret "));
+    assert_eq!(r.entries[1].password.as_deref(), Some("   "));
+    assert_eq!(r.entries[2].password, None);
+
+    let lastpass = b"url,username,password,totp,extra,name,grouping,fav\n\
+https://a.example,octo, secret ,,,A,,0\n";
+    let r = parse(Format::LastpassCsv, lastpass);
+    assert_eq!(r.entries[0].password.as_deref(), Some(" secret "));
+
+    let keepass = b"Group,Title,Username,Password,URL,Notes\nRoot,A,octo, secret ,,\n";
+    let r = parse(Format::KeepassCsv, keepass);
+    assert_eq!(r.entries[0].password.as_deref(), Some(" secret "));
+
+    // Rowel's own sheet, through the export and back.
+    let entries = vec![
+        ImportedEntry {
+            kind: EntryKind::Login,
+            title: "A".into(),
+            password: Some(" secret ".into()),
+            ..Default::default()
+        },
+        ImportedEntry {
+            kind: EntryKind::Ssh,
+            title: "K".into(),
+            ssh_private_key: Some("KEY".into()),
+            ssh_passphrase: Some(" pass ".into()),
+            ..Default::default()
+        },
+    ];
+    let r = parse(Format::GenericCsv, &to_generic_csv(&entries).unwrap());
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries[0].password.as_deref(), Some(" secret "));
+    assert_eq!(r.entries[1].ssh_passphrase.as_deref(), Some(" pass "));
+}
+
+// 1Password's sheet is logins only; the star and the tags it carries are read,
+// which the generic mapper would have dropped. An archived item is a live one.
+#[test]
+fn onepassword_csv_reads_logins_with_tags_and_the_star() {
+    let csv = b"Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes\n\
+GitHub,https://github.com,octo,pw,otpauth://totp/GitHub?secret=ABC,true,,\"dev, work\",hello\n\
+Old,https://old.example,octo,pw2,,,true,,\n\
+,https://untitled.example,,pw3,,false,,one;two,\n";
+    assert_eq!(Format::from_name("1password"), Some(Format::OnepasswordCsv));
+    let r = parse(Format::OnepasswordCsv, csv);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 3);
+    let e = &r.entries[0];
+    assert_eq!(e.kind, EntryKind::Login);
+    assert_eq!(e.title, "GitHub");
+    assert_eq!(e.username.as_deref(), Some("octo"));
+    assert_eq!(e.password.as_deref(), Some("pw"));
+    assert_eq!(e.url.as_deref(), Some("https://github.com"));
+    assert_eq!(e.otp.as_deref(), Some("otpauth://totp/GitHub?secret=ABC"));
+    assert_eq!(e.notes.as_deref(), Some("hello"));
+    assert!(e.favorite);
+    assert_eq!(e.tags, vec!["dev".to_string(), "work".to_string()]);
+
+    assert_eq!(r.entries[1].title, "Old");
+    assert!(!r.entries[1].favorite);
+    assert!(r.entries[1].tags.is_empty());
+
+    let untitled = &r.entries[2];
+    assert_eq!(untitled.title, "https://untitled.example");
+    assert!(!untitled.favorite);
+    assert_eq!(untitled.tags, vec!["one".to_string(), "two".to_string()]);
+}
+
+// Slots are filled by field type, never by label — Enpass labels are in the
+// user's language. What has no slot stays as an extra, concealed when Enpass
+// flagged it; sections and app associations are machinery and are dropped.
+#[test]
+fn enpass_maps_a_login_by_field_type() {
+    let json = r#"{"folders":[],"items":[
+      {"archived":0,"category":"login","createdAt":1577093622,"favorite":1,
+       "fields":[
+         {"label":"Nom d'utilisateur","type":"username","value":"octo","sensitive":0,"deleted":0},
+         {"label":"E-mail","type":"email","value":"octo@example.com"},
+         {"label":"Mot de passe","type":"password","value":"now","sensitive":1,
+          "value_updated_at":1700000000,
+          "history":[{"updated_at":1600000000,"value":"older"},{"updated_at":1650000000,"value":"old"},{"updated_at":1,"value":""}]},
+         {"label":"Site web","type":"url","value":"https://github.com"},
+         {"label":"Autre site","type":"url","value":"https://gist.github.com"},
+         {"label":"Code à usage unique","type":"totp","value":"JBSWY3DPEHPK3PXP"},
+         {"label":"Sécurité","type":"section","value":""},
+         {"label":"Question","type":"text","value":"First pet?"},
+         {"label":"Réponse","type":"password","value":"rex","sensitive":1},
+         {"label":"Vide","type":"text","value":""},
+         {"label":"Supprimé","type":"text","value":"gone","deleted":1},
+         {"label":"Android","type":".Android#","value":"com.github.android"}
+       ],
+       "folders":[],"note":"the note","template_type":"login.default","title":"GitHub",
+       "trashed":0,"updated_at":1700000001,"uuid":"a"}
+    ]}"#
+    .as_bytes();
+    let r = parse(Format::Enpass, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 1);
+    let e = &r.entries[0];
+    assert_eq!(e.kind, EntryKind::Login);
+    assert_eq!(e.title, "GitHub");
+    assert_eq!(e.username.as_deref(), Some("octo"));
+    assert_eq!(e.email.as_deref(), Some("octo@example.com"));
+    assert_eq!(e.password.as_deref(), Some("now"));
+    assert_eq!(e.url.as_deref(), Some("https://github.com"));
+    assert_eq!(e.otp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+    assert_eq!(e.notes.as_deref(), Some("the note"));
+    assert!(e.favorite);
+    assert_eq!(e.created_at.as_deref(), Some("2019-12-23T09:33:42+00:00"));
+    assert_eq!(e.updated_at.as_deref(), Some("2023-11-14T22:13:21+00:00"));
+    assert_eq!(
+        e.password_updated_at.as_deref(),
+        Some("2023-11-14T22:13:20+00:00")
+    );
+    // Newest first, the blank one dropped.
+    assert_eq!(e.password_history.len(), 2);
+    assert_eq!(e.password_history[0].password, "old");
+    assert_eq!(
+        e.password_history[0].replaced_at,
+        "2022-04-15T05:20:00+00:00"
+    );
+    assert_eq!(e.password_history[1].password, "older");
+    assert_eq!(
+        e.extra,
+        vec![
+            field("Autre site", "https://gist.github.com"),
+            field("Question", "First pet?"),
+            concealed("Réponse", "rex"),
+        ]
+    );
+}
+
+#[test]
+fn enpass_maps_cards_notes_and_folders() {
+    let json = br#"{
+      "folders":[
+        {"title":"Work","uuid":"f1","parent_uuid":""},
+        {"title":"Banks","uuid":"f2","parent_uuid":"f1"},
+        {"title":"Orphan","uuid":"f3","parent_uuid":"ghost"},
+        {"title":"Ping","uuid":"f4","parent_uuid":"f5"},
+        {"title":"Pong","uuid":"f5","parent_uuid":"f4"}
+      ],
+      "items":[
+        {"category":"creditcard","title":"Visa","folders":["f2","missing"],"fields":[
+          {"label":"Cardholder","type":"ccName","value":"Ada Lovelace"},
+          {"label":"Type","type":"ccType","value":"Visa"},
+          {"label":"Number","type":"ccNumber","value":"4111111111111111","sensitive":1},
+          {"label":"CVC","type":"ccCvc","value":"123","sensitive":1},
+          {"label":"PIN","type":"ccPin","value":"9876","sensitive":1},
+          {"label":"Expiry date","type":"ccExpiry","value":"09/28"},
+          {"label":"Valid from","type":"ccValidfrom","value":"09/23"},
+          {"label":"Bank","type":"ccBankname","value":"Lloyds"}
+        ]},
+        {"category":"note","title":"Wifi","note":"body","folders":["f1","f3","f4"],"fields":[
+          {"label":"SSID","type":"text","value":"home"},
+          {"label":"Key","type":"password","value":"hunter2","sensitive":1}
+        ]},
+        {"category":"creditcard","title":"Odd","fields":[
+          {"label":"Expiry date","type":"ccExpiry","value":"sometime"}
+        ]}
+      ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 3);
+
+    let card = &r.entries[0];
+    assert_eq!(card.kind, EntryKind::Card);
+    assert_eq!(card.cardholder.as_deref(), Some("Ada Lovelace"));
+    assert_eq!(card.card_number.as_deref(), Some("4111111111111111"));
+    assert_eq!(card.card_cvc.as_deref(), Some("123"));
+    assert_eq!(card.card_pin.as_deref(), Some("9876"));
+    assert_eq!(card.card_month.as_deref(), Some("09"));
+    assert_eq!(card.card_year.as_deref(), Some("2028"));
+    assert_eq!(card.tags, vec!["Work/Banks".to_string()]);
+    assert_eq!(
+        card.extra,
+        vec![
+            field("Type", "Visa"),
+            field("Valid from", "09/23"),
+            field("Bank", "Lloyds"),
+        ]
+    );
+
+    let note = &r.entries[1];
+    assert_eq!(note.kind, EntryKind::Note);
+    assert_eq!(note.notes.as_deref(), Some("body"));
+    // A parent the file never lists ends the path, and so does one already on
+    // it (a two-folder cycle): the child keeps its name either way.
+    assert_eq!(
+        note.tags,
+        vec![
+            "Work".to_string(),
+            "Orphan".to_string(),
+            "Pong/Ping".to_string()
+        ]
+    );
+    assert_eq!(
+        note.extra,
+        vec![field("SSID", "home"), concealed("Key", "hunter2")]
+    );
+
+    // An expiry that does not split stays as the labelled text it was.
+    let odd = &r.entries[2];
+    assert!(odd.card_month.is_none());
+    assert_eq!(odd.extra, vec![field("Expiry date", "sometime")]);
+}
+
+// An item's files are not brought over; the item is, and its row carries a
+// warning — not an error, which would count it as skipped — so the user keeps
+// the export rather than trusting a clean-looking import.
+#[test]
+fn enpass_reports_an_item_whose_attachments_are_left_behind() {
+    let json = br#"{"items":[
+      {"category":"note","title":"Scan","note":"body","attachments":[
+        {"name":"passport.pdf","data":"AAAA","size":3},
+        {"name":"back.jpg","data":"BBBB","size":3}]},
+      {"category":"note","title":"Plain","note":"body","attachments":[]},
+      {"category":"note","title":"Nulled","note":"body","attachments":null}
+    ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert_eq!(r.entries.len(), 3);
+    assert_eq!(r.entries[0].title, "Scan");
+    assert!(r.errors.is_empty());
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].row, 1);
+    assert!(r.warnings[0]
+        .message
+        .starts_with("2 attachment(s) not imported"));
+}
+
+// Enpass migration tooling writes `null` where a list is empty — `fields`,
+// an item's `folders`, a password's `history`, even the top-level `folders`.
+// One such member reads as empty; it never costs the other items.
+#[test]
+fn enpass_reads_a_null_list_as_empty() {
+    let json = br#"{"folders":null,"items":[
+      {"category":"login","title":"GitHub","folders":null,"fields":[
+        {"label":"Username","type":"username","value":"octo"},
+        {"label":"Password","type":"password","value":"pw","history":null}]},
+      {"category":"note","title":"Blank","note":"body","fields":null},
+      {"category":"login","title":"Also fine","fields":[
+        {"label":"Password","type":"password","value":"pw2"}]}
+    ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 3);
+    assert_eq!(r.entries[0].username.as_deref(), Some("octo"));
+    assert!(r.entries[0].password_history.is_empty());
+    assert_eq!(r.entries[1].kind, EntryKind::Note);
+    assert!(r.entries[1].extra.is_empty());
+    assert_eq!(r.entries[2].password.as_deref(), Some("pw2"));
+    assert_eq!(parse(Format::Enpass, br#"{"items":null}"#).entries.len(), 0);
+}
+
+// Enpass writes a document date in the user's own pattern. It is stored only
+// when the order is beyond doubt; a date that reads two ways is left alone.
+#[test]
+fn enpass_reads_a_document_date_only_when_its_order_is_plain() {
+    use super::enpass::iso_date;
+    assert_eq!(iso_date("1987-06-25").as_deref(), Some("1987-06-25"));
+    assert_eq!(iso_date("1987/6/5").as_deref(), Some("1987-06-05"));
+    assert_eq!(iso_date("25/06/1987").as_deref(), Some("1987-06-25"));
+    assert_eq!(iso_date("06/25/1987").as_deref(), Some("1987-06-25"));
+    assert_eq!(iso_date("25.06.1987").as_deref(), Some("1987-06-25"));
+    assert_eq!(iso_date(" 3/3/2021 ").as_deref(), Some("2021-03-03"));
+    assert_eq!(iso_date("01/06/1987"), None);
+    assert_eq!(iso_date("25/06/87"), None);
+    assert_eq!(iso_date("32/01/1987"), None);
+    assert_eq!(iso_date("1987-13-01"), None);
+    assert_eq!(iso_date("sometime"), None);
+}
+
+// The shape of the file Enpass 6 actually writes (no `folders` member at all,
+// every template field present whether filled or not): a driving licence is
+// the app's identity kind, filled by the template's English labels, with the
+// fields the app has no slot for kept as extras; Enpass's own "identity" (a
+// person, not a document) has no password and stays a note.
+#[test]
+fn enpass_reads_a_driving_licence_as_an_identity() {
+    let json = br#"{"items":[
+      {"archived":0,"auto_submit":1,"category":"license","category_name":"License",
+       "createdAt":1791803738,"favorite":0,"field_updated_at":1791803738,
+       "icon":{"fav":"","image":{"file":"misc/license"},"type":1,"uuid":""},
+       "note":"","subtitle":"345675454","template_type":"license.driving","title":"Driving license",
+       "trashed":0,"updated_at":1791803738,"uuid":"l1","fields":[
+        {"deleted":0,"label":"Number","order":1,"sensitive":0,"type":"numeric","uid":0,"updated_at":1791803738,"value":"345675454","value_updated_at":1791803738},
+        {"label":"Name","order":2,"sensitive":0,"type":"text","value":"Ada Lovelace"},
+        {"label":"Gender","order":3,"sensitive":0,"type":"text","value":"Female"},
+        {"label":"Birth date","order":4,"sensitive":0,"type":"date","value":"25/06/1987"},
+        {"label":"Address","order":5,"sensitive":0,"type":"text","value":"1 Main St"},
+        {"label":"Height","order":6,"sensitive":0,"type":"text","value":""},
+        {"label":"Class","order":7,"sensitive":0,"type":"text","value":"B"},
+        {"label":"Restrictions","order":8,"sensitive":0,"type":"text","value":""},
+        {"label":"State","order":9,"sensitive":0,"type":"text","value":""},
+        {"label":"Country","order":10,"sensitive":0,"type":"text","value":"GB"},
+        {"label":"Expiry date","order":11,"sensitive":0,"type":"date","value":""},
+        {"label":"Issued on","order":12,"sensitive":0,"type":"date","value":"01/06/2020"},
+        {"label":"If lost, call","order":13,"sensitive":0,"type":"phone","value":""}]},
+      {"category":"identity","template_type":"identity.default","title":"Me","fields":[
+        {"label":"First name","type":"text","value":"Ada"},
+        {"label":"Last name","type":"text","value":"Lovelace"},
+        {"label":"HOME ADDRESS","type":"section","value":""},
+        {"label":"Street","type":"text","value":""}]}
+    ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 2);
+
+    let licence = &r.entries[0];
+    assert_eq!(licence.kind, EntryKind::Identity);
+    assert_eq!(licence.doc_type.as_deref(), Some("driver_license"));
+    assert_eq!(licence.doc_number.as_deref(), Some("345675454"));
+    assert_eq!(licence.holder_name.as_deref(), Some("Ada Lovelace"));
+    assert_eq!(licence.doc_sex.as_deref(), Some("Female"));
+    assert_eq!(licence.doc_birth_date.as_deref(), Some("1987-06-25"));
+    assert_eq!(licence.doc_country.as_deref(), Some("GB"));
+    // `01/06/2020` could be June or January: it stays a labelled extra rather
+    // than a date the expiry warning would misread.
+    assert!(licence.doc_issue_date.is_none());
+    assert!(licence.doc_expiry_date.is_none());
+    assert_eq!(
+        licence.extra,
+        vec![
+            field("Address", "1 Main St"),
+            field("Class", "B"),
+            field("Issued on", "01/06/2020"),
+        ]
+    );
+
+    let me = &r.entries[1];
+    assert_eq!(me.kind, EntryKind::Note);
+    assert_eq!(
+        me.extra,
+        vec![field("First name", "Ada"), field("Last name", "Lovelace")]
+    );
+}
+
+// A template the app has no kind for is a login when it holds a password and a
+// note otherwise; a `password` item is a login; a passport is an identity; the
+// trash stays in the trash; an item with nothing to call it by is one bad row.
+#[test]
+fn enpass_sorts_other_templates_and_skips_the_trash() {
+    let json = br#"{"items":[
+      {"category":"password","title":"Door code","fields":[
+        {"label":"Password","type":"password","value":"1234"}]},
+      {"category":"computer","template_type":"computer.wifi","title":"Router","fields":[
+        {"label":"SSID","type":"text","value":"home"},
+        {"label":"Password","type":"password","value":"hunter2"},
+        {"label":"Admin URL","type":"url","value":"http://192.168.0.1"}]},
+      {"category":"travel","template_type":"travel.passport","title":"Passport","fields":[
+        {"label":"Number","type":"text","value":"X1234567"},
+        {"label":"Nationality","type":"text","value":"British"},
+        {"label":"Place of issue","type":"text","value":"London"},
+        {"label":"Expiry date","type":"date","value":"2030-01-01"}]},
+      {"category":"license","template_type":"license.software","title":"IDE","fields":[
+        {"label":"Key","type":"text","value":"ABCD-EFGH"}]},
+      {"category":"login","title":"Gone","trashed":1,"fields":[
+        {"label":"Password","type":"password","value":"pw"}]},
+      {"category":"login","title":"","fields":[
+        {"label":"Website","type":"url","value":"https://untitled.example"}]},
+      {"category":"note","title":"","fields":[]}
+    ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert_eq!(r.entries.len(), 5);
+    assert_eq!(r.entries[0].kind, EntryKind::Login);
+    assert_eq!(r.entries[0].password.as_deref(), Some("1234"));
+
+    let router = &r.entries[1];
+    assert_eq!(router.kind, EntryKind::Login);
+    assert_eq!(router.password.as_deref(), Some("hunter2"));
+    assert_eq!(router.url.as_deref(), Some("http://192.168.0.1"));
+    assert_eq!(router.extra, vec![field("SSID", "home")]);
+
+    let passport = &r.entries[2];
+    assert_eq!(passport.kind, EntryKind::Identity);
+    assert_eq!(passport.doc_type.as_deref(), Some("passport"));
+    assert_eq!(passport.doc_number.as_deref(), Some("X1234567"));
+    assert_eq!(passport.doc_nationality.as_deref(), Some("British"));
+    assert_eq!(passport.doc_authority.as_deref(), Some("London"));
+    assert_eq!(passport.doc_expiry_date.as_deref(), Some("2030-01-01"));
+    assert!(passport.extra.is_empty());
+
+    // A software licence is not an ID document.
+    let ide = &r.entries[3];
+    assert_eq!(ide.kind, EntryKind::Note);
+    assert_eq!(ide.extra, vec![field("Key", "ABCD-EFGH")]);
+
+    // A login with no title is called after its site.
+    assert_eq!(r.entries[4].title, "https://untitled.example");
+    assert_eq!(r.errors.len(), 1);
+    assert_eq!(r.errors[0].row, 7);
 }
 
 #[test]
@@ -1263,9 +1715,12 @@ fn cxf_skips_a_totp_with_parameters_it_cannot_generate_for() {
         assert_eq!(r.entries.len(), 1, "{member}");
         assert_eq!(r.entries[0].username.as_deref(), Some("alice"), "{member}");
         assert_eq!(r.entries[0].otp, None, "{member}");
-        assert_eq!(r.errors.len(), 1, "{member}: {:?}", r.errors);
-        assert_eq!(r.errors[0].row, 1);
-        let message = &r.errors[0].message;
+        // The login imports without its seed: a warning on the row, not a
+        // row lost.
+        assert!(r.errors.is_empty(), "{member}: {:?}", r.errors);
+        assert_eq!(r.warnings.len(), 1, "{member}: {:?}", r.warnings);
+        assert_eq!(r.warnings[0].row, 1);
+        let message = &r.warnings[0].message;
         assert!(message.contains("totp"), "{message}");
         assert!(message.contains(what), "{message}");
     }

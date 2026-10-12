@@ -94,8 +94,10 @@ export default function Result({ flow }: { flow: ReturnType<typeof useImport> })
         </span>
       )}
 
-      {preview && <RowErrors errors={preview.errors} />}
-      {result && <RowErrors errors={result.errors} />}
+      {preview && <RowErrors kind="error" rows={preview.errors} />}
+      {preview && <RowErrors kind="warning" rows={preview.warnings} />}
+      {result && <RowErrors kind="error" rows={result.errors} />}
+      {result && <RowErrors kind="warning" rows={result.warnings} />}
     </div>
   )
 }

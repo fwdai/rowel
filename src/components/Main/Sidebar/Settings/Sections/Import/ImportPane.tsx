@@ -6,8 +6,9 @@ import Tiles from './Tiles'
 import BackupCard from './BackupCard'
 import Result from './Result'
 
-// Bringing secrets in: any export file up top, then the apps we know by name,
-// then a backup of our own.
+// Bringing secrets in: any export file up top, then the apps we know by name
+// (the popular ones as tiles, the rest behind the last tile's menu), then a
+// backup of our own.
 export default function ImportPane({ flow }: { flow: ReturnType<typeof useImport> }) {
   const { t } = useTranslation()
   // Which tile lit: a `.rowel` has none, it came from the OS, not a tile.
