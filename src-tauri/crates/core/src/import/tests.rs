@@ -828,11 +828,7 @@ fn detect_tells_enpass_from_bitwarden_json() {
 #[test]
 fn csv_passwords_keep_their_spaces() {
     let generic = b"name,username,password\nA, octo , secret \nB,octo,   \nC,octo,\n";
-    for fmt in [
-        Format::GenericCsv,
-        Format::OnepasswordCsv,
-        Format::BrowserCsv,
-    ] {
+    for fmt in [Format::GenericCsv, Format::BrowserCsv] {
         let r = parse(fmt, generic);
         assert_eq!(r.entries.len(), 3, "{fmt:?}");
         assert_eq!(r.entries[0].username.as_deref(), Some("octo"), "{fmt:?}");
@@ -844,6 +840,14 @@ fn csv_passwords_keep_their_spaces() {
         assert_eq!(r.entries[1].password.as_deref(), Some("   "), "{fmt:?}");
         assert_eq!(r.entries[2].password, None, "{fmt:?}");
     }
+
+    let onepassword = b"Title,Url,Username,Password\nA,, octo , secret \nB,,octo,   \nC,,octo,\n";
+    let r = parse(Format::OnepasswordCsv, onepassword);
+    assert_eq!(r.entries.len(), 3);
+    assert_eq!(r.entries[0].username.as_deref(), Some("octo"));
+    assert_eq!(r.entries[0].password.as_deref(), Some(" secret "));
+    assert_eq!(r.entries[1].password.as_deref(), Some("   "));
+    assert_eq!(r.entries[2].password, None);
 
     let lastpass = b"url,username,password,totp,extra,name,grouping,fav\n\
 https://a.example,octo, secret ,,,A,,0\n";
@@ -876,16 +880,18 @@ https://a.example,octo, secret ,,,A,,0\n";
     assert_eq!(r.entries[1].ssh_passphrase.as_deref(), Some(" pass "));
 }
 
-// 1Password's CSV columns are all ones the generic aliases know, `OTPAuth`
-// included, so the tile reads it as a login sheet under its own name.
+// 1Password's sheet is logins only; the star and the tags it carries are read,
+// which the generic mapper would have dropped. An archived item is a live one.
 #[test]
-fn onepassword_csv_reads_as_logins() {
+fn onepassword_csv_reads_logins_with_tags_and_the_star() {
     let csv = b"Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes\n\
-GitHub,https://github.com,octo,pw,otpauth://totp/GitHub?secret=ABC,,,dev,hello\n";
+GitHub,https://github.com,octo,pw,otpauth://totp/GitHub?secret=ABC,true,,\"dev, work\",hello\n\
+Old,https://old.example,octo,pw2,,,true,,\n\
+,https://untitled.example,,pw3,,false,,one;two,\n";
     assert_eq!(Format::from_name("1password"), Some(Format::OnepasswordCsv));
     let r = parse(Format::OnepasswordCsv, csv);
     assert!(r.errors.is_empty(), "{:?}", r.errors);
-    assert_eq!(r.entries.len(), 1);
+    assert_eq!(r.entries.len(), 3);
     let e = &r.entries[0];
     assert_eq!(e.kind, EntryKind::Login);
     assert_eq!(e.title, "GitHub");
@@ -894,6 +900,17 @@ GitHub,https://github.com,octo,pw,otpauth://totp/GitHub?secret=ABC,,,dev,hello\n
     assert_eq!(e.url.as_deref(), Some("https://github.com"));
     assert_eq!(e.otp.as_deref(), Some("otpauth://totp/GitHub?secret=ABC"));
     assert_eq!(e.notes.as_deref(), Some("hello"));
+    assert!(e.favorite);
+    assert_eq!(e.tags, vec!["dev".to_string(), "work".to_string()]);
+
+    assert_eq!(r.entries[1].title, "Old");
+    assert!(!r.entries[1].favorite);
+    assert!(r.entries[1].tags.is_empty());
+
+    let untitled = &r.entries[2];
+    assert_eq!(untitled.title, "https://untitled.example");
+    assert!(!untitled.favorite);
+    assert_eq!(untitled.tags, vec!["one".to_string(), "two".to_string()]);
 }
 
 // Slots are filled by field type, never by label — Enpass labels are in the
@@ -1033,6 +1050,27 @@ fn enpass_maps_cards_notes_and_folders() {
     let odd = &r.entries[2];
     assert!(odd.card_month.is_none());
     assert_eq!(odd.extra, vec![field("Expiry date", "sometime")]);
+}
+
+// An item's files are not brought over; the item is, and its row is reported,
+// so the user keeps the export rather than trusting a clean-looking import.
+#[test]
+fn enpass_reports_an_item_whose_attachments_are_left_behind() {
+    let json = br#"{"items":[
+      {"category":"note","title":"Scan","note":"body","attachments":[
+        {"name":"passport.pdf","data":"AAAA","size":3},
+        {"name":"back.jpg","data":"BBBB","size":3}]},
+      {"category":"note","title":"Plain","note":"body","attachments":[]},
+      {"category":"note","title":"Nulled","note":"body","attachments":null}
+    ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert_eq!(r.entries.len(), 3);
+    assert_eq!(r.entries[0].title, "Scan");
+    assert_eq!(r.errors.len(), 1);
+    assert_eq!(r.errors[0].row, 1);
+    assert!(r.errors[0]
+        .message
+        .starts_with("2 attachment(s) not imported"));
 }
 
 // Enpass migration tooling writes `null` where a list is empty — `fields`,

@@ -177,10 +177,11 @@ pub struct GenericCsv;
 /// Chrome / Safari CSV — same header-aliased shape as generic.
 pub struct BrowserCsv;
 
-/// 1Password CSV (`Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,
-/// Notes`): every column the app has a slot for is one the aliases already
-/// answer to, so this is the generic mapper under the app's own name. Tags,
-/// the star and the archive flag are not read yet; `.1pux` is not read at all.
+/// 1Password CSV: `Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,
+/// Notes`. Every row is a login (the sheet carries nothing else); its tags and
+/// star are read, which the generic mapper would drop. An archived item is a
+/// live one kept out of the main list and comes in as an ordinary entry, as an
+/// archived Enpass item does. The `.1pux` archive is not read.
 pub struct OnepasswordCsv;
 
 fn parse_aliased(bytes: &[u8]) -> ImportResult {
@@ -357,8 +358,50 @@ impl Importer for BrowserCsv {
 
 impl Importer for OnepasswordCsv {
     fn parse(&self, bytes: &[u8]) -> ImportResult {
-        parse_aliased(bytes)
+        let mut result = ImportResult::default();
+        let Some(rows) = read_rows(bytes, &mut result) else {
+            return result;
+        };
+        for (i, rec) in rows.records.iter().enumerate() {
+            let h = &rows.headers;
+            let url = get(h, rec, &["url"]);
+            let title = get(h, rec, &["title"]).or_else(|| url.clone());
+            let Some(title) = title else {
+                result.push_err(i + 2, "empty row");
+                continue;
+            };
+            result.entries.push(ImportedEntry {
+                kind: EntryKind::Login,
+                title,
+                username: get(h, rec, &["username"]),
+                password: get_verbatim(h, rec, &["password"]),
+                url,
+                otp: get(h, rec, &["otpauth"]),
+                notes: get(h, rec, &["notes"]),
+                tags: split_tags(get(h, rec, &["tags"])),
+                favorite: is_true(get(h, rec, &["favorite"])),
+                ..Default::default()
+            });
+        }
+        result
     }
+}
+
+// 1Password lists tags in one cell; the separator is not documented, so both
+// of the two it could be are honoured.
+fn split_tags(cell: Option<String>) -> Vec<String> {
+    cell.map(|t| {
+        t.split([',', ';'])
+            .map(|tag| tag.trim().to_string())
+            .filter(|tag| !tag.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+// A flag column, however the producer spells yes.
+fn is_true(cell: Option<String>) -> bool {
+    cell.is_some_and(|v| matches!(v.trim().to_lowercase().as_str(), "true" | "yes" | "1"))
 }
 
 /// LastPass CSV: `url,username,password,totp,extra,name,grouping,fav`. Secure

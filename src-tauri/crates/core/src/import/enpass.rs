@@ -5,6 +5,9 @@
 //! labelled extra, concealed when Enpass marked it sensitive. Folders are
 //! nested by `parent_uuid` and become one path tag per folder the item sits in.
 //!
+//! Attachments are not read: an item that has any still imports, and the row
+//! is reported, so the user knows to keep the export file for them.
+//!
 //! The one exception is an ID document (`license.driving`, `travel.passport`):
 //! its fields are all plain `text`/`date`/`numeric`, so the template says what
 //! the item is and the English labels say which field is which. A localized
@@ -57,6 +60,11 @@ struct Item {
     /// The uuids of the folders the item is filed in.
     #[serde(default, deserialize_with = "super::null_to_default")]
     folders: Vec<String>,
+    /// The files on the item. Not imported — nothing here writes a file — so
+    /// a row that has any says so in the report rather than reading as a
+    /// clean import; only the count is needed for that.
+    #[serde(default, deserialize_with = "super::null_to_default")]
+    attachments: Vec<serde_json::Value>,
     // Flags are 0/1 integers; timestamps are epoch seconds. All lenient: one
     // odd value must not cost the whole file.
     #[serde(default, deserialize_with = "super::lenient_u64")]
@@ -273,6 +281,7 @@ impl Importer for Enpass {
             }
             let category = category(&item);
             let document = document_type(item.template_type.as_deref());
+            let attachments = item.attachments.len();
             let fields: Vec<Field> = item
                 .fields
                 .into_iter()
@@ -312,6 +321,12 @@ impl Importer for Enpass {
                 continue;
             }
             result.entries.push(entry);
+            if attachments > 0 {
+                result.push_err(
+                    row,
+                    format!("{attachments} attachment(s) not imported; keep the export"),
+                );
+            }
         }
         result
     }
