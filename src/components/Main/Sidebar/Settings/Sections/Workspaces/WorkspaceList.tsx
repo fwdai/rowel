@@ -70,9 +70,8 @@ export default function WorkspaceList() {
         >
           <span className="text-bad">{syncErrorText(sync)}</span>
           <Button
-            variant="pale"
+            variant="pale-danger"
             size="md"
-            className="text-bad hover:text-bad"
             testid="workspace-delete-stranded"
             disabled={last}
             onClick={() => askDelete(active)}

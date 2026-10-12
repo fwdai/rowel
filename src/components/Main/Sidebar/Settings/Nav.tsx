@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
 import { useVault, usePrefs, type Section } from '@/store'
-import { LABEL, META_TYPE } from '@/components/elements/tokens'
+import Chip from '@/components/elements/Chip'
+import { LABEL } from '@/components/elements/tokens'
 import { auditCounts } from '@/utils/vaultScore'
 import Footer from './Footer'
 import { GROUPS, SECTIONS } from './sections'
@@ -74,12 +75,9 @@ export default function Nav({ section, onSelect, disabled = false }: Props) {
                       </span>
                       <span className="min-w-0 flex-1 truncate">{t(label)}</span>
                       {badge !== null && (
-                        <span
-                          data-testid="settings-nav-audit-badge"
-                          className={`flex-none rounded-full px-2 ${META_TYPE} bg-accent-soft text-accent`}
-                        >
+                        <Chip tone="accent" testid="settings-nav-audit-badge">
                           {badge}
-                        </span>
+                        </Chip>
                       )}
                     </button>
                   </li>

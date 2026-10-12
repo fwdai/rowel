@@ -2,21 +2,18 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { exportVault } from '@/api/vault'
 import { BACKUP_EXTENSION } from '@/lib/backup'
-import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
+import Chip from '@/components/elements/Chip'
+import Note from '@/components/elements/Note'
 import { inputClass } from '@/components/elements/formStyles'
 import { verbatimInput } from '@/components/elements/inputProps'
-import { META, ROW_HAIRLINE } from '@/components/elements/tokens'
 import { DiskGlyph } from '../../../../icons'
-import RowHead from './RowHead'
+import ExpandableRow from '../ExpandableRow'
 
 // The whole vault as one backup file, resealed under the master password the
 // user re-types here (the open session's key is never handed to the exporter).
-// Unfolds its form under the row, as ExpandableRow does; laid out by hand only
-// because its label carries the extension chip.
 export default function BackupRow() {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
   const [password, setPassword] = useState('')
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,52 +34,44 @@ export default function BackupRow() {
   }
 
   return (
-    <div data-testid="settings-backup-row" className={cx('px-4 py-3.5', ROW_HAIRLINE)}>
-      <div className="flex items-center gap-3.5">
-        <RowHead
-          icon={<DiskGlyph size={16} />}
-          label={
-            <>
-              {t('Encrypted backup')}
-              <span className={`rounded-xs border border-line2 px-1 font-normal ${META}`}>
-                {BACKUP_EXTENSION}
-              </span>
-            </>
-          }
-          description={t('Your whole vault, sealed with your master password')}
+    <ExpandableRow
+      label={
+        <span className="flex items-center gap-2">
+          {t('Encrypted backup')}
+          <Chip>{BACKUP_EXTENSION}</Chip>
+        </span>
+      }
+      description={t('Your whole vault, sealed with your master password')}
+      icon={<DiskGlyph size={16} />}
+      action={t('Save…')}
+      testid="settings-backup-row"
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          type="password"
+          name="export_password"
+          {...verbatimInput}
+          placeholder={t('Master password')}
+          className={`${inputClass} max-w-xs`}
+          value={password}
+          disabled={exporting}
+          onChange={event => {
+            setError(null)
+            setPassword(event.target.value)
+          }}
         />
-        <Button variant="pale" size="md" className="flex-none" onClick={() => setOpen(!open)}>
-          {open ? t('Cancel') : t('Save…')}
+        <Button
+          size="md"
+          disabled={!password}
+          loading={exporting}
+          onClick={onExport}
+          testid="settings-backup-save"
+        >
+          {t('Save')}
         </Button>
+        {error && <Note tone="bad">{error}</Note>}
+        {saved && <Note tone="good">{t('Saved')}</Note>}
       </div>
-      {open && (
-        <div className="mt-3 flex flex-wrap items-center gap-3 pl-[46px]">
-          <input
-            type="password"
-            name="export_password"
-            {...verbatimInput}
-            placeholder={t('Master password')}
-            className={`${inputClass} max-w-xs`}
-            value={password}
-            disabled={exporting}
-            onChange={event => {
-              setError(null)
-              setPassword(event.target.value)
-            }}
-          />
-          <Button
-            size="md"
-            disabled={!password}
-            loading={exporting}
-            onClick={onExport}
-            testid="settings-backup-save"
-          >
-            {t('Save')}
-          </Button>
-          {error && <span className="text-sm text-bad">{error}</span>}
-          {saved && <span className="text-sm text-good">{t('Saved')}</span>}
-        </div>
-      )}
-    </div>
+    </ExpandableRow>
   )
 }

@@ -49,7 +49,7 @@ function Strip({ onDrop }: Omit<Props, 'variant'>) {
   )
 
   const className =
-    'flex items-center gap-3.5 rounded-lg border border-dashed border-line2 px-4 py-5 text-text3'
+    'flex items-center gap-3.5 rounded-lg border border-dashed border-line2 px-4 py-5 text-text2'
 
   return isMobile ? (
     <button

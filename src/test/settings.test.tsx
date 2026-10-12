@@ -382,7 +382,7 @@ describe('Settings › sync', () => {
     const pill = () => screen.getByTestId('settings-drive-status')
 
     expect(pill()).toHaveTextContent('Not connected')
-    expect(pill()).toHaveAttribute('data-tone', 'idle')
+    expect(pill()).toHaveAttribute('data-tone', 'neutral')
 
     act(() => report({ configured: true }))
     expect(pill()).toHaveTextContent('Up to date')
@@ -390,7 +390,7 @@ describe('Settings › sync', () => {
 
     act(() => report({ configured: true, inProgress: true }))
     expect(pill()).toHaveTextContent('Syncing')
-    expect(pill()).toHaveAttribute('data-tone', 'busy')
+    expect(pill()).toHaveAttribute('data-tone', 'accent')
 
     act(() => report({ configured: true, error: 'Drive API 503' }))
     expect(pill()).toHaveTextContent('Last attempt failed')

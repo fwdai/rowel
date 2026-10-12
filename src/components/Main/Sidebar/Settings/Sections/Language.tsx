@@ -7,13 +7,9 @@ import { cx } from '@/utils/cx'
 import SettingsRow from '@/components/elements/SettingsRow'
 import MenuSelect from '@/components/elements/MenuSelect'
 import AccentSwatches from '@/components/elements/AccentSwatches'
-import { CARD, LABEL } from '@/components/elements/tokens'
+import { CARD, CARD_OPEN, LABEL } from '@/components/elements/tokens'
 import { CalendarGlyph, GlobeGlyph, PaletteGlyph } from '@/components/Main/icons'
 import ThemePicker from './General/ThemePicker'
-
-// The language and date menus hang out of their card, so this one card lets
-// them: its rows paint no ground of their own, so nothing needs the corner clip.
-const MENU_CARD = CARD.replace('overflow-hidden', 'overflow-visible')
 
 // Each language named in its own tongue, with its locale code beside it.
 const LOCALES = Object.entries(LANGUAGES).map(([value, label]) => ({ value, label, meta: value }))
@@ -61,7 +57,8 @@ export default function Language() {
 
       <section className="mb-7">
         <div className={cx(LABEL, 'mb-2')}>{t('Language & region')}</div>
-        <div className={MENU_CARD}>
+        {/* The language and date menus hang out of their card. */}
+        <div className={CARD_OPEN}>
           <SettingsRow
             label={languageLabel}
             description={t('Menus, dialogs and autofill prompts. Applies instantly.')}

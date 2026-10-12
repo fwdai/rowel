@@ -4,9 +4,10 @@ import type { Audit } from '@/api/tools'
 import { usePrefs, setView, closeSettings } from '@/store'
 import { auditCounts } from '@/utils/vaultScore'
 import { cx } from '@/utils/cx'
+import { TEXT_LINK } from '@/components/elements/tokens'
 import { setBreachCheck } from './breach'
 
-const LINK = 'mt-1 cursor-pointer text-left text-base text-accent hover:underline'
+const LINK = `mt-1 text-left text-base ${TEXT_LINK}`
 
 const openHealth = () => {
   setView('health')
