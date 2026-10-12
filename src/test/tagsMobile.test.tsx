@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
 import type { EntryMeta } from '@/api/types'
-import { useUi, useVault, startEntry } from '@/store'
+import { useUi, useVault, deleteEntry, startEntry } from '@/store'
 import { deferred, withEntries, loginEntry, loginMeta } from './utils'
 import { calls, mockCommand } from './ipc'
 import { setLayout } from './layout'
@@ -333,6 +333,39 @@ describe('tags on the entry screen', () => {
           'travel'
         ])
       )
+    })
+
+    // `save_entry` is an upsert, so a queued save reaching the core after an
+    // archive would bring the row back out of it.
+    it('drops a queued save for an entry archived meanwhile', async () => {
+      const first = deferred<EntryMeta>()
+      mockCommand('save_entry', ({ entry }) =>
+        calls('save_entry').length === 1 ? first.promise : saved(entry)
+      )
+      seed()
+      await openPicker()
+
+      await userEvent.click(screen.getByTestId('tag-suggest-money'))
+      await closePicker()
+      await userEvent.click(screen.getByTestId('add-tag-button'))
+      await userEvent.click(screen.getByTestId('tag-suggest-travel'))
+      await closePicker()
+      expect(calls('save_entry')).toHaveLength(1)
+
+      // Archived while the second list is still waiting its turn.
+      await act(() => deleteEntry('l1'))
+      expect(useVault.getState().items.find(e => e.id === 'l1')).toBeUndefined()
+      expect(useVault.getState().currentId).toBeNull()
+
+      await act(async () => {
+        first.resolve(saved(calls('save_entry')[0].entry))
+        await first.promise
+      })
+
+      // The second list never goes out, and the row stays archived.
+      await waitFor(() => expect(calls('delete_entry')).toHaveLength(1))
+      expect(calls('save_entry')).toHaveLength(1)
+      expect(useVault.getState().items.find(e => e.id === 'l1')).toBeUndefined()
     })
   })
 
