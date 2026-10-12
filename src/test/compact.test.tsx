@@ -898,9 +898,11 @@ describe('swipe back', () => {
     await waitFor(() => expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument())
   })
 
-  // The strip the drag starts on lies over the scroller's first points, so a
-  // tap there is handed to what it covers: the row, or the back control.
-  it('lays a strip on the edge and passes a tap on it to the control under', async () => {
+  // The strip the drag starts on lies over the scroller's first points and the
+  // back control's arrow, so a tap — or a mouse click, which never swipes — is
+  // handed to what it covers. What is found there may be the arrow's SVG, so
+  // the click has to bubble up to its button rather than be `click()`ed.
+  it('lays a strip on the edge and passes a click on it to the control under', async () => {
     seed()
     render(<Main />)
     act(() => openSettings())
@@ -910,20 +912,19 @@ describe('swipe back', () => {
     expect(pane).toContainElement(strip)
     expect(strip).toHaveClass('touch-none')
 
-    const back = screen.getByTestId('settings-back')
+    const arrow = screen.getByTestId('settings-back').querySelector('svg')!
     const found: number[][] = []
     document.elementFromPoint = (x, y) => {
       found.push([x, y, strip.style.pointerEvents === 'none' ? 1 : 0])
-      return back
+      return arrow
     }
-    pane.getBoundingClientRect = () => ({ left: 0, width: 390 }) as DOMRect
-    const touch = { pointerId: 1, pointerType: 'touch' }
-    fireEvent.pointerDown(strip, { ...touch, clientX: 8, clientY: 30 })
-    fireEvent.pointerUp(strip, { ...touch, clientX: 8, clientY: 30 })
+    fireEvent.click(strip, { clientX: 8, clientY: 30 })
     // Looked up with the strip out of the way, and once.
     expect(found).toEqual([[8, 30, 1]])
     expect(strip.style.pointerEvents).toBe('')
-    await waitFor(() => expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument())
+    // The back control answered: the pane is gone, the root alone remains.
+    await waitFor(() => expect(screen.queryByTestId('settings-pane')).not.toBeInTheDocument())
+    expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument()
   })
 })
 

@@ -1,4 +1,11 @@
-import { createContext, useContext, useEffect, useRef, type PointerEvent } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent
+} from 'react'
 
 /**
  * What a `Stack` gives the screen over its lower layer: a way to put that
@@ -72,8 +79,8 @@ const reducedMotion = () =>
  * scroll, and the pointer under the swipe is cancelled mid-drag — the screen
  * followed the finger for a moment and then sprang back. That is the way the
  * bottom sheet's grabber owns its drag, too: one started in the content is a
- * scroll. A tap on the strip is passed on to whatever lies under it, so the
- * sliver of a row it covers still answers.
+ * scroll. A tap or a mouse click on the strip is passed on to whatever lies
+ * under it, so the sliver of a row or back arrow it covers still answers.
  *
  * There is no exit animation in the shell (the screen simply unmounts), so
  * the commit finishes the slide itself before calling back.
@@ -119,16 +126,28 @@ export function useSwipeBack(onBack: () => void, disabled = false) {
     latest.current.onBack()
   }
 
-  // A tap on the strip is for what the strip is lying over — a row's first
-  // points, the back control — so the strip steps aside for a moment to find
-  // it and clicks it. (jsdom has no `elementFromPoint`; the tests supply one.)
-  const forwardTap = (e: PointerEvent<HTMLDivElement>) => {
+  // A tap or a click on the strip is for what the strip is lying over — a row's
+  // first points, the back control's arrow — so the strip steps aside for a
+  // moment to find it and clicks it. A bubbling click rather than `click()`:
+  // what it finds may be the arrow's SVG, which has no `click()` of its own.
+  // Every pointer comes through here, a mouse included — it may not swipe,
+  // but it may click. A drag that captured the pointer lands its click on the
+  // screen, not the strip, so a swipe never doubles as a tap. (jsdom has no
+  // `elementFromPoint`; the tests supply one.)
+  const forwardTap = (e: ReactMouseEvent<HTMLDivElement>) => {
     const strip = edge.current
     if (!strip || e.target !== strip) return
     strip.style.pointerEvents = 'none'
     const under = document.elementFromPoint?.(e.clientX, e.clientY)
     strip.style.pointerEvents = ''
-    if (under instanceof HTMLElement) under.click()
+    under?.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        clientX: e.clientX,
+        clientY: e.clientY
+      })
+    )
   }
 
   const ref = (el: HTMLDivElement | null) => {
@@ -171,10 +190,7 @@ export function useSwipeBack(onBack: () => void, disabled = false) {
     const from = origin.current
     if (from?.id !== e.pointerId) return
     origin.current = null
-    if (!from.pop) {
-      if (from.pop === null) forwardTap(e)
-      return
-    }
+    if (!from.pop) return
     const dx = e.clientX - from.x
     const speed = dx / Math.max(1, e.timeStamp - from.at)
     if (dx > from.width * COMMIT_SHARE || (dx > FLICK_MIN_PX && speed > FLICK_SPEED)) {
@@ -201,6 +217,7 @@ export function useSwipeBack(onBack: () => void, disabled = false) {
     /** Spread on an empty div, the screen's last child: the strip the finger lands on. */
     edge: {
       ref: edge,
+      onClick: forwardTap,
       'aria-hidden': true,
       'data-testid': 'swipe-edge',
       className: 'absolute inset-y-0 left-0 z-10 touch-none',
