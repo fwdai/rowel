@@ -18,6 +18,7 @@ import {
   removeAttachment,
   enterMain,
   setSyncStatus,
+  setupAccountPending,
   initialApp,
   setFilterType,
   lockVault
@@ -229,5 +230,24 @@ describe('enterMain', () => {
 
     expect(useApp.getState().sync.configured).toBe(false)
     expect(calls('sync_now')).toHaveLength(0)
+  })
+
+  // A vault created or restored behind a connect has had no `sync:status`
+  // yet: the provider is the one the connect was for, not the Drive fallback.
+  it('takes the provider from the connect that a fresh vault was made behind', async () => {
+    setupAccountPending('dropbox')
+
+    await enterMain({ entries: [], syncConfigured: true })
+
+    expect(useApp.getState().sync.provider).toBe('dropbox')
+  })
+
+  it('keeps the provider a status already reported over the pending one', async () => {
+    setSyncStatus({ ...initialApp.sync, configured: true, provider: 'googleDrive' })
+    setupAccountPending('dropbox')
+
+    await enterMain({ entries: [], syncConfigured: true })
+
+    expect(useApp.getState().sync.provider).toBe('googleDrive')
   })
 })

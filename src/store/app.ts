@@ -288,11 +288,20 @@ export const enterMain = async (result: UnlockResult) => {
   // sync arrives as `sync:status` once a flow or a run happens. No re-probe:
   // `initialized` and `scanSupported` cannot have changed, and this is the one
   // answer an unlock does change.
+  //
+  // Which provider: the status the launch probe gave for an existing vault,
+  // or — for a vault that was just created or restored behind a first-run or
+  // Settings connect, which no status has described yet — the account that
+  // connect was for. Without that, the gap until the first run's status read
+  // as Google Drive (`syncProvider`'s fallback) and showed Drive-only controls
+  // over a Dropbox vault.
   useApp.setState(state => ({
     sync: {
       ...state.sync,
       configured: result.syncConfigured,
-      provider: result.syncConfigured ? state.sync.provider : null
+      provider: result.syncConfigured
+        ? (state.sync.provider ?? state.setupAccount.provider)
+        : null
     }
   }))
   // One run on unlock: this device may have been off while another pushed,
