@@ -126,14 +126,24 @@ pub trait VaultStore {
     async fn list_vaults(&self) -> Result<Vec<RemoteEntry>>;
     /// The entry named `name` in `Vaults/`, or `None`.
     async fn stat(&self, name: &str) -> Result<Option<RemoteEntry>>;
-    /// Contents by handle, refusing anything over `max_bytes`.
-    async fn read(&self, handle: &str, max_bytes: usize) -> Result<(Vec<u8>, Option<String>)>;
-    /// Create or overwrite `name` in `Vaults/`, creating folders as needed.
-    async fn write(&self, name: &str, bytes: &[u8]) -> Result<Option<String>>;
+    /// Contents by handle, refusing anything over `max_bytes`. No revision:
+    /// the core takes it from the same `stat` that located the entry, so
+    /// `fetch` and `head_revision` cannot drift apart.
+    async fn read(&self, handle: &str, max_bytes: usize) -> Result<Vec<u8>>;
+    /// A new entry named `name` in `Vaults/`, creating folders as needed.
+    async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>>;
+    /// Overwrite an existing entry by handle. Kept apart from `create` so a
+    /// "delete everywhere" landing between the core's existence check and the
+    /// write fails (no such handle) instead of quietly re-creating the pack.
+    async fn update(&self, handle: &str, bytes: &[u8]) -> Result<Option<String>>;
     /// Delete by handle. Already gone counts as deleted.
     async fn delete(&self, handle: &str) -> Result<()>;
 }
 ```
+
+(As implemented in PR 1. The first draft had a single name-based `write` and
+a `read` that returned the revision; both were changed for the reasons in the
+comments above.)
 
 Runtime dispatch is an enum, not `Box<dyn>`: `async fn` traits are not
 object-safe, and there will only ever be a handful of providers.
