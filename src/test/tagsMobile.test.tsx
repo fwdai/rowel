@@ -63,10 +63,8 @@ describe('tags on the entry screen', () => {
     const chip = within(section).getByLabelText('Filter by tag work')
     expect(chip).toHaveTextContent('work')
     expect(chip).not.toHaveTextContent('#')
-    // A dot in a hue of its own, hashed from the name, like a workspace tile's
-    // colour — the pill itself stays neutral.
-    expect(chip.querySelector('.tag-dot')).not.toBeNull()
-    expect(chip.style.getPropertyValue('--hue')).not.toBe('')
+    // The cards' own white on the screen's ground, edged — not a grey tile.
+    expect(chip).toHaveClass('bg-detail')
     // No card under the chips: they are the content.
     expect(section.querySelector('.shadow-card')).toBeNull()
     expect(within(section).getByTestId('add-tag-button')).toHaveTextContent('Add tag')
@@ -155,10 +153,10 @@ describe('tags on the entry screen', () => {
     expect(applied()).toEqual(['money'])
     expect(suggested()).toEqual(['work2', 'travel1'])
     expect(field()).toHaveFocus()
-    // In the field it wears the same dot it has on the entry; floating, it
-    // is a bare outline.
-    expect(screen.getByLabelText('Remove tag money').querySelector('.tag-dot')).not.toBeNull()
-    expect(screen.getByTestId('tag-suggest-work').querySelector('.tag-dot')).toBeNull()
+    // In the field — itself the white detail surface — the chip takes the
+    // tile grey rather than white on white; floating, it is a bare outline.
+    expect(screen.getByLabelText('Remove tag money')).toHaveClass('bg-tile')
+    expect(screen.getByTestId('tag-suggest-work')).not.toHaveClass('bg-tile')
 
     await closePicker()
 

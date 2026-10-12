@@ -106,6 +106,7 @@ export default function TagPicker({ subject, value, onChange, onClose }: Props) 
           {value.map(tag => (
             <TagChip
               key={tag}
+              tone="field"
               removes
               testid={`tag-applied-${tag}`}
               label={t('Remove tag {{tag}}', { tag })}

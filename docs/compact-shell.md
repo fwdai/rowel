@@ -190,15 +190,14 @@ editor with its ×, under the search field as the list's filter, and as the
 add control — `elements/TagChip`: a 32px pill (24 on the desktop), no `#`
 in front of it (a tag is not a hashtag; the list's title names the tag bare
 too), and a hit area reaching the 44px the platform asks for. At rest it is
-the cards' own materials — the detail surface with a hairline edge — with a
-small dot in a hue hashed from its name (`lib/hue`, the same hash a
-workspace tile's colour comes from; `tag-dot` in the theme, the monogram's
-muted edge tone made solid), so a tag has a colour of its own and is the
-same colour on every entry without a row of tags becoming a row of colours:
-the pill stays quiet and the dot is the label. The list's filter chip is the
-one heavy one — the accent, solid — because there the tag is what the screen
-is about; the picker's waiting chips are bare outlines in the secondary ink
-that take their dot and full ink as they enter the field. Pressing a tag while reading goes to everything filed
+the cards' own white on the screen's grey ground, in an edge tinted with the
+accent at a quarter — a step firmer than a card's hairline, so the pill holds
+its shape beside the content without colouring it. Inside the picker's field,
+which is itself the white detail surface, the same chip takes the tile grey
+(`tone="field"`), since white on white would be no chip at all. The list's
+filter chip is the one heavy one — the accent, solid — because there the tag
+is what the screen is about; the picker's waiting chips are bare outlines in
+the secondary ink. Pressing a tag while reading goes to everything filed
 under it. Adding or taking one off never needs the editor: the add chip opens
 `elements/TagPicker`, a bottom sheet holding one token field — the entry's
 tags as chips inside it, the caret after them, as Mail's recipients field and

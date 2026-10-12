@@ -39,6 +39,7 @@ export default function TagsInput({ value, onChange, placeholder }: Props) {
       {value.map(tag => (
         <TagChip
           key={tag}
+          tone="field"
           removes
           label={t('Remove tag {{tag}}', { tag })}
           onClick={() => removeTag(tag)}
