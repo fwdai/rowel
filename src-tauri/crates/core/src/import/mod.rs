@@ -5,14 +5,15 @@
 //! Tauri. The command layer (`commands::import`) owns the seal + upsert.
 //!
 //! Adding a format = adding one [`Importer`] adapter and one [`Format`] variant.
-//! The trait is byte-in / result-out, so a zipped format (1Password `.1pux`) slots
-//! in later without reshaping anything.
+//! The trait is byte-in / result-out, which is how a zipped format (1Password's
+//! `.1pux`) reads through the same contract as the JSON and CSV ones.
 
 mod bitwarden;
 mod csv;
 mod cxf;
 mod enpass;
 pub mod export;
+mod onepassword;
 
 #[cfg(test)]
 mod tests;
@@ -54,6 +55,20 @@ where
     D: Deserializer<'de>,
 {
     Ok(lenient_u64(d)?.and_then(|n| u8::try_from(n).ok()))
+}
+
+/// A field value is a string, but a numeric field may be written as a number;
+/// anything else reads as absent rather than failing the document.
+pub(crate) fn lenient_string<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Some(s),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    })
 }
 
 /// A member a producer writes as `null` where a list belongs: read as empty.
@@ -292,9 +307,13 @@ pub enum Format {
     Bitwarden,
     Cxf,    // FIDO Credential Exchange Format — the second JSON shape we read
     Enpass, // Enpass 6 JSON — the third
+    Onepux, // 1Password's own export: a zip around a JSON document
     GenericCsv,
     BrowserCsv,     // Chrome / Safari share a header-aliased shape
     OnepasswordCsv, // 1Password's CSV fits the same aliases
+    // Whichever of its two files 1Password wrote, told apart by content: the
+    // one "1Password" choice in the UI takes either.
+    Onepassword,
     LastpassCsv,
     KeepassCsv,
 }
@@ -306,9 +325,11 @@ impl Format {
             "bitwarden" => Some(Format::Bitwarden),
             "cxf" | "fido" => Some(Format::Cxf),
             "enpass" | "enpass_json" => Some(Format::Enpass),
+            "1pux" | "onepux" => Some(Format::Onepux),
             "csv" | "generic" | "generic_csv" => Some(Format::GenericCsv),
             "chrome" | "safari" | "browser" | "browser_csv" => Some(Format::BrowserCsv),
-            "1password" | "onepassword" | "onepassword_csv" => Some(Format::OnepasswordCsv),
+            "onepassword_csv" => Some(Format::OnepasswordCsv),
+            "1password" | "onepassword" => Some(Format::Onepassword),
             "lastpass" | "lastpass_csv" => Some(Format::LastpassCsv),
             "keepass" | "keepass_csv" => Some(Format::KeepassCsv),
             _ => None,
@@ -321,9 +342,11 @@ impl Format {
             Format::Bitwarden => Box::new(bitwarden::Bitwarden),
             Format::Cxf => Box::new(cxf::Cxf),
             Format::Enpass => Box::new(enpass::Enpass),
+            Format::Onepux => Box::new(onepassword::Onepux),
             Format::GenericCsv => Box::new(csv::GenericCsv),
             Format::BrowserCsv => Box::new(csv::BrowserCsv),
             Format::OnepasswordCsv => Box::new(csv::OnepasswordCsv),
+            Format::Onepassword => Box::new(onepassword::Onepassword),
             Format::LastpassCsv => Box::new(csv::LastpassCsv),
             Format::KeepassCsv => Box::new(csv::KeepassCsv),
         }
@@ -334,6 +357,11 @@ impl Format {
 /// UI can offer "auto". Explicit selection always wins upstream.
 pub fn detect(name: &str, bytes: &[u8]) -> Option<Format> {
     let lower = name.to_lowercase();
+    // The one archive we read; a zip of anything else fails in its adapter
+    // with a message that says so.
+    if lower.ends_with(".1pux") || onepassword::is_zip(bytes) {
+        return Some(Format::Onepux);
+    }
     if lower.ends_with(".json") {
         return Some(detect_json(bytes));
     }
@@ -388,6 +416,9 @@ fn detect_csv(bytes: &[u8]) -> Format {
         Format::LastpassCsv
     } else if has("group") && has("title") {
         Format::KeepassCsv
+    } else if has("otpauth") {
+        // The column only 1Password's CSV has; its tags and star are read too.
+        Format::OnepasswordCsv
     } else {
         Format::GenericCsv
     }

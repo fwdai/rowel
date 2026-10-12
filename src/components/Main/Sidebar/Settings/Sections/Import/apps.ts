@@ -25,7 +25,7 @@ export const APPS: ImportApp[] = [
     brand: '1password',
     badge: '1P',
     name: '1Password',
-    hint: '.csv export',
+    hint: '.1pux or .csv export',
     format: '1password',
     featured: true
   },
