@@ -68,8 +68,10 @@ describe('tags on the entry screen', () => {
     // The add control is the screen's quiet verb, not a chip-shaped thing.
     expect(within(section).getByTestId('add-tag-button')).toHaveClass('text-accent')
     expect(within(section).getByTestId('add-tag-button')).not.toHaveClass('border')
-    // No card under the chips: they are the content.
-    expect(section.querySelector('.shadow-card')).toBeNull()
+    // No card under the chips: they are the content, standing straight on
+    // the section — each a small card of its own, but inside nothing.
+    expect(chip.parentElement).not.toHaveClass('shadow-card')
+    expect(chip.closest('.shadow-card')).toBe(chip)
     expect(within(section).getByTestId('add-tag-button')).toHaveTextContent('Add tag')
   })
 
