@@ -144,8 +144,8 @@ one-time code is a row under the password with a countdown ring in its rail
 (`fields/Otp/Countdown`, a conic gradient on a registered `--otp-left`), on
 both shells; the editor keeps the dial as the live preview. Under the rows,
 files, passkeys, custom fields and tags are sections (`SECTION_LABEL`: 12px
-uppercase, tracking pulled in, inset to the rows), every "add" under a card
-is the same quiet accent line (`ACTION_ROW`), and the dates are one centred
+uppercase, tracking pulled in, inset to the rows), every "add" under the rows
+is the same dashed pill (`ADD_PILL`, `ACTION_ROW`), and the dates are one centred
 meta line at the end — `Compact/Detail/Meta`, handed to `Show/Body` as its
 `Footer` and to `Edit/Body` as the editor's, which reads the same facts the
 desktop's strip does. Files are a plain list, not
@@ -177,10 +177,13 @@ one picture at a time, so a list of images costs kilobytes whatever the files
 weigh and never a burst of decodes; a picture the
 engine cannot decode (a TIFF or a BMP off Apple platforms) is fetched again as
 the backend's PNG of it (`attachment_render`), so what an image shows does
-not depend on the OS. Under the list, and alone on an entry with no files, one quiet line:
-"Attach file" behind a paperclip in the accent — text (`ACTION_ROW`, a 44px
-row), not a card cell: a boxed button under every section made the screen a
-stack of cards rather than content with quiet verbs.
+not depend on the OS. Under the list, and alone on an entry with no files,
+"Attach file" behind a paperclip: on the phone the same dashed pill "Add tag"
+is (`ACTION_ROW`, the `max-md:` twin of `TagChip`'s `ADD_PILL`) — the
+outline of a thing not yet there, 32px with a 44px hit area — so the two
+verbs under the rows are visibly one control; on the desktop the accent text
+line `AddAction` draws. Not a card cell: a boxed button under every section
+made the screen a stack of cards rather than content with quiet verbs.
 
 Tags stand in the same gutter as the files, under a `SECTION_LABEL_FLUSH`
 heading, and are no more a card than they are: the chips themselves are the

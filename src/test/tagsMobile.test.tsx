@@ -68,6 +68,10 @@ describe('tags on the entry screen', () => {
     // No card under the chips: they are the content.
     expect(section.querySelector('.shadow-card')).toBeNull()
     expect(within(section).getByTestId('add-tag-button')).toHaveTextContent('Add tag')
+    // The two "add" verbs under the rows are the same dashed pill: the tags'
+    // at the chip's own classes, the files' under the phone's prefix.
+    expect(within(section).getByTestId('add-tag-button')).toHaveClass('border-dashed')
+    expect(screen.getByTestId('attach-file-button')).toHaveClass('max-md:border-dashed')
   })
 
   it('goes to everything filed under a pressed tag, named without a hash', async () => {

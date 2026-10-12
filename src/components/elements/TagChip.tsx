@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { cx } from '@/utils/cx'
 import { CloseGlyph, PlusGlyph } from '../Main/icons'
+import { ADD_PILL } from './tokens'
 
 /**
  * The one way a tag is drawn, wherever it turns up: on an entry, in the
@@ -27,7 +28,9 @@ import { CloseGlyph, PlusGlyph } from '../Main/icons'
  * - outline, waiting to be picked in the sheet: the bare pill with a hairline
  *   and the secondary ink, not yet filled in; tapped, it goes into the field.
  * - add: the dashed outline of a tag not yet there — the add and create
- *   controls, the same shape so that what they add is what they look like.
+ *   controls, the same shape so that what they add is what they look like,
+ *   and the same pill the phone's "Attach file" is (`ADD_PILL`), so the two
+ *   verbs under the rows read as one control.
  */
 export type TagTone = 'rest' | 'field' | 'active' | 'outline' | 'add'
 
@@ -60,7 +63,7 @@ const TONE: Record<TagTone, string> = {
   field: `${EDGE} bg-tile text-text hover:bg-text/10 active:bg-text/15`,
   active: 'bg-accent text-accent-fg hover:brightness-110',
   outline: 'border border-line2 text-text2 hover:bg-hover hover:text-text active:bg-sel',
-  add: 'border border-dashed border-line2 text-text2 hover:border-text3 hover:text-text active:bg-hover'
+  add: ADD_PILL
 }
 
 export default function TagChip({
