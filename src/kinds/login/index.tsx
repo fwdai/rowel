@@ -1,6 +1,6 @@
 import { LoginGlyph } from '@/components/Main/icons'
 import type { Kind } from '../types'
-import { defaults, isValid, listSubtitle, primarySecret } from './meta'
+import { defaults, isValid, listSubtitle, otpSecret, primarySecret, url, username } from './meta'
 import ListRow from './ListRow'
 import Fields from './Fields'
 
@@ -18,6 +18,9 @@ const login: Kind = {
   defaults,
   isValid,
   primarySecret,
+  username,
+  url,
+  otpSecret,
   primaryActionLabel: 'Copy password',
   listSubtitle,
   ListRow,

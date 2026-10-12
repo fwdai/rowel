@@ -41,6 +41,14 @@ export interface Kind {
   isValid: (draft: EntryDraft) => boolean
   /** The one secret worth a shortcut — what ⏎ and ⌘⏎ copy. */
   primarySecret: (entry: Entry) => string
+  /**
+   * The values the list's other copy chords ask for — ⌘B the login name, ⌘U
+   * the address, ⌘T the TOTP seed the code is cut from. Left off by kinds that
+   * have no such field, so a chord on them does nothing.
+   */
+  username?: (entry: Entry) => string
+  url?: (entry: Entry) => string
+  otpSecret?: (entry: Entry) => string
   /** Untranslated label for the detail header's primary button. */
   primaryActionLabel: TKey
   /** The row's secondary line, from non-secret metadata only. */

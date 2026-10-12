@@ -1,23 +1,42 @@
 import Fuse from 'fuse.js'
-import type { EntryMeta, EntryType } from '@/api/types'
+import type { Entry, EntryMeta, EntryType } from '@/api/types'
+import { generateOtp } from '@/api/tools'
 import { revealEntry } from '@/api/vault'
-import { kindOf } from '@/kinds'
+import { completeEntry, kindOf } from '@/kinds'
 import { flashCopied } from '@/store'
 import { copy } from './copy'
 
+/** What a copy shortcut can lift off an entry without opening it. */
+export type EntryValue = 'secret' | 'username' | 'otp' | 'url'
+
+const VALUES: Record<EntryValue, (entry: Entry) => string | Promise<string>> = {
+  secret: entry => kindOf(entry.type).primarySecret(entry),
+  username: entry => kindOf(entry.type).username?.(entry) ?? '',
+  url: entry => kindOf(entry.type).url?.(entry) ?? '',
+  // The seed is never what gets pasted: the backend cuts the current code from it.
+  otp: entry => {
+    const secret = kindOf(entry.type).otpSecret?.(entry)
+    return secret ? generateOtp(secret).then(otp => otp.code) : ''
+  }
+}
+
 // Decrypts just this entry (secrets never live in the list metadata) and puts
-// the one secret worth a shortcut for its kind on the clipboard, with the usual
-// auto-clear timeout. Backs the list search's ⌘⏎, which has no control on
-// screen to flash a check on, so the app-level pill is its confirmation.
-export const copySecret = (entry: EntryMeta): Promise<void> =>
+// one of its values on the clipboard, with the usual auto-clear timeout. Backs
+// the list's copy chords, which have no control on screen to flash a check on,
+// so the app-level pill is their confirmation. An entry without the value, or
+// one that will not reveal (a tombstone), copies nothing.
+export const copyValue = (entry: EntryMeta, value: EntryValue): Promise<void> =>
   revealEntry(entry.id)
-    .then(revealed => {
-      const value = kindOf(revealed.type).primarySecret(revealed)
-      if (!value) return
-      copy(value)
+    .then(revealed => VALUES[value](completeEntry(revealed)))
+    .then(text => {
+      if (!text) return
+      copy(text)
       flashCopied()
     })
     .catch(() => {})
+
+/** The one secret worth a shortcut for the entry's kind — the list search's ⌘⏎. */
+export const copySecret = (entry: EntryMeta): Promise<void> => copyValue(entry, 'secret')
 
 interface FilterOptions {
   // null means every kind — the "All Items" view.

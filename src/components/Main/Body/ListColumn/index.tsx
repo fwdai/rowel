@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { useUi } from '@/store'
 import { cx } from '@/utils/cx'
 import ActiveTag from './ActiveTag'
+import { onCopyKey } from './copyKeys'
 import List from '../List'
 import Search from './Search'
 import Title from './Title'
@@ -103,7 +104,7 @@ export default function ListColumn({
           is a hero with its own buttons, and inside `role="listbox"` those are
           neither options nor reachable as controls. */}
       <div className={cx('min-h-0 flex-1 overflow-y-auto', scroller)}>
-        <div role="listbox" aria-label={title}>
+        <div role="listbox" aria-label={title} onKeyDown={onCopyKey}>
           <List />
         </div>
         {footer}

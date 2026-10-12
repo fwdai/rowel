@@ -31,5 +31,11 @@ export const isValid = (draft: EntryDraft): boolean =>
 export const primarySecret = (entry: Entry): string =>
   entry.type === 'login' ? entry.password : ''
 
+export const username = (entry: Entry): string => (entry.type === 'login' ? entry.username : '')
+
+export const url = (entry: Entry): string => (entry.type === 'login' ? entry.website : '')
+
+export const otpSecret = (entry: Entry): string => (entry.type === 'login' ? entry.otp : '')
+
 // The host stands in for a row not yet stamped with its username.
 export const listSubtitle = (entry: EntryMeta): string => entry.username || entry.urlHost
