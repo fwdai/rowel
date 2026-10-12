@@ -606,21 +606,28 @@ fn open_consent(
 /// sealed under it (`commands::sync::sync_adopt_pending`). Blocking (the
 /// loopback listener): call it off the main thread.
 ///
-/// The flow belongs to the setup attempt current when it starts: Cancel, Go
-/// back and a new connect all move `AppState::setup_attempt`, and the listener
-/// gives up as soon as it sees that — rather than holding its port until
-/// [`CONSENT_TIMEOUT`], which for a provider with a few registered ports
+/// The flow belongs to `attempt`, the setup attempt the caller began: Cancel,
+/// Go back and a new connect all move `AppState::setup_attempt` past it, and
+/// the listener gives up as soon as it sees that — rather than holding its port
+/// until [`CONSENT_TIMEOUT`], which for a provider with a few registered ports
 /// (Dropbox) would let abandoned attempts lock out the next one.
+///
+/// The caller's number, not one read here: this runs on a worker thread the
+/// caller scheduled, and a cancel landing before it starts would otherwise be
+/// read as the live attempt and missed.
 #[cfg(desktop)]
-pub fn obtain_tokens(app: &AppHandle, provider: Provider) -> Result<Tokens> {
-    use std::sync::atomic::Ordering;
-    let attempt = app_state(app).setup_attempt.load(Ordering::SeqCst);
-    let cancelled = || app_state(app).setup_attempt.load(Ordering::SeqCst) != attempt;
+pub fn obtain_tokens(app: &AppHandle, provider: Provider, attempt: u64) -> Result<Tokens> {
+    let cancelled = || superseded(&app_state(app).setup_attempt, attempt);
 
     let config = oauth_config(provider);
     let listener = bind_loopback(config.loopback_ports)?;
     let port = listener.local_addr()?.port();
     let credentials = Credentials::resolve(app, config)?.with_loopback(port);
+    // A consent page for a dead attempt would ask the user to approve a
+    // sign-in nothing is waiting for.
+    if cancelled() {
+        return Err(sign_in_cancelled());
+    }
     let started = open_consent(app, config, &credentials)?;
     let code = listen_for_code(&listener, &started.state, provider, cancelled)?;
     let client = super::http_client();
@@ -631,6 +638,18 @@ pub fn obtain_tokens(app: &AppHandle, provider: Provider) -> Result<Tokens> {
         &code,
         &started.verifier,
     ))
+}
+
+/// Whether `attempt` is no longer the live setup attempt `counter` holds: a
+/// cancel, a Go back or a newer connect has moved it on.
+#[cfg(desktop)]
+fn superseded(counter: &std::sync::atomic::AtomicU64, attempt: u64) -> bool {
+    counter.load(std::sync::atomic::Ordering::SeqCst) != attempt
+}
+
+#[cfg(desktop)]
+fn sign_in_cancelled() -> Error {
+    Error::Other("sign-in cancelled".into())
 }
 
 /// The consent flow's listener, bound before the browser opens: the redirect
@@ -992,7 +1011,7 @@ fn listen_for_code_until(
     listener.set_nonblocking(true)?;
     loop {
         if cancelled() {
-            return Err(Error::Other("sign-in cancelled".into()));
+            return Err(sign_in_cancelled());
         }
         // Checked on every pass, connection or not: a local process that keeps
         // connecting without ever sending a request could otherwise hold the
@@ -1189,6 +1208,37 @@ mod tests {
         drop(listener);
         // The port is free for the next attempt.
         assert!(TcpListener::bind((HOST, port)).is_ok());
+    }
+
+    // `connect_pending` begins its attempt and schedules the flow; a Cancel
+    // can land before that thread runs. The flow is handed the caller's
+    // attempt rather than reading the counter itself, so it sees the cancel on
+    // its first check, before any browser opens, instead of adopting the
+    // cancel's number as its own.
+    #[cfg(desktop)]
+    #[test]
+    fn an_attempt_cancelled_before_its_flow_starts_is_already_superseded() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let counter = AtomicU64::new(0);
+        let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1; // begin_attempt
+        assert!(!superseded(&counter, attempt));
+        counter.fetch_add(1, Ordering::SeqCst); // abandon_attempt, worker not yet run
+        assert!(superseded(&counter, attempt));
+
+        let listener = TcpListener::bind((HOST, 0)).unwrap();
+        let started = Instant::now();
+        let result = listen_for_code_until(
+            &listener,
+            "nonce",
+            started + CONSENT_TIMEOUT,
+            Provider::Dropbox,
+            || superseded(&counter, attempt),
+        );
+        match result {
+            Err(Error::Other(why)) => assert!(why.contains("cancelled"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     // A local process that keeps connecting but never sends a request must
