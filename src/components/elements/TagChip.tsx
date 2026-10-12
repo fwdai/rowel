@@ -49,10 +49,11 @@ interface Props {
 const PILL =
   "relative inline-flex h-6 max-w-full flex-none cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium whitespace-nowrap transition-colors max-md:h-8 max-md:gap-1.5 max-md:px-3 max-md:text-base max-md:before:absolute max-md:before:inset-x-0 max-md:before:-inset-y-1.5 max-md:before:content-['']"
 
-// The resting edge: the accent at a quarter, which on the ink theme is a
-// firmer grey than a card's hairline and on a coloured accent carries a trace
-// of it — tinted rather than plain.
-const EDGE = 'border border-accent/25'
+// The resting edge: the accent at 15%, which on the ink theme is a grey a
+// step firmer than a card's hairline (7.5%) and softer than a divider (19%),
+// and on a coloured accent carries a trace of it — tinted rather than plain.
+// A quarter was too hard an edge against the white fill.
+const EDGE = 'border border-accent/15'
 
 const TONE: Record<TagTone, string> = {
   rest: `${EDGE} bg-detail text-text hover:bg-hover active:bg-sel`,
