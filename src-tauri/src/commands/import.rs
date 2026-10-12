@@ -108,22 +108,11 @@ pub async fn import_entries(
     let emitter = app.clone();
     let parsed = super::blocking(move || -> Result<Parsed> {
         let (bytes, unpacked) = read_import_file(Path::new(&path))?;
-
-        let fmt = if unpacked {
-            // What came out of the archive is `export.data` alone, which
-            // only its own adapter reads; its name no longer says so.
-            Format::Onepux
-        } else if format.eq_ignore_ascii_case("auto") {
-            let name = Path::new(&path)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            import::detect(&name, &bytes)
-                .ok_or_else(|| Error::Other("could not detect format".into()))?
-        } else {
-            Format::from_name(&format)
-                .ok_or_else(|| Error::Other(format!("unknown format: {format}")))?
-        };
+        let name = Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let fmt = resolve_format(&format, unpacked, &name, &bytes)?;
 
         let parsed = fmt.importer().parse(&bytes);
         if parsed.entries.len() > MAX_ENTRIES {
@@ -215,6 +204,30 @@ pub async fn import_entries(
         warnings: parsed.warnings,
         entries: list_metas(store)?,
     })
+}
+
+// Which adapter reads `bytes`: the one the tile named, or the one the file's
+// name and content suggest under "auto". What came out of an archive is
+// `export.data` alone, which only the 1Password adapter reads — so it is that
+// adapter under "auto" or a 1Password choice, and under any other choice the
+// file is turned away rather than read as something the user did not pick:
+// every tile shares one picker, and the tile is what says which reader runs.
+fn resolve_format(format: &str, unpacked: bool, name: &str, bytes: &[u8]) -> Result<Format> {
+    let auto = format.eq_ignore_ascii_case("auto");
+    if unpacked {
+        return match Format::from_name(format) {
+            _ if auto => Ok(Format::Onepux),
+            Some(Format::Onepux | Format::Onepassword) => Ok(Format::Onepux),
+            _ => Err(Error::Other(
+                "that file is a 1Password export; import it from the 1Password tile".into(),
+            )),
+        };
+    }
+    if auto {
+        return import::detect(name, bytes)
+            .ok_or_else(|| Error::Other("could not detect format".into()));
+    }
+    Format::from_name(format).ok_or_else(|| Error::Other(format!("unknown format: {format}")))
 }
 
 // The bytes an import parses, and whether they were taken out of an archive.
@@ -580,6 +593,41 @@ mod tests {
         assert!(!explicit_path_allowed(true, false));
         assert!(!explicit_path_allowed(false, true));
         assert!(!explicit_path_allowed(false, false));
+    }
+
+    // The tile picks the reader. An archive's JSON goes to the 1Password
+    // adapter under "auto" or that tile, and is refused under any other tile
+    // rather than read as something the user did not choose; a plain file is
+    // read by the tile's adapter, or detected under "auto".
+    #[test]
+    fn an_archive_is_read_as_1password_only_when_that_is_the_choice_or_none_was_made() {
+        let data = br#"{"accounts":[]}"#;
+        assert_eq!(
+            resolve_format("auto", true, "x.1pux", data).unwrap(),
+            Format::Onepux
+        );
+        assert_eq!(
+            resolve_format("1password", true, "x.1pux", data).unwrap(),
+            Format::Onepux
+        );
+        assert_eq!(
+            resolve_format("1pux", true, "x.1pux", data).unwrap(),
+            Format::Onepux
+        );
+        let err = resolve_format("bitwarden", true, "x.1pux", data).unwrap_err();
+        assert!(err.to_string().contains("1Password tile"), "{err}");
+        let err = resolve_format("nonsense", true, "x.1pux", data).unwrap_err();
+        assert!(err.to_string().contains("1Password tile"), "{err}");
+
+        assert_eq!(
+            resolve_format("bitwarden", false, "x.json", data).unwrap(),
+            Format::Bitwarden
+        );
+        assert_eq!(
+            resolve_format("auto", false, "x.csv", b"Title,Password\nA,p\n").unwrap(),
+            Format::GenericCsv
+        );
+        assert!(resolve_format("nonsense", false, "x.json", data).is_err());
     }
 
     // A `.1pux` is read for its one JSON member, however much sits beside it:
