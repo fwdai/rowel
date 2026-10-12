@@ -807,27 +807,37 @@ describe('Settings › import', () => {
     expect(calls('import_swftx')).toEqual([])
   })
 
-  // The apps most people are leaving get a tile each; the rest share one
-  // dropdown, so they are on offer without being advertised on the same level.
-  it('offers a tile per popular app and the rest in one dropdown', async () => {
+  // Six tiles, three to a row: the apps most people are leaving, in order, and
+  // a sixth whose menu holds the rest, so they are on offer without being
+  // advertised on the same level.
+  it('offers five app tiles and the rest behind a sixth', async () => {
     await open()
     await go('import')
-    for (const key of ['bitwarden', 'lastpass', 'keepass', 'swftx'])
-      expect(screen.getByTestId(`import-tile-${key}`)).toBeInTheDocument()
-    const others = screen.getByRole('combobox', { name: 'Another app' })
-    for (const key of ['chrome', 'enpass', 'cxf', 'csv'])
-      expect(within(others).getByTestId(`import-tile-${key}`)).toBeInTheDocument()
+    const tiles = screen.getAllByTestId(/^import-tile-/).map(el => el.dataset.testid)
+    expect(tiles).toEqual([
+      'import-tile-1password',
+      'import-tile-lastpass',
+      'import-tile-enpass',
+      'import-tile-bitwarden',
+      'import-tile-keepass',
+      'import-tile-other',
+      'import-tile-swftx'
+    ])
+
+    await userEvent.click(screen.getByTestId('import-tile-other'))
+    const menu = screen.getByRole('menu')
+    for (const key of ['chrome', 'cxf', 'csv'])
+      expect(within(menu).getByTestId(`import-tile-${key}`)).toBeInTheDocument()
   })
 
-  // Picking from the dropdown is picking a tile: the file picker opens, and
-  // the dry run names the format rather than sniffing it.
-  it('imports an Enpass export picked from the dropdown', async () => {
+  // A tile is a file picker: the dry run names the format rather than
+  // sniffing it, and the tile stays lit as the source.
+  it('imports an Enpass export from its tile', async () => {
     vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
     await open()
     await go('import')
 
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Another app' }), 'enpass')
-
+    await userEvent.click(screen.getByTestId('import-tile-enpass'))
     await waitFor(() =>
       expect(calls('import_entries')).toContainEqual({
         path: '/tmp/enpass.json',
@@ -835,7 +845,38 @@ describe('Settings › import', () => {
         dryRun: true
       })
     )
-    expect(screen.getByRole('combobox', { name: 'Another app' })).toHaveValue('enpass')
+  })
+
+  // An app from the sixth tile's menu is picked the same way, and the tile
+  // takes that app's name while it is the source. Picking it again picks
+  // another file: the menu items are buttons, not a selection.
+  it('imports from an app in the other-apps menu, and again', async () => {
+    vi.mocked(openDialog).mockResolvedValue('/tmp/export.csv')
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-other'))
+    await userEvent.click(screen.getByTestId('import-tile-chrome'))
+    await waitFor(() =>
+      expect(calls('import_entries')).toContainEqual({
+        path: '/tmp/export.csv',
+        format: 'chrome',
+        dryRun: true
+      })
+    )
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('import-tile-other')).toHaveTextContent('Chrome / Safari')
+
+    vi.mocked(openDialog).mockResolvedValue('/tmp/export-2.csv')
+    await userEvent.click(screen.getByTestId('import-tile-other'))
+    await userEvent.click(screen.getByTestId('import-tile-chrome'))
+    await waitFor(() =>
+      expect(calls('import_entries')).toContainEqual({
+        path: '/tmp/export-2.csv',
+        format: 'chrome',
+        dryRun: true
+      })
+    )
   })
 
   // The picker is on the drop target itself, on every platform; a file chosen

@@ -165,6 +165,12 @@ pub struct GenericCsv;
 /// Chrome / Safari CSV — same header-aliased shape as generic.
 pub struct BrowserCsv;
 
+/// 1Password CSV (`Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,
+/// Notes`): every column the app has a slot for is one the aliases already
+/// answer to, so this is the generic mapper under the app's own name. Tags,
+/// the star and the archive flag are not read yet; `.1pux` is not read at all.
+pub struct OnepasswordCsv;
+
 fn parse_aliased(bytes: &[u8]) -> ImportResult {
     let mut result = ImportResult::default();
     let Some(rows) = read_rows(bytes, &mut result) else {
@@ -330,6 +336,12 @@ impl Importer for GenericCsv {
 }
 
 impl Importer for BrowserCsv {
+    fn parse(&self, bytes: &[u8]) -> ImportResult {
+        parse_aliased(bytes)
+    }
+}
+
+impl Importer for OnepasswordCsv {
     fn parse(&self, bytes: &[u8]) -> ImportResult {
         parse_aliased(bytes)
     }

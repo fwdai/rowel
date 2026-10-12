@@ -823,6 +823,26 @@ fn detect_tells_enpass_from_bitwarden_json() {
     assert_eq!(Format::from_name("Enpass"), Some(Format::Enpass));
 }
 
+// 1Password's CSV columns are all ones the generic aliases know, `OTPAuth`
+// included, so the tile reads it as a login sheet under its own name.
+#[test]
+fn onepassword_csv_reads_as_logins() {
+    let csv = b"Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes\n\
+GitHub,https://github.com,octo,pw,otpauth://totp/GitHub?secret=ABC,,,dev,hello\n";
+    assert_eq!(Format::from_name("1password"), Some(Format::OnepasswordCsv));
+    let r = parse(Format::OnepasswordCsv, csv);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 1);
+    let e = &r.entries[0];
+    assert_eq!(e.kind, EntryKind::Login);
+    assert_eq!(e.title, "GitHub");
+    assert_eq!(e.username.as_deref(), Some("octo"));
+    assert_eq!(e.password.as_deref(), Some("pw"));
+    assert_eq!(e.url.as_deref(), Some("https://github.com"));
+    assert_eq!(e.otp.as_deref(), Some("otpauth://totp/GitHub?secret=ABC"));
+    assert_eq!(e.notes.as_deref(), Some("hello"));
+}
+
 // Slots are filled by field type, never by label — Enpass labels are in the
 // user's language. What has no slot stays as an extra, concealed when Enpass
 // flagged it; sections and app associations are machinery and are dropped.
@@ -892,7 +912,8 @@ fn enpass_maps_cards_notes_and_folders() {
     let json = br#"{
       "folders":[
         {"title":"Work","uuid":"f1","parent_uuid":""},
-        {"title":"Banks","uuid":"f2","parent_uuid":"f1"}
+        {"title":"Banks","uuid":"f2","parent_uuid":"f1"},
+        {"title":"Orphan","uuid":"f3","parent_uuid":"ghost"}
       ],
       "items":[
         {"category":"creditcard","title":"Visa","folders":["f2","missing"],"fields":[
@@ -905,7 +926,7 @@ fn enpass_maps_cards_notes_and_folders() {
           {"label":"Valid from","type":"ccValidfrom","value":"09/23"},
           {"label":"Bank","type":"ccBankname","value":"Lloyds"}
         ]},
-        {"category":"note","title":"Wifi","note":"body","folders":["f1"],"fields":[
+        {"category":"note","title":"Wifi","note":"body","folders":["f1","f3"],"fields":[
           {"label":"SSID","type":"text","value":"home"},
           {"label":"Key","type":"password","value":"hunter2","sensitive":1}
         ]},
@@ -938,7 +959,8 @@ fn enpass_maps_cards_notes_and_folders() {
     let note = &r.entries[1];
     assert_eq!(note.kind, EntryKind::Note);
     assert_eq!(note.notes.as_deref(), Some("body"));
-    assert_eq!(note.tags, vec!["Work".to_string()]);
+    // A parent the file never lists ends the path; the child keeps its name.
+    assert_eq!(note.tags, vec!["Work".to_string(), "Orphan".to_string()]);
     assert_eq!(
         note.extra,
         vec![field("SSID", "home"), concealed("Key", "hunter2")]
@@ -948,6 +970,24 @@ fn enpass_maps_cards_notes_and_folders() {
     let odd = &r.entries[2];
     assert!(odd.card_month.is_none());
     assert_eq!(odd.extra, vec![field("Expiry date", "sometime")]);
+}
+
+// Enpass writes a document date in the user's own pattern. It is stored only
+// when the order is beyond doubt; a date that reads two ways is left alone.
+#[test]
+fn enpass_reads_a_document_date_only_when_its_order_is_plain() {
+    use super::enpass::iso_date;
+    assert_eq!(iso_date("1987-06-25").as_deref(), Some("1987-06-25"));
+    assert_eq!(iso_date("1987/6/5").as_deref(), Some("1987-06-05"));
+    assert_eq!(iso_date("25/06/1987").as_deref(), Some("1987-06-25"));
+    assert_eq!(iso_date("06/25/1987").as_deref(), Some("1987-06-25"));
+    assert_eq!(iso_date("25.06.1987").as_deref(), Some("1987-06-25"));
+    assert_eq!(iso_date(" 3/3/2021 ").as_deref(), Some("2021-03-03"));
+    assert_eq!(iso_date("01/06/1987"), None);
+    assert_eq!(iso_date("25/06/87"), None);
+    assert_eq!(iso_date("32/01/1987"), None);
+    assert_eq!(iso_date("1987-13-01"), None);
+    assert_eq!(iso_date("sometime"), None);
 }
 
 // The shape of the file Enpass 6 actually writes (no `folders` member at all,
@@ -966,7 +1006,7 @@ fn enpass_reads_a_driving_licence_as_an_identity() {
         {"deleted":0,"label":"Number","order":1,"sensitive":0,"type":"numeric","uid":0,"updated_at":1791803738,"value":"345675454","value_updated_at":1791803738},
         {"label":"Name","order":2,"sensitive":0,"type":"text","value":"Ada Lovelace"},
         {"label":"Gender","order":3,"sensitive":0,"type":"text","value":"Female"},
-        {"label":"Birth date","order":4,"sensitive":0,"type":"date","value":"01/06/1987"},
+        {"label":"Birth date","order":4,"sensitive":0,"type":"date","value":"25/06/1987"},
         {"label":"Address","order":5,"sensitive":0,"type":"text","value":"1 Main St"},
         {"label":"Height","order":6,"sensitive":0,"type":"text","value":""},
         {"label":"Class","order":7,"sensitive":0,"type":"text","value":"B"},
@@ -992,13 +1032,19 @@ fn enpass_reads_a_driving_licence_as_an_identity() {
     assert_eq!(licence.doc_number.as_deref(), Some("345675454"));
     assert_eq!(licence.holder_name.as_deref(), Some("Ada Lovelace"));
     assert_eq!(licence.doc_sex.as_deref(), Some("Female"));
-    assert_eq!(licence.doc_birth_date.as_deref(), Some("01/06/1987"));
+    assert_eq!(licence.doc_birth_date.as_deref(), Some("1987-06-25"));
     assert_eq!(licence.doc_country.as_deref(), Some("GB"));
-    assert_eq!(licence.doc_issue_date.as_deref(), Some("01/06/2020"));
+    // `01/06/2020` could be June or January: it stays a labelled extra rather
+    // than a date the expiry warning would misread.
+    assert!(licence.doc_issue_date.is_none());
     assert!(licence.doc_expiry_date.is_none());
     assert_eq!(
         licence.extra,
-        vec![field("Address", "1 Main St"), field("Class", "B")]
+        vec![
+            field("Address", "1 Main St"),
+            field("Class", "B"),
+            field("Issued on", "01/06/2020"),
+        ]
     );
 
     let me = &r.entries[1];

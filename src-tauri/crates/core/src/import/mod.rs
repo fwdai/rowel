@@ -271,7 +271,8 @@ pub enum Format {
     Cxf,    // FIDO Credential Exchange Format — the second JSON shape we read
     Enpass, // Enpass 6 JSON — the third
     GenericCsv,
-    BrowserCsv, // Chrome / Safari share a header-aliased shape
+    BrowserCsv,     // Chrome / Safari share a header-aliased shape
+    OnepasswordCsv, // 1Password's CSV fits the same aliases
     LastpassCsv,
     KeepassCsv,
 }
@@ -285,6 +286,7 @@ impl Format {
             "enpass" | "enpass_json" => Some(Format::Enpass),
             "csv" | "generic" | "generic_csv" => Some(Format::GenericCsv),
             "chrome" | "safari" | "browser" | "browser_csv" => Some(Format::BrowserCsv),
+            "1password" | "onepassword" | "onepassword_csv" => Some(Format::OnepasswordCsv),
             "lastpass" | "lastpass_csv" => Some(Format::LastpassCsv),
             "keepass" | "keepass_csv" => Some(Format::KeepassCsv),
             _ => None,
@@ -299,6 +301,7 @@ impl Format {
             Format::Enpass => Box::new(enpass::Enpass),
             Format::GenericCsv => Box::new(csv::GenericCsv),
             Format::BrowserCsv => Box::new(csv::BrowserCsv),
+            Format::OnepasswordCsv => Box::new(csv::OnepasswordCsv),
             Format::LastpassCsv => Box::new(csv::LastpassCsv),
             Format::KeepassCsv => Box::new(csv::KeepassCsv),
         }

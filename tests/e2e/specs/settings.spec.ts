@@ -130,20 +130,26 @@ describe("settings", () => {
     await $('[data-testid="settings-breach-toggle"]').click();
   });
 
-  it("offers a tile per popular app and the other sources in one dropdown", async () => {
+  it("offers five app tiles and the other sources behind a sixth", async () => {
     await section("import");
 
-    for (const key of ["bitwarden", "lastpass", "keepass", "swftx"])
+    for (const key of [
+      "1password",
+      "lastpass",
+      "enpass",
+      "bitwarden",
+      "keepass",
+      "other",
+      "swftx",
+    ])
       await expect($(`[data-testid="import-tile-${key}"]`)).toBeDisplayed();
 
-    // The rest are options of the "Another app" select: present, but an
-    // option inside a closed native select is not displayed.
-    const others = $('[data-testid="settings-modal"]').$(
-      'select[name="import_other_app"]',
-    );
-    await expect(others).toBeDisplayed();
-    for (const key of ["chrome", "enpass", "cxf", "csv"])
-      await expect(others.$(`[data-testid="import-tile-${key}"]`)).toExist();
+    // The rest are items of the sixth tile's menu, mounted only while it is open.
+    await $('[data-testid="import-tile-other"]').click();
+    for (const key of ["chrome", "cxf", "csv"])
+      await expect($(`[data-testid="import-tile-${key}"]`)).toBeDisplayed();
+    await browser.keys("Escape");
+    await expect($('[data-testid="import-tile-chrome"]')).not.toExist();
 
     await expect($('[data-testid="import-dropzone"]')).toBeDisplayed();
   });

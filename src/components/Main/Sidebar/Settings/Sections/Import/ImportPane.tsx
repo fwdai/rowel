@@ -3,13 +3,12 @@ import { LABEL } from '@/components/elements/tokens'
 import type { useImport } from './useImport'
 import DropZone from './DropZone'
 import Tiles from './Tiles'
-import OtherApps from './OtherApps'
 import BackupCard from './BackupCard'
 import Result from './Result'
 
 // Bringing secrets in: any export file up top, then the apps we know by name
-// (the popular ones as tiles, the rest in one dropdown), then a backup of our
-// own.
+// (the popular ones as tiles, the rest behind the last tile's menu), then a
+// backup of our own.
 export default function ImportPane({ flow }: { flow: ReturnType<typeof useImport> }) {
   const { t } = useTranslation()
   // Which tile lit: a `.rowel` has none, it came from the OS, not a tile.
@@ -25,7 +24,6 @@ export default function ImportPane({ flow }: { flow: ReturnType<typeof useImport
       <DropZone variant="hero" onDrop={flow.dropped} />
       <div className={LABEL}>{t('Or start from an app')}</div>
       <Tiles active={active} disabled={flow.running} onFormat={flow.chooseFile} />
-      <OtherApps active={active} disabled={flow.running} onFormat={flow.chooseFile} />
       <BackupCard
         active={active === 'swftx'}
         disabled={flow.running}

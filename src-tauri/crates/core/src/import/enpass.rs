@@ -197,13 +197,17 @@ impl Folders {
         )
     }
 
-    // `Parent/Child` for a nested folder. A folder the file does not list, or
-    // a cycle in parents, ends the path where it is rather than looping.
+    // `Parent/Child` for a nested folder. A parent the file does not list, or
+    // a cycle in parents, ends the path where it is rather than losing the
+    // folders already named; only a starting folder the file does not list
+    // yields nothing.
     fn path(&self, uuid: &str) -> Option<String> {
         let mut parts = Vec::new();
         let mut next = Some(uuid.to_owned());
         while let Some(id) = next.take() {
-            let folder = self.0.get(&id)?;
+            let Some(folder) = self.0.get(&id) else {
+                break;
+            };
             parts.push(folder.title.clone().unwrap_or_default());
             if parts.len() > 32 {
                 break;
@@ -385,8 +389,9 @@ fn card(mut entry: ImportedEntry, fields: Vec<Field>) -> ImportedEntry {
 // An ID document's fields are all generic types, so the slots are filled by
 // the template's English labels; the first one wearing a label wins, and
 // anything unmatched (class, restrictions, height, an address) is an extra.
-// Dates cross as Enpass wrote them: its `01/06/1987` is in the user's own
-// pattern, which the app also leaves as typed rather than guessing the order.
+// The date slots only hold `YYYY-MM-DD` — the expiry warning reads them as
+// such — so a date is converted when its order can be told (see [`iso_date`])
+// and otherwise kept as the labelled extra it was, where it still reads.
 fn identity(mut entry: ImportedEntry, fields: Vec<Field>, doc_type: &str) -> ImportedEntry {
     entry.kind = EntryKind::Identity;
     entry.doc_type = Some(doc_type.to_owned());
@@ -400,6 +405,26 @@ fn identity(mut entry: ImportedEntry, fields: Vec<Field>, doc_type: &str) -> Imp
             .unwrap_or_default()
             .trim()
             .to_lowercase();
+        let is_date = matches!(
+            label.as_str(),
+            "birth date"
+                | "date of birth"
+                | "issued on"
+                | "issue date"
+                | "expiry date"
+                | "expires on"
+        );
+        let value = if is_date {
+            match iso_date(&value) {
+                Some(iso) => iso,
+                None => {
+                    entry.extra.push(field.into_extra());
+                    continue;
+                }
+            }
+        } else {
+            value
+        };
         let slot = match label.as_str() {
             "number" => &mut entry.doc_number,
             "name" | "full name" => &mut entry.holder_name,
@@ -424,6 +449,40 @@ fn identity(mut entry: ImportedEntry, fields: Vec<Field>, doc_type: &str) -> Imp
         *slot = Some(value);
     }
     entry
+}
+
+/// A document date as the app stores it, `YYYY-MM-DD`, when Enpass's value can
+/// be read without guessing: already ISO, `YYYY/MM/DD`, or a numeric date
+/// ending in a four-digit year whose day and month the numbers themselves
+/// settle — one of them is past 12, or the two are equal. Enpass writes dates
+/// in the user's own pattern, so `01/06/1987` could be either order and is
+/// `None`, as is anything that is not three numbers.
+pub(super) fn iso_date(value: &str) -> Option<String> {
+    let parts: Vec<&str> = value.trim().split(['/', '.', '-']).map(str::trim).collect();
+    let numeric = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    if parts.len() != 3 || !parts.iter().all(|p| numeric(p)) {
+        return None;
+    }
+    let number = |s: &str| s.parse::<u32>().ok();
+    let (year, month, day) = if parts[0].len() == 4 {
+        (parts[0], number(parts[1])?, number(parts[2])?)
+    } else if parts[2].len() == 4 {
+        let (first, second) = (number(parts[0])?, number(parts[1])?);
+        let (day, month) = if first > 12 {
+            (first, second)
+        } else if second > 12 {
+            (second, first)
+        } else if first == second {
+            (first, second)
+        } else {
+            return None;
+        };
+        (parts[2], month, day)
+    } else {
+        return None;
+    };
+    ((1..=12).contains(&month) && (1..=31).contains(&day))
+        .then(|| format!("{year}-{month:02}-{day:02}"))
 }
 
 // Every field is kept: a note's fields are the user's own, and so are those of

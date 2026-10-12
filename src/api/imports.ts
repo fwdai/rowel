@@ -12,6 +12,7 @@ export type ImportFormat =
   | 'chrome'
   | 'lastpass'
   | 'keepass'
+  | '1password'
 
 export type ExportFormat = 'bitwarden' | 'cxf' | 'csv'
 
