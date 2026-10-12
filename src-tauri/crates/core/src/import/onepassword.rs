@@ -379,6 +379,9 @@ impl Importer for Onepux {
                 let urls = item.overview.urls;
                 let url = non_empty(item.overview.url)
                     .or_else(|| urls.iter().find_map(|u| non_empty(u.url.clone())));
+                // Every site the item names, for the kinds that have no slot
+                // for one and for the sites beyond the one that fills it.
+                let websites = websites(url.as_deref(), urls);
                 let details = item.details;
                 let attachments = usize::from(details.document.is_some())
                     + details
@@ -387,6 +390,14 @@ impl Importer for Onepux {
                         .flat_map(|s| &s.fields)
                         .filter(|f| f.is_file())
                         .count();
+                // A link to another item cannot be followed here; like a
+                // file, it is left behind and said so.
+                let links = details
+                    .sections
+                    .iter()
+                    .flat_map(|s| &s.fields)
+                    .filter(|f| f.kind() == "reference")
+                    .count();
                 let fields: Vec<Field> = details
                     .sections
                     .into_iter()
@@ -411,12 +422,11 @@ impl Importer for Onepux {
                     || fields.iter().any(|f| is_password(f) && f.text().is_some());
                 let site = Site {
                     url,
-                    urls,
                     login_fields,
                     password: details.password,
                     history: details.password_history,
                 };
-                let entry = match category.as_str() {
+                let mut entry = match category.as_str() {
                     "002" => card(base, fields),
                     "003" | "006" => note(base, fields),
                     "103" => identity(base, fields, "driver_license"),
@@ -432,6 +442,12 @@ impl Importer for Onepux {
                     _ if has_password => login(base, fields, site),
                     _ => note(base, fields),
                 };
+                let kept = entry.url.clone();
+                entry.extra.extend(
+                    websites
+                        .into_iter()
+                        .filter(|site| kept.as_deref() != Some(site.value.as_str())),
+                );
                 if entry.title.is_empty() {
                     result.push_err(row, "item has no title");
                     continue;
@@ -443,16 +459,42 @@ impl Importer for Onepux {
                         format!("{attachments} attachment(s) not imported; keep the export"),
                     );
                 }
+                if links > 0 {
+                    result.push_warn(
+                        row,
+                        format!("{links} link(s) to other items not imported; keep the export"),
+                    );
+                }
             }
         }
         result
     }
 }
 
+/// The item's sites as labelled extras, each once: the listed ones under
+/// their own labels, then the primary if the list did not already name it.
+fn websites(primary: Option<&str>, urls: Vec<Url>) -> Vec<ExtraField> {
+    let mut out: Vec<ExtraField> = Vec::new();
+    let listed = urls
+        .into_iter()
+        .filter_map(|u| Some((non_empty(u.label), non_empty(u.url)?)));
+    let primary = primary.map(|u| (None, u.to_owned()));
+    for (label, value) in listed.chain(primary) {
+        if out.iter().any(|site| site.value == value) {
+            continue;
+        }
+        out.push(ExtraField {
+            label: label.unwrap_or_else(|| "website".to_owned()),
+            value,
+            secret: false,
+        });
+    }
+    out
+}
+
 /// What a login signs in to and with, from outside the sections.
 struct Site {
     url: Option<String>,
-    urls: Vec<Url>,
     login_fields: Vec<LoginField>,
     password: Option<String>,
     history: Vec<History>,
@@ -466,8 +508,8 @@ fn is_password(field: &Field) -> bool {
 
 // The designated form fields sign in; a Password item keeps its secret on the
 // item itself. The first field of each kind fills the slot; a second one (a
-// recovery address, another website) stays an extra. A field 1Password left
-// blank is not carried anywhere.
+// recovery address) stays an extra, as do the item's other sites (see
+// [`websites`]). A field 1Password left blank is not carried anywhere.
 fn login(mut entry: ImportedEntry, fields: Vec<Field>, site: Site) -> ImportedEntry {
     entry.kind = EntryKind::Login;
     entry.url = site.url.clone();
@@ -524,19 +566,6 @@ fn login(mut entry: ImportedEntry, fields: Vec<Field>, site: Site) -> ImportedEn
         } else {
             entry.extra.extend(field.into_extra());
         }
-    }
-    for other in site.urls {
-        let Some(value) = non_empty(other.url) else {
-            continue;
-        };
-        if entry.url.as_deref() == Some(value.as_str()) {
-            continue;
-        }
-        entry.extra.push(ExtraField {
-            label: non_empty(other.label).unwrap_or_else(|| "website".to_owned()),
-            value,
-            secret: false,
-        });
     }
     entry.password_history = password_history(site.history);
     if entry.title.is_empty() {

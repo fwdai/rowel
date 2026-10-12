@@ -2362,7 +2362,13 @@ fn onepux_maps_a_login_by_designation_and_field_kind() {
     ));
     let r = parse(Format::Onepux, &file);
     assert!(r.errors.is_empty(), "{:?}", r.errors);
-    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    // The link to another item cannot come along, and the row says so.
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].row, 1);
+    assert_eq!(
+        r.warnings[0].message,
+        "1 link(s) to other items not imported; keep the export"
+    );
     assert_eq!(r.entries.len(), 1);
     let e = &r.entries[0];
     assert_eq!(e.kind, EntryKind::Login);
@@ -2445,7 +2451,8 @@ fn onepux_maps_cards_documents_keys_and_notes() {
             {"title":"URL","id":"url","value":{"url":"https://box.example"}},
             {"title":"username","id":"username","value":{"string":"root"}},
             {"title":"password","id":"password","value":{"concealed":"toor"}}]}]}},
-          {"categoryUuid":"004","overview":{"title":"Octo Cat"},"details":{"sections":[{"fields":[
+          {"categoryUuid":"004","overview":{"title":"Octo Cat","url":"https://octo.example",
+            "urls":[{"label":"blog","url":"https://blog.octo.example"},{"label":"","url":"https://octo.example"}]},"details":{"sections":[{"fields":[
             {"title":"first name","id":"firstname","value":{"string":"Octo"}},
             {"title":"birth date","id":"birthdate","value":{"date":551577600}}]}]}},
           {"categoryUuid":"003","overview":{"title":"Note"},"details":{"notesPlain":"body","sections":[{"fields":[
@@ -2535,11 +2542,14 @@ fn onepux_maps_cards_documents_keys_and_notes() {
 
     let person = &r.entries[7];
     assert_eq!(person.kind, EntryKind::Note);
+    // A note has no slot for a site, so every one the item named is kept.
     assert_eq!(
         person.extra,
         vec![
             field("first name", "Octo"),
-            field("birth date", "1987-06-25")
+            field("birth date", "1987-06-25"),
+            field("blog", "https://blog.octo.example"),
+            field("website", "https://octo.example"),
         ]
     );
 
