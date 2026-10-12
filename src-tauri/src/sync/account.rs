@@ -34,7 +34,7 @@
 #[cfg(desktop)]
 use std::io::{BufRead, BufReader, Write};
 #[cfg(desktop)]
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 #[cfg(desktop)]
 use std::time::{Duration, Instant};
 
@@ -105,7 +105,8 @@ const CALLBACK: &str = "/auth/callback";
 /// enough that an abandoned tab frees the flow within the session.
 #[cfg(desktop)]
 const CONSENT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-/// How often the listener checks the deadline while nothing has connected.
+/// How often the listener checks the deadline and the cancel, both while
+/// nothing has connected and while a connection is slow to send its request.
 #[cfg(desktop)]
 const ACCEPT_POLL: Duration = Duration::from_millis(100);
 /// How long one connection gets to send its request line.
@@ -1035,16 +1036,12 @@ fn listen_for_code_until(
             }
             Err(e) => return Err(e.into()),
         };
-        // Some platforms hand the accepted socket the listener's non-blocking
-        // flag; the read below wants a plain deadline instead.
-        stream.set_nonblocking(false)?;
-        stream.set_read_timeout(Some(REQUEST_TIMEOUT.min(remaining)))?;
-
-        let mut reader = BufReader::new(&stream);
-        let mut request_line = String::new();
-        if reader.read_line(&mut request_line).is_err() {
+        // One connection gets `REQUEST_TIMEOUT` to send its request line, and
+        // never more than what is left of the whole wait.
+        let request_deadline = deadline.min(Instant::now() + REQUEST_TIMEOUT);
+        let Some(request_line) = read_request_line(&stream, request_deadline, &cancelled)? else {
             continue;
-        }
+        };
 
         // "GET /auth/callback?code=... HTTP/1.1"
         let path = request_line.split_whitespace().nth(1).unwrap_or("");
@@ -1073,6 +1070,43 @@ fn listen_for_code_until(
 
         let _ = stream.write_all(response_html(code.as_ref().err(), provider).as_bytes());
         return code;
+    }
+}
+
+// The first line of `stream`'s request, read in `ACCEPT_POLL` slices so that a
+// connection sending nothing cannot hold off a cancel for a whole
+// `REQUEST_TIMEOUT`: between slices the cancel and `until` are checked.
+// `read_line` keeps what a timed-out slice read, so a line that arrives in
+// pieces accumulates. `Ok(None)` is a connection that broke or ran out of time
+// before finishing the line; the listener drops it and keeps waiting.
+#[cfg(desktop)]
+fn read_request_line(
+    stream: &TcpStream,
+    until: Instant,
+    cancelled: &impl Fn() -> bool,
+) -> Result<Option<String>> {
+    use std::io::ErrorKind;
+    // Some platforms hand the accepted socket the listener's non-blocking
+    // flag; the reads below want a short timeout instead.
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(ACCEPT_POLL))?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        match reader.read_line(&mut line) {
+            Ok(_) => return Ok(Some(line)),
+            // A slice with nothing (more) to read: Unix reports it as
+            // `WouldBlock`, Windows as `TimedOut`.
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(_) => return Ok(None),
+        }
+        if cancelled() {
+            return Err(sign_in_cancelled());
+        }
+        if Instant::now() >= until {
+            return Ok(None);
+        }
     }
 }
 
@@ -1208,6 +1242,76 @@ mod tests {
         drop(listener);
         // The port is free for the next attempt.
         assert!(TcpListener::bind((HOST, port)).is_ok());
+    }
+
+    // A connection that opens and then says nothing (a browser's speculative
+    // preconnect) must not hold off a cancel: the request line is read in
+    // short slices with the cancel checked between them, so the listener
+    // lets go of its port at once rather than after a full `REQUEST_TIMEOUT`.
+    #[cfg(desktop)]
+    #[test]
+    fn a_silent_connection_does_not_delay_a_cancel() {
+        let listener = TcpListener::bind((HOST, 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Connected before the listener polls, so its first accept is this
+        // connection and the wait is spent in the read.
+        let silent = std::net::TcpStream::connect(addr).unwrap();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let canceller = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(150));
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+        };
+
+        let started = Instant::now();
+        let result = listen_for_code_until(
+            &listener,
+            "nonce",
+            started + CONSENT_TIMEOUT,
+            Provider::Dropbox,
+            || cancel.load(std::sync::atomic::Ordering::SeqCst),
+        );
+        canceller.join().unwrap();
+
+        match result {
+            Err(Error::Other(why)) => assert!(why.contains("cancelled"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        // Well inside the 10 s a single blocking read would have taken.
+        assert!(started.elapsed() < Duration::from_secs(2));
+        drop(silent);
+        drop(listener);
+        assert!(TcpListener::bind(addr).is_ok());
+    }
+
+    // The short read slices must not cost a request line that arrives in
+    // pieces slower than one slice: what a timed-out read got is kept.
+    #[cfg(desktop)]
+    #[test]
+    fn a_request_line_split_across_read_slices_still_arrives_whole() {
+        let listener = TcpListener::bind((HOST, 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let browser = std::thread::spawn(move || {
+            let mut slow = std::net::TcpStream::connect(addr).unwrap();
+            slow.write_all(b"GET /auth/callback?code=4/abc").unwrap();
+            std::thread::sleep(ACCEPT_POLL * 5 / 2);
+            slow.write_all(b"&state=nonce HTTP/1.1\r\n\r\n").unwrap();
+            let mut answer = String::new();
+            std::io::Read::read_to_string(&mut slow, &mut answer).unwrap();
+            assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        });
+
+        let code = listen_for_code_until(
+            &listener,
+            "nonce",
+            Instant::now() + REQUEST_TIMEOUT,
+            Provider::GoogleDrive,
+            || false,
+        );
+        browser.join().unwrap();
+        assert_eq!(code.unwrap(), "4/abc");
     }
 
     // `connect_pending` begins its attempt and schedules the flow; a Cancel
