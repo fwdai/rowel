@@ -498,18 +498,18 @@ fn disconnected_mid_restore_error(provider: sync::Provider) -> String {
 /// belong to is still a pack in the account. Exactly the same events report
 /// it, so the picker the first run draws is the picker this draws.
 ///
-/// `provider` is optional and defaults to Google Drive, so a frontend that
-/// does not send it connects Drive as it always did.
+/// The frontend always sends `provider`; it is an `Option` only because a Tauri
+/// argument can be omitted only when it is one, and `None` means Google Drive.
 #[cfg(desktop)]
 #[tauri::command]
-pub fn workspace_drive_connect(app: AppHandle, provider: Option<sync::Provider>) -> Result<()> {
+pub fn workspace_connect(app: AppHandle, provider: Option<sync::Provider>) -> Result<()> {
     setup::connect_pending(&app, provider.unwrap_or_default())
 }
 
-/// The mobile twin of [`workspace_drive_connect`].
+/// The mobile twin of [`workspace_connect`].
 #[cfg(mobile)]
 #[tauri::command]
-pub fn workspace_drive_connect(
+pub fn workspace_connect(
     app: AppHandle,
     state: State<'_, AppState>,
     provider: Option<sync::Provider>,
@@ -534,7 +534,7 @@ pub fn workspace_drive_connect(
 /// directory is removed, the workspace the user was in comes back exactly as it
 /// was, and the account stays pending — so the retry is one press away.
 #[tauri::command]
-pub async fn workspace_restore_from_drive(
+pub async fn workspace_restore_from_pending(
     name: String,
     password: Zeroizing<String>,
     file_id: String,
@@ -558,7 +558,7 @@ pub async fn workspace_restore_from_drive(
 /// holds and this device does not — the ones every sync run reports
 /// (`sync::publish_remote_vaults`).
 ///
-/// [`workspace_restore_from_drive`] with the sign-in taken out: the tokens are
+/// [`workspace_restore_from_pending`] with the sign-in taken out: the tokens are
 /// the open workspace's own, read off its token file, and a copy is sealed
 /// under the restored vault's key exactly as a pending account would be. The
 /// device ends up with one account in two workspaces, which is what an account

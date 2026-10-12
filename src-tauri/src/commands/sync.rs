@@ -47,7 +47,7 @@ use crate::sync::setup::PackInfo;
 ///
 /// Keyless, always: the account is asked what it holds before anything is
 /// sealed under this vault's key. Consent and probe run on the blocking pool
-/// and report on the `setup:drive:*` events — the ones onboarding and Settings
+/// and report on the `setup:account:*` events — the ones onboarding and Settings
 /// › Workspaces listen to — and the frontend then calls [`sync_adopt_pending`],
 /// which joins the account only if it is empty or already holds this vault,
 /// and otherwise leaves the account's vaults to be restored. Offered only on a
@@ -64,8 +64,8 @@ use crate::sync::setup::PackInfo;
 /// reported as status as well as rejected, so the frontend never has to turn a
 /// rejected promise into state itself.
 ///
-/// `provider` is optional and defaults to Google Drive, so a frontend that
-/// does not send it connects Drive as it always did.
+/// The frontend always sends `provider`; it is an `Option` only because a Tauri
+/// argument can be omitted only when it is one, and `None` means Google Drive.
 #[cfg(desktop)]
 #[tauri::command]
 pub fn sync_connect(app: AppHandle, provider: Option<sync::Provider>) -> Result<()> {
@@ -77,7 +77,7 @@ pub fn sync_connect(app: AppHandle, provider: Option<sync::Provider>) -> Result<
 ///
 /// Nothing here waits: Safari takes the screen and iOS suspends the app behind
 /// it, so there is no result to wait for. The frontend is told by the
-/// `setup:drive:*` events rather than by this promise, as on desktop.
+/// `setup:account:*` events rather than by this promise, as on desktop.
 ///
 /// Synchronous on purpose, unlike its desktop twin. It does no blocking work,
 /// and running on the IPC (main) thread is what puts the opener plugin's
@@ -165,10 +165,10 @@ pub async fn sync_adopt_pending(app: AppHandle, state: State<'_, AppState>) -> R
         // catches a cancel that arrived during the write itself.
         let mut pending = state.pending_account.lock().unwrap();
         let Some(current) = pending.as_mut() else {
-            return Err(Error::DriveNotConnected);
+            return Err(Error::AccountNotConnected);
         };
         if current.attempt != attempt || super::setup::current_attempt(&state) != attempt {
-            return Err(Error::DriveNotConnected);
+            return Err(Error::AccountNotConnected);
         }
         // Keep a refresh-token rotation for a retry if the file write fails.
         current.tokens = tokens.clone();
@@ -192,7 +192,7 @@ pub async fn sync_adopt_pending(app: AppHandle, state: State<'_, AppState>) -> R
             {
                 *pending = None;
             }
-            return Err(Error::DriveNotConnected);
+            return Err(Error::AccountNotConnected);
         }
 
         // Announce the committed connection while both the workspace and its run
@@ -362,9 +362,9 @@ pub(crate) fn start_consent(
         provider,
         started: std::time::Instant::now(),
     });
-    // Every connect announces itself on the `setup:drive:*` family: it is the
+    // Every connect announces itself on the `setup:account:*` family: it is the
     // probe's answer the frontend waits for, whichever screen asked.
-    events::setup_drive_pending(app);
+    events::setup_account_pending(app);
     Ok(())
 }
 
@@ -495,12 +495,12 @@ pub fn on_resume(app: &AppHandle) {
 }
 
 /// The consent flow ended without a connection. One place, so every ending
-/// reports the same way — on the `setup:drive:*` family every keyless connect
+/// reports the same way — on the `setup:account:*` family every keyless connect
 /// is started under.
 #[cfg(mobile)]
 fn fail(app: &AppHandle, why: String) {
-    log::warn!("drive setup failed: {why}");
-    events::setup_drive_error(app, &why);
+    log::warn!("account setup failed: {why}");
+    events::setup_account_error(app, &why);
 }
 
 // --- status ------------------------------------------------------------------

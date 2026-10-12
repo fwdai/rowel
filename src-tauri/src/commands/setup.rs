@@ -9,14 +9,14 @@
 //!
 //! The connect step reports through events rather than its return value, so the
 //! frontend can render "waiting for the browser" while the flow is out. Exactly
-//! one of `setup:drive:probed` / `setup:drive:error` follows every
-//! `setup:drive:pending` (see [`crate::events`]).
+//! one of `setup:account:probed` / `setup:account:error` follows every
+//! `setup:account:pending` (see [`crate::events`]).
 //!
 //! That first half is not onboarding's alone. Adding a workspace by restoring
 //! one of the account's other vaults has the same problem — a vault that does
 //! not exist yet, so no key to seal an account under — and so borrows
 //! [`connect_pending`], [`peek_pending`], [`download`] and
-//! [`setup_drive_disconnect`] from here rather than copying them (see
+//! [`setup_disconnect`] from here rather than copying them (see
 //! `commands::workspace`). What that flow does *not* share is
 //! [`guard_no_vault`], which is exactly the condition it inverts.
 
@@ -39,19 +39,19 @@ use crate::sync::{self, restore, setup::PackInfo, Provider};
 
 /// Connect an account and report what it holds. Onboarding only.
 ///
-/// `provider` is optional and defaults to Google Drive, so a frontend that
-/// does not send it connects Drive as it always did.
+/// The frontend always sends `provider`; it is an `Option` only because a Tauri
+/// argument can be omitted only when it is one, and `None` means Google Drive.
 #[cfg(desktop)]
 #[tauri::command]
-pub fn setup_drive_connect(app: AppHandle, provider: Option<Provider>) -> Result<()> {
+pub fn setup_connect(app: AppHandle, provider: Option<Provider>) -> Result<()> {
     guard_no_vault(&app)?;
     connect_pending(&app, provider.unwrap_or_default())
 }
 
-/// The mobile twin of [`setup_drive_connect`].
+/// The mobile twin of [`setup_connect`].
 #[cfg(mobile)]
 #[tauri::command]
-pub fn setup_drive_connect(
+pub fn setup_connect(
     app: AppHandle,
     state: State<'_, AppState>,
     provider: Option<Provider>,
@@ -70,7 +70,7 @@ pub fn setup_drive_connect(
 /// restore is the case where one already does. Everything after it is the same
 /// — the tokens wait in [`AppState::pending_account`] until whichever flow
 /// follows produces a key to seal them under, and the same probe answers on the
-/// same `setup:drive:*` events, so one screen's picker serves both.
+/// same `setup:account:*` events, so one screen's picker serves both.
 ///
 /// Desktop: the consent flow waits on a loopback listener and the probe is a
 /// network round trip, so both go to the blocking pool — the command returns as
@@ -79,7 +79,7 @@ pub fn setup_drive_connect(
 pub(crate) fn connect_pending(app: &AppHandle, provider: Provider) -> Result<()> {
     ensure_idle(&app.state::<AppState>())?;
     let attempt = begin_attempt(&app.state::<AppState>());
-    events::setup_drive_pending(app);
+    events::setup_account_pending(app);
 
     let app = app.clone();
     super::detached(move || {
@@ -133,7 +133,7 @@ pub(crate) async fn on_consent(app: &AppHandle, provider: Provider, code: &str, 
 /// than a second spelling of it. There is no vault to guard here — the whole
 /// point is that nothing has been written yet.
 #[tauri::command]
-pub fn setup_drive_disconnect(state: State<'_, AppState>) -> Result<()> {
+pub fn setup_disconnect(state: State<'_, AppState>) -> Result<()> {
     ensure_idle(&state)?;
     // Invalidate first. An adoption may be holding the pending-token lock while
     // it seals credentials; advancing the attempt lets its post-write check see
@@ -194,7 +194,7 @@ fn report(app: &AppHandle, attempt: u64, probed: Result<(sync::Tokens, Vec<PackI
     match probed {
         Ok((tokens, files)) => {
             *pending = Some(PendingAccount { attempt, tokens });
-            events::setup_drive_probed(app, files);
+            events::setup_account_probed(app, files);
         }
         Err(e) => {
             // Half a connection is worse than none — the next attempt starts
@@ -205,8 +205,8 @@ fn report(app: &AppHandle, attempt: u64, probed: Result<(sync::Tokens, Vec<PackI
             {
                 *pending = None;
             }
-            log::warn!("drive setup failed: {e}");
-            events::setup_drive_error(app, &e.to_string());
+            log::warn!("account setup failed: {e}");
+            events::setup_account_error(app, &e.to_string());
         }
     }
 }
@@ -223,7 +223,7 @@ fn report(app: &AppHandle, attempt: u64, probed: Result<(sync::Tokens, Vec<PackI
 /// is no local vault to throttle guesses against yet, and the pack is Argon2id
 /// + SQLCipher on its own terms.
 #[tauri::command]
-pub async fn setup_restore_from_drive(
+pub async fn setup_restore_from_account(
     password: Zeroizing<String>,
     file_id: String,
     app: AppHandle,
@@ -252,7 +252,7 @@ pub async fn setup_restore_from_drive(
 /// Restore from a `.rowel` backup on disk. Onboarding only.
 ///
 /// The same pack the sync engine uploads, written by `export_vault` instead of
-/// pulled from Drive — so this is [`setup_restore_from_drive`] with the
+/// pulled from the account — so this is [`setup_restore_from_account`] with the
 /// download swapped for a file read, and no account to keep afterwards. The
 /// read shares the blocking thread with the restore: a backup is the whole
 /// vault, and a large one on a slow disk must not stall the async runtime. No
@@ -550,7 +550,7 @@ pub(crate) fn complete_attempt(state: &AppState, attempt: u64) -> bool {
 }
 
 /// Onboarding only. A device that already holds a vault has other routes to
-/// Drive (`sync_connect`, `workspace_restore_from_drive`), and every one of
+/// an account (`sync_connect`, `workspace_restore_from_pending`), and every one of
 /// them merges or adds a workspace rather than replaces — which is the point:
 /// nothing here may be reachable in a way that could overwrite a vault this
 /// device already has.
@@ -573,9 +573,9 @@ pub(crate) fn peek_pending(state: &AppState) -> Result<sync::Tokens> {
 /// for the account they originally probed.
 pub(crate) fn peek_pending_attempt(state: &AppState) -> Result<(u64, sync::Tokens)> {
     let pending = state.pending_account.lock().unwrap();
-    let pending = pending.as_ref().ok_or(Error::DriveNotConnected)?;
+    let pending = pending.as_ref().ok_or(Error::AccountNotConnected)?;
     if current_attempt(state) != pending.attempt {
-        return Err(Error::DriveNotConnected);
+        return Err(Error::AccountNotConnected);
     }
     Ok((pending.attempt, pending.tokens.clone()))
 }
@@ -583,9 +583,9 @@ pub(crate) fn peek_pending_attempt(state: &AppState) -> Result<(u64, sync::Token
 /// Keep a refresh-token rotation only for the account that is still pending.
 pub(crate) fn replace_pending_tokens(state: &AppState, tokens: sync::Tokens) -> Result<()> {
     let mut pending = state.pending_account.lock().unwrap();
-    let pending = pending.as_mut().ok_or(Error::DriveNotConnected)?;
+    let pending = pending.as_mut().ok_or(Error::AccountNotConnected)?;
     if current_attempt(state) != pending.attempt {
-        return Err(Error::DriveNotConnected);
+        return Err(Error::AccountNotConnected);
     }
     pending.tokens = tokens;
     Ok(())
@@ -643,7 +643,7 @@ mod tests {
         let state = AppState::default();
         assert!(matches!(
             peek_pending(&state),
-            Err(Error::DriveNotConnected)
+            Err(Error::AccountNotConnected)
         ));
         assert!(take_pending(&state).is_none());
     }
@@ -693,7 +693,7 @@ mod tests {
 
         assert!(matches!(
             peek_pending_attempt(&state),
-            Err(Error::DriveNotConnected)
+            Err(Error::AccountNotConnected)
         ));
     }
 
@@ -749,7 +749,7 @@ mod tests {
         assert_ne!(current_attempt(&state), cancelled);
         assert!(matches!(
             peek_pending_attempt(&state),
-            Err(Error::DriveNotConnected)
+            Err(Error::AccountNotConnected)
         ));
 
         let current = set_pending(&state, "second");
@@ -787,8 +787,8 @@ mod tests {
     // The event names are the frontend's contract.
     #[test]
     fn the_onboarding_events_keep_their_names() {
-        assert_eq!(events::SETUP_DRIVE_PENDING, "setup:drive:pending");
-        assert_eq!(events::SETUP_DRIVE_PROBED, "setup:drive:probed");
-        assert_eq!(events::SETUP_DRIVE_ERROR, "setup:drive:error");
+        assert_eq!(events::SETUP_ACCOUNT_PENDING, "setup:account:pending");
+        assert_eq!(events::SETUP_ACCOUNT_PROBED, "setup:account:probed");
+        assert_eq!(events::SETUP_ACCOUNT_ERROR, "setup:account:error");
     }
 }

@@ -15,9 +15,9 @@ pub const VAULT_LOCKED: &str = "vault:locked";
 pub const VAULT_MERGED: &str = "vault:merged";
 pub const SYNC_STATUS: &str = "sync:status";
 pub const IMPORT_PROGRESS: &str = "import:progress";
-pub const SETUP_DRIVE_PENDING: &str = "setup:drive:pending";
-pub const SETUP_DRIVE_PROBED: &str = "setup:drive:probed";
-pub const SETUP_DRIVE_ERROR: &str = "setup:drive:error";
+pub const SETUP_ACCOUNT_PENDING: &str = "setup:account:pending";
+pub const SETUP_ACCOUNT_PROBED: &str = "setup:account:probed";
+pub const SETUP_ACCOUNT_ERROR: &str = "setup:account:error";
 pub const WORKSPACES_REMOTE: &str = "workspaces:remote";
 pub const WORKSPACES_ADDED: &str = "workspaces:added";
 pub const WORKSPACES_RENAMED: &str = "workspaces:renamed";
@@ -81,16 +81,16 @@ pub fn import_progress(app: &AppHandle, done: usize, total: usize) {
     let _ = app.emit(IMPORT_PROGRESS, Progress { done, total });
 }
 
-pub fn setup_drive_pending(app: &AppHandle) {
-    let _ = app.emit(SETUP_DRIVE_PENDING, ());
+pub fn setup_account_pending(app: &AppHandle) {
+    let _ = app.emit(SETUP_ACCOUNT_PENDING, ());
 }
 
-pub fn setup_drive_probed(app: &AppHandle, files: Vec<PackInfo>) {
-    let _ = app.emit(SETUP_DRIVE_PROBED, Probed { files });
+pub fn setup_account_probed(app: &AppHandle, files: Vec<PackInfo>) {
+    let _ = app.emit(SETUP_ACCOUNT_PROBED, Probed { files });
 }
 
-pub fn setup_drive_error(app: &AppHandle, error: &str) {
-    let _ = app.emit(SETUP_DRIVE_ERROR, ErrorText { error });
+pub fn setup_account_error(app: &AppHandle, error: &str) {
+    let _ = app.emit(SETUP_ACCOUNT_ERROR, ErrorText { error });
 }
 
 /// The account's vaults that no workspace on this device holds, after every

@@ -11,9 +11,9 @@
 //! vault, and the snapshot can lag it — the engine commits an adopted id only
 //! after the run that pushed the pack has succeeded.
 
-// Reached from onboarding's `setup_restore_from_drive`, which is what supplies
+// Reached from onboarding's `setup_restore_from_account`, which is what supplies
 // the two things this path needs and no other caller can: the master password
-// (asked for on a screen that runs before a vault exists) and Drive credentials
+// (asked for on a screen that runs before a vault exists) and account credentials
 // held in memory, since the token file is sealed under a vault key that does not
 // exist until this function has produced one.
 
