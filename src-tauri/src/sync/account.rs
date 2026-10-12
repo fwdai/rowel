@@ -285,6 +285,12 @@ impl<'a> TokenFile<'a> {
     /// The active workspace's token file — whichever provider's it holds, at
     /// most one — and the app's connection generation. For the transitions
     /// that act on the file that is there: read, re-seal, disconnect.
+    ///
+    /// The provider is picked here, before any guard is held, so it is only a
+    /// hint: a connect to the other provider can swap the file before the
+    /// transition takes the guard. A read through a stale pick finds nothing,
+    /// which is harmless; [`TokenFile::disconnect`] and [`TokenFile::reseal`]
+    /// change the file, so they look again under the guard.
     fn of(app: &'a AppHandle) -> Result<Self> {
         let dir = storage::workspace_dir(app)?;
         let provider = storage::token_file_in(&dir).unwrap_or_default();
@@ -352,14 +358,22 @@ impl<'a> TokenFile<'a> {
         Ok((*generation, tokens))
     }
 
-    /// Bump the generation and delete the file under one hold of the guard, so
-    /// a refresh's write-back and a re-seal (which take the same guard) either
-    /// see the old generation and finish before this runs, or see the new one
-    /// and leave the file gone.
+    /// Bump the generation and delete the token file under one hold of the
+    /// guard, so a refresh's write-back and a re-seal (which take the same
+    /// guard) either see the old generation and finish before this runs, or
+    /// see the new one and leave the file gone.
+    ///
+    /// Every provider's file, not just this one's: whichever was picked before
+    /// the guard was taken may have been replaced by a connect to the other
+    /// provider since, and "disconnected" means no token file at all. An error
+    /// means a file is still on disk.
     fn disconnect(&self) -> Result<()> {
         let mut generation = self.generation.lock().unwrap();
         *generation += 1;
-        storage::remove_if_present(&self.path())
+        for provider in Provider::ALL {
+            storage::remove_if_present(&self.dir.join(provider.token_file_name()))?;
+        }
+        Ok(())
     }
 
     /// Read with `old` and write back with `new`, under the guard so a
@@ -374,14 +388,23 @@ impl<'a> TokenFile<'a> {
     /// [`TokenFile::persist_if_current`] return `Ok(false)`, so the in-flight
     /// run winds down and leaves the freshly re-sealed file alone.
     ///
+    /// Which provider's file to re-seal is decided under the guard, not taken
+    /// from `self`: a connect to the other provider may have replaced the file
+    /// since this one was picked, and the file there now is the one the new
+    /// key has to open.
+    ///
     /// No file is no connection to re-seal: nothing is written and the
     /// generation stands.
     fn reseal(&self, old: &Cryptor, new: &Cryptor) -> Result<()> {
         let mut generation = self.generation.lock().unwrap();
-        let Some(tokens) = self.read(old) else {
+        let Some(provider) = storage::token_file_in(&self.dir) else {
             return Ok(());
         };
-        self.write(new, &tokens)?;
+        let present = Self::new(self.dir.clone(), provider, self.generation);
+        let Some(tokens) = present.read(old) else {
+            return Ok(());
+        };
+        present.write(new, &tokens)?;
         *generation += 1;
         Ok(())
     }
@@ -1529,6 +1552,50 @@ mod tests {
             file.read(&key).unwrap().access_token.as_deref(),
             Some("g-2")
         );
+    }
+
+    // `TokenFile::of` picks the provider before the guard is held. A Dropbox
+    // connect landing between that pick (Google's) and the disconnect must
+    // not leave Dropbox's live file behind a disconnect that says it worked.
+    #[test]
+    fn a_disconnect_removes_a_file_swapped_in_after_the_lookup() {
+        let key = cryptor("pw");
+        let generation = Mutex::new(2);
+        let picked = google_file(&generation);
+        picked.connect(&key, &tokens("g-1")).unwrap();
+
+        let dropbox = TokenFile::new(picked.dir.clone(), Provider::Dropbox, &generation);
+        dropbox.connect(&key, &dropbox_tokens("d-1")).unwrap();
+        assert_eq!(*generation.lock().unwrap(), 3);
+
+        picked.disconnect().unwrap();
+
+        assert_eq!(storage::token_file_in(&picked.dir), None);
+        assert_eq!(*generation.lock().unwrap(), 4, "bumped once");
+    }
+
+    // The same race against a password change: the file re-sealed is the one
+    // there under the guard, so the swapped-in Dropbox file opens under the
+    // new key rather than being left sealed under the retired one.
+    #[test]
+    fn a_reseal_acts_on_the_file_present_at_lock_time() {
+        let (old, new) = (cryptor("old-pw"), cryptor("new-pw"));
+        let generation = Mutex::new(0);
+        let picked = google_file(&generation);
+        picked.connect(&old, &tokens("g-1")).unwrap();
+
+        let dropbox = TokenFile::new(picked.dir.clone(), Provider::Dropbox, &generation);
+        dropbox.connect(&old, &dropbox_tokens("d-1")).unwrap();
+        let before = *generation.lock().unwrap();
+
+        picked.reseal(&old, &new).unwrap();
+
+        assert!(!picked.path().exists(), "no Google file written");
+        assert!(dropbox.read(&old).is_none());
+        let read = dropbox.read(&new).expect("re-sealed under the new key");
+        assert_eq!(read.provider, Provider::Dropbox);
+        assert_eq!(read.access_token.as_deref(), Some("d-1"));
+        assert_eq!(*generation.lock().unwrap(), before + 1);
     }
 
     // The same rule for a workspace beside the open one.
