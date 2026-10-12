@@ -4662,6 +4662,7 @@ dependencies = [
  "windows 0.62.2",
  "windows-registry 0.100.0",
  "zeroize",
+ "zip",
  "zxcvbn",
 ]
 

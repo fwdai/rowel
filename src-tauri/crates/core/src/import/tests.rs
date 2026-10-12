@@ -2280,10 +2280,18 @@ fn detect_tells_a_1pux_by_its_name_or_its_signature() {
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     assert!(r.entries.is_empty());
 
+    // `export.data` on its own, as the command hands it over after taking it
+    // out of the file on disk, reads the same under either format.
+    let data = one_vault(r#"{"categoryUuid":"003","overview":{"title":"Bare"},"details":{}}"#);
+    let r = parse(Format::Onepux, data.as_bytes());
+    assert_eq!(r.entries[0].title, "Bare");
+    assert_eq!(parse(Format::Onepassword, data.as_bytes()), r);
+
+    // Neither an archive nor its JSON: one error for the file.
     let r = parse(Format::Onepux, b"Title,Url,Username,Password\nA,,u,p\n");
     assert_eq!(r.errors.len(), 1);
     assert_eq!(r.errors[0].row, 0);
-    assert!(r.errors[0].message.starts_with("not a 1Password export"));
+    assert!(r.errors[0].message.starts_with("invalid 1Password export"));
 
     let mut empty = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     empty
@@ -2347,11 +2355,13 @@ fn onepux_maps_a_login_by_designation_and_field_kind() {
                 {"value":"octo","name":"login","fieldType":"T","designation":"username"},
                 {"value":"pw","name":"pass","fieldType":"P","designation":"password"},
                 {"value":"✓","name":"remember","fieldType":"C","designation":""},
-                {"value":"42","name":"tenant","fieldType":"T","designation":""}],
+                {"value":"42","name":"tenant","fieldType":"T","designation":""},
+                {"value":"","name":"terms","fieldType":"C","designation":""},
+                {"value":"","name":"","fieldType":"C","designation":""}],
               "notesPlain":"hello",
               "sections":[{"title":"","fields":[
                 {"title":"one-time password","id":"TOTP_x","value":{"totp":"otpauth://totp/GitHub?secret=ABC"}},
-                {"title":"E-Mail","id":"mail","value":{"email":{"email_address":"octo@example.com","provider":null}}},
+                {"title":"E-Mail","id":"mail","value":{"email":{"email_address":"octo@example.com","provider":"gmail"}}},
                 {"title":"security question","id":"q1","value":{"concealed":"blue"}},
                 {"title":"blank","id":"b","value":{"string":""}},
                 {"title":"linked","id":"l","value":{"reference":"some-uuid"}}]}],
@@ -2386,9 +2396,12 @@ fn onepux_maps_a_login_by_designation_and_field_kind() {
     assert_eq!(
         e.extra,
         vec![
+            field("remember", "true"),
             field("tenant", "42"),
+            field("terms", "false"),
             concealed("security question", "blue"),
             field("API", "https://api.github.com"),
+            field("E-Mail provider", "gmail"),
         ]
     );
     let history: Vec<&str> = e
@@ -2437,8 +2450,9 @@ fn onepux_maps_cards_documents_keys_and_notes() {
             {"title":"country","id":"country","value":{"string":"Sweden"}},
             {"title":"expiry date","id":"expiry_date","value":{"monthYear":203005}}]}]}},
           {"categoryUuid":"114","overview":{"title":"Deploy key"},"details":{"sections":[{"fields":[
-            {"title":"private key","id":"private_key","value":{"sshKey":{"privateKey":"-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n",
-              "metadata":{"privateKey":"-----BEGIN ...","publicKey":"ssh-ed25519 AAAA octo","fingerprint":"SHA256:xyz","keyType":"ed25519"}}}}]}]}},
+            {"title":"private key","id":"private_key","value":{"sshKey":{"privateKey":"-----BEGIN PRIVATE KEY-----\npkcs8\n-----END PRIVATE KEY-----\n",
+              "metadata":{"privateKey":"-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n","publicKey":"ssh-ed25519 AAAA octo","fingerprint":"SHA256:xyz","keyType":"ed25519"}}}},
+            {"title":"spare","id":"spare","value":{"sshKey":{"privateKey":"-----BEGIN PRIVATE KEY-----\nonly\n-----END PRIVATE KEY-----\n"}}}]}]}},
           {"categoryUuid":"112","overview":{"title":"Stripe","url":"https://api.stripe.com"},"details":{"sections":[{"fields":[
             {"title":"username","id":"username","value":{"string":"octo"}},
             {"title":"credential","id":"credential","value":{"concealed":"sk_live_1"}},
@@ -2513,7 +2527,22 @@ fn onepux_maps_cards_documents_keys_and_notes() {
         .starts_with("-----BEGIN OPENSSH"));
     assert_eq!(key.ssh_public_key.as_deref(), Some("ssh-ed25519 AAAA octo"));
     assert_eq!(key.ssh_fingerprint.as_deref(), Some("SHA256:xyz"));
-    assert_eq!(key.extra, vec![field("Key type", "ed25519")]);
+    // The OpenSSH block from the metadata is the key, as the generator here
+    // writes one; a key that only comes as PKCS#8 is kept as that.
+    assert_eq!(
+        key.ssh_private_key.as_deref(),
+        Some("-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n")
+    );
+    assert_eq!(
+        key.extra,
+        vec![
+            field("Key type", "ed25519"),
+            concealed(
+                "spare",
+                "-----BEGIN PRIVATE KEY-----\nonly\n-----END PRIVATE KEY-----\n"
+            ),
+        ]
+    );
 
     let api = &r.entries[4];
     assert_eq!(api.kind, EntryKind::ApiKey);

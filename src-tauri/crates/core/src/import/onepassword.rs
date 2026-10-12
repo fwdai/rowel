@@ -13,9 +13,12 @@
 //! name is a tag too, so the items keep their homes apart.
 //!
 //! Attachments are not read: an item that has any still imports, and the row
-//! carries a warning, so the user knows to keep the export file for them.
+//! carries a warning, so the user knows to keep the export file for them. Nor
+//! need the archive be read whole for that: [`unpack`] takes `export.data`
+//! out of any reader, so the command layer hands a file on disk straight to
+//! it and the attachments beside the JSON never pass through memory.
 
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -23,16 +26,22 @@ use serde_json::Value;
 use super::{lenient_string, non_empty, rfc3339, EntryKind, ImportResult, ImportedEntry, Importer};
 use crate::models::{ExtraField, PasswordHistoryItem, PASSWORD_HISTORY_CAP};
 
-/// The `.1pux` archive.
+/// The `.1pux` archive — or its `export.data` alone, when a caller has
+/// already taken it out with [`unpack`].
 pub struct Onepux;
 
-/// Whichever of its two exports 1Password wrote, told apart by the archive's
-/// signature — so the one "1Password" choice in the UI takes either file.
+/// Whichever of its two exports 1Password wrote, told apart by content: the
+/// archive by its signature, the JSON by its first byte, and otherwise the
+/// CSV — so the one "1Password" choice in the UI takes either file.
 pub struct Onepassword;
 
 /// The local-file header every zip starts with.
-pub(super) fn is_zip(bytes: &[u8]) -> bool {
+pub fn is_zip(bytes: &[u8]) -> bool {
     bytes.starts_with(b"PK\x03\x04")
+}
+
+fn is_json(bytes: &[u8]) -> bool {
+    bytes.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'{')
 }
 
 /// How much of `export.data` is read out of the archive. A zip can claim any
@@ -222,7 +231,7 @@ impl Field {
                 Value::Object(email) => email.get("email_address")?.as_str()?.to_owned(),
                 other => plain(other)?,
             },
-            "sshKey" => payload.get("privateKey")?.as_str()?.to_owned(),
+            "sshKey" => ssh_private_key(payload)?,
             "file" | "reference" => return None,
             _ => plain(payload)?,
         };
@@ -236,6 +245,44 @@ impl Field {
             label: self.label(),
         })
     }
+
+    /// The provider 1Password notes beside an address (`gmail`, say), which
+    /// the email slot has no room for: a labelled extra of its own.
+    fn email_provider(&self) -> Option<ExtraField> {
+        let (kind, payload) = self.typed()?;
+        if kind != "email" {
+            return None;
+        }
+        let provider = non_empty(payload.get("provider")?.as_str().map(str::to_owned))?;
+        Some(ExtraField {
+            label: format!("{} provider", self.label()),
+            value: provider,
+            secret: false,
+        })
+    }
+}
+
+/// The key itself. 1Password writes it twice: `privateKey` is PKCS#8, and the
+/// `metadata` beside it repeats it in the OpenSSH form `ssh-keygen` writes
+/// and the app's own generator makes. The OpenSSH block is taken when it is
+/// there, so an imported key reads like one made here; the PKCS#8 one is
+/// still a key every OpenSSH client accepts, and is kept when it is all
+/// there is.
+fn ssh_private_key(payload: &Value) -> Option<String> {
+    let block = |v: Option<&Value>| non_empty(v?.as_str().map(str::to_owned));
+    let openssh = block(payload.get("metadata").and_then(|m| m.get("privateKey"))).filter(|key| {
+        key.trim_start()
+            .starts_with("-----BEGIN OPENSSH PRIVATE KEY-----")
+    });
+    openssh.or_else(|| block(payload.get("privateKey")))
+}
+
+/// A saved form checkbox as 1Password records it: a tick, or nothing.
+fn checked(value: Option<&str>) -> bool {
+    matches!(
+        value.unwrap_or_default().trim().to_lowercase().as_str(),
+        "✓" | "✔" | "true" | "1" | "on" | "yes" | "checked"
+    )
 }
 
 fn plain(payload: &Value) -> Option<String> {
@@ -301,9 +348,11 @@ fn password_history(history: Vec<History>) -> Vec<PasswordHistoryItem> {
         .collect()
 }
 
-/// `export.data` out of the archive, or why it could not be read.
-fn export_data(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
+/// `export.data` out of the archive, or why it could not be read. The reader
+/// is whatever holds the archive — the bytes already in memory, or the file
+/// on disk, whose attachments are then never read at all.
+pub fn unpack<R: Read + Seek>(archive: R) -> Result<Vec<u8>, String> {
+    let mut archive = zip::ZipArchive::new(archive).map_err(|e| e.to_string())?;
     let file = archive.by_name("export.data").map_err(|e| match e {
         zip::result::ZipError::FileNotFound => "no export.data in the archive".to_owned(),
         // A codec this build does not read, say — not a missing file.
@@ -321,7 +370,7 @@ fn export_data(bytes: &[u8]) -> Result<Vec<u8>, String> {
 
 impl Importer for Onepassword {
     fn parse(&self, bytes: &[u8]) -> ImportResult {
-        if is_zip(bytes) {
+        if is_zip(bytes) || is_json(bytes) {
             Onepux.parse(bytes)
         } else {
             super::csv::OnepasswordCsv.parse(bytes)
@@ -332,12 +381,16 @@ impl Importer for Onepassword {
 impl Importer for Onepux {
     fn parse(&self, bytes: &[u8]) -> ImportResult {
         let mut result = ImportResult::default();
-        let data = match export_data(bytes) {
-            Ok(data) => data,
-            Err(e) => {
-                result.push_err(0, format!("not a 1Password export: {e}"));
-                return result;
+        let data = if is_zip(bytes) {
+            match unpack(Cursor::new(bytes)) {
+                Ok(data) => data,
+                Err(e) => {
+                    result.push_err(0, format!("not a 1Password export: {e}"));
+                    return result;
+                }
             }
+        } else {
+            bytes.to_vec()
         };
         let export: Export = match serde_json::from_slice(&data) {
             Ok(e) => e,
@@ -398,6 +451,12 @@ impl Importer for Onepux {
                     .flat_map(|s| &s.fields)
                     .filter(|f| f.kind() == "reference")
                     .count();
+                let providers: Vec<ExtraField> = details
+                    .sections
+                    .iter()
+                    .flat_map(|s| &s.fields)
+                    .filter_map(Field::email_provider)
+                    .collect();
                 let fields: Vec<Field> = details
                     .sections
                     .into_iter()
@@ -448,6 +507,7 @@ impl Importer for Onepux {
                         .into_iter()
                         .filter(|site| kept.as_deref() != Some(site.value.as_str())),
                 );
+                entry.extra.extend(providers);
                 if entry.title.is_empty() {
                     result.push_err(row, "item has no title");
                     continue;
@@ -514,17 +574,24 @@ fn login(mut entry: ImportedEntry, fields: Vec<Field>, site: Site) -> ImportedEn
     entry.kind = EntryKind::Login;
     entry.url = site.url.clone();
     for form in site.login_fields {
-        let Some(value) = non_empty(form.value) else {
+        // A saved checkbox is kept as the yes or no it recorded — unticked as
+        // much as ticked, which is what an unnamed one has no way to say.
+        let checkbox = form.field_type.as_deref() == Some("C");
+        let value = if checkbox {
+            if non_empty(form.name.clone()).is_none() {
+                continue;
+            }
+            Some(checked(form.value.as_deref()).to_string())
+        } else {
+            non_empty(form.value)
+        };
+        let Some(value) = value else {
             continue;
         };
         let slot = match form.designation.as_deref() {
             Some("username") => &mut entry.username,
             Some("password") => &mut entry.password,
             _ => {
-                // A checkbox's tick says nothing on its own.
-                if matches!(form.field_type.as_deref(), Some("C" | "B" | "R")) {
-                    continue;
-                }
                 entry.extra.push(ExtraField {
                     secret: form.field_type.as_deref() == Some("P"),
                     label: form.name.unwrap_or_default(),

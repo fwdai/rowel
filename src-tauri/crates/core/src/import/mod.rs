@@ -14,6 +14,7 @@ mod cxf;
 mod enpass;
 pub mod export;
 mod onepassword;
+pub use onepassword::{is_zip, unpack as unpack_1pux};
 
 #[cfg(test)]
 mod tests;
