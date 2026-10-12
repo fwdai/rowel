@@ -92,7 +92,7 @@ products solve it, don't patch symptoms.
 > workspace on this device holds (`sync::publish_remote_vaults` → `workspaces:remote`,
 > registry vault ids plus the run's own), and Settings › Workspaces offers them under "In
 > your Google account" with the shared picker and restore form. The restore
-> (`workspace_restore_from_account`) is `workspace_restore_from_drive` with the sign-in taken
+> (`workspace_restore_from_account`) is `workspace_restore_from_pending` with the sign-in taken
 > out: the open workspace's own tokens do the download and a copy is sealed under the restored
 > key — one account, connected once, in as many workspaces as the account has vaults. In the
 > other direction, `workspace_create` on a connected device inherits the account: the tokens
