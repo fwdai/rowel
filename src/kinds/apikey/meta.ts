@@ -23,6 +23,9 @@ export const isValid = (draft: EntryDraft): boolean =>
 export const primarySecret = (entry: Entry): string =>
   entry.type === 'apikey' ? entry.apiKey : ''
 
+// Where the key is sent stands in for a login's website.
+export const url = (entry: Entry): string => (entry.type === 'apikey' ? entry.baseUrl : '')
+
 // `API KEY · PRODUCTION`: the environment beside the kind, the way an identity
 // names its document — and loud on purpose, since a production key pasted into
 // a test script is the mistake this line exists to prevent.

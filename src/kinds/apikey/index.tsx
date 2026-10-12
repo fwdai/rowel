@@ -1,6 +1,6 @@
 import { ApiKeyGlyph } from '@/components/Main/icons'
 import type { Kind } from '../types'
-import { defaults, eyebrow, isValid, listSubtitle, primarySecret } from './meta'
+import { defaults, eyebrow, isValid, listSubtitle, primarySecret, url } from './meta'
 import ListRow from './ListRow'
 import Fields from './Fields'
 
@@ -18,6 +18,7 @@ const apikey: Kind = {
   defaults,
   isValid,
   primarySecret,
+  url,
   primaryActionLabel: 'Copy key',
   listSubtitle,
   eyebrow,
