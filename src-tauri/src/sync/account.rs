@@ -382,27 +382,32 @@ pub fn read_tokens(app: &AppHandle, cryptor: &Cryptor) -> Option<Tokens> {
 ///
 /// Whichever provider's file the workspace holds is the one read: the name
 /// says whose it is, before anything is unsealed.
+///
+/// Each file is tried by opening it, not by `Path::exists()` as the lookups
+/// for a *status* do (`storage::token_file_in`): `exists` answers `false` for
+/// a directory this process cannot search, and here that would read as "never
+/// connected" and let the delete go ahead with the vault's pack still live.
+/// Only "no such file" is absence; every other failure is an error.
 pub fn read_tokens_in(dir: &std::path::Path, cryptor: &Cryptor) -> Result<Option<Tokens>> {
-    let Some(provider) = storage::token_file_in(dir) else {
-        return Ok(None);
-    };
-    let path = dir.join(provider.token_file_name());
-    let blob = match std::fs::read_to_string(&path) {
-        Ok(blob) => blob,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-    // An empty file is a write that did not finish, not an absent one: the
-    // grant it was meant to hold may still be live at the provider.
-    if blob.trim().is_empty() {
-        return Err(Error::Other(unreadable_tokens_error(provider)));
+    for provider in Provider::ALL {
+        let blob = match std::fs::read_to_string(dir.join(provider.token_file_name())) {
+            Ok(blob) => blob,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
+        // An empty file is a write that did not finish, not an absent one: the
+        // grant it was meant to hold may still be live at the provider.
+        if blob.trim().is_empty() {
+            return Err(Error::Other(unreadable_tokens_error(provider)));
+        }
+        let json = cryptor
+            .decrypt(&blob)
+            .map_err(|_| Error::Other(unreadable_tokens_error(provider)))?;
+        let tokens = serde_json::from_str(&json)
+            .map_err(|_| Error::Other(unreadable_tokens_error(provider)))?;
+        return Ok(Some(tokens));
     }
-    let json = cryptor
-        .decrypt(&blob)
-        .map_err(|_| Error::Other(unreadable_tokens_error(provider)))?;
-    let tokens =
-        serde_json::from_str(&json).map_err(|_| Error::Other(unreadable_tokens_error(provider)))?;
-    Ok(Some(tokens))
+    Ok(None)
 }
 
 // One message for every way the file can be there and unusable: the user can
@@ -1378,6 +1383,35 @@ mod tests {
         assert!(read_tokens_in(&dir, &key).is_err());
         write_tokens_in(&dir, &cryptor("another-pw"), &tokens("access-1")).unwrap();
         assert!(read_tokens_in(&dir, &key).is_err());
+    }
+
+    // The one failure `Path::exists()` hides: a token directory this process
+    // cannot search. Read as "never connected", the delete would go ahead and
+    // leave the pack live with no workspace left to retry from; it has to be
+    // an error instead. Root can search anything, so the check is skipped there.
+    #[cfg(unix)]
+    #[test]
+    fn an_unsearchable_token_directory_is_an_error_not_an_absent_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if std::env::var_os("USER").is_some_and(|user| user == "root") {
+            return;
+        }
+        let dir = tmp_workspace_dir();
+        let key = cryptor("pw");
+        write_tokens_in(&dir, &key, &tokens("access-1")).unwrap();
+        let auth = dir.join(Provider::GoogleDrive.token_file_name());
+        let auth = auth.parent().unwrap();
+
+        std::fs::set_permissions(auth, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = read_tokens_in(&dir, &key);
+        // Restore before asserting, so a failure leaves nothing undeletable.
+        std::fs::set_permissions(auth, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(
+            result.is_err(),
+            "an unsearchable directory must not read as absent"
+        );
     }
 
     // No token file is no connection to re-seal: a password change on a vault
