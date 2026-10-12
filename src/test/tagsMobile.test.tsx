@@ -210,6 +210,27 @@ describe('tags on the entry screen', () => {
     })
   })
 
+  it('never floats, nor adds, a tag the entry already holds in another case', async () => {
+    withEntries([
+      loginMeta({ id: 'l1', title: 'Google', tags: ['Work'] }),
+      loginMeta({ id: 'l2', title: 'Airbnb', tags: ['work'] })
+    ])
+    mockCommand('reveal_entry', () => loginEntry({ id: 'l1', title: 'Google', tags: ['Work'] }))
+    await openPicker()
+
+    // The vault's "work" is this entry's "Work": nothing to float.
+    expect(applied()).toEqual(['Work'])
+    expect(suggested()).toEqual([])
+
+    // Nor to make: Return on the other case keeps the one already there.
+    await userEvent.type(field(), 'work{Enter}')
+    expect(applied()).toEqual(['Work'])
+    expect(field()).toHaveValue('')
+    await closePicker()
+    await waitFor(() => expect(screen.queryByTestId('tag-picker')).not.toBeInTheDocument())
+    expect(calls('save_entry')).toHaveLength(0)
+  })
+
   it('says how to start when the vault carries no tags at all', async () => {
     withEntries([loginMeta({ id: 'l1', title: 'Google' })])
     mockCommand('reveal_entry', () => loginEntry({ id: 'l1', title: 'Google' }))

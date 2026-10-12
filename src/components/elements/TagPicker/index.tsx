@@ -46,8 +46,11 @@ export default function TagPicker({ subject, value, onChange, onClose }: Props) 
   const titleId = 'tag-picker-title'
 
   const needle = query.trim()
+  // Identity is by folded name throughout: a tag the entry carries as "Work"
+  // is the vault's "work", so that one is neither floated nor added twice.
+  const held = (tag: string) => value.some(mine => fold(mine) === fold(tag))
   const options = counts.filter(
-    row => !value.includes(row.tag) && (!needle || fold(row.tag).includes(fold(needle)))
+    row => !held(row.tag) && (!needle || fold(row.tag).includes(fold(needle)))
   )
   // What Return means: the tag already there under that name, or a new one.
   const match = needle
@@ -57,9 +60,10 @@ export default function TagPicker({ subject, value, onChange, onClose }: Props) 
   const bare = counts.length === 0 && value.length === 0 && needle === ''
 
   // The caret stays in the field through every press on a chip: the next tag
-  // is typed, not re-aimed at.
+  // is typed, not re-aimed at. A name the field already holds in any case is
+  // not added again, whichever path asked.
   const add = (tag: string) => {
-    onChange([...value, tag])
+    if (!held(tag)) onChange([...value, tag])
     setQuery('')
     input.current?.focus()
   }
@@ -73,7 +77,7 @@ export default function TagPicker({ subject, value, onChange, onClose }: Props) 
       event.preventDefault()
       if (!needle) return
       if (creatable) return add(needle)
-      if (match && !value.includes(match)) return add(match)
+      if (match) return add(match)
       setQuery('')
     } else if (event.key === 'Backspace' && query === '' && value.length > 0) {
       remove(value[value.length - 1])
