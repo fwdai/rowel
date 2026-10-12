@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
-import { useUi, useVault } from '@/store'
-import { withEntries, loginEntry, loginMeta } from './utils'
+import type { EntryMeta } from '@/api/types'
+import { useUi, useVault, startEntry } from '@/store'
+import { deferred, withEntries, loginEntry, loginMeta } from './utils'
 import { calls, mockCommand } from './ipc'
 import { setLayout } from './layout'
 
@@ -242,6 +243,97 @@ describe('tags on the entry screen', () => {
 
     expect(screen.getByTestId('tag-picker-empty')).toHaveTextContent('first tag')
     expect(suggested()).toEqual([])
+  })
+
+  it('ignores Return while an input method is still composing', async () => {
+    seed()
+    await openPicker()
+
+    await userEvent.type(field(), '工作')
+    // The composer's Return, as the keyboard sends it mid-word…
+    fireEvent.keyDown(field(), { key: 'Enter', isComposing: true })
+    // …and as Safari sends it, with no flag and the composition key code.
+    fireEvent.keyDown(field(), { key: 'Enter', keyCode: 229 })
+
+    expect(applied()).toEqual(['work'])
+    expect(field()).toHaveValue('工作')
+
+    // Settled, the same key makes the tag.
+    await userEvent.keyboard('{Enter}')
+    expect(applied()).toEqual(['work', '工作'])
+  })
+
+  // The picker closes before its write lands. What the user does in that
+  // gap must not be undone by the write landing.
+  describe('while the save is still in flight', () => {
+    const saved = (entry: unknown): EntryMeta => {
+      const { id, title, tags } = entry as { id: string; title: string; tags: string[] }
+      return loginMeta({ id, title, tags, updatedAt: '2024-02-01T00:00:00.000Z' })
+    }
+
+    it('leaves a draft the user has since opened alone', async () => {
+      const write = deferred<EntryMeta>()
+      mockCommand('save_entry', () => write.promise)
+      seed()
+      await openPicker()
+
+      await userEvent.click(screen.getByTestId('tag-suggest-money'))
+      await closePicker()
+      expect(calls('save_entry')).toHaveLength(1)
+
+      // Meanwhile: a new entry is being written.
+      act(() => startEntry('login'))
+      expect(useVault.getState().creating).toBe('login')
+      expect(useVault.getState().currentId).toBeNull()
+
+      await act(async () => {
+        write.resolve(saved(calls('save_entry')[0].entry))
+        await write.promise
+      })
+
+      // The row is updated where it is; the draft is still the screen.
+      expect(useVault.getState().creating).toBe('login')
+      expect(useVault.getState().currentId).toBeNull()
+      expect(useVault.getState().items.find(e => e.id === 'l1')?.tags).toEqual(['work', 'money'])
+    })
+
+    it('reopens on the list it sent, and sends the lists in order', async () => {
+      const first = deferred<EntryMeta>()
+      mockCommand('save_entry', ({ entry }) =>
+        calls('save_entry').length === 1 ? first.promise : saved(entry)
+      )
+      seed()
+      await openPicker()
+
+      await userEvent.click(screen.getByTestId('tag-suggest-money'))
+      await closePicker()
+      expect(calls('save_entry')).toHaveLength(1)
+
+      // Reopened before the first write lands: the field holds what was sent,
+      // not the vault's stale list.
+      await userEvent.click(screen.getByTestId('add-tag-button'))
+      expect(applied()).toEqual(['work', 'money'])
+      await userEvent.click(screen.getByTestId('tag-suggest-travel'))
+      await closePicker()
+
+      // The second write waits for the first.
+      expect(calls('save_entry')).toHaveLength(1)
+      await act(async () => {
+        first.resolve(saved(calls('save_entry')[0].entry))
+        await first.promise
+      })
+      await waitFor(() => expect(calls('save_entry')).toHaveLength(2))
+      expect(calls('save_entry')[1]).toEqual({
+        entry: expect.objectContaining({ tags: ['work', 'money', 'travel'] })
+      })
+      await waitFor(() =>
+        expect(useVault.getState().items.find(e => e.id === 'l1')?.tags).toEqual([
+          'work',
+          'money',
+          'travel'
+        ])
+      )
+    })
   })
 
   it('reports a save the backend refused, and keeps the entry where it was', async () => {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { showTag } from '@/store'
 import TagChip from '@/components/elements/TagChip'
@@ -41,6 +41,11 @@ export default function Meta({
   const [open, setOpen] = useState(false)
   // The read screen's copy of the tags while the sheet is up.
   const [pending, setPending] = useState<string[]>(tags)
+  // The list of the save still in flight, if there is one: what the sheet
+  // reopens on, since `tags` is the vault's and lags the write. Saves go out
+  // one after another on `chain`, so a second close cannot overtake a first.
+  const [sent, setSent] = useState<string[] | null>(null)
+  const chain = useRef(Promise.resolve())
   const [error, setError] = useState<string | null>(null)
 
   // Creation is a fact, so it reads as a date; a modification is about recency,
@@ -60,16 +65,31 @@ export default function Meta({
 
   if (!filed && !writable && stamps.length === 0) return null
 
+  // What the entry's tags are as far as this screen knows: the write on its
+  // way, else the vault's.
+  const latest = sent ?? tags
+
   const pick = () => {
-    setPending(tags)
+    setPending(latest)
     setError(null)
     setOpen(true)
   }
 
   const close = () => {
     setOpen(false)
-    if (editing || !onSave || same(pending, tags)) return
-    onSave(pending).catch(() => setError(t('Could not save. Please try again.')))
+    if (editing || !onSave || same(pending, latest)) return
+    const next = pending
+    setSent(next)
+    chain.current = chain.current.then(() =>
+      onSave(next).then(
+        // Cleared only if no later list has taken its place meanwhile.
+        () => setSent(current => (current === next ? null : current)),
+        () => {
+          setSent(null)
+          setError(t('Could not save. Please try again.'))
+        }
+      )
+    )
   }
 
   return (

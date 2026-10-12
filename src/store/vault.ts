@@ -174,8 +174,16 @@ export const saveEntry = async (draft: EntryDraft) => {
 // Writes an entry's tags back without an editor — the phone's picker. The
 // secrets go back exactly as they were revealed, so to the core this is an
 // edit that changed nothing but the tags: the row restamps, re-reveals and
-// syncs as after any save.
-export const saveTags = (entry: Entry, tags: string[]) => saveEntry({ ...entry, tags })
+// syncs as after any save. Unlike `saveEntry` it leaves the screen alone: the
+// picker has closed before the write lands, and by then the user may have
+// gone back or opened a draft, which a re-selection here would take away.
+// The row is replaced where it is; the selection, if it is still this row,
+// stays by `setEntries`'s own rule. Nothing about the audit changes.
+export const saveTags = async (entry: Entry, tags: string[]) => {
+  const meta = await saveEntryCmd(buildEntry({ ...entry, tags }))
+  setEntries(upsert(useVault.getState().items, meta))
+  scheduleSync()
+}
 
 // What the UI calls "Archive": the backend op is a tombstone, so the row only
 // leaves All Items — `loadArchive` still lists it.

@@ -26,6 +26,8 @@ export default function TagsInput({ value, onChange, placeholder }: Props) {
   const removeTag = (tag: string) => onChange(value.filter(t => t !== tag))
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // An input method still composing owns the key (see TagPicker).
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Enter') {
       event.preventDefault()
       addTag()

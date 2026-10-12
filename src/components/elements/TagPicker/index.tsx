@@ -73,6 +73,10 @@ export default function TagPicker({ subject, value, onChange, onClose }: Props) 
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // A key pressed while an input method is composing (a Chinese or Japanese
+    // keyboard settling on a word) is the composer's: Return there picks the
+    // candidate, not the tag. Safari reports such keys as 229 with no flag.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Enter') {
       event.preventDefault()
       if (!needle) return
