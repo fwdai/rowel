@@ -6,7 +6,16 @@ import type { CSSProperties } from 'react'
 export const CARD =
   'overflow-hidden rounded-lg border border-line bg-card shadow-card max-md:rounded-xl'
 
-export const ROW_HAIRLINE = 'inset-shadow-hairline last:inset-shadow-none'
+// The rule under a list row, dropped on the card's last row — and on the row a
+// band gutter follows (see `BAND_GUTTER`), where the cut is rule enough.
+export const ROW_HAIRLINE =
+  'inset-shadow-hairline last:inset-shadow-none has-[+[data-gutter]]:inset-shadow-none'
+
+// A gutter cut through a card between two bands of rows: the pane's own ground
+// showing through, so the bands read apart without a heading over each (the
+// identity editor's holder / document / extras, every kind's fixed rows / the
+// user's own). Nothing to cut when it would be the card's first child.
+export const BAND_GUTTER = 'h-2 bg-app first:hidden'
 
 // A 460px face (a credit card, an ID document) with its note panel: stacked,
 // and side by side once the *pane* is wide enough for both — 460 plus a note
@@ -62,7 +71,8 @@ export const LABEL = `${LABEL_TYPE} text-text2`
 // caption — sentence case, 12px, the secondary ink, no tracking — rather than
 // the desktop's tracked uppercase: at 11px uppercase and 0.12em the label read
 // as big as the 16px value it captions, and a row became two lines of the
-// same weight.
+// same weight. A typed label (a custom pair's) wears it too, so an editing
+// row is a detail row whose caption happens to take a caret.
 export const ROW_LABEL = `${LABEL} max-md:text-sm max-md:normal-case max-md:tracking-[0]`
 
 // The one gutter for everything that stands on the pane outside a card — a

@@ -1,7 +1,15 @@
 import { useTranslation } from 'react-i18next'
 import CopyButton from '@/components/elements/CopyButton'
 import Panel from '@/components/elements/Panel'
-import { CopyValue, Field, FieldRow, NoteField, useFields } from '@/components/elements/fields'
+import {
+  CopyValue,
+  CustomFieldsField,
+  Field,
+  FieldRow,
+  NoteField,
+  hasExtra,
+  useFields
+} from '@/components/elements/fields'
 import { filled } from '@/components/elements/fields/formats'
 import { HOVER_ONLY, ROW_COPY, VALUE } from '@/components/elements/tokens'
 import { cx } from '@/utils/cx'
@@ -13,8 +21,8 @@ import PrivateBlock from './PrivateBlock'
  * An SSH key read as an object: the fingerprint plate (see `Face`) beside the
  * public half — the line, the comment it ends in, the passphrase kept with it —
  * and the private key sealed under them — side by side at every pane width,
- * the plate shrinking before it would ever stack. The note, when there is one,
- * takes a panel of its own under the lot.
+ * the plate shrinking before it would ever stack. The note and the user's own
+ * rows, when there are any, take a panel of their own under the lot.
  */
 export default function Read() {
   const { t } = useTranslation()
@@ -67,9 +75,10 @@ export default function Read() {
           <PrivateBlock />
         </div>
       </div>
-      {filled(entry.note) && (
+      {(filled(entry.note) || hasExtra(entry)) && (
         <Panel>
           <NoteField label="Note" />
+          <CustomFieldsField />
         </Panel>
       )}
     </div>

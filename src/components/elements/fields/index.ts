@@ -1,6 +1,6 @@
 export { FieldsProvider, useField, useFields, type FieldsState } from './context'
 export { default as CustomFieldsField } from './CustomFields'
-export { pruneExtra } from './CustomFields/extras'
+export { hasExtra, pruneExtra } from './CustomFields/extras'
 export { default as CopyValue } from './CopyValue'
 export { default as Field } from './Field'
 export {

@@ -6,6 +6,7 @@ import { FACE_ASIDE } from '@/components/elements/tokens'
 import {
   CustomFieldsField,
   NoteField,
+  hasExtra,
   useField,
   useFields
 } from '@/components/elements/fields'
@@ -15,20 +16,11 @@ import { CARD_MASK } from '../meta'
 import { formatExpiry, isExpired, splitExpiry } from '../expiry'
 import Value from './Value'
 
-// The card and its note, then what the plastic has no room for, as on a
-// document.
+// The card, with what the plastic has no room for — the note and the user's
+// own rows — on a panel beside it.
 export default function Fields() {
-  return (
-    <>
-      <Card />
-      <CustomFieldsField />
-    </>
-  )
-}
-
-function Card() {
   const { t } = useTranslation()
-  const { set, attempted } = useFields()
+  const { entry, set, attempted } = useFields()
   const editing = !!set
   const [show, setShow] = useState(false)
   // Editing shows what is being typed; reading hides it until asked.
@@ -42,9 +34,10 @@ function Card() {
   const year = useField('year')
   const note = useField('note')
 
-  // The card is 460 wide whatever else there is, so the note goes in a column
-  // of its own — and reading, an empty column is no column at all.
-  const aside = editing || !!note.value
+  // The card is 460 wide whatever else there is, so the note and the custom
+  // rows go in a column of their own — and reading, an empty column is no
+  // column at all.
+  const aside = editing || !!note.value || hasExtra(entry)
   const expired = !editing && isExpired(month.value, year.value)
 
   // Derived live from the number in hand, so it tracks an unsaved edit too.
@@ -190,6 +183,7 @@ function Card() {
       {aside && (
         <Panel>
           <NoteField label="Note" />
+          <CustomFieldsField />
         </Panel>
       )}
     </div>

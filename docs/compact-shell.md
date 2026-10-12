@@ -142,10 +142,21 @@ there; the rows that draw their own geometry rather than rendering through
 exported classes, so one row on the phone is one row whatever it holds. The
 one-time code is a row under the password with a countdown ring in its rail
 (`fields/Otp/Countdown`, a conic gradient on a registered `--otp-left`), on
-both shells; the editor keeps the dial as the live preview. Under the rows,
-files, passkeys, custom fields and tags are sections (`SECTION_LABEL`: 12px
-uppercase, tracking pulled in, inset to the rows), every "add" under the rows
-is the same dashed pill (`ADD_PILL`, `ACTION_ROW`), and the dates are one centred
+both shells; the editor's row is the secret's own box, with the live code as
+a meta line under it once the secret parses. Custom fields are the card's own
+last band, not a section or a card of their own: behind a gutter cut through
+the card (`BAND_GUTTER`, the identity editor's cut between its bands) the
+user's rows take the fixed rows' geometry, the user's label as the caption, and
+the band ends on the "+ Add field" row (`fields/CustomFields`), which appends
+a pair and hands it the caret — on the phone the label is the caption over
+the value with no underline of its own ("Field name" in its place until it is
+typed), and the editor's two controls — conceal, remove — are glyphs alone in
+the rail at a compact 32px with 16px glyphs (two 44px blocks were a toolbar),
+in the fixed rows' control ink, each still a 44px target through its slop. Under the rows,
+files, passkeys and tags are sections (`SECTION_LABEL`: 12px
+uppercase, tracking pulled in, inset to the rows), every "add" — under the
+rows and the one inside the card — is the same dashed pill (`ADD_PILL`,
+`ACTION_ROW`), and the dates are one centred
 meta line at the end — `Compact/Detail/Meta`, handed to `Show/Body` as its
 `Footer` and to `Edit/Body` as the editor's, which reads the same facts the
 desktop's strip does. Files are a plain list, not
@@ -222,7 +233,12 @@ leaves where it is.
 Overlays are not screens and do not live in the shell div. That div carries
 `viewportStyle`'s translate, which makes it the containing block of anything
 `fixed` inside it, so a sheet mounted there would take the keyboard offset
-twice. `Generator/Attached`, and every fixed overlay after it, is a sibling of
+twice. The shell is sized from the visual viewport only while a field has the
+focus (`useVisualViewport` answers null otherwise): iOS never shrinks the
+layout viewport for the keyboard, so the shell shrinks itself to keep the
+caret in view, but at rest it is the plain full-height box, so a stale
+viewport reading — the Simulator's accessory strip, left behind after a field
+went away — can never leave a band of the page's ground under the tab bar. `Generator/Attached`, and every fixed overlay after it, is a sibling of
 the shell; one opened from inside a screen (the tag picker, which has a field
 to type into) portals itself to `document.body` for the same reason.
 

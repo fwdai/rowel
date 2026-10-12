@@ -28,25 +28,24 @@ describe('Type-aware fields', () => {
     // The label is the translated one the row shows, not the draft key.
     expect(screen.getByLabelText('URL')).toBe(input('website'))
     expect(screen.getByLabelText('Email')).toBe(input('email'))
-    // The OTP row starts as the offer to add one; the box arrives on request.
-    expect(screen.getByLabelText('One-time code')).toBe(screen.getByTestId('add-otp-button'))
-    await userEvent.click(screen.getByTestId('add-otp-button'))
     expect(screen.getByLabelText('One-time code')).toBe(input('otp'))
-    expect(input('otp')).toHaveFocus()
   })
 
-  // A login without a code keeps the read view's one-column layout while
-  // editing: the dial's column is opened by the user, not by the mode switch.
-  it('offers to add a one-time code instead of an empty dial', async () => {
+  // The code is a row of the card like the password it goes with, in both
+  // modes and whether or not there is one yet: no verb to press first, and no
+  // panel of its own for the box to move into.
+  it('keeps the one-time code as a plain row of the card, under the password', async () => {
     mockCommand('reveal_entry', () => loginEntry())
     render(<Show entry={loginMeta()} editing />)
 
     // The editor mounts once the reveal lands.
     await waitFor(() => expect(input('username')).not.toBeNull())
-    expect(input('otp')).toBeNull()
-    await userEvent.click(screen.getByTestId('add-otp-button'))
-    expect(screen.queryByTestId('add-otp-button')).not.toBeInTheDocument()
     expect(input('otp')).not.toBeNull()
+    expect(input('password').closest('.rounded-lg')).toContainElement(input('otp'))
+    const names = Array.from(document.querySelectorAll<HTMLInputElement>('input[name]')).map(
+      box => box.name
+    )
+    expect(names.indexOf('otp')).toBe(names.indexOf('password') + 1)
   })
 
   it('names a full-bleed note body, which has no label column', () => {
@@ -194,7 +193,6 @@ describe('Type-aware fields', () => {
 
   it('takes an otpauth:// link and keeps only the secret inside it', async () => {
     render(<Show type="login" editing />)
-    await userEvent.click(screen.getByTestId('add-otp-button'))
     await userEvent.click(input('otp'))
     await userEvent.paste('otpauth://totp/Acme:me@acme.io?secret=JBSWY3DPEHPK3PXP&issuer=Acme')
     await userEvent.tab()
@@ -206,7 +204,6 @@ describe('Type-aware fields', () => {
 
   it('refuses an OTP secret it cannot read', async () => {
     render(<Show type="login" editing />)
-    await userEvent.click(screen.getByTestId('add-otp-button'))
     await userEvent.type(input('otp'), 'not-a-secret')
 
     expect(screen.getByText('Not a one-time-password secret')).toBeInTheDocument()
@@ -226,7 +223,7 @@ describe('Type-aware fields', () => {
 
   // Reading, the code is a row under the password — its value the copy
   // control, as every row's is, and how long it has left a ring in the rail.
-  // The editor's live preview offers no copy: while typing, the dial only
+  // The editor's live preview offers no copy: while typing, the code only
   // proves the secret works.
   it('reads the code as a row that copies when pressed', async () => {
     mockCommand('generate_otp', () => ({ code: '123456', time: 25 }))
@@ -470,8 +467,7 @@ describe('Custom fields', () => {
       ])))
     render(<Show entry={identityMeta()} />)
 
-    expect(await screen.findByText('Custom fields')).toBeInTheDocument()
-    expect(screen.getByTestId('entry-extra-label-0')).toHaveTextContent('Categories')
+    expect(await screen.findByTestId('entry-extra-label-0')).toHaveTextContent('Categories')
     expect(screen.getByTestId('entry-extra-value-0')).toHaveTextContent('B, BE')
     expect(screen.getByTestId('entry-extra-label-1')).toHaveTextContent('Blood type')
     // A value is copyable, like any other row's.
@@ -483,7 +479,7 @@ describe('Custom fields', () => {
     render(<Show entry={identityMeta()} />)
 
     await screen.findByTestId('entry-value-name')
-    expect(screen.queryByText('Custom fields')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('entry-extra-label-0')).not.toBeInTheDocument()
   })
 
   // A blank row is the editor's own scaffolding, so reading skips it — an empty
@@ -495,8 +491,7 @@ describe('Custom fields', () => {
       ])))
     render(<Show entry={identityMeta()} />)
 
-    await screen.findByText('Custom fields')
-    expect(screen.getByTestId('entry-extra-label-0')).toHaveTextContent('Blood type')
+    expect(await screen.findByTestId('entry-extra-label-0')).toHaveTextContent('Blood type')
     expect(screen.queryByTestId('entry-extra-label-1')).not.toBeInTheDocument()
   })
 
@@ -593,19 +588,30 @@ describe('Custom fields', () => {
     )
   })
 
-  // Most entries never get one, so the editor offers the action alone — no
-  // heading over an empty section — until the first row is asked for.
-  it('offers only the add action until a row is added', async () => {
+  // Most entries never get one, so the card ends on the add row alone until the
+  // first row is asked for — and the row it adds takes the caret, so "Add
+  // field" is followed by typing the label, not by a second tap.
+  it('offers only the add action until a row is added, then focuses the new label', async () => {
     mockCommand('reveal_entry', () => identityEntry())
     render(<Show entry={identityMeta()} editing />)
 
     await waitFor(() => expect(input('name').value).toBe('ADA LOVELACE'))
-    expect(screen.queryByText('Custom fields')).not.toBeInTheDocument()
     expect(document.querySelector('input[name="extra-label-0"]')).toBeNull()
 
     await userEvent.click(screen.getByTestId('add-extra-field'))
-    expect(screen.getByText('Custom fields')).toBeInTheDocument()
-    expect(input('extra-label-0')).toBeInTheDocument()
+    expect(input('extra-label-0')).toHaveFocus()
+  })
+
+  // The rows are the card's own, not a card of their own: the add row sits in
+  // the same panel as the fixed fields, and a pair lands above it.
+  it('keeps the pairs and the add row on the fixed fields’ card', async () => {
+    mockCommand('reveal_entry', () => identityEntry([{ label: 'Blood type', value: 'O+' }]))
+    render(<Show entry={identityMeta()} editing />)
+
+    await waitFor(() => expect(input('extra-value-0').value).toBe('O+'))
+    const panel = input('name').closest('.rounded-lg')!
+    expect(panel).toContainElement(input('extra-label-0'))
+    expect(panel).toContainElement(screen.getByTestId('add-extra-field'))
   })
 
   it('masks a concealed value until it is revealed, and keeps it copyable', async () => {

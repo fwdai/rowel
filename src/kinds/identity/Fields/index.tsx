@@ -5,10 +5,11 @@ import {
   DateField,
   Field,
   NoteField,
+  hasExtra,
   useFields
 } from '@/components/elements/fields'
 import { filled } from '@/components/elements/fields/formats'
-import { FACE_ASIDE } from '@/components/elements/tokens'
+import { BAND_GUTTER, FACE_ASIDE } from '@/components/elements/tokens'
 import { countryName } from '@/utils/countries'
 import {
   docTypeOf,
@@ -50,21 +51,19 @@ export default function Fields() {
   }
 
   // Reading, the document is an object (see `Face`); the note it carries and
-  // any custom fields keep their rows beside and below it, as on a credit card.
+  // any custom fields keep their rows on a panel beside it, as on a credit card.
   if (!editing) {
-    const aside = filled(entry.note)
+    const aside = filled(entry.note) || hasExtra(entry)
     return (
-      <>
-        <div className={aside ? FACE_ASIDE : undefined}>
-          <Face />
-          {aside && (
-            <Panel>
-              <NoteField label="Note" />
-            </Panel>
-          )}
-        </div>
-        <CustomFieldsField />
-      </>
+      <div className={aside ? FACE_ASIDE : undefined}>
+        <Face />
+        {aside && (
+          <Panel>
+            <NoteField label="Note" />
+            <CustomFieldsField />
+          </Panel>
+        )}
+      </div>
     )
   }
 
@@ -109,14 +108,15 @@ export default function Fields() {
           <Fragment key={specOf(band[0].key).group}>
             {/* A gutter cut through the panel: the bands read apart without a
                 heading over each of them. */}
-            {index > 0 && <div className="h-2 bg-app" />}
+            {index > 0 && <div data-gutter className={BAND_GUTTER} />}
             {/* Each band is its own row scope, so the hairline stops at the
                 band's last row (ROW_HAIRLINE drops it on `last`). */}
             <div>{band.map(row)}</div>
           </Fragment>
         ))}
+        {/* The user's own rows close the card, with the row that adds one. */}
+        <CustomFieldsField />
       </Panel>
-      <CustomFieldsField />
     </>
   )
 }

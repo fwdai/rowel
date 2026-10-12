@@ -155,11 +155,12 @@ describe('Env fields, reading', () => {
     expect(screen.getByTestId('entry-value-note')).toHaveTextContent('rotate monthly')
   })
 
-  // Custom fields under the file, as on every other kind: nothing without
-  // them, and a concealed one masked until its eye is pressed.
-  it('reads custom fields under the file, and has no section without them', async () => {
+  // Custom fields under the file, as on every other kind: no panel without
+  // them (or a note), and a concealed one masked until its eye is pressed.
+  it('reads custom fields under the file, and has no panel without them', async () => {
     const { unmount } = renderRead()
-    expect(screen.queryByText('Custom fields')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('entry-extra-label-0')).not.toBeInTheDocument()
+    expect(screen.queryByText('Note')).not.toBeInTheDocument()
     unmount()
 
     render(
@@ -179,7 +180,6 @@ describe('Env fields, reading', () => {
         <Fields />
       </FieldsProvider>
     )
-    expect(screen.getByText('Custom fields')).toBeInTheDocument()
     expect(screen.getByTestId('entry-extra-label-0')).toHaveTextContent('Deployed to')
     expect(screen.getByTestId('entry-extra-value-0')).toHaveTextContent('fly.io')
     const token = screen.getByTestId('entry-extra-value-1')
@@ -297,11 +297,9 @@ describe('Env fields, editing', () => {
   it('adds a custom field and writes it to the draft', async () => {
     const onSet = vi.fn()
     render(<Editor body={BODY} onSet={onSet} />)
-    expect(screen.queryByText('Custom fields')).not.toBeInTheDocument()
     expect(document.querySelector('input[name="extra-label-0"]')).toBeNull()
 
     await userEvent.click(screen.getByTestId('add-extra-field'))
-    expect(screen.getByText('Custom fields')).toBeInTheDocument()
     await userEvent.type(document.querySelector('input[name="extra-label-0"]')!, 'Deployed to')
     await userEvent.type(document.querySelector('input[name="extra-value-0"]')!, 'fly.io')
     await userEvent.click(screen.getByTestId('conceal-extra-0'))
