@@ -70,7 +70,6 @@ export default function Language() {
                 value={i18n.resolvedLanguage ?? ''}
                 onChange={locale => void i18n.changeLanguage(locale)}
                 testidPrefix="settings-locale"
-                upOnCompact
               />
             }
           />
@@ -85,7 +84,6 @@ export default function Language() {
                 value={format}
                 onChange={next => setPref('dateFormat', next)}
                 testidPrefix="settings-date-format"
-                upOnCompact
               />
             }
           />

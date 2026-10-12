@@ -74,13 +74,14 @@ export default function Pane({
 }
 
 // The heading stays put above the body: the frame scrolls itself and keeps the
-// tab bar's clearance, so the column has no scroller of its own.
+// tab bar's clearance, so the column has no scroller of its own. `relative`:
+// what the frame's bottom action is pinned to.
 function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean }) {
   const { close } = useSubpage()
   const swipe = useSwipeBack(close, locked)
 
   return (
-    <div {...swipe} data-testid="settings-subpage" className={PUSHED_SCREEN}>
+    <div {...swipe} data-testid="settings-subpage" className={cx('relative', PUSHED_SCREEN)}>
       <NavBar
         leading={
           <BackButton

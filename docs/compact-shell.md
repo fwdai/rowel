@@ -96,7 +96,11 @@ switch, `Generator/Panel`, a bottom Use & copy), and opened from a password row
 it is `Generator/Attached` — the same `Dialog` the wide shell mounts, framed as
 a page sheet. Both take `useGeneratorDialog`, so the two shells generate the
 same way. Settings is a root list of rows over the desktop's own `Section`
-panes, and carries the lock control the vanished top bar used to.
+panes, and carries the lock control the vanished top bar used to. The rows
+step up to the phone's type tier through `max-md:` inside `SettingsRow`, and
+a sub-page's one action (Create, Save, Delete) is the same bottom slab the
+generator root draws, lifted over the tab bar; the nav row's Back is its
+Cancel.
 
 The three pushed headers — the entry's, the form's, a settings pane's — are one
 `Compact/NavBar` (leading · title · trailing) with `Compact/BackButton` in the
@@ -394,10 +398,10 @@ on — never with a prop.
 
 What the six slices deliberately left behind, smallest first:
 
-- **Generator controls have no touch tier.** The length slider and the toggle
-  rows are the desktop's sizes inside `Generator/Panel`, which both shells
-  share; giving them a touch tier means sizing them through the panel rather
-  than around it.
+- **The length slider has no touch tier.** The switches, segments, chips and
+  inline buttons the generator and Settings share take theirs through
+  `any-pointer-coarse:` inside each element; the range input is the one
+  control still at the desktop's size.
 - **`big` secrets truncate when stacked.** A long SSH private key in a narrow
   container clips rather than wrapping; the stacked row needs its own
   presentation for the multi-line value tier.

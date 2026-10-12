@@ -19,20 +19,19 @@ interface Props<T extends string> {
   onChange: (value: T) => void
   // `<prefix>-trigger` on the trigger, `<prefix>-<value>` on each item.
   testidPrefix?: string
-  // On the phone layout the menu opens above the trigger when there is more
-  // room above it than below.
-  upOnCompact?: boolean
 }
 
 // A single choice from a field-shaped trigger naming the current option, opening
 // a menu of all of them. For options too many or too wide to sit side by side.
+// On the phone the field spans its row and the menu spans the field; wherever
+// it is, the menu opens upward when there is more room above the field than
+// below it, so it never runs off the bottom of a screen.
 export default function MenuSelect<T extends string>({
   label,
   options,
   value,
   onChange,
-  testidPrefix,
-  upOnCompact
+  testidPrefix
 }: Props<T>) {
   const [open, setOpen] = useState(false)
   const [up, setUp] = useState(false)
@@ -40,7 +39,7 @@ export default function MenuSelect<T extends string>({
   const current = options.find(option => option.value === value)
 
   const toggle = () => {
-    if (!open && upOnCompact && trigger.current) {
+    if (!open && trigger.current) {
       const { top, bottom } = trigger.current.getBoundingClientRect()
       setUp(top > window.innerHeight - bottom)
     }
@@ -63,7 +62,7 @@ export default function MenuSelect<T extends string>({
         aria-expanded={open}
         aria-label={`${label}: ${current?.label ?? value}`}
         onClick={toggle}
-        className="flex h-9 w-[236px] max-w-full cursor-pointer items-center gap-2 rounded-sm border border-line2 bg-field px-3 text-base font-medium text-text transition-colors hover:border-accent-line"
+        className="flex h-9 w-[236px] max-w-full cursor-pointer items-center gap-2 rounded-sm border border-line2 bg-field px-3 text-base font-medium text-text transition-colors hover:border-accent-line max-md:h-11 max-md:w-full"
       >
         <span className="min-w-0 flex-1 truncate text-left">{current?.label ?? value}</span>
         {current?.meta && <span className={META}>{current.meta}</span>}
@@ -73,10 +72,10 @@ export default function MenuSelect<T extends string>({
         <Dropdown
           onBlur={() => setOpen(false)}
           className={cx(
-            'right-0 top-10 w-[260px]',
-            up && 'max-md:top-auto max-md:bottom-10 max-md:origin-bottom'
+            'right-0 w-[260px] max-md:left-0 max-md:w-auto',
+            up ? 'bottom-full mb-1 origin-bottom' : 'top-full mt-1'
           )}
-          listClassName={upOnCompact ? 'max-md:max-h-[35vh]' : undefined}
+          listClassName="max-h-[40vh]"
         >
           {options.map(option => (
             <DropdownItem
