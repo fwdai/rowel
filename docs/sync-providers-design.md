@@ -436,8 +436,14 @@ path for old builds, Shares row enabled for Dropbox.
 
 ### Later / optional
 
-- Upload sessions for packs over 150 MB.
-- Conditional write on Dropbox (`update rev`).
+- Upload sessions for packs over 150 MiB.
+- Conditional write on Dropbox (`update rev`): done in PR 4 for `update`;
+  `create` still uses overwrite, so two devices' simultaneous first push
+  leaves the later pack and the next merge recovers the other.
+- A connect that fails mid-write after removing the other provider's token
+  file leaves the session flagged connected with no file. Only reachable if an
+  already-connected vault connects a second provider, which the UI does not
+  offer; write the new file before removing the old one if that ever changes.
 - Move the pure sync modules (`engine`, `pack`, `layout`, identity rules)
   into `rowel-core` once a second consumer exists.
 
