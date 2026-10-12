@@ -5,6 +5,7 @@ import { describeError } from '@/api/errors'
 import { useVault } from '@/store'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
+import Note from '@/components/elements/Note'
 import { LABEL, TEXT_LINK } from '@/components/elements/tokens'
 import { useSectionNav } from '../../../sectionNav'
 import Formats from './Formats'
@@ -56,7 +57,6 @@ export default function ExportPane() {
           </button>
         </p>
         <Button
-          size="md"
           disabled={!acknowledged}
           loading={running}
           onClick={run}
@@ -66,15 +66,15 @@ export default function ExportPane() {
         </Button>
       </div>
 
-      {(error || saved) && (
-        <div className="mt-3 text-base">
-          {error && <span className="text-bad">{error}</span>}
-          {saved && (
-            <span className="text-good">
-              {t('Saved to')} {fileName(saved)}
-            </span>
-          )}
-        </div>
+      {error && (
+        <Note tone="bad" className="mt-3">
+          {error}
+        </Note>
+      )}
+      {saved && (
+        <Note tone="good" className="mt-3">
+          {t('Saved to')} {fileName(saved)}
+        </Note>
       )}
     </div>
   )

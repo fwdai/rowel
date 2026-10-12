@@ -1,10 +1,10 @@
 {
   "Master Password": "主密码",
   "Enter Master Password": "输入主密码",
-  "Current Password": "当前密码",
+  "Current password": "当前密码",
   "Set Master Password": "设置主密码",
-  "New Password": "新密码",
-  "Repeat New Password": "重复新密码",
+  "New password": "新密码",
+  "Repeat new password": "重复新密码",
   "Confirm Master Password": "确认主密码",
   "Incorrect Master Password": "主密码错误",
   "Vault needs a newer version of the app": "该保险库需要更新版本的 {{appName}}",
@@ -17,7 +17,7 @@
   "This share was created in another workspace": "此分享是在另一个工作区中创建的",
   "Sync this workspace once before sharing from it": "请先同步此工作区一次，然后再从中分享",
   "Passwords do not match": "两次输入的密码不一致",
-  "Successfully changed password": "密码修改成功",
+  "Password changed": "密码修改成功",
   "Fill in the password": "请输入密码",
   "Very weak": "很弱",
   "Weak": "弱",
@@ -28,7 +28,7 @@
   "Open App": "打开 {{appName}}",
   "About": "关于",
   "Quit": "退出",
-  "Vault File Password": "保险库文件密码",
+  "Vault file password": "保险库文件密码",
   "Run import": "开始导入",
   "Imported": "已导入",
   "Unlock with Touch ID or Windows Hello": "使用 Touch ID 或 Windows Hello 解锁",
@@ -724,5 +724,6 @@
   "No preview for this kind of file": "此类文件无法预览",
   "Could not open this file.": "无法打开此文件。",
   "Hide Rowel after copying": "复制后隐藏 {{appName}}",
-  "Go back to the app you came from once a value is copied": "复制后返回之前所在的应用"
+  "Go back to the app you came from once a value is copied": "复制后返回之前所在的应用",
+  "Unlock with {{biometry}}": "使用{{biometry}}解锁"
 }

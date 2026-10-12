@@ -1,10 +1,10 @@
 {
   "Master Password": "Hasło główne",
   "Enter Master Password": "Wpisz hasło główne",
-  "Current Password": "Obecne hasło",
+  "Current password": "Obecne hasło",
   "Set Master Password": "Ustaw hasło główne",
-  "New Password": "Nowe hasło",
-  "Repeat New Password": "Powtórz nowe hasło",
+  "New password": "Nowe hasło",
+  "Repeat new password": "Powtórz nowe hasło",
   "Confirm Master Password": "Potwierdź hasło główne",
   "Incorrect Master Password": "Nieprawidłowe hasło główne",
   "Vault needs a newer version of the app": "Sejf wymaga nowszej wersji aplikacji {{appName}}",
@@ -17,7 +17,7 @@
   "This share was created in another workspace": "To udostępnienie zostało utworzone w innym obszarze roboczym",
   "Sync this workspace once before sharing from it": "Zsynchronizuj ten obszar roboczy raz, zanim zaczniesz z niego udostępniać",
   "Passwords do not match": "Hasła nie są takie same",
-  "Successfully changed password": "Hasło zostało zmienione",
+  "Password changed": "Hasło zostało zmienione",
   "Fill in the password": "Wpisz hasło",
   "Very weak": "Bardzo słabe",
   "Weak": "Słabe",
@@ -28,7 +28,7 @@
   "Open App": "Otwórz {{appName}}",
   "About": "O aplikacji",
   "Quit": "Zakończ",
-  "Vault File Password": "Hasło do pliku sejfu",
+  "Vault file password": "Hasło do pliku sejfu",
   "Run import": "Uruchom import",
   "Imported": "Zaimportowano",
   "Unlock with Touch ID or Windows Hello": "Odblokuj przez Touch ID lub Windows Hello",
@@ -760,5 +760,6 @@
   "No preview for this kind of file": "Brak podglądu dla tego rodzaju pliku",
   "Could not open this file.": "Nie udało się otworzyć tego pliku.",
   "Hide Rowel after copying": "Ukryj {{appName}} po skopiowaniu",
-  "Go back to the app you came from once a value is copied": "Wróć do aplikacji, z której przyszedłeś, po skopiowaniu wartości"
+  "Go back to the app you came from once a value is copied": "Wróć do aplikacji, z której przyszedłeś, po skopiowaniu wartości",
+  "Unlock with {{biometry}}": "Odblokuj za pomocą {{biometry}}"
 }

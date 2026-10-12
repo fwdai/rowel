@@ -431,7 +431,7 @@ describe('Settings › security', () => {
     await userEvent.click(screen.getByTestId('change-password-submit'))
 
     expect(calls('change_master_password')).toContainEqual({ current: 'old', new: 'newpass' })
-    expect(await screen.findByText('Successfully changed password')).toBeInTheDocument()
+    expect(await screen.findByText('Password changed')).toBeInTheDocument()
   })
 
   // A workspace on a password of its own is left on it, and so is one whose own
@@ -619,15 +619,15 @@ describe('Settings › security', () => {
     await go('security')
     await userEvent.click(screen.getByText('Change…'))
 
-    await userEvent.type(screen.getByLabelText('New Password'), 'newpass')
-    await userEvent.type(screen.getByLabelText('Repeat New Password'), 'newpa')
+    await userEvent.type(screen.getByLabelText('New password'), 'newpass')
+    await userEvent.type(screen.getByLabelText('Repeat new password'), 'newpa')
     expect(screen.getByText("Passwords don't match yet.")).toBeInTheDocument()
     expect(screen.getByTestId('change-password-submit')).toBeDisabled()
 
-    await userEvent.type(screen.getByLabelText('Repeat New Password'), 'ss')
+    await userEvent.type(screen.getByLabelText('Repeat new password'), 'ss')
     expect(screen.queryByText("Passwords don't match yet.")).not.toBeInTheDocument()
 
-    const field = screen.getByLabelText('New Password')
+    const field = screen.getByLabelText('New password')
     expect(field).toHaveAttribute('type', 'password')
     await userEvent.click(screen.getByRole('button', { name: 'Show' }))
     expect(field).toHaveAttribute('type', 'text')

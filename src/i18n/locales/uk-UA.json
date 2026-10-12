@@ -1,10 +1,10 @@
 {
   "Master Password": "Головний пароль",
   "Enter Master Password": "Введіть головний пароль",
-  "Current Password": "Поточний пароль",
+  "Current password": "Поточний пароль",
   "Set Master Password": "Задайте головний пароль",
-  "New Password": "Новий пароль",
-  "Repeat New Password": "Повторіть новий пароль",
+  "New password": "Новий пароль",
+  "Repeat new password": "Повторіть новий пароль",
   "Confirm Master Password": "Підтвердьте головний пароль",
   "Incorrect Master Password": "Неправильний головний пароль",
   "Vault needs a newer version of the app": "Сховищу потрібна новіша версія {{appName}}",
@@ -17,7 +17,7 @@
   "This share was created in another workspace": "Це посилання створено в іншому робочому просторі",
   "Sync this workspace once before sharing from it": "Синхронізуйте цей робочий простір один раз, перш ніж ділитися з нього",
   "Passwords do not match": "Паролі не збігаються",
-  "Successfully changed password": "Пароль змінено",
+  "Password changed": "Пароль змінено",
   "Fill in the password": "Введіть пароль",
   "Very weak": "Дуже слабкий",
   "Weak": "Слабкий",
@@ -28,7 +28,7 @@
   "Open App": "Відкрити {{appName}}",
   "About": "Про програму",
   "Quit": "Вийти",
-  "Vault File Password": "Пароль файлу сховища",
+  "Vault file password": "Пароль файлу сховища",
   "Run import": "Імпортувати",
   "Imported": "Імпортовано",
   "Unlock with Touch ID or Windows Hello": "Розблокування через Touch ID або Windows Hello",
@@ -760,5 +760,6 @@
   "No preview for this kind of file": "Для файлів цього типу немає попереднього перегляду",
   "Could not open this file.": "Не вдалося відкрити цей файл.",
   "Hide Rowel after copying": "Ховати {{appName}} після копіювання",
-  "Go back to the app you came from once a value is copied": "Повертатися до програми, з якої ви прийшли, після копіювання"
+  "Go back to the app you came from once a value is copied": "Повертатися до програми, з якої ви прийшли, після копіювання",
+  "Unlock with {{biometry}}": "Розблокувати за допомогою {{biometry}}"
 }

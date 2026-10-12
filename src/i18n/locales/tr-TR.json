@@ -1,10 +1,10 @@
 {
   "Master Password": "Ana şifre",
   "Enter Master Password": "Ana şifreyi girin",
-  "Current Password": "Mevcut şifre",
+  "Current password": "Mevcut şifre",
   "Set Master Password": "Ana şifre belirleyin",
-  "New Password": "Yeni şifre",
-  "Repeat New Password": "Yeni şifreyi tekrar girin",
+  "New password": "Yeni şifre",
+  "Repeat new password": "Yeni şifreyi tekrar girin",
   "Confirm Master Password": "Ana şifreyi onaylayın",
   "Incorrect Master Password": "Ana şifre hatalı",
   "Vault needs a newer version of the app": "Kasa, {{appName}} uygulamasının daha yeni bir sürümünü gerektiriyor",
@@ -17,7 +17,7 @@
   "This share was created in another workspace": "Bu paylaşım başka bir çalışma alanında oluşturuldu",
   "Sync this workspace once before sharing from it": "Bu çalışma alanından paylaşmadan önce onu bir kez eşitleyin",
   "Passwords do not match": "Şifreler eşleşmiyor",
-  "Successfully changed password": "Şifre başarıyla değiştirildi",
+  "Password changed": "Şifre başarıyla değiştirildi",
   "Fill in the password": "Şifreyi girin",
   "Very weak": "Çok zayıf",
   "Weak": "Zayıf",
@@ -28,7 +28,7 @@
   "Open App": "{{appName}} uygulamasını aç",
   "About": "Hakkında",
   "Quit": "Çıkış",
-  "Vault File Password": "Kasa dosyası şifresi",
+  "Vault file password": "Kasa dosyası şifresi",
   "Run import": "Aktarımı başlat",
   "Imported": "İçe aktarılan",
   "Unlock with Touch ID or Windows Hello": "Touch ID veya Windows Hello ile kilit açma",
@@ -736,5 +736,6 @@
   "No preview for this kind of file": "Bu tür dosyalar için önizleme yok",
   "Could not open this file.": "Bu dosya açılamadı.",
   "Hide Rowel after copying": "Kopyaladıktan sonra {{appName}} uygulamasını gizle",
-  "Go back to the app you came from once a value is copied": "Bir değer kopyalanınca geldiğiniz uygulamaya dönün"
+  "Go back to the app you came from once a value is copied": "Bir değer kopyalanınca geldiğiniz uygulamaya dönün",
+  "Unlock with {{biometry}}": "{{biometry}} ile kilidi aç"
 }

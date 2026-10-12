@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { exportVault } from '@/api/vault'
 import { BACKUP_EXTENSION } from '@/lib/backup'
 import Button from '@/components/elements/Button'
 import Chip from '@/components/elements/Chip'
+import Field from '@/components/elements/Field'
 import Note from '@/components/elements/Note'
 import { inputClass } from '@/components/elements/formStyles'
 import { verbatimInput } from '@/components/elements/inputProps'
@@ -14,6 +15,7 @@ import ExpandableRow from '../ExpandableRow'
 // user re-types here (the open session's key is never handed to the exporter).
 export default function BackupRow() {
   const { t } = useTranslation()
+  const id = useId()
   const [password, setPassword] = useState('')
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -46,31 +48,34 @@ export default function BackupRow() {
       action={t('Save…')}
       testid="settings-backup-row"
     >
-      <div className="flex flex-wrap items-center gap-3">
-        <input
-          type="password"
-          name="export_password"
-          {...verbatimInput}
-          placeholder={t('Master password')}
-          className={`${inputClass} max-w-xs`}
-          value={password}
-          disabled={exporting}
-          onChange={event => {
-            setError(null)
-            setPassword(event.target.value)
-          }}
-        />
-        <Button
-          size="md"
-          disabled={!password}
-          loading={exporting}
-          onClick={onExport}
-          testid="settings-backup-save"
-        >
-          {t('Save')}
-        </Button>
-        {error && <Note tone="bad">{error}</Note>}
-        {saved && <Note tone="good">{t('Saved')}</Note>}
+      <div className="flex max-w-sm flex-col gap-3">
+        <Field id={id} label={t('Master password')}>
+          <input
+            id={id}
+            type="password"
+            name="export_password"
+            {...verbatimInput}
+            className={inputClass}
+            value={password}
+            disabled={exporting}
+            onChange={event => {
+              setError(null)
+              setPassword(event.target.value)
+            }}
+          />
+        </Field>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            disabled={!password}
+            loading={exporting}
+            onClick={onExport}
+            testid="settings-backup-save"
+          >
+            {t('Save')}
+          </Button>
+          {error && <Note tone="bad">{error}</Note>}
+          {saved && <Note tone="good">{t('Saved')}</Note>}
+        </div>
       </div>
     </ExpandableRow>
   )

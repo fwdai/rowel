@@ -10,6 +10,7 @@ import {
 import { describeError } from '@/api/errors'
 import { useLatestRequest } from '@/hooks/useLatestRequest'
 import { useUi } from '@/store'
+import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
 import Toggle from '@/components/elements/Toggle'
@@ -101,9 +102,9 @@ export default function Browser() {
           }
         >
           {error && (
-            <span data-testid="settings-browser-error" className="text-sm text-bad">
+            <Note tone="bad" testid="settings-browser-error">
               {error}
-            </span>
+            </Note>
           )}
         </SettingsRow>
         {/* What the choice does is only written while the host is on, so the
