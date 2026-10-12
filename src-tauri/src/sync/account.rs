@@ -285,6 +285,12 @@ impl<'a> TokenFile<'a> {
     /// The active workspace's token file — whichever provider's it holds, at
     /// most one — and the app's connection generation. For the transitions
     /// that act on the file that is there: read, re-seal, disconnect.
+    ///
+    /// The provider is picked here, before any guard is held, so it is only a
+    /// hint: a connect to the other provider can swap the file before the
+    /// transition takes the guard. A read through a stale pick finds nothing,
+    /// which is harmless; [`TokenFile::disconnect`] and [`TokenFile::reseal`]
+    /// change the file, so they look again under the guard.
     fn of(app: &'a AppHandle) -> Result<Self> {
         let dir = storage::workspace_dir(app)?;
         let provider = storage::token_file_in(&dir).unwrap_or_default();
@@ -352,14 +358,22 @@ impl<'a> TokenFile<'a> {
         Ok((*generation, tokens))
     }
 
-    /// Bump the generation and delete the file under one hold of the guard, so
-    /// a refresh's write-back and a re-seal (which take the same guard) either
-    /// see the old generation and finish before this runs, or see the new one
-    /// and leave the file gone.
+    /// Bump the generation and delete the token file under one hold of the
+    /// guard, so a refresh's write-back and a re-seal (which take the same
+    /// guard) either see the old generation and finish before this runs, or
+    /// see the new one and leave the file gone.
+    ///
+    /// Every provider's file, not just this one's: whichever was picked before
+    /// the guard was taken may have been replaced by a connect to the other
+    /// provider since, and "disconnected" means no token file at all. An error
+    /// means a file is still on disk.
     fn disconnect(&self) -> Result<()> {
         let mut generation = self.generation.lock().unwrap();
         *generation += 1;
-        storage::remove_if_present(&self.path())
+        for provider in Provider::ALL {
+            storage::remove_if_present(&self.dir.join(provider.token_file_name()))?;
+        }
+        Ok(())
     }
 
     /// Read with `old` and write back with `new`, under the guard so a
@@ -374,14 +388,23 @@ impl<'a> TokenFile<'a> {
     /// [`TokenFile::persist_if_current`] return `Ok(false)`, so the in-flight
     /// run winds down and leaves the freshly re-sealed file alone.
     ///
+    /// Which provider's file to re-seal is decided under the guard, not taken
+    /// from `self`: a connect to the other provider may have replaced the file
+    /// since this one was picked, and the file there now is the one the new
+    /// key has to open.
+    ///
     /// No file is no connection to re-seal: nothing is written and the
     /// generation stands.
     fn reseal(&self, old: &Cryptor, new: &Cryptor) -> Result<()> {
         let mut generation = self.generation.lock().unwrap();
-        let Some(tokens) = self.read(old) else {
+        let Some(provider) = storage::token_file_in(&self.dir) else {
             return Ok(());
         };
-        self.write(new, &tokens)?;
+        let present = Self::new(self.dir.clone(), provider, self.generation);
+        let Some(tokens) = present.read(old) else {
+            return Ok(());
+        };
+        present.write(new, &tokens)?;
         *generation += 1;
         Ok(())
     }
@@ -569,14 +592,24 @@ fn open_consent(
 /// on an open vault first asks what the account holds before the tokens are
 /// sealed under it (`commands::sync::sync_adopt_pending`). Blocking (the
 /// loopback listener): call it off the main thread.
+///
+/// The flow belongs to the setup attempt current when it starts: Cancel, Go
+/// back and a new connect all move `AppState::setup_attempt`, and the listener
+/// gives up as soon as it sees that — rather than holding its port until
+/// [`CONSENT_TIMEOUT`], which for a provider with a few registered ports
+/// (Dropbox) would let abandoned attempts lock out the next one.
 #[cfg(desktop)]
 pub fn obtain_tokens(app: &AppHandle, provider: Provider) -> Result<Tokens> {
+    use std::sync::atomic::Ordering;
+    let attempt = app_state(app).setup_attempt.load(Ordering::SeqCst);
+    let cancelled = || app_state(app).setup_attempt.load(Ordering::SeqCst) != attempt;
+
     let config = oauth_config(provider);
     let listener = bind_loopback(config.loopback_ports)?;
     let port = listener.local_addr()?.port();
     let credentials = Credentials::resolve(app, config)?.with_loopback(port);
     let started = open_consent(app, config, &credentials)?;
-    let code = listen_for_code(&listener, &started.state, provider)?;
+    let code = listen_for_code(&listener, &started.state, provider, cancelled)?;
     let client = super::http_client();
     tauri::async_runtime::block_on(exchange_code(
         &client,
@@ -910,7 +943,9 @@ fn challenge(verifier: &str) -> String {
 
 // Block until the browser hits the callback, returning the auth code — or
 // until `CONSENT_TIMEOUT` passes with no answer, which is an error like any
-// other refusal and frees whatever the caller had marked pending.
+// other refusal and frees whatever the caller had marked pending. `cancelled`
+// ends the wait early the same way: the caller has disowned the flow, and the
+// listener (and its port) goes with it.
 //
 // `std` has no accept-with-timeout, so the listener is non-blocking and polled
 // against the deadline. Browsers also open connections that are not the
@@ -918,8 +953,19 @@ fn challenge(verifier: &str) -> String {
 // anything that is not this request's answer — another path, or a callback
 // that does not echo our `state` — is answered 404 and the wait goes on.
 #[cfg(desktop)]
-fn listen_for_code(listener: &TcpListener, state: &str, provider: Provider) -> Result<String> {
-    listen_for_code_until(listener, state, Instant::now() + CONSENT_TIMEOUT, provider)
+fn listen_for_code(
+    listener: &TcpListener,
+    state: &str,
+    provider: Provider,
+    cancelled: impl Fn() -> bool,
+) -> Result<String> {
+    listen_for_code_until(
+        listener,
+        state,
+        Instant::now() + CONSENT_TIMEOUT,
+        provider,
+        cancelled,
+    )
 }
 
 #[cfg(desktop)]
@@ -928,9 +974,13 @@ fn listen_for_code_until(
     state: &str,
     deadline: Instant,
     provider: Provider,
+    cancelled: impl Fn() -> bool,
 ) -> Result<String> {
     listener.set_nonblocking(true)?;
     loop {
+        if cancelled() {
+            return Err(Error::Other("sign-in cancelled".into()));
+        }
         // Checked on every pass, connection or not: a local process that keeps
         // connecting without ever sending a request could otherwise hold the
         // flow open past the deadline, one read timeout at a time. The same
@@ -1084,9 +1134,48 @@ mod tests {
         // The real deadline is minutes; the loop's shape is what this checks,
         // so run it against a deadline that has already passed.
         let started = Instant::now();
-        let result = listen_for_code_until(&listener, "nonce", started, Provider::GoogleDrive);
+        let result =
+            listen_for_code_until(&listener, "nonce", started, Provider::GoogleDrive, || false);
         assert!(result.is_err());
         assert!(started.elapsed() < CONSENT_TIMEOUT);
+    }
+
+    // A flow the user walked away from (Cancel, Go back, another connect)
+    // lets go of its port at once instead of holding it until the deadline:
+    // Dropbox has only a few registered ports, and abandoned attempts sitting
+    // on all of them would lock out the next sign-in.
+    #[cfg(desktop)]
+    #[test]
+    fn a_cancelled_flow_frees_its_port_before_the_deadline() {
+        let listener = TcpListener::bind((HOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let canceller = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(150));
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+        };
+
+        let started = Instant::now();
+        let result = listen_for_code_until(
+            &listener,
+            "nonce",
+            started + CONSENT_TIMEOUT,
+            Provider::Dropbox,
+            || cancel.load(std::sync::atomic::Ordering::SeqCst),
+        );
+        canceller.join().unwrap();
+
+        match result {
+            Err(Error::Other(why)) => assert!(why.contains("cancelled"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(started.elapsed() < Duration::from_secs(2));
+        drop(listener);
+        // The port is free for the next attempt.
+        assert!(TcpListener::bind((HOST, port)).is_ok());
     }
 
     // A local process that keeps connecting but never sends a request must
@@ -1118,6 +1207,7 @@ mod tests {
             "nonce",
             started + deadline,
             Provider::GoogleDrive,
+            || false,
         );
         stop.store(true, std::sync::atomic::Ordering::SeqCst);
         pest.join().unwrap();
@@ -1159,6 +1249,7 @@ mod tests {
             "nonce",
             Instant::now() + REQUEST_TIMEOUT,
             Provider::GoogleDrive,
+            || false,
         );
         browser.join().unwrap();
         assert_eq!(code.unwrap(), "4/abc");
@@ -1529,6 +1620,50 @@ mod tests {
             file.read(&key).unwrap().access_token.as_deref(),
             Some("g-2")
         );
+    }
+
+    // `TokenFile::of` picks the provider before the guard is held. A Dropbox
+    // connect landing between that pick (Google's) and the disconnect must
+    // not leave Dropbox's live file behind a disconnect that says it worked.
+    #[test]
+    fn a_disconnect_removes_a_file_swapped_in_after_the_lookup() {
+        let key = cryptor("pw");
+        let generation = Mutex::new(2);
+        let picked = google_file(&generation);
+        picked.connect(&key, &tokens("g-1")).unwrap();
+
+        let dropbox = TokenFile::new(picked.dir.clone(), Provider::Dropbox, &generation);
+        dropbox.connect(&key, &dropbox_tokens("d-1")).unwrap();
+        assert_eq!(*generation.lock().unwrap(), 3);
+
+        picked.disconnect().unwrap();
+
+        assert_eq!(storage::token_file_in(&picked.dir), None);
+        assert_eq!(*generation.lock().unwrap(), 4, "bumped once");
+    }
+
+    // The same race against a password change: the file re-sealed is the one
+    // there under the guard, so the swapped-in Dropbox file opens under the
+    // new key rather than being left sealed under the retired one.
+    #[test]
+    fn a_reseal_acts_on_the_file_present_at_lock_time() {
+        let (old, new) = (cryptor("old-pw"), cryptor("new-pw"));
+        let generation = Mutex::new(0);
+        let picked = google_file(&generation);
+        picked.connect(&old, &tokens("g-1")).unwrap();
+
+        let dropbox = TokenFile::new(picked.dir.clone(), Provider::Dropbox, &generation);
+        dropbox.connect(&old, &dropbox_tokens("d-1")).unwrap();
+        let before = *generation.lock().unwrap();
+
+        picked.reseal(&old, &new).unwrap();
+
+        assert!(!picked.path().exists(), "no Google file written");
+        assert!(dropbox.read(&old).is_none());
+        let read = dropbox.read(&new).expect("re-sealed under the new key");
+        assert_eq!(read.provider, Provider::Dropbox);
+        assert_eq!(read.access_token.as_deref(), Some("d-1"));
+        assert_eq!(*generation.lock().unwrap(), before + 1);
     }
 
     // The same rule for a workspace beside the open one.
