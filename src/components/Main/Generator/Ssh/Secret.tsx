@@ -34,7 +34,7 @@ export default function Secret({ value }: { value: string }) {
         >
           {show ? <EyeOffGlyph /> : <EyeGlyph />}
         </IconButton>
-        <CopyButton value={value} title={t('Copy')} />
+        <CopyButton value={value} title={t('Copy')} stay />
       </div>
     </div>
   )

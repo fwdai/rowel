@@ -746,5 +746,7 @@
   "Remove “{{name}}”?": "Usunąć „{{name}}”?",
   "The file is removed from this entry. This can’t be undone.": "Plik zostanie usunięty z tego wpisu. Tej operacji nie można cofnąć.",
   "No preview for this kind of file": "Brak podglądu dla tego rodzaju pliku",
-  "Could not open this file.": "Nie udało się otworzyć tego pliku."
+  "Could not open this file.": "Nie udało się otworzyć tego pliku.",
+  "Hide Rowel after copying": "Ukryj {{appName}} po skopiowaniu",
+  "Go back to the app you came from once a value is copied": "Wróć do aplikacji, z której przyszedłeś, po skopiowaniu wartości"
 }

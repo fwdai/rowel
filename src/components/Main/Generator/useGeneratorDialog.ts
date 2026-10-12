@@ -59,7 +59,9 @@ export function useGeneratorDialog(
       return
     }
     apply?.(value)
-    copy(value)
+    // Still work inside Rowel — a draft being filled, or a password just made
+    // and not yet saved anywhere — so the window stays for it.
+    copy(value, { stay: true })
     // The dialog closes on the press, so there is no button left to flash a
     // check on: the pill is the copy's only feedback.
     flashCopied()

@@ -724,5 +724,7 @@
   "Remove “{{name}}”?": "Ta bort ”{{name}}”?",
   "The file is removed from this entry. This can’t be undone.": "Filen tas bort från den här posten. Det går inte att ångra.",
   "No preview for this kind of file": "Ingen förhandsvisning för den här filtypen",
-  "Could not open this file.": "Det gick inte att öppna filen."
+  "Could not open this file.": "Det gick inte att öppna filen.",
+  "Hide Rowel after copying": "Dölj {{appName}} efter kopiering",
+  "Go back to the app you came from once a value is copied": "Gå tillbaka till appen du kom från när ett värde har kopierats"
 }

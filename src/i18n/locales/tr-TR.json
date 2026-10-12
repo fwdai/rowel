@@ -724,5 +724,7 @@
   "Remove “{{name}}”?": "“{{name}}” kaldırılsın mı?",
   "The file is removed from this entry. This can’t be undone.": "Dosya bu kayıttan kaldırılır. Bu işlem geri alınamaz.",
   "No preview for this kind of file": "Bu tür dosyalar için önizleme yok",
-  "Could not open this file.": "Bu dosya açılamadı."
+  "Could not open this file.": "Bu dosya açılamadı.",
+  "Hide Rowel after copying": "Kopyaladıktan sonra {{appName}} uygulamasını gizle",
+  "Go back to the app you came from once a value is copied": "Bir değer kopyalanınca geldiğiniz uygulamaya dönün"
 }

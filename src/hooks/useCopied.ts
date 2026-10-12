@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { copy } from '@/services/copy'
+import { copy, type CopyOptions } from '@/services/copy'
 
 // How long the confirmation glyph stays up after a copy.
 const FEEDBACK_TIMEOUT = 1200
@@ -15,8 +15,8 @@ export function useCopied(timeout = FEEDBACK_TIMEOUT) {
   useEffect(() => () => clearTimeout(timer.current), [])
 
   const copyValue = useCallback(
-    (value: string) => {
-      copy(value)
+    (value: string, options?: CopyOptions) => {
+      copy(value, options)
       clearTimeout(timer.current)
       setCopied(true)
       timer.current = setTimeout(() => setCopied(false), timeout)

@@ -106,6 +106,10 @@ pub struct Settings {
     /// a fresh install does — see `locale::resolve_preferred`.
     pub locale: Option<String>,
     pub breach_check: bool,
+    /// Desktop: send the window away once a copy lands, so focus goes back to
+    /// the app the value is for. Off by default; read by the frontend, which
+    /// calls `hide_window` (see `services/copy.ts`).
+    pub hide_on_copy: bool,
     pub generator: GeneratorDefaults,
     pub browser: BrowserSettings,
 }
@@ -121,6 +125,7 @@ impl Default for Settings {
             accent: "ink".into(),
             locale: None,
             breach_check: false,
+            hide_on_copy: false,
             generator: GeneratorDefaults::default(),
             browser: BrowserSettings::default(),
         }
@@ -250,6 +255,7 @@ mod tests {
         assert_eq!(settings.accent, "ink");
         assert_eq!(settings.locale, None);
         assert!(!settings.breach_check);
+        assert!(!settings.hide_on_copy);
         assert_eq!(settings.generator, GeneratorDefaults::default());
         assert_eq!(settings.generator.length, 20);
         assert!(!settings.browser.enabled);
@@ -266,6 +272,18 @@ mod tests {
 
         let json = serde_json::to_string(&Settings::default()).unwrap();
         assert!(json.contains("\"keepassxcCompat\":true"));
+    }
+
+    // A file from before the setting existed keeps Rowel in front after a copy,
+    // which is all it ever did.
+    #[test]
+    fn an_older_file_reads_hide_on_copy_as_off() {
+        let stored: Settings = serde_json::from_str(r#"{"breachCheck":true}"#).unwrap();
+        assert!(!stored.hide_on_copy);
+
+        let merged = merge(&stored, &serde_json::json!({ "hideOnCopy": true })).unwrap();
+        assert!(merged.hide_on_copy);
+        assert!(merged.breach_check);
     }
 
     #[test]

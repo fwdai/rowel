@@ -1,10 +1,12 @@
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { usePrefs, setPref } from '@/store'
+import { isMobile } from '@/lib/platform'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
 import Segmented from '@/components/elements/Segmented'
 import { ClipboardGlyph, LockGlyph } from '@/components/Main/icons'
+import HideOnCopyRow from './HideOnCopyRow'
 
 const LOCK_OPTIONS = [
   { value: '60', label: '1 m' },
@@ -69,6 +71,7 @@ export default function SessionGroup() {
           />
         }
       />
+      {!isMobile && <HideOnCopyRow />}
     </SettingsGroup>
   )
 }

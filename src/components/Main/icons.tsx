@@ -47,6 +47,7 @@ import {
   LayoutGrid,
   Link,
   Lock,
+  Minimize2,
   Moon,
   MoreHorizontal,
   Palette,
@@ -211,10 +212,12 @@ export const TransferGlyph = glyph(ArrowDownUp, 16)
 export const ExtensionGlyph = glyph(Puzzle, 16)
 // The iOS disclosure mark: a row that pushes a screen rather than doing a thing.
 export const ChevronRightGlyph = glyph(ChevronRight, 16)
-// Settings row marks: the accent, the date pattern, the clipboard wipe.
+// Settings row marks: the accent, the date pattern, the clipboard wipe, the
+// window stepping aside after a copy.
 export const PaletteGlyph = glyph(Palette, 16)
 export const CalendarGlyph = glyph(Calendar, 16)
 export const ClipboardGlyph = glyph(ClipboardList, 16)
+export const HideGlyph = glyph(Minimize2, 16)
 // Links that are out there (Settings › Sharing). The row's own mark, not an
 // action: `ShareGlyph` is what hands an entry over in the first place.
 export const LinkGlyph = glyph(Link, 16)

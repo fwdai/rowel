@@ -25,7 +25,7 @@ describe('CopyToast', () => {
   it('stays down for a plain copy', () => {
     render(<CopyToast />)
 
-    act(() => copy('hunter2'))
+    act(() => void copy('hunter2'))
     expect(calls('copy_to_clipboard')[0]).toMatchObject({ value: 'hunter2' })
     expect(screen.queryByTestId('copy-toast')).not.toBeInTheDocument()
   })

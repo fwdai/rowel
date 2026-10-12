@@ -137,7 +137,8 @@ describe('Env fields, reading', () => {
     renderRead()
     await userEvent.click(screen.getByLabelText('STRIPE_KEY · Copy'))
 
-    expect(copy).toHaveBeenCalledWith('sk_live_1')
+    // No options: a value read out of an entry is free to send Rowel away.
+    expect(copy).toHaveBeenCalledWith('sk_live_1', undefined)
   })
 
   it('shows the note in a panel of its own only when there is one', () => {

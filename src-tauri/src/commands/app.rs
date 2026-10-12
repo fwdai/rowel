@@ -172,6 +172,15 @@ pub fn app_ready(app: AppHandle) {
     window::reveal(&app);
 }
 
+/// Get out of the way of the app the user came from (Settings › Hide Rowel
+/// after copying). Whether to is the frontend's call; see `window::hide` for
+/// how, per platform.
+#[cfg(desktop)]
+#[tauri::command]
+pub fn hide_window(app: AppHandle) {
+    window::hide(&app);
+}
+
 /// The backup the OS asked the app to open before the webview was listening
 /// for `file:opened` — a launch by double-clicking one. Handed over once (see
 /// `crate::opened`); `null` on every ordinary launch.
