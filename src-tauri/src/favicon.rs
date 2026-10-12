@@ -341,7 +341,7 @@ async fn fetch_icon(url: Url, allowed: &impl Fn() -> bool) -> Option<String> {
     // Enforced on the bytes as they arrive, not just on the declared length: a
     // body with no `Content-Length`, or one that lies, is cut off at the cap
     // rather than buffered whole and then measured.
-    let bytes = crate::sync::drive::read_capped(&mut resp, MAX_ICON_BYTES)
+    let bytes = crate::sync::read_capped(&mut resp, MAX_ICON_BYTES)
         .await
         .ok()?;
     if bytes.is_empty() {

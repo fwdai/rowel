@@ -15,7 +15,7 @@ use crate::crypto::Cryptor;
 use crate::error::{Error, Result};
 use crate::models::Entry;
 use crate::session::{store_err, Session};
-use crate::share::{self, remote::DrivePublicFetch, ActiveShare, Created};
+use crate::share::{self, remote::AnyShareRemote, ActiveShare, Created};
 use crate::state::AppState;
 use crate::store::{identity, VaultStore};
 
@@ -45,7 +45,7 @@ pub async fn share_create(
 
     blocking(move || {
         share::create(
-            &share::drive_remote(&app, cryptor),
+            &remote_for(&app, cryptor)?,
             &entry,
             &vault_id,
             share::now_ms(),
@@ -58,7 +58,7 @@ pub async fn share_create(
 /// recipient may not even have a vault yet.
 #[tauri::command]
 pub async fn share_open(link: String) -> Result<Entry> {
-    blocking(move || share::open(&DrivePublicFetch, &link, share::now_ms())).await
+    blocking(move || share::open(&share::public_fetch(), &link, share::now_ms())).await
 }
 
 /// Take one of this vault's shares back. The id arrives from the webview, so it
@@ -71,7 +71,7 @@ pub async fn share_revoke(
     state: State<'_, AppState>,
 ) -> Result<()> {
     let (cryptor, vault_id) = sender_credentials(&state)?;
-    blocking(move || share::revoke(&share::drive_remote(&app, cryptor), &file_id, &vault_id)).await
+    blocking(move || share::revoke(&remote_for(&app, cryptor)?, &file_id, &vault_id)).await
 }
 
 /// This vault's outstanding shares, expired ones swept first. The account may
@@ -79,14 +79,7 @@ pub async fn share_revoke(
 #[tauri::command]
 pub async fn share_list(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<ActiveShare>> {
     let (cryptor, vault_id) = sender_credentials(&state)?;
-    blocking(move || {
-        share::list(
-            &share::drive_remote(&app, cryptor),
-            &vault_id,
-            share::now_ms(),
-        )
-    })
-    .await
+    blocking(move || share::list(&remote_for(&app, cryptor)?, &vault_id, share::now_ms())).await
 }
 
 /// What the sending side requires, answered with the thing every share is keyed
@@ -112,6 +105,13 @@ fn sendable(session: &Session) -> Result<String> {
     identity::vault_id(session.store()?)
         .map_err(store_err)?
         .ok_or(Error::ShareNeedsSync)
+}
+
+/// The open workspace's share remote, or a refusal when its provider has no
+/// share support — nothing in the UI offers sharing there.
+fn remote_for(app: &AppHandle, cryptor: Cryptor) -> Result<AnyShareRemote> {
+    share::remote_for(app, cryptor)
+        .ok_or_else(|| Error::Other("sharing is only available with Google Drive".into()))
 }
 
 /// What a sender-side Drive call needs: the cryptor that unwraps the account's

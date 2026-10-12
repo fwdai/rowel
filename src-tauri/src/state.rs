@@ -25,7 +25,7 @@ pub enum AuthPurpose {
     /// joins the account only if the account is empty or already holds it —
     /// see `commands::sync::sync_adopt_pending`). What asked is the frontend's
     /// to remember; the redirect does the same thing either way and leaves the
-    /// tokens in [`AppState::pending_drive`].
+    /// tokens in [`AppState::pending_account`].
     Setup,
 }
 
@@ -48,11 +48,12 @@ pub struct PendingAuth {
     pub started: std::time::Instant,
 }
 
-/// OAuth tokens produced by one particular Drive consent attempt.
+/// OAuth tokens produced by one particular consent attempt — any provider's;
+/// the tokens name theirs.
 ///
 /// The attempt travels with the tokens so an async consumer cannot mistake a
 /// newer account's pending credentials for the ones it probed before an await.
-pub struct PendingDrive {
+pub struct PendingAccount {
     pub attempt: u64,
     pub tokens: crate::sync::Tokens,
 }
@@ -233,14 +234,14 @@ pub struct AppState {
     /// `commands::workspace` reads to refuse a switch while a consent flow or a
     /// run is out. Reached through [`AppState::sync_run`], never directly.
     pub sync_runs: Mutex<HashMap<String, SyncRun>>,
-    /// Drive tokens for an account connected during first-run onboarding.
+    /// Tokens for an account connected during first-run onboarding.
     ///
     /// Memory only, and deliberately so: they are sealed under the vault key,
     /// and on a fresh install that key does not exist yet. They live here from
     /// the moment consent is granted until the restore or create that follows
     /// produces a key to write them under (or the user backs out, which drops
     /// them). Outside `session` because there is no session to put them in.
-    pub pending_drive: Mutex<Option<PendingDrive>>,
+    pub pending_account: Mutex<Option<PendingAccount>>,
     /// A first-run create or restore is writing the vault. Same shape as
     /// `syncing`: the check for "no vault yet" and the writes that follow it
     /// are not one step, so two overlapping requests could both pass the check
@@ -301,7 +302,7 @@ impl Default for AppState {
             sync_rerun: AtomicBool::default(),
             sync_generation: Mutex::default(),
             sync_runs: Mutex::default(),
-            pending_drive: Mutex::default(),
+            pending_account: Mutex::default(),
             setup_busy: AtomicBool::default(),
             setup_attempt: AtomicU64::default(),
             pending_open: Mutex::default(),

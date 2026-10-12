@@ -22,6 +22,7 @@ use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
 
 use super::pack::{self, PackError};
+use super::Provider;
 use crate::app::APP_NAME;
 use crate::error::{Error, Result};
 use crate::session::{store_err, Session};
@@ -48,8 +49,11 @@ const META_REMOTE_REV: &str = "sync_remote_rev";
 const META_LAST_MS: &str = "sync_last_ms";
 
 // Surfaced verbatim by the sync indicator, so it has to read as a sentence.
-fn foreign_vault_error() -> String {
-    format!("Google Drive holds a vault from a different {APP_NAME} install")
+fn foreign_vault_error(provider: Provider) -> String {
+    format!(
+        "{} holds a vault from a different {APP_NAME} install",
+        provider.display_name()
+    )
 }
 
 fn too_large_to_sync_error() -> String {
@@ -296,13 +300,15 @@ pub struct SessionVault {
     key: Zeroizing<Vec<u8>>,
     kdf_params_json: String,
     scratch: PathBuf,
+    /// Whose account the pulled pack came from, for the error that says so.
+    provider: Provider,
 }
 
 impl SessionVault {
     /// Capture what a run needs from the live session. Fails if the vault is
     /// locked, or has no KDF descriptor to put in the pack header — without one
     /// a fresh install could never derive the key to open what we upload.
-    pub fn capture(app: &AppHandle) -> Result<Self> {
+    pub fn capture(app: &AppHandle, provider: Provider) -> Result<Self> {
         let kdf_params_json = storage::read_kdf_sidecar(app)?.ok_or_else(|| {
             Error::Other("this vault predates the key descriptor and cannot be synced".into())
         })?;
@@ -313,6 +319,7 @@ impl SessionVault {
             key: Zeroizing::new(session.key()?.sqlcipher_key().to_vec()),
             kdf_params_json,
             scratch: storage::sync_scratch_dir(app)?,
+            provider,
         })
     }
 
@@ -355,7 +362,13 @@ impl SessionVault {
 
 impl LocalVault for SessionVault {
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-        decode_pack(pack_bytes, &self.kdf_params_json, &self.key, &self.scratch)
+        decode_pack(
+            pack_bytes,
+            &self.kdf_params_json,
+            &self.key,
+            &self.scratch,
+            self.provider,
+        )
     }
 
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
@@ -420,10 +433,11 @@ fn decode_pack(
     expected_kdf_params_json: &str,
     key: &[u8],
     scratch_dir: &Path,
+    provider: Provider,
 ) -> Result<Snapshot> {
     let unpacked = pack::unpack(bytes).map_err(remote_pack_error)?;
     if unpacked.kdf_params_json != expected_kdf_params_json {
-        return Err(Error::Other(foreign_vault_error()));
+        return Err(Error::Other(foreign_vault_error(provider)));
     }
     records_from_snapshot(&unpacked.snapshot, key, scratch_dir)
 }
@@ -622,7 +636,13 @@ mod tests {
 
     impl LocalVault for Device {
         fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-            decode_pack(pack_bytes, &kdf_json(), KEY, &self.scratch)
+            decode_pack(
+                pack_bytes,
+                &kdf_json(),
+                KEY,
+                &self.scratch,
+                Provider::GoogleDrive,
+            )
         }
         fn merge(&self, incoming: &Snapshot) -> Result<usize> {
             merge_snapshot(&self.store, incoming)
@@ -976,10 +996,19 @@ mod tests {
         let remote = FakeRemote::with(pack::pack(&foreign, &[0u8; 4096]));
 
         match sync(&remote, &a, NOW) {
-            Err(Error::Other(msg)) => assert_eq!(msg, foreign_vault_error()),
+            Err(Error::Other(msg)) => assert_eq!(msg, foreign_vault_error(Provider::GoogleDrive)),
             other => panic!("expected the foreign-vault error, got {other:?}"),
         }
         assert_eq!(remote.uploads(), 0);
+    }
+
+    // The sentence names the provider, in the words the Drive copy always used.
+    #[test]
+    fn the_foreign_vault_error_reads_as_it_always_did_for_drive() {
+        assert_eq!(
+            foreign_vault_error(Provider::GoogleDrive),
+            format!("Google Drive holds a vault from a different {APP_NAME} install")
+        );
     }
 
     #[test]

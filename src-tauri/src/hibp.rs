@@ -72,9 +72,9 @@ async fn fetch_range(client: &Client, prefix: &str) -> Result<String> {
         return Err(Error::Other(format!("HIBP {}", resp.status())));
     }
     // Capped while streaming, like every other download in the app — see
-    // `sync::drive::read_capped`. The body is ASCII `SUFFIX:count` lines, so a
+    // `sync::read_capped`. The body is ASCII `SUFFIX:count` lines, so a
     // lossy decode costs nothing and keeps the error cases to the two below.
-    let body = crate::sync::drive::read_capped(&mut resp, MAX_RANGE_BYTES)
+    let body = crate::sync::read_capped(&mut resp, MAX_RANGE_BYTES)
         .await
         .map_err(|e| match e {
             Error::FileTooLarge => Error::Other("HIBP range response too large".into()),

@@ -94,7 +94,7 @@ fn join_all(app: &AppHandle, password: &str) -> Result<()> {
     // the listing itself then failed. The workspace they came from keeps the
     // refreshed copy either way, before the failure is looked at: a rotated
     // refresh token that lived only here would leave the workspace holding the
-    // retired one (as `auth::access_token` writes back before its own Drive
+    // retired one (as `sync::account::access_token` writes back before its own
     // call). A disconnect that landed under the listing ends the task here.
     if !account.settle(app, &state, &tokens)? {
         return Ok(());

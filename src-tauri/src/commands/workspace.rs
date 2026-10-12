@@ -470,19 +470,25 @@ fn open_account(app: &AppHandle, state: &AppState) -> Result<Option<(sync::Token
     drop(session);
     sync::current_account(app, &cryptor)
         .map(Some)
-        .ok_or_else(|| Error::Other(account_unreadable_error()))
+        .ok_or_else(|| Error::Other(account_unreadable_error(sync::sealed_provider(app))))
+}
+
+// Surfaced verbatim in the form, so it has to read as a sentence. The provider
+// is the token file's name's to say: the file itself is what would not read.
+fn account_unreadable_error(provider: sync::Provider) -> String {
+    format!(
+        "this workspace's {} account could not be read; disconnect and connect it again, then \
+         retry",
+        provider.account_name()
+    )
 }
 
 // Surfaced verbatim in the form, so it has to read as a sentence.
-fn account_unreadable_error() -> String {
-    "this workspace's Google account could not be read; disconnect and connect it again, then \
-     retry"
-        .into()
-}
-
-// Surfaced verbatim in the form, so it has to read as a sentence.
-fn disconnected_mid_restore_error() -> String {
-    "Google Drive was disconnected while the vault was downloading; connect again and retry".into()
+fn disconnected_mid_restore_error(provider: sync::Provider) -> String {
+    format!(
+        "{} was disconnected while the vault was downloading; connect again and retry",
+        provider.display_name()
+    )
 }
 
 /// Connect a Google account for a workspace that does not exist yet.
@@ -655,7 +661,9 @@ async fn restore_workspace(
         if let Account::Open { generation } = account {
             let cryptor = state.session.lock().unwrap().cryptor()?;
             if !sync::persist_tokens_if_current(app, &cryptor, &tokens, generation)? {
-                return Err(Error::Other(disconnected_mid_restore_error()));
+                return Err(Error::Other(disconnected_mid_restore_error(
+                    tokens.provider,
+                )));
             }
         }
         let lease = state.session.lock().unwrap().take_out()?;
@@ -663,7 +671,9 @@ async fn restore_workspace(
         {
             // The paths have not moved yet, so the session goes straight back.
             state.session.lock().unwrap().restore(lease);
-            return Err(Error::Other(disconnected_mid_restore_error()));
+            return Err(Error::Other(disconnected_mid_restore_error(
+                tokens.provider,
+            )));
         }
         let active = std::mem::replace(&mut *state.active_workspace.lock().unwrap(), id.clone());
         (active, lease)
@@ -1083,10 +1093,10 @@ async fn delete_remote_pack(
     let Some(vault_id) = vault_id else {
         return Ok(());
     };
-    let Some(mut tokens) = sync::read_tokens_in(dir, &key.cryptor())? else {
+    let Some(tokens) = sync::read_tokens_in(dir, &key.cryptor())? else {
         return Ok(());
     };
-    sync::delete_pack(app, &mut tokens, &vault_id).await
+    sync::delete_pack(&sync::pending_store(app, tokens), &vault_id).await
 }
 
 // Prove `password` opens the vault in `dir`, and hand back the key that did it.
