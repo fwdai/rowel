@@ -691,10 +691,11 @@ describe('Settings › vault audit', () => {
     expect(screen.getByTestId('settings-audit-verdict')).toHaveTextContent('Weak')
     expect(screen.getByText('2 items')).toBeInTheDocument()
     const strip = screen.getByTestId('settings-audit-counts')
-    expect(strip).toHaveTextContent('1weak')
-    expect(strip).toHaveTextContent('1reused')
-    // Breaches are not counted while monitoring is off; the strip offers it.
-    expect(strip).toHaveTextContent('—breached')
+    expect(strip).toHaveTextContent('weak1')
+    expect(strip).toHaveTextContent('reused1')
+    // The label sits over its figure. Breaches are not counted while
+    // monitoring is off; the strip offers it.
+    expect(strip).toHaveTextContent('breached—')
     expect(screen.getByTestId('settings-breach-enable')).toHaveTextContent('Turn on monitoring')
   })
 

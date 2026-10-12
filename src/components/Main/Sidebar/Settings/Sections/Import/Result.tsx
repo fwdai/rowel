@@ -20,7 +20,7 @@ export default function Result({ flow }: { flow: ReturnType<typeof useImport> })
   if (!picked) return null
 
   return (
-    <div className={`${CARD} flex flex-col gap-3 p-4`} data-testid="import-result">
+    <div className={`${CARD} mt-3 flex flex-col gap-3 p-4`} data-testid="import-result">
       <div className={META}>{fileName(picked.path)}</div>
 
       {picked.kind === 'rowel' ? (

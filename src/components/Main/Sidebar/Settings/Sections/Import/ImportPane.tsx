@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { cx } from '@/utils/cx'
 import { LABEL } from '@/components/elements/tokens'
 import type { useImport } from './useImport'
 import DropZone from './DropZone'
@@ -20,19 +21,22 @@ export default function ImportPane({ flow }: { flow: ReturnType<typeof useImport
         : flow.picked.format
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
       <DropZone variant="hero" onDrop={flow.dropped} />
-      <div className={LABEL}>{t('Or start from an app')}</div>
+      {/* The same rhythm as every other group: its label 8px over its cards. */}
+      <div className={cx(LABEL, 'mt-7 mb-2')}>{t('Or start from an app')}</div>
       <Tiles active={active} disabled={flow.running} onFormat={flow.chooseFile} />
-      <BackupCard
-        active={active === 'swftx'}
-        disabled={flow.running}
-        onBackup={flow.chooseBackup}
-      />
+      <div className="mt-3">
+        <BackupCard
+          active={active === 'swftx'}
+          disabled={flow.running}
+          onBackup={flow.chooseBackup}
+        />
+      </div>
       <Result flow={flow} />
-      <p className="text-sm text-text2">
+      <p className="mt-3 text-sm text-text2">
         {t('Imports are merged. Existing items are never overwritten.')}
       </p>
-    </div>
+    </>
   )
 }

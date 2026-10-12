@@ -31,12 +31,13 @@ export default function Nav({ section, onSelect, disabled = false }: Props) {
   const issues = useAuditIssues()
 
   return (
+    // No title of its own: the section names the dialog in the header beside
+    // it, and a second 20px heading on the same line only competed with it.
     <nav className="flex w-[240px] flex-none flex-col border-r border-line bg-rail p-4">
-      <div className="px-2 text-xl font-semibold tracking-display text-text">{t('Settings')}</div>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {GROUPS.map((group, index) => (
           <div key={group.key}>
-            <div className={cx(LABEL, 'px-2 pb-2', index === 0 ? 'pt-4' : 'pt-5')}>
+            <div className={cx(LABEL, 'px-2 pb-2', index === 0 ? 'pt-1.5' : 'pt-5')}>
               {t(group.label)}
             </div>
             <ul className="m-0 flex flex-col gap-0.5 p-0">
@@ -62,12 +63,16 @@ export default function Nav({ section, onSelect, disabled = false }: Props) {
                       {/* The glyph a tier under the label: a 16px stroke lays
                           down more ink than 13px text, so the same token reads
                           darker on it. text3 is the glyph tier for exactly
-                          that, and hover lifts both to the full ink together. */}
+                          that, and hover lifts both to the full ink together.
+                          The selected tile takes the accent wash a lit
+                          SettingsRow tile does, not the fill: "you are here"
+                          is the lens, as on the rail, and the accent is for
+                          verbs. */}
                       <span
                         className={cx(
                           'grid h-7 w-7 flex-none place-items-center rounded-sm transition-colors',
                           active
-                            ? 'bg-accent text-accent-fg'
+                            ? 'bg-accent-soft text-accent'
                             : 'bg-tile text-text3 group-hover:text-text'
                         )}
                       >

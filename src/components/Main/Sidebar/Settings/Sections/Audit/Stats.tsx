@@ -4,7 +4,7 @@ import type { Audit } from '@/api/tools'
 import { usePrefs, setView, closeSettings } from '@/store'
 import { auditCounts } from '@/utils/vaultScore'
 import { cx } from '@/utils/cx'
-import { TEXT_LINK } from '@/components/elements/tokens'
+import { LABEL, TEXT_LINK } from '@/components/elements/tokens'
 import { setBreachCheck } from './breach'
 
 const LINK = `mt-1 text-left text-base ${TEXT_LINK}`
@@ -22,13 +22,14 @@ interface CellProps {
   children: ReactNode
 }
 
+// A label over its figure, the geometry the Drive card's strip draws too.
 function Cell({ label, value, children }: CellProps) {
   const tone = value === undefined ? 'text-text2' : value > 0 ? 'text-warn' : 'text-good'
   return (
-    <div className="flex flex-col items-start px-4 py-3.5 not-first:border-l not-first:border-line">
-      <div className="flex flex-wrap items-baseline gap-x-1.5">
-        <span className={cx('text-2xl font-medium tabular-nums', tone)}>{value ?? '—'}</span>
-        <span className="text-sm text-text2">{label}</span>
+    <div className="flex flex-col items-start px-5 py-3.5 not-first:border-l not-first:border-line">
+      <div className={LABEL}>{label}</div>
+      <div className={cx('mt-0.5 text-xl font-semibold tabular-nums tracking-display', tone)}>
+        {value ?? '—'}
       </div>
       {children}
     </div>

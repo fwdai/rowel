@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { useUi, closeSettings, setSettingsSection, type Section as Key } from '@/store'
 import Modal from '@/components/elements/Modal'
 import DialogHeader from '@/components/elements/DialogHeader'
-import { cx } from '@/utils/cx'
+import IconButton from '@/components/elements/IconButton'
 import Nav from './Nav'
 import Section from './Section'
 import { descriptionOf, titleOf } from './sections'
@@ -55,23 +55,20 @@ export default function SettingsModal() {
             onClose={closeSettings}
             disabled={locked}
             leading={
+              // The same quiet chrome as the close control at the row's other
+              // end: a bare glyph on the hover wash, not a bordered control.
               subpage && (
-                <button
-                  type="button"
-                  aria-label={t('Back')}
+                <IconButton
+                  muted
+                  label={t('Back')}
                   title={t('Back')}
-                  data-testid="settings-subpage-back"
+                  testid="settings-subpage-back"
                   disabled={locked}
                   onClick={close}
-                  className={cx(
-                    'grid h-7.5 w-7.5 flex-none place-items-center self-center rounded-sm border border-line2 text-text2 transition-colors',
-                    locked
-                      ? 'cursor-default opacity-50'
-                      : 'cursor-pointer hover:border-accent-line hover:text-text'
-                  )}
+                  className="self-center"
                 >
                   <BackGlyph size={16} />
-                </button>
+                </IconButton>
               )
             }
           />
