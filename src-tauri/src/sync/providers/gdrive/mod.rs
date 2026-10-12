@@ -36,8 +36,11 @@ pub static OAUTH: OAuthConfig = OAuthConfig {
         ("prompt", "consent"),
     ],
     // A Desktop-app client accepts any loopback port.
+    #[cfg(desktop)]
     loopback_ports: &[],
+    #[cfg(desktop)]
     client_id: env_client_id,
+    #[cfg(desktop)]
     client_secret: env_client_secret,
     no_client: "Google OAuth client not configured; set GOOGLE_OAUTH_CLIENT_ID",
     #[cfg(mobile)]
@@ -47,6 +50,8 @@ pub static OAUTH: OAuthConfig = OAuthConfig {
     mobile_cancel_uri: |_| None,
 };
 
+// On both platforms: the desktop client's id, and the phone's override of the
+// id its deep-link scheme implies (`mobile_client`).
 fn env_client_id() -> Option<String> {
     std::env::var("GOOGLE_OAUTH_CLIENT_ID")
         .ok()
@@ -54,6 +59,9 @@ fn env_client_id() -> Option<String> {
         .filter(|id| !id.is_empty() && id != CLIENT_ID_PLACEHOLDER)
 }
 
+// An iOS client is public and never sends one, so only the desktop client
+// reads it.
+#[cfg(desktop)]
 fn env_client_secret() -> Option<String> {
     std::env::var("GOOGLE_OAUTH_CLIENT_SECRET")
         .ok()

@@ -39,8 +39,11 @@ pub static OAUTH: OAuthConfig = OAuthConfig {
     token_url: oauth::TOKEN_URL,
     consent_params: oauth::CONSENT_PARAMS,
     // Dropbox matches the redirect exactly, port included: only these.
+    #[cfg(desktop)]
     loopback_ports: &oauth::LOOPBACK_PORTS,
+    #[cfg(desktop)]
     client_id: oauth::app_key,
+    #[cfg(desktop)]
     client_secret: || None,
     no_client: "Dropbox app key not configured; set DROPBOX_APP_KEY",
     #[cfg(mobile)]
@@ -324,11 +327,15 @@ mod tests {
         assert_eq!(OAUTH.provider, Provider::Dropbox);
         assert_eq!(OAUTH.auth_url, "https://www.dropbox.com/oauth2/authorize");
         assert_eq!(OAUTH.token_url, "https://api.dropboxapi.com/oauth2/token");
-        assert!(
-            (OAUTH.client_secret)().is_none(),
-            "a PKCE public client sends no secret"
-        );
         assert!(OAUTH.no_client.contains(oauth::APP_KEY_ENV));
+    }
+
+    // The desktop client is the only one that could carry a secret, and it
+    // does not: a PKCE public client never sends one.
+    #[cfg(desktop)]
+    #[test]
+    fn the_desktop_client_sends_no_secret() {
+        assert!((OAUTH.client_secret)().is_none());
     }
 
     #[test]
@@ -341,6 +348,7 @@ mod tests {
 
     // Dropbox has no any-port loopback rule: the desktop flow must be told the
     // registered ports, or it would bind one the App Console never heard of.
+    #[cfg(desktop)]
     #[test]
     fn the_desktop_flow_uses_the_registered_loopback_ports() {
         assert!(!OAUTH.loopback_ports.is_empty());
