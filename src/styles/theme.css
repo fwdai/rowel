@@ -686,6 +686,16 @@
 }
 
 /*
+ * A tag's colour, kept to a dot: the one place a tag chip carries its hashed
+ * `--hue`, so a row of tags reads as labels with colour codes rather than a
+ * row of coloured pills. The monogram's edge tone — muted, themed — made
+ * solid. See elements/TagChip.
+ */
+@utility tag-dot {
+  background: oklch(var(--monogram-edge-l) var(--monogram-edge-c) var(--hue));
+}
+
+/*
  * Busy text: the muted ink with a brighter band sweeping through the glyphs.
  * Gradient is clipped to the text, so it re-themes via the ink tokens.
  */

@@ -63,8 +63,9 @@ describe('tags on the entry screen', () => {
     const chip = within(section).getByLabelText('Filter by tag work')
     expect(chip).toHaveTextContent('work')
     expect(chip).not.toHaveTextContent('#')
-    // Tinted in a hue of its own, hashed from the name, like a workspace tile.
-    expect(chip).toHaveClass('monogram')
+    // A dot in a hue of its own, hashed from the name, like a workspace tile's
+    // colour — the pill itself stays neutral.
+    expect(chip.querySelector('.tag-dot')).not.toBeNull()
     expect(chip.style.getPropertyValue('--hue')).not.toBe('')
     // No card under the chips: they are the content.
     expect(section.querySelector('.shadow-card')).toBeNull()
@@ -154,10 +155,10 @@ describe('tags on the entry screen', () => {
     expect(applied()).toEqual(['money'])
     expect(suggested()).toEqual(['work2', 'travel1'])
     expect(field()).toHaveFocus()
-    // In the field it wears the same hue it has on the entry; floating, it
-    // was a bare outline.
-    expect(screen.getByLabelText('Remove tag money')).toHaveClass('monogram')
-    expect(screen.getByTestId('tag-suggest-work')).not.toHaveClass('monogram')
+    // In the field it wears the same dot it has on the entry; floating, it
+    // is a bare outline.
+    expect(screen.getByLabelText('Remove tag money').querySelector('.tag-dot')).not.toBeNull()
+    expect(screen.getByTestId('tag-suggest-work').querySelector('.tag-dot')).toBeNull()
 
     await closePicker()
 
