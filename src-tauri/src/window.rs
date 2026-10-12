@@ -146,11 +146,30 @@ pub fn raise(app: &AppHandle) {
 
 // Show and focus the main window (tray "Open Rowel" and second-instance launch).
 pub fn show(app: &AppHandle) {
+    // `hide` hid the app rather than the window, so the app is what comes back
+    // first. Nothing to undo otherwise.
+    #[cfg(target_os = "macos")]
+    let _ = app.show();
     if let Some(window) = app.get_webview_window(MAIN) {
         let _ = window.show();
         // Minimization is a desktop window state; the API doesn't exist on mobile.
         #[cfg(desktop)]
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+/// Step aside so focus goes back to the app the user came from. On macOS that
+/// is hiding the app (⌘H), which reactivates the previous one; minimizing would
+/// leave Rowel active with no window, and focus nowhere useful. Windows hands
+/// focus to the next window down on a minimize, and Linux does whatever its
+/// window manager does. `show` brings it all back.
+#[cfg(desktop)]
+pub fn hide(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app.hide();
+    #[cfg(not(target_os = "macos"))]
+    if let Some(window) = app.get_webview_window(MAIN) {
+        let _ = window.minimize();
     }
 }

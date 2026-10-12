@@ -716,5 +716,7 @@
   "Remove “{{name}}”?": "要移除“{{name}}”吗？",
   "The file is removed from this entry. This can’t be undone.": "该文件将从此条目中移除，且无法撤销。",
   "No preview for this kind of file": "此类文件无法预览",
-  "Could not open this file.": "无法打开此文件。"
+  "Could not open this file.": "无法打开此文件。",
+  "Hide Rowel after copying": "复制后隐藏 {{appName}}",
+  "Go back to the app you came from once a value is copied": "复制后返回之前所在的应用"
 }

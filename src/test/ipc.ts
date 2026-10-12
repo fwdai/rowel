@@ -42,6 +42,7 @@ const session = { entries: [], syncConfigured: false }
 const DEFAULT_SETTINGS: Settings = {
   autolockSecs: 60,
   clipboardTimeoutMs: 30000,
+  hideOnCopy: false,
   dateFormat: 'MM/DD/YYYY',
   sort: 'recent',
   theme: 'light',
@@ -228,6 +229,7 @@ const DEFAULTS: Record<string, Handler> = {
   get_audit: () => ({}),
   fetch_favicon: () => null,
   copy_to_clipboard: () => undefined,
+  hide_window: () => undefined,
   scan_image: reject({ kind: 'unrecognized', message: 'nothing recognized' }),
   scan_image_bytes: reject({ kind: 'unrecognized', message: 'nothing recognized' }),
   // The dialog Rust opens: nothing picked unless a test says otherwise.

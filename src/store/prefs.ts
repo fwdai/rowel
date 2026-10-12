@@ -41,6 +41,7 @@ export const DEFAULT_PREFS: Settings = {
   breachCheck: false,
   autolockSecs: 60,
   clipboardTimeoutMs: 30_000,
+  hideOnCopy: false,
   dateFormat: 'MM/DD/YYYY',
   locale: null,
   generator: {
@@ -80,6 +81,7 @@ const sanitize = (raw: Partial<Settings>): Settings => {
       raw.clipboardTimeoutMs >= 0
         ? raw.clipboardTimeoutMs
         : DEFAULT_PREFS.clipboardTimeoutMs,
+    hideOnCopy: raw.hideOnCopy === true,
     dateFormat: DATE_FORMATS.includes(raw.dateFormat as DateFormat)
       ? (raw.dateFormat as DateFormat)
       : DEFAULT_PREFS.dateFormat,

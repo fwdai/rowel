@@ -215,6 +215,9 @@ pub fn run() {
             commands::auth::change_master_password,
             commands::app::app_status,
             commands::app::app_ready,
+            // A phone has no window to send back.
+            #[cfg(desktop)]
+            commands::app::hide_window,
             commands::app::take_opened_file,
             commands::app::set_settings,
             commands::vault::reveal_entry,

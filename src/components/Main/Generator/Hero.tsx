@@ -33,7 +33,7 @@ export default function Hero({ value, bits, level, ready, onRegenerate }: Props)
           <IconButton title={t('Regenerate')} testid="generator-regenerate" onClick={onRegenerate}>
             <RefreshGlyph />
           </IconButton>
-          <CopyButton value={value} title={t('Copy')} disabled={!ready} />
+          <CopyButton value={value} title={t('Copy')} disabled={!ready} stay />
         </div>
       </div>
       <Entropy bits={bits} level={level} stretch className="mt-3.5" />

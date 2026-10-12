@@ -749,5 +749,7 @@
   "Remove “{{name}}”?": "Видалити «{{name}}»?",
   "The file is removed from this entry. This can’t be undone.": "Файл буде видалено з цього запису. Цю дію не можна скасувати.",
   "No preview for this kind of file": "Для файлів цього типу немає попереднього перегляду",
-  "Could not open this file.": "Не вдалося відкрити цей файл."
+  "Could not open this file.": "Не вдалося відкрити цей файл.",
+  "Hide Rowel after copying": "Ховати {{appName}} після копіювання",
+  "Go back to the app you came from once a value is copied": "Повертатися до програми, з якої ви прийшли, після копіювання"
 }

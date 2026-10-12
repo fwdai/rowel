@@ -24,7 +24,7 @@ export default function Line({ label, value, testid }: Props) {
         >
           {value}
         </div>
-        <CopyButton value={value} title={t('Copy')} />
+        <CopyButton value={value} title={t('Copy')} stay />
       </div>
     </div>
   )

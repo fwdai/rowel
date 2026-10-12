@@ -8,7 +8,8 @@ export default function CopyButton({
   title,
   disabled,
   className,
-  testid
+  testid,
+  stay
 }: {
   value: string
   title?: string
@@ -16,6 +17,8 @@ export default function CopyButton({
   disabled?: boolean
   className?: string
   testid?: string
+  // Keep Rowel up even with "Hide Rowel after copying" on (see `CopyOptions`).
+  stay?: boolean
 }) {
   const { t } = useTranslation()
   const { copied, copy } = useCopied()
@@ -25,7 +28,7 @@ export default function CopyButton({
       disabled={disabled}
       className={className}
       testid={testid}
-      onClick={() => copy(value)}
+      onClick={() => copy(value, { stay })}
     >
       {copied ? <CheckGlyph className="text-good" /> : <CopyGlyph />}
     </IconButton>
