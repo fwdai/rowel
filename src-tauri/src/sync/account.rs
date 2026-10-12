@@ -63,15 +63,23 @@ pub struct OAuthConfig {
     /// Query pairs the consent URL needs beyond the standard ones (Google:
     /// scope, `access_type=offline`, `prompt=consent`).
     pub consent_params: &'static [(&'static str, &'static str)],
+    // The desktop client, which only the loopback consent flow below reads. A
+    // phone build has no loopback listener and its client comes out of
+    // `mobile_client`, so these do not exist there — rather than sit unread
+    // and fail the iOS build under `-D dead-code`.
+    //
     /// The loopback ports the desktop client is registered for. Empty is any
     /// port at all (Google's Desktop-app clients), and the OS picks one; a
     /// provider that matches the redirect exactly lists the ones it registered,
     /// tried in order until one binds.
+    #[cfg(desktop)]
     pub loopback_ports: &'static [u16],
     /// The client id from the environment, run time first, then build time.
+    #[cfg(desktop)]
     pub client_id: fn() -> Option<String>,
     /// A desktop client's (non-confidential) secret, if the provider issues
     /// one.
+    #[cfg(desktop)]
     pub client_secret: fn() -> Option<String>,
     /// What a sign-in says when this build has no client for the provider.
     pub no_client: &'static str,

@@ -53,6 +53,10 @@ pub fn app_key() -> Option<String> {
 /// binds. **Every one of them must be registered in the App Console** as
 /// `http://127.0.0.1:<port>/auth/callback`, or consent fails with an
 /// "invalid redirect_uri" page.
+///
+/// Desktop only, like the `OAuthConfig` field it fills: a phone has no
+/// loopback listener, and an unread constant fails the iOS build.
+#[cfg(any(desktop, test))]
 pub const LOOPBACK_PORTS: [u16; 3] = [53682, 53683, 53684];
 
 /// `http://127.0.0.1:<port>/auth/callback`, for one of [`LOOPBACK_PORTS`]: the
