@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { hueOf } from '@/lib/hue'
 import { isWorkspaceColor, WORKSPACE_COLOR_CLASSES } from '@/lib/workspaceColor'
 import { cx } from '@/utils/cx'
 
@@ -13,14 +14,6 @@ interface Props {
   // The letter's size; half the tile's unless a larger tile wants it lighter.
   fontSize?: number
   className?: string
-}
-
-// A stable hue for a string: the same seed always lands on the same colour,
-// and neighbouring ids spread across the wheel rather than clustering.
-const hueOf = (seed: string): number => {
-  let hash = 5381
-  for (let i = 0; i < seed.length; i++) hash = (hash * 33) ^ seed.charCodeAt(i)
-  return Math.abs(hash) % 360
 }
 
 // A chosen colour is a solid tile with white ink and a glint along its top

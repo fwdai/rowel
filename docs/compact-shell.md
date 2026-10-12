@@ -187,10 +187,16 @@ heading, and are no more a card than they are: the chips themselves are the
 content, with a dashed "Add tag" chip at
 their end. One element draws a tag wherever it appears — on the entry, in the
 editor with its ×, under the search field as the list's filter, and as the
-add control — `elements/TagChip`: a 32px pill (24 on the desktop) with a
-soft fill and no edge, no `#` in front of it (a tag is not a hashtag; the
-list's title names the tag bare too), and a hit area reaching the 44px the
-platform asks for. Pressing a tag while reading goes to everything filed
+add control — `elements/TagChip`: a 32px pill (24 on the desktop), no `#`
+in front of it (a tag is not a hashtag; the list's title names the tag bare
+too), and a hit area reaching the 44px the platform asks for. At rest it
+wears the `monogram` label tint in a hue hashed from its own name
+(`lib/hue`, the same hash a workspace tile's colour comes from): a pale wash
+with a hairline edge and the name in the hue's deep ink, so a tag has a
+colour of its own and is the same colour on every entry. The list's filter
+chip is the one heavy one — the accent, solid — because there the tag is
+what the screen is about; the picker's waiting chips are bare outlines that
+take their colour as they enter the field. Pressing a tag while reading goes to everything filed
 under it. Adding or taking one off never needs the editor: the add chip opens
 `elements/TagPicker`, a bottom sheet holding one token field — the entry's
 tags as chips inside it, the caret after them, as Mail's recipients field and

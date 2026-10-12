@@ -1,24 +1,32 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
+import { hueOf } from '@/lib/hue'
 import { cx } from '@/utils/cx'
 import { CloseGlyph, PlusGlyph } from '../Main/icons'
 
 /**
  * The one way a tag is drawn, wherever it turns up: on an entry, in the
  * editor, inside the picker's field and floating under it, under the search
- * field as the list's filter, and as the way to add one. A pill with a soft
- * fill and no edge of its own — nothing else in the app is that shape on that
- * surface, which is what makes a tag recognisable as one without a `#` in
- * front of it. 24px on the desktop, 32px on the phone with a hit area that
- * reaches the platform's 44px (the pseudo-element; the row around the chips
- * gives the vertical room for it).
+ * field as the list's filter, and as the way to add one. A pill, 24px on the
+ * desktop and 32px on the phone with a hit area that reaches the platform's
+ * 44px (the pseudo-element; the row around the chips gives the vertical room
+ * for it). No `#` in front of it: a tag is not a hashtag, and the pill is what
+ * makes it recognisable.
  *
- * Four tones for the four things a tag can be doing: resting on an entry or
- * in a field (press it to see everything filed under it, or × to take it
- * off), standing as the one filter the list is narrowed by (the accent, with
- * the × that lifts it), waiting to be picked (a hairline outline — the same
- * pill, not yet filled in), and the dashed outline of a tag not yet there —
- * the add and create controls, which are the same shape so that the thing
- * they add is what they look like.
+ * Four tones for the four things a tag can be doing:
+ *
+ * - resting, on an entry or in the picker's field: the `monogram` label tint
+ *   in a hue hashed from the tag's own name (`lib/hue`) — a pale wash with a
+ *   hairline edge and the name in the hue's deep ink, so a tag has a colour
+ *   that is its own and wears it the same on every entry, the way a workspace
+ *   tile does. Press it to see everything filed under it, or its × to take it
+ *   off.
+ * - active, as the one filter the list is narrowed by: the accent, solid,
+ *   with the × that lifts it — the one place a tag is heavy, because it is
+ *   the one thing the screen is about.
+ * - outline, waiting to be picked in the sheet: the bare pill with a hairline,
+ *   not yet filled in; tapped, it goes into the field and takes its colour.
+ * - add: the dashed outline of a tag not yet there — the add and create
+ *   controls, the same shape so that what they add is what they look like.
  */
 export type TagTone = 'rest' | 'active' | 'outline' | 'add'
 
@@ -34,14 +42,15 @@ interface Props {
   testid?: string
   onClick: () => void
   className?: string
-  children: ReactNode
+  /** The tag's name — what is shown, and what the resting tint is keyed on. */
+  children: string
 }
 
 const PILL =
-  "relative inline-flex h-6 max-w-full flex-none cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium whitespace-nowrap transition-colors max-md:h-8 max-md:gap-1.5 max-md:px-3 max-md:text-base max-md:before:absolute max-md:before:inset-x-0 max-md:before:-inset-y-1.5 max-md:before:content-['']"
+  "relative inline-flex h-6 max-w-full flex-none cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium whitespace-nowrap transition-[color,background-color,border-color,filter] max-md:h-8 max-md:gap-1.5 max-md:px-3 max-md:text-base max-md:before:absolute max-md:before:inset-x-0 max-md:before:-inset-y-1.5 max-md:before:content-['']"
 
 const TONE: Record<TagTone, string> = {
-  rest: 'bg-tile text-text hover:bg-text/10 active:bg-text/15',
+  rest: 'monogram hover:brightness-[.97] active:brightness-95',
   active: 'bg-accent text-accent-fg hover:brightness-110',
   outline: 'border border-line2 text-text hover:bg-hover active:bg-sel',
   add: 'border border-dashed border-line2 text-text2 hover:border-text3 hover:text-text active:bg-hover'
@@ -66,6 +75,7 @@ export default function TagChip({
       data-testid={testid}
       onClick={onClick}
       className={cx(PILL, TONE[tone], className)}
+      style={tone === 'rest' ? ({ '--hue': hueOf(children) } as CSSProperties) : undefined}
     >
       {tone === 'add' && <PlusGlyph size={12} className="flex-none max-md:size-3.5" />}
       <span className="min-w-0 truncate">{children}</span>
