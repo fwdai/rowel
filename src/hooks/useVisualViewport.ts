@@ -13,7 +13,9 @@ const viewport = () => (typeof window === 'undefined' ? null : (window.visualVie
 // holds the focus. A button or a link never raises it. Read off the document
 // rather than remembered from the last focus event, so the answer is the
 // current one however the focus moved — including a focused field being
-// unmounted under the keyboard, which fires no blur at all.
+// unmounted under the keyboard, which fires no blur at all: React reads the
+// snapshot again on every render of the caller, and the shell renders as the
+// editor leaves, so that read is what takes it back to full height.
 const typing = (): boolean => {
   if (typeof document === 'undefined') return false
   const active = document.activeElement

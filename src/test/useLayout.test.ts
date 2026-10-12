@@ -65,13 +65,25 @@ describe('useVisualViewport', () => {
     act(() => input.blur())
     expect(result.current).toBeNull()
 
-    // So does the field going away under the caret: an unmount fires no blur,
-    // but the next focus change reads the document as it now is.
+    uninstall()
+  })
+
+  // A focused field unmounted under the keyboard (Save, Cancel) fires no blur
+  // and, on the Simulator, sometimes no viewport event either. What does
+  // happen is a render: the shell re-renders as the editor leaves, and the
+  // snapshot reads the document as it then is — nothing focused, so null —
+  // with no event at all.
+  it('reads a field gone from under the caret on the next render, with no event', () => {
+    install(640, 120)
+    const input = document.createElement('input')
+    document.body.append(input)
     input.focus()
-    expect(renderHook(() => useVisualViewport()).result.current).not.toBeNull()
-    input.remove()
-    act(() => document.body.dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
-    expect(renderHook(() => useVisualViewport()).result.current).toBeNull()
+    const { result, rerender } = renderHook(() => useVisualViewport())
+    expect(result.current).not.toBeNull()
+
+    act(() => input.remove())
+    rerender()
+    expect(result.current).toBeNull()
     uninstall()
   })
 
