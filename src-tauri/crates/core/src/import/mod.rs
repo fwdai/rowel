@@ -11,6 +11,7 @@
 mod bitwarden;
 mod csv;
 mod cxf;
+mod enpass;
 pub mod export;
 
 #[cfg(test)]
@@ -53,6 +54,13 @@ where
     D: Deserializer<'de>,
 {
     Ok(lenient_u64(d)?.and_then(|n| u8::try_from(n).ok()))
+}
+
+/// An epoch second, as CXF and Enpass date things, to the RFC 3339 string the
+/// app stores. `None` for a second no calendar has.
+pub(crate) fn rfc3339(secs: u64) -> Option<String> {
+    let secs = i64::try_from(secs).ok()?;
+    chrono::DateTime::from_timestamp(secs, 0).map(|t| t.to_rfc3339())
 }
 
 /// The kind of a normalized entry; maps 1:1 onto `models::Entry.kind`.
@@ -260,7 +268,8 @@ pub trait Importer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     Bitwarden,
-    Cxf, // FIDO Credential Exchange Format — the other JSON shape we read
+    Cxf,    // FIDO Credential Exchange Format — the second JSON shape we read
+    Enpass, // Enpass 6 JSON — the third
     GenericCsv,
     BrowserCsv, // Chrome / Safari share a header-aliased shape
     LastpassCsv,
@@ -273,6 +282,7 @@ impl Format {
         match name.trim().to_lowercase().as_str() {
             "bitwarden" => Some(Format::Bitwarden),
             "cxf" | "fido" => Some(Format::Cxf),
+            "enpass" | "enpass_json" => Some(Format::Enpass),
             "csv" | "generic" | "generic_csv" => Some(Format::GenericCsv),
             "chrome" | "safari" | "browser" | "browser_csv" => Some(Format::BrowserCsv),
             "lastpass" | "lastpass_csv" => Some(Format::LastpassCsv),
@@ -286,6 +296,7 @@ impl Format {
         match self {
             Format::Bitwarden => Box::new(bitwarden::Bitwarden),
             Format::Cxf => Box::new(cxf::Cxf),
+            Format::Enpass => Box::new(enpass::Enpass),
             Format::GenericCsv => Box::new(csv::GenericCsv),
             Format::BrowserCsv => Box::new(csv::BrowserCsv),
             Format::LastpassCsv => Box::new(csv::LastpassCsv),
@@ -314,9 +325,11 @@ pub fn detect(name: &str, bytes: &[u8]) -> Option<Format> {
     None
 }
 
-// Both JSON formats we read are top-level objects; CXF is the one that declares
-// a `version` object and an `accounts` array. Parsed once, then thrown away —
-// an explicit choice from the UI skips this entirely.
+// All three JSON formats we read are top-level objects. CXF is the one that
+// declares a `version` object and an `accounts` array. Enpass and Bitwarden
+// both have `items` and `folders`; an Enpass item names its `category` (or
+// `template_type`) where a Bitwarden one has a numeric `type`. Parsed once,
+// then thrown away — an explicit choice from the UI skips this entirely.
 fn detect_json(bytes: &[u8]) -> Format {
     let Ok(doc) = serde_json::from_slice::<serde_json::Value>(bytes) else {
         return Format::Bitwarden;
@@ -324,7 +337,18 @@ fn detect_json(bytes: &[u8]) -> Format {
     let cxf = doc.get("accounts").is_some_and(serde_json::Value::is_array)
         && doc.get("version").is_some_and(serde_json::Value::is_object);
     if cxf {
-        Format::Cxf
+        return Format::Cxf;
+    }
+    let enpass = doc
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item.get("category").is_some() || item.get("template_type").is_some())
+        });
+    if enpass {
+        Format::Enpass
     } else {
         Format::Bitwarden
     }

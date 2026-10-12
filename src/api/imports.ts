@@ -7,6 +7,7 @@ export type ImportFormat =
   | 'auto'
   | 'bitwarden'
   | 'cxf'
+  | 'enpass'
   | 'csv'
   | 'chrome'
   | 'lastpass'

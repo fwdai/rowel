@@ -15,7 +15,8 @@ use super::export::{
     PUBLIC_KEY_LABEL, SCOPES_LABEL,
 };
 use super::{
-    non_empty, take_labelled, EntryKind, ImportResult, ImportedEntry, ImportedPasskey, Importer,
+    non_empty, rfc3339, take_labelled, EntryKind, ImportResult, ImportedEntry, ImportedPasskey,
+    Importer,
 };
 use crate::models::ExtraField;
 use crate::otp::{self, OtpAlgorithm, OtpParams};
@@ -424,10 +425,4 @@ fn totp_number(v: &Value) -> Option<u64> {
         Value::String(s) => s.trim().parse().ok(),
         _ => None,
     }
-}
-
-/// CXF timestamps are Unix seconds; the app stores RFC 3339 strings.
-fn rfc3339(secs: u64) -> Option<String> {
-    let secs = i64::try_from(secs).ok()?;
-    chrono::DateTime::from_timestamp(secs, 0).map(|t| t.to_rfc3339())
 }

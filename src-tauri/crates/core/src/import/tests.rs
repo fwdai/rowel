@@ -806,6 +806,265 @@ fn detect_tells_cxf_from_bitwarden_json() {
     assert_eq!(detect("broken.json", b"{not json"), Some(Format::Bitwarden));
 }
 
+// Enpass and Bitwarden both write `items` and `folders`; an Enpass item is told
+// by the `category` (or `template_type`) it names, which no Bitwarden item has.
+#[test]
+fn detect_tells_enpass_from_bitwarden_json() {
+    let enpass = br#"{"folders":[],"items":[{"category":"login","title":"x","fields":[]}]}"#;
+    assert_eq!(detect("export.json", enpass), Some(Format::Enpass));
+    assert_eq!(detect("noext", enpass), Some(Format::Enpass));
+    let templated = br#"{"items":[{"template_type":"login.default","title":"x"}]}"#;
+    assert_eq!(detect("export.json", templated), Some(Format::Enpass));
+    assert_eq!(
+        detect("bw.json", br#"{"items":[{"type":1,"name":"x"}]}"#),
+        Some(Format::Bitwarden)
+    );
+    assert_eq!(Format::from_name("enpass"), Some(Format::Enpass));
+    assert_eq!(Format::from_name("Enpass"), Some(Format::Enpass));
+}
+
+// Slots are filled by field type, never by label — Enpass labels are in the
+// user's language. What has no slot stays as an extra, concealed when Enpass
+// flagged it; sections and app associations are machinery and are dropped.
+#[test]
+fn enpass_maps_a_login_by_field_type() {
+    let json = r#"{"folders":[],"items":[
+      {"archived":0,"category":"login","createdAt":1577093622,"favorite":1,
+       "fields":[
+         {"label":"Nom d'utilisateur","type":"username","value":"octo","sensitive":0,"deleted":0},
+         {"label":"E-mail","type":"email","value":"octo@example.com"},
+         {"label":"Mot de passe","type":"password","value":"now","sensitive":1,
+          "value_updated_at":1700000000,
+          "history":[{"updated_at":1600000000,"value":"older"},{"updated_at":1650000000,"value":"old"},{"updated_at":1,"value":""}]},
+         {"label":"Site web","type":"url","value":"https://github.com"},
+         {"label":"Autre site","type":"url","value":"https://gist.github.com"},
+         {"label":"Code à usage unique","type":"totp","value":"JBSWY3DPEHPK3PXP"},
+         {"label":"Sécurité","type":"section","value":""},
+         {"label":"Question","type":"text","value":"First pet?"},
+         {"label":"Réponse","type":"password","value":"rex","sensitive":1},
+         {"label":"Vide","type":"text","value":""},
+         {"label":"Supprimé","type":"text","value":"gone","deleted":1},
+         {"label":"Android","type":".Android#","value":"com.github.android"}
+       ],
+       "folders":[],"note":"the note","template_type":"login.default","title":"GitHub",
+       "trashed":0,"updated_at":1700000001,"uuid":"a"}
+    ]}"#
+    .as_bytes();
+    let r = parse(Format::Enpass, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 1);
+    let e = &r.entries[0];
+    assert_eq!(e.kind, EntryKind::Login);
+    assert_eq!(e.title, "GitHub");
+    assert_eq!(e.username.as_deref(), Some("octo"));
+    assert_eq!(e.email.as_deref(), Some("octo@example.com"));
+    assert_eq!(e.password.as_deref(), Some("now"));
+    assert_eq!(e.url.as_deref(), Some("https://github.com"));
+    assert_eq!(e.otp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+    assert_eq!(e.notes.as_deref(), Some("the note"));
+    assert!(e.favorite);
+    assert_eq!(e.created_at.as_deref(), Some("2019-12-23T09:33:42+00:00"));
+    assert_eq!(e.updated_at.as_deref(), Some("2023-11-14T22:13:21+00:00"));
+    assert_eq!(
+        e.password_updated_at.as_deref(),
+        Some("2023-11-14T22:13:20+00:00")
+    );
+    // Newest first, the blank one dropped.
+    assert_eq!(e.password_history.len(), 2);
+    assert_eq!(e.password_history[0].password, "old");
+    assert_eq!(
+        e.password_history[0].replaced_at,
+        "2022-04-15T05:20:00+00:00"
+    );
+    assert_eq!(e.password_history[1].password, "older");
+    assert_eq!(
+        e.extra,
+        vec![
+            field("Autre site", "https://gist.github.com"),
+            field("Question", "First pet?"),
+            concealed("Réponse", "rex"),
+        ]
+    );
+}
+
+#[test]
+fn enpass_maps_cards_notes_and_folders() {
+    let json = br#"{
+      "folders":[
+        {"title":"Work","uuid":"f1","parent_uuid":""},
+        {"title":"Banks","uuid":"f2","parent_uuid":"f1"}
+      ],
+      "items":[
+        {"category":"creditcard","title":"Visa","folders":["f2","missing"],"fields":[
+          {"label":"Cardholder","type":"ccName","value":"Ada Lovelace"},
+          {"label":"Type","type":"ccType","value":"Visa"},
+          {"label":"Number","type":"ccNumber","value":"4111111111111111","sensitive":1},
+          {"label":"CVC","type":"ccCvc","value":"123","sensitive":1},
+          {"label":"PIN","type":"ccPin","value":"9876","sensitive":1},
+          {"label":"Expiry date","type":"ccExpiry","value":"09/28"},
+          {"label":"Valid from","type":"ccValidfrom","value":"09/23"},
+          {"label":"Bank","type":"ccBankname","value":"Lloyds"}
+        ]},
+        {"category":"note","title":"Wifi","note":"body","folders":["f1"],"fields":[
+          {"label":"SSID","type":"text","value":"home"},
+          {"label":"Key","type":"password","value":"hunter2","sensitive":1}
+        ]},
+        {"category":"creditcard","title":"Odd","fields":[
+          {"label":"Expiry date","type":"ccExpiry","value":"sometime"}
+        ]}
+      ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 3);
+
+    let card = &r.entries[0];
+    assert_eq!(card.kind, EntryKind::Card);
+    assert_eq!(card.cardholder.as_deref(), Some("Ada Lovelace"));
+    assert_eq!(card.card_number.as_deref(), Some("4111111111111111"));
+    assert_eq!(card.card_cvc.as_deref(), Some("123"));
+    assert_eq!(card.card_pin.as_deref(), Some("9876"));
+    assert_eq!(card.card_month.as_deref(), Some("09"));
+    assert_eq!(card.card_year.as_deref(), Some("2028"));
+    assert_eq!(card.tags, vec!["Work/Banks".to_string()]);
+    assert_eq!(
+        card.extra,
+        vec![
+            field("Type", "Visa"),
+            field("Valid from", "09/23"),
+            field("Bank", "Lloyds"),
+        ]
+    );
+
+    let note = &r.entries[1];
+    assert_eq!(note.kind, EntryKind::Note);
+    assert_eq!(note.notes.as_deref(), Some("body"));
+    assert_eq!(note.tags, vec!["Work".to_string()]);
+    assert_eq!(
+        note.extra,
+        vec![field("SSID", "home"), concealed("Key", "hunter2")]
+    );
+
+    // An expiry that does not split stays as the labelled text it was.
+    let odd = &r.entries[2];
+    assert!(odd.card_month.is_none());
+    assert_eq!(odd.extra, vec![field("Expiry date", "sometime")]);
+}
+
+// The shape of the file Enpass 6 actually writes (no `folders` member at all,
+// every template field present whether filled or not): a driving licence is
+// the app's identity kind, filled by the template's English labels, with the
+// fields the app has no slot for kept as extras; Enpass's own "identity" (a
+// person, not a document) has no password and stays a note.
+#[test]
+fn enpass_reads_a_driving_licence_as_an_identity() {
+    let json = br#"{"items":[
+      {"archived":0,"auto_submit":1,"category":"license","category_name":"License",
+       "createdAt":1791803738,"favorite":0,"field_updated_at":1791803738,
+       "icon":{"fav":"","image":{"file":"misc/license"},"type":1,"uuid":""},
+       "note":"","subtitle":"345675454","template_type":"license.driving","title":"Driving license",
+       "trashed":0,"updated_at":1791803738,"uuid":"l1","fields":[
+        {"deleted":0,"label":"Number","order":1,"sensitive":0,"type":"numeric","uid":0,"updated_at":1791803738,"value":"345675454","value_updated_at":1791803738},
+        {"label":"Name","order":2,"sensitive":0,"type":"text","value":"Ada Lovelace"},
+        {"label":"Gender","order":3,"sensitive":0,"type":"text","value":"Female"},
+        {"label":"Birth date","order":4,"sensitive":0,"type":"date","value":"01/06/1987"},
+        {"label":"Address","order":5,"sensitive":0,"type":"text","value":"1 Main St"},
+        {"label":"Height","order":6,"sensitive":0,"type":"text","value":""},
+        {"label":"Class","order":7,"sensitive":0,"type":"text","value":"B"},
+        {"label":"Restrictions","order":8,"sensitive":0,"type":"text","value":""},
+        {"label":"State","order":9,"sensitive":0,"type":"text","value":""},
+        {"label":"Country","order":10,"sensitive":0,"type":"text","value":"GB"},
+        {"label":"Expiry date","order":11,"sensitive":0,"type":"date","value":""},
+        {"label":"Issued on","order":12,"sensitive":0,"type":"date","value":"01/06/2020"},
+        {"label":"If lost, call","order":13,"sensitive":0,"type":"phone","value":""}]},
+      {"category":"identity","template_type":"identity.default","title":"Me","fields":[
+        {"label":"First name","type":"text","value":"Ada"},
+        {"label":"Last name","type":"text","value":"Lovelace"},
+        {"label":"HOME ADDRESS","type":"section","value":""},
+        {"label":"Street","type":"text","value":""}]}
+    ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.entries.len(), 2);
+
+    let licence = &r.entries[0];
+    assert_eq!(licence.kind, EntryKind::Identity);
+    assert_eq!(licence.doc_type.as_deref(), Some("driver_license"));
+    assert_eq!(licence.doc_number.as_deref(), Some("345675454"));
+    assert_eq!(licence.holder_name.as_deref(), Some("Ada Lovelace"));
+    assert_eq!(licence.doc_sex.as_deref(), Some("Female"));
+    assert_eq!(licence.doc_birth_date.as_deref(), Some("01/06/1987"));
+    assert_eq!(licence.doc_country.as_deref(), Some("GB"));
+    assert_eq!(licence.doc_issue_date.as_deref(), Some("01/06/2020"));
+    assert!(licence.doc_expiry_date.is_none());
+    assert_eq!(
+        licence.extra,
+        vec![field("Address", "1 Main St"), field("Class", "B")]
+    );
+
+    let me = &r.entries[1];
+    assert_eq!(me.kind, EntryKind::Note);
+    assert_eq!(
+        me.extra,
+        vec![field("First name", "Ada"), field("Last name", "Lovelace")]
+    );
+}
+
+// A template the app has no kind for is a login when it holds a password and a
+// note otherwise; a `password` item is a login; a passport is an identity; the
+// trash stays in the trash; an item with nothing to call it by is one bad row.
+#[test]
+fn enpass_sorts_other_templates_and_skips_the_trash() {
+    let json = br#"{"items":[
+      {"category":"password","title":"Door code","fields":[
+        {"label":"Password","type":"password","value":"1234"}]},
+      {"category":"computer","template_type":"computer.wifi","title":"Router","fields":[
+        {"label":"SSID","type":"text","value":"home"},
+        {"label":"Password","type":"password","value":"hunter2"},
+        {"label":"Admin URL","type":"url","value":"http://192.168.0.1"}]},
+      {"category":"travel","template_type":"travel.passport","title":"Passport","fields":[
+        {"label":"Number","type":"text","value":"X1234567"},
+        {"label":"Nationality","type":"text","value":"British"},
+        {"label":"Place of issue","type":"text","value":"London"},
+        {"label":"Expiry date","type":"date","value":"2030-01-01"}]},
+      {"category":"license","template_type":"license.software","title":"IDE","fields":[
+        {"label":"Key","type":"text","value":"ABCD-EFGH"}]},
+      {"category":"login","title":"Gone","trashed":1,"fields":[
+        {"label":"Password","type":"password","value":"pw"}]},
+      {"category":"login","title":"","fields":[
+        {"label":"Website","type":"url","value":"https://untitled.example"}]},
+      {"category":"note","title":"","fields":[]}
+    ]}"#;
+    let r = parse(Format::Enpass, json);
+    assert_eq!(r.entries.len(), 5);
+    assert_eq!(r.entries[0].kind, EntryKind::Login);
+    assert_eq!(r.entries[0].password.as_deref(), Some("1234"));
+
+    let router = &r.entries[1];
+    assert_eq!(router.kind, EntryKind::Login);
+    assert_eq!(router.password.as_deref(), Some("hunter2"));
+    assert_eq!(router.url.as_deref(), Some("http://192.168.0.1"));
+    assert_eq!(router.extra, vec![field("SSID", "home")]);
+
+    let passport = &r.entries[2];
+    assert_eq!(passport.kind, EntryKind::Identity);
+    assert_eq!(passport.doc_type.as_deref(), Some("passport"));
+    assert_eq!(passport.doc_number.as_deref(), Some("X1234567"));
+    assert_eq!(passport.doc_nationality.as_deref(), Some("British"));
+    assert_eq!(passport.doc_authority.as_deref(), Some("London"));
+    assert_eq!(passport.doc_expiry_date.as_deref(), Some("2030-01-01"));
+    assert!(passport.extra.is_empty());
+
+    // A software licence is not an ID document.
+    let ide = &r.entries[3];
+    assert_eq!(ide.kind, EntryKind::Note);
+    assert_eq!(ide.extra, vec![field("Key", "ABCD-EFGH")]);
+
+    // A login with no title is called after its site.
+    assert_eq!(r.entries[4].title, "https://untitled.example");
+    assert_eq!(r.errors.len(), 1);
+    assert_eq!(r.errors[0].row, 7);
+}
+
 #[test]
 fn detect_by_extension_and_content() {
     assert_eq!(detect("export.json", b"{}"), Some(Format::Bitwarden));

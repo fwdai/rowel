@@ -807,20 +807,35 @@ describe('Settings › import', () => {
     expect(calls('import_swftx')).toEqual([])
   })
 
-  it('offers a tile per source and no format select', async () => {
+  // The apps most people are leaving get a tile each; the rest share one
+  // dropdown, so they are on offer without being advertised on the same level.
+  it('offers a tile per popular app and the rest in one dropdown', async () => {
     await open()
     await go('import')
-    for (const key of [
-      'bitwarden',
-      'cxf',
-      'chrome',
-      'lastpass',
-      'keepass',
-      'csv',
-      'swftx'
-    ])
+    for (const key of ['bitwarden', 'lastpass', 'keepass', 'swftx'])
       expect(screen.getByTestId(`import-tile-${key}`)).toBeInTheDocument()
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    const others = screen.getByRole('combobox', { name: 'Another app' })
+    for (const key of ['chrome', 'enpass', 'cxf', 'csv'])
+      expect(within(others).getByTestId(`import-tile-${key}`)).toBeInTheDocument()
+  })
+
+  // Picking from the dropdown is picking a tile: the file picker opens, and
+  // the dry run names the format rather than sniffing it.
+  it('imports an Enpass export picked from the dropdown', async () => {
+    vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
+    await open()
+    await go('import')
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Another app' }), 'enpass')
+
+    await waitFor(() =>
+      expect(calls('import_entries')).toContainEqual({
+        path: '/tmp/enpass.json',
+        format: 'enpass',
+        dryRun: true
+      })
+    )
+    expect(screen.getByRole('combobox', { name: 'Another app' })).toHaveValue('enpass')
   })
 
   // The picker is on the drop target itself, on every platform; a file chosen
