@@ -2450,9 +2450,11 @@ fn onepux_maps_cards_documents_keys_and_notes() {
             {"title":"country","id":"country","value":{"string":"Sweden"}},
             {"title":"expiry date","id":"expiry_date","value":{"monthYear":203005}}]}]}},
           {"categoryUuid":"114","overview":{"title":"Deploy key"},"details":{"sections":[{"fields":[
-            {"title":"private key","id":"private_key","value":{"sshKey":{"privateKey":"-----BEGIN PRIVATE KEY-----\npkcs8\n-----END PRIVATE KEY-----\n",
-              "metadata":{"privateKey":"-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n","publicKey":"ssh-ed25519 AAAA octo","fingerprint":"SHA256:xyz","keyType":"ed25519"}}}},
+            {"title":"private key","id":"private_key","value":{"sshKey":{"privateKey":"-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIFYAdBe0wA2kXej4h4SX8AGsC/kjI4TKWEcivS/EC8Rb\n-----END PRIVATE KEY-----\n",
+              "metadata":{"privateKey":"-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIFYAdBe0wA2kXej4h4SX8AGsC/kjI4TKWEcivS/EC8Rb\n-----END PRIVATE KEY-----\n","publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJWRyIiw75kU1Wo8Pmls6ZtTKfHn58UsSI84WIrPiVNB octo","fingerprint":"SHA256:NVYSMnDilri+HeSJWIVb9W6V043z6EzNZcY3Tp0hVQo","keyType":"ed25519"}}}},
             {"title":"spare","id":"spare","value":{"sshKey":{"privateKey":"-----BEGIN PRIVATE KEY-----\nonly\n-----END PRIVATE KEY-----\n"}}}]}]}},
+          {"categoryUuid":"114","overview":{"title":"Odd key"},"details":{"sections":[{"fields":[
+            {"title":"private key","id":"private_key","value":{"sshKey":{"privateKey":"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"}}}]}]}},
           {"categoryUuid":"112","overview":{"title":"Stripe","url":"https://api.stripe.com"},"details":{"sections":[{"fields":[
             {"title":"username","id":"username","value":{"string":"octo"}},
             {"title":"credential","id":"credential","value":{"concealed":"sk_live_1"}},
@@ -2476,7 +2478,7 @@ fn onepux_maps_cards_documents_keys_and_notes() {
     ));
     let r = parse(Format::Onepux, &file);
     assert!(r.errors.is_empty(), "{:?}", r.errors);
-    assert_eq!(r.entries.len(), 9);
+    assert_eq!(r.entries.len(), 10);
 
     let card = &r.entries[0];
     assert_eq!(card.kind, EntryKind::Card);
@@ -2525,13 +2527,35 @@ fn onepux_maps_cards_documents_keys_and_notes() {
         .as_deref()
         .unwrap()
         .starts_with("-----BEGIN OPENSSH"));
-    assert_eq!(key.ssh_public_key.as_deref(), Some("ssh-ed25519 AAAA octo"));
-    assert_eq!(key.ssh_fingerprint.as_deref(), Some("SHA256:xyz"));
-    // The OpenSSH block from the metadata is the key, as the generator here
-    // writes one; a key that only comes as PKCS#8 is kept as that.
     assert_eq!(
-        key.ssh_private_key.as_deref(),
-        Some("-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n")
+        key.ssh_public_key.as_deref(),
+        Some(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJWRyIiw75kU1Wo8Pmls6ZtTKfHn58UsSI84WIrPiVNB octo"
+        )
+    );
+    assert_eq!(
+        key.ssh_fingerprint.as_deref(),
+        Some("SHA256:NVYSMnDilri+HeSJWIVb9W6V043z6EzNZcY3Tp0hVQo")
+    );
+    // 1Password writes the key in PKCS#8, which OpenSSH will not read for an
+    // Ed25519 key: it comes in as the OpenSSH block the kind holds, the same
+    // key (its public line is the one 1Password wrote beside it), and the
+    // public line and fingerprint are 1Password's own where it gave them. A
+    // second key on the item is an extra and stays as it came.
+    let block = key.ssh_private_key.as_deref().unwrap();
+    assert!(
+        block.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"),
+        "{block}"
+    );
+    assert_eq!(
+        key.ssh_public_key.as_deref(),
+        Some(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJWRyIiw75kU1Wo8Pmls6ZtTKfHn58UsSI84WIrPiVNB octo"
+        )
+    );
+    assert_eq!(
+        key.ssh_fingerprint.as_deref(),
+        Some("SHA256:NVYSMnDilri+HeSJWIVb9W6V043z6EzNZcY3Tp0hVQo")
     );
     assert_eq!(
         key.extra,
@@ -2543,8 +2567,23 @@ fn onepux_maps_cards_documents_keys_and_notes() {
             ),
         ]
     );
+    // A PKCS#8 block with no key OpenSSH names inside is kept as it came,
+    // and the row says so; the public line is then not made up either.
+    let odd = &r.entries[4];
+    assert_eq!(odd.kind, EntryKind::Ssh);
+    assert_eq!(
+        odd.ssh_private_key.as_deref(),
+        Some("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n")
+    );
+    assert_eq!(odd.ssh_public_key, None);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(r.warnings[0].row, 5);
+    assert_eq!(
+        r.warnings[0].message,
+        "private key kept in PKCS#8 form: not an Ed25519, RSA or ECDSA key, the kinds OpenSSH names"
+    );
 
-    let api = &r.entries[4];
+    let api = &r.entries[5];
     assert_eq!(api.kind, EntryKind::ApiKey);
     assert_eq!(api.api_key.as_deref(), Some("sk_live_1"));
     assert_eq!(api.url.as_deref(), Some("https://api.stripe.com"));
@@ -2558,18 +2597,18 @@ fn onepux_maps_cards_documents_keys_and_notes() {
         ]
     );
 
-    let wifi = &r.entries[5];
+    let wifi = &r.entries[6];
     assert_eq!(wifi.kind, EntryKind::Login);
     assert_eq!(wifi.password.as_deref(), Some("hunter2"));
 
-    let server = &r.entries[6];
+    let server = &r.entries[7];
     assert_eq!(server.kind, EntryKind::Login);
     assert_eq!(server.url.as_deref(), Some("ssh://box"));
     assert_eq!(server.username.as_deref(), Some("root"));
     assert_eq!(server.password.as_deref(), Some("toor"));
     assert_eq!(server.extra, vec![field("URL", "https://box.example")]);
 
-    let person = &r.entries[7];
+    let person = &r.entries[8];
     assert_eq!(person.kind, EntryKind::Note);
     // A note has no slot for a site, so every one the item named is kept.
     assert_eq!(
@@ -2582,7 +2621,7 @@ fn onepux_maps_cards_documents_keys_and_notes() {
         ]
     );
 
-    let note = &r.entries[8];
+    let note = &r.entries[9];
     assert_eq!(note.kind, EntryKind::Note);
     assert_eq!(note.notes.as_deref(), Some("body"));
     // A private key or a card number is a secret on a note as well.

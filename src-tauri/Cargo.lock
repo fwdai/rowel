@@ -1611,6 +1611,7 @@ version = "2.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
 dependencies = [
+ "pkcs8",
  "signature",
 ]
 
@@ -4696,20 +4697,25 @@ dependencies = [
  "chrono",
  "coset",
  "csv",
+ "ed25519-dalek",
  "hex",
  "log",
  "p256",
+ "p384",
+ "p521",
  "passkey-authenticator",
  "passkey-client",
  "passkey-types",
  "public-suffix",
  "rand",
  "ring",
+ "rsa",
  "rusqlite",
  "rusqlite_migration",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "ssh-key",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -5458,6 +5464,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b86f5297f0f04d08cabaa0f6bff7cb6aec4d9c3b49d87990d63da9d9156a8c3"
 dependencies = [
  "ed25519-dalek",
+ "num-bigint-dig",
  "p256",
  "p384",
  "p521",

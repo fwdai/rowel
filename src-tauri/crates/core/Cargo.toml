@@ -59,6 +59,16 @@ coset = "0.4"
 # `CredentialStore` and `UserValidationMethod` are async traits; implementing
 # them needs the same attribute macro passkey-authenticator declares them with.
 async-trait = "0.1"
+# PKCS#8 private keys, as 1Password exports them, to the OpenSSH form the
+# `ssh` kind holds (`ssh::from_pkcs8`). ssh-key is the crate the app's own
+# generator writes keys with; the algorithm crates behind its features are
+# all in the locked graph already, and only their PKCS#8 decoding is switched
+# on here. p256 above is the one of them the passkeys use too.
+ssh-key = { version = "0.6.7", default-features = false, features = ["ed25519", "rsa", "p256", "p384", "p521", "std"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["pkcs8"] }
+rsa = { version = "0.9", default-features = false, features = ["std"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"] }
+p521 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # `Win32_Security*` + `Win32_System_Threading` build the owner-only DACL for

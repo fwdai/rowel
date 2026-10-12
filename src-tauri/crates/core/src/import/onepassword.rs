@@ -262,19 +262,40 @@ impl Field {
     }
 }
 
-/// The key itself. 1Password writes it twice: `privateKey` is PKCS#8, and the
-/// `metadata` beside it repeats it in the OpenSSH form `ssh-keygen` writes
-/// and the app's own generator makes. The OpenSSH block is taken when it is
-/// there, so an imported key reads like one made here; the PKCS#8 one is
-/// still a key every OpenSSH client accepts, and is kept when it is all
-/// there is.
+/// The key itself. 1Password writes it twice, as `privateKey` and again in
+/// the `metadata` beside it, in PKCS#8 both times in the exports seen so far.
+/// An OpenSSH block is taken from either place when one is there, as it is
+/// already the form the app holds; otherwise the PKCS#8 one, which
+/// [`openssh_key`] converts once the item is an SSH entry.
 fn ssh_private_key(payload: &Value) -> Option<String> {
     let block = |v: Option<&Value>| non_empty(v?.as_str().map(str::to_owned));
-    let openssh = block(payload.get("metadata").and_then(|m| m.get("privateKey"))).filter(|key| {
-        key.trim_start()
-            .starts_with("-----BEGIN OPENSSH PRIVATE KEY-----")
-    });
-    openssh.or_else(|| block(payload.get("privateKey")))
+    let top = block(payload.get("privateKey"));
+    let meta = block(payload.get("metadata").and_then(|m| m.get("privateKey")));
+    let openssh = |key: &Option<String>| key.as_deref().is_some_and(crate::ssh::is_openssh);
+    if openssh(&top) {
+        top
+    } else if openssh(&meta) {
+        meta
+    } else {
+        top.or(meta)
+    }
+}
+
+/// An SSH entry's key in the form the kind holds: a PKCS#8 block is
+/// converted to OpenSSH, and the public line and fingerprint 1Password did
+/// not supply come from the conversion. `Err` says why a key stays PKCS#8.
+fn openssh_key(entry: &mut ImportedEntry) -> Result<(), String> {
+    let Some(key) = entry.ssh_private_key.as_deref() else {
+        return Ok(());
+    };
+    if !crate::ssh::is_pkcs8(key) {
+        return Ok(());
+    }
+    let converted = crate::ssh::from_pkcs8(key)?;
+    entry.ssh_private_key = Some(converted.private_key);
+    entry.ssh_public_key.get_or_insert(converted.public_key);
+    entry.ssh_fingerprint.get_or_insert(converted.fingerprint);
+    Ok(())
 }
 
 /// A saved form checkbox as 1Password records it: a tick, or nothing.
@@ -512,7 +533,17 @@ impl Importer for Onepux {
                     result.push_err(row, "item has no title");
                     continue;
                 }
+                // OpenSSH reads a PKCS#8 key for RSA and ECDSA but not for
+                // Ed25519, the kind most are, so a key is converted here; one
+                // that cannot be is kept as it came, and the row says so.
+                let kept_pkcs8 = match entry.kind {
+                    EntryKind::Ssh => openssh_key(&mut entry).err(),
+                    _ => None,
+                };
                 result.entries.push(entry);
+                if let Some(why) = kept_pkcs8 {
+                    result.push_warn(row, format!("private key kept in PKCS#8 form: {why}"));
+                }
                 if attachments > 0 {
                     result.push_warn(
                         row,
