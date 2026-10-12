@@ -636,6 +636,23 @@ fn cxf_maps_note_only_items_and_flags_unmappable_ones() {
     assert_eq!(r.errors[0].row, 2); // second item overall
 }
 
+// An item whose only credential is a passkey that cannot sign has nothing to
+// import: one error for the row, and no warning left over to list it as
+// imported as well.
+#[test]
+fn cxf_rejects_an_item_whose_only_passkey_is_incomplete_without_a_warning() {
+    let json = br#"{"version":{"major":1,"minor":0},"accounts":[{"items":[
+      {"id":"aQ","title":"Acme","credentials":[
+        {"type":"passkey","rpId":"acme.test","username":"alice","key":"cGsx"}
+      ]}
+    ]}]}"#;
+    let r = parse(Format::Cxf, json);
+    assert!(r.entries.is_empty());
+    assert_eq!(r.errors.len(), 1);
+    assert_eq!(r.errors[0].row, 1);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+}
+
 // A passkey without an id, relying party or key cannot sign; it is dropped on
 // its own and the item still imports.
 #[test]

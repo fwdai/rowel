@@ -15,6 +15,9 @@ export default function RowErrors({ rows, kind }: Props) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   if (rows.length === 0) return null
+  // The heading counts rows, not messages: one row can carry several notes
+  // (a login with four unusable passkeys) and is still one row.
+  const count = new Set(rows.map(e => e.row)).size
 
   return (
     <div className="text-base" data-testid={`import-row-${kind}s`}>
@@ -23,8 +26,8 @@ export default function RowErrors({ rows, kind }: Props) {
         onClick={() => setOpen(!open)}
       >
         {kind === 'error'
-          ? t('{{count}} rows could not be read', { count: rows.length })
-          : t('{{count}} rows imported with a note', { count: rows.length })}{' '}
+          ? t('{{count}} rows could not be read', { count })
+          : t('{{count}} rows imported with a note', { count })}{' '}
         {open ? '▾' : '▸'}
       </span>
       {open && (

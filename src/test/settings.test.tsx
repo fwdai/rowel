@@ -832,7 +832,8 @@ describe('Settings › import', () => {
 
   // A row that imported but left something behind (an Enpass attachment) is
   // a note on the preview, apart from the rows that could not be read: the
-  // totals still say every row is coming in.
+  // totals still say every row is coming in. Two notes on one row are one
+  // row in the heading.
   it('shows a warning row apart from the skipped count', async () => {
     vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
     mockCommand('import_entries', () => ({
@@ -842,7 +843,10 @@ describe('Settings › import', () => {
       duplicates: 0,
       dryRun: true,
       errors: [],
-      warnings: [{ row: 1, message: '2 attachment(s) not imported; keep the export' }],
+      warnings: [
+        { row: 1, message: '2 attachment(s) not imported; keep the export' },
+        { row: 1, message: 'unsupported or incomplete passkey' }
+      ],
       entries: []
     }))
     await open()
@@ -858,6 +862,7 @@ describe('Settings › import', () => {
     expect(note).toHaveTextContent('1 row imported with a note')
     await userEvent.click(within(note).getByText(/imported with a note/))
     expect(note).toHaveTextContent('Row 1: 2 attachment(s) not imported; keep the export')
+    expect(note).toHaveTextContent('Row 1: unsupported or incomplete passkey')
   })
 
   // A tile is a file picker: the dry run names the format rather than

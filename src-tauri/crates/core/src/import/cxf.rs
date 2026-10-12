@@ -160,6 +160,10 @@ impl Importer for Cxf {
 
 /// `rowel` says the document is one of ours, and so may hold fields of ours.
 fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
+    // A warning says "this row imported, minus something"; if the item is
+    // turned down below, its warnings go with it, or the row would be listed
+    // as both lost and imported.
+    let kept = result.warnings.len();
     let Item {
         title,
         creation_at,
@@ -305,6 +309,7 @@ fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
             ..Default::default()
         }
     } else {
+        result.warnings.truncate(kept);
         result.push_err(row, "item has no supported credential");
         return;
     };
