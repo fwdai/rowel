@@ -29,10 +29,10 @@ export default function Fields() {
         {/* Not every key lapses; one that does says how long it has left when read. */}
         <DateField name="expiry_date" label="Expires" expiry />
         <NoteField label="Note" />
+        {/* What the fixed rows have no place for — an import's `staging`
+            environment, an account id — closes the card as rows of its own. */}
+        <CustomFieldsField />
       </Panel>
-      {/* What the fixed rows have no place for — an import's `staging`
-          environment, an account id — keeps its own rows under them. */}
-      <CustomFieldsField />
     </>
   )
 }

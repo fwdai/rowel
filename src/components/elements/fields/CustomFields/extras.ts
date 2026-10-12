@@ -18,6 +18,13 @@ export const rowsOf = (value: unknown): ExtraField[] =>
 export const isBlank = (field: ExtraField) => !field.label.trim() && !field.value.trim()
 
 /**
+ * Whether reading the entry has any custom row to show — for a kind whose read
+ * face is an object (a card, a document) rather than a card of rows, which has
+ * to know before it draws the panel the rows go on.
+ */
+export const hasExtra = (entry: EntryDraft) => rowsOf(entry.extra).some(field => !isBlank(field))
+
+/**
  * What a save should send: the rows that say something, and no `extra` key at
  * all when none do — so an entry that never had an extra field stays without
  * one, and a row the user added and left blank never reaches the vault.

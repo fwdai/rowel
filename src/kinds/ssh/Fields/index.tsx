@@ -26,11 +26,12 @@ export default function Fields() {
             placeholder="••••••••"
           />
           <NoteField label="Note" />
+          {/* The user's own rows close the card, with the row that adds one. */}
+          <CustomFieldsField />
         </Panel>
       ) : (
         <Read />
       )}
-      <CustomFieldsField />
     </>
   )
 }

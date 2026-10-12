@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import Panel from '@/components/elements/Panel'
 import Segmented from '@/components/elements/Segmented'
 import IconButton from '@/components/elements/IconButton'
-import { CustomFieldsField, NoteField, useField } from '@/components/elements/fields'
+import { CustomFieldsField, NoteField, hasExtra, useField, useFields } from '@/components/elements/fields'
 import { META } from '@/components/elements/tokens'
 import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import { bandsOf, parseEnv, varsOf } from '../parse'
@@ -19,6 +19,7 @@ type Tab = 'variables' | 'file'
 // in the same string.
 export default function Fields() {
   const { t } = useTranslation()
+  const { entry } = useFields()
   const { value: body, editing } = useField('body')
   const { value: note } = useField('note')
   const [tab, setTab] = useState<Tab>('variables')
@@ -80,16 +81,15 @@ export default function Fields() {
       {/* Renders nothing outside edit mode; it writes the same `body`. */}
       <DropTarget />
 
-      {/* Reading, an empty note is no panel at all — like the card's aside. */}
-      {(editing || note !== '') && (
+      {/* The note, and under it what the file has no line for — the account it
+          belongs to, where it is deployed — as on every other kind. Reading,
+          with neither there is no panel at all, like the card's aside. */}
+      {(editing || note !== '' || hasExtra(entry)) && (
         <Panel className="mt-3">
           <NoteField label="Note" />
+          <CustomFieldsField />
         </Panel>
       )}
-
-      {/* What the file has no line for — the account it belongs to, where it
-          is deployed — as on every other kind. */}
-      <CustomFieldsField />
     </>
   )
 }

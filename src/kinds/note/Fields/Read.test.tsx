@@ -41,13 +41,12 @@ describe('a secure note, read', () => {
     expect(screen.getByTestId('entry-value-note')).toHaveTextContent('8842-1907')
   })
 
-  it('reads custom fields under the body, and has no section without them', () => {
+  it('reads custom fields under the body, and has no card for them without any', () => {
     const { unmount } = read()
-    expect(screen.queryByText('Custom fields')).toBeNull()
+    expect(screen.queryByTestId('entry-extra-label-0')).toBeNull()
     unmount()
 
     read({ ...NOTE, extra: [{ label: 'Issued by', value: 'GitHub' }] })
-    expect(screen.getByText('Custom fields')).toBeInTheDocument()
     expect(screen.getByTestId('entry-extra-label-0')).toHaveTextContent('Issued by')
     expect(screen.getByTestId('entry-extra-value-0')).toHaveTextContent('GitHub')
   })
