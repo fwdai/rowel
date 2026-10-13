@@ -213,7 +213,7 @@ describe('opening a file', () => {
     expect(image.getAttribute('src')).not.toBe(thumb.getAttribute('src'))
     expect(calls('attachment_read')).toEqual([{ id: 'a1' }])
 
-    await userEvent.click(screen.getByTestId('attachment-preview-close'))
+    await userEvent.click(screen.getByTestId('attachment-preview-esc'))
     expect(screen.queryByTestId('attachment-preview')).not.toBeInTheDocument()
   })
 
@@ -462,6 +462,40 @@ describe('stepping through the files', () => {
     await userEvent.click(close)
 
     expect(screen.queryByTestId('attachment-preview')).not.toBeInTheDocument()
+  })
+
+  // The view stays mounted while it steps, so a slow read of the file left
+  // behind can land after the next file's read has started. It is dropped:
+  // the first file's bytes never show under the second file's name.
+  it('drops a read of the file stepped away from, however late it lands', async () => {
+    three()
+    const pending = new Map<string, (bytes: ArrayBuffer) => void>()
+    mockCommand(
+      'attachment_read',
+      ({ id }) =>
+        new Promise<ArrayBuffer>(resolve => {
+          pending.set(id as string, resolve)
+        })
+    )
+    const made = vi.spyOn(URL, 'createObjectURL')
+    render(<Show entry={loginMeta()} />)
+
+    const [first] = await screen.findAllByTestId('attachment-open-button')
+    await userEvent.click(first)
+    await userEvent.keyboard('{ArrowRight}')
+    await waitFor(() => expect(pending.has('a2')).toBe(true))
+    expect(screen.queryByTestId('preview-text')).not.toBeInTheDocument()
+
+    // The second file answers first and is shown.
+    await act(async () => pending.get('a2')!(bytesOf('second')))
+    expect(await screen.findByTestId('preview-text')).toHaveTextContent('second')
+    const shown = made.mock.calls.length
+
+    // Then the first file's answer arrives, late: nothing changes.
+    await act(async () => pending.get('a1')!(bytesOf('first')))
+    expect(screen.getByTestId('preview-text')).toHaveTextContent('second')
+    expect(made.mock.calls.length).toBe(shown)
+    made.mockRestore()
   })
 
   it('offers no step for a lone file', async () => {

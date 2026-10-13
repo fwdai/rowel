@@ -42,15 +42,20 @@ const EMPTY: Held = { url: null, bytes: null, failed: false, unsupported: false,
  */
 export function useAttachmentUrl(attachment: Attachment, enabled: boolean): AttachmentUrl {
   const [held, setHeld] = useState<Held>(EMPTY)
-  // Whether the view that asked is still there, and the URL it holds — kept
-  // out of state so the cleanup and a late `degrade` see the latest.
-  const alive = useRef(false)
+  // Which file is being asked for, counted up on every change of file (and
+  // on unmount), and the URL held for it — kept out of state so the cleanup
+  // and a late answer see the latest. Every read and rendition carries the
+  // generation it was started under and is dropped if that has moved on:
+  // the view stays mounted while the preview steps from one file to the
+  // next, and a slow read of the first file landing after the second's had
+  // started would otherwise show the first file under the second's name.
+  const generation = useRef(0)
   const current = useRef<string | null>(null)
   const type = typeOf(attachment)
 
   const hold = useCallback(
-    (bytes: Uint8Array<ArrayBuffer>, rendition: boolean) => {
-      if (!alive.current) return
+    (bytes: Uint8Array<ArrayBuffer>, rendition: boolean, asked: number) => {
+      if (asked !== generation.current) return
       if (current.current) URL.revokeObjectURL(current.current)
       current.current = URL.createObjectURL(
         new Blob([bytes], { type: rendition ? 'image/png' : type })
@@ -62,12 +67,16 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
 
   useEffect(() => {
     if (!enabled) return
-    alive.current = true
+    // The same counter, under a name the cleanup may read: it is a box, not a
+    // node, so the lint's worry about a stale `.current` does not apply.
+    const asks = generation
+    const asked = ++asks.current
     readAttachment(attachment.id)
-      .then(bytes => hold(bytes, false))
-      .catch(() => alive.current && setHeld({ ...EMPTY, failed: true }))
+      .then(bytes => hold(bytes, false, asked))
+      .catch(() => asked === asks.current && setHeld({ ...EMPTY, failed: true }))
     return () => {
-      alive.current = false
+      // Anything still on its way answers a question no longer asked.
+      asks.current++
       if (current.current) URL.revokeObjectURL(current.current)
       current.current = null
       setHeld(EMPTY)
@@ -75,11 +84,13 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
   }, [attachment.id, enabled, hold])
 
   const degrade = useCallback(() => {
-    const giveUp = () => alive.current && setHeld(h => ({ ...h, unsupported: true }))
+    const asked = generation.current
+    const giveUp = () =>
+      asked === generation.current && setHeld(h => ({ ...h, unsupported: true }))
     if (!held.url) return
     if (held.rendition) return giveUp()
     renderAttachment(attachment.id)
-      .then(bytes => hold(bytes, true))
+      .then(bytes => hold(bytes, true, asked))
       .catch(giveUp)
   }, [attachment.id, held.url, held.rendition, hold])
 

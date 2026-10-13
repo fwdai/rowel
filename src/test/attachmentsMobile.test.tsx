@@ -7,6 +7,7 @@ import Sheet from '@/components/elements/Sheet'
 import { MAX_ATTACHMENT_BYTES } from '@/api/attachments'
 import { loginEntry, loginMeta } from './utils'
 import { calls, mockCommand, seedAttachments } from './ipc'
+import { setLayout } from './layout'
 
 // The platform is baked in at build time, so a phone build is a module-level
 // fact rather than a prop: this file is the attachments suite as that build
@@ -155,6 +156,7 @@ describe('a file on a phone', () => {
     seedAttachments([
       { id: 'a1', entryId: 'l1', name: 'contract.pdf', mime: 'application/pdf', size: 1536 }
     ])
+    setLayout('compact')
     renderShow()
 
     // The row itself carries no controls — not the desktop's hover actions
@@ -163,6 +165,10 @@ describe('a file on a phone', () => {
     const row = await screen.findByTestId('attachment-row')
     expect(row.querySelectorAll('button')).toHaveLength(1)
     await userEvent.click(screen.getByTestId('attachment-open-button'))
+    // The phone's way out is the bar's left control; the desktop's `esc`
+    // close is not in its DOM at all.
+    expect(screen.getByTestId('attachment-preview-close')).toHaveAccessibleName('Close')
+    expect(screen.queryByTestId('attachment-preview-esc')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('preview-remove-button'))
 
     const sheet = screen.getByTestId('attachment-remove-sheet')

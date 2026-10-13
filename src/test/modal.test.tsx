@@ -31,6 +31,31 @@ describe('Modal focus management', () => {
     expect(modal.contains(document.activeElement)).toBe(true)
   })
 
+  // A control the stylesheet hides for this shell cannot take focus; starting
+  // there would leave the keyboard behind the card. jsdom reports nothing
+  // about visibility, so the engine's answer is stood in for here.
+  it('starts focus on the first control that is actually shown', () => {
+    Object.defineProperty(HTMLElement.prototype, 'checkVisibility', {
+      configurable: true,
+      value(this: HTMLElement) {
+        return !this.hasAttribute('data-hidden')
+      }
+    })
+    try {
+      render(
+        <Modal onClose={vi.fn()} testid="plain" hideClose>
+          <button type="button" data-hidden="">
+            hidden
+          </button>
+          <button type="button">shown</button>
+        </Modal>
+      )
+      expect(document.activeElement).toBe(screen.getByText('shown'))
+    } finally {
+      delete (HTMLElement.prototype as { checkVisibility?: unknown }).checkVisibility
+    }
+  })
+
   it('keeps Tab from leaving the card', async () => {
     render(<Settings />)
     const modal = await openSettings()

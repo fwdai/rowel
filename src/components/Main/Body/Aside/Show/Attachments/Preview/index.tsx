@@ -5,6 +5,7 @@ import EscClose from '@/components/elements/EscClose'
 import IconButton from '@/components/elements/IconButton'
 import { BELOW_CHROME, META } from '@/components/elements/tokens'
 import { isTopmostDialog, useDialogFocus } from '@/hooks/useDialogFocus'
+import { useLayout } from '@/hooks/useLayout'
 import { useVisualViewport, viewportStyle } from '@/hooks/useVisualViewport'
 import { BackGlyph, CloseGlyph, DownloadGlyph, NextGlyph, TrashGlyph } from '@/components/Main/icons'
 import { cx } from '@/utils/cx'
@@ -53,12 +54,15 @@ interface Props {
  * naming the file, so the finger that landed on the wrong row finds out
  * here), and the way out. Under the bar, the file (`Stage`).
  *
- * Where the way out stands is the platform's: on the phone, Close is the
- * 44px control at the bar's left, where every pushed screen keeps its back;
- * on the desktop it is the `esc` close at the right end, where every dialog
- * of the app keeps it (`EscClose`), after the file's own actions. The bar
- * is a three-column grid so the name stays centred whatever stands at the
- * ends.
+ * Where the way out stands is the shell's: on the phone, Close is the 44px
+ * control at the bar's left, where every pushed screen keeps its back; on
+ * the desktop it is the `esc` close at the right end, where every dialog of
+ * the app keeps it (`EscClose`), after the file's own actions. Only one of
+ * the two is in the DOM, chosen by `useLayout` (the same 768px cut as `md:`)
+ * rather than hidden by it: the dialog's focus starts on its first control,
+ * and a control the stylesheet has hidden cannot take it, which left the
+ * keyboard outside the lightbox. The bar is a three-column grid so the name
+ * stays centred whatever stands at the ends.
  *
  * The view is of one file but knows its list: the caption says "2 of 5", the
  * left and right arrow keys step to the neighbours, and on the desktop a
@@ -96,6 +100,7 @@ export default function Preview({
   const frame = useRef<HTMLDivElement | null>(null)
   useDialogFocus(frame, onClose)
   const view = useVisualViewport()
+  const compact = useLayout() === 'compact'
   const kind = previewKind(attachment)
   const file = useAttachmentUrl(attachment, kind !== 'none')
   const hasPrevious = index > 0
@@ -134,14 +139,16 @@ export default function Preview({
     >
       <div className="grid h-14 flex-none grid-cols-[1fr_minmax(0,3fr)_1fr] items-center gap-2 px-2 max-md:inset-shadow-hairline md:h-16 md:px-4">
         <div className="flex items-center">
-          <IconButton
-            label={t('Close')}
-            onClick={onClose}
-            testid="attachment-preview-close"
-            className={cx(BAR_ACTION, 'md:hidden')}
-          >
-            <CloseGlyph size={20} />
-          </IconButton>
+          {compact && (
+            <IconButton
+              label={t('Close')}
+              onClick={onClose}
+              testid="attachment-preview-close"
+              className={BAR_ACTION}
+            >
+              <CloseGlyph size={20} />
+            </IconButton>
+          )}
         </div>
         <div className="min-w-0 text-center">
           <h1 id={TITLE_ID} className="truncate text-base font-medium">
@@ -169,11 +176,9 @@ export default function Preview({
             <TrashGlyph size={20} className="md:size-[18px]" />
           </IconButton>
           {/* A breath between the file's actions and the way out. */}
-          <EscClose
-            onClose={onClose}
-            testid="attachment-preview-esc"
-            className={cx(PILL, 'ml-3 max-md:hidden')}
-          />
+          {!compact && (
+            <EscClose onClose={onClose} testid="attachment-preview-esc" className={cx(PILL, 'ml-3')} />
+          )}
         </div>
       </div>
 

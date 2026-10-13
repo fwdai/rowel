@@ -5,9 +5,15 @@ const TABBABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 // A control taken out of the tab order (a dialog header's pointer-only close)
-// is not where focus should start or wrap either.
+// is not where focus should start or wrap either — nor one the stylesheet has
+// hidden for this shell (a `max-md:`-only control on the desktop): focusing
+// a `display: none` element does nothing, and a trap that keeps aiming at
+// one leaves focus behind the dialog for good. jsdom lays nothing out and
+// has no `checkVisibility`; there everything in the DOM counts.
 const tabbables = (root: HTMLElement | null) =>
-  Array.from(root?.querySelectorAll<HTMLElement>(TABBABLE) ?? []).filter(el => el.tabIndex >= 0)
+  Array.from(root?.querySelectorAll<HTMLElement>(TABBABLE) ?? []).filter(
+    el => el.tabIndex >= 0 && (typeof el.checkVisibility !== 'function' || el.checkVisibility())
+  )
 
 /**
  * Whether `dialog` is the dialog on top — the one a key press belongs to. A
