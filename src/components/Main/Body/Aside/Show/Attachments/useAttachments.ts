@@ -8,6 +8,7 @@ import {
   saveAttachment
 } from '@/api/attachments'
 import { pickFileToRead } from '@/api/tools'
+import { shrinkPhoto } from '@/lib/photo'
 import { describeError, errorKind } from '@/api/errors'
 import { attachBytes, attachFile, removeAttachment, useVault } from '@/store'
 
@@ -73,17 +74,17 @@ export function useAttachments(entryId: string) {
 
   /**
    * Attach a file the webview holds — a photo the phone's camera just took
-   * through the capture input. Refused by size before it is read: the backend
-   * would refuse it too, but not before the whole thing had been loaded and
-   * sent over.
+   * through the capture input, cut down first (`shrinkPhoto`). Refused by size
+   * before it is read: the backend would refuse it too, but not before the
+   * whole thing had been loaded and sent over.
    */
-  const addFile = (file: File) => {
-    if (file.size > MAX_ATTACHMENT_BYTES) return tooLarge()
-    return attach(async () => {
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      await attachBytes(entryId, file.name, bytes)
+  const addFile = (file: File) =>
+    attach(async () => {
+      const photo = await shrinkPhoto(file)
+      if (photo.size > MAX_ATTACHMENT_BYTES) return tooLarge()
+      const bytes = new Uint8Array(await photo.arrayBuffer())
+      await attachBytes(entryId, photo.name, bytes)
     })
-  }
 
   /**
    * Let the user pick a file and attach it: any file from the file browser, or

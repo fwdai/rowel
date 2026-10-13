@@ -102,7 +102,8 @@ const FILE_NAME_HEADER: &str = "x-file-name";
 /// Attach a file the webview holds as bytes — the one the phone's system
 /// picker handed its file input, from the camera, the photo library or Files —
 /// to the entry named in the request's headers. The bytes are the request's
-/// raw body, so a photo is not spelled out as an array of numbers.
+/// raw body, or a JSON array of them once Tauri has fallen back to its
+/// `postMessage` transport (see `body_bytes`); the headers ride either way.
 ///
 /// No grant is involved, and none would mean anything: `grants` exists because
 /// a *path* is the webview naming a file on disk it never read, whereas these
@@ -117,18 +118,10 @@ pub async fn attachment_add_bytes(
 ) -> Result<AttachmentDto> {
     let entry_id = header(&request, ENTRY_ID_HEADER)?;
     let name = header(&request, FILE_NAME_HEADER)?;
-    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
-        return Err(Error::Unsupported(
-            "the file has to be sent as bytes".into(),
-        ));
-    };
     // Sized before it is copied: a body past the cap is refused without a
     // second copy of it being made. The copy that is made is scrubbed on the
     // way out; the body Tauri holds is dropped with the request.
-    if body.len() as u64 > MAX_ATTACHMENT_BYTES {
-        return Err(Error::FileTooLarge);
-    }
-    let bytes = Zeroizing::new(body.clone());
+    let bytes = Zeroizing::new(super::body_bytes(request.body(), MAX_ATTACHMENT_BYTES)?);
     let (epoch, cipher, room) = begin_add_bytes(&state, &entry_id)?;
     let attachment =
         super::blocking(move || seal_bytes(&cipher, &entry_id, &name, &bytes, room)).await?;
