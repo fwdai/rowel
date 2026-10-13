@@ -659,9 +659,7 @@ fn rekey_one(
     // has just rewritten a whole database in.
     if let Some(tokens) = tokens {
         if let Err(e) = crate::sync::persist_tokens_in(dir, &new_cryptor, &tokens) {
-            log::warn!(
-                "could not re-seal this lockbox's Drive token under the new password: {e}"
-            );
+            log::warn!("could not re-seal this lockbox's Drive token under the new password: {e}");
         }
     }
     Ok(material)
