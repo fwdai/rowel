@@ -143,7 +143,8 @@ interprocess = "2"
 # Passkeys through the extension (`browser::passkeys`), where the host is the
 # WebAuthn client: tokio's current-thread runtime drives the authenticator's
 # async traits on the connection's own thread. Already in the locked graph.
-tokio = { version = "1", features = ["rt"] }
+# `sync` for the async lock the emblem set's version check is held behind.
+tokio = { version = "1", features = ["rt", "sync"] }
 
 # Frameworks that exist on both macOS and iOS: Foundation, LocalAuthentication,
 # Vision and the Keychain.

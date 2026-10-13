@@ -138,8 +138,8 @@ fn migration_list() -> Vec<M<'static>> {
 pub enum ImageCache {
     /// Website favicons, by host.
     Favicons,
-    /// Passport-cover emblems, by ISO 3166-1 alpha-3 country and the version
-    /// of the emblem set (`UKR@2`).
+    /// Passport-cover emblems, by ISO 3166-1 alpha-3 country, beside one
+    /// `@set` row: the version of the website's set they were fetched under.
     Emblems,
 }
 
@@ -630,6 +630,13 @@ impl SqliteStore {
             }
             None => None,
         })
+    }
+
+    /// Forget everything `cache` holds, hits and misses alike.
+    pub fn clear_images(&self, cache: ImageCache) -> Result<()> {
+        let (table, _) = cache.table();
+        self.lock()?.execute(&format!("DELETE FROM {table}"), [])?;
+        Ok(())
     }
 
     /// Record the lookup for `key` in `cache`: its image, or `None` for "has

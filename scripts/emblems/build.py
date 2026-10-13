@@ -9,9 +9,9 @@ arms reduced to the symbol a passport stamps in foil, as a one-colour SVG.
 
     uv run scripts/emblems/build.py --out <dir>
 
-Then copy <dir> into rowel-web as public/assets/passport/emblems, and bump
-`SET` in src-tauri/src/emblem.rs: the app caches an emblem for good, so that
-is how it learns the set has changed.
+Then copy <dir> into rowel-web as public/assets/passport/emblems and deploy.
+That is the whole update: `version.json`, a hash of every SVG in <dir>, is how
+the app learns the set has changed (see src-tauri/src/emblem.rs).
 
 For every ISO 3166-1 alpha-3 code `src/utils/countries.ts` knows, the arms are
 Wikidata's "coat of arms image" (P94) unless `overrides.json` names another
@@ -39,7 +39,7 @@ how hard a change of colour has to be to be cut (`EDGE` by default; higher
 for art so heavily shaded that its lines would dissolve it, false for none).
 `"skip": true` leaves a country out.
 
-Alongside the SVGs it writes `credits.json` (each source file's author and
+Alongside the SVGs it writes `version.json`, `credits.json` (each source file's author and
 licence, from Commons: derived from CC-BY-SA art, ours need the credit too),
 and contact sheets to review every country on its own cover colour.
 """
@@ -379,6 +379,18 @@ def sheets(masks: dict[str, np.ndarray], originals: dict[str, Path], review: Pat
         sheet.save(review / f"sheet-{number}.png")
 
 
+def write_version(out: Path) -> str:
+    """Hash every SVG in `out` — names and bytes, in name order — into the
+    `version.json` the app checks. Over the folder rather than this run, so a
+    rebuild of a few countries changes it as surely as a full one."""
+    digest = hashlib.sha256()
+    for path in sorted(out.glob("*.svg")):
+        digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+    version = digest.hexdigest()[:16]
+    (out / "version.json").write_text(json.dumps({"version": version}) + "\n")
+    return version
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", type=Path, required=True, help="where the SVGs go")
@@ -418,7 +430,11 @@ def main() -> None:
             json.dumps(credits({c: files[c] for c in masks}), indent=2, ensure_ascii=False) + "\n"
         )
     sheets(masks, originals, args.review)
-    print(f"{len(masks)} emblems → {args.out}; review sheets in {args.review}", file=sys.stderr)
+    version = write_version(args.out)
+    print(
+        f"{len(masks)} emblems → {args.out} (set {version}); review sheets in {args.review}",
+        file=sys.stderr,
+    )
 
 
 if __name__ == "__main__":

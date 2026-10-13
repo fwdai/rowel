@@ -6,33 +6,52 @@
 //! and served as `<WEBSITE>/assets/passport/emblems/<ISO>.svg`. A country with
 //! none answers 404, which is cached as a miss like a favicon's.
 //!
+//! The website is the source of truth: beside the emblems it serves
+//! `version.json`, a hash of the whole set. The app reads it at most every
+//! [`RECHECK`], and when it differs from the version the vault's cache was
+//! filled under, the cache is emptied and each emblem is fetched again the next
+//! time it is drawn. So publishing a new set is the whole update — no release.
+//! The version file is the same for everyone and says nothing about the vault;
+//! offline, the cache is used as it stands.
+//!
 //! Privacy: a favicon is fetched from the host its entry already points at, so
 //! the request tells that host nothing new. This one tells our website a
 //! passport's issuing country — asked only while the vault is unlocked, once per
-//! country per workspace (and per [`SET`] of emblems), and cached in the vault's SQLCipher database (the
-//! `emblems` table) so the countries are not spelled out in file names beside it.
+//! country per workspace and set, and cached in the vault's SQLCipher database
+//! (the `emblems` table) so the countries are not spelled out in file names
+//! beside it.
 //!
 //! An SVG can carry script, which is why the favicon fetch refuses one. These
 //! come from one host and in one shape — a `viewBox` and even-odd paths, nothing
 //! else — so that shape is all that is accepted ([`is_emblem`]); anything with
 //! one character more is a miss.
 
+use std::time::{Duration, Instant};
+
 use tauri::AppHandle;
+use tokio::sync::Mutex;
 use url::Url;
 
 use crate::app::WEBSITE;
 use crate::error::Result;
 use crate::favicon::{cache, cached, data_uri, fetch_typed, with_session};
-use crate::session::Epoch;
+use crate::session::{Epoch, Session};
 use crate::store::ImageCache;
 
 const SVG: &str = "image/svg+xml";
+const JSON: &str = "application/json";
 
-/// Which generation of the website's emblems the cache holds. A cached emblem
-/// never ages out (see `SqliteStore::get_image`), so the cache is keyed by this
-/// too: bump it whenever `scripts/emblems/build.py` is rerun and its output
-/// published, and every vault fetches the new set instead of keeping the old.
-const SET: u32 = 3;
+/// How often the set's version is asked for, successfully or not.
+const RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// The row of the emblems table that holds the version its other rows were
+/// fetched under. Not a country code, so it can never be mistaken for one.
+const SET_KEY: &str = "@set";
+
+/// The website's version of the set as last read, and when it was asked for.
+/// Behind an async lock held across the request, so the first covers drawn
+/// after launch wait for one check instead of each making their own.
+static CHECKED: Mutex<Option<(Option<String>, Instant)>> = Mutex::const_new(None);
 
 /// The emblem for `country` (ISO 3166-1 alpha-3) as a data: URI, or None when
 /// there is none. Gated, cached and cut short by a lock exactly as
@@ -42,25 +61,85 @@ pub async fn fetch(app: &AppHandle, country: &str, epoch: Epoch) -> Result<Optio
     if country.len() != 3 || !country.bytes().all(|b| b.is_ascii_uppercase()) {
         return Ok(None);
     }
-    let key = format!("{country}@{SET}");
-    if let Some(cached) = with_session(app, |session| {
-        cached(session, ImageCache::Emblems, &key, epoch)
-    }) {
-        return Ok(cached);
-    }
     let allowed = || {
         with_session(app, |session| {
             session.is_unlocked() && session.epoch() == epoch
         })
     };
+    if let Some(set) = current_set(&allowed).await {
+        with_session(app, |session| adopt_set(session, epoch, &set));
+    }
+    if let Some(cached) = with_session(app, |session| {
+        cached(session, ImageCache::Emblems, country, epoch)
+    }) {
+        return Ok(cached);
+    }
     let found = match fetch_typed(url(country), &allowed, &[SVG]).await {
         Some((_, body)) if is_emblem(&body) => Some(data_uri(SVG, &body)),
         _ => None,
     };
     with_session(app, |session| {
-        cache(session, ImageCache::Emblems, &key, epoch, found.as_deref())
+        cache(
+            session,
+            ImageCache::Emblems,
+            country,
+            epoch,
+            found.as_deref(),
+        )
     });
     Ok(found)
+}
+
+/// The website's current version of the set: asked for at most every
+/// [`RECHECK`], and otherwise the answer from last time. None until a check
+/// has succeeded — the cache is then used as it stands.
+async fn current_set(allowed: &impl Fn() -> bool) -> Option<String> {
+    let mut checked = CHECKED.lock().await;
+    if let Some((set, at)) = checked.as_ref() {
+        if at.elapsed() < RECHECK {
+            return set.clone();
+        }
+    }
+    let url = Url::parse(&format!("{WEBSITE}/assets/passport/emblems/version.json"))
+        .expect("the website makes a valid URL");
+    let fresh = match fetch_typed(url, allowed, &[JSON]).await {
+        Some((_, body)) => parse_set(&body),
+        None => None,
+    };
+    // A failed check keeps the version it had, and is not retried before the
+    // next recheck: offline, every cover would otherwise ask again.
+    let set = fresh.or_else(|| checked.as_ref().and_then(|(set, _)| set.clone()));
+    *checked = Some((set.clone(), Instant::now()));
+    set
+}
+
+/// The version out of `version.json`: `{"version": "<hex>"}`, the hex short
+/// and nothing else, since it ends up as a row of the cache.
+fn parse_set(body: &[u8]) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        version: String,
+    }
+    let version = serde_json::from_slice::<File>(body).ok()?.version;
+    (!version.is_empty() && version.len() <= 64 && version.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then_some(version)
+}
+
+/// Bring the session's emblem cache onto `set`: if it was filled under another
+/// version (or none), empty it and record this one, so every emblem is fetched
+/// again when it is next drawn. Misses go with it — a country the old set had
+/// no emblem for may have one now.
+fn adopt_set(session: &Session, epoch: Epoch, set: &str) {
+    let Ok(store) = session.store_at(epoch) else {
+        return;
+    };
+    let current = store.get_image(ImageCache::Emblems, SET_KEY, i64::MAX);
+    if matches!(current, Ok(Some(Some(ref held))) if held == set) {
+        return;
+    }
+    if store.clear_images(ImageCache::Emblems).is_ok() {
+        let _ = store.put_image(ImageCache::Emblems, SET_KEY, Some(set));
+    }
 }
 
 fn url(country: &str) -> Url {
@@ -152,6 +231,60 @@ mod tests {
             assert!(!is_emblem(hostile.as_bytes()), "{hostile}");
         }
         assert!(!is_emblem(&[0xff, 0xfe]));
+    }
+
+    #[test]
+    fn the_version_file_names_a_short_hex_version_and_nothing_else() {
+        assert_eq!(
+            parse_set(br#"{"version": "3f9a0c21be"}"#).as_deref(),
+            Some("3f9a0c21be")
+        );
+        for bad in [
+            &br#"{"version": ""}"#[..],
+            br#"{"version": "@set"}"#,
+            br#"{"version": "abc def"}"#,
+            br#"{"other": "abc"}"#,
+            b"<html>not found</html>",
+        ] {
+            assert_eq!(parse_set(bad), None, "{}", String::from_utf8_lossy(bad));
+        }
+    }
+
+    // A new set on the website empties what the vault cached under the old one
+    // — misses too — and the same set again leaves the cache alone.
+    #[test]
+    fn a_new_set_on_the_website_empties_the_cache() {
+        use crate::crypto::VaultKey;
+        use crate::favicon::MISS_TTL;
+        use crate::store::SqliteStore;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key = VaultKey::legacy_from_password("pw");
+        let store = SqliteStore::open(&dir.path().join("vault.db"), key.sqlcipher_key().as_slice())
+            .unwrap();
+        let mut session = Session::default();
+        session.set(key, store, false);
+        let epoch = session.epoch();
+        let ttl = MISS_TTL.as_millis() as i64;
+        let held = |code: &str| {
+            session
+                .store()
+                .unwrap()
+                .get_image(ImageCache::Emblems, code, ttl)
+                .unwrap()
+        };
+
+        adopt_set(&session, epoch, "aaaa");
+        cache(&session, ImageCache::Emblems, "UKR", epoch, Some("data:x"));
+        cache(&session, ImageCache::Emblems, "TUR", epoch, None);
+
+        adopt_set(&session, epoch, "aaaa");
+        assert_eq!(held("UKR"), Some(Some("data:x".into())), "same set: kept");
+
+        adopt_set(&session, epoch, "bbbb");
+        assert_eq!(held("UKR"), None, "new set: the emblem is asked for again");
+        assert_eq!(held("TUR"), None, "and so is a country that had none");
+        assert_eq!(held(SET_KEY), Some(Some("bbbb".into())));
     }
 
     #[test]
