@@ -14,7 +14,9 @@
 //     background page for a native message, and the port has to keep polling
 //     for lock signals (safari-native.js);
 //   - safari-native.js is loaded right after the polyfill, before anything
-//     that connects;
+//     that connects, and upstream's one connectNative call
+//     (background/client.js) is rewritten to the port it provides, since
+//     Safari's own browser.runtime.connectNative cannot be overridden;
 //   - the Gecko settings go (add-on id, data collection), as does any
 //     manifest `key` (Chromium's pinned id means nothing to Safari), and the
 //     blocking webRequest permission Safari does not support (upstream already
@@ -30,6 +32,9 @@ const source = join(root, 'rowel');
 const out = join(root, 'build', 'safari');
 const SHIM = 'background/safari-native.js';
 const POLYFILL = 'common/browser-polyfill.min.js';
+const CLIENT = 'background/client.js';
+const UPSTREAM_CONNECT = 'browser.runtime.connectNative(';
+const SAFARI_CONNECT = 'globalThis.rowelConnectNative(';
 
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
 
@@ -61,6 +66,13 @@ const skip = join(source, 'tests');
 cpSync(source, out, { recursive: true, filter: (src) => src !== skip });
 cpSync(join(root, 'safari', 'safari-native.js'), join(out, SHIM));
 writeFileSync(join(out, 'manifest.json'), JSON.stringify(manifest, null, 4) + '\n');
+
+const client = readFileSync(join(out, CLIENT), 'utf8');
+const calls = client.split(UPSTREAM_CONNECT).length - 1;
+if (calls !== 1) {
+    throw new Error(`${CLIENT} has ${calls} calls of ${UPSTREAM_CONNECT}...), expected the one to point at the Safari port`);
+}
+writeFileSync(join(out, CLIENT), client.replace(UPSTREAM_CONNECT, SAFARI_CONNECT));
 
 for (const script of scripts) {
     if (!existsSync(join(out, script))) {
