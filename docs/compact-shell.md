@@ -176,15 +176,26 @@ and not the inset of the text within one — through one wrapper, `EDGE_GUTTER`,
 as starting before it), and none of them carries an inset of its own. A label
 over a card (`SECTION_LABEL`) keeps the card's inset, aligned with its
 captions as iOS aligns a group's header with its cells.
-No controls on a line, on either shell: the whole line
+No controls on a line on the phone: the whole line
 opens the file, and saving and removing live in the preview
 (`Attachments/Preview`), one view for both shells — the screen on the phone,
 a lightbox over the dimmed window on the desktop, told apart by
 `max-md:`/`md:` on the same elements — with the
-file's name in its bar and a Quick Look-style close on the left. Removing
-asks first through `elements/ConfirmSheet`: the platform's action sheet on the
-phone, a red verb over a bold Cancel from the bottom edge, and the same two
-rows on a small card on the desktop. The bytes come to the webview only for
+file's name in its bar and a Quick Look-style close on the left. On the
+desktop the same two actions also stand at the line's end, shown to the
+pointer and to a Tab (`HOVER_ONLY`, gated on `isMobile` rather than a
+breakpoint, since it is the hover that a phone lacks), as every value row
+offers its copy. The preview knows its list: the caption counts ("2 of 5"),
+the arrow keys step to the neighbours, and the desktop floats a round control
+at each edge of the stage for the pointer; removing the open file moves on to
+the next. A picture larger than the stage is a press away from its actual
+size on the desktop (`Preview/Picture`), the pointer saying which way.
+Which file is open and which is being removed are the section's
+(`Attachments/index`), so a row's action and the preview's bar ask through
+one `ConfirmSheet`, rendered after the preview so it is the dialog on top.
+Removing asks first through `elements/ConfirmSheet`: the platform's action
+sheet on the phone, a red verb over a bold Cancel from the bottom edge, and
+the same two rows on a small card on the desktop. The bytes come to the webview only for
 the file being shown (`attachment_read`), never with the list — a row's
 thumbnail is the backend's small PNG of the picture (`attachment_thumbnail`),
 turned the way its EXIF says, asked for as the row comes on screen and made

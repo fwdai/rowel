@@ -157,9 +157,12 @@ describe('a file on a phone', () => {
     ])
     renderShow()
 
-    // The row itself carries no controls: the file opens, and the actions are
-    // the preview's.
-    await userEvent.click(await screen.findByTestId('attachment-open-button'))
+    // The row itself carries no controls — not the desktop's hover actions
+    // either, since a finger cannot hover: the file opens, and the actions
+    // are the preview's.
+    const row = await screen.findByTestId('attachment-row')
+    expect(row.querySelectorAll('button')).toHaveLength(1)
+    await userEvent.click(screen.getByTestId('attachment-open-button'))
     await userEvent.click(screen.getByTestId('preview-remove-button'))
 
     const sheet = screen.getByTestId('attachment-remove-sheet')

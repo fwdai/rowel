@@ -10,6 +10,16 @@ const tabbables = (root: HTMLElement | null) =>
   Array.from(root?.querySelectorAll<HTMLElement>(TABBABLE) ?? []).filter(el => el.tabIndex >= 0)
 
 /**
+ * Whether `dialog` is the dialog on top — the one a key press belongs to. A
+ * dialog that takes keys of its own beyond this hook's (the file preview's
+ * arrows) asks this first, so a sheet opened over it gets them instead.
+ */
+export const isTopmostDialog = (dialog: HTMLElement | null): boolean => {
+  const dialogs = document.querySelectorAll('[role="dialog"]')
+  return dialogs[dialogs.length - 1] === dialog
+}
+
+/**
  * The keyboard contract every dialog frame shares — the centered `Modal` and
  * the full-screen `Sheet` alike.
  *
@@ -50,8 +60,7 @@ export function useDialogFocus(dialog: RefObject<HTMLElement | null>, onClose: (
       // Something nearer the key already handled it (a field's own Esc, the
       // generator's own listener) — acting again would close twice.
       if (e.defaultPrevented) return
-      const dialogs = document.querySelectorAll('[role="dialog"]')
-      if (dialogs[dialogs.length - 1] !== dialog.current) return
+      if (!isTopmostDialog(dialog.current)) return
       // Escape closes every dialog — the scrim and the X are pointer-only exits.
       if (e.key === 'Escape') {
         e.preventDefault()
