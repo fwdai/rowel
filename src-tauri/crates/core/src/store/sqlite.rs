@@ -107,12 +107,22 @@ fn migration_list() -> Vec<M<'static>> {
          );
          CREATE INDEX attachments_entry ON attachments (entry_id);",
         ),
+        // An ID document's type and issuing country, derived from the payload
+        // at save time so the list can draw a passport's cover without
+        // unsealing it. Neither is a secret: a passport says what it is and who
+        // issued it on its cover. NULL `doc_type` = not yet derived (backfilled
+        // on unlock); NULL `doc_country` is also simply the truth for a document
+        // whose country is not an ISO code, so the type is the marker.
+        M::up(
+            "ALTER TABLE entries ADD COLUMN doc_type TEXT;
+             ALTER TABLE entries ADD COLUMN doc_country TEXT;",
+        ),
     ]
 }
 
 // New columns are appended last so pre-existing column indexes stay put.
-const COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, payload, card_brand, favorite, has_passkey, file_name, var_count, username";
-const META_COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, card_brand, favorite, has_passkey, file_name, var_count, username";
+const COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, payload, card_brand, favorite, has_passkey, file_name, var_count, username, doc_type, doc_country";
+const META_COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, card_brand, favorite, has_passkey, file_name, var_count, username, doc_type, doc_country";
 
 const ATT_META_COLS: &str = "id, entry_id, name, mime, size, created_at, updated_at, deleted_at";
 const ATT_COLS: &str = "id, entry_id, name, mime, size, created_at, updated_at, deleted_at, blob";
@@ -398,6 +408,17 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Stamp an identity row's derived document type and country without
+    /// touching `updated_at`, for the same reason [`SqliteStore::set_card_brand`]
+    /// does not.
+    pub fn set_doc_meta(&self, id: &str, doc_type: &str, doc_country: Option<&str>) -> Result<()> {
+        self.lock()?.execute(
+            "UPDATE entries SET doc_type = ?1, doc_country = ?2 WHERE id = ?3",
+            params![doc_type, doc_country, id],
+        )?;
+        Ok(())
+    }
+
     /// Stamp a login row's derived username without touching `updated_at`.
     pub fn set_username(&self, id: &str, username: &str) -> Result<()> {
         self.lock()?.execute(
@@ -589,9 +610,11 @@ impl SqliteStore {
     /// existing vault. Keep in step with `migration_list`.
     #[cfg(test)]
     pub(crate) fn drop_favicons_for_test(&self) -> Result<()> {
-        let previous = schema_version() - 3;
+        let previous = schema_version() - 4;
         self.lock()?.execute_batch(&format!(
-            "DROP TABLE attachments;
+            "ALTER TABLE entries DROP COLUMN doc_type;
+             ALTER TABLE entries DROP COLUMN doc_country;
+             DROP TABLE attachments;
              ALTER TABLE entries DROP COLUMN username;
              DROP TABLE favicons;
              PRAGMA user_version = {previous};"
@@ -732,14 +755,15 @@ impl VaultStore for SqliteStore {
         // written, so a save that drops the last passkey has to clear it.
         conn.execute(
             &format!(
-                "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+                "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
                  ON CONFLICT(id) DO UPDATE SET
                    kind=excluded.kind, title=excluded.title, tags=excluded.tags,
                    url_host=excluded.url_host, updated_at=excluded.updated_at,
                    deleted_at=excluded.deleted_at, payload=excluded.payload,
                    card_brand=excluded.card_brand, has_passkey=excluded.has_passkey,
                    file_name=excluded.file_name, var_count=excluded.var_count,
-                   username=excluded.username"
+                   username=excluded.username, doc_type=excluded.doc_type,
+                   doc_country=excluded.doc_country"
             ),
             params![
                 rec.id,
@@ -761,6 +785,8 @@ impl VaultStore for SqliteStore {
                 rec.file_name,
                 rec.var_count,
                 rec.username,
+                rec.doc_type,
+                rec.doc_country,
             ],
         )?;
         Ok(())
@@ -826,6 +852,7 @@ impl VaultStore for SqliteStore {
              SET payload = x'', title = '', tags = '[]', url_host = '',
                  card_brand = NULL, favorite = 0, has_passkey = 0,
                  file_name = NULL, var_count = NULL, username = NULL,
+                 doc_type = NULL, doc_country = NULL,
                  updated_at = ?1
              WHERE id = ?2 AND deleted_at IS NOT NULL",
             params![now, id],
@@ -1161,7 +1188,7 @@ fn row_to_attachment(row: &Row) -> rusqlite::Result<Attachment> {
 // sync-in paths (import, merge_records) need.
 fn verbatim_upsert() -> String {
     format!(
-        "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+        "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
          ON CONFLICT(id) DO UPDATE SET
            kind=excluded.kind, title=excluded.title, tags=excluded.tags,
            url_host=excluded.url_host, created_at=excluded.created_at,
@@ -1169,7 +1196,8 @@ fn verbatim_upsert() -> String {
            payload=excluded.payload, card_brand=excluded.card_brand,
            favorite=excluded.favorite, has_passkey=excluded.has_passkey,
            file_name=excluded.file_name, var_count=excluded.var_count,
-           username=excluded.username"
+           username=excluded.username, doc_type=excluded.doc_type,
+           doc_country=excluded.doc_country"
     )
 }
 
@@ -1202,6 +1230,8 @@ fn exec_record(stmt: &mut Statement, r: &Record) -> rusqlite::Result<usize> {
         r.file_name,
         r.var_count,
         r.username,
+        r.doc_type,
+        r.doc_country,
     ])
 }
 
@@ -1222,6 +1252,8 @@ fn row_to_record(row: &Row) -> rusqlite::Result<Record> {
         file_name: row.get(12)?,
         var_count: row.get(13)?,
         username: row.get(14)?,
+        doc_type: row.get(15)?,
+        doc_country: row.get(16)?,
     })
 }
 
@@ -1241,6 +1273,8 @@ fn row_to_meta(row: &Row) -> rusqlite::Result<EntryMeta> {
         file_name: row.get(11)?,
         var_count: row.get(12)?,
         username: row.get(13)?,
+        doc_type: row.get(14)?,
+        doc_country: row.get(15)?,
     })
 }
 

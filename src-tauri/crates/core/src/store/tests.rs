@@ -74,6 +74,8 @@ fn rec(id: &str, payload: &[u8]) -> Record {
         file_name: None,
         var_count: None,
         username: None,
+        doc_type: None,
+        doc_country: None,
     }
 }
 
@@ -212,6 +214,8 @@ fn purge_empties_the_row_and_drops_it_from_the_trash() {
         deleted_at: Some(1000),
         title: "Secret Thing".into(),
         username: Some("alice".into()),
+        doc_type: Some("passport".into()),
+        doc_country: Some("UKR".into()),
         ..stamped("1", b"sealed-payload", 1000)
     }]);
 
@@ -225,6 +229,7 @@ fn purge_empties_the_row_and_drops_it_from_the_trash() {
     assert!(purged.payload.is_empty());
     assert_eq!(purged.title, "");
     assert_eq!(purged.username, None);
+    assert_eq!((purged.doc_type, purged.doc_country), (None, None));
     assert!(purged.updated_at > 1000);
 }
 
@@ -455,6 +460,38 @@ fn build_record_stamps_a_logins_username() {
 
     let env = migrate::build_record(&env_entry(None, "A=1\n"), b"s".to_vec()).unwrap();
     assert_eq!(env.username, None);
+}
+
+fn identity_entry(doc_type: Option<&str>, country: &str) -> Entry {
+    let mut value = serde_json::json!({
+        "id": "i1", "type": "identity", "title": "Passport", "country": country
+    });
+    if let Some(doc_type) = doc_type {
+        value["doc_type"] = serde_json::Value::String(doc_type.into());
+    }
+    serde_json::from_value(value).unwrap()
+}
+
+// The type is stamped on every identity, so it is the backfill's marker; the
+// country only when it is a code the list can draw a cover for.
+#[test]
+fn build_record_stamps_an_identitys_document_type_and_country() {
+    let stamp = |entry: &Entry| {
+        let rec = migrate::build_record(entry, b"s".to_vec()).unwrap();
+        (rec.doc_type, rec.doc_country)
+    };
+    let some = |s: &str| Some(s.to_string());
+
+    assert_eq!(
+        stamp(&identity_entry(Some("passport"), " ukr ")),
+        (some("passport"), some("UKR"))
+    );
+    assert_eq!(
+        stamp(&identity_entry(Some("id_card"), "United Kingdom")),
+        (some("id_card"), None)
+    );
+    assert_eq!(stamp(&identity_entry(None, "GB")), (some(""), None));
+    assert_eq!(stamp(&sample_entry()), (None, None));
 }
 
 // What counts as a variable line, and what does not: comments, blank lines,

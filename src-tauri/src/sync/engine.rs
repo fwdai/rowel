@@ -554,6 +554,8 @@ mod tests {
             file_name: None,
             var_count: None,
             username: None,
+            doc_type: None,
+            doc_country: None,
         }
     }
 

@@ -123,6 +123,24 @@ describe('Entry list', () => {
     setFilterType(null)
   })
 
+  it('draws a passport with a known country as its cover', () => {
+    const identity = { type: 'identity' as const, urlHost: '' }
+    withEntries([
+      loginMeta({ id: 'p1', title: 'My passport', docType: 'passport', docCountry: 'UKR', ...identity }),
+      loginMeta({ id: 'p2', title: 'Licence', docType: 'driver_license', docCountry: 'UKR', ...identity }),
+      loginMeta({ id: 'p3', title: 'Odd code', docType: 'passport', docCountry: 'XYZ', ...identity })
+    ])
+    setFilterType('identity')
+    render(<ListColumn />)
+
+    // Only the passport gets a cover: a licence has none, and a code that is no
+    // country has no colour to draw.
+    const covers = screen.getAllByTestId('passport-cover')
+    expect(covers.map(cover => cover.dataset.country)).toEqual(['UKR'])
+    expect(covers[0]).toHaveStyle({ backgroundColor: '#17305D' })
+    setFilterType(null)
+  })
+
   it('sorts alphabetically', async () => {
     // The sort control is one of the title row's actions, handed down by the
     // shell — the wide one sends exactly this.

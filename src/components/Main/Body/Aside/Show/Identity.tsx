@@ -4,6 +4,8 @@ import { cx } from '@/utils/cx'
 import CardBrandMark from '@/components/elements/CardBrandMark'
 import { hasBrandMark } from '@/utils/cardBrand'
 import { kindOf } from '@/kinds'
+import Cover from '@/kinds/identity/Cover'
+import { passportCountry } from '@/kinds/identity/meta'
 import { useFavicon } from '@/hooks/useFavicon'
 
 interface Props {
@@ -19,10 +21,12 @@ interface Props {
 }
 
 // Who the entry is: its own artwork if it has any — a favicon, a card brand
-// mark — and the kind's glyph otherwise, beside the title. One component, two
-// sizes: both shells draw the same identity, only bigger where there is room.
+// mark, a passport's cover — and the kind's glyph otherwise, beside the title.
+// One component, two sizes: both shells draw the same identity, only bigger
+// where there is room.
 export default function Identity({ entry, tile, glyph, className, children }: Props) {
   const icon = useFavicon(entry.urlHost)
+  const country = passportCountry(entry)
   const Glyph = kindOf(entry.type).Glyph
   // Brand marks are wider than they are tall, so they ride 4px under the kind
   // glyph's edge at every size — the pairing the header has always drawn.
@@ -46,6 +50,8 @@ export default function Identity({ entry, tile, glyph, className, children }: Pr
           <img src={icon} alt="" className="h-full w-full object-cover" />
         ) : hasBrandMark(entry.cardBrand) ? (
           <CardBrandMark brand={entry.cardBrand} size={mark} />
+        ) : country ? (
+          <Cover country={country} size={glyph} />
         ) : (
           <Glyph size={glyph} />
         )}
