@@ -12,8 +12,8 @@ use std::future::Future;
 use reqwest::Client;
 use serde_json::{json, Value};
 
-use super::layout;
 use crate::error::{Error, Result};
+use crate::sync::{layout, read_capped};
 
 const FILES: &str = "https://www.googleapis.com/drive/v3/files";
 const UPLOAD: &str = "https://www.googleapis.com/upload/drive/v3/files";
@@ -505,22 +505,6 @@ pub async fn download_public(
             Error::FileTooLarge => Error::ShareTooLarge,
             e => e,
         })
-}
-
-/// Read a response body, failing with [`Error::FileTooLarge`] the moment it
-/// exceeds `max_bytes` — before the excess is ever held in memory. The check
-/// is on what arrives, not on `Content-Length`, so a body that lies about its
-/// size (or sends none) is bounded the same. Crate-visible: every download in
-/// the app has a cap, and this is the one loop that enforces one.
-pub(crate) async fn read_capped(resp: &mut reqwest::Response, max_bytes: usize) -> Result<Vec<u8>> {
-    let mut body = Vec::new();
-    while let Some(chunk) = resp.chunk().await.map_err(other)? {
-        if body.len() + chunk.len() > max_bytes {
-            return Err(Error::FileTooLarge);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
 }
 
 /// One file by id, or `None` when Drive says there is no such file.

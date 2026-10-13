@@ -1,25 +1,33 @@
-//! Google OAuth2 with PKCE (port of `gdrive/auth.js`), in two shapes.
+//! The account a workspace syncs through: OAuth2 with PKCE (port of
+//! `gdrive/auth.js`), in two shapes, and the sealed token file it ends in.
+//!
+//! The flow is the same for every provider; what differs — endpoints, consent
+//! parameters, the client id, the redirect a phone registers — is data, an
+//! [`OAuthConfig`] per provider (see [`super::provider::oauth_config`]). Which
+//! config a call uses comes from the tokens' own [`Provider`], or, before there
+//! are tokens, from the provider the caller is connecting.
 //!
 //! Desktop talks to a Desktop-app client: the consent URL opens in the browser
 //! and a one-shot loopback listener on 127.0.0.1 captures the auth code, so the
 //! whole flow is one blocking call. The listener takes whichever port the OS
-//! hands it (Google allows any loopback port for a Desktop-app client) and
-//! gives up after [`CONSENT_TIMEOUT`], so a consent tab the user closes
-//! without answering cannot wedge a fixed port — or the "pending" state the
-//! frontend shows — until the app restarts.
+//! hands it (Google allows any loopback port for a Desktop-app client; a
+//! provider that does not lists the ports it registered, see
+//! [`OAuthConfig::loopback_ports`]) and gives up after [`CONSENT_TIMEOUT`], so a
+//! consent tab the user closes without answering cannot wedge a port — or the
+//! "pending" state the frontend shows — until the app restarts.
 //!
 //! iOS talks to an iOS client, which is public (no secret, PKCE mandatory) and
 //! is registered against a redirect URI on its own URL scheme. Safari takes the
 //! screen and the app is suspended behind it, so the flow has to be cut in half
-//! — [`begin`] opens the consent page, [`complete`] runs when iOS reopens the
-//! app with the redirect. Everything between the two (the PKCE pair, the auth
-//! URL, the token exchange, the token file) is shared.
+//! — [`begin`] opens the consent page, [`exchange_for_tokens`] runs when iOS
+//! reopens the app with the redirect. Everything between the two (the PKCE
+//! pair, the auth URL, the token exchange, the token file) is shared.
 //!
 //! Every request carries a random `state` that the redirect has to echo back
 //! ([`parse_redirect`]). On desktop that is belt-and-braces over a loopback port
 //! only this process listens on; on iOS it is the whole defence — any app can
 //! open a URL on our scheme, and without the nonce one could pass off a stray
-//! URL as Google's answer to a flow it never saw.
+//! URL as the provider's answer to a flow it never saw.
 //!
 //! Tokens are stored encrypted via the vault cryptor either way.
 
@@ -40,10 +48,48 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
+use super::provider::{oauth_config, Provider};
 #[cfg(desktop)]
 use crate::app::APP_NAME;
 use crate::error::{Error, Result};
 use crate::{crypto::Cryptor, storage};
+
+/// Everything about a provider's OAuth client the shared flow cannot know.
+/// One `static` per provider, next to its adapter.
+pub struct OAuthConfig {
+    pub provider: Provider,
+    pub auth_url: &'static str,
+    pub token_url: &'static str,
+    /// Query pairs the consent URL needs beyond the standard ones (Google:
+    /// scope, `access_type=offline`, `prompt=consent`).
+    pub consent_params: &'static [(&'static str, &'static str)],
+    // The desktop client, which only the loopback consent flow below reads. A
+    // phone build has no loopback listener and its client comes out of
+    // `mobile_client`, so these do not exist there — rather than sit unread
+    // and fail the iOS build under `-D dead-code`.
+    //
+    /// The loopback ports the desktop client is registered for. Empty is any
+    /// port at all (Google's Desktop-app clients), and the OS picks one; a
+    /// provider that matches the redirect exactly lists the ones it registered,
+    /// tried in order until one binds.
+    #[cfg(desktop)]
+    pub loopback_ports: &'static [u16],
+    /// The client id from the environment, run time first, then build time.
+    #[cfg(desktop)]
+    pub client_id: fn() -> Option<String>,
+    /// A desktop client's (non-confidential) secret, if the provider issues
+    /// one.
+    #[cfg(desktop)]
+    pub client_secret: fn() -> Option<String>,
+    /// What a sign-in says when this build has no client for the provider.
+    pub no_client: &'static str,
+    /// The phone's client id and the full redirect URI it registered, both
+    /// read off this build's deep-link configuration (or the environment).
+    /// Whole, not a scheme plus a shared path: providers shape the URI
+    /// differently.
+    #[cfg(mobile)]
+    pub mobile_client: fn(&AppHandle) -> Result<(String, String)>,
+}
 
 #[cfg(desktop)]
 const HOST: &str = "127.0.0.1";
@@ -60,32 +106,14 @@ const ACCEPT_POLL: Duration = Duration::from_millis(100);
 /// How long one connection gets to send its request line.
 #[cfg(desktop)]
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
-const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-
-// Supply your own Google OAuth client at build or run time.
-const CLIENT_ID_PLACEHOLDER: &str = "YOUR_GOOGLE_OAUTH_CLIENT_ID";
-
-/// A Google iOS client is addressed by its *reversed* client id, which is also
-/// the URL scheme the app registers: client id `123-abc.apps.googleusercontent
-/// .com` <-> scheme `com.googleusercontent.apps.123-abc`.
-#[cfg(any(mobile, test))]
-const IOS_SCHEME_PREFIX: &str = "com.googleusercontent.apps.";
-#[cfg(any(mobile, test))]
-const IOS_CLIENT_ID_SUFFIX: &str = ".apps.googleusercontent.com";
-/// One slash, not two: a reversed-client-id scheme has no authority for a
-/// second one to separate. This is the exact string Google registers.
-#[cfg(any(mobile, test))]
-const IOS_REDIRECT_PATH: &str = ":/oauth2redirect";
 
 /// What a redirect URL turned out to be, once checked against the request that
 /// is waiting for one.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Redirect {
-    /// Google's answer to *our* request: the code to exchange.
+    /// The provider's answer to *our* request: the code to exchange.
     Code(String),
-    /// Google's answer to our request, and the answer was no (or nothing).
+    /// The provider's answer to our request, and the answer was no (or nothing).
     Denied(String),
     /// Not an answer to our request at all: the `state` is missing or belongs
     /// to some other flow. Whatever is pending must not be touched on its
@@ -94,10 +122,15 @@ pub enum Redirect {
 }
 
 /// The OAuth grant. `Debug` is hand-written below: both tokens are bearer
-/// credentials for the user's Drive, and a derived impl would print them into
-/// whatever `{:?}` they reached.
+/// credentials for the user's cloud storage, and a derived impl would print
+/// them into whatever `{:?}` they reached.
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Tokens {
+    /// Whose grant this is, and so which client refreshes it. Defaulted on
+    /// read: a file sealed before providers existed has no such field, and is
+    /// Google's.
+    #[serde(default)]
+    pub provider: Provider,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,6 +145,7 @@ impl std::fmt::Debug for Tokens {
         // connected account from a bare one.
         let redacted = |token: &Option<String>| token.as_ref().map(|_| "<redacted>");
         f.debug_struct("Tokens")
+            .field("provider", &self.provider)
             .field("access_token", &redacted(&self.access_token))
             .field("refresh_token", &redacted(&self.refresh_token))
             .field("expires_at", &self.expires_at)
@@ -143,15 +177,10 @@ struct Credentials {
     secret: Option<String>,
 }
 
-fn env_client_id() -> Option<String> {
-    std::env::var("GOOGLE_OAUTH_CLIENT_ID")
-        .ok()
-        .or_else(|| option_env!("GOOGLE_OAUTH_CLIENT_ID").map(String::from))
-        .filter(|id| !id.is_empty() && id != CLIENT_ID_PLACEHOLDER)
-}
-
-fn no_client() -> Error {
-    Error::Other("Google OAuth client not configured; set GOOGLE_OAUTH_CLIENT_ID".into())
+/// The error a sign-in or refresh fails with when this build has no client for
+/// `config`'s provider.
+pub(crate) fn no_client(config: &OAuthConfig) -> Error {
+    Error::Other(config.no_client.into())
 }
 
 #[cfg(desktop)]
@@ -159,14 +188,11 @@ impl Credentials {
     /// The client alone. The redirect is left empty because it depends on the
     /// port the consent flow's listener lands on ([`Credentials::with_loopback`]);
     /// a token refresh, the other caller, never sends one.
-    fn resolve(_app: &AppHandle) -> Result<Self> {
+    fn resolve(_app: &AppHandle, config: &OAuthConfig) -> Result<Self> {
         Ok(Self {
-            client_id: env_client_id().ok_or_else(no_client)?,
+            client_id: (config.client_id)().ok_or_else(|| no_client(config))?,
             redirect_uri: String::new(),
-            secret: std::env::var("GOOGLE_OAUTH_CLIENT_SECRET")
-                .ok()
-                .or_else(|| option_env!("GOOGLE_OAUTH_CLIENT_SECRET").map(String::from))
-                .filter(|s| !s.is_empty()),
+            secret: (config.client_secret)(),
         })
     }
 
@@ -179,68 +205,27 @@ impl Credentials {
 
 #[cfg(mobile)]
 impl Credentials {
-    /// The committed deep-link scheme is the source of truth (iOS client ids
-    /// are public, and the scheme is what actually registers the app for the
-    /// redirect). `GOOGLE_OAUTH_CLIENT_ID` overrides it for a build that is
-    /// given the id from a secret — and the redirect is then derived back from
-    /// that same id, so the two can never disagree at runtime.
-    fn resolve(app: &AppHandle) -> Result<Self> {
-        let client_id = match env_client_id() {
-            Some(id) => id,
-            None => client_id_from_scheme(&deep_link_scheme(app)?).ok_or_else(no_client)?,
-        };
-        let scheme = scheme_from_client_id(&client_id).ok_or_else(no_client)?;
+    /// A phone's client is public: no secret, and the client id and redirect
+    /// come from the provider's own reading of the deep-link configuration
+    /// ([`OAuthConfig::mobile_client`]).
+    fn resolve(app: &AppHandle, config: &OAuthConfig) -> Result<Self> {
+        let (client_id, redirect_uri) = (config.mobile_client)(app)?;
         Ok(Self {
-            redirect_uri: format!("{scheme}{IOS_REDIRECT_PATH}"),
             client_id,
+            redirect_uri,
             secret: None,
         })
     }
 }
 
-/// `com.googleusercontent.apps.123-abc` -> `123-abc.apps.googleusercontent.com`
-#[cfg(any(mobile, test))]
-fn client_id_from_scheme(scheme: &str) -> Option<String> {
-    let id = scheme.strip_prefix(IOS_SCHEME_PREFIX)?;
-    (!id.is_empty()).then(|| format!("{id}{IOS_CLIENT_ID_SUFFIX}"))
-}
-
-/// The inverse of [`client_id_from_scheme`].
-#[cfg(any(mobile, test))]
-fn scheme_from_client_id(client_id: &str) -> Option<String> {
-    let id = client_id.strip_suffix(IOS_CLIENT_ID_SUFFIX)?;
-    (!id.is_empty()).then(|| format!("{IOS_SCHEME_PREFIX}{id}"))
-}
-
-/// The reversed-client-id scheme out of `plugins.deep-link.mobile` (see
-/// `tauri.ios.conf.json`). Other schemes may be configured for other purposes,
-/// so this picks the one that looks like a Google client rather than the first.
+/// Whether a deep link is *this build's* OAuth redirect for `provider` — the
+/// configured scheme and path exactly — rather than some other URL the app was
+/// opened with. Says nothing about which request it answers; [`parse_redirect`]
+/// does.
 #[cfg(mobile)]
-fn deep_link_scheme(app: &AppHandle) -> Result<String> {
-    app.config()
-        .plugins
-        .0
-        .get("deep-link")
-        .and_then(|c| c.get("mobile")?.as_array())
-        .and_then(|domains| {
-            domains.iter().find_map(|d| {
-                d.get("scheme")?
-                    .as_array()?
-                    .iter()
-                    .filter_map(|s| s.as_str())
-                    .find(|s| s.starts_with(IOS_SCHEME_PREFIX))
-                    .map(str::to_owned)
-            })
-        })
-        .ok_or_else(no_client)
-}
-
-/// Whether a deep link is *this build's* OAuth redirect — the configured
-/// scheme and path exactly — rather than some other URL the app was opened
-/// with. Says nothing about which request it answers; [`parse_redirect`] does.
-#[cfg(mobile)]
-pub fn redirect_matches(app: &AppHandle, url: &Url) -> bool {
-    Credentials::resolve(app).is_ok_and(|c| matches_redirect_uri(url, &c.redirect_uri))
+pub fn redirect_matches(app: &AppHandle, provider: Provider, url: &Url) -> bool {
+    Credentials::resolve(app, oauth_config(provider))
+        .is_ok_and(|c| matches_redirect_uri(url, &c.redirect_uri))
 }
 
 /// `url` is `redirect_uri` plus, at most, a query: same scheme (schemes are
@@ -254,7 +239,7 @@ fn matches_redirect_uri(url: &Url, redirect_uri: &str) -> bool {
     })
 }
 
-// --- token persistence (encrypted `auth/gdrive.swftx`) ---
+// --- token persistence (encrypted `auth/<provider>.swftx`) ---
 
 /// The encrypted token file, and the connection generation that says which
 /// account the tokens in it belong to.
@@ -277,10 +262,21 @@ impl<'a> TokenFile<'a> {
         Self { path, generation }
     }
 
-    /// The active workspace's token file and the app's connection generation.
+    /// The active workspace's token file — whichever provider's it holds, at
+    /// most one — and the app's connection generation. For the transitions
+    /// that act on the file that is there: read, re-seal, disconnect.
     fn of(app: &'a AppHandle) -> Result<Self> {
         Ok(Self::new(
-            storage::gdrive_path(app)?,
+            storage::token_path(app)?,
+            &app_state(app).inner().sync_generation,
+        ))
+    }
+
+    /// `provider`'s token file in the active workspace, for a write: where
+    /// tokens go is named by the tokens, not by whatever file was there.
+    fn for_provider(app: &'a AppHandle, provider: Provider) -> Result<Self> {
+        Ok(Self::new(
+            storage::token_path_for(app, provider)?,
             &app_state(app).inner().sync_generation,
         ))
     }
@@ -383,47 +379,73 @@ pub fn read_tokens(app: &AppHandle, cryptor: &Cryptor) -> Option<Tokens> {
 /// copy of these credentials, and a file it could not read is not a workspace
 /// that never connected — folding the two together would leave the vault's pack
 /// live on Drive and take the workspace needed to retry the delete with it.
+///
+/// Whichever provider's file the workspace holds is the one read: the name
+/// says whose it is, before anything is unsealed.
+///
+/// Each file is tried by opening it, not by `Path::exists()` as the lookups
+/// for a *status* do (`storage::token_file_in`): `exists` answers `false` for
+/// a directory this process cannot search, and here that would read as "never
+/// connected" and let the delete go ahead with the vault's pack still live.
+/// Only "no such file" is absence; every other failure is an error.
 pub fn read_tokens_in(dir: &std::path::Path, cryptor: &Cryptor) -> Result<Option<Tokens>> {
-    let path = dir.join(storage::GDRIVE_FILE);
-    let blob = match std::fs::read_to_string(&path) {
-        Ok(blob) => blob,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-    // An empty file is a write that did not finish, not an absent one: the
-    // grant it was meant to hold may still be live at Google.
-    if blob.trim().is_empty() {
-        return Err(Error::Other(unreadable_tokens_error()));
+    for provider in Provider::ALL {
+        let blob = match std::fs::read_to_string(dir.join(provider.token_file_name())) {
+            Ok(blob) => blob,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
+        // An empty file is a write that did not finish, not an absent one: the
+        // grant it was meant to hold may still be live at the provider.
+        if blob.trim().is_empty() {
+            return Err(Error::Other(unreadable_tokens_error(provider)));
+        }
+        let json = cryptor
+            .decrypt(&blob)
+            .map_err(|_| Error::Other(unreadable_tokens_error(provider)))?;
+        let tokens = serde_json::from_str(&json)
+            .map_err(|_| Error::Other(unreadable_tokens_error(provider)))?;
+        return Ok(Some(tokens));
     }
-    let json = cryptor
-        .decrypt(&blob)
-        .map_err(|_| Error::Other(unreadable_tokens_error()))?;
-    let tokens =
-        serde_json::from_str(&json).map_err(|_| Error::Other(unreadable_tokens_error()))?;
-    Ok(Some(tokens))
+    Ok(None)
 }
 
 // One message for every way the file can be there and unusable: the user can
 // do the same thing about all of them, and none of them says which vault key
 // or which byte was wrong.
-fn unreadable_tokens_error() -> String {
-    "this lockbox's saved Google account could not be read".into()
+fn unreadable_tokens_error(provider: Provider) -> String {
+    format!(
+        "this lockbox's saved {} account could not be read",
+        provider.account_name()
+    )
 }
 
-/// Seal the tokens under `cryptor` and write them.
+/// Seal the tokens under `cryptor` and write them, to the file their provider
+/// names.
 ///
 /// Crate-visible because first-run onboarding holds tokens in memory long
 /// before a vault key exists to seal them with, and persists them only once the
 /// restore or create it is driving has produced one.
 pub fn write_tokens(app: &AppHandle, cryptor: &Cryptor, tokens: &Tokens) -> Result<()> {
-    TokenFile::of(app)?.write(cryptor, tokens)
+    TokenFile::for_provider(app, tokens.provider)?.write(cryptor, tokens)
 }
 
 /// [`write_tokens`] into a named workspace directory rather than the active
 /// workspace's, for a vault being added beside the open one.
 pub fn write_tokens_in(dir: &std::path::Path, cryptor: &Cryptor, tokens: &Tokens) -> Result<()> {
     let json = serde_json::to_string(tokens)?;
-    storage::write_gdrive_in(dir, &cryptor.encrypt(&json)?)
+    storage::write_token_file_in(dir, tokens.provider, &cryptor.encrypt(&json)?)
+}
+
+/// Which provider the active workspace syncs through, read off its token
+/// file's name — no key needed. A workspace with none reads as Google's, the
+/// provider every file without a name was written for; nothing that reads
+/// this gets as far as a network call without the file there anyway.
+pub fn sealed_provider(app: &AppHandle) -> Provider {
+    storage::workspace_dir(app)
+        .ok()
+        .and_then(|dir| storage::token_file_in(&dir))
+        .unwrap_or_default()
 }
 
 pub fn is_configured(app: &AppHandle, cryptor: &Cryptor) -> bool {
@@ -467,59 +489,94 @@ pub struct Started {
     pub state: String,
 }
 
-// Send the user to Google's consent page, and hand back what the redirect will
-// need to be recognised and redeemed.
-fn open_consent(app: &AppHandle, credentials: &Credentials) -> Result<Started> {
+// Send the user to the provider's consent page, and hand back what the
+// redirect will need to be recognised and redeemed.
+fn open_consent(
+    app: &AppHandle,
+    config: &OAuthConfig,
+    credentials: &Credentials,
+) -> Result<Started> {
     let started = Started {
         verifier: gen_nonce(),
         state: gen_nonce(),
     };
-    let url = auth_url(credentials, &challenge(&started.verifier), &started.state)?;
+    let url = auth_url(
+        config,
+        credentials,
+        &challenge(&started.verifier),
+        &started.state,
+    )?;
     app.opener().open_url(url, None::<&str>).map_err(other)?;
     Ok(started)
 }
 
-/// Desktop: open the browser and block on the loopback listener until Google
-/// redirects to it, then exchange the code — handing the tokens back rather
-/// than writing them.
+/// Desktop: open the browser and block on the loopback listener until the
+/// provider redirects to it, then exchange the code — handing the tokens back
+/// rather than writing them.
 ///
 /// Every connect is keyless: onboarding has no vault yet, and a sync connect
 /// on an open vault first asks what the account holds before the tokens are
 /// sealed under it (`commands::sync::sync_adopt_pending`). Blocking (the
 /// loopback listener): call it off the main thread.
 #[cfg(desktop)]
-pub fn obtain_tokens(app: &AppHandle) -> Result<Tokens> {
-    // Bound before the browser opens, on a port the OS picks: the redirect
-    // then names a port this process actually holds, and two attempts (or two
-    // apps) can never fight over one.
-    let listener = TcpListener::bind((HOST, 0)).map_err(other)?;
+pub fn obtain_tokens(app: &AppHandle, provider: Provider) -> Result<Tokens> {
+    let config = oauth_config(provider);
+    let listener = bind_loopback(config.loopback_ports)?;
     let port = listener.local_addr()?.port();
-    let credentials = Credentials::resolve(app)?.with_loopback(port);
-    let started = open_consent(app, &credentials)?;
-    let code = listen_for_code(&listener, &started.state)?;
+    let credentials = Credentials::resolve(app, config)?.with_loopback(port);
+    let started = open_consent(app, config, &credentials)?;
+    let code = listen_for_code(&listener, &started.state, provider)?;
     let client = super::http_client();
     tauri::async_runtime::block_on(exchange_code(
         &client,
+        config,
         &credentials,
         &code,
         &started.verifier,
     ))
 }
 
-/// Mobile, first half: open the consent page and hand back what the caller
-/// must keep until the redirect arrives.
+/// The consent flow's listener, bound before the browser opens: the redirect
+/// then names a port this process actually holds, and two attempts (or two
+/// apps) can never fight over one.
+///
+/// On a port the OS picks, when the provider allows any; otherwise on the
+/// first of its registered ports that is free — one already taken by another
+/// app is skipped rather than shared.
+#[cfg(desktop)]
+fn bind_loopback(ports: &[u16]) -> Result<TcpListener> {
+    if ports.is_empty() {
+        return TcpListener::bind((HOST, 0)).map_err(other);
+    }
+    ports
+        .iter()
+        .find_map(|&port| TcpListener::bind((HOST, port)).ok())
+        .ok_or_else(|| {
+            Error::Other("every port the sign-in can return to is in use; try again".into())
+        })
+}
+
+/// Mobile, first half: open `provider`'s consent page and hand back what the
+/// caller must keep until the redirect arrives.
 #[cfg(mobile)]
-pub fn begin(app: &AppHandle) -> Result<Started> {
-    open_consent(app, &Credentials::resolve(app)?)
+pub fn begin(app: &AppHandle, provider: Provider) -> Result<Started> {
+    let config = oauth_config(provider);
+    open_consent(app, config, &Credentials::resolve(app, config)?)
 }
 
 /// Mobile, second half: exchange a code [`parse_redirect`] accepted, handing
 /// the tokens back rather than writing them — the twin of [`obtain_tokens`].
 /// Async: this runs off the URL-open callback, not on it.
 #[cfg(mobile)]
-pub async fn exchange_for_tokens(app: &AppHandle, code: &str, verifier: &str) -> Result<Tokens> {
-    let credentials = Credentials::resolve(app)?;
-    exchange_code(&super::http_client(), &credentials, code, verifier).await
+pub async fn exchange_for_tokens(
+    app: &AppHandle,
+    provider: Provider,
+    code: &str,
+    verifier: &str,
+) -> Result<Tokens> {
+    let config = oauth_config(provider);
+    let credentials = Credentials::resolve(app, config)?;
+    exchange_code(&super::http_client(), config, &credentials, code, verifier).await
 }
 
 /// Read a redirect URL as the answer to the request identified by `state`.
@@ -570,7 +627,8 @@ pub async fn access_token(client: &Client, app: &AppHandle, cryptor: &Cryptor) -
     // against the stale file again.
     if refreshing && !persisted_if_current(app, cryptor, &tokens, generation)? {
         log::info!(
-            "the Drive connection moved on mid-refresh; not writing the refreshed tokens back"
+            "the {} connection moved on mid-refresh; not writing the refreshed tokens back",
+            tokens.provider.display_name()
         );
     }
     Ok(token)
@@ -585,7 +643,66 @@ pub(crate) fn persisted_if_current(
     tokens: &Tokens,
     generation: u64,
 ) -> Result<bool> {
-    TokenFile::of(app)?.persist_if_current(cryptor, tokens, generation)
+    TokenFile::for_provider(app, tokens.provider)?.persist_if_current(cryptor, tokens, generation)
+}
+
+/// How a store reaches its account's credentials — the two ways tokens are
+/// held, as one value an adapter is built with ([`super::store_for`]).
+pub enum Auth {
+    /// The active workspace's sealed file: read per call, and refreshes
+    /// written back if the connection generation still matches
+    /// ([`access_token`]).
+    Sealed { app: AppHandle, cryptor: Cryptor },
+    /// Tokens held in memory — consent's result, or a workspace's file unsealed
+    /// by a caller acting on it from outside: refreshed in place, and handed
+    /// back afterwards ([`Auth::into_tokens`]). The app is for the refresh,
+    /// which needs the platform's OAuth client.
+    Pending {
+        app: AppHandle,
+        tokens: std::sync::Mutex<Tokens>,
+    },
+}
+
+impl Auth {
+    pub fn pending(app: &AppHandle, tokens: Tokens) -> Self {
+        Auth::Pending {
+            app: app.clone(),
+            tokens: std::sync::Mutex::new(tokens),
+        }
+    }
+
+    /// Whose account this is: the tokens' own say for pending ones, the token
+    /// file's name for the sealed one.
+    pub fn provider(&self) -> Provider {
+        match self {
+            Auth::Sealed { app, .. } => sealed_provider(app),
+            Auth::Pending { tokens, .. } => tokens.lock().unwrap().provider,
+        }
+    }
+
+    /// A valid access token, refreshed if needed.
+    pub async fn access_token(&self, client: &Client) -> Result<String> {
+        match self {
+            Auth::Sealed { app, cryptor } => access_token(client, app, cryptor).await,
+            Auth::Pending { app, tokens } => {
+                // A copy across the round trip, put back afterwards: no lock
+                // is held across a network call. One caller drives a pending
+                // store at a time, so nothing else writes in between.
+                let mut held = tokens.lock().unwrap().clone();
+                let token = fresh_access_token(client, app, &mut held).await;
+                *tokens.lock().unwrap() = held;
+                token
+            }
+        }
+    }
+
+    /// The pending tokens as the refreshes left them; `None` for sealed ones.
+    pub fn into_tokens(self) -> Option<Tokens> {
+        match self {
+            Auth::Sealed { .. } => None,
+            Auth::Pending { tokens, .. } => Some(tokens.into_inner().unwrap()),
+        }
+    }
 }
 
 fn app_state(app: &AppHandle) -> tauri::State<'_, crate::state::AppState> {
@@ -600,6 +717,8 @@ fn app_state(app: &AppHandle) -> tauri::State<'_, crate::state::AppState> {
 /// business: [`access_token`] reads and rewrites the encrypted token file,
 /// while onboarding holds the only copy in memory and has nowhere to write it
 /// until a vault exists.
+///
+/// The client refreshed against is the tokens' own provider's.
 pub async fn fresh_access_token(
     client: &Client,
     app: &AppHandle,
@@ -610,11 +729,19 @@ pub async fn fresh_access_token(
             .refresh_token
             .clone()
             .ok_or(Error::SyncNotConfigured)?;
-        let fresh = refresh(client, &Credentials::resolve(app)?, &refresh_token).await?;
+        let config = oauth_config(tokens.provider);
+        let fresh = refresh(
+            client,
+            config,
+            &Credentials::resolve(app, config)?,
+            &refresh_token,
+        )
+        .await?;
         tokens.access_token = fresh.access_token;
         tokens.expires_at = fresh.expires_at;
-        // Google only re-issues a refresh token sometimes; keeping the old one
-        // otherwise is what stops a refresh from disconnecting the account.
+        // Google only re-issues a refresh token sometimes (Dropbox never
+        // does); keeping the old one otherwise is what stops a refresh from
+        // disconnecting the account.
         if fresh.refresh_token.is_some() {
             tokens.refresh_token = fresh.refresh_token;
         }
@@ -630,23 +757,32 @@ fn needs_refresh(tokens: &Tokens) -> bool {
     }
 }
 
-fn auth_url(credentials: &Credentials, challenge: &str, state: &str) -> Result<String> {
-    let mut url = Url::parse(AUTH_URL).map_err(other)?;
-    url.query_pairs_mut()
+fn auth_url(
+    config: &OAuthConfig,
+    credentials: &Credentials,
+    challenge: &str,
+    state: &str,
+) -> Result<String> {
+    let mut url = Url::parse(config.auth_url).map_err(other)?;
+    let mut query = url.query_pairs_mut();
+    query
         .append_pair("client_id", &credentials.client_id)
         .append_pair("redirect_uri", &credentials.redirect_uri)
-        .append_pair("response_type", "code")
-        .append_pair("scope", SCOPE)
-        .append_pair("access_type", "offline")
-        .append_pair("prompt", "consent")
+        .append_pair("response_type", "code");
+    for (key, value) in config.consent_params {
+        query.append_pair(key, value);
+    }
+    query
         .append_pair("state", state)
         .append_pair("code_challenge", challenge)
         .append_pair("code_challenge_method", "S256");
+    drop(query);
     Ok(url.into())
 }
 
 async fn exchange_code(
     client: &Client,
+    config: &OAuthConfig,
     credentials: &Credentials,
     code: &str,
     verifier: &str,
@@ -657,11 +793,12 @@ async fn exchange_code(
         ("grant_type", "authorization_code".to_string()),
         ("code_verifier", verifier.to_string()),
     ];
-    post_token(client, credentials, form).await
+    post_token(client, config, credentials, form).await
 }
 
 async fn refresh(
     client: &Client,
+    config: &OAuthConfig,
     credentials: &Credentials,
     refresh_token: &str,
 ) -> Result<Tokens> {
@@ -669,11 +806,12 @@ async fn refresh(
         ("refresh_token", refresh_token.to_string()),
         ("grant_type", "refresh_token".to_string()),
     ];
-    post_token(client, credentials, form).await
+    post_token(client, config, credentials, form).await
 }
 
 async fn post_token(
     client: &Client,
+    config: &OAuthConfig,
     credentials: &Credentials,
     mut form: Vec<(&str, String)>,
 ) -> Result<Tokens> {
@@ -682,7 +820,7 @@ async fn post_token(
         form.push(("client_secret", secret.clone()));
     }
     let resp = client
-        .post(TOKEN_URL)
+        .post(config.token_url)
         .form(&form)
         .send()
         .await
@@ -694,6 +832,7 @@ async fn post_token(
     }
     let parsed: TokenResponse = serde_json::from_str(&body).map_err(other)?;
     Ok(Tokens {
+        provider: config.provider,
         access_token: parsed.access_token,
         refresh_token: parsed.refresh_token,
         expires_at: parsed
@@ -728,12 +867,17 @@ fn challenge(verifier: &str) -> String {
 // anything that is not this request's answer — another path, or a callback
 // that does not echo our `state` — is answered 404 and the wait goes on.
 #[cfg(desktop)]
-fn listen_for_code(listener: &TcpListener, state: &str) -> Result<String> {
-    listen_for_code_until(listener, state, Instant::now() + CONSENT_TIMEOUT)
+fn listen_for_code(listener: &TcpListener, state: &str, provider: Provider) -> Result<String> {
+    listen_for_code_until(listener, state, Instant::now() + CONSENT_TIMEOUT, provider)
 }
 
 #[cfg(desktop)]
-fn listen_for_code_until(listener: &TcpListener, state: &str, deadline: Instant) -> Result<String> {
+fn listen_for_code_until(
+    listener: &TcpListener,
+    state: &str,
+    deadline: Instant,
+    provider: Provider,
+) -> Result<String> {
     listener.set_nonblocking(true)?;
     loop {
         // Checked on every pass, connection or not: a local process that keeps
@@ -745,9 +889,10 @@ fn listen_for_code_until(listener: &TcpListener, state: &str, deadline: Instant)
             .checked_duration_since(Instant::now())
             .filter(|d| !d.is_zero())
         else {
-            return Err(Error::Other(
-                "Google sign-in took too long; try again".into(),
-            ));
+            return Err(Error::Other(format!(
+                "{} sign-in took too long; try again",
+                provider.account_name()
+            )));
         };
         let (mut stream, _) = match listener.accept() {
             Ok(connection) => connection,
@@ -781,7 +926,7 @@ fn listen_for_code_until(listener: &TcpListener, state: &str, deadline: Instant)
         let code = match parse_redirect(&url, state) {
             Redirect::Code(code) => Ok(code),
             Redirect::Denied(error) => Err(Error::Other(error)),
-            // Not Google's answer to *our* request. Anything that can reach
+            // Not the provider's answer to *our* request. Anything that can reach
             // this port — another local process, or a page in the same
             // browser — could otherwise end the sign-in with a bare hit on the
             // callback path, leaving the real redirect to a dead port. Treated
@@ -793,7 +938,7 @@ fn listen_for_code_until(listener: &TcpListener, state: &str, deadline: Instant)
             }
         };
 
-        let _ = stream.write_all(response_html(code.as_ref().err()).as_bytes());
+        let _ = stream.write_all(response_html(code.as_ref().err(), provider).as_bytes());
         return code;
     }
 }
@@ -802,7 +947,7 @@ fn listen_for_code_until(listener: &TcpListener, state: &str, deadline: Instant)
 const NOT_FOUND: &str = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
 // The error shown on the page comes off the redirect's query string, so it is
-// Google's text but not ours: escaped rather than trusted.
+// the provider's text but not ours: escaped rather than trusted.
 #[cfg(desktop)]
 fn escape_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -820,7 +965,7 @@ fn escape_html(text: &str) -> String {
 }
 
 #[cfg(desktop)]
-fn response_html(error: Option<&Error>) -> String {
+fn response_html(error: Option<&Error>, provider: Provider) -> String {
     let (status, body) = match error {
         None => (
             "200 OK",
@@ -831,7 +976,8 @@ fn response_html(error: Option<&Error>) -> String {
         Some(error) => (
             "400 Bad Request",
             format!(
-                "<h2>Failed to connect your Google Drive account.</h2><p>{}</p>",
+                "<h2>Failed to connect your {} account.</h2><p>{}</p>",
+                provider.display_name(),
                 escape_html(&error.to_string())
             ),
         ),
@@ -887,7 +1033,7 @@ mod tests {
         // The real deadline is minutes; the loop's shape is what this checks,
         // so run it against a deadline that has already passed.
         let started = Instant::now();
-        let result = listen_for_code_until(&listener, "nonce", started);
+        let result = listen_for_code_until(&listener, "nonce", started, Provider::GoogleDrive);
         assert!(result.is_err());
         assert!(started.elapsed() < CONSENT_TIMEOUT);
     }
@@ -916,7 +1062,12 @@ mod tests {
 
         let deadline = Duration::from_millis(300);
         let started = Instant::now();
-        let result = listen_for_code_until(&listener, "nonce", started + deadline);
+        let result = listen_for_code_until(
+            &listener,
+            "nonce",
+            started + deadline,
+            Provider::GoogleDrive,
+        );
         stop.store(true, std::sync::atomic::Ordering::SeqCst);
         pest.join().unwrap();
 
@@ -952,7 +1103,12 @@ mod tests {
             assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
         });
 
-        let code = listen_for_code_until(&listener, "nonce", Instant::now() + REQUEST_TIMEOUT);
+        let code = listen_for_code_until(
+            &listener,
+            "nonce",
+            Instant::now() + REQUEST_TIMEOUT,
+            Provider::GoogleDrive,
+        );
         browser.join().unwrap();
         assert_eq!(code.unwrap(), "4/abc");
     }
@@ -961,9 +1117,10 @@ mod tests {
     #[cfg(desktop)]
     #[test]
     fn the_failure_page_escapes_the_error() {
-        let page = response_html(Some(&Error::Other(
-            "<script>alert('x' & \"y\")</script>".into(),
-        )));
+        let page = response_html(
+            Some(&Error::Other("<script>alert('x' & \"y\")</script>".into())),
+            Provider::GoogleDrive,
+        );
         assert!(
             page.contains("&lt;script&gt;alert(&#39;x&#39; &amp; &quot;y&quot;)&lt;/script&gt;")
         );
@@ -977,12 +1134,63 @@ mod tests {
             redirect_uri: "com.googleusercontent.apps.1-a:/oauth2redirect".into(),
             secret: None,
         };
-        let url = Url::parse(&auth_url(&credentials, "chal", "nonce-1").unwrap()).unwrap();
+        let config = oauth_config(Provider::GoogleDrive);
+        let url = Url::parse(&auth_url(config, &credentials, "chal", "nonce-1").unwrap()).unwrap();
         let state = url
             .query_pairs()
             .find(|(k, _)| k == "state")
             .map(|(_, v)| v.into_owned());
         assert_eq!(state.as_deref(), Some("nonce-1"));
+    }
+
+    // The provider's own parameters sit where Google's always did, between the
+    // standard ones and the nonce: the consent URL Google sees is unchanged.
+    #[test]
+    fn the_consent_url_carries_the_providers_parameters_in_place() {
+        let credentials = Credentials {
+            client_id: "1-a.apps.googleusercontent.com".into(),
+            redirect_uri: "http://127.0.0.1:1/auth/callback".into(),
+            secret: None,
+        };
+        let config = oauth_config(Provider::GoogleDrive);
+        let url = Url::parse(&auth_url(config, &credentials, "chal", "n").unwrap()).unwrap();
+        let keys: Vec<String> = url.query_pairs().map(|(k, _)| k.into_owned()).collect();
+        assert_eq!(
+            keys,
+            [
+                "client_id",
+                "redirect_uri",
+                "response_type",
+                "scope",
+                "access_type",
+                "prompt",
+                "state",
+                "code_challenge",
+                "code_challenge_method",
+            ]
+        );
+        assert!(url.as_str().starts_with(config.auth_url));
+    }
+
+    // A provider that registers fixed ports gets the first free one of them,
+    // and the redirect is built from whichever that was.
+    #[cfg(desktop)]
+    #[test]
+    fn a_registered_port_that_is_taken_is_skipped() {
+        let taken = TcpListener::bind((HOST, 0)).unwrap();
+        let taken_port = taken.local_addr().unwrap().port();
+        let free_port = {
+            let probe = TcpListener::bind((HOST, 0)).unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let ports: &'static [u16] = Box::leak(vec![taken_port, free_port].into_boxed_slice());
+        let listener = bind_loopback(ports).unwrap();
+        assert_eq!(listener.local_addr().unwrap().port(), free_port);
+
+        // Any port at all, when the provider registered none.
+        assert!(bind_loopback(&[]).is_ok());
+        // Every registered port taken is an error, not a port of the OS's choosing.
+        assert!(bind_loopback(&[taken_port]).is_err());
     }
 
     #[test]
@@ -1001,26 +1209,6 @@ mod tests {
         // Our scheme, some other path.
         assert!(!matches("com.googleusercontent.apps.1-a:/anything?code=x"));
         assert!(!matches("rowel:/oauth2redirect"));
-    }
-
-    #[test]
-    fn ios_scheme_and_client_id_are_inverses() {
-        let scheme = "com.googleusercontent.apps.123456-abcdef";
-        let client_id = "123456-abcdef.apps.googleusercontent.com";
-        assert_eq!(client_id_from_scheme(scheme).as_deref(), Some(client_id));
-        assert_eq!(scheme_from_client_id(client_id).as_deref(), Some(scheme));
-        assert_eq!(
-            format!("{scheme}{IOS_REDIRECT_PATH}"),
-            "com.googleusercontent.apps.123456-abcdef:/oauth2redirect"
-        );
-    }
-
-    #[test]
-    fn a_foreign_scheme_yields_no_client_id() {
-        assert!(client_id_from_scheme("rowel").is_none());
-        // The prefix alone names no client.
-        assert!(client_id_from_scheme("com.googleusercontent.apps.").is_none());
-        assert!(scheme_from_client_id("123-abc.example.com").is_none());
     }
 
     const REDIRECT: &str = "com.googleusercontent.apps.1-a:/oauth2redirect";
@@ -1091,7 +1279,8 @@ mod tests {
     // `workspace::dir_of` hands one to a delete.
     fn tmp_workspace_dir() -> PathBuf {
         let dir = tmp_dir();
-        std::fs::create_dir_all(dir.join(storage::GDRIVE_FILE).parent().unwrap()).unwrap();
+        let file = Provider::GoogleDrive.token_file_name();
+        std::fs::create_dir_all(dir.join(file).parent().unwrap()).unwrap();
         dir
     }
 
@@ -1101,6 +1290,7 @@ mod tests {
 
     fn tokens(access: &str) -> Tokens {
         Tokens {
+            provider: Provider::GoogleDrive,
             access_token: Some(access.into()),
             refresh_token: Some("refresh-1".into()),
             expires_at: Some(4_102_444_800),
@@ -1177,7 +1367,7 @@ mod tests {
     fn a_workspaces_tokens_tell_an_absent_file_from_an_unreadable_one() {
         let dir = tmp_workspace_dir();
         let key = cryptor("pw");
-        let path = dir.join(storage::GDRIVE_FILE);
+        let path = dir.join(Provider::GoogleDrive.token_file_name());
 
         assert!(read_tokens_in(&dir, &key).unwrap().is_none());
 
@@ -1195,6 +1385,35 @@ mod tests {
         assert!(read_tokens_in(&dir, &key).is_err());
     }
 
+    // The one failure `Path::exists()` hides: a token directory this process
+    // cannot search. Read as "never connected", the delete would go ahead and
+    // leave the pack live with no workspace left to retry from; it has to be
+    // an error instead. Root can search anything, so the check is skipped there.
+    #[cfg(unix)]
+    #[test]
+    fn an_unsearchable_token_directory_is_an_error_not_an_absent_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if std::env::var_os("USER").is_some_and(|user| user == "root") {
+            return;
+        }
+        let dir = tmp_workspace_dir();
+        let key = cryptor("pw");
+        write_tokens_in(&dir, &key, &tokens("access-1")).unwrap();
+        let auth = dir.join(Provider::GoogleDrive.token_file_name());
+        let auth = auth.parent().unwrap();
+
+        std::fs::set_permissions(auth, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = read_tokens_in(&dir, &key);
+        // Restore before asserting, so a failure leaves nothing undeletable.
+        std::fs::set_permissions(auth, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(
+            result.is_err(),
+            "an unsearchable directory must not read as absent"
+        );
+    }
+
     // No token file is no connection to re-seal: a password change on a vault
     // that never connected Drive is a no-op, and must not spend a generation
     // some in-flight refresh is holding.
@@ -1208,5 +1427,26 @@ mod tests {
 
         assert_eq!(*generation.lock().unwrap(), 5);
         assert!(!file.path.exists());
+    }
+
+    // A token file sealed before providers existed names none, and is Google's:
+    // an install that updates is still connected, with nothing migrated.
+    #[test]
+    fn a_token_file_from_before_providers_reads_as_googles() {
+        let tokens: Tokens =
+            serde_json::from_str(r#"{"access_token":"a","refresh_token":"r","expires_at":1}"#)
+                .unwrap();
+        assert_eq!(tokens.provider, Provider::GoogleDrive);
+        assert_eq!(tokens.refresh_token.as_deref(), Some("r"));
+    }
+
+    // The error that names the account says whose it is, in the words the
+    // Google copy always used.
+    #[test]
+    fn an_unreadable_token_file_names_its_provider() {
+        assert_eq!(
+            unreadable_tokens_error(Provider::GoogleDrive),
+            "this lockbox's saved Google account could not be read"
+        );
     }
 }
