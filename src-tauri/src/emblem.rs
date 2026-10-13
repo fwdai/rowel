@@ -32,7 +32,7 @@ const SVG: &str = "image/svg+xml";
 /// never ages out (see `SqliteStore::get_image`), so the cache is keyed by this
 /// too: bump it whenever `scripts/emblems/build.py` is rerun and its output
 /// published, and every vault fetches the new set instead of keeping the old.
-const SET: u32 = 2;
+const SET: u32 = 3;
 
 /// The emblem for `country` (ISO 3166-1 alpha-3) as a data: URI, or None when
 /// there is none. Gated, cached and cut short by a lock exactly as

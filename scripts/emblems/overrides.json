@@ -11,6 +11,7 @@
   "RUS": { "lines": false },
   "SVK": { "drop": ["red"] },
   "THA": { "lines": 200 },
+  "TUR": { "file": "Flag of Turkey.svg", "drop": ["red"] },
   "VAT": { "lines": 200 },
   "WLF": { "skip": true }
 }
