@@ -43,6 +43,16 @@ impl Provider {
         }
     }
 
+    /// Rowel's folder as the user sees it in the account, for copy that names
+    /// a path inside it: `Rowel` on Drive, `Apps/Rowel` in Dropbox, where an
+    /// App folder app lives under `Apps/`.
+    pub fn packs_root_label(self) -> &'static str {
+        match self {
+            Provider::GoogleDrive => super::layout::ROOT_FOLDER,
+            Provider::Dropbox => dropbox::APP_FOLDER,
+        }
+    }
+
     /// The sealed token file, relative to a workspace directory. At most one of
     /// these exists per workspace, so the file's name alone says which provider
     /// a *locked* workspace syncs through.

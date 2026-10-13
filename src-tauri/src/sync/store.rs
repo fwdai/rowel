@@ -300,13 +300,16 @@ pub(crate) fn pick_packs_folder(
 }
 
 // Surfaced verbatim by the sync indicator, so it has to read as a sentence.
+// The folders are named as the user finds them in the account
+// (`Provider::packs_root_label`); the app to update is always Rowel.
 fn both_packs_folders_error(provider: Provider) -> String {
     let [first, second] = layout::PACKS_FOLDERS;
-    let root = layout::ROOT_FOLDER;
+    let root = provider.packs_root_label();
     format!(
-        "this {} holds both {root}/{first} and {root}/{second}; update {root} on every device, \
+        "this {} holds both {root}/{first} and {root}/{second}; update {app} on every device, \
          then move the packs into one of them and delete the other",
-        provider.display_name()
+        provider.display_name(),
+        app = layout::ROOT_FOLDER,
     )
 }
 
@@ -703,6 +706,17 @@ mod tests {
             both_packs_folders_error(DRIVE),
             "this Google Drive holds both Rowel/Vaults and Rowel/Lockboxes; update Rowel on \
              every device, then move the packs into one of them and delete the other"
+        );
+    }
+
+    // In Dropbox the folders sit in the app folder, which the user finds
+    // under `Apps/`; the app to update is still Rowel.
+    #[test]
+    fn the_both_folders_error_names_dropboxs_app_folder() {
+        assert_eq!(
+            both_packs_folders_error(Provider::Dropbox),
+            "this Dropbox holds both Apps/Rowel/Vaults and Apps/Rowel/Lockboxes; update Rowel \
+             on every device, then move the packs into one of them and delete the other"
         );
     }
 
