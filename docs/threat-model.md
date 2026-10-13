@@ -11,8 +11,13 @@ frontend (React/TypeScript). All cryptography and key handling live in Rust. The
 webview never sees the master key; it talks to the core through a fixed,
 enumerated list of commands (`src-tauri/src/lib.rs`) and receives non-secret
 entry metadata for the list plus one decrypted entry at a time on reveal. The
-vault is a locally stored, encrypted SQLite database under the OS app-data
-directory (on iOS, the App Group container; see "iOS AutoFill"). There is no account server and no backend that holds user secrets. The
+vault is a set of locally stored, encrypted SQLite databases under the OS
+app-data directory (on iOS, the App Group container; see "iOS AutoFill"), one
+per lockbox (Personal, Family, Work), one lockbox open at a time. Where this
+document speaks of the vault's database or key, it means the open lockbox's.
+The code calls a lockbox a *workspace* (`workspace.rs`, `workspaces.json`);
+see Vocabulary in the README. There is no account server and no backend that
+holds user secrets. The
 webview is locked down by a strict CSP (`default-src 'self'`, `connect-src
 'self'`, `object-src 'none'`, `frame-src 'none'`, `base-uri 'none'`, and no
 `'unsafe-inline'` anywhere: the two `<style>` blocks in `index.html` run under
@@ -33,7 +38,7 @@ env-file dialog cannot be read by `scan_image`, so the dialog's framing is part
 of what was consented to. The one exception is a drop, which `attachment_add`
 may also spend: the file was handed to the app itself, and attaching it seals
 it away and returns nothing of it. The session must then still be the one that asked — the epoch
-is re-checked after the read, so a lock or a workspace switch mid-read discards
+is re-checked after the read, so a lock or a lockbox switch mid-read discards
 the bytes. Only then is the file classified: the extension against a fixed
 image list (`scan/mod.rs`), the `.env` name-or-parse check and the 1 MiB cap
 (`commands/env.rs`). That classification is a sanity check on a file the user
@@ -55,7 +60,7 @@ lifetimes and are dropped, not scrubbed.
 
 ## What sits on disk
 
-The vault is a **SQLite database sealed with SQLCipher** (`vault.db`,
+Each lockbox is a **SQLite database sealed with SQLCipher** (`vault.db`,
 `src-tauri/crates/core/src/store/`, `rusqlite` with `bundled-sqlcipher`). SQLCipher encrypts
 the **entire database file at rest** — page contents, the schema, free pages, and
 the write-ahead log — with AES-256 and per-page authentication. On disk, nothing
@@ -109,8 +114,8 @@ Inside the decrypted database:
   live and deleted, in the clear beside the encrypted database where any
   file-level backup picked it up. Both the read and the write go through the
   session epoch the command captured when it started (`Session::store_at(epoch)`),
-  so a lock or a workspace switch during a lookup discards the result rather
-  than writing it into whichever workspace is open when the fetch returns. The
+  so a lock or a lockbox switch during a lookup discards the result rather
+  than writing it into whichever lockbox is open when the fetch returns. The
   legacy directory is removed at startup, not after a lookup.
 
 The practical shape of this two-layer design: an attacker who never obtains the
@@ -278,16 +283,16 @@ bytes would reach the webview on every reveal.
   writer as an export (`save::save_export`: owner-only on desktop, staged in
   the sandbox for the iOS exporter). The webview receives name, type and size.
   Add and save re-check the session epoch after their off-thread step, so a
-  lock or workspace switch mid-read discards the bytes; every command fails on
+  lock or lockbox switch mid-read discards the bytes; every command fails on
   a locked vault.
 - **The caps.** 10 MiB per file (`MAX_ATTACHMENT_BYTES`), enforced on the read
   itself (`read_regular_file_capped`), refused as `fileTooLarge`. 128 MiB for
-  all of a vault's files together (`MAX_VAULT_ATTACHMENT_BYTES`), archived ones
+  all of a lockbox's files together (`MAX_VAULT_ATTACHMENT_BYTES`), archived ones
   included since they ride every pack until purged, refused as `vaultFull`
   before the file is sealed. That is half the 256 MiB pack and backup-restore
   cap, which also has to hold the entries, the indexes and the WAL. The entry's
   list mentions the budget only once more than 80% of it is spent. As a net
-  for a vault that got past it some other way (an older build, a hand-edited
+  for a lockbox that got past it some other way (an older build, a hand-edited
   database), the sync engine refuses to upload a pack larger than the download
   cap, so no device is handed a pack it cannot pull.
 - **Delete, purge, sync.** A file's state is its entry's: a file that still
@@ -339,7 +344,7 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
    passphrase itself is not stored. One thing outlives the unlock by a bounded
    stretch: when the vault syncs, a second `Zeroizing` copy of the passphrase is
    moved into a blocking-pool task that tries it against the Google account's
-   packs this device lacks and adds the ones it opens as workspaces
+   packs this device lacks and adds the ones it opens as lockboxes
    (`commands/autojoin.rs`). The copy is spent on those Argon2id derives, is
    never written anywhere, and is scrubbed when the task ends. How long that is:
    the task stops starting on new candidates 60 seconds in (`JOIN_BUDGET`), so
@@ -348,7 +353,7 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
    rate that still counts as progress, not by a deadline, since a steady trickle
    never trips the read-stall one. A large pack on a slow link stretches the
    copy's life by the length of that download. Whatever was not tried stays on
-   offer in Settings › Workspaces. Biometric unlock has no passphrase and does
+   offer in Settings › Lockboxes. Biometric unlock has no passphrase and does
    not do this.
 2. **Hold in Rust only.** The derived secret lives in the Rust session
    (`state.rs`, `Session.master_key`) wrapped in a zeroizing buffer, alongside the
@@ -368,7 +373,7 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
    event locks instead of re-arming, and it judges by the wall clock rather than
    the timer's `Instant`, which does not advance across a sleeping Mac or a
    suspended iOS process (`autolock::handle_event`). Every lock, including
-   a workspace switch, also **clears the clipboard** if it still holds a secret
+   a lockbox switch, also **clears the clipboard** if it still holds a secret
    the app copied, so a copied password does not outlive the session it came
    from even with the clipboard timeout set to "Never". On iOS the clear is the
    expiry instead — reading the pasteboard back to compare would raise the system
@@ -428,35 +433,35 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
      logged-in user.
    - **Linux and others:** unsupported; the app reports biometrics unavailable
      rather than store an ungated key.
-5. **One unlock for every workspace (`appkey.rs`).** The primary workspace's
-   key is the *app key*. Every other workspace keeps a copy of its own key
+5. **One unlock for every lockbox (`appkey.rs`).** The primary lockbox's
+   key is the *app key*. Every other lockbox keeps a copy of its own key
    sealed under it — AES-256-GCM under an HKDF subkey of the app key, bound to
-   the workspace id as associated data — in a `0600` sidecar beside its
+   the lockbox id as associated data — in a `0600` sidecar beside its
    database (`vault.key.sealed`). Opening the primary, by passphrase or by the
    biometric item above (which stores the app key and nothing else), unwraps
-   every sidecar into an in-memory ring, so a workspace switch opens the next
+   every sidecar into an in-memory ring, so a lockbox switch opens the next
    database without a prompt and without an Argon2id run. The ring lives as
    long as a session would: it ends with every lock, the auto-lock included,
    and the sidecars are worth nothing without the app key. They are also local
-   to the device on purpose — the pack a workspace syncs stays under its own
+   to the device on purpose — the pack a lockbox syncs stays under its own
    passphrase-derived key, so another device restores it with the passphrase
-   exactly as before. A workspace that has never been opened with its
+   exactly as before. A lockbox that has never been opened with its
    passphrase on a device has no sidecar there; its first switch lands on its
    lock screen, and that unlock writes one. The same passphrase for every
-   workspace is the rule (a create proves it against the app key), which is
+   lockbox is the rule (a create proves it against the app key), which is
    what lets a non-primary unlock prove the passphrase against the primary in
    the background and fill the ring from there. Every step that settles which
    key the app key is and then reads or writes sidecars by it — a proof filling
    the ring, a passphrase change replacing the key, a delete promoting a
-   workspace — runs whole under one lock (`AppState::sidecars`), so a slower
+   lockbox — runs whole under one lock (`AppState::sidecars`), so a slower
    proof of a retired key cannot reseal a sidecar under it, or remove a fresh
    one as stale, behind a change that has already landed. A passphrase *change*
-   (`change_master_password`) keeps that rule true: after the open workspace is
-   re-keyed, every other workspace that shares the passphrase is re-keyed too —
+   (`change_master_password`) keeps that rule true: after the open lockbox is
+   re-keyed, every other lockbox that shares the passphrase is re-keyed too —
    each under a fresh salt of its own, through the same snapshot-guarded saga on
    its own files, and with its Drive token re-sealed under its new key — so a
-   workspace created before the change no longer restores on another device only
-   under the passphrase the user has just replaced. A workspace on a passphrase
+   lockbox created before the change no longer restores on another device only
+   under the passphrase the user has just replaced. A lockbox on a passphrase
    of its own is left untouched (its own passphrase is not the one that was
    proved), and one whose re-key fails stays on the passphrase it had; both are
    reported back so the UI can say the new passphrase does not open everything
@@ -500,7 +505,7 @@ Bringing existing data forward is an **explicit** action, and there are two path
 - **A stalled or hostile network peer.** Every HTTPS client in the app shares a
   connect deadline and a read-stall deadline (`sync::http_client_builder`), so
   a connection that stops answering fails the run instead of holding the
-  `syncing` flag — and with it manual sync and workspace switching — until the
+  `syncing` flag — and with it manual sync and lockbox switching — until the
   process exits. Downloads are capped and the cap is enforced on the bytes as
   they arrive: 256 MiB for a sync pack, 2 MiB for a share, 256 KiB for an icon.
   The desktop OAuth loopback listener binds an OS-chosen port and gives up
@@ -629,20 +634,20 @@ exposed process than the webview, and it is not ours.
   asked, as KeePassXC does. A new passkey is put on the one login for
   that site, or on a new login when there is none or several (the same rule
   `passkey::store` had). The write is pinned to the session the ceremony
-  began in: a lock or a workspace switch while the user decides fails it
-  rather than landing it in another vault.
-- **How it is admitted.** An extension asks once per vault. The app comes
+  began in: a lock or a lockbox switch while the user decides fails it
+  rather than landing it in another lockbox.
+- **How it is admitted.** An extension asks once per lockbox. The app comes
   forward with a dialog, one ask at a time and refused after a minute
   unanswered, and the extension gets in only if the user gives it a name.
   What is remembered is that name and the extension's identification key, as
-  a row inside the vault it was let into (`browser::clients`), sealed with the
+  a row inside the lockbox it was let into (`browser::clients`), sealed with the
   rest of it: the key is the whole credential — the protocol never has the
   extension sign with the private half — so on disk it is as unreadable as
-  what it opens. An association is to that vault alone; another workspace on
+  what it opens. An association is to that lockbox alone; another lockbox on
   the device does not answer to it. Every later request presents the key
   inside the sealed channel, and a connection's key is checked against the
-  open vault's list on every request, so forgetting an extension in Settings ›
-  Browser extension, or switching workspace, ends its access at its next
+  open lockbox's list on every request, so forgetting an extension in Settings ›
+  Browser extension, or switching lockbox, ends its access at its next
   request rather than its next reconnect. Switching the host off ends the
   connections that are up as well.
 - **Transport.** The app listens on a local socket beside the vault, created
@@ -719,10 +724,10 @@ the vault is as unlocked as it was, and the auto-lock is what ends that.
 
 The extension (`app.rowel.mobile.autofill`: Swift for the sheet, and the
 `rowel-autofill` crate over `rowel_core` for the vault) reaches exactly those
-two things: the active workspace's vault in the shared container, and that
+two things: the active lockbox's database in the shared container, and that
 keychain item. It opens nothing before the user passes Face ID or Touch ID —
 the item's access control demands it — and then opens the vault with the same
-app key the app's own biometric unlock uses, so a workspace that opens only
+app key the app's own biometric unlock uses, so a lockbox that opens only
 with its own password stays closed to it, and a device with biometric unlock
 turned off gives it nothing. It never creates a vault, and writes to one only
 to keep a passkey it registered; while a password change the app was

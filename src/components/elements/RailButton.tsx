@@ -34,7 +34,7 @@ export default function RailButton({
   children: ReactNode
 }) {
   return (
-    <Tooltip content={label}>
+    <Tooltip content={label} side="right">
       <button
         type="button"
         aria-label={label}
