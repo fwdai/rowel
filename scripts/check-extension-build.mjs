@@ -56,6 +56,12 @@ check(
 for (const browser of ['chromium', 'firefox', 'safari']) {
   const client = readFileSync(join(BUILD, browser, 'background', 'client.js'), 'utf8')
   check(client.includes(`nativeHostName = '${HOST}'`), `${browser} build talks to native host ${HOST}`)
+  const viaShim = client.includes('globalThis.rowelConnectNative(')
+  const viaBrowser = client.includes('browser.runtime.connectNative(')
+  check(
+    browser === 'safari' ? viaShim && !viaBrowser : viaBrowser && !viaShim,
+    `${browser} build connects through ${browser === 'safari' ? 'the Safari port shim' : 'browser.runtime.connectNative'}`
+  )
 }
 
 if (failed) process.exit(1)

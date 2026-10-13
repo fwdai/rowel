@@ -9,13 +9,17 @@
 // back what the app sent unsolicited — the database-locked/-unlocked signals —
 // with its replies.
 //
-// This replaces browser.runtime.connectNative with a port that behaves the way
+// This provides globalThis.rowelConnectNative, a port that behaves the way
 // background/client.js expects a Chrome or Firefox one to: postMessage() sends
 // a request, every reply and signal arrives through onMessage in the order the
 // app sent them, and onDisconnect fires when the app is not there or has gone —
 // the "not connected" state, and upstream's automatic reconnect, exactly as a
-// proxy that exits does it. Nothing upstream is changed; this file is loaded
-// only by the Safari manifest, right after the polyfill (safari/build.mjs).
+// proxy that exits does it. The Safari build (safari/build.mjs) points
+// upstream's connectNative call at it. It is a global rather than a
+// replacement of browser.runtime.connectNative because WebKit serves that
+// property from the API class's callbacks ahead of anything set on the
+// object, so it cannot be overridden. This file is loaded only by the Safari
+// manifest, right after the polyfill.
 //
 // Ordering holds by construction. Every native message goes through one
 // promise chain, so there is only ever one outstanding and responses are
@@ -221,16 +225,5 @@
         }
     }
 
-    const safariConnectNative = (name) => new SafariNativePort(name);
-
-    // The polyfill may have wrapped the runtime in a Proxy that answers from its
-    // own cache: a definition lands there, where an assignment might not.
-    Object.defineProperty(runtime, 'connectNative', {
-        value: safariConnectNative,
-        configurable: true,
-        writable: true,
-    });
-    if (browser.runtime.connectNative !== safariConnectNative) {
-        console.error('Rowel: could not install the Safari native messaging port');
-    }
+    globalThis.rowelConnectNative = (name) => new SafariNativePort(name);
 })();

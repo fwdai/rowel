@@ -82,9 +82,13 @@ safari-native.js ─────────────┴──▶ SafariWebEx
   Apple documents that call for the containing app, not for the extension
   process, so the extension takes a push only as a cue to poll now.
 - **The extension's side** (`extension/safari/safari-native.js`, loaded only
-  by the Safari build, right after the polyfill) replaces
-  `runtime.connectNative` with a port that behaves as `background/client.js`
-  expects of Chrome's: `postMessage` sends a request through
+  by the Safari build, right after the polyfill) provides
+  `globalThis.rowelConnectNative`, a port that behaves as
+  `background/client.js` expects of Chrome's. The Safari build rewrites
+  upstream's one `browser.runtime.connectNative(` call to it, and fails if
+  there is not exactly one; Safari's own `runtime.connectNative` cannot be
+  overridden, since WebKit serves it from the API class's property callbacks
+  ahead of anything set on the object. `postMessage` sends a request through
   `sendNativeMessage`, replies and signals come back through `onMessage`, and
   `onDisconnect` fires on any error — the "not connected" state, from which
   upstream's automatic reconnect takes over, just as when a Chrome proxy
@@ -188,8 +192,10 @@ Both halves of the relay are tested without Safari, and CI runs both:
   `node --test` against a scripted `sendNativeMessage`: one message
   outstanding and issue order, the heartbeat held off while busy, signals
   around a reply, duplicates, the `after` warning, every error mapping to
-  `onDisconnect`, reconnecting, and installing through the polyfill. CI's
-  extension job.
+  `onDisconnect`, reconnecting, and that the port is reachable as a global
+  behind a runtime that, like Safari's, ignores anything set on it. CI's
+  extension job; `scripts/check-extension-build.mjs` then checks the built
+  Safari copy connects through the global and the others do not.
 
 A debug build of the handler also honours `ROWEL_DB_DIR` for its socket, so it
 can be pointed at a debug app run with it.
