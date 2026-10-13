@@ -261,8 +261,7 @@ pub async fn find_by_app_property(
 ///
 /// For a caller that has to see the whole folder rather than one known name:
 /// the sync engine's vault-id resolution and first-run onboarding both learn
-/// which vaults an account holds from the file names they find in `Lockboxes/`
-/// (or the legacy `Vaults/`).
+/// which vaults an account holds from the file names they find in `Vaults/`.
 pub async fn list_folder(client: &Client, token: &str, parent: &str) -> Result<Vec<DriveFile>> {
     let q = format!("'{}' in parents and trashed = false", escape(parent));
     find_all(client, token, &q).await

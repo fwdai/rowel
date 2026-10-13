@@ -1,7 +1,7 @@
-//! Google Drive sync provider. Finds (or creates) `Rowel/Lockboxes/` (read as
-//! `Rowel/Vaults/` on accounts from before the rename) and the
-//! `<vault-id>.rowel` pack inside it, and reads/writes that one file. Every
-//! name it uses comes from [`layout`].
+//! Google Drive sync provider. Finds (or creates) `Rowel/Vaults/` — read as
+//! `Rowel/Lockboxes/` once a later release has renamed it, see
+//! [`find_packs_folder`] — and the `<vault-id>.rowel` pack inside it, and
+//! reads/writes that one file. Every name it uses comes from [`layout`].
 //!
 //! Which pack is *this* vault's is settled once per run, before the engine
 //! starts: see [`resolve_vault_id`].
@@ -488,8 +488,8 @@ pub(crate) async fn delete_pack(
     Ok(())
 }
 
-/// `Rowel/Lockboxes` (or the legacy `Rowel/Vaults`), with either level created
-/// if this account has never had it. The root id comes back too, so a caller
+/// `Rowel/Vaults` (or `Rowel/Lockboxes` after the cutover), with either level
+/// created if this account has never had it. The root id comes back too, so a caller
 /// that caches the pair ([`DriveRemote::ensure_vaults`]) does not list it a
 /// second time.
 async fn ensure_vaults_path(client: &Client, token: &str) -> Result<(String, String)> {
@@ -512,31 +512,48 @@ async fn packs_folder_in(client: &Client, token: &str, root: &str) -> Result<Opt
     find_packs_folder(|name| drive::folder_id_in(client, token, name, root)).await
 }
 
-/// The first of [`layout::PACKS_FOLDERS`] that `lookup` finds: `Lockboxes/`,
-/// else the legacy `Vaults/`, else none.
+/// The one of [`layout::PACKS_FOLDERS`] that `lookup` finds — `Vaults/` today,
+/// `Lockboxes/` once a later release has renamed it — or none.
 ///
-/// Reading `Vaults/` is what keeps an account from before the rename syncing
-/// where it always has, and where an older client on another device still
-/// looks. When both exist `Lockboxes/` wins, deterministically, so two devices
-/// never split across them. `lookup` is the Drive call, injected so the rule is
-/// testable without one.
+/// Reading both is what lets a client of this release keep syncing across that
+/// rename. Finding *both* is refused rather than resolved: it means two
+/// generations of client have filed packs apart (one of them, older than the
+/// rename, recreated `Vaults/` beside `Lockboxes/`), and picking either side
+/// would hide the other's packs and deletion markers and let the two histories
+/// drift on in silence. Stopping is what gets the user to update the straggler
+/// and fold the folders together. `lookup` is the Drive call, injected so the
+/// rule is testable without one.
 async fn find_packs_folder<F, Fut>(mut lookup: F) -> Result<Option<String>>
 where
     F: FnMut(&'static str) -> Fut,
     Fut: Future<Output = Result<Option<String>>>,
 {
+    let mut found = None;
     for name in layout::PACKS_FOLDERS {
-        if let Some(id) = lookup(name).await? {
-            return Ok(Some(id));
+        let Some(id) = lookup(name).await? else {
+            continue;
+        };
+        if found.is_some() {
+            return Err(Error::Other(format!(
+                "this Google Drive holds both {}/{} and {}/{}; update {} on every device, then move the packs into one of them and delete the other",
+                layout::ROOT_FOLDER,
+                layout::PACKS_FOLDERS[0],
+                layout::ROOT_FOLDER,
+                layout::PACKS_FOLDERS[1],
+                layout::ROOT_FOLDER
+            )));
         }
+        found = Some(id);
     }
-    Ok(None)
+    Ok(found)
 }
 
-/// [`find_packs_folder`], creating [`layout::LOCKBOXES_FOLDER`] when the account
-/// has neither. Never creates one beside an existing `Vaults/`: that account
-/// keeps syncing into it, with no re-upload and nothing for an older client to
-/// miss.
+/// [`find_packs_folder`], creating [`layout::VAULTS_FOLDER`] when the account
+/// has none. Always that name, never [`layout::LOCKBOXES_FOLDER`]: a fresh
+/// account filed under the new name forks the first time a client from before
+/// the rename syncs into it (it finds no `Vaults/`, makes one, uploads there).
+/// Creating the new name is the cutover release's move, once no supported
+/// client is older than the rename.
 async fn ensure_packs_folder<F, Fut, C, CFut>(lookup: F, create: C) -> Result<String>
 where
     F: FnMut(&'static str) -> Fut,
@@ -546,12 +563,12 @@ where
 {
     match find_packs_folder(lookup).await? {
         Some(id) => Ok(id),
-        None => create(layout::LOCKBOXES_FOLDER).await,
+        None => create(layout::VAULTS_FOLDER).await,
     }
 }
 
-/// [`Remote`] over one vault's pack, `Rowel/Lockboxes/<vault-id>.rowel` (or
-/// under the legacy `Rowel/Vaults/`, see [`find_packs_folder`]).
+/// [`Remote`] over one vault's pack, `Rowel/Vaults/<vault-id>.rowel` (or
+/// under `Rowel/Lockboxes/` after the cutover, see [`find_packs_folder`]).
 ///
 /// Both folder ids are resolved once per instance (one instance per run)
 /// because the selection rule is deterministic and re-listing them would only
@@ -592,8 +609,8 @@ impl DriveRemote {
         Ok(found)
     }
 
-    // The packs folder (`Rowel/Lockboxes`, or the legacy `Rowel/Vaults`), the
-    // same way.
+    // The packs folder (`Rowel/Vaults`, or `Rowel/Lockboxes` after the
+    // cutover), the same way.
     async fn vaults(&self, client: &Client, token: &str) -> Result<Option<String>> {
         if let Some(id) = self.vaults.lock().unwrap().clone() {
             return Ok(Some(id));
@@ -746,25 +763,37 @@ mod tests {
         move |name| std::future::ready(Ok(folders.contains(&name).then(|| name.to_string())))
     }
 
+    // Every account today: syncing goes where it always has, and where a
+    // client from before the rename on another device still looks.
     #[tokio::test]
-    async fn a_fresh_layout_account_uses_lockboxes() {
+    async fn an_account_reads_vaults() {
+        let found = find_packs_folder(lookup_in(&[layout::VAULTS_FOLDER])).await;
+        assert_eq!(found.unwrap().as_deref(), Some("Vaults"));
+    }
+
+    // After the cutover release has renamed the folder, this release keeps
+    // reading it rather than taking the account for empty.
+    #[tokio::test]
+    async fn an_account_renamed_by_the_cutover_reads_lockboxes() {
         let found = find_packs_folder(lookup_in(&[layout::LOCKBOXES_FOLDER])).await;
         assert_eq!(found.unwrap().as_deref(), Some("Lockboxes"));
     }
 
-    // An account from before the rename keeps syncing where it always has —
-    // and where an older client on another device still looks.
+    // Both means two generations of client have filed packs apart. Picking a
+    // side would hide the other's packs and markers and let the histories
+    // drift on; the run stops instead, whichever order the folders turn up in.
     #[tokio::test]
-    async fn an_account_from_before_the_rename_reads_vaults() {
-        let found = find_packs_folder(lookup_in(&[layout::LEGACY_VAULTS_FOLDER])).await;
-        assert_eq!(found.unwrap().as_deref(), Some("Vaults"));
-    }
-
-    #[tokio::test]
-    async fn with_both_folders_lockboxes_wins() {
-        let both = &[layout::LEGACY_VAULTS_FOLDER, layout::LOCKBOXES_FOLDER];
-        let found = find_packs_folder(lookup_in(both)).await;
-        assert_eq!(found.unwrap().as_deref(), Some("Lockboxes"));
+    async fn with_both_folders_the_run_refuses_to_pick_a_side() {
+        for both in [
+            &[layout::VAULTS_FOLDER, layout::LOCKBOXES_FOLDER],
+            &[layout::LOCKBOXES_FOLDER, layout::VAULTS_FOLDER],
+        ] {
+            let err = find_packs_folder(lookup_in(both)).await.unwrap_err();
+            assert!(
+                matches!(&err, Error::Other(message) if message.contains("Rowel/Vaults") && message.contains("Rowel/Lockboxes")),
+                "{err:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -772,27 +801,33 @@ mod tests {
         assert_eq!(find_packs_folder(lookup_in(&[])).await.unwrap(), None);
     }
 
+    // A fresh account gets `Vaults/`, the one name every supported client
+    // knows; an account that has a folder, under either name, keeps it and
+    // nothing is created beside it.
     #[tokio::test]
-    async fn only_an_account_with_neither_folder_gets_one_created_and_it_is_lockboxes() {
+    async fn only_an_account_with_no_folder_gets_one_created_and_it_is_vaults() {
         let created = RefCell::new(Vec::new());
         let create = |name: &'static str| {
             created.borrow_mut().push(name);
             std::future::ready(Ok(format!("new-{name}")))
         };
         let id = ensure_packs_folder(lookup_in(&[]), create).await.unwrap();
-        assert_eq!(id, "new-Lockboxes");
-        assert_eq!(*created.borrow(), ["Lockboxes"]);
+        assert_eq!(id, "new-Vaults");
+        assert_eq!(*created.borrow(), ["Vaults"]);
 
-        // An existing `Vaults/` is used as is: nothing is created beside it.
-        let create = |name: &'static str| {
-            created.borrow_mut().push(name);
-            std::future::ready(Ok(format!("new-{name}")))
-        };
-        let id = ensure_packs_folder(lookup_in(&[layout::LEGACY_VAULTS_FOLDER]), create)
-            .await
-            .unwrap();
-        assert_eq!(id, "Vaults");
-        assert_eq!(created.borrow().len(), 1);
+        let existing: [&'static [&'static str]; 2] =
+            [&[layout::VAULTS_FOLDER], &[layout::LOCKBOXES_FOLDER]];
+        for folders in existing {
+            let create = |name: &'static str| {
+                created.borrow_mut().push(name);
+                std::future::ready(Ok(format!("new-{name}")))
+            };
+            let id = ensure_packs_folder(lookup_in(folders), create)
+                .await
+                .unwrap();
+            assert_eq!(id, folders[0]);
+            assert_eq!(created.borrow().len(), 1);
+        }
     }
 
     const ID: &str = "a1b2c3";

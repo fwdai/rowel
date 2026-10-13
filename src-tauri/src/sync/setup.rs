@@ -55,9 +55,9 @@ impl PackInfo {
 /// Every vault in the account a first run could restore from, newest first.
 ///
 /// An empty list covers "no Rowel folder", "no packs folder in it" (neither
-/// `Lockboxes/` nor the legacy `Vaults/`) and "a packs folder with nothing
-/// restorable in it" — to onboarding they are the same answer, and the same
-/// fresh start.
+/// `Vaults/` nor, after the cutover, `Lockboxes/`) and "a packs folder with
+/// nothing restorable in it" — to onboarding they are the same answer, and the
+/// same fresh start.
 ///
 /// All of them rather than one: two installs syncing their own primary vault to
 /// the same Google account each mint their own vault id, so the account holds a
@@ -85,8 +85,8 @@ pub async fn find_pack_by_id(client: &Client, token: &str, file_id: &str) -> Res
         .ok_or(Error::NoRemoteVault)
 }
 
-/// Which of `vaults` (the contents of `Rowel/Lockboxes/`, or the legacy
-/// `Rowel/Vaults/`) are vaults to offer, and
+/// Which of `vaults` (the contents of `Rowel/Vaults/`, or of
+/// `Rowel/Lockboxes/` after the cutover) are vaults to offer, and
 /// in what order.
 ///
 /// Live packs only — see [`PackInfo::of`] for what makes one.

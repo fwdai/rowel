@@ -23,22 +23,26 @@
 
 /// The one folder Rowel owns in the account.
 pub const ROOT_FOLDER: &str = "Rowel";
-/// Subfolder of [`ROOT_FOLDER`] holding one pack per lockbox, and the only
-/// one a fresh account is given.
-pub const LOCKBOXES_FOLDER: &str = "Lockboxes";
-/// What [`LOCKBOXES_FOLDER`] was called before the lockbox rename. Accounts
-/// created then keep it and go on syncing in it.
+/// Subfolder of [`ROOT_FOLDER`] holding one pack per lockbox: the folder every
+/// client creates, and the one every account has today.
 ///
-/// Deliberately not renamed in place (a `files.update` of the folder's name):
-/// an older client that finds `Rowel/` but no `Vaults/` reads the account as
-/// never pushed, recreates `Vaults/` and uploads its own pack there, and the
-/// two devices fork without a word. The rename becomes safe once clients that
-/// only know this name are out of support; until then it is read, never moved.
-pub const LEGACY_VAULTS_FOLDER: &str = "Vaults";
-/// Where to look for the packs folder, most preferred first. When an account
-/// has both (two devices raced across the rename, or a user made one by hand)
-/// [`LOCKBOXES_FOLDER`] wins, on every device alike.
-pub const PACKS_FOLDERS: [&str; 2] = [LOCKBOXES_FOLDER, LEGACY_VAULTS_FOLDER];
+/// It keeps its pre-rename name on purpose. A client from before the lockbox
+/// rename that finds `Rowel/` but no `Vaults/` reads the account as never
+/// pushed, creates `Vaults/` and uploads its own pack there — so for as long
+/// as such clients are supported, *any* client that files packs anywhere else
+/// forks the account the moment one of them syncs. Neither renaming this
+/// folder in place (a `files.update` of its name) nor giving fresh accounts
+/// the new name is safe until then.
+pub const VAULTS_FOLDER: &str = "Vaults";
+/// The name the packs folder takes once every supported client knows it: the
+/// cutover is a later release, which renames [`VAULTS_FOLDER`] in place and
+/// creates this one for fresh accounts. This release only *reads* it, so a
+/// client of this release keeps syncing across that cutover.
+pub const LOCKBOXES_FOLDER: &str = "Lockboxes";
+/// Every name the packs folder can have. An account has exactly one of them:
+/// both at once means two generations of client have filed packs apart, and a
+/// run refuses to pick a side (see `sync::find_packs_folder`).
+pub const PACKS_FOLDERS: [&str; 2] = [VAULTS_FOLDER, LOCKBOXES_FOLDER];
 /// Subfolder of [`ROOT_FOLDER`] holding outstanding shares.
 pub const SHARES_FOLDER: &str = "Shares";
 
