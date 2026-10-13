@@ -172,6 +172,7 @@ const DEFAULTS: Record<string, Handler> = {
     skipped: 0,
     dryRun: dryRun as boolean,
     errors: [],
+    warnings: [],
     entries: []
   }),
   export_entries: () => null,

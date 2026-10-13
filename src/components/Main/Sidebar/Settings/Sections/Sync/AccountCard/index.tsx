@@ -8,7 +8,7 @@ import {
 } from '@/store'
 import { syncProvider } from '@/api/sync'
 import { cx } from '@/utils/cx'
-import { CARD } from '@/components/elements/tokens'
+import { CARD, HERO_WASH } from '@/components/elements/tokens'
 import AccountRestoreForm from '@/components/elements/AccountRestoreForm'
 import ProviderButtons from '@/components/elements/ProviderButtons'
 import Header from './Header'
@@ -23,10 +23,6 @@ interface Props {
   offered: boolean
   restoring: boolean
 }
-
-// A soft accent wash from the top-left corner, over the card's own ground.
-const WASH =
-  'bg-[radial-gradient(120%_140%_at_0%_0%,color-mix(in_srgb,var(--c-accent)_10%,transparent),transparent_55%)]'
 
 // The one account this vault syncs through: where it stands, the control that
 // moves it on, and — once connected — what it holds and the way out. Before
@@ -49,7 +45,7 @@ export default function AccountCard({ probing, offered, restoring }: Props) {
       : t('Last attempt failed')
 
   return (
-    <div data-testid="settings-drive-row" className={cx(CARD, WASH)}>
+    <div data-testid="settings-drive-row" className={cx(CARD, HERO_WASH)}>
       <Header provider={provider} probing={probing} offered={offered} restoring={restoring} />
 
       {!sync.configured && !busy && (
@@ -57,12 +53,12 @@ export default function AccountCard({ probing, offered, restoring }: Props) {
           testid="settings"
           onPick={connectSync}
           disabled={sync.inProgress}
-          className="flex flex-wrap gap-2 px-[18px] pb-[18px]"
+          className="flex flex-wrap gap-2 px-5 pb-5"
         />
       )}
 
       {offered && (
-        <div className="flex flex-col gap-3 px-[18px] pb-[18px]">
+        <div className="flex flex-col gap-3 px-5 pb-5">
           <p data-testid="settings-drive-found" className="text-sm text-text2">
             {t(
               'Restore it here to sync the same data on this device. The vault open now stays as a workspace of its own.'

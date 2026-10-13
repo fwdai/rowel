@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import type { BrowserClient } from '@/api/browser'
 import { keyFingerprint } from '@/lib/keyFingerprint'
 import Button from '@/components/elements/Button'
+import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
 
@@ -22,12 +23,9 @@ export default function Clients({
   return (
     <SettingsGroup label={t('Connected extensions')}>
       {clients.length === 0 ? (
-        <div
-          data-testid="settings-browser-clients-empty"
-          className="px-4 py-3.5 text-base text-text3"
-        >
+        <Note testid="settings-browser-clients-empty" className="px-4 py-3.5">
           {t('No extension has connected to this vault yet')}
-        </div>
+        </Note>
       ) : (
         clients.map(client => (
           <SettingsRow
@@ -37,9 +35,8 @@ export default function Clients({
             description={<span className="font-mono">{keyFingerprint(client.key)}</span>}
             control={
               <Button
-                variant="pale"
+                variant="pale-danger"
                 size="md"
-                className="text-bad hover:text-bad"
                 disabled={busy}
                 onClick={() => onForget(client.key)}
                 testid="settings-browser-forget"

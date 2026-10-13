@@ -24,6 +24,6 @@ export const pickBackup = (): Promise<string | null> =>
   pickFile([{ name: t('Rowel backup'), extensions: ['rowel'] }])
 
 export const pickImportFile = (): Promise<string | null> =>
-  pickFile([{ name: t('Password exports'), extensions: ['json', 'csv'] }])
+  pickFile([{ name: t('Password exports'), extensions: ['json', 'csv', '1pux'] }])
 
 // No extension filter: a `.env` has none, and `.env.production` is not `.production`.

@@ -49,7 +49,7 @@ export default function Sample({ value, bits, level, onRegenerate }: Props) {
           label={t('Regenerate')}
           onClick={onRegenerate}
           testid="settings-generator-regenerate"
-          className="border border-line2 hover:border-accent-line"
+          className="border border-line2 hover:border-accent-line any-pointer-coarse:h-11 any-pointer-coarse:w-11"
         >
           <RefreshGlyph />
         </IconButton>
