@@ -25,6 +25,12 @@
 //! an Objective-C exception, which is what [`supported`] guards against.
 //! Everywhere else the variant still compiles and every call says so.
 
+// The plain-value half below (record fields, error codes, the compare-and-swap
+// check, the cap) is what `cloudkit` and the tests consume. Off Apple nothing
+// but the gate and the stub is live, and that is not dead code to fix — the
+// adapter is simply absent there.
+#![cfg_attr(not(target_vendor = "apple"), allow(dead_code))]
+
 #[cfg(target_vendor = "apple")]
 mod cloudkit;
 #[cfg(target_vendor = "apple")]
