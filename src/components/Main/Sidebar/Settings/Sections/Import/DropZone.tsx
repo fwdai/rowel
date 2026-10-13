@@ -1,30 +1,34 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isMobile } from '@/lib/platform'
 import { pickImportFile } from '@/api/pickers'
-import { useFileDrop } from '@/hooks/useFileDrop'
-import { DownloadGlyph } from '../../../../icons'
-import { META_TYPE } from '@/components/elements/tokens'
-import HeroDropZone from './HeroDropZone'
+import { useWebviewDragDrop } from '@/hooks/useWebviewDragDrop'
+import { cx } from '@/utils/cx'
+import Button from '@/components/elements/Button'
+import { CARD } from '@/components/elements/tokens'
+import { UploadGlyph } from '../../../../icons'
 
 interface Props {
   onDrop: (path: string) => void
-  // `hero`: the section's lead drop target, with a picker button of its own
-  // on every platform (see HeroDropZone). Left out, the compact strip below.
-  variant?: 'hero'
 }
 
-export default function DropZone({ onDrop, variant }: Props) {
-  return variant === 'hero' ? <HeroDropZone onDrop={onDrop} /> : <Strip onDrop={onDrop} />
-}
-
-// The "I don't see my provider" route into the same import: any export file,
-// with the backend sniffing its format. Nothing drags a file onto a phone, so
-// there the drop target becomes the button it was the alternative to — the
-// picker is `pick_import_file`, the very one the tiles above already use.
-function Strip({ onDrop }: Omit<Props, 'variant'>) {
+// The import section's lead: any export file, with the backend sniffing its
+// format. On the desktop a drop target that lights up while a file is held
+// over the window, with a picker button as the other way in. Nothing drags a
+// file onto a phone, so there the same card is simply the picker — a solid
+// card the whole of which is the tap, and no dashed outline promising a
+// gesture the platform has not got.
+export default function DropZone({ onDrop }: Props) {
   const { t } = useTranslation()
-  useFileDrop(([path]) => {
-    if (path) onDrop(path)
+  const [over, setOver] = useState(false)
+
+  useWebviewDragDrop(payload => {
+    if (payload.type === 'leave') setOver(false)
+    else if (payload.type === 'drop') {
+      setOver(false)
+      const [path] = payload.paths
+      if (path) onDrop(path)
+    } else setOver(true)
   })
 
   const pick = () =>
@@ -36,33 +40,49 @@ function Strip({ onDrop }: Omit<Props, 'variant'>) {
 
   const body = (
     <>
-      <DownloadGlyph size={16} />
-      <div className="min-w-0 text-left">
-        <div className="text-sm text-text2">
-          {isMobile ? t('Or choose an export file') : t('Or drop an export file here')}
-        </div>
-        <div className={META_TYPE}>
-          {t('csv, json, 1pux — parsed locally, never uploaded')}
-        </div>
+      <div className="grid h-11 w-11 place-items-center rounded-lg bg-accent-soft text-accent">
+        <UploadGlyph size={20} />
       </div>
+      <div className="mt-3 text-md font-semibold tracking-display text-text">
+        {isMobile ? t('Choose an export file') : t('Drop an export file')}
+      </div>
+      <p className="mt-1 max-w-[360px] text-sm text-text2 max-md:text-base">
+        {t('We detect the format automatically. Parsed on this device, never uploaded.')}
+      </p>
     </>
   )
 
-  const className =
-    'flex items-center gap-3.5 rounded-lg border border-dashed border-line2 px-4 py-5 text-text2'
+  if (isMobile)
+    return (
+      <button
+        type="button"
+        data-testid="import-dropzone"
+        onClick={() => void pick()}
+        className={cx(CARD, 'flex w-full cursor-pointer flex-col items-center p-5 text-center active:bg-hover')}
+      >
+        {body}
+      </button>
+    )
 
-  return isMobile ? (
-    <button
-      type="button"
+  return (
+    <div
       data-testid="import-dropzone"
-      onClick={() => void pick()}
-      className={`${className} w-full cursor-pointer transition-colors hover:border-accent-line`}
+      data-over={over || undefined}
+      className={cx(
+        'flex flex-col items-center rounded-xl border-[1.5px] border-dashed px-5 py-6 text-center transition-colors',
+        over ? 'border-accent-line bg-accent-soft' : 'border-line2 bg-field hover:border-accent-line'
+      )}
     >
       {body}
-    </button>
-  ) : (
-    <div data-testid="import-dropzone" className={className}>
-      {body}
+      <Button
+        variant="pale"
+        size="md"
+        className="mt-4"
+        onClick={() => void pick()}
+        testid="import-choose-file"
+      >
+        {t('Choose file…')}
+      </Button>
     </div>
   )
 }

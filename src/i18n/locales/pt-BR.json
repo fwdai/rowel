@@ -307,9 +307,6 @@
   ".json export": "exportação .json",
   ".1pux or .csv export": "exportação .1pux ou .csv",
   ".csv export": "exportação .csv",
-  "Or drop an export file here": "Ou solte um arquivo de exportação aqui",
-  "Or choose an export file": "Ou escolha um arquivo de exportação",
-  "csv, json, 1pux — parsed locally, never uploaded": "csv, json, 1pux — lidos localmente, nunca enviados",
   "Imports are merged. Existing items are never overwritten.": "As importações são mescladas. Itens existentes nunca são substituídos.",
   "Ready to import": "Pronto para importar",
   "Row {{row}}": "Linha {{row}}",
@@ -749,5 +746,6 @@
   "Could not open this file.": "Não foi possível abrir este arquivo.",
   "Hide Rowel after copying": "Ocultar o {{appName}} depois de copiar",
   "Go back to the app you came from once a value is copied": "Volte ao app de onde você veio assim que um valor for copiado",
-  "Unlock with {{biometry}}": "Desbloquear com {{biometry}}"
+  "Unlock with {{biometry}}": "Desbloquear com {{biometry}}",
+  "Choose an export file": "Escolher um arquivo de exportação"
 }

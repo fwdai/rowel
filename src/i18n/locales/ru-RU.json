@@ -307,9 +307,6 @@
   ".json export": "экспорт .json",
   ".1pux or .csv export": "экспорт .1pux или .csv",
   ".csv export": "экспорт .csv",
-  "Or drop an export file here": "Или перетащите файл экспорта сюда",
-  "Or choose an export file": "Или выберите файл экспорта",
-  "csv, json, 1pux — parsed locally, never uploaded": "csv, json, 1pux — разбираются локально, ничего не отправляется",
   "Imports are merged. Existing items are never overwritten.": "Импорт добавляется к текущим записям. Существующие записи не перезаписываются.",
   "Ready to import": "Готово к импорту",
   "Row {{row}}": "Строка {{row}}",
@@ -761,5 +758,6 @@
   "Could not open this file.": "Не удалось открыть этот файл.",
   "Hide Rowel after copying": "Скрывать {{appName}} после копирования",
   "Go back to the app you came from once a value is copied": "Возвращаться в приложение, из которого вы пришли, после копирования",
-  "Unlock with {{biometry}}": "Разблокировать с помощью {{biometry}}"
+  "Unlock with {{biometry}}": "Разблокировать с помощью {{biometry}}",
+  "Choose an export file": "Выбрать файл экспорта"
 }

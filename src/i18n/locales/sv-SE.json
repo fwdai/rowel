@@ -307,9 +307,6 @@
   ".json export": ".json-export",
   ".1pux or .csv export": ".1pux- eller .csv-export",
   ".csv export": ".csv-export",
-  "Or drop an export file here": "Eller släpp en exportfil här",
-  "Or choose an export file": "Eller välj en exportfil",
-  "csv, json, 1pux — parsed locally, never uploaded": "csv, json, 1pux — tolkas lokalt, laddas aldrig upp",
   "Imports are merged. Existing items are never overwritten.": "Importer slås samman. Befintliga objekt skrivs aldrig över.",
   "Ready to import": "Klart att importera",
   "Row {{row}}": "Rad {{row}}",
@@ -737,5 +734,6 @@
   "Could not open this file.": "Det gick inte att öppna filen.",
   "Hide Rowel after copying": "Dölj {{appName}} efter kopiering",
   "Go back to the app you came from once a value is copied": "Gå tillbaka till appen du kom från när ett värde har kopierats",
-  "Unlock with {{biometry}}": "Lås upp med {{biometry}}"
+  "Unlock with {{biometry}}": "Lås upp med {{biometry}}",
+  "Choose an export file": "Välj en exportfil"
 }

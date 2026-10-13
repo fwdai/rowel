@@ -307,9 +307,6 @@
   ".json export": ".json aktarımı",
   ".1pux or .csv export": ".1pux veya .csv aktarımı",
   ".csv export": ".csv aktarımı",
-  "Or drop an export file here": "Ya da bir dışa aktarım dosyasını buraya bırakın",
-  "Or choose an export file": "Ya da bir dışa aktarım dosyası seçin",
-  "csv, json, 1pux — parsed locally, never uploaded": "csv, json, 1pux — yerelde okunur, hiçbir yere yüklenmez",
   "Imports are merged. Existing items are never overwritten.": "İçe aktarımlar birleştirilir. Mevcut kayıtların üzerine asla yazılmaz.",
   "Ready to import": "Aktarıma hazır",
   "Row {{row}}": "Satır {{row}}",
@@ -737,5 +734,6 @@
   "Could not open this file.": "Bu dosya açılamadı.",
   "Hide Rowel after copying": "Kopyaladıktan sonra {{appName}} uygulamasını gizle",
   "Go back to the app you came from once a value is copied": "Bir değer kopyalanınca geldiğiniz uygulamaya dönün",
-  "Unlock with {{biometry}}": "{{biometry}} ile kilidi aç"
+  "Unlock with {{biometry}}": "{{biometry}} ile kilidi aç",
+  "Choose an export file": "Bir dışa aktarma dosyası seçin"
 }

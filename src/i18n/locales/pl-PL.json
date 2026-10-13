@@ -307,9 +307,6 @@
   ".json export": "eksport .json",
   ".1pux or .csv export": "eksport .1pux lub .csv",
   ".csv export": "eksport .csv",
-  "Or drop an export file here": "Albo upuść tu plik eksportu",
-  "Or choose an export file": "Albo wybierz plik eksportu",
-  "csv, json, 1pux — parsed locally, never uploaded": "csv, json, 1pux — przetwarzane lokalnie, nigdy nie wysyłane",
   "Imports are merged. Existing items are never overwritten.": "Import jest scalany. Istniejące pozycje nigdy nie są nadpisywane.",
   "Ready to import": "Gotowe do importu",
   "Row {{row}}": "Wiersz {{row}}",
@@ -761,5 +758,6 @@
   "Could not open this file.": "Nie udało się otworzyć tego pliku.",
   "Hide Rowel after copying": "Ukryj {{appName}} po skopiowaniu",
   "Go back to the app you came from once a value is copied": "Wróć do aplikacji, z której przyszedłeś, po skopiowaniu wartości",
-  "Unlock with {{biometry}}": "Odblokuj za pomocą {{biometry}}"
+  "Unlock with {{biometry}}": "Odblokuj za pomocą {{biometry}}",
+  "Choose an export file": "Wybierz plik eksportu"
 }

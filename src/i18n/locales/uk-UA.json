@@ -307,9 +307,6 @@
   ".json export": "експорт .json",
   ".1pux or .csv export": "експорт .1pux або .csv",
   ".csv export": "експорт .csv",
-  "Or drop an export file here": "Або перетягніть сюди файл експорту",
-  "Or choose an export file": "Або виберіть файл експорту",
-  "csv, json, 1pux — parsed locally, never uploaded": "csv, json, 1pux — обробляються локально, нікуди не надсилаються",
   "Imports are merged. Existing items are never overwritten.": "Імпортоване об'єднується зі сховищем. Наявні записи ніколи не перезаписуються.",
   "Ready to import": "Готово до імпорту",
   "Row {{row}}": "Рядок {{row}}",
@@ -761,5 +758,6 @@
   "Could not open this file.": "Не вдалося відкрити цей файл.",
   "Hide Rowel after copying": "Ховати {{appName}} після копіювання",
   "Go back to the app you came from once a value is copied": "Повертатися до програми, з якої ви прийшли, після копіювання",
-  "Unlock with {{biometry}}": "Розблокувати за допомогою {{biometry}}"
+  "Unlock with {{biometry}}": "Розблокувати за допомогою {{biometry}}",
+  "Choose an export file": "Вибрати файл експорту"
 }
