@@ -60,6 +60,19 @@ export interface Kind {
    * once the secrets are in hand, so it can name what is inside the payload.
    */
   eyebrow?: (entry: Entry) => { text: string; testid: string } | null
+  /**
+   * A second question the add picker asks before the form opens — which
+   * document an identity is. Answered once, as a value seeded into `field` on
+   * the new draft, so the form arrives already cut to the answer and never
+   * changes shape under the user's hands. Left off by a kind with one form.
+   */
+  choices?: {
+    /** The draft field the answer is written to. */
+    field: string
+    /** The question, as the picker's title. Untranslated. */
+    title: TKey
+    options: { value: string; label: TKey; Glyph: Glyph }[]
+  }
   ListRow: ComponentType<ContentProps>
   /**
    * The kind's field set — the read view AND the editor. It takes no props:

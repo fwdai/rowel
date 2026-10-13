@@ -293,6 +293,16 @@ Overlays that stay overlays on a phone: the add picker (`fit="content"`, so a
 bottom sheet) and the generator opened from a password row (a page sheet). Both
 go through `Frame`.
 
+The add picker is two pages in one frame. The first is the kinds; a kind that
+declares `choices` (an identity's document) turns the page to a list of its
+answers under a Back control — the settings sub-page step (`animate-step-forward`
+/ `-back`), with the column holding the height it had so the sheet's top edge
+stays put. The answer rides into the draft as a prefill, the road a scan already
+takes, so the form opens cut to it and carries no type switch. A surface that
+already knows the kind (the palette's "Add an identity", a filtered list's
+empty pane) goes through `AddSecret/add.ts`, which opens the picker on that
+page instead of the form.
+
 Tabs (labels are the desktop's i18n keys): **All Items · Favorites · Generator
 · Settings**. Archive is a row in Settings on compact. A list tab closes
 settings and the standalone generator and calls `setView`; Generator and
