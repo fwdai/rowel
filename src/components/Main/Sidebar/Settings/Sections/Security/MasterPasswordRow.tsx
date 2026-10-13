@@ -7,6 +7,7 @@ import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
 import Field from '@/components/elements/Field'
 import IconButton from '@/components/elements/IconButton'
+import Note from '@/components/elements/Note'
 import PasswordStrength from '@/components/elements/PasswordStrength'
 import { inputClass } from '@/components/elements/formStyles'
 import { verbatimInput } from '@/components/elements/inputProps'
@@ -62,7 +63,7 @@ export default function MasterPasswordRow() {
         setSuccess(
           unchanged?.length
             ? t('Password changed. Some workspaces on this device kept their own password.')
-            : t('Successfully changed password')
+            : t('Password changed')
         )
       })
       .catch((err: unknown) => setError(describeError(err)))
@@ -80,10 +81,10 @@ export default function MasterPasswordRow() {
       testid="settings-master-password-row"
     >
       <div className="flex max-w-sm flex-col gap-3">
-        {field('current_password', 'Current Password', input('current_password'))}
+        {field('current_password', 'Current password', input('current_password'))}
         {field(
           'new_password',
-          'New Password',
+          'New password',
           <>
             <div className="relative">
               {input('new_password', shown ? 'text' : 'password', 'pr-10')}
@@ -102,17 +103,14 @@ export default function MasterPasswordRow() {
         )}
         {field(
           'new_password_repeat',
-          'Repeat New Password',
+          'Repeat new password',
           <>
             {input('new_password_repeat')}
-            {mismatch && (
-              <span className="text-sm text-bad">{t("Passwords don't match yet.")}</span>
-            )}
+            {mismatch && <Note tone="bad">{t("Passwords don't match yet.")}</Note>}
           </>
         )}
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            size="md"
             testid="change-password-submit"
             onClick={onSubmit}
             disabled={disabled}
@@ -121,14 +119,14 @@ export default function MasterPasswordRow() {
             {t('Update')}
           </Button>
           {error && (
-            <span data-testid="change-password-error" className="text-sm text-bad">
+            <Note tone="bad" testid="change-password-error">
               {error}
-            </span>
+            </Note>
           )}
           {success && (
-            <span data-testid="change-password-success" className="text-sm text-good">
+            <Note tone="good" testid="change-password-success">
               {success}
-            </span>
+            </Note>
           )}
         </div>
       </div>

@@ -8,6 +8,7 @@ import { useGeneratorDialog } from '../../Generator/useGeneratorDialog'
 import { RefreshGlyph } from '../../icons'
 import {
   ACTION_BUTTON,
+  ACTION_FILL,
   HEADER_ACTION,
   ROOT_ACTION,
   ROOT_CLEARANCE,
@@ -74,7 +75,7 @@ export default function Generator() {
         data-testid="generator-use-button"
         disabled={!ready}
         onClick={confirm}
-        className={cx(ACTION_BUTTON, ROOT_ACTION, !ready && 'opacity-50')}
+        className={cx(ACTION_BUTTON, ACTION_FILL, ROOT_ACTION, !ready && 'opacity-50')}
       >
         {t(confirmLabel)}
       </button>

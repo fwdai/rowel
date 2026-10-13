@@ -39,7 +39,7 @@ export default function Header({ provider, probing, offered, restoring }: Props)
           : t('Not connected')
 
   return (
-    <div className="flex items-center gap-4 p-[18px]">
+    <div className="flex items-center gap-4 p-5">
       <div className="grid h-11 w-11 flex-none place-items-center rounded-lg bg-accent-soft text-accent">
         {provider ? <ProviderMark provider={provider} size={22} /> : <CloudGlyph size={20} />}
       </div>

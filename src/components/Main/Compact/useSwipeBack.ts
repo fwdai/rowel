@@ -1,4 +1,11 @@
-import { createContext, useContext, useEffect, useRef, type PointerEvent } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent
+} from 'react'
 
 /**
  * What a `Stack` gives the screen over its lower layer: a way to put that
@@ -62,15 +69,25 @@ const reducedMotion = () =>
  *
  * Both are moved by hand rather than through state: a pointermove at 60Hz
  * re-rendering the whole entry screen is a cost the drag would show. Only the
- * pointer handlers and `ref` are React's; the ref callback also sets
- * `touch-action: pan-y`, which is what keeps the webview from claiming a
- * horizontal pan as its own gesture while vertical ones still scroll.
+ * pointer handlers and `ref` are React's.
+ *
+ * The drag starts on `edge`, a strip the screen lays along its left side, over
+ * its scroller — the one element the finger is meant to land on. The strip is
+ * `touch-action: none` and outside the scroller, so the webview's own scroll
+ * gesture never has the touch to begin with: a touch that starts *in* a
+ * scroller belongs to it as soon as it moves a few points on an axis it can
+ * scroll, and the pointer under the swipe is cancelled mid-drag — the screen
+ * followed the finger for a moment and then sprang back. That is the way the
+ * bottom sheet's grabber owns its drag, too: one started in the content is a
+ * scroll. A tap or a mouse click on the strip is passed on to whatever lies
+ * under it, so the sliver of a row or back arrow it covers still answers.
  *
  * There is no exit animation in the shell (the screen simply unmounts), so
  * the commit finishes the slide itself before calling back.
  */
 export function useSwipeBack(onBack: () => void, disabled = false) {
   const screen = useRef<HTMLDivElement | null>(null)
+  const edge = useRef<HTMLDivElement | null>(null)
   const recede = useContext(UnderContext)
   const origin = useRef<Origin | null>(null)
   const leaving = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -109,9 +126,32 @@ export function useSwipeBack(onBack: () => void, disabled = false) {
     latest.current.onBack()
   }
 
+  // A tap or a click on the strip is for what the strip is lying over — a row's
+  // first points, the back control's arrow — so the strip steps aside for a
+  // moment to find it and clicks it. A bubbling click rather than `click()`:
+  // what it finds may be the arrow's SVG, which has no `click()` of its own.
+  // Every pointer comes through here, a mouse included — it may not swipe,
+  // but it may click. A drag that captured the pointer lands its click on the
+  // screen, not the strip, so a swipe never doubles as a tap. (jsdom has no
+  // `elementFromPoint`; the tests supply one.)
+  const forwardTap = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const strip = edge.current
+    if (!strip || e.target !== strip) return
+    strip.style.pointerEvents = 'none'
+    const under = document.elementFromPoint?.(e.clientX, e.clientY)
+    strip.style.pointerEvents = ''
+    under?.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        clientX: e.clientX,
+        clientY: e.clientY
+      })
+    )
+  }
+
   const ref = (el: HTMLDivElement | null) => {
     screen.current = el
-    if (el) el.style.touchAction = 'pan-y'
   }
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
@@ -171,5 +211,17 @@ export function useSwipeBack(onBack: () => void, disabled = false) {
     if (from.pop) settle()
   }
 
-  return { ref, onPointerDown, onPointerMove, onPointerUp, onPointerCancel }
+  return {
+    /** Spread on the screen: the handlers, and the ref the drag moves. */
+    screen: { ref, onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    /** Spread on an empty div, the screen's last child: the strip the finger lands on. */
+    edge: {
+      ref: edge,
+      onClick: forwardTap,
+      'aria-hidden': true,
+      'data-testid': 'swipe-edge',
+      className: 'absolute inset-y-0 left-0 z-10 touch-none',
+      style: { width: EDGE_PX }
+    }
+  }
 }

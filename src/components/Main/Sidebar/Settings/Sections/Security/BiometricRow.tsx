@@ -5,6 +5,9 @@ import type { BiometricMode } from '@/api/types'
 import { enableBiometric, disableBiometric } from '@/api/auth'
 import { describeError } from '@/api/errors'
 import { useApp, refreshApp } from '@/store'
+import { isMobile } from '@/lib/platform'
+import { biometryLabel } from '@/lib/biometry'
+import Note from '@/components/elements/Note'
 import SettingsRow from '@/components/elements/SettingsRow'
 import Toggle from '@/components/elements/Toggle'
 import BiometryGlyph from '@/components/elements/BiometryGlyph'
@@ -48,11 +51,18 @@ export default function BiometricRow() {
       .finally(() => refreshApp().finally(() => setBusy(false)))
   }
 
+  // A phone names the gate it has — Face ID or Touch ID, as the lock screen
+  // does; the desktop keeps naming the two it may have.
+  const type = biometric?.type ?? 'touch'
+  const label = isMobile
+    ? t('Unlock with {{biometry}}', { biometry: t(biometryLabel(type)) })
+    : t('Unlock with Touch ID or Windows Hello')
+
   // A row of the Unlock card: its tile lights once the key is enrolled.
   return (
     <SettingsRow
-      label={t('Unlock with Touch ID or Windows Hello')}
-      icon={<BiometryGlyph type={biometric?.type ?? 'touch'} size={16} />}
+      label={label}
+      icon={<BiometryGlyph type={type} size={16} />}
       iconActive={!!biometric?.available}
       description={description(t, biometric?.available ? biometric.mode : null)}
       control={
@@ -61,15 +71,15 @@ export default function BiometricRow() {
           checked={!!biometric?.available}
           disabled={busy || !enrollable}
           onChange={toggle}
-          aria-label={t('Unlock with Touch ID or Windows Hello')}
+          aria-label={label}
           testid="settings-biometric-toggle"
         />
       }
     >
       {error && (
-        <span data-testid="settings-biometric-error" className="text-sm text-bad">
+        <Note tone="bad" testid="settings-biometric-error">
           {error}
-        </span>
+        </Note>
       )}
     </SettingsRow>
   )

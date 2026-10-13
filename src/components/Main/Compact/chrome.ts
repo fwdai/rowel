@@ -70,9 +70,11 @@ export const TAB_BAR_NOTCH =
  * sub-page. It arrives across the whole width as the `Stack` layer under it
  * recedes, and throws a shadow off its left edge onto that layer: unseen at
  * rest, where it lies past the screen's edge, and the seam between the two
- * screens while an edge swipe holds them apart.
+ * screens while an edge swipe holds them apart. `relative`: what the swipe's
+ * edge strip, and a bottom action and its fade, are pinned to.
  */
-export const PUSHED_SCREEN = 'flex min-h-0 flex-1 flex-col animate-push bg-screen shadow-push'
+export const PUSHED_SCREEN =
+  'relative flex min-h-0 flex-1 flex-col animate-push bg-screen shadow-push'
 
 /**
  * What a root screen's scroller reserves under its content so the last row can
@@ -84,12 +86,16 @@ export const TAB_BAR_CLEARANCE = 'pb-36'
 export const TAB_BAR_FADE = 'h-36'
 
 /**
- * The face of a screen's bottom action: an accent slab a thumb can land on
- * without aiming. Shared so the detail screen's Copy and the generator's Use
- * are visibly the same control, put on different footings below.
+ * The face of a screen's bottom action: a slab a thumb can land on without
+ * aiming. Shared so the detail screen's Copy, the generator's Use and a
+ * settings sub-page's Create are visibly the same control, put on different
+ * footings below. The fill is separate so the one destructive slab (Delete
+ * workspace) can take the warning's instead of the accent's.
  */
 export const ACTION_BUTTON =
-  'absolute flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-accent text-lg font-semibold text-accent-fg shadow-float transition-opacity disabled:cursor-default'
+  'absolute flex cursor-pointer items-center justify-center gap-2 rounded-xl text-lg font-semibold shadow-float transition-opacity disabled:cursor-default'
+export const ACTION_FILL = 'bg-accent text-accent-fg'
+export const ACTION_FILL_DANGER = 'bg-bad text-white'
 
 /**
  * A pushed screen's bottom action, on the same footing: a 54px button on
@@ -102,12 +108,10 @@ export const PRIMARY_ACTION = `${EDGE} h-[54px]`
 export const PRIMARY_CLEARANCE = 'pb-[102px]'
 
 /**
- * A pushed screen's scroller. `overscroll-contain` is what keeps the edge swipe
- * alive, not a scroll nicety: WebKit resets the used `touch-action` at a scroll
- * container, so the `pan-y` `useSwipeBack` puts on the screen does not reach a
- * touch that starts in here — and a drag the native scroller may hand to its
- * parent begins a pan that cancels the pointer under the swipe. Contained, a
- * sideways drag has nowhere to go, no pan begins, and the swipe keeps it.
+ * A pushed screen's scroller. The edge swipe never starts in here — its strip
+ * lies over the scroller's left edge (`useSwipeBack`) — so a touch that does is
+ * the scroller's alone. `overscroll-contain` keeps a drag it cannot use from
+ * being handed up to the shell.
  */
 export const SCREEN_SCROLLER = 'min-h-0 flex-1 overflow-y-auto overscroll-contain'
 

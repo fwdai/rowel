@@ -581,11 +581,22 @@ pub(crate) fn read_file(path: &Path) -> Result<String> {
 /// the cap is told from one past it without trusting any reported length — if
 /// it arrives, the file is too large and nothing beyond it is ever read.
 pub fn read_regular_file_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
+    read_capped(open_regular_file(path)?, cap)
+}
+
+/// The handle the above reads from, for a caller that wants to read a file
+/// its own way (an archive it takes one member out of) on the same terms: one
+/// open, settled on that handle to be a regular file.
+pub fn open_regular_file(path: &Path) -> Result<fs::File> {
     let file = open_without_blocking(path)?;
     if !file.metadata()?.file_type().is_file() {
         return Err(not_a_regular_file());
     }
+    Ok(file)
+}
 
+/// The rest of a handle, refusing anything past `cap` (see above).
+pub fn read_capped(file: fs::File, cap: u64) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     file.take(cap.saturating_add(1)).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > cap {

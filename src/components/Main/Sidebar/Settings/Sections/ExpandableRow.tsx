@@ -4,22 +4,28 @@ import Button from '@/components/elements/Button'
 import SettingsRow from '@/components/elements/SettingsRow'
 
 interface Props {
-  label: string
+  label: ReactNode
   description?: string
   // The row's 16px mark, drawn in SettingsRow's tile.
   icon?: ReactNode
+  /** What the button offers while the row is folded ("Change…", "Show"). */
   action: string
+  /** What it offers once unfolded. "Cancel" for a form; a list says "Hide". */
+  collapse?: string
+  /** On the row; the button that unfolds it takes `<testid>-toggle`. */
   testid?: string
   children: ReactNode
 }
 
-// A settings row whose control unfolds a short form beneath it, so the card
-// stays a list of one-line rows until something is actually being changed.
+// A settings row whose control unfolds something beneath it — a short form, a
+// list — so the card stays a list of one-line rows until something is asked
+// for. What unfolds slides down under the row rather than appearing.
 export default function ExpandableRow({
   label,
   description,
   icon,
   action,
+  collapse,
   testid,
   children
 }: Props) {
@@ -33,12 +39,22 @@ export default function ExpandableRow({
       icon={icon}
       testid={testid}
       control={
-        <Button variant="pale" size="md" onClick={() => setOpen(!open)}>
-          {open ? t('Cancel') : action}
+        <Button
+          variant="pale"
+          size="md"
+          testid={testid && `${testid}-toggle`}
+          expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? (collapse ?? t('Cancel')) : action}
         </Button>
       }
     >
-      {open && children}
+      {open && (
+        <div className="grid animate-unfold">
+          <div className="min-h-0 overflow-hidden">{children}</div>
+        </div>
+      )}
     </SettingsRow>
   )
 }
