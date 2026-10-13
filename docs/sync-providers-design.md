@@ -352,6 +352,11 @@ Stated here because they are what the Drive code's comments defend:
 4. No lock is held across a network call; adapters are driven with
    `block_on` only on blocking-pool threads (`commands::detached`/`blocking`).
 5. Marker before pack on delete; the core does it, the adapter just writes.
+   The core also closes the other side of that window: a first push re-checks
+   the marker after its `create` and deletes its own pack if one landed in
+   between (`PackRemote::create_pack`), so a "delete everywhere" racing a
+   first push never leaves the account holding both. The adapter owes this
+   nothing beyond `stat` and `delete` being honest.
 6. A revision token is "unknown" rather than fabricated when the API has none.
 
 ## 6. PR plan
