@@ -46,7 +46,7 @@ export default function RestoreFromDrive() {
       label={t('Restore from Google Drive')}
       icon={<CloudGlyph size={16} />}
       description={t(
-        'Sign in and pick one of the vaults this Google account already holds. It arrives as a workspace of its own, unlocked with its own master password and syncing to the same pack.'
+        'Sign in and pick one of the lockboxes this Google account already holds. It arrives as a separate lockbox, unlocked with its own master password and syncing to the same pack.'
       )}
       testid="workspace-restore-row"
       control={

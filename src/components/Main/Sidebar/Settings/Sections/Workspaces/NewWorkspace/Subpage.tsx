@@ -76,7 +76,7 @@ export default function NewWorkspaceSubpage() {
     <SubpageFrame
       footer={{
         hint: ready ? t('Ready') : t('Name and master password required'),
-        cta: t('Create workspace'),
+        cta: t('Create lockbox'),
         disabled: !ready,
         loading: busy,
         // The frame's Enter covers the password field too: its own onEnter
@@ -121,7 +121,7 @@ export default function NewWorkspaceSubpage() {
             </Note>
           )}
           <Note>
-            {t('Sealed with the master password of {{name}}, the primary workspace on this device.', {
+            {t('Sealed with the master password of {{name}}, the primary lockbox on this device.', {
               name: primaryName
             })}
           </Note>

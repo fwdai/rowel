@@ -273,7 +273,7 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
         app_key
     } else {
         appkey::unwrap_key(&app, &active, &app_material).ok_or_else(|| {
-            Error::Other("biometric unlock is not enabled for this workspace".into())
+            Error::Other("biometric unlock is not enabled for this lockbox".into())
         })?
     };
     let (key, store, entries) = open_off_thread(&app, key).await?;
@@ -660,7 +660,7 @@ fn rekey_one(
     if let Some(tokens) = tokens {
         if let Err(e) = crate::sync::persist_tokens_in(dir, &new_cryptor, &tokens) {
             log::warn!(
-                "could not re-seal this workspace's Drive token under the new password: {e}"
+                "could not re-seal this lockbox's Drive token under the new password: {e}"
             );
         }
     }

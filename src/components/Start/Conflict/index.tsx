@@ -30,7 +30,7 @@ export default function Conflict({ onUnlockExisting }: Props) {
         tone="warn"
         title={t('This Drive already has Rowel data')}
         body={t(
-          "It's sealed with its own master password. Unlock that vault here and this device will sync the same data as your others."
+          "It's sealed with its own master password. Unlock that lockbox here and this device will sync the same data as your others."
         )}
       />
 
@@ -39,7 +39,7 @@ export default function Conflict({ onUnlockExisting }: Props) {
           <FoundFileCard
             where="drive"
             testid="setup-conflict-file"
-            name={t('Rowel vault')}
+            name={t('Rowel lockbox')}
             meta={describeDriveFile(file, dates)}
             encrypted
           />

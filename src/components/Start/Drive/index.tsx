@@ -138,7 +138,7 @@ export default function Drive({ onStartFresh, onUseFile, onRestored }: Props) {
         title={t('Welcome back.')}
         body={
           several
-            ? t('This account holds more than one vault. Pick the one to unlock here.')
+            ? t('This account holds more than one lockbox. Pick the one to unlock here.')
             : t('Enter your master password to unlock on this device.')
         }
       />
