@@ -554,16 +554,16 @@ describe('compact shell', () => {
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
 
     act(() => lockSettings(true))
     expect(screen.getByTestId('settings-back')).toBeDisabled()
     await userEvent.click(screen.getByTestId('settings-back'))
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     // Leaving Settings from the tab bar goes through the guarded `closeSettings`.
     await userEvent.click(screen.getByTestId('tab-items'))
     expect(useUi.getState().settings).toBe(true)
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
 
     act(() => lockSettings(false))
     await userEvent.click(screen.getByTestId('settings-back'))
@@ -578,14 +578,14 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
     await userEvent.click(screen.getByTestId('workspace-new-row'))
 
-    expect(screen.getByRole('heading', { name: 'New workspace' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Workspaces')
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
     // The section stays under its sub-page, inert, as the root stays under it.
     expect(screen.getByTestId('settings-back').closest('[inert]')).not.toBeNull()
     expect(screen.getByTestId('settings-subpage-back').closest('[inert]')).toBeNull()
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-back').closest('[inert]')).toBeNull()
   })
 
@@ -894,7 +894,7 @@ describe('swipe back', () => {
     act(() => lockSettings(true))
     fireEvent.pointerUp(pane, { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 100 })
     await act(() => new Promise(resolve => setTimeout(resolve, 200)))
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(pane.style.translate).toBe('0 0')
   })
 
@@ -908,12 +908,12 @@ describe('swipe back', () => {
     act(() => lockSettings(true))
     swipe(screen.getByTestId('settings-subpage'), { dx: 200 })
     await act(() => new Promise(resolve => setTimeout(resolve, 200)))
-    expect(screen.getByRole('heading', { name: 'New workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
 
     act(() => lockSettings(false))
     swipe(screen.getByTestId('settings-subpage'), { dx: 200 })
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     )
     swipe(screen.getByTestId('settings-pane'), { dx: 200 })
     await waitFor(() => expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument())

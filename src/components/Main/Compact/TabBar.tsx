@@ -10,7 +10,7 @@ import {
   type View
 } from '@/store'
 import { cx } from '@/utils/cx'
-import { DicesRailGlyph, GearRailGlyph, GridRailGlyph, StarRailGlyph } from '../icons'
+import { GeneratorRailGlyph, GearRailGlyph, GridRailGlyph, StarRailGlyph } from '../icons'
 import { TAB_BAR, TAB_BAR_FADE, TAB_BAR_NOTCH } from './chrome'
 import Tab from './Tab'
 import AddTab from './AddTab'
@@ -136,7 +136,7 @@ export default function TabBar() {
               openGenerator()
             }}
           >
-            <DicesRailGlyph />
+            <GeneratorRailGlyph />
           </Tab>
           <Tab
             label={t('Settings')}

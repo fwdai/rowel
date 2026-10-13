@@ -45,7 +45,7 @@ describe("settings", () => {
     const sections: [string, string][] = [
       ["security", "Security"],
       ["audit", "Vault audit"],
-      ["workspaces", "Workspaces"],
+      ["workspaces", "Lockboxes"],
       ["import", "Import & export"],
       ["language", "General"],
       ["sync", "Sync & backup"],
