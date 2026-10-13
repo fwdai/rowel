@@ -1,57 +1,78 @@
-import type { ReactNode } from 'react'
-import { cx } from '@/utils/cx'
+import { useState, type ReactNode } from 'react'
+import {
+  autoUpdate,
+  flip,
+  FloatingPortal,
+  offset,
+  shift,
+  useDismiss,
+  useFloating,
+  useFocus,
+  useHover,
+  useInteractions
+} from '@floating-ui/react'
+
+// Kept clear of the window's edges, so a panel pushed back inside does not sit
+// flush against the frame.
+const EDGE = 8
 
 interface Props {
   content: ReactNode
   children: ReactNode
   /**
-   * Which edge of the panel is pinned to the trigger.
-   *
-   * `center` is the default and right for anything with room on both sides.
-   * `end` pins the panel's right edge to the trigger's, for triggers in the
-   * right-hand chrome: the panel is far wider than the 28px control it hangs
-   * off, so centering one there sends half its width past the window edge,
-   * where it is simply clipped -- there is no page to scroll into.
+   * The side of the trigger the panel would rather open on: `right` for the
+   * left rail, `top` for bottom chrome. It is a preference -- when that side
+   * has no room the panel flips to the other one, and it slides along its side
+   * to stay inside the window, so a trigger near an edge needs nothing extra.
    */
-  align?: 'center' | 'end'
-  /**
-   * Which side of the trigger the panel opens on. `bottom` is the default;
-   * `top` is for a trigger in bottom chrome (the lock screen's footer), where
-   * a panel below it would run off the window.
-   */
-  side?: 'top' | 'bottom'
+  side?: 'top' | 'bottom' | 'left' | 'right'
 }
 
-export default function Tooltip({
-  content,
-  children,
-  align = 'center',
-  side = 'bottom'
-}: Props) {
+export default function Tooltip({ content, children, side = 'bottom' }: Props) {
+  const [open, setOpen] = useState(false)
+  const {
+    refs: { setReference, setFloating },
+    floatingStyles,
+    context
+  } = useFloating({
+    open,
+    onOpenChange: setOpen,
+    placement: side,
+    // Positioned by top/left rather than a transform, which `animate-pop`'s
+    // keyframes would overwrite.
+    transform: false,
+    whileElementsMounted: autoUpdate,
+    middleware: [offset(8), flip({ padding: EDGE }), shift({ padding: EDGE })]
+  })
+  // Showing waits 300ms so a pointer crossing a row of tiles doesn't flash
+  // every tooltip on the way; hiding is immediate.
+  const hover = useHover(context, { delay: { open: 300 }, move: false })
+  const focus = useFocus(context)
+  const dismiss = useDismiss(context)
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, dismiss])
+
   return (
-    <div className="group/tt relative">
-      {/* The panel stays mounted, so `animate-pop` is scoped to the shown state
-          (its `both` fill would otherwise pin opacity to 1 and never hide), and
-          centering uses auto margins rather than a transform the pop would eat.
-          Showing waits 300ms so a pointer crossing a row of tiles doesn't flash
-          every tooltip on the way; hiding is immediate because the delay lives
-          on the shown state only. The pop needs its own animation-delay — the
-          `delay-*` utilities move transitions, not keyframes.
-          Being mounted at all times also means it would sit in the AT tree
-          permanently, duplicating the trigger's own `aria-label`, so it is
-          hidden from it. */}
-      <div
-        role="tooltip"
-        aria-hidden="true"
-        className={cx(
-          'pointer-events-none absolute z-50 w-max whitespace-nowrap rounded-sm bg-text px-2.5 py-1 text-base text-detail opacity-0 shadow-float transition-opacity delay-0 group-hover/tt:animate-pop group-hover/tt:opacity-100 group-hover/tt:delay-300 group-hover/tt:[animation-delay:300ms] group-focus-within/tt:animate-pop group-focus-within/tt:opacity-100 group-focus-within/tt:delay-300 group-focus-within/tt:[animation-delay:300ms]',
-          side === 'top' ? 'bottom-full mb-2' : 'top-full mt-2',
-          align === 'end' ? 'right-0' : 'inset-x-0 mx-auto'
-        )}
-      >
-        {content}
+    <>
+      <div ref={setReference} {...getReferenceProps()}>
+        {children}
       </div>
-      {children}
-    </div>
+      {open && (
+        // Portaled, so no clipping ancestor can cut it off. The trigger already
+        // carries the same words as its accessible name, so the panel is kept
+        // out of the AT tree rather than announced twice.
+        <FloatingPortal>
+          <div
+            ref={setFloating}
+            style={floatingStyles}
+            role="tooltip"
+            aria-hidden="true"
+            className="pointer-events-none z-50 w-max whitespace-nowrap rounded-sm bg-text px-2.5 py-1 text-base text-detail shadow-float animate-pop"
+            {...getFloatingProps()}
+          >
+            {content}
+          </div>
+        </FloatingPortal>
+      )}
+    </>
   )
 }
