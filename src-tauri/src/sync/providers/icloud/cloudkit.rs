@@ -480,6 +480,16 @@ pub(super) async fn update(
     outcome
 }
 
+/// The fetch asks for no fields at all (`desiredKeys = []`): the system
+/// fields, change tag included, come regardless, and the pack this is about
+/// to replace is the one thing a push must not download again — the run
+/// already pulled it. CloudKit saves only the keys that changed, so a record
+/// fetched without its fields is a fine one to put the new pack on.
+///
+/// As in [`start_stat`], the per-record block answers and the operation's
+/// completion delivers the operation's own error when no record was looked
+/// at; the save the per-record block starts answers on its own completion,
+/// so the operation's must not speak for it.
 fn start_update(
     name: &str,
     expected: Option<&str>,
@@ -489,28 +499,59 @@ fn start_update(
     let path = path.to_path_buf();
     let expected = expected.map(str::to_owned);
     let db = database();
+    let op = unsafe {
+        CKFetchRecordsOperation::initWithRecordIDs(
+            CKFetchRecordsOperation::alloc(),
+            &NSArray::from_slice(&[&*record_id(name)]),
+        )
+    };
+    unsafe { op.setDesiredKeys(Some(&keys(&[]))) };
+    user_initiated(&op);
+
     let done = Completion::new();
-    let fetched = {
+    let answered = Arc::new(Mutex::new(false));
+    let per_record = {
         let db = db.clone();
         let done = done.clone();
-        RcBlock::new(move |record: *mut CKRecord, error: *mut NSError| {
-            let Some(record) = (unsafe { record.as_ref() }) else {
+        let answered = answered.clone();
+        RcBlock::new(
+            move |record: *mut CKRecord, _id: *mut CKRecordID, error: *mut NSError| {
+                *lock(&answered) = true;
+                let Some(record) = (unsafe { record.as_ref() }) else {
+                    done.resolve(Err(unsafe { error_at(error) }
+                        .unwrap_or_else(no_answer)
+                        .into_error()));
+                    return;
+                };
+                let current = unsafe { record.recordChangeTag() }.map(|tag| tag.to_string());
+                if stale(expected.as_deref(), current.as_deref()) {
+                    done.resolve(Err(changed_since_pull()));
+                    return;
+                }
+                set_pack(record, &path, size);
+                let saved = saved_block(done.clone(), changed_since_pull);
+                unsafe { db.saveRecord_completionHandler(record, &saved) };
+            },
+        )
+    };
+    let finished = {
+        let done = done.clone();
+        RcBlock::new(
+            move |_records: *mut NSDictionary<CKRecordID, CKRecord>, error: *mut NSError| {
+                if *lock(&answered) {
+                    return;
+                }
                 done.resolve(Err(unsafe { error_at(error) }
                     .unwrap_or_else(no_answer)
                     .into_error()));
-                return;
-            };
-            let current = unsafe { record.recordChangeTag() }.map(|tag| tag.to_string());
-            if stale(expected.as_deref(), current.as_deref()) {
-                done.resolve(Err(changed_since_pull()));
-                return;
-            }
-            set_pack(record, &path, size);
-            let saved = saved_block(done.clone(), changed_since_pull);
-            unsafe { db.saveRecord_completionHandler(record, &saved) };
-        })
+            },
+        )
     };
-    unsafe { db.fetchRecordWithID_completionHandler(&record_id(name), &fetched) };
+    unsafe {
+        op.setPerRecordCompletionBlock(Some(&per_record));
+        op.setFetchRecordsCompletionBlock(Some(&finished));
+        db.addOperation(&op);
+    }
     done
 }
 
