@@ -318,13 +318,13 @@ fn install(
     Ok((name, key))
 }
 
-/// What an added workspace is called when its pack carries no name of its own.
+/// What an added lockbox is called when its pack carries no name of its own.
 /// The vault's id, shortened: the one thing that tells two of them apart, and
 /// the same thing Drive shows in the file name. Shared with the Drive restores
 /// in `commands::workspace`, which name a nameless pack the same way.
 pub(crate) fn label(vault_id: &str) -> String {
     let short: String = vault_id.chars().take(6).collect();
-    format!("Vault {short}")
+    format!("Lockbox {short}")
 }
 
 #[cfg(test)]
@@ -375,8 +375,8 @@ mod tests {
 
     #[test]
     fn the_label_is_the_vault_id_shortened() {
-        assert_eq!(label("9f3c1a2b4d5e6f70"), "Vault 9f3c1a");
-        assert_eq!(label("ab"), "Vault ab");
+        assert_eq!(label("9f3c1a2b4d5e6f70"), "Lockbox 9f3c1a");
+        assert_eq!(label("ab"), "Lockbox ab");
     }
 
     // The name the user gave the vault on another device travels in the pack,
@@ -407,7 +407,7 @@ mod tests {
             &Tokens::default(),
         )
         .unwrap();
-        assert_eq!(name, "Vault 9f3c1a");
+        assert_eq!(name, "Lockbox 9f3c1a");
     }
 
     // The open vault counts as held even before a sync has recorded it: a pack

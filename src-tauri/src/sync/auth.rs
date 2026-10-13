@@ -407,7 +407,7 @@ pub fn read_tokens_in(dir: &std::path::Path, cryptor: &Cryptor) -> Result<Option
 // do the same thing about all of them, and none of them says which vault key
 // or which byte was wrong.
 fn unreadable_tokens_error() -> String {
-    "this workspace's saved Google account could not be read".into()
+    "this lockbox's saved Google account could not be read".into()
 }
 
 /// Seal the tokens under `cryptor` and write them.

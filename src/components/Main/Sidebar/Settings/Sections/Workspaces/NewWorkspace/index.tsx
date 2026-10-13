@@ -20,9 +20,9 @@ export default function NewWorkspace() {
         <PlusGlyph />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-base font-medium text-accent">{t('New workspace')}</span>
+        <span className="block text-base font-medium text-accent">{t('New lockbox')}</span>
         <span className="mt-0.5 block text-sm text-text2">
-          {t('A separate encrypted vault for work, family or a client')}
+          {t('A separate encrypted lockbox for work, family or a client')}
         </span>
       </span>
       <ChevronRightGlyph className="flex-none text-text2" />

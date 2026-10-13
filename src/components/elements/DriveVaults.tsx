@@ -38,13 +38,13 @@ export default function DriveVaults({ files, selectedId, onSelect, testid = 'dri
   if (files.length > 1)
     return (
       <RadioList
-        name={t('Vaults in this account')}
+        name={t('Lockboxes in this account')}
         testidPrefix={`${testid}-vault`}
         value={selectedId ?? ''}
         onChange={onSelect}
         options={files.map(vault => ({
           value: vault.id,
-          label: t('Rowel vault'),
+          label: t('Rowel lockbox'),
           meta: describeDriveFile(vault, dates)
         }))}
       />
@@ -55,7 +55,7 @@ export default function DriveVaults({ files, selectedId, onSelect, testid = 'dri
       <FoundFileCard
         where="drive"
         testid={`${testid}-found-file`}
-        name={t('Rowel vault')}
+        name={t('Rowel lockbox')}
         meta={describeDriveFile(file, dates)}
         encrypted
       />

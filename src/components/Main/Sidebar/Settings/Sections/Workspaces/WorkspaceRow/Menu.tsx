@@ -56,7 +56,7 @@ export default function Menu({ id, last, onEdit, onDelete }: Props) {
           </fieldset>
           {last && (
             <p className={`${META} px-2 pb-1 pt-0.5`}>
-              {t('Your only workspace cannot be deleted. Add another one first.')}
+              {t('Your only lockbox cannot be deleted. Add another one first.')}
             </p>
           )}
         </Dropdown>

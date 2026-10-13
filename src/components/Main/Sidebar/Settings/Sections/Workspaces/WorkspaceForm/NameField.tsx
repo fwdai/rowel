@@ -35,7 +35,7 @@ export default function NameField({ value, onChange, duplicate, disabled, testid
       />
       {duplicate && (
         <Note tone="bad" testid={`${testidPrefix}-duplicate`}>
-          {t('You already have a workspace with this name.')}
+          {t('You already have a lockbox with this name.')}
         </Note>
       )}
     </Field>

@@ -15,6 +15,7 @@ import {
   ArchiveRestore,
   ArrowDownUp,
   AtSign,
+  Box,
   Braces,
   Calendar,
   Camera,
@@ -42,7 +43,6 @@ import {
   Image,
   KeyRound,
   KeySquare,
-  Layers,
   LayoutGrid,
   Link,
   Lock,
@@ -202,7 +202,8 @@ export const GeneratorGlyph = glyph(SquareAsterisk, 16)
 export const ShieldGlyph = glyph(ShieldCheck, 16)
 export const GlobeGlyph = glyph(Globe, 16)
 export const ActivityGlyph = glyph(Activity, 16)
-export const LayersGlyph = glyph(Layers, 16)
+// Settings › Lockboxes: one sealed container among several in the vault.
+export const BoxGlyph = glyph(Box, 16)
 // Settings › General: the app's own preferences, as sliders rather than the gear
 // the rail already uses for Settings as a whole.
 export const GeneralGlyph = glyph(Settings2, 16)
