@@ -8,6 +8,10 @@
 
 pub const APP_NAME: &str = "Rowel";
 
+/// The app's website: the tray's "Website" item, and where the passport-cover
+/// emblems are served from (`emblem::fetch`).
+pub const WEBSITE: &str = "https://rowel.app";
+
 /// The iOS App Group the app shares with its AutoFill extension
 /// (`app.rowel.mobile.autofill`). It names two things at once: the file
 /// container the vault lives in (so the extension can open it), and the

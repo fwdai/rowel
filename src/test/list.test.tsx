@@ -145,7 +145,7 @@ describe('Entry list', () => {
   })
 
   it('stamps the cover with the country’s emblem, asked for once per country', async () => {
-    const emblem = 'data:image/png;base64,EMBLEM'
+    const emblem = 'data:image/svg+xml;base64,EMBLEM'
     mockCommand('fetch_emblem', () => emblem)
     const passport = { type: 'identity' as const, urlHost: '', docType: 'passport' }
     withEntries([
@@ -155,9 +155,7 @@ describe('Entry list', () => {
     setFilterType('identity')
     render(<ListColumn />)
 
-    await waitFor(() =>
-      expect(document.querySelectorAll(`image[href="${emblem}"]`)).toHaveLength(2)
-    )
+    await waitFor(() => expect(screen.getAllByTestId('passport-emblem')).toHaveLength(2))
     expect(calls('fetch_emblem')).toEqual([{ country: 'UKR' }])
     setFilterType(null)
   })

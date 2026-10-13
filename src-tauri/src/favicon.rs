@@ -345,9 +345,21 @@ fn embedded_v4(v6: Ipv6Addr) -> Option<Ipv4Addr> {
 }
 
 // The image at `url` as a data: URI, provided it is a raster type we render and
-// fits the cap. Every hop goes through [`get`]'s gate. Also the emblem fetch's
-// way out (`crate::emblem`): one hardened path to the network for every image.
-pub(crate) async fn fetch_icon(url: Url, allowed: &impl Fn() -> bool) -> Option<String> {
+// fits the cap.
+async fn fetch_icon(url: Url, allowed: &impl Fn() -> bool) -> Option<String> {
+    let (mime, bytes) = fetch_typed(url, allowed, &SAFE_TYPES).await?;
+    Some(data_uri(&mime, &bytes))
+}
+
+// The body at `url` and its type, provided the type is one of `types` and the
+// body fits the cap. Every hop goes through [`get`]'s gate. Also the emblem
+// fetch's way out (`crate::emblem`): one hardened path to the network for every
+// image the app shows.
+pub(crate) async fn fetch_typed(
+    url: Url,
+    allowed: &impl Fn() -> bool,
+    types: &[&str],
+) -> Option<(String, Vec<u8>)> {
     let mut resp = get(url, allowed).await?;
     if !resp.status().is_success() {
         return None;
@@ -361,7 +373,7 @@ pub(crate) async fn fetch_icon(url: Url, allowed: &impl Fn() -> bool) -> Option<
         .next()?
         .trim()
         .to_ascii_lowercase();
-    if !SAFE_TYPES.contains(&mime.as_str()) {
+    if !types.contains(&mime.as_str()) {
         return None;
     }
     // Enforced on the bytes as they arrive, not just on the declared length: a
@@ -370,10 +382,11 @@ pub(crate) async fn fetch_icon(url: Url, allowed: &impl Fn() -> bool) -> Option<
     let bytes = crate::sync::drive::read_capped(&mut resp, MAX_ICON_BYTES)
         .await
         .ok()?;
-    if bytes.is_empty() {
-        return None;
-    }
-    Some(format!("data:{mime};base64,{}", B64.encode(&bytes)))
+    (!bytes.is_empty()).then_some((mime, bytes))
+}
+
+pub(crate) fn data_uri(mime: &str, bytes: &[u8]) -> String {
+    format!("data:{mime};base64,{}", B64.encode(bytes))
 }
 
 // The first `MAX_HTML_BYTES` of the page. Only the <head> is wanted, so an
