@@ -150,7 +150,10 @@ fn tells_an_mrz_from_other_print_by_its_filler() {
     assert!(mrz::present(&rows(&[TD3[0]])));
     assert!(mrz::present(&rows(&["<<<<<<<<<<<<<<<<<<<"])));
     assert!(mrz::present(&rows(&[&TD3[0].replace('<', "«")])));
-    assert!(!mrz::present(&rows(&["JOHN A SMITH", "4111 1111 1111 1111"])));
+    assert!(!mrz::present(&rows(&[
+        "JOHN A SMITH",
+        "4111 1111 1111 1111"
+    ])));
     assert!(!mrz::present(&rows(&["a < b", "x << y"])));
 }
 
