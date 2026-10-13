@@ -35,7 +35,7 @@ export default function Header({ provider, probing, offered, restoring }: Props)
       : probing
         ? waiting
         : offered
-          ? t('This account already holds a vault')
+          ? t('This account already holds a lockbox')
           : t('Not connected')
 
   return (

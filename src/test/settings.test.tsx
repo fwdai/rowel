@@ -328,7 +328,7 @@ describe('Settings › sync', () => {
       await act(async () => setupAccountProbed([VAULT, OTHER_VAULT]))
 
       expect(await screen.findByTestId('settings-drive-found')).toBeInTheDocument()
-      expect(screen.getByText('This account already holds a vault')).toBeInTheDocument()
+      expect(screen.getByText('This account already holds a lockbox')).toBeInTheDocument()
       expect(screen.getByTestId(`drive-vault-${VAULT.id}`)).toBeInTheDocument()
       // Asked once, and refused; the tokens are still pending for the restore.
       expect(calls('sync_adopt_pending')).toHaveLength(1)
@@ -484,7 +484,7 @@ describe('Settings › security', () => {
 
     expect(
       await screen.findByText(
-        'Password changed. Some workspaces on this device kept their own password.'
+        'Password changed. Some lockboxes on this device kept their own password.'
       )
     ).toBeInTheDocument()
   })
@@ -1427,7 +1427,7 @@ describe('Settings › workspaces › edit', () => {
   it('opens on the workspace as it is, with nothing to save yet', async () => {
     await edit('w2')
 
-    expect(screen.getByRole('heading', { name: 'Edit workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Edit lockbox' })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-edit-name')).toHaveValue('Work')
     expect(screen.getByTestId('workspace-edit-preview')).toHaveTextContent(
       '12 items · Google Drive'
@@ -1476,7 +1476,7 @@ describe('Settings › workspaces › edit', () => {
     await userEvent.type(input, 'personal')
 
     expect(screen.getByTestId('workspace-edit-duplicate')).toHaveTextContent(
-      'You already have a workspace with this name.'
+      'You already have a lockbox with this name.'
     )
     expect(screen.getByTestId('workspace-edit-save')).toBeDisabled()
     await userEvent.keyboard('{Enter}')
@@ -1555,7 +1555,7 @@ describe('Settings › workspaces › new', () => {
   it('opens the sub-page from the list’s last row and creates one', async () => {
     await openNew()
 
-    expect(screen.getByRole('heading', { name: 'New workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
     await userEvent.type(screen.getByTestId('workspace-new-name'), 'Family')
     await userEvent.type(screen.getByTestId('workspace-new-password'), 'master-pass')
     expect(create()).toBeEnabled()
@@ -1591,7 +1591,7 @@ describe('Settings › workspaces › new', () => {
     await userEvent.type(screen.getByTestId('workspace-new-password'), 'master-pass')
 
     expect(screen.getByTestId('workspace-new-duplicate')).toHaveTextContent(
-      'You already have a workspace with this name.'
+      'You already have a lockbox with this name.'
     )
     expect(create()).toBeDisabled()
     await userEvent.keyboard('{Enter}')
@@ -1668,11 +1668,11 @@ describe('Settings › workspaces › delete', () => {
     // A page under Workspaces, like Edit, not a dialog over the list: the
     // header names the step and the preview says which workspace.
     expect(screen.getByTestId('workspace-delete-page')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Delete workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Delete lockbox' })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-delete-preview')).toHaveTextContent('Work')
     expect(screen.queryByTestId('workspace-new-row')).not.toBeInTheDocument()
     expect(
-      screen.getByText('This removes the workspace and everything in it from this device.')
+      screen.getByText('This removes the lockbox and everything in it from this device.')
     ).toBeInTheDocument()
   })
 
@@ -1777,7 +1777,7 @@ describe('Settings › workspaces › delete', () => {
     await userEvent.click(screen.getByTestId('workspace-delete-submit'))
 
     expect(await screen.findByTestId('workspace-delete-error')).toHaveTextContent(
-      'That is not this workspace’s master password'
+      'That is not this lockbox’s master password'
     )
     expect(screen.getByTestId('workspace-delete-page')).toBeInTheDocument()
   })
@@ -1876,7 +1876,7 @@ describe('Settings › workspaces › delete', () => {
       screen.queryByTestId('workspace-delete-scope-everywhere')
     ).not.toBeInTheDocument()
     expect(
-      screen.getByText('This removes the workspace and everything in it from this device.')
+      screen.getByText('This removes the lockbox and everything in it from this device.')
     ).toBeInTheDocument()
   })
 
@@ -1895,7 +1895,7 @@ describe('Settings › workspaces › delete', () => {
     )
 
     expect(screen.getByTestId('workspace-deleted-remotely')).toHaveTextContent(
-      'This vault was deleted from its account on another device.'
+      'This lockbox was deleted from its account on another device.'
     )
     await userEvent.click(screen.getByTestId('workspace-delete-stranded'))
 
@@ -2086,7 +2086,7 @@ describe('Settings › workspaces › restore from an account', () => {
     await userEvent.click(screen.getByTestId('workspace-restore-submit'))
 
     expect(
-      await screen.findByText('This vault is already a workspace on this device')
+      await screen.findByText('This lockbox is already on this device')
     ).toBeInTheDocument()
   })
 
@@ -2136,7 +2136,7 @@ describe('Settings sub-pages', () => {
   }
 
   const onSection = () => {
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
   }
@@ -2147,7 +2147,7 @@ describe('Settings sub-pages', () => {
     // The title takes the section's line: one heading, nothing stacked above
     // it, so the header keeps its height on the way in and out.
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
-    expect(screen.getByRole('heading', { name: 'New workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
     expect(
       screen.getByText('Its own encrypted database, unlocked alongside your others.')
     ).toBeInTheDocument()
@@ -2194,7 +2194,7 @@ describe('Settings sub-pages', () => {
     await userEvent.keyboard('{Escape}')
     await userEvent.click(screen.getByTestId('settings-subpage-cancel'))
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
-    expect(screen.getByRole('heading', { name: 'New workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
     expect(useUi.getState().settings).toBe(true)
   })
 })

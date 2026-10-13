@@ -19,10 +19,10 @@ export default function InfoTiles() {
   const provider = useApp(state => syncProvider(state.sync))
   return (
     <div className="mt-3.5 grid grid-cols-1 gap-2.5 md:grid-cols-3">
-      <Tile title={t('Separate database')} body={t('Each workspace is its own encrypted file.')} />
-      <Tile title={t('One unlock')} body={t('Your master password opens every workspace that shares it.')} />
+      <Tile title={t('Separate database')} body={t('Each lockbox is its own encrypted file.')} />
+      <Tile title={t('One unlock')} body={t('Your master password opens every lockbox that shares it.')} />
       <Tile
-        title={t('Synced as its own vault')}
+        title={t('Synced as its own lockbox')}
         body={
           provider
             ? t('Stored in the same {{provider}} account.', { provider: providerName(provider) })

@@ -38,13 +38,13 @@ export default function AccountVaults({ files, selectedId, onSelect, testid = 'd
   if (files.length > 1)
     return (
       <RadioList
-        name={t('Vaults in this account')}
+        name={t('Lockboxes in this account')}
         testidPrefix={`${testid}-vault`}
         value={selectedId ?? ''}
         onChange={onSelect}
         options={files.map(vault => ({
           value: vault.id,
-          label: t('Rowel vault'),
+          label: t('Rowel lockbox'),
           meta: describeRemotePack(vault, dates)
         }))}
       />
@@ -55,7 +55,7 @@ export default function AccountVaults({ files, selectedId, onSelect, testid = 'd
       <FoundFileCard
         where="cloud"
         testid={`${testid}-found-file`}
-        name={t('Rowel vault')}
+        name={t('Rowel lockbox')}
         meta={describeRemotePack(file, dates)}
         encrypted
       />

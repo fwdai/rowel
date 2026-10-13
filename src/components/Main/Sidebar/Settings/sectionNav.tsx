@@ -24,7 +24,7 @@ export interface SubpageNav {
 }
 
 /**
- * A step below a section ("New workspace" under Workspaces), opened by the
+ * A step below a section ("New lockbox" under Lockboxes), opened by the
  * section's own body. Each shell holds it in local state, not the store: the
  * store's section persists so the modal reopens where it was left, and a form
  * half-filled last time is not a place to reopen into. Outside a shell nothing

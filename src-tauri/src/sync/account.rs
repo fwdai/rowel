@@ -477,7 +477,7 @@ pub fn read_tokens_in(dir: &std::path::Path, cryptor: &Cryptor) -> Result<Option
 // or which byte was wrong.
 fn unreadable_tokens_error(provider: Provider) -> String {
     format!(
-        "this workspace's saved {} account could not be read",
+        "this lockbox's saved {} account could not be read",
         provider.account_name()
     )
 }
@@ -1511,7 +1511,7 @@ mod tests {
     fn an_unreadable_token_file_names_its_provider() {
         assert_eq!(
             unreadable_tokens_error(Provider::GoogleDrive),
-            "this workspace's saved Google account could not be read"
+            "this lockbox's saved Google account could not be read"
         );
         assert_eq!(
             unreadable_tokens_error(Provider::Dropbox),

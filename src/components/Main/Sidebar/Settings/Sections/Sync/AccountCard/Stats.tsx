@@ -9,7 +9,7 @@ export default function Stats({ lastSynced }: { lastSynced: string }) {
 
   const stats = [
     { label: t('Last synced'), value: lastSynced },
-    { label: t('Workspaces'), value: String(workspaces.length) },
+    { label: t('Lockboxes'), value: String(workspaces.length) },
     { label: t('Encryption'), value: t('End-to-end') }
   ]
 
