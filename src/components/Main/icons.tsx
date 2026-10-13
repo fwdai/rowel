@@ -26,7 +26,6 @@ import {
   Cloud,
   Copy,
   CreditCard,
-  Dices,
   Download,
   HardDrive,
   ExternalLink,
@@ -62,6 +61,7 @@ import {
   Settings2,
   Share2,
   ShieldCheck,
+  SquareAsterisk,
   Star,
   Sun,
   Tags,
@@ -198,7 +198,7 @@ export const ScanGlyph = glyph(ScanLine, 16)
 // The camera, on the phone's scan source sheet (its other row is ImageGlyph).
 export const CameraGlyph = glyph(Camera, 16)
 // The generator, as a row (the palette's command, the Add picker's action).
-export const DicesGlyph = glyph(Dices, 16)
+export const GeneratorGlyph = glyph(SquareAsterisk, 16)
 export const ShieldGlyph = glyph(ShieldCheck, 16)
 export const GlobeGlyph = glyph(Globe, 16)
 export const ActivityGlyph = glyph(Activity, 16)
@@ -235,5 +235,5 @@ export const StarRailGlyph = glyph(Star, 20)
 export const TagsRailGlyph = glyph(Tags, 20)
 export const ArchiveRailGlyph = glyph(Archive, 20)
 export const LockRailGlyph = glyph(Lock, 20)
-export const DicesRailGlyph = glyph(Dices, 20)
+export const GeneratorRailGlyph = glyph(SquareAsterisk, 20)
 export const BackGlyph = glyph(ChevronLeft, 20)
