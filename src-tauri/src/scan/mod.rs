@@ -162,6 +162,10 @@ fn local_path(path: &str) -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from(path))
 }
 
+/// The largest photo `scan_bytes` is handed — far past any phone camera's
+/// JPEG, there only so a body cannot be arbitrarily large.
+pub(crate) const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+
 /// The image types both OCR backends load and both entry points offer — the
 /// file dialog's filter (`commands::tools::pick_file`) and the window drop's
 /// own test. Kept in step with `IMAGE_EXTENSIONS` in `src/lib/fileTypes.ts`.
