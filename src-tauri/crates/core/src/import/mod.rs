@@ -5,13 +5,16 @@
 //! Tauri. The command layer (`commands::import`) owns the seal + upsert.
 //!
 //! Adding a format = adding one [`Importer`] adapter and one [`Format`] variant.
-//! The trait is byte-in / result-out, so a zipped format (1Password `.1pux`) slots
-//! in later without reshaping anything.
+//! The trait is byte-in / result-out, which is how a zipped format (1Password's
+//! `.1pux`) reads through the same contract as the JSON and CSV ones.
 
 mod bitwarden;
 mod csv;
 mod cxf;
+mod enpass;
 pub mod export;
+mod onepassword;
+pub use onepassword::{is_zip, unpack as unpack_1pux};
 
 #[cfg(test)]
 mod tests;
@@ -53,6 +56,38 @@ where
     D: Deserializer<'de>,
 {
     Ok(lenient_u64(d)?.and_then(|n| u8::try_from(n).ok()))
+}
+
+/// A field value is a string, but a numeric field may be written as a number;
+/// anything else reads as absent rather than failing the document.
+pub(crate) fn lenient_string<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Some(s),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    })
+}
+
+/// A member a producer writes as `null` where a list belongs: read as empty.
+/// `#[serde(default)]` covers an absent member only; an explicit `null` would
+/// otherwise fail `from_slice` for the whole document.
+pub(crate) fn null_to_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
+/// An epoch second, as CXF and Enpass date things, to the RFC 3339 string the
+/// app stores. `None` for a second no calendar has.
+pub(crate) fn rfc3339(secs: u64) -> Option<String> {
+    let secs = i64::try_from(secs).ok()?;
+    chrono::DateTime::from_timestamp(secs, 0).map(|t| t.to_rfc3339())
 }
 
 /// The kind of a normalized entry; maps 1:1 onto `models::Entry.kind`.
@@ -234,17 +269,28 @@ pub struct RowError {
     pub message: String,
 }
 
-/// The outcome of parsing a file: the entries that parsed plus the rows that
-/// didn't. One malformed row never aborts the batch.
+/// The outcome of parsing a file: the entries that parsed, the rows that
+/// didn't, and the rows that did but left something behind (an unusable
+/// passkey, an attachment). One malformed row never aborts the batch. A
+/// warning's row is in `entries`; an error's row is not — the report counts
+/// the two apart, so a note never makes an imported item look skipped.
 #[derive(Debug, Default, PartialEq)]
 pub struct ImportResult {
     pub entries: Vec<ImportedEntry>,
     pub errors: Vec<RowError>,
+    pub warnings: Vec<RowError>,
 }
 
 impl ImportResult {
     fn push_err(&mut self, row: usize, message: impl Into<String>) {
         self.errors.push(RowError {
+            row,
+            message: message.into(),
+        });
+    }
+
+    fn push_warn(&mut self, row: usize, message: impl Into<String>) {
+        self.warnings.push(RowError {
             row,
             message: message.into(),
         });
@@ -260,9 +306,15 @@ pub trait Importer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     Bitwarden,
-    Cxf, // FIDO Credential Exchange Format — the other JSON shape we read
+    Cxf,    // FIDO Credential Exchange Format — the second JSON shape we read
+    Enpass, // Enpass 6 JSON — the third
+    Onepux, // 1Password's own export: a zip around a JSON document
     GenericCsv,
-    BrowserCsv, // Chrome / Safari share a header-aliased shape
+    BrowserCsv,     // Chrome / Safari share a header-aliased shape
+    OnepasswordCsv, // 1Password's CSV fits the same aliases
+    // Whichever of its two files 1Password wrote, told apart by content: the
+    // one "1Password" choice in the UI takes either.
+    Onepassword,
     LastpassCsv,
     KeepassCsv,
 }
@@ -273,8 +325,12 @@ impl Format {
         match name.trim().to_lowercase().as_str() {
             "bitwarden" => Some(Format::Bitwarden),
             "cxf" | "fido" => Some(Format::Cxf),
+            "enpass" | "enpass_json" => Some(Format::Enpass),
+            "1pux" | "onepux" => Some(Format::Onepux),
             "csv" | "generic" | "generic_csv" => Some(Format::GenericCsv),
             "chrome" | "safari" | "browser" | "browser_csv" => Some(Format::BrowserCsv),
+            "onepassword_csv" => Some(Format::OnepasswordCsv),
+            "1password" | "onepassword" => Some(Format::Onepassword),
             "lastpass" | "lastpass_csv" => Some(Format::LastpassCsv),
             "keepass" | "keepass_csv" => Some(Format::KeepassCsv),
             _ => None,
@@ -286,8 +342,12 @@ impl Format {
         match self {
             Format::Bitwarden => Box::new(bitwarden::Bitwarden),
             Format::Cxf => Box::new(cxf::Cxf),
+            Format::Enpass => Box::new(enpass::Enpass),
+            Format::Onepux => Box::new(onepassword::Onepux),
             Format::GenericCsv => Box::new(csv::GenericCsv),
             Format::BrowserCsv => Box::new(csv::BrowserCsv),
+            Format::OnepasswordCsv => Box::new(csv::OnepasswordCsv),
+            Format::Onepassword => Box::new(onepassword::Onepassword),
             Format::LastpassCsv => Box::new(csv::LastpassCsv),
             Format::KeepassCsv => Box::new(csv::KeepassCsv),
         }
@@ -298,6 +358,11 @@ impl Format {
 /// UI can offer "auto". Explicit selection always wins upstream.
 pub fn detect(name: &str, bytes: &[u8]) -> Option<Format> {
     let lower = name.to_lowercase();
+    // The one archive we read; a zip of anything else fails in its adapter
+    // with a message that says so.
+    if lower.ends_with(".1pux") || onepassword::is_zip(bytes) {
+        return Some(Format::Onepux);
+    }
     if lower.ends_with(".json") {
         return Some(detect_json(bytes));
     }
@@ -314,9 +379,11 @@ pub fn detect(name: &str, bytes: &[u8]) -> Option<Format> {
     None
 }
 
-// Both JSON formats we read are top-level objects; CXF is the one that declares
-// a `version` object and an `accounts` array. Parsed once, then thrown away —
-// an explicit choice from the UI skips this entirely.
+// All three JSON formats we read are top-level objects. CXF is the one that
+// declares a `version` object and an `accounts` array. Enpass and Bitwarden
+// both have `items` and `folders`; an Enpass item names its `category` (or
+// `template_type`) where a Bitwarden one has a numeric `type`. Parsed once,
+// then thrown away — an explicit choice from the UI skips this entirely.
 fn detect_json(bytes: &[u8]) -> Format {
     let Ok(doc) = serde_json::from_slice::<serde_json::Value>(bytes) else {
         return Format::Bitwarden;
@@ -324,7 +391,18 @@ fn detect_json(bytes: &[u8]) -> Format {
     let cxf = doc.get("accounts").is_some_and(serde_json::Value::is_array)
         && doc.get("version").is_some_and(serde_json::Value::is_object);
     if cxf {
-        Format::Cxf
+        return Format::Cxf;
+    }
+    let enpass = doc
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item.get("category").is_some() || item.get("template_type").is_some())
+        });
+    if enpass {
+        Format::Enpass
     } else {
         Format::Bitwarden
     }
@@ -339,6 +417,11 @@ fn detect_csv(bytes: &[u8]) -> Format {
         Format::LastpassCsv
     } else if has("group") && has("title") {
         Format::KeepassCsv
+    } else if has("otpauth") && has("title") {
+        // The columns as 1Password names them: its tags and star are read too.
+        // A sheet that merely has an `otpauth` column keeps the generic
+        // mapper, whose aliases it may need for the rest of its header.
+        Format::OnepasswordCsv
     } else {
         Format::GenericCsv
     }

@@ -7,10 +7,12 @@ export type ImportFormat =
   | 'auto'
   | 'bitwarden'
   | 'cxf'
+  | 'enpass'
   | 'csv'
   | 'chrome'
   | 'lastpass'
   | 'keepass'
+  | '1password'
 
 export type ExportFormat = 'bitwarden' | 'cxf' | 'csv'
 
@@ -26,6 +28,8 @@ export interface ImportReport {
   duplicates: number // rows identical to an entry already in the vault
   dryRun: boolean
   errors: RowError[]
+  /** Rows that imported but left something behind; counted in `total`, never in `skipped`. */
+  warnings: RowError[]
   /** The refreshed live list after a real run; empty on a dry run. */
   entries: EntryMeta[]
 }

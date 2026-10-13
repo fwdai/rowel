@@ -8,6 +8,7 @@ import { PRIMARY_WORKSPACE, workspaceLabel } from '@/lib/workspace'
 import { firstUnusedColor, type WorkspaceColor } from '@/lib/workspaceColor'
 import { cx } from '@/utils/cx'
 import Field from '@/components/elements/Field'
+import Note from '@/components/elements/Note'
 import { inputClass } from '@/components/elements/formStyles'
 import { verbatimInput } from '@/components/elements/inputProps'
 import { CARD, LABEL } from '@/components/elements/tokens'
@@ -117,15 +118,15 @@ export default function NewWorkspaceSubpage() {
             }}
           />
           {error && (
-            <p data-testid="workspace-new-error" className="text-sm text-bad">
+            <Note tone="bad" testid="workspace-new-error">
               {error}
-            </p>
+            </Note>
           )}
-          <p className="text-sm text-text2">
+          <Note>
             {t('Sealed with the master password of {{name}}, the primary workspace on this device.', {
               name: primaryName
             })}
-          </p>
+          </Note>
         </Field>
       </div>
     </SubpageFrame>

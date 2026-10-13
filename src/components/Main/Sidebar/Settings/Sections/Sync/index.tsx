@@ -4,15 +4,17 @@ import { useApp, forgetAccount, setupAccountFailed, setupAccountReset } from '@/
 import { syncAdoptPending, syncErrorText, syncProvider } from '@/api/sync'
 import { providerShares } from '@/api/provider'
 import { describeError, errorKind } from '@/api/errors'
+import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import AccountCard from './AccountCard'
 import BackupRow from './BackupRow'
 import SharesRow from './SharesRow'
 
+// Under the card, at its own inset.
 const ErrorNote = ({ message }: { message: string }) => (
-  <div data-testid="settings-sync-error" className="px-[18px] pt-2.5 text-sm text-bad">
+  <Note tone="bad" testid="settings-sync-error" className="px-5 pt-2.5">
     {message}
-  </div>
+  </Note>
 )
 
 export default function Sync() {

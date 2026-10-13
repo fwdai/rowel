@@ -445,7 +445,7 @@ describe('Settings › sync', () => {
     const pill = () => screen.getByTestId('settings-drive-status')
 
     expect(pill()).toHaveTextContent('Not connected')
-    expect(pill()).toHaveAttribute('data-tone', 'idle')
+    expect(pill()).toHaveAttribute('data-tone', 'neutral')
 
     act(() => report({ configured: true }))
     expect(pill()).toHaveTextContent('Up to date')
@@ -453,7 +453,7 @@ describe('Settings › sync', () => {
 
     act(() => report({ configured: true, inProgress: true }))
     expect(pill()).toHaveTextContent('Syncing')
-    expect(pill()).toHaveAttribute('data-tone', 'busy')
+    expect(pill()).toHaveAttribute('data-tone', 'accent')
 
     act(() => report({ configured: true, error: 'Drive API 503' }))
     expect(pill()).toHaveTextContent('Last attempt failed')
@@ -494,7 +494,7 @@ describe('Settings › security', () => {
     await userEvent.click(screen.getByTestId('change-password-submit'))
 
     expect(calls('change_master_password')).toContainEqual({ current: 'old', new: 'newpass' })
-    expect(await screen.findByText('Successfully changed password')).toBeInTheDocument()
+    expect(await screen.findByText('Password changed')).toBeInTheDocument()
   })
 
   // A workspace on a password of its own is left on it, and so is one whose own
@@ -682,15 +682,15 @@ describe('Settings › security', () => {
     await go('security')
     await userEvent.click(screen.getByText('Change…'))
 
-    await userEvent.type(screen.getByLabelText('New Password'), 'newpass')
-    await userEvent.type(screen.getByLabelText('Repeat New Password'), 'newpa')
+    await userEvent.type(screen.getByLabelText('New password'), 'newpass')
+    await userEvent.type(screen.getByLabelText('Repeat new password'), 'newpa')
     expect(screen.getByText("Passwords don't match yet.")).toBeInTheDocument()
     expect(screen.getByTestId('change-password-submit')).toBeDisabled()
 
-    await userEvent.type(screen.getByLabelText('Repeat New Password'), 'ss')
+    await userEvent.type(screen.getByLabelText('Repeat new password'), 'ss')
     expect(screen.queryByText("Passwords don't match yet.")).not.toBeInTheDocument()
 
-    const field = screen.getByLabelText('New Password')
+    const field = screen.getByLabelText('New password')
     expect(field).toHaveAttribute('type', 'password')
     await userEvent.click(screen.getByRole('button', { name: 'Show' }))
     expect(field).toHaveAttribute('type', 'text')
@@ -754,10 +754,11 @@ describe('Settings › vault audit', () => {
     expect(screen.getByTestId('settings-audit-verdict')).toHaveTextContent('Weak')
     expect(screen.getByText('2 items')).toBeInTheDocument()
     const strip = screen.getByTestId('settings-audit-counts')
-    expect(strip).toHaveTextContent('1weak')
-    expect(strip).toHaveTextContent('1reused')
-    // Breaches are not counted while monitoring is off; the strip offers it.
-    expect(strip).toHaveTextContent('—breached')
+    expect(strip).toHaveTextContent('weak1')
+    expect(strip).toHaveTextContent('reused1')
+    // The label sits over its figure. Breaches are not counted while
+    // monitoring is off; the strip offers it.
+    expect(strip).toHaveTextContent('breached—')
     expect(screen.getByTestId('settings-breach-enable')).toHaveTextContent('Turn on monitoring')
   })
 
@@ -870,20 +871,111 @@ describe('Settings › import', () => {
     expect(calls('import_swftx')).toEqual([])
   })
 
-  it('offers a tile per source and no format select', async () => {
+  // Six tiles, three to a row: the apps most people are leaving, in order, and
+  // a sixth whose menu holds the rest, so they are on offer without being
+  // advertised on the same level.
+  it('offers five app tiles and the rest behind a sixth', async () => {
     await open()
     await go('import')
-    for (const key of [
-      'bitwarden',
-      'cxf',
-      'chrome',
-      'lastpass',
-      'keepass',
-      'csv',
-      'swftx'
+    const tiles = screen.getAllByTestId(/^import-tile-/).map(el => el.dataset.testid)
+    expect(tiles).toEqual([
+      'import-tile-1password',
+      'import-tile-lastpass',
+      'import-tile-enpass',
+      'import-tile-bitwarden',
+      'import-tile-keepass',
+      'import-tile-other',
+      'import-tile-swftx'
     ])
-      expect(screen.getByTestId(`import-tile-${key}`)).toBeInTheDocument()
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('import-tile-other'))
+    const menu = screen.getByRole('menu')
+    for (const key of ['chrome', 'cxf', 'csv'])
+      expect(within(menu).getByTestId(`import-tile-${key}`)).toBeInTheDocument()
+  })
+
+  // A row that imported but left something behind (an Enpass attachment) is
+  // a note on the preview, apart from the rows that could not be read: the
+  // totals still say every row is coming in. Two notes on one row are one
+  // row in the heading.
+  it('shows a warning row apart from the skipped count', async () => {
+    vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
+    mockCommand('import_entries', () => ({
+      total: 1,
+      imported: 0,
+      skipped: 0,
+      duplicates: 0,
+      dryRun: true,
+      errors: [],
+      warnings: [
+        { row: 1, message: '2 attachment(s) not imported; keep the export' },
+        { row: 1, message: 'unsupported or incomplete passkey' }
+      ],
+      entries: []
+    }))
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-enpass'))
+    const result = await screen.findByTestId('import-result')
+    expect(result).toHaveTextContent('Ready to import: 1')
+    expect(result).not.toHaveTextContent('skipped')
+    expect(screen.queryByTestId('import-row-errors')).not.toBeInTheDocument()
+
+    const note = screen.getByTestId('import-row-warnings')
+    expect(note).toHaveTextContent('1 row imported with a note')
+    await userEvent.click(within(note).getByText(/imported with a note/))
+    expect(note).toHaveTextContent('Row 1: 2 attachment(s) not imported; keep the export')
+    expect(note).toHaveTextContent('Row 1: unsupported or incomplete passkey')
+  })
+
+  // A tile is a file picker: the dry run names the format rather than
+  // sniffing it, and the tile stays lit as the source.
+  it('imports an Enpass export from its tile', async () => {
+    vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-enpass'))
+    await waitFor(() =>
+      expect(calls('import_entries')).toContainEqual({
+        path: '/tmp/enpass.json',
+        format: 'enpass',
+        dryRun: true
+      })
+    )
+  })
+
+  // An app from the sixth tile's menu is picked the same way, and the tile
+  // takes that app's name while it is the source. Picking it again picks
+  // another file: the menu items are buttons, not a selection.
+  it('imports from an app in the other-apps menu, and again', async () => {
+    vi.mocked(openDialog).mockResolvedValue('/tmp/export.csv')
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-other'))
+    await userEvent.click(screen.getByTestId('import-tile-chrome'))
+    await waitFor(() =>
+      expect(calls('import_entries')).toContainEqual({
+        path: '/tmp/export.csv',
+        format: 'chrome',
+        dryRun: true
+      })
+    )
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('import-tile-other')).toHaveTextContent('Chrome / Safari')
+
+    vi.mocked(openDialog).mockResolvedValue('/tmp/export-2.csv')
+    await userEvent.click(screen.getByTestId('import-tile-other'))
+    await userEvent.click(screen.getByTestId('import-tile-chrome'))
+    await waitFor(() =>
+      expect(calls('import_entries')).toContainEqual({
+        path: '/tmp/export-2.csv',
+        format: 'chrome',
+        dryRun: true
+      })
+    )
   })
 
   // The picker is on the drop target itself, on every platform; a file chosen

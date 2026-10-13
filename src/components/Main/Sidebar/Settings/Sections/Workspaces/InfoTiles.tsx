@@ -5,7 +5,7 @@ import { syncProvider } from '@/api/sync'
 
 function Tile({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-lg border border-line bg-field px-3.5 py-3">
+    <div className="rounded-lg border border-line bg-field px-4 py-3">
       <div className="text-base font-medium text-text">{title}</div>
       <div className="mt-0.5 text-sm text-text2">{body}</div>
     </div>

@@ -2,9 +2,11 @@ import type { ReactNode } from 'react'
 import { cx } from '@/utils/cx'
 import { META_TYPE } from './tokens'
 
-type Variant = 'primary' | 'ghost' | 'pale' | 'danger'
+type Variant = 'primary' | 'ghost' | 'pale' | 'danger' | 'pale-danger'
 // Two control heights, per the design system: md 28px (inline actions, pairs
 // with 28px icon buttons) and lg 36px (form/CTA tier, pairs with 36px inputs).
+// Where a finger is one of the pointers the inline tier steps up to the form
+// tier: a 28px button in a phone's settings row is not a target.
 type Size = 'md' | 'lg'
 
 interface Props {
@@ -17,6 +19,8 @@ interface Props {
   kbd?: string
   loading?: boolean
   disabled?: boolean
+  // The button unfolds something under it (an expandable row's form or list).
+  expanded?: boolean
   onClick?: () => void
   children: ReactNode
   className?: string
@@ -27,7 +31,7 @@ const base =
   'relative inline-flex items-center justify-center gap-2 rounded-sm text-base font-medium cursor-pointer select-none transition-[filter,background,opacity,color] disabled:cursor-default'
 
 const sizes: Record<Size, string> = {
-  md: 'h-7 px-3',
+  md: 'h-7 px-3 any-pointer-coarse:h-9 any-pointer-coarse:px-3.5',
   lg: 'h-9 px-4'
 }
 
@@ -47,7 +51,10 @@ const variants: Record<Variant, string> = {
   primary: `bg-accent text-accent-fg hover:bg-accent-hover ${filled}`,
   ghost: 'border border-line bg-tile text-text hover:bg-hover',
   pale: 'border border-line2 bg-field text-text2 hover:border-accent-line hover:text-text',
-  danger: `bg-bad text-white hover:bg-bad-hover ${filled}`
+  danger: `bg-bad text-white hover:bg-bad-hover ${filled}`,
+  // The quiet destructive verb of a row (Forget, Revoke, Disconnect): the pale
+  // button in the warning ink, since a red fill on every row would shout.
+  'pale-danger': 'border border-line2 bg-field text-bad hover:border-bad/50'
 }
 
 // Shared token-styled button. Serves both the full-width auth CTAs (`block`) and
@@ -59,6 +66,7 @@ export default function Button({
   kbd,
   loading,
   disabled,
+  expanded,
   onClick,
   children,
   className,
@@ -69,6 +77,7 @@ export default function Button({
     <button
       type="button"
       data-testid={testid}
+      aria-expanded={expanded}
       disabled={inert}
       onClick={inert ? undefined : onClick}
       className={cx(

@@ -320,13 +320,14 @@ impl Importer for Bitwarden {
                         fido2_credentials: vec![],
                     });
                     // An unusable credential is dropped on its own — the login
-                    // and its other passkeys still import.
+                    // and its other passkeys still import, so it is a warning
+                    // on the row, not a row lost.
                     let mut passkeys = Vec::new();
                     for cred in login.fido2_credentials {
                         if cred.is_usable() {
                             passkeys.push(cred.into());
                         } else {
-                            result.push_err(row, "unsupported or incomplete passkey");
+                            result.push_warn(row, "unsupported or incomplete passkey");
                         }
                     }
                     result.entries.push(ImportedEntry {

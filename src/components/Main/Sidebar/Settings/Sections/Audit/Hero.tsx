@@ -6,7 +6,7 @@ import { vaultScore } from '@/utils/vaultScore'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
 import ScoreRing from '@/components/elements/ScoreRing'
-import { CARD, LABEL, META } from '@/components/elements/tokens'
+import { CARD, HERO_WASH, LABEL, META } from '@/components/elements/tokens'
 import Stats from './Stats'
 
 // The score in a word, on the bands ScoreRing inks its arc by: good from 70,
@@ -19,10 +19,6 @@ const verdict = (score: number | null, t: TFunction) =>
       : score >= 40
         ? t('Fair')
         : t('Weak')
-
-// A soft good-tinted light from the top-left corner, behind the ring.
-const WASH =
-  'bg-[radial-gradient(320px_200px_at_0_0,color-mix(in_srgb,var(--c-good)_12%,transparent),transparent)]'
 
 export default function Hero() {
   const { t } = useTranslation()
@@ -39,9 +35,8 @@ export default function Hero() {
   }
 
   return (
-    <div className={cx(CARD, 'relative mb-7')}>
-      <div aria-hidden className={cx('pointer-events-none absolute inset-0', WASH)} />
-      <div className="relative flex items-center gap-5 p-5">
+    <div className={cx(CARD, HERO_WASH, 'mb-7')}>
+      <div className="flex items-center gap-5 p-5">
         <div className="flex-none text-text">
           <ScoreRing score={score} size={76} testid="settings-audit-score" />
         </div>

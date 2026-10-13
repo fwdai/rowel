@@ -3,8 +3,9 @@ import type { Workspace } from '@/api/types'
 import { PRIMARY_WORKSPACE, workspaceLabel } from '@/lib/workspace'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
+import Chip from '@/components/elements/Chip'
 import Monogram from '@/components/elements/Monogram'
-import { META, META_TYPE, ROW_HAIRLINE } from '@/components/elements/tokens'
+import { META, ROW_HAIRLINE } from '@/components/elements/tokens'
 import { useSubpage } from '../../../sectionNav'
 import Menu from './Menu'
 
@@ -17,33 +18,6 @@ interface Props {
   about: string
   onSwitch: () => void
   onDelete: () => void
-}
-
-function OpenNow() {
-  const { t } = useTranslation()
-  return (
-    <span
-      className={`flex h-5 flex-none items-center gap-1.5 rounded-full bg-good/10 px-2 ${META_TYPE} font-medium text-good`}
-    >
-      <span className="h-[5px] w-[5px] rounded-full bg-current" />
-      {t('Open now')}
-    </span>
-  )
-}
-
-// The primary is the workspace whose master password is the device's — the one
-// a new workspace is sealed with and the one Touch ID enrols — and nothing
-// else on the row says which that is once it has been renamed.
-function Primary({ id }: { id: string }) {
-  const { t } = useTranslation()
-  return (
-    <span
-      data-testid={`workspace-primary-${id}`}
-      className={`flex h-5 flex-none items-center rounded-full bg-tile px-2 ${META_TYPE} font-medium text-text2`}
-    >
-      {t('Primary')}
-    </span>
-  )
 }
 
 // One workspace on this device: its tile, its name over what is known of it,
@@ -67,8 +41,18 @@ export default function WorkspaceRow({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate text-base font-medium text-text">{label}</span>
-            {workspace.id === PRIMARY_WORKSPACE && <Primary id={workspace.id} />}
-            {current && <OpenNow />}
+            {/* The primary is the workspace whose master password is the
+                device's — the one a new workspace is sealed with and the one
+                Touch ID enrols — and nothing else on the row says which that
+                is once it has been renamed. */}
+            {workspace.id === PRIMARY_WORKSPACE && (
+              <Chip testid={`workspace-primary-${workspace.id}`}>{t('Primary')}</Chip>
+            )}
+            {current && (
+              <Chip tone="good" dot>
+                {t('Open now')}
+              </Chip>
+            )}
           </div>
           <div className={cx(META, 'mt-0.5 truncate')}>{about}</div>
         </div>

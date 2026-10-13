@@ -150,6 +150,18 @@ fn get_decoded(
         .filter(|v| !v.is_empty())
 }
 
+// A password cell, as typed: its spaces are part of the secret, so it is
+// never trimmed, and only an empty cell is absent. Rowel's own sheet still
+// has its formula escape undone.
+fn get_secret(
+    headers: &[String],
+    rec: &StringRecord,
+    aliases: &[&str],
+    rowel: bool,
+) -> Option<String> {
+    decoded(get_verbatim(headers, rec, aliases), rowel).filter(|v| !v.is_empty())
+}
+
 fn tag_vec(group: Option<String>) -> Vec<String> {
     group
         .map(|g| g.trim_start_matches("Root/").trim().to_string())
@@ -165,6 +177,13 @@ pub struct GenericCsv;
 /// Chrome / Safari CSV — same header-aliased shape as generic.
 pub struct BrowserCsv;
 
+/// 1Password CSV: `Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,
+/// Notes`. Every row is a login (the sheet carries nothing else); its tags and
+/// star are read, which the generic mapper would drop. An archived item is a
+/// live one kept out of the main list and comes in as an ordinary entry, as an
+/// archived Enpass item does. The `.1pux` archive is not read.
+pub struct OnepasswordCsv;
+
 fn parse_aliased(bytes: &[u8]) -> ImportResult {
     let mut result = ImportResult::default();
     let Some(rows) = read_rows(bytes, &mut result) else {
@@ -176,6 +195,7 @@ fn parse_aliased(bytes: &[u8]) -> ImportResult {
         // so an older Rowel export still comes back as what it was.
         let rowel = get(&rows.headers, rec, CSV_VERSION).is_some();
         let cell = |aliases| get_decoded(&rows.headers, rec, aliases, rowel);
+        let secret = |aliases| get_secret(&rows.headers, rec, aliases, rowel);
         let title = cell(TITLE).or_else(|| cell(URL)).or_else(|| cell(USERNAME));
         let Some(title) = title else {
             result.push_err(i + 2, "empty row");
@@ -232,7 +252,7 @@ fn parse_aliased(bytes: &[u8]) -> ImportResult {
             kind: EntryKind::Login,
             title,
             username: cell(USERNAME),
-            password: cell(PASSWORD),
+            password: secret(PASSWORD),
             url: cell(URL),
             notes: cell(NOTES),
             otp: cell(OTP),
@@ -252,6 +272,7 @@ fn rowel_row(
     title: String,
 ) -> ImportedEntry {
     let cell = |aliases| get_decoded(headers, rec, aliases, true);
+    let secret = |aliases| get_secret(headers, rec, aliases, true);
     let mut entry = ImportedEntry {
         kind,
         title,
@@ -272,7 +293,7 @@ fn rowel_row(
     match kind {
         EntryKind::Login => {
             entry.username = cell(OWN_USERNAME);
-            entry.password = cell(PASSWORD);
+            entry.password = secret(PASSWORD);
             entry.url = cell(URL);
             entry.otp = cell(OTP);
             entry.email = cell(EMAIL);
@@ -303,7 +324,7 @@ fn rowel_row(
             entry.ssh_private_key = cell(SSH_PRIVATE_KEY);
             entry.ssh_public_key = cell(SSH_PUBLIC_KEY);
             entry.ssh_fingerprint = cell(SSH_FINGERPRINT);
-            entry.ssh_passphrase = cell(SSH_PASSPHRASE);
+            entry.ssh_passphrase = secret(SSH_PASSPHRASE);
         }
         EntryKind::Env => {
             // The file is the secret and the canonical form, so it is the one
@@ -333,6 +354,54 @@ impl Importer for BrowserCsv {
     fn parse(&self, bytes: &[u8]) -> ImportResult {
         parse_aliased(bytes)
     }
+}
+
+impl Importer for OnepasswordCsv {
+    fn parse(&self, bytes: &[u8]) -> ImportResult {
+        let mut result = ImportResult::default();
+        let Some(rows) = read_rows(bytes, &mut result) else {
+            return result;
+        };
+        for (i, rec) in rows.records.iter().enumerate() {
+            let h = &rows.headers;
+            let url = get(h, rec, &["url"]);
+            let title = get(h, rec, &["title"]).or_else(|| url.clone());
+            let Some(title) = title else {
+                result.push_err(i + 2, "empty row");
+                continue;
+            };
+            result.entries.push(ImportedEntry {
+                kind: EntryKind::Login,
+                title,
+                username: get(h, rec, &["username"]),
+                password: get_verbatim(h, rec, &["password"]),
+                url,
+                otp: get(h, rec, &["otpauth"]),
+                notes: get(h, rec, &["notes"]),
+                tags: split_tags(get(h, rec, &["tags"])),
+                favorite: is_true(get(h, rec, &["favorite"])),
+                ..Default::default()
+            });
+        }
+        result
+    }
+}
+
+// 1Password lists tags in one cell; the separator is not documented, so both
+// of the two it could be are honoured.
+fn split_tags(cell: Option<String>) -> Vec<String> {
+    cell.map(|t| {
+        t.split([',', ';'])
+            .map(|tag| tag.trim().to_string())
+            .filter(|tag| !tag.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+// A flag column, however the producer spells yes.
+fn is_true(cell: Option<String>) -> bool {
+    cell.is_some_and(|v| matches!(v.trim().to_lowercase().as_str(), "true" | "yes" | "1"))
 }
 
 /// LastPass CSV: `url,username,password,totp,extra,name,grouping,fav`. Secure
@@ -368,7 +437,7 @@ impl Importer for LastpassCsv {
                     kind: EntryKind::Login,
                     title,
                     username: get(h, rec, &["username"]),
-                    password: get(h, rec, &["password"]),
+                    password: get_verbatim(h, rec, &["password"]),
                     url,
                     otp: get(h, rec, &["totp"]),
                     notes,
@@ -401,7 +470,7 @@ impl Importer for KeepassCsv {
                 kind: EntryKind::Login,
                 title,
                 username: get(h, rec, &["username"]),
-                password: get(h, rec, &["password"]),
+                password: get_verbatim(h, rec, &["password"]),
                 url: get(h, rec, &["url"]),
                 notes: get(h, rec, &["notes"]),
                 otp: get(h, rec, &["totp"]),
