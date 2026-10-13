@@ -296,10 +296,13 @@ flick) slides it the rest of the way out and runs the same handler its back
 control does (`Compact/useSwipeBack`, on the entry screen and both settings
 panes, under the same `settingsLocked`); short of that, both spring back. The
 form is not among them: it rose from the bottom and its only exit is the
-guarded Cancel. Every one of these screens scrolls through `SCREEN_SCROLLER`
-(`Compact/chrome`): its `overscroll-contain` is what stops the webview's own
-scroll gesture from taking the drag and cancelling the swipe — see the note on
-the token.
+guarded Cancel. The drag starts on a 24px strip the screen lays over the left
+edge of its scroller, `touch-action: none` — the way the bottom sheet's
+grabber owns its drag. A touch that starts inside a scroller is the webview's
+to scroll the moment it moves on an axis the scroller has room on, and the
+pointer under the swipe is cancelled mid-drag; on the strip there is no
+scroller to claim it. A tap on the strip is passed on to what lies under it.
+Every one of these screens scrolls through `SCREEN_SCROLLER` (`Compact/chrome`).
 
 ## iOS conventions to follow
 
