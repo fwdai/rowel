@@ -9,29 +9,34 @@ arms reduced to the symbol a passport stamps in foil, as a one-colour SVG.
 
     uv run scripts/emblems/build.py --out <dir>
 
-Then copy <dir> into rowel-web as public/assets/passport/emblems.
+Then copy <dir> into rowel-web as public/assets/passport/emblems, and bump
+`SET` in src-tauri/src/emblem.rs: the app caches an emblem for good, so that
+is how it learns the set has changed.
 
 For every ISO 3166-1 alpha-3 code `src/utils/countries.ts` knows, the arms are
 Wikidata's "coat of arms image" (P94) unless `overrides.json` names another
 Commons file. Each is rendered by Commons as a PNG and then:
 
-1. its field goes — the one big single-colour region the symbol sits inside
-   (Poland's red, Ukraine's blue), so only the eagle or the trident is left;
-2. its line work is cut back out of what remains, the way a foil stamp shows
-   an engraving, so a detailed achievement does not flatten into a blob. A
-   one-colour emblem has no line work to cut and is left whole;
+1. its field goes — the single-colour region that is the emblem's own shape
+   (Poland's red shield, Vietnam's red disk) with the symbol set inside it —
+   all of its colour within that outline, so only the eagle or the star is
+   left, and the pockets of field between a trident's arms are open;
+2. every line where one colour meets another is cut back in, and the art's
+   own thin outlines with them, so each part of the arms stands on its own in
+   the foil the way relief reads on a cover, instead of merging into a blob;
 3. the result is traced into a single even-odd path and cropped to it.
 
 The app paints the shape in gold; the SVG carries no colour of its own. Every
 step can be adjusted per country in `overrides.json`:
 
     "UKR": { "file": "Lesser Coat of Arms of Ukraine.svg", "field": false, "lines": false }
-    "BIH": { "drop": ["blue"] }
+    "SVK": { "drop": ["red"] }
 
-`drop` names the heraldic colours to remove instead of guessing the field —
-for a field the symbol touches the edge of, which the guess cannot see as
-enclosing it: red, blue, green, black, white, gold. `"lines": true` cuts line
-work even from a one-colour emblem, which is otherwise left whole, and
+`drop` names the heraldic colours to remove instead of finding the field —
+for a field the symbol touches the edge of, which is then kept as an engraved
+shield rather than dropped: red, blue, green, black, white, gold. `lines` is
+how hard a change of colour has to be to be cut (`EDGE` by default; higher
+for art so heavily shaded that its lines would dissolve it, false for none).
 `"skip": true` leaves a country out.
 
 Alongside the SVGs it writes `credits.json` (each source file's author and
@@ -57,6 +62,7 @@ import numpy as np
 import potrace
 from PIL import Image, ImageDraw
 from scipy import ndimage
+from scipy.spatial import ConvexHull
 
 ROOT = Path(__file__).resolve().parents[2]
 COUNTRIES = ROOT / "src/utils/countries.ts"
@@ -66,9 +72,12 @@ OVERRIDES = Path(__file__).with_name("overrides.json")
 USER_AGENT = "Rowel-Password-Manager (https://rowel.app)"
 # Wide enough for the line work to survive the extraction.
 RENDER_WIDTH = 500
-# What the symbol is traced at: past this the path only grows, not the detail
-# a 60px tile (120px at 2x) can show.
-TRACE_SIZE = 256
+# What the symbol is traced at: enough to keep a two-pixel gap between two
+# parts of the arms a gap, short of the full render the path would only grow at.
+TRACE_SIZE = 400
+# How hard a change of colour has to be to be cut as a line (see
+# `boundaries`): shading stays below it, an edge between two colours does not.
+EDGE = 90
 # Between requests to Commons, which answers a burst with 429.
 PAUSE = 1.5
 
@@ -147,52 +156,121 @@ def tinctures(rgb: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def symbol(
-    png: Path, field: bool = True, lines: bool | None = None, drop: list[str] | None = None
+    png: Path, field: bool = True, lines: bool | int = True, drop: list[str] | None = None
 ) -> np.ndarray:
-    """The emblem as a boolean mask: the symbol, without its field."""
+    """The emblem as a boolean mask: the symbol, without its field, its parts
+    parted by the lines where one colour meets another."""
     rgba = np.array(Image.open(png).convert("RGBA"))
-    rgb, opaque = rgba[..., :3], rgba[..., 3] > 128
-    total = opaque.sum()
-
-    tones = np.array(Image.fromarray(rgb).quantize(colors=10, method=Image.Quantize.MEDIANCUT))
-    tones[~opaque] = 255
+    rgb, opaque = rgba[..., :3].astype(float), rgba[..., 3] > 128
 
     keep = opaque.copy()
     if drop:
-        colors = tinctures(rgb)
+        colors = tinctures(rgba[..., :3])
         for name in drop:
             keep &= ~colors[name]
     elif field:
-        # The field encloses the symbol: of the big single-tone regions, the
-        # largest whose holes hold a real share of the art. Only that one — a
-        # trident encloses bits of the field too. And art of another colour: a
-        # solid black lion capital encloses only air and more of its own black.
-        best, area = None, 0
-        for tone in np.unique(tones[opaque]):
-            regions, count = ndimage.label(tones == tone)
-            for i in range(1, count + 1):
-                region = regions == i
-                size = region.sum()
-                if size < 0.12 * total or size <= area:
-                    continue
-                holes = ndimage.binary_fill_holes(region) & opaque & (tones != tone)
-                if holes.sum() > 0.08 * total:
-                    best, area = region, size
-        if best is not None:
-            keep &= ~best
+        found = find_field(rgb, opaque)
+        if found is not None:
+            keep &= ~found
 
-    # A one-tone emblem (India's lion capital) is its own silhouette: there is
-    # no line work in it to tell from the shape — unless an override says so.
-    shares = np.bincount(tones[keep].ravel(), minlength=256)
-    one_tone = keep.any() and shares.max() >= 0.85 * keep.sum()
-    if lines or (lines is None and not one_tone):
-        lum = rgb @ np.array([0.2126, 0.7152, 0.0722])
-        dark = ((lum < 70) | (lum < ndimage.uniform_filter(lum, size=7) - 38)) & keep
-        # Thin strokes only — what an opening removes. A solid black eagle is
-        # the symbol itself, not its outline, and stays.
-        keep &= ~(dark & ~ndimage.binary_opening(dark, iterations=2))
+    if lines is not False:
+        keep &= ~boundaries(rgb, keep, EDGE if lines is True else lines)
+    return without_specks(keep)
 
-    return ndimage.binary_opening(keep, iterations=1)
+
+def find_field(rgb: np.ndarray, opaque: np.ndarray) -> np.ndarray | None:
+    """The field the symbol is set on, every pixel of it — or None for arms
+    that have none (an eagle on its own).
+
+    The field is the big single-colour region that is the emblem's own shape:
+    a shield or a disk, solid inside its outline (the share of its convex hull
+    it fills — Vietnam's disk, notched by its cog, fills 0.79), with art of
+    another colour set within it. A spread eagle or a
+    trident is no such shape, which is what keeps Austria's black eagle from
+    being taken for one. Once found, all of its colour inside its outline goes
+    — the pockets of blue between a trident's arms too, which are separate
+    regions of the same field.
+    """
+    total = opaque.sum()
+    tones = np.array(Image.fromarray(rgb.astype(np.uint8)).quantize(colors=12, method=Image.Quantize.MEDIANCUT))
+    tones[~opaque] = 255
+    best, area = None, 0
+    for tone in np.unique(tones[opaque]):
+        regions, count = ndimage.label(tones == tone)
+        sizes = ndimage.sum(np.ones_like(regions), regions, range(1, count + 1))
+        for i in np.nonzero(sizes >= 0.10 * total)[0] + 1:
+            # Judged by its core: a field can touch more of its own colour
+            # through a thin join — Vietnam's red disk, its red ribbon — and
+            # the two together are no shield.
+            region = core(regions == i)
+            size = region.sum()
+            if size < 0.10 * total or size <= area:
+                continue
+            shape = ndimage.binary_fill_holes(region)
+            inside = shape & opaque & ~region
+            if inside.sum() < 0.01 * total or solidity(shape) < 0.72:
+                continue
+            best, area = (region, shape), size
+    if best is None:
+        return None
+    region, shape = best
+    color = rgb[region].mean(axis=0)
+    return shape & opaque & (np.linalg.norm(rgb - color, axis=-1) < 48)
+
+
+def core(region: np.ndarray) -> np.ndarray:
+    """The largest piece of a region once thin joins are cut, at full size."""
+    opened = ndimage.binary_opening(region, iterations=4)
+    pieces, count = ndimage.label(opened)
+    if count == 0:
+        return opened
+    sizes = ndimage.sum(opened, pieces, range(1, count + 1))
+    largest = pieces == np.argmax(sizes) + 1
+    # Grown back over what the opening shaved off its edge, but not past it.
+    return ndimage.binary_dilation(largest, iterations=4) & region
+
+
+def solidity(shape: np.ndarray) -> float:
+    """How much of its convex hull a shape fills: ~1 for a shield or a disk."""
+    points = np.argwhere(shape)
+    if len(points) < 3:
+        return 0.0
+    return shape.sum() / ConvexHull(points).volume
+
+
+def boundaries(rgb: np.ndarray, keep: np.ndarray, edge: int) -> np.ndarray:
+    """Where the art changes colour inside what is kept, as thin lines: each
+    element of the arms then stands on its own in the foil — the star apart
+    from the disk, the cog's teeth apart from the rice — the way relief reads
+    on a cover.
+
+    A boundary is a hard change between pixels two apart, unsmoothed: a real
+    edge keeps its full contrast there, where a shaded surface changes a little
+    at a time and stays below it. The lines are as thin as that finds them and
+    no thicker, and a fragment too short to be a line — the grain of a shaded
+    eagle — is not cut, so detailed art keeps its lines without dissolving. The
+    art's own dark outlines count too, where they run inside the symbol; at its
+    edge a thin dark stroke is the symbol (Albania's feathers, Oman's khanjar).
+    """
+    step = np.zeros(keep.shape)
+    for axis in (0, 1):
+        ahead, behind = np.roll(rgb, -1, axis), np.roll(rgb, 1, axis)
+        step = np.maximum(step, np.linalg.norm(ahead - behind, axis=-1))
+    edges = without_specks((step > edge) & keep, smallest=20)
+
+    lum = rgb @ np.array([0.2126, 0.7152, 0.0722])
+    dark = (lum < 70) & keep
+    inside = ndimage.binary_erosion(keep, iterations=3)
+    outline = dark & ~ndimage.binary_opening(dark, iterations=2) & inside
+    return edges | outline
+
+
+def without_specks(mask: np.ndarray, smallest: int = 12) -> np.ndarray:
+    """The mask without islands too small to be anything but noise — thin gold
+    lines, unlike with an opening, survive."""
+    regions, count = ndimage.label(mask)
+    sizes = ndimage.sum(mask, regions, range(1, count + 1))
+    return np.isin(regions, np.nonzero(sizes >= smallest)[0] + 1)
 
 
 def svg(mask: np.ndarray) -> str | None:
@@ -233,7 +311,7 @@ def svg(mask: np.ndarray) -> str | None:
 def build(job: tuple[str, str, dict]) -> tuple[str, str | None, np.ndarray | None]:
     code, png, options = job
     mask = symbol(
-        Path(png), options.get("field", True), options.get("lines"), options.get("drop")
+        Path(png), options.get("field", True), options.get("lines", True), options.get("drop")
     )
     return code, svg(mask), mask
 
@@ -276,8 +354,9 @@ def credits(files: dict[str, str]) -> dict[str, dict]:
 
 def sheets(masks: dict[str, np.ndarray], originals: dict[str, Path], review: Path) -> None:
     """Every country twice — its source art, and the symbol as the app will
-    paint it, in gold on its own cover — forty to a sheet."""
-    colors, tile, per_row, per_sheet = cover_colors(), 96, 10, 40
+    paint it, in gold on its own cover — large enough to judge the detail,
+    twenty-four to a sheet."""
+    colors, tile, per_row, per_sheet = cover_colors(), 150, 6, 24
     codes = sorted(masks)
     for number, at in enumerate(range(0, len(codes), per_sheet), start=1):
         batch = codes[at : at + per_sheet]

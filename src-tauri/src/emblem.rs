@@ -9,7 +9,7 @@
 //! Privacy: a favicon is fetched from the host its entry already points at, so
 //! the request tells that host nothing new. This one tells our website a
 //! passport's issuing country — asked only while the vault is unlocked, once per
-//! country per workspace, and cached in the vault's SQLCipher database (the
+//! country per workspace (and per [`SET`] of emblems), and cached in the vault's SQLCipher database (the
 //! `emblems` table) so the countries are not spelled out in file names beside it.
 //!
 //! An SVG can carry script, which is why the favicon fetch refuses one. These
@@ -28,6 +28,12 @@ use crate::store::ImageCache;
 
 const SVG: &str = "image/svg+xml";
 
+/// Which generation of the website's emblems the cache holds. A cached emblem
+/// never ages out (see `SqliteStore::get_image`), so the cache is keyed by this
+/// too: bump it whenever `scripts/emblems/build.py` is rerun and its output
+/// published, and every vault fetches the new set instead of keeping the old.
+const SET: u32 = 2;
+
 /// The emblem for `country` (ISO 3166-1 alpha-3) as a data: URI, or None when
 /// there is none. Gated, cached and cut short by a lock exactly as
 /// `favicon::fetch` is — see there.
@@ -36,8 +42,9 @@ pub async fn fetch(app: &AppHandle, country: &str, epoch: Epoch) -> Result<Optio
     if country.len() != 3 || !country.bytes().all(|b| b.is_ascii_uppercase()) {
         return Ok(None);
     }
+    let key = format!("{country}@{SET}");
     if let Some(cached) = with_session(app, |session| {
-        cached(session, ImageCache::Emblems, country, epoch)
+        cached(session, ImageCache::Emblems, &key, epoch)
     }) {
         return Ok(cached);
     }
@@ -51,13 +58,7 @@ pub async fn fetch(app: &AppHandle, country: &str, epoch: Epoch) -> Result<Optio
         _ => None,
     };
     with_session(app, |session| {
-        cache(
-            session,
-            ImageCache::Emblems,
-            country,
-            epoch,
-            found.as_deref(),
-        )
+        cache(session, ImageCache::Emblems, &key, epoch, found.as_deref())
     });
     Ok(found)
 }

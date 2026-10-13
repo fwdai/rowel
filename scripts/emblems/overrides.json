@@ -1,12 +1,16 @@
 {
-  "BIH": { "drop": ["blue"] },
-  "DZA": { "lines": true },
+  "ARM": { "lines": 200 },
   "GIB": { "drop": ["white"] },
   "GLP": { "drop": ["blue", "black"] },
-  "GNB": { "lines": true },
   "KIR": { "drop": ["red"] },
+  "LBN": { "drop": ["red", "white"] },
   "MAF": { "drop": ["blue"] },
+  "MRT": { "drop": ["green"] },
   "MSR": { "drop": ["blue"] },
+  "NIU": { "drop": ["white"] },
+  "RUS": { "lines": false },
   "SVK": { "drop": ["red"] },
+  "THA": { "lines": 200 },
+  "VAT": { "lines": 200 },
   "WLF": { "skip": true }
 }

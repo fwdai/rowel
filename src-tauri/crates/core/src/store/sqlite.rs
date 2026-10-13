@@ -138,7 +138,8 @@ fn migration_list() -> Vec<M<'static>> {
 pub enum ImageCache {
     /// Website favicons, by host.
     Favicons,
-    /// Passport-cover emblems, by ISO 3166-1 alpha-3 country.
+    /// Passport-cover emblems, by ISO 3166-1 alpha-3 country and the version
+    /// of the emblem set (`UKR@2`).
     Emblems,
 }
 
