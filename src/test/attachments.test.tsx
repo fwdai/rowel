@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Show from '@/components/Main/Body/Aside/Show'
 import Main from '@/components/Main'
@@ -496,6 +496,38 @@ describe('stepping through the files', () => {
     expect(screen.getByTestId('preview-text')).toHaveTextContent('second')
     expect(made.mock.calls.length).toBe(shown)
     made.mockRestore()
+  })
+
+  // Stepping away from a file already shown: the render that carries the
+  // new name must not carry the old bytes, not even for the one render
+  // before the effect that clears them — React may paint it.
+  it('never answers one file’s name with another file’s bytes, not for a render', async () => {
+    const { useAttachmentUrl } = await import(
+      '@/components/Main/Body/Aside/Show/Attachments/useAttachmentUrl'
+    )
+    const a1 = file({ id: 'a1', name: 'first.txt', mime: 'text/plain' })
+    const a2 = file({ id: 'a2', name: 'second.txt', mime: 'text/plain' })
+    mockCommand('attachment_read', ({ id }) =>
+      id === 'a1' ? bytesOf('first') : new Promise<ArrayBuffer>(() => {})
+    )
+    // Every render's answer, as the view would see it.
+    const seen: [string, string | null][] = []
+    const { rerender } = renderHook(
+      ({ attachment }: { attachment: Attachment }) => {
+        const held = useAttachmentUrl(attachment, true)
+        seen.push([attachment.id, held.url])
+        return held
+      },
+      { initialProps: { attachment: a1 } }
+    )
+    const last = () => seen[seen.length - 1]
+    await waitFor(() => expect(last()[1]).toMatch(/^blob:/))
+    const firstUrl = last()[1]
+
+    rerender({ attachment: a2 })
+
+    expect(seen.filter(([id]) => id === 'a2').every(([, url]) => url === null)).toBe(true)
+    expect(seen.some(([id, url]) => id === 'a2' && url === firstUrl)).toBe(false)
   })
 
   it('offers no step for a lone file', async () => {

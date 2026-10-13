@@ -23,9 +23,18 @@ export interface AttachmentUrl {
 type Held = Omit<AttachmentUrl, 'degrade'> & {
   /** Which bytes `url` points at: the file's own, or the PNG made of them. */
   rendition: boolean
+  /** Whose bytes they are. State outlives a change of file by one render. */
+  id: string | null
 }
 
-const EMPTY: Held = { url: null, bytes: null, failed: false, unsupported: false, rendition: false }
+const EMPTY: Held = {
+  url: null,
+  bytes: null,
+  failed: false,
+  unsupported: false,
+  rendition: false,
+  id: null
+}
 
 /**
  * One attachment's bytes as something the DOM can point at — an `<img>`, an
@@ -53,6 +62,8 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
   const current = useRef<string | null>(null)
   const type = typeOf(attachment)
 
+  const id = attachment.id
+
   const hold = useCallback(
     (bytes: Uint8Array<ArrayBuffer>, rendition: boolean, asked: number) => {
       if (asked !== generation.current) return
@@ -60,9 +71,9 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
       current.current = URL.createObjectURL(
         new Blob([bytes], { type: rendition ? 'image/png' : type })
       )
-      setHeld({ ...EMPTY, url: current.current, bytes, rendition })
+      setHeld({ ...EMPTY, url: current.current, bytes, rendition, id })
     },
-    [type]
+    [type, id]
   )
 
   useEffect(() => {
@@ -71,9 +82,9 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
     // node, so the lint's worry about a stale `.current` does not apply.
     const asks = generation
     const asked = ++asks.current
-    readAttachment(attachment.id)
+    readAttachment(id)
       .then(bytes => hold(bytes, false, asked))
-      .catch(() => asked === asks.current && setHeld({ ...EMPTY, failed: true }))
+      .catch(() => asked === asks.current && setHeld({ ...EMPTY, failed: true, id }))
     return () => {
       // Anything still on its way answers a question no longer asked.
       asks.current++
@@ -81,7 +92,7 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
       current.current = null
       setHeld(EMPTY)
     }
-  }, [attachment.id, enabled, hold])
+  }, [id, enabled, hold])
 
   const degrade = useCallback(() => {
     const asked = generation.current
@@ -89,12 +100,17 @@ export function useAttachmentUrl(attachment: Attachment, enabled: boolean): Atta
       asked === generation.current && setHeld(h => ({ ...h, unsupported: true }))
     if (!held.url) return
     if (held.rendition) return giveUp()
-    renderAttachment(attachment.id)
+    renderAttachment(id)
       .then(bytes => hold(bytes, true, asked))
       .catch(giveUp)
-  }, [attachment.id, held.url, held.rendition, hold])
+  }, [id, held.url, held.rendition, hold])
 
-  const { url, bytes, failed, unsupported } = held
+  // What is held is the last file's until the effect that follows this
+  // render clears it, and React may paint in between: the view keyed on the
+  // new file would mount with the old one's picture for a frame. So the
+  // answer is tied to the file it was read for, and another file gets
+  // nothing until its own bytes arrive.
+  const { url, bytes, failed, unsupported } = held.id === id ? held : EMPTY
   return { url, bytes, failed, unsupported, degrade }
 }
 
