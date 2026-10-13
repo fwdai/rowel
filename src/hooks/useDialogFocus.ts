@@ -5,9 +5,25 @@ const TABBABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 // A control taken out of the tab order (a dialog header's pointer-only close)
-// is not where focus should start or wrap either.
+// is not where focus should start or wrap either — nor one the stylesheet has
+// hidden for this shell (a `max-md:`-only control on the desktop): focusing
+// a `display: none` element does nothing, and a trap that keeps aiming at
+// one leaves focus behind the dialog for good. jsdom lays nothing out and
+// has no `checkVisibility`; there everything in the DOM counts.
 const tabbables = (root: HTMLElement | null) =>
-  Array.from(root?.querySelectorAll<HTMLElement>(TABBABLE) ?? []).filter(el => el.tabIndex >= 0)
+  Array.from(root?.querySelectorAll<HTMLElement>(TABBABLE) ?? []).filter(
+    el => el.tabIndex >= 0 && (typeof el.checkVisibility !== 'function' || el.checkVisibility())
+  )
+
+/**
+ * Whether `dialog` is the dialog on top — the one a key press belongs to. A
+ * dialog that takes keys of its own beyond this hook's (the file preview's
+ * arrows) asks this first, so a sheet opened over it gets them instead.
+ */
+export const isTopmostDialog = (dialog: HTMLElement | null): boolean => {
+  const dialogs = document.querySelectorAll('[role="dialog"]')
+  return dialogs[dialogs.length - 1] === dialog
+}
 
 /**
  * The keyboard contract every dialog frame shares — the centered `Modal` and
@@ -50,8 +66,7 @@ export function useDialogFocus(dialog: RefObject<HTMLElement | null>, onClose: (
       // Something nearer the key already handled it (a field's own Esc, the
       // generator's own listener) — acting again would close twice.
       if (e.defaultPrevented) return
-      const dialogs = document.querySelectorAll('[role="dialog"]')
-      if (dialogs[dialogs.length - 1] !== dialog.current) return
+      if (!isTopmostDialog(dialog.current)) return
       // Escape closes every dialog — the scrim and the X are pointer-only exits.
       if (e.key === 'Escape') {
         e.preventDefault()

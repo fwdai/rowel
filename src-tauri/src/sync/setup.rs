@@ -28,7 +28,7 @@ pub struct PackInfo {
     pub id: String,
     pub name: String,
     /// The vault this pack holds, read out of its file name — which is also the
-    /// only thing that makes a file in `Vaults/` a pack at all.
+    /// only thing that makes a file in the packs folder a pack at all.
     pub vault_id: String,
     /// `0` when the provider reported no length. Onboarding only renders this,
     /// and a missing size is not worth a second shape in the payload.
@@ -58,9 +58,10 @@ impl PackInfo {
 
 /// Every vault in the account a first run could restore from, newest first.
 ///
-/// An empty list covers "no Rowel folder", "no Vaults/ in it" and "a Vaults/
-/// with nothing restorable in it" — to onboarding they are the same answer, and
-/// the same fresh start.
+/// An empty list covers "no Rowel folder", "no packs folder in it" (neither
+/// `Vaults/` nor, after the cutover, `Lockboxes/`) and "a packs folder with
+/// nothing restorable in it" — to onboarding they are the same answer, and the
+/// same fresh start.
 ///
 /// All of them rather than one: two installs syncing their own primary vault to
 /// the same account each mint their own vault id, so the account holds a pack
@@ -84,7 +85,8 @@ pub async fn find_pack_by_id(store: &impl VaultStore, file_id: &str) -> Result<P
         .ok_or(Error::NoRemoteVault)
 }
 
-/// Which of `vaults` (the contents of `Rowel/Vaults/`) are vaults to offer, and
+/// Which of `vaults` (the contents of `Rowel/Vaults/`, or of
+/// `Rowel/Lockboxes/` after the cutover) are vaults to offer, and
 /// in what order.
 ///
 /// Live packs only — see [`PackInfo::of`] for what makes one.

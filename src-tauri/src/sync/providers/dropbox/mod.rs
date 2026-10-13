@@ -11,6 +11,10 @@
 //! /Vaults/<vault-id>.deleted    the deletion marker (layout::deleted_marker_name)
 //! ```
 //!
+//! `/Vaults` is read as `/Lockboxes` once a later release has renamed it, by
+//! the core's rule ([`crate::sync::store::pick_packs_folder`]); a fresh
+//! account only ever gets `/Vaults`.
+//!
 //! Dropbox paths are unique and case-insensitive, so unlike Drive there are no
 //! same-name siblings to choose between. Entries also carry a stable `id:...`
 //! that every call here accepts in place of a path; it is the handle the core
@@ -22,14 +26,21 @@
 pub mod api;
 pub mod oauth;
 
+use std::future::Future;
+use std::sync::Mutex;
+
 #[cfg(mobile)]
 use tauri::AppHandle;
 
 use crate::error::{Error, Result};
 use crate::sync::account::{Auth, OAuthConfig};
-use crate::sync::store::{RemoteEntry, VaultStore};
+use crate::sync::store::{ensure_packs_folder, find_packs_folder, RemoteEntry, VaultStore};
 use crate::sync::{http_client, Provider};
 use api::DropboxEntry;
+
+/// The app folder as the user finds it in their Dropbox. Dropbox names it
+/// after the app, which is registered as `layout::ROOT_FOLDER`.
+pub const APP_FOLDER: &str = "Apps/Rowel";
 
 /// Dropbox's OAuth client, as the shared flow in `sync::account` drives it.
 /// A public client: an app key, PKCE, and never a secret.
@@ -89,14 +100,58 @@ fn app_key_from_scheme(scheme: &str) -> Option<String> {
         .map(String::from)
 }
 
+/// A folder at the top of the app folder, by path: `/Vaults`. A folder's
+/// handle is its path; only files are addressed by `id:`.
+fn folder_path(name: &str) -> String {
+    format!("/{name}")
+}
+
+/// `name` inside the packs folder `folder`: `/Vaults/<name>`.
+fn entry_path(folder: &str, name: &str) -> String {
+    format!("{folder}/{name}")
+}
+
+/// The folder `name` at the top of the app folder, as its path, or `None`
+/// when there is none. Something there that is not a folder is not one.
+async fn folder_at(client: &reqwest::Client, token: &str, name: &str) -> Result<Option<String>> {
+    let found = api::get_metadata(client, token, &folder_path(name)).await?;
+    Ok(found.filter(|e| e.is_folder).map(|_| folder_path(name)))
+}
+
+/// The packs folder (`/Vaults`, or `/Lockboxes` after the cutover), if the
+/// account has one, settled by the core's rule over `lookup`.
+async fn packs_folder<F, Fut>(lookup: F) -> Result<Option<String>>
+where
+    F: FnMut(&'static str) -> Fut,
+    Fut: Future<Output = Result<Option<String>>>,
+{
+    find_packs_folder(Provider::Dropbox, lookup).await
+}
+
+/// [`packs_folder`], or `/Vaults` when the account has none. Nothing is
+/// created here: the upload that follows creates its parent folders.
+async fn packs_folder_for_create<F, Fut>(lookup: F) -> Result<String>
+where
+    F: FnMut(&'static str) -> Fut,
+    Fut: Future<Output = Result<Option<String>>>,
+{
+    ensure_packs_folder(Provider::Dropbox, lookup, |name| {
+        std::future::ready(Ok(folder_path(name)))
+    })
+    .await
+}
+
 /// [`VaultStore`] over the connected account's app folder.
 ///
-/// Nothing is cached: paths are fixed (`/Vaults/<name>`), so there are no
-/// folder ids to resolve, and every `stat` asks the server, which is what
-/// `head_revision` relies on to see another device's write.
+/// The packs folder is resolved once per instance (one instance per run), as
+/// Drive resolves its folder ids: the rule is deterministic and asking again
+/// would only cost round trips. A *file* is never cached: every `stat` asks the
+/// server, which is what `head_revision` relies on to see another device's
+/// write.
 pub struct Store {
     auth: Auth,
     client: reqwest::Client,
+    packs: Mutex<Option<String>>,
 }
 
 impl Store {
@@ -104,6 +159,7 @@ impl Store {
         Self {
             auth,
             client: http_client(),
+            packs: Mutex::new(None),
         }
     }
 
@@ -113,6 +169,37 @@ impl Store {
 
     async fn token(&self) -> Result<String> {
         self.auth.access_token(&self.client).await
+    }
+
+    fn cached_packs(&self) -> Option<String> {
+        self.packs.lock().unwrap().clone()
+    }
+
+    fn cache_packs(&self, path: &str) {
+        *self.packs.lock().unwrap() = Some(path.to_string());
+    }
+
+    // The packs folder, remembered for the rest of the run once found. `None`
+    // means there is none yet — which is also "no remote vault".
+    async fn packs(&self, token: &str) -> Result<Option<String>> {
+        if let Some(path) = self.cached_packs() {
+            return Ok(Some(path));
+        }
+        let found = packs_folder(|name| folder_at(&self.client, token, name)).await?;
+        if let Some(path) = &found {
+            self.cache_packs(path);
+        }
+        Ok(found)
+    }
+
+    // [`Store::packs`], for a create: `/Vaults` when the account has none.
+    async fn packs_for_create(&self, token: &str) -> Result<String> {
+        if let Some(path) = self.cached_packs() {
+            return Ok(path);
+        }
+        let path = packs_folder_for_create(|name| folder_at(&self.client, token, name)).await?;
+        self.cache_packs(&path);
+        Ok(path)
     }
 }
 
@@ -154,17 +241,24 @@ impl VaultStore for Store {
         Provider::Dropbox
     }
 
-    // A missing `/Vaults` lists as empty (`api::list_folder`): an account
-    // nothing has ever synced to.
+    // No packs folder is an account nothing has ever synced to, which is the
+    // same answer as an empty one.
     async fn list_vaults(&self) -> Result<Vec<RemoteEntry>> {
         let token = self.token().await?;
-        let listing = api::list_folder(&self.client, &token, &api::vaults_path()).await?;
+        let Some(folder) = self.packs(&token).await? else {
+            return Ok(Vec::new());
+        };
+        let listing = api::list_folder(&self.client, &token, &folder).await?;
         Ok(file_entries(listing))
     }
 
     async fn stat(&self, name: &str) -> Result<Option<RemoteEntry>> {
         let token = self.token().await?;
-        let found = api::get_metadata(&self.client, &token, &api::vault_entry_path(name)).await?;
+        let Some(folder) = self.packs(&token).await? else {
+            return Ok(None);
+        };
+        let path = entry_path(&folder, name);
+        let found = api::get_metadata(&self.client, &token, &path).await?;
         Ok(found.filter(|e| !e.is_folder).map(entry))
     }
 
@@ -184,7 +278,8 @@ impl VaultStore for Store {
     // made a same-name sibling instead.
     async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
         let token = self.token().await?;
-        api::upload(&self.client, &token, &api::vault_entry_path(name), bytes).await
+        let folder = self.packs_for_create(&token).await?;
+        api::upload(&self.client, &token, &entry_path(&folder, name), bytes).await
     }
 
     // Addressed by `id:`, so an entry deleted since the `stat` fails the upload
@@ -206,6 +301,7 @@ impl VaultStore for Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync::layout;
 
     fn file(id: &str, name: &str) -> DropboxEntry {
         DropboxEntry {
@@ -271,6 +367,66 @@ mod tests {
     #[test]
     fn a_missing_vaults_folder_is_an_empty_account() {
         assert!(file_entries(Vec::new()).is_empty());
+    }
+
+    // --- which folder is `Vaults/` ---
+
+    // The folders at the top of an app folder, as `folder_at` would find them:
+    // each by its path.
+    fn lookup_in(
+        folders: &'static [&'static str],
+    ) -> impl FnMut(&'static str) -> std::future::Ready<Result<Option<String>>> {
+        move |name| std::future::ready(Ok(folders.contains(&name).then(|| folder_path(name))))
+    }
+
+    #[tokio::test]
+    async fn an_app_folder_with_vaults_syncs_there() {
+        let found = packs_folder(lookup_in(&[layout::VAULTS_FOLDER])).await;
+        assert_eq!(found.unwrap().as_deref(), Some("/Vaults"));
+    }
+
+    #[tokio::test]
+    async fn an_app_folder_renamed_by_the_cutover_syncs_in_lockboxes() {
+        let found = packs_folder(lookup_in(&[layout::LOCKBOXES_FOLDER])).await;
+        assert_eq!(found.unwrap().as_deref(), Some("/Lockboxes"));
+    }
+
+    #[tokio::test]
+    async fn an_app_folder_with_neither_has_no_packs_folder() {
+        assert_eq!(packs_folder(lookup_in(&[])).await.unwrap(), None);
+    }
+
+    // Named as the user finds them in their Dropbox, under `Apps/`.
+    #[tokio::test]
+    async fn an_app_folder_with_both_is_refused_naming_both() {
+        let both = &[layout::LOCKBOXES_FOLDER, layout::VAULTS_FOLDER];
+        let err = packs_folder(lookup_in(both)).await.unwrap_err();
+        assert!(
+            matches!(&err, Error::Other(m) if m.starts_with("this Dropbox holds both Apps/Rowel/Vaults and Apps/Rowel/Lockboxes;")),
+            "{err:?}"
+        );
+        assert!(packs_folder_for_create(lookup_in(both)).await.is_err());
+    }
+
+    // A fresh account gets `/Vaults`, never `/Lockboxes`; one that has either
+    // keeps it.
+    #[tokio::test]
+    async fn a_create_targets_vaults_unless_the_account_has_a_folder() {
+        let fresh = packs_folder_for_create(lookup_in(&[])).await.unwrap();
+        assert_eq!(fresh, "/Vaults");
+        assert_eq!(entry_path(&fresh, "a1b2.rowel"), "/Vaults/a1b2.rowel");
+
+        let renamed = packs_folder_for_create(lookup_in(&[layout::LOCKBOXES_FOLDER]))
+            .await
+            .unwrap();
+        assert_eq!(entry_path(&renamed, "a1b2.rowel"), "/Lockboxes/a1b2.rowel");
+    }
+
+    #[test]
+    fn the_app_folder_is_named_after_the_app() {
+        assert_eq!(APP_FOLDER, format!("Apps/{}", layout::ROOT_FOLDER));
+        assert_eq!(Provider::Dropbox.packs_root_label(), APP_FOLDER);
+        assert_eq!(Provider::GoogleDrive.packs_root_label(), "Rowel");
     }
 
     // Only an `id:` is ever addressed by handle: a path smuggled in through the

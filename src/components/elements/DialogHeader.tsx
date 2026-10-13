@@ -1,8 +1,6 @@
 import type { ReactNode } from 'react'
-import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
-import { CloseGlyph } from '../Main/icons'
-import Kbd from './Kbd'
+import EscClose from './EscClose'
 import { useFrameOwnsClose } from './frameContext'
 
 /**
@@ -32,7 +30,6 @@ export default function DialogHeader({
   // Horizontal padding override; defaults to `px-7`.
   className?: string
 }) {
-  const { t } = useTranslation()
   // On a phone the frame's own bar has the close; `esc` means nothing there.
   const framed = useFrameOwnsClose()
 
@@ -54,25 +51,15 @@ export default function DialogHeader({
         </h1>
         {description != null && <p className="mt-0.5 text-sm text-text2">{description}</p>}
       </div>
-      {/* Says what closes it as well as closing it: Escape does the same, so
-          it is a pointer target and not the first tab stop of every dialog. */}
       {!framed && (
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-label={t('Close')}
-          title={t('Close')}
-          data-testid="modal-close"
+        <EscClose
+          onClose={onClose}
           disabled={disabled}
-          onClick={onClose}
           className={cx(
-            'flex h-7 flex-none items-center gap-2 rounded-sm px-1.5 text-text2 transition-colors',
-            disabled ? 'cursor-default opacity-50' : 'cursor-pointer hover:bg-hover hover:text-text'
+            'h-7 rounded-sm px-1.5 text-text2',
+            !disabled && 'hover:bg-hover hover:text-text'
           )}
-        >
-          <Kbd>esc</Kbd>
-          <CloseGlyph />
-        </button>
+        />
       )}
     </div>
   )

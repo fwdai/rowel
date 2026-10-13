@@ -230,8 +230,13 @@ API facts the adapter is built on (checked against the Dropbox docs on
 2026-10-12; sources under "Verified against Dropbox docs" below):
 
 - App type: **App folder** access. Every path is relative to
-  `/Apps/<app name>/`, so `layout::ROOT_FOLDER` is implied and the adapter
-  works under `/Vaults/`. Scopes: `files.metadata.read`,
+  `/Apps/<app name>/` (`Apps/Rowel` as the user sees it), so
+  `layout::ROOT_FOLDER` is implied. The packs folder is whichever of
+  `/Vaults` or `/Lockboxes` exists there, by the core's rule
+  (`store::find_packs_folder`: both is an error naming both, as
+  `Apps/Rowel/Vaults` and `Apps/Rowel/Lockboxes`); with neither, the first
+  push creates it as `/Vaults` (`store::ensure_packs_folder`; the upload
+  makes the folder). Paths below say `/Vaults` for that folder. Scopes: `files.metadata.read`,
   `files.content.read`, `files.content.write` (`sharing.write` later).
 - OAuth: authorize `https://www.dropbox.com/oauth2/authorize` with
   `token_access_type=offline`, `code_challenge_method=S256`; token
