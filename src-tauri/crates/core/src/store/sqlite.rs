@@ -117,7 +117,40 @@ fn migration_list() -> Vec<M<'static>> {
             "ALTER TABLE entries ADD COLUMN doc_type TEXT;
              ALTER TABLE entries ADD COLUMN doc_country TEXT;",
         ),
+        // The coat of arms a passport's cover is stamped with, by ISO alpha-3
+        // country, fetched once and kept like a favicon (see `favicons` above):
+        // in here, which countries the vault's passports are from is SQLCipher
+        // at rest rather than a set of file names beside it.
+        M::up(
+            "CREATE TABLE emblems (
+           country    TEXT PRIMARY KEY,
+           uri        TEXT,
+           fetched_at INTEGER NOT NULL
+         );",
+        ),
     ]
+}
+
+/// The image caches the vault keeps, all one shape — a key, the image as a
+/// `data:` URI or NULL for a recorded miss, and when it was fetched — and read
+/// and written by the same rules (see [`SqliteStore::get_image`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageCache {
+    /// Website favicons, by host.
+    Favicons,
+    /// Passport-cover emblems, by ISO 3166-1 alpha-3 country.
+    Emblems,
+}
+
+impl ImageCache {
+    // The table and its key column. Fixed strings, never input, which is what
+    // makes splicing them into the SQL safe.
+    fn table(self) -> (&'static str, &'static str) {
+        match self {
+            ImageCache::Favicons => ("favicons", "host"),
+            ImageCache::Emblems => ("emblems", "country"),
+        }
+    }
 }
 
 // New columns are appended last so pre-existing column indexes stay put.
@@ -561,25 +594,31 @@ impl SqliteStore {
         Ok(reclaimed)
     }
 
-    /// The cached favicon for `host`, if the cache still answers for it:
+    /// The cached image for `key` in `cache`, if the cache still answers for it:
     ///
-    /// - `None` — nothing usable. Either the host was never looked up, or the
+    /// - `None` — nothing usable. Either the key was never looked up, or the
     ///   only thing recorded is a miss older than `miss_ttl_ms`, which is due
     ///   to be retried.
-    /// - `Some(None)` — a fresh miss: the host was looked up and has no icon.
-    /// - `Some(Some(uri))` — the cached icon.
+    /// - `Some(None)` — a fresh miss: the key was looked up and has no image.
+    /// - `Some(Some(uri))` — the cached image.
     ///
     /// A hit never ages out: an icon that was right once stays rendered, and
     /// re-fetching every site's artwork on a timer would be a periodic
     /// broadcast of the vault's host list. Only misses expire, so a site that
     /// gains an icon (or was offline when we asked) is asked again. The TTL is
     /// the caller's policy, not the store's.
-    pub fn get_favicon(&self, host: &str, miss_ttl_ms: i64) -> Result<Option<Option<String>>> {
+    pub fn get_image(
+        &self,
+        cache: ImageCache,
+        key: &str,
+        miss_ttl_ms: i64,
+    ) -> Result<Option<Option<String>>> {
+        let (table, column) = cache.table();
         let row: Option<(Option<String>, i64)> = self
             .lock()?
             .query_row(
-                "SELECT uri, fetched_at FROM favicons WHERE host = ?1",
-                params![host],
+                &format!("SELECT uri, fetched_at FROM {table} WHERE {column} = ?1"),
+                params![key],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
@@ -592,14 +631,17 @@ impl SqliteStore {
         })
     }
 
-    /// Record the lookup for `host`: its icon, or `None` for "has none".
-    /// Re-stamps `fetched_at`, so a repeated miss restarts its TTL rather than
-    /// being retried on every launch once the first one aged out.
-    pub fn put_favicon(&self, host: &str, uri: Option<&str>) -> Result<()> {
+    /// Record the lookup for `key` in `cache`: its image, or `None` for "has
+    /// none". Re-stamps `fetched_at`, so a repeated miss restarts its TTL rather
+    /// than being retried on every launch once the first one aged out.
+    pub fn put_image(&self, cache: ImageCache, key: &str, uri: Option<&str>) -> Result<()> {
+        let (table, column) = cache.table();
         self.lock()?.execute(
-            "INSERT INTO favicons (host, uri, fetched_at) VALUES (?1, ?2, ?3)
-             ON CONFLICT(host) DO UPDATE SET uri = excluded.uri, fetched_at = excluded.fetched_at",
-            params![host, uri, now_ms()],
+            &format!(
+                "INSERT INTO {table} ({column}, uri, fetched_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT({column}) DO UPDATE SET uri = excluded.uri, fetched_at = excluded.fetched_at"
+            ),
+            params![key, uri, now_ms()],
         )?;
         Ok(())
     }
@@ -610,9 +652,10 @@ impl SqliteStore {
     /// existing vault. Keep in step with `migration_list`.
     #[cfg(test)]
     pub(crate) fn drop_favicons_for_test(&self) -> Result<()> {
-        let previous = schema_version() - 4;
+        let previous = schema_version() - 5;
         self.lock()?.execute_batch(&format!(
-            "ALTER TABLE entries DROP COLUMN doc_type;
+            "DROP TABLE emblems;
+             ALTER TABLE entries DROP COLUMN doc_type;
              ALTER TABLE entries DROP COLUMN doc_country;
              DROP TABLE attachments;
              ALTER TABLE entries DROP COLUMN username;

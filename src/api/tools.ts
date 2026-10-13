@@ -108,5 +108,9 @@ export const scanImageBytes = (image: Uint8Array): Promise<ScanResult> =>
 export const fetchFavicon = (host: string): Promise<string | null> =>
   call('fetch_favicon', { host })
 
+// A passport cover's coat of arms, by ISO 3166-1 alpha-3 country.
+export const fetchEmblem = (country: string): Promise<string | null> =>
+  call('fetch_emblem', { country })
+
 export const copyToClipboard = (value: string, clearAfterMs?: number): Promise<void> =>
   call('copy_to_clipboard', { value, clearAfterMs })

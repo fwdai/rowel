@@ -24,6 +24,7 @@ mod commands;
 // What iOS suggests above the keyboard for the AutoFill extension. Empty on
 // every other platform.
 mod credential_identities;
+mod emblem;
 mod events;
 mod favicon;
 mod grants;
@@ -251,6 +252,7 @@ pub fn run() {
             commands::tools::scan_image,
             commands::tools::scan_image_bytes,
             commands::tools::fetch_favicon,
+            commands::tools::fetch_emblem,
             commands::clipboard::copy_to_clipboard,
             commands::setup::setup_drive_connect,
             commands::setup::setup_drive_disconnect,

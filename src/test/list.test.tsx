@@ -5,6 +5,7 @@ import ListColumn from '@/components/Main/Body/ListColumn'
 import SortMenu from '@/components/Main/Body/List/SortMenu'
 import { type Audit } from '@/api/tools'
 import { useVault, useUi, setView, setFilterType, clearSession } from '@/store'
+import { resetEmblems } from '@/hooks/useEmblem'
 import { resetFavicons } from '@/hooks/useFavicon'
 import { withEntries, loginEntry, loginMeta } from './utils'
 import { calls, mockCommand, clearCalls } from './ipc'
@@ -32,7 +33,9 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(NOW)
   resetFavicons()
+  resetEmblems()
   clearCalls('fetch_favicon')
+  clearCalls('fetch_emblem')
 })
 
 afterEach(() => vi.useRealTimers())
@@ -138,6 +141,24 @@ describe('Entry list', () => {
     const covers = screen.getAllByTestId('passport-cover')
     expect(covers.map(cover => cover.dataset.country)).toEqual(['UKR'])
     expect(covers[0]).toHaveStyle({ backgroundColor: '#17305D' })
+    setFilterType(null)
+  })
+
+  it('stamps the cover with the country’s emblem, asked for once per country', async () => {
+    const emblem = 'data:image/png;base64,EMBLEM'
+    mockCommand('fetch_emblem', () => emblem)
+    const passport = { type: 'identity' as const, urlHost: '', docType: 'passport' }
+    withEntries([
+      loginMeta({ id: 'p1', title: 'Mine', docCountry: 'UKR', ...passport }),
+      loginMeta({ id: 'p2', title: 'Old one', docCountry: 'UKR', ...passport })
+    ])
+    setFilterType('identity')
+    render(<ListColumn />)
+
+    await waitFor(() =>
+      expect(document.querySelectorAll(`img[src="${emblem}"]`)).toHaveLength(2)
+    )
+    expect(calls('fetch_emblem')).toEqual([{ country: 'UKR' }])
     setFilterType(null)
   })
 

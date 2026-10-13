@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{
-    migrate, record_hash, Attachment, AttachmentMeta, Record, SqliteStore, StoreError, VaultStore,
-    SYNC_META_PREFIX,
+    migrate, record_hash, Attachment, AttachmentMeta, ImageCache, Record, SqliteStore, StoreError,
+    VaultStore, SYNC_META_PREFIX,
 };
 use crate::crypto::{self, KdfParams, VaultKey};
 use crate::models::Entry;
@@ -743,19 +743,34 @@ const MISS_TTL_MS: i64 = 7 * DAY_MS;
 fn favicon_round_trips_an_icon_and_a_miss() {
     let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
     // Nothing recorded is not the same answer as "recorded: no icon".
-    assert_eq!(store.get_favicon("ex.com", MISS_TTL_MS).unwrap(), None);
+    assert_eq!(
+        store
+            .get_image(ImageCache::Favicons, "ex.com", MISS_TTL_MS)
+            .unwrap(),
+        None
+    );
 
     store
-        .put_favicon("ex.com", Some("data:image/png;base64,AA"))
+        .put_image(
+            ImageCache::Favicons,
+            "ex.com",
+            Some("data:image/png;base64,AA"),
+        )
         .unwrap();
-    store.put_favicon("nope.com", None).unwrap();
+    store
+        .put_image(ImageCache::Favicons, "nope.com", None)
+        .unwrap();
 
     assert_eq!(
-        store.get_favicon("ex.com", MISS_TTL_MS).unwrap(),
+        store
+            .get_image(ImageCache::Favicons, "ex.com", MISS_TTL_MS)
+            .unwrap(),
         Some(Some("data:image/png;base64,AA".into()))
     );
     assert_eq!(
-        store.get_favicon("nope.com", MISS_TTL_MS).unwrap(),
+        store
+            .get_image(ImageCache::Favicons, "nope.com", MISS_TTL_MS)
+            .unwrap(),
         Some(None)
     );
 }
@@ -765,18 +780,30 @@ fn favicon_round_trips_an_icon_and_a_miss() {
 #[test]
 fn favicon_put_replaces_the_previous_answer() {
     let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
-    store.put_favicon("ex.com", None).unwrap();
     store
-        .put_favicon("ex.com", Some("data:image/png;base64,BB"))
+        .put_image(ImageCache::Favicons, "ex.com", None)
+        .unwrap();
+    store
+        .put_image(
+            ImageCache::Favicons,
+            "ex.com",
+            Some("data:image/png;base64,BB"),
+        )
         .unwrap();
     assert_eq!(
-        store.get_favicon("ex.com", MISS_TTL_MS).unwrap(),
+        store
+            .get_image(ImageCache::Favicons, "ex.com", MISS_TTL_MS)
+            .unwrap(),
         Some(Some("data:image/png;base64,BB".into()))
     );
 
-    store.put_favicon("ex.com", None).unwrap();
+    store
+        .put_image(ImageCache::Favicons, "ex.com", None)
+        .unwrap();
     assert_eq!(
-        store.get_favicon("ex.com", MISS_TTL_MS).unwrap(),
+        store
+            .get_image(ImageCache::Favicons, "ex.com", MISS_TTL_MS)
+            .unwrap(),
         Some(None)
     );
 }
@@ -787,15 +814,26 @@ fn favicon_put_replaces_the_previous_answer() {
 #[test]
 fn a_miss_expires_but_a_hit_does_not() {
     let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
-    store.put_favicon("nope.com", None).unwrap();
     store
-        .put_favicon("ex.com", Some("data:image/png;base64,CC"))
+        .put_image(ImageCache::Favicons, "nope.com", None)
+        .unwrap();
+    store
+        .put_image(
+            ImageCache::Favicons,
+            "ex.com",
+            Some("data:image/png;base64,CC"),
+        )
         .unwrap();
 
     // A TTL of zero makes every recorded miss stale, whatever the clock says.
-    assert_eq!(store.get_favicon("nope.com", 0).unwrap(), None);
     assert_eq!(
-        store.get_favicon("ex.com", 0).unwrap(),
+        store
+            .get_image(ImageCache::Favicons, "nope.com", 0)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store.get_image(ImageCache::Favicons, "ex.com", 0).unwrap(),
         Some(Some("data:image/png;base64,CC".into()))
     );
 }
@@ -808,12 +846,18 @@ fn favicons_survive_a_reopen() {
     {
         let store = SqliteStore::open(&path, KEY).unwrap();
         store
-            .put_favicon("ex.com", Some("data:image/png;base64,DD"))
+            .put_image(
+                ImageCache::Favicons,
+                "ex.com",
+                Some("data:image/png;base64,DD"),
+            )
             .unwrap();
     }
     let store = SqliteStore::open(&path, KEY).unwrap();
     assert_eq!(
-        store.get_favicon("ex.com", MISS_TTL_MS).unwrap(),
+        store
+            .get_image(ImageCache::Favicons, "ex.com", MISS_TTL_MS)
+            .unwrap(),
         Some(Some("data:image/png;base64,DD".into()))
     );
 }
@@ -832,10 +876,40 @@ fn the_favicons_table_is_migrated_into_an_existing_vault() {
     }
     let store = SqliteStore::open(&path, KEY).unwrap();
     assert_eq!(store.list().unwrap().len(), 1);
-    store.put_favicon("ex.com", None).unwrap();
+    store
+        .put_image(ImageCache::Favicons, "ex.com", None)
+        .unwrap();
     assert_eq!(
-        store.get_favicon("ex.com", MISS_TTL_MS).unwrap(),
+        store
+            .get_image(ImageCache::Favicons, "ex.com", MISS_TTL_MS)
+            .unwrap(),
         Some(None)
+    );
+    // Everything after it lands too: the document columns and the emblem cache.
+    store.set_doc_meta("1", "passport", Some("UKR")).unwrap();
+    store.put_image(ImageCache::Emblems, "UKR", None).unwrap();
+}
+
+// The caches share their rules, not their rows: an emblem is never answered
+// out of the favicons, nor a favicon out of the emblems.
+#[test]
+fn each_image_cache_keeps_its_own_rows() {
+    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    store
+        .put_image(ImageCache::Emblems, "UKR", Some("data:image/png;base64,EE"))
+        .unwrap();
+
+    assert_eq!(
+        store
+            .get_image(ImageCache::Emblems, "UKR", MISS_TTL_MS)
+            .unwrap(),
+        Some(Some("data:image/png;base64,EE".into()))
+    );
+    assert_eq!(
+        store
+            .get_image(ImageCache::Favicons, "UKR", MISS_TTL_MS)
+            .unwrap(),
+        None
     );
 }
 
