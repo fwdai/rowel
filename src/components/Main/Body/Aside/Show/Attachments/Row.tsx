@@ -34,6 +34,13 @@ interface Props {
  * glyphs cost the line nothing at rest. A phone has no hover, and its lines
  * carry no controls at all — the preview is the one path there.
  *
+ * The desktop line lights up as a rounded tile rather than a band: it reaches
+ * 8px past the content on both sides (a negative margin paid back as padding,
+ * so the thumbnail and the name keep the section's gutter), with air between
+ * the lines instead of hairlines, as Finder's and Notes' lists do. A hairline
+ * under a rounded tile would read as the tile's own edge. The phone keeps the
+ * grouped list's hairlines, which are its platform's.
+ *
  * An image row draws the backend's small thumbnail of its file, never the
  * file, and asks for it only once the row is on screen: the file is read
  * whole only when the row is opened, so a list of pictures costs the webview
@@ -50,13 +57,17 @@ export default function Row({ attachment, onOpen, onSave, onRemove }: Props) {
       data-testid="attachment-row"
       // No inset of its own: the list stands inside the section's
       // `EDGE_GUTTER`, with its heading and the verb under it.
-      className={cx('group flex items-center transition-colors hover:bg-hover', ROW_HAIRLINE)}
+      className={cx(
+        'group flex items-center transition-colors hover:bg-hover',
+        ROW_HAIRLINE,
+        'md:-mx-2 md:rounded-xl md:px-2 md:inset-shadow-none md:hover:bg-hover/70'
+      )}
     >
       <button
         type="button"
         data-testid="attachment-open-button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 text-left active:bg-hover"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 text-left max-md:active:bg-hover md:py-2"
       >
         <Thumb attachment={attachment} url={thumbnail} size="row" />
         <span className="min-w-0 flex-1">

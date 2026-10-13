@@ -168,7 +168,9 @@ a card and not a gallery (`Show/Attachments/Row`): each a line with a 40px
 thumbnail — the picture for an image, the kind's page for anything else —
 beside its name and "670 KB · PNG", hairlines between the lines, on the
 screen's own ground with nothing around them, as Mail and Notes list
-attachments. The lines, their "Attachments" heading
+attachments. On the desktop the lines are rounded tiles instead — lit on
+hover, reaching 8px past the content on each side, air between them and no
+hairlines — since a hairline under a rounded tile reads as the tile's edge. The lines, their "Attachments" heading
 (`SECTION_LABEL_FLUSH`), the verbs under the sections and the notes under
 them all stand on the pane outside any card, so they share the cards' margin
 and not the inset of the text within one — through one wrapper, `EDGE_GUTTER`,
@@ -181,7 +183,16 @@ opens the file, and saving and removing live in the preview
 (`Attachments/Preview`), one view for both shells — the screen on the phone,
 a lightbox over the dimmed window on the desktop, told apart by
 `max-md:`/`md:` on the same elements — with the
-file's name in its bar and a Quick Look-style close on the left. On the
+file's name centred in its bar, Close at the bar's left on the phone (where
+a pushed screen keeps its back) and the `esc` close at its right on the
+desktop (`elements/EscClose`, the one every dialog header draws), after the
+file's own actions, which stand on glass tiles there (`bg-glass`, white
+under the pointer) since bare glyphs on the blurred ground read as
+watermarks. A picture is fitted to the stage but never past its actual size
+(one image pixel per device pixel). The
+lightbox starts under the wide shell's 38px chrome bar (`BELOW_CHROME`, the
+same number as the bar's `CHROME_BAR`), so its Close never sits on the
+macOS traffic lights and the bar stays the window's drag handle. On the
 desktop the same two actions also stand at the line's end, shown to the
 pointer and to a Tab (`HOVER_ONLY`, gated on `isMobile` rather than a
 breakpoint, since it is the hover that a phone lacks), as every value row

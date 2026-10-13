@@ -336,7 +336,11 @@ describe('opening a file', () => {
     expect(image).toHaveAttribute('data-zoom', 'fit')
 
     Object.defineProperty(image, 'naturalWidth', { value: 4000 })
+    Object.defineProperty(image, 'naturalHeight', { value: 3000 })
     fireEvent.load(image)
+    // Fitted, it is bounded by the stage and by itself — never blown up.
+    expect(image.style.maxWidth).toBe('min(100%, 4000px)')
+    expect(image.style.maxHeight).toBe('min(100%, 3000px)')
     expect(image).toHaveAttribute('title', 'Actual size')
     await userEvent.click(image)
     expect(image).toHaveAttribute('data-zoom', 'actual')
@@ -344,6 +348,43 @@ describe('opening a file', () => {
     await userEvent.click(image)
     expect(image).toHaveAttribute('data-zoom', 'fit')
     expect(screen.getByTestId('attachment-preview')).toBeInTheDocument()
+  })
+
+  // An engine that can decode off-screen (every real one; jsdom cannot) is
+  // asked first, and the picture is mounted with its bound already on it —
+  // never a first frame at the stage's size and a second at its own.
+  it('decodes a picture before showing it, so it mounts at its size', async () => {
+    let decoded: () => void = () => {}
+    const decode = vi.fn(function (this: HTMLImageElement) {
+      Object.defineProperty(this, 'naturalWidth', { value: 800 })
+      Object.defineProperty(this, 'naturalHeight', { value: 600 })
+      return new Promise<void>(resolve => {
+        decoded = resolve
+      })
+    })
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      value: decode,
+      configurable: true
+    })
+    // `canProbe` is read when the module loads: load it fresh under the stub.
+    vi.resetModules()
+    const { default: Picture } = await import(
+      '@/components/Main/Body/Aside/Show/Attachments/Preview/Picture'
+    )
+    try {
+      render(<Picture url="blob:x" name="scan.png" onError={() => {}} />)
+
+      expect(decode).toHaveBeenCalledTimes(1)
+      expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+
+      await act(async () => decoded())
+      const image = screen.getByTestId('preview-image')
+      expect(image.style.maxWidth).toBe('min(100%, 800px)')
+      expect(image.style.maxHeight).toBe('min(100%, 600px)')
+    } finally {
+      delete (HTMLImageElement.prototype as { decode?: unknown }).decode
+      vi.resetModules()
+    }
   })
 
   it('closes on a press on the ground beside the file, not on the file', async () => {
@@ -396,6 +437,31 @@ describe('stepping through the files', () => {
     expect(preview).toHaveTextContent('second.txt')
     await userEvent.click(screen.getByTestId('preview-previous-button'))
     expect(preview).toHaveTextContent('first.txt')
+  })
+
+  // The desktop lightbox leaves the window's chrome bar — and the traffic
+  // lights in it — to the window.
+  it('starts under the chrome bar on the desktop', async () => {
+    seedAttachments([file()])
+    render(<Show entry={loginMeta()} />)
+
+    await userEvent.click(await screen.findByTestId('attachment-open-button'))
+
+    expect(screen.getByTestId('attachment-preview')).toHaveClass('md:top-[38px]')
+  })
+
+  // The desktop's way out is the same `esc` close every dialog header has,
+  // at the right end of the bar.
+  it('closes from the esc control at the bar’s right end', async () => {
+    seedAttachments([file()])
+    render(<Show entry={loginMeta()} />)
+
+    await userEvent.click(await screen.findByTestId('attachment-open-button'))
+    const close = screen.getByTestId('attachment-preview-esc')
+    expect(close).toHaveTextContent('esc')
+    await userEvent.click(close)
+
+    expect(screen.queryByTestId('attachment-preview')).not.toBeInTheDocument()
   })
 
   it('offers no step for a lone file', async () => {

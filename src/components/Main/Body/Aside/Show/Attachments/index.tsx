@@ -83,7 +83,8 @@ export default function Attachments({ entry }: { entry: EntryMeta }) {
       {items.length > 0 && (
         <div className="mt-4" data-testid="attachments-section">
           <span className={SECTION_LABEL_FLUSH}>{t('Attachments')}</span>
-          <div>
+          {/* A breath between the desktop's tiles; the phone's hairlines need none. */}
+          <div className="md:space-y-0.5">
             {items.map(item => (
               <Row
                 key={item.id}
