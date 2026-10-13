@@ -34,10 +34,11 @@ use url::{Host, Url};
 use crate::error::Result;
 use crate::session::{Epoch, Session};
 use crate::state::AppState;
+use crate::store::ImageCache;
 
 const MAX_ICON_BYTES: usize = 256 * 1024;
 const MAX_HTML_BYTES: usize = 512 * 1024;
-const MISS_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+pub(crate) const MISS_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const TIMEOUT: Duration = Duration::from_secs(8);
 const USER_AGENT: &str = "Rowel-Password-Manager";
 
@@ -70,7 +71,9 @@ pub async fn fetch(app: &AppHandle, host: &str, epoch: Epoch) -> Result<Option<S
     let Some(host) = safe_host(host) else {
         return Ok(None);
     };
-    if let Some(cached) = with_session(app, |session| cached(session, &host, epoch)) {
+    if let Some(cached) = with_session(app, |session| {
+        cached(session, ImageCache::Favicons, &host, epoch)
+    }) {
         return Ok(cached);
     }
     let allowed = || {
@@ -80,7 +83,13 @@ pub async fn fetch(app: &AppHandle, host: &str, epoch: Epoch) -> Result<Option<S
     };
     let found = lookup(&host, &allowed).await;
     with_session(app, |session| {
-        cache(session, &host, epoch, found.as_deref())
+        cache(
+            session,
+            ImageCache::Favicons,
+            &host,
+            epoch,
+            found.as_deref(),
+        )
     });
     Ok(found)
 }
@@ -88,7 +97,7 @@ pub async fn fetch(app: &AppHandle, host: &str, epoch: Epoch) -> Result<Option<S
 // The session mutex, held for the length of one memory read or DB call and no
 // longer — never across the network lookup between them, which takes seconds
 // and would hold every other command out for them.
-fn with_session<T>(app: &AppHandle, f: impl FnOnce(&Session) -> T) -> T {
+pub(crate) fn with_session<T>(app: &AppHandle, f: impl FnOnce(&Session) -> T) -> T {
     let state = app.state::<AppState>();
     let session = state.session.lock().unwrap();
     f(&session)
@@ -101,17 +110,31 @@ fn with_session<T>(app: &AppHandle, f: impl FnOnce(&Session) -> T) -> T {
 // not necessarily the one that asked. `store_at` refuses that as it refuses a
 // plain lock: the read is a miss and the write is dropped, rather than one
 // workspace's host and icon landing in another's `favicons` table.
-fn cached(session: &Session, host: &str, epoch: Epoch) -> Option<Option<String>> {
+//
+// Shared with the emblem cache (`crate::emblem`), which is the same problem
+// under a different key.
+pub(crate) fn cached(
+    session: &Session,
+    table: ImageCache,
+    key: &str,
+    epoch: Epoch,
+) -> Option<Option<String>> {
     session
         .store_at(epoch)
         .ok()?
-        .get_favicon(host, MISS_TTL.as_millis() as i64)
+        .get_image(table, key, MISS_TTL.as_millis() as i64)
         .ok()?
 }
 
-fn cache(session: &Session, host: &str, epoch: Epoch, uri: Option<&str>) {
+pub(crate) fn cache(
+    session: &Session,
+    table: ImageCache,
+    key: &str,
+    epoch: Epoch,
+    uri: Option<&str>,
+) {
     if let Ok(store) = session.store_at(epoch) {
-        let _ = store.put_favicon(host, uri);
+        let _ = store.put_image(table, key, uri);
     }
 }
 
@@ -321,7 +344,22 @@ fn embedded_v4(v6: Ipv6Addr) -> Option<Ipv4Addr> {
     (s[0] == 0x2002).then(|| v4(s[1], s[2]))
 }
 
+// The image at `url` as a data: URI, provided it is a raster type we render and
+// fits the cap.
 async fn fetch_icon(url: Url, allowed: &impl Fn() -> bool) -> Option<String> {
+    let (mime, bytes) = fetch_typed(url, allowed, &SAFE_TYPES).await?;
+    Some(data_uri(&mime, &bytes))
+}
+
+// The body at `url` and its type, provided the type is one of `types` and the
+// body fits the cap. Every hop goes through [`get`]'s gate. Also the emblem
+// fetch's way out (`crate::emblem`): one hardened path to the network for every
+// image the app shows.
+pub(crate) async fn fetch_typed(
+    url: Url,
+    allowed: &impl Fn() -> bool,
+    types: &[&str],
+) -> Option<(String, Vec<u8>)> {
     let mut resp = get(url, allowed).await?;
     if !resp.status().is_success() {
         return None;
@@ -335,7 +373,7 @@ async fn fetch_icon(url: Url, allowed: &impl Fn() -> bool) -> Option<String> {
         .next()?
         .trim()
         .to_ascii_lowercase();
-    if !SAFE_TYPES.contains(&mime.as_str()) {
+    if !types.contains(&mime.as_str()) {
         return None;
     }
     // Enforced on the bytes as they arrive, not just on the declared length: a
@@ -344,10 +382,11 @@ async fn fetch_icon(url: Url, allowed: &impl Fn() -> bool) -> Option<String> {
     let bytes = crate::sync::read_capped(&mut resp, MAX_ICON_BYTES)
         .await
         .ok()?;
-    if bytes.is_empty() {
-        return None;
-    }
-    Some(format!("data:{mime};base64,{}", B64.encode(&bytes)))
+    (!bytes.is_empty()).then_some((mime, bytes))
+}
+
+pub(crate) fn data_uri(mime: &str, bytes: &[u8]) -> String {
+    format!("data:{mime};base64,{}", B64.encode(bytes))
 }
 
 // The first `MAX_HTML_BYTES` of the page. Only the <head> is wanted, so an
@@ -606,42 +645,50 @@ mod tests {
         session.set(key, store, false);
         let asked_in = session.epoch();
 
-        assert_eq!(cached(&session, "ex.com", asked_in), None, "nothing yet");
-        cache(&session, "ex.com", asked_in, icon);
         assert_eq!(
-            cached(&session, "ex.com", asked_in),
+            cached(&session, ImageCache::Favicons, "ex.com", asked_in),
+            None,
+            "nothing yet"
+        );
+        cache(&session, ImageCache::Favicons, "ex.com", asked_in, icon);
+        assert_eq!(
+            cached(&session, ImageCache::Favicons, "ex.com", asked_in),
             Some(icon.map(str::to_string))
         );
 
         // The vault locks and a second workspace is opened while the lookup
         // for `other.com` is still in flight.
         session.clear();
-        cache(&session, "other.com", asked_in, icon);
+        cache(&session, ImageCache::Favicons, "other.com", asked_in, icon);
         let second_dir = tempfile::tempdir().unwrap();
         let (key, store) = open(&second_dir, "second");
         session.set(key, store, false);
 
-        cache(&session, "other.com", asked_in, icon);
+        cache(&session, ImageCache::Favicons, "other.com", asked_in, icon);
         assert_eq!(
             session
                 .store()
                 .unwrap()
-                .get_favicon("other.com", MISS_TTL.as_millis() as i64)
+                .get_image(
+                    ImageCache::Favicons,
+                    "other.com",
+                    MISS_TTL.as_millis() as i64
+                )
                 .unwrap(),
             None,
             "the first workspace's host must not land in the second's vault"
         );
         assert_eq!(
-            cached(&session, "ex.com", asked_in),
+            cached(&session, ImageCache::Favicons, "ex.com", asked_in),
             None,
             "nor may the second workspace be read on the first's behalf"
         );
 
         // The session in front of it is cached as usual.
         let now = session.epoch();
-        cache(&session, "other.com", now, icon);
+        cache(&session, ImageCache::Favicons, "other.com", now, icon);
         assert_eq!(
-            cached(&session, "other.com", now),
+            cached(&session, ImageCache::Favicons, "other.com", now),
             Some(icon.map(str::to_string))
         );
     }

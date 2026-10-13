@@ -190,6 +190,12 @@ export interface EntryMeta {
   // A login's username, derived at save time like cardBrand. Absent on other
   // kinds and on rows not yet stamped.
   username?: string
+  // An identity's document type (`passport`, …) and its issuing country when
+  // that is an ISO 3166-1 alpha-3 code, derived at save time like cardBrand so
+  // the list can draw a passport's cover. Absent on other kinds and on rows not
+  // yet stamped.
+  docType?: string
+  docCountry?: string
   createdAt?: string
   updatedAt?: string
   // Present only on the tombstones listDeleted returns.

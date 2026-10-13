@@ -1,7 +1,8 @@
 //! Dropbox v2 REST surface, App folder access. All calls are authorized with a
 //! bearer access token; every path is relative to the app's own folder
-//! (`/Apps/<app name>/` in the user's Dropbox), so the vaults live at
-//! `/Vaults` and the app can see nothing outside it.
+//! (`/Apps/<app name>/` in the user's Dropbox), and the app can see nothing
+//! outside it. Which folder in there holds the packs is the store's business
+//! (see `super::Store`); nothing here names one.
 //!
 //! Two hosts, two calling conventions:
 //! - RPC endpoints (`api.dropboxapi.com`) take their argument as a JSON body
@@ -25,7 +26,6 @@ use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 
 use crate::error::{Error, Result};
-use crate::sync::layout;
 
 const API: &str = "https://api.dropboxapi.com/2";
 const CONTENT: &str = "https://content.dropboxapi.com/2";
@@ -66,16 +66,6 @@ pub struct DropboxEntry {
     /// Last content change on the server, RFC 3339 UTC (`2024-05-04T10:11:12Z`).
     /// Empty for folders, which have none.
     pub server_modified: String,
-}
-
-/// The vaults folder: `/Vaults`, relative to the app folder.
-pub fn vaults_path() -> String {
-    format!("/{}", layout::VAULTS_FOLDER)
-}
-
-/// `name` inside the vaults folder: `/Vaults/<name>`.
-pub fn vault_entry_path(name: &str) -> String {
-    format!("{}/{name}", vaults_path())
 }
 
 fn other<E: std::fmt::Display>(e: E) -> Error {
@@ -518,12 +508,6 @@ async fn read_capped(resp: &mut reqwest::Response, max_bytes: usize) -> Result<V
 mod tests {
     use super::*;
     use std::cell::RefCell;
-
-    #[test]
-    fn the_vaults_folder_sits_at_the_app_folder_root() {
-        assert_eq!(vaults_path(), "/Vaults");
-        assert_eq!(vault_entry_path("a1b2.rowel"), "/Vaults/a1b2.rowel");
-    }
 
     #[test]
     fn a_file_entry_carries_size_rev_and_modified_time() {

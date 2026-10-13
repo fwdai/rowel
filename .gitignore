@@ -29,3 +29,6 @@ src-tauri/gen/schemas
 
 # Local dev vault used when running the app from the workspace (see ROWEL_DB_DIR)
 .dev-vault/
+
+# Python bytecode (scripts/emblems)
+__pycache__/
