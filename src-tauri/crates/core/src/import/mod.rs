@@ -417,10 +417,16 @@ fn detect_csv(bytes: &[u8]) -> Format {
         Format::LastpassCsv
     } else if has("group") && has("title") {
         Format::KeepassCsv
-    } else if has("otpauth") && has("title") {
-        // The columns as 1Password names them: its tags and star are read too.
-        // A sheet that merely has an `otpauth` column keeps the generic
-        // mapper, whose aliases it may need for the rest of its header.
+    } else if ["title", "url", "username", "password", "otpauth"]
+        .iter()
+        .all(|c| has(c))
+    {
+        // The columns as 1Password names them, all five: its tags and star are
+        // read too. The 1Password reader looks up these exact names, so a sheet
+        // that has `title` and `otpauth` but spells the rest `website`, `login`
+        // or `pass` keeps the generic mapper, whose aliases read them — routed
+        // here it would import every row with its credentials silently
+        // missing.
         Format::OnepasswordCsv
     } else {
         Format::GenericCsv
