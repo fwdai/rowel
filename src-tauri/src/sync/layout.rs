@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! Rowel/
-//!   Lockboxes/             (`Vaults/` on accounts created before the rename)
+//!   Vaults/                (`Lockboxes/` once a later release renames it)
 //!     <vault-id>.rowel     one pack per vault
 //!   Shares/
 //!     <random>.rowelshare              one outstanding share
