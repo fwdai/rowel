@@ -1515,7 +1515,7 @@ mod tests {
         );
         assert_eq!(
             unreadable_tokens_error(Provider::Dropbox),
-            "this workspace's saved Dropbox account could not be read"
+            "this lockbox's saved Dropbox account could not be read"
         );
     }
 
