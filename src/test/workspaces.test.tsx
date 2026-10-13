@@ -299,7 +299,7 @@ describe('WorkspacePicker', () => {
       render(<WorkspacePicker />)
 
       await userEvent.click(screen.getByTestId('workspace-chip'))
-      const search = screen.getByRole('combobox', { name: 'Find a vault' })
+      const search = screen.getByRole('combobox', { name: 'Find a lockbox' })
       const lit = () => document.getElementById(search.getAttribute('aria-activedescendant') ?? '')
 
       // A combobox's popup is a listbox, its rows options: the lit one is

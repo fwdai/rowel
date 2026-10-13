@@ -1289,6 +1289,17 @@ fn detect_by_extension_and_content() {
         detect("x.csv", b"name,website,login,pass,otpauth\n"),
         Some(Format::GenericCsv)
     );
+    // Nor is `title` with `otpauth`: the 1Password reader wants 1Password's
+    // exact `url`, `username` and `password`, and would drop these columns.
+    assert_eq!(
+        detect("x.csv", b"title,website,login,pass,otpauth\n"),
+        Some(Format::GenericCsv)
+    );
+    // The five columns 1Password names, in any order and case, are its sheet.
+    assert_eq!(
+        detect("x.csv", b"OTPAuth,Password,Username,Url,Title\n"),
+        Some(Format::OnepasswordCsv)
+    );
     assert_eq!(
         detect("noext", b"  {\"items\":[]}"),
         Some(Format::Bitwarden)

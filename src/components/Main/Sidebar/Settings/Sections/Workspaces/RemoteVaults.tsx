@@ -43,7 +43,7 @@ export default function RemoteVaults() {
         label={t('Not on this device yet')}
         icon={<CloudGlyph size={16} />}
         description={t(
-          'Restore one to add it as a workspace here, unlocked with its own master password and already syncing. No new sign-in needed.'
+          'Restore one to add it as a lockbox here, unlocked with its own master password and already syncing. No new sign-in needed.'
         )}
         testid="workspace-remote-row"
       >

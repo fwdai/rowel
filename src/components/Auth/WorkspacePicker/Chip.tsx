@@ -27,7 +27,7 @@ export default function Chip({ workspace, open, onClick, ref }: Props) {
       data-testid="workspace-chip"
       aria-haspopup="menu"
       aria-expanded={open}
-      title={t('Switch vault')}
+      title={t('Switch lockbox')}
       onClick={onClick}
       className={cx(
         // Concentric with the tile it holds: the tile's 7px corner (30% of 24)

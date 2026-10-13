@@ -84,7 +84,7 @@ export default function DriveRestoreForm({
   return (
     <div className="flex max-w-sm flex-col gap-3">
       <DriveVaults files={files} selectedId={selectedId} onSelect={onSelect} testid={pickerTestid} />
-      <Field id={`${id}-name`} label={t('Workspace name (optional)')}>
+      <Field id={`${id}-name`} label={t('Lockbox name (optional)')}>
         <input
           id={`${id}-name`}
           type="text"

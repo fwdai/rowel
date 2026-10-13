@@ -34,7 +34,7 @@ export default function Preview({ name, color, seed, meta, testid }: Props) {
             label ? 'text-text' : 'text-text2'
           )}
         >
-          {label || t('Untitled workspace')}
+          {label || t('Untitled lockbox')}
         </div>
         <div className={cx(META, 'mt-0.5 truncate')}>{meta}</div>
       </div>

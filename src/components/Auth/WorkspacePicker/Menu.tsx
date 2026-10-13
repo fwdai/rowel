@@ -131,7 +131,7 @@ export default function Menu({ list, active, onPick, onClose }: Props) {
             data-testid="workspace-search-empty"
             className="px-2.5 py-[18px] text-center text-base text-text2"
           >
-            {t('No vault matches “{{query}}”', { query })}
+            {t('No lockbox matches “{{query}}”', { query })}
           </div>
         )}
       </Dropdown>

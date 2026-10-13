@@ -1535,7 +1535,7 @@ mod tests {
     fn a_blank_name_over_a_nameless_pack_falls_back_to_the_label() {
         assert_eq!(
             settle_name(&store(), String::new(), "9f3c1a2b").unwrap(),
-            "Vault 9f3c1a"
+            "Lockbox 9f3c1a"
         );
     }
 

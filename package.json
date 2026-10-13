@@ -39,6 +39,7 @@
     "release:local": "bash scripts/release-local.sh"
   },
   "dependencies": {
+    "@floating-ui/react": "^0.27.20",
     "@tauri-apps/api": "^2.12.0",
     "@tauri-apps/plugin-dialog": "^2.8.1",
     "@tauri-apps/plugin-opener": "^2.7.0",

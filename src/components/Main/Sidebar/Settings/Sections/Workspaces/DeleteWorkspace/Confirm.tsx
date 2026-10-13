@@ -58,7 +58,7 @@ export default function Confirm({ workspace }: { workspace: Workspace }) {
     deleteWorkspace(workspace.id, password, everywhere)
       .then(close)
       .catch((err: unknown) => {
-        setError(unsealError(t, err, t('That is not this workspace’s master password')))
+        setError(unsealError(t, err, t('That is not this lockbox’s master password')))
         setBusy(false)
       })
   }
@@ -106,10 +106,10 @@ export default function Confirm({ workspace }: { workspace: Workspace }) {
           <Note>
             {everywhere
               ? t(
-                  'This removes the workspace from this device and deletes its copy in Google Drive. Your other devices will stop syncing it.'
+                  'This removes the lockbox from this device and deletes its copy in Google Drive. Your other devices will stop syncing it.'
                 )
               : t(
-                  'This removes the workspace and everything in it from this device. A copy on Google Drive is left where it is, so the account still holds it.'
+                  'This removes the lockbox and everything in it from this device. A copy on Google Drive is left where it is, so the account still holds it.'
                 )}
           </Note>
         </div>
@@ -117,7 +117,7 @@ export default function Confirm({ workspace }: { workspace: Workspace }) {
 
       <div className={cx(LABEL, 'mt-6 mb-2')}>{t("Confirm it's you")}</div>
       <div className={cx(CARD, 'flex flex-col gap-4 p-5')}>
-        <Field id={passwordId} label={t('Master password of this workspace')}>
+        <Field id={passwordId} label={t('Master password of this lockbox')}>
           <input
             id={passwordId}
             type="password"
