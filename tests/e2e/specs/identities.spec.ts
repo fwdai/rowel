@@ -2,7 +2,6 @@ import {
   createIdentity,
   createLogin,
   expectTitles,
-  pickDocType,
   resetEmpty,
   startEdit,
   unlock,
@@ -12,9 +11,10 @@ import {
 
 // ID documents. What makes this kind different from the other three is that the
 // form is cut from the document type: a passport asks for a nationality and a
-// personal number, a driving licence asks for neither. So these specs cover the
-// type switch as much as the round trip — plus the reveal on the document
-// number, which is the one field here the vault encrypts.
+// personal number, a driving licence asks for neither. The document is chosen
+// in the add picker before the form opens, so these specs cover that second
+// page as much as the round trip — plus the reveal on the document number,
+// which is the one field here the vault encrypts.
 
 const MASTER_PASSWORD = "Zt8@qLm3vKp9!wRs";
 
@@ -210,26 +210,24 @@ describe("identity entries", () => {
     await expect($('[data-testid="entry-extra-value-0"]')).toHaveText(EXTRA.value);
   });
 
-  // Last, because it rewrites the passport into a licence: switching type has
-  // to drop the rows the new document lacks rather than save them unseen.
-  it("drops the rows the new type lacks when the type is switched", async () => {
+  // The document was settled before the form opened, so the editor only names
+  // it: a caption over the rows, and no switch that could reshape them.
+  it("names the document in the editor and offers no switch", async () => {
     await reopen(PASSPORT.title);
     await startEdit();
     await expect($('input[name="nationality"]')).toHaveValue(
       PASSPORT.nationality,
     );
 
-    await pickDocType("driver_license");
-    await expect($('input[name="nationality"]')).not.toBeExisting();
+    await waitFor("identity-doc-type");
+    const caption = await $('[data-testid="identity-doc-type"]').getText();
+    expect(caption.toLowerCase()).toBe("passport");
+    await expect($('[data-testid="identity-doc-type-driver_license"]')).not.toBeExisting();
 
-    await $('[data-testid="save-entry-button"]').click();
+    await $('[data-testid="cancel-entry-button"]').click();
     await $('[data-testid="entry-sheet"]').waitForDisplayed({
       reverse: true,
       timeout: 15_000,
     });
-
-    await reopen(PASSPORT.title);
-    await expectDocType("Driver license");
-    await expect(value("nationality")).not.toBeExisting();
   });
 });
