@@ -355,7 +355,7 @@ pub(crate) async fn create_off_thread(
 /// where the retry is one press away.
 ///
 /// `vault_id` is the id the restored pack's own file name gave it, when it came
-/// from `Vaults/<id>.rowel`. Stamped here, inside the all-or-nothing, rather
+/// from `Lockboxes/<id>.rowel`. Stamped here, inside the all-or-nothing, rather
 /// than after the fact.
 fn adopt(
     app: &AppHandle,
@@ -428,7 +428,7 @@ fn adopt(
 ///
 /// The file name is authoritative, not whatever the pack carries inside: a pack
 /// written before ids were stamped into `meta` carries none at all, and this
-/// device has to reach `Vaults/<id>.rowel` on its very first sync — under a
+/// device has to reach `Lockboxes/<id>.rowel` on its very first sync — under a
 /// different id it would upload a second pack beside the one it just restored.
 fn stamp_vault_id(store: &SqliteStore, vault_id: &str) -> Result<()> {
     crate::store::identity::adopt_vault_id(store, vault_id).map_err(store_err)

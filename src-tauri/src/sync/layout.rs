@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! Rowel/
-//!   Vaults/
+//!   Lockboxes/             (`Vaults/` on accounts created before the rename)
 //!     <vault-id>.rowel     one pack per vault
 //!   Shares/
 //!     <random>.rowelshare              one outstanding share
@@ -23,8 +23,22 @@
 
 /// The one folder Rowel owns in the account.
 pub const ROOT_FOLDER: &str = "Rowel";
-/// Subfolder of [`ROOT_FOLDER`] holding one pack per vault.
-pub const VAULTS_FOLDER: &str = "Vaults";
+/// Subfolder of [`ROOT_FOLDER`] holding one pack per lockbox, and the only
+/// one a fresh account is given.
+pub const LOCKBOXES_FOLDER: &str = "Lockboxes";
+/// What [`LOCKBOXES_FOLDER`] was called before the lockbox rename. Accounts
+/// created then keep it and go on syncing in it.
+///
+/// Deliberately not renamed in place (a `files.update` of the folder's name):
+/// an older client that finds `Rowel/` but no `Vaults/` reads the account as
+/// never pushed, recreates `Vaults/` and uploads its own pack there, and the
+/// two devices fork without a word. The rename becomes safe once clients that
+/// only know this name are out of support; until then it is read, never moved.
+pub const LEGACY_VAULTS_FOLDER: &str = "Vaults";
+/// Where to look for the packs folder, most preferred first. When an account
+/// has both (two devices raced across the rename, or a user made one by hand)
+/// [`LOCKBOXES_FOLDER`] wins, on every device alike.
+pub const PACKS_FOLDERS: [&str; 2] = [LOCKBOXES_FOLDER, LEGACY_VAULTS_FOLDER];
 /// Subfolder of [`ROOT_FOLDER`] holding outstanding shares.
 pub const SHARES_FOLDER: &str = "Shares";
 
@@ -45,7 +59,8 @@ pub fn vault_file_name(vault_id: &str) -> String {
     format!("{vault_id}.{VAULT_EXTENSION}")
 }
 
-/// The vault id a file in [`VAULTS_FOLDER`] is the pack of, if it is one.
+/// The vault id a file in the packs folder ([`PACKS_FOLDERS`]) is the pack of,
+/// if it is one.
 ///
 /// Exact: `<id>.rowel` where `<id>` is non-empty lowercase hex. This is the
 /// user's own Drive folder, so anything else they have put in it — a copy, a

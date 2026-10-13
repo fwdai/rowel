@@ -40,6 +40,9 @@ products solve it, don't patch symptoms.
 > written into the vault's `meta` mid-run, at the one point that is past a fetched, decoded and
 > merged pull and short of every push: a failed import never leaves a vault pointed at a pack it
 > did not merge, and no pack is ever uploaded under an id the vault does not already answer to.
+> New accounts file packs under `Rowel/Lockboxes/`; an account that already has `Rowel/Vaults/`
+> keeps syncing there (`Lockboxes/` wins if both exist), and the folder is not renamed in place
+> while older clients that only know `Vaults/` are supported, since they would recreate it and fork.
 >
 > Onboarding's probe lists every live pack it finds and the first run picks which vault to
 > restore or to archive, so an account holding two installs' primaries never has one chosen

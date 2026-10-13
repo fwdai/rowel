@@ -55,7 +55,7 @@ use crate::sync::setup::PackInfo;
 ///
 /// Any workspace may connect: the token file resolves under the active
 /// workspace's directory, and the vault's own id names the pack it syncs
-/// (`Rowel/Vaults/<vault-id>.rowel`), so two workspaces share neither
+/// (`Rowel/Lockboxes/<vault-id>.rowel`), so two workspaces share neither
 /// credentials nor a file even when the user points them at the same Drive.
 /// What they do share is the OAuth grant behind those credentials, which Google
 /// keeps per account and client rather than per token — see [`sync_disconnect`].

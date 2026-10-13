@@ -74,7 +74,8 @@ message, rather than arriving as a username and nothing else.
 
 ```
 Rowel/                      the existing sync folder
-  Vaults/
+  Lockboxes/                accounts created before the rename keep Vaults/,
+                            and are read from there
     <vault-id>.rowel        a vault pack, untouched by sharing
   Shares/
     <random>.rowelshare     one share, appProperties: rowelShare, entryId, kind,
