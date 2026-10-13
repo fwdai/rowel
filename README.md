@@ -1,6 +1,6 @@
 ![Rowel — Password Manager](docs/banner.svg)
 
-## Free Offline-first Password Manager for MacOS, Windows and Linux.
+## Free Offline-first Secrets Manager for macOS, Windows, Linux and iOS.
 
 <div align="center">
   
@@ -17,16 +17,21 @@
 
 ## Features
 
-- Store Login/Password credentials
-- Credit card Information 
-- Secure notes to store sensitive information
-- One-click Strong Password Generation
-- Time-based One Time Passwords support (TOTP)
-- Google Drive Sync (optional)
-- Browser autofill through the KeePassXC-Browser extension (see below)
+- More than passwords: logins, credit cards, secure notes, identities and
+  documents (passports, ID cards, licenses), SSH keys, API keys and `.env`
+  files, each a kind of its own
+- Several lockboxes inside one vault — Personal, Family, Work — each its own
+  encrypted file, opened by one master password
+- Passkeys, Time-based One Time Passwords (TOTP) and one-click strong password
+  generation
+- Scan a card or an identity document from a photo to fill it in
+- Share a single item by link: encrypted, expires in 24 hours, revocable
+- Google Drive Sync (optional), each lockbox to your own Drive
+- Browser autofill and passkeys through the browser extension (see below)
+- iOS AutoFill for passwords and passkeys
 - No data is leaving your computer:
-  - Your vault is a locally stored, encrypted SQLite database (SQLCipher); each
-    entry's secrets are sealed in an extra application-level AEAD layer
+  - Each lockbox is a locally stored, encrypted SQLite database (SQLCipher);
+    each item's secrets are sealed in an extra application-level AEAD layer
   - Secrets stay encrypted at rest and in memory, decrypted only when you reveal
     or copy them
   - Ability to migrate from one computer to another using backup file or GDrive sync
@@ -110,6 +115,20 @@ so builds are reproducible from a fixed toolchain.
 ## Development
 
 Rowel is built with [Tauri 2](https://v2.tauri.app) (Rust backend + TypeScript/React/Vite frontend).
+
+### Vocabulary
+
+- **Vault** — everything Rowel keeps on a device: one lock, one master
+  password, "Lock vault", Vault Health.
+- **Lockbox** — a compartment inside the vault (Personal, Family, Work, a
+  client). Each is its own SQLCipher file and syncs to Google Drive as its own
+  pack; its sync identity is `vault_id` in the code (`store::identity`).
+- **Item** (or secret) — what goes in a lockbox: a login, card, note, identity
+  or document, SSH key, API key or env file. The code calls it an `Entry`.
+- The code still calls a lockbox a **workspace**: `src-tauri/src/workspace.rs`,
+  `src/store/workspace.ts`, `WorkspacePicker`, the `workspace_*` commands, the
+  `workspaces:*` events, the `workspaces/` directory and `workspaces.json`. Docs
+  say "lockbox" for the idea and keep the code name for a symbol or a path.
 
 ### Prerequisites
 
