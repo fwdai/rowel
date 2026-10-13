@@ -49,7 +49,7 @@ export default function SyncIndicator({ className, onClick }: Props) {
   const badge = BADGE[tone]
 
   return (
-    <Tooltip content={label} align="end">
+    <Tooltip content={label}>
       <button
         type="button"
         data-testid="sync-indicator"

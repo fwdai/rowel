@@ -45,7 +45,7 @@ describe("settings", () => {
     const sections: [string, string][] = [
       ["security", "Security"],
       ["audit", "Vault audit"],
-      ["workspaces", "Workspaces"],
+      ["workspaces", "Lockboxes"],
       ["import", "Import & export"],
       ["language", "General"],
       ["sync", "Sync & backup"],
@@ -131,21 +131,28 @@ describe("settings", () => {
     await $('[data-testid="settings-breach-toggle"]').click();
   });
 
-  it("offers one import tile per source and no format select", async () => {
+  it("offers five app tiles and the other sources behind a sixth", async () => {
     await section("import");
 
     for (const key of [
-      "bitwarden",
-      "chrome",
+      "1password",
       "lastpass",
+      "enpass",
+      "bitwarden",
       "keepass",
-      "csv",
+      "other",
       "swftx",
     ])
       await expect($(`[data-testid="import-tile-${key}"]`)).toBeDisplayed();
 
+    // The rest are items of the sixth tile's menu, mounted only while it is open.
+    await $('[data-testid="import-tile-other"]').click();
+    for (const key of ["chrome", "cxf", "csv"])
+      await expect($(`[data-testid="import-tile-${key}"]`)).toBeDisplayed();
+    await browser.keys("Escape");
+    await expect($('[data-testid="import-tile-chrome"]')).not.toExist();
+
     await expect($('[data-testid="import-dropzone"]')).toBeDisplayed();
-    await expect($('[data-testid="settings-modal"]').$("select")).not.toExist();
   });
 
   it("switches the theme and the date format", async () => {

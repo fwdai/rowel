@@ -29,8 +29,8 @@ export default function Search({ value, onChange, onKeyDown, controls, active }:
         aria-controls={controls}
         aria-activedescendant={active}
         data-testid="workspace-search"
-        aria-label={t('Find a vault')}
-        placeholder={t('Find a vault')}
+        aria-label={t('Find a lockbox')}
+        placeholder={t('Find a lockbox')}
         value={value}
         onChange={event => onChange(event.target.value)}
         onKeyDown={onKeyDown}

@@ -172,6 +172,7 @@ const DEFAULTS: Record<string, Handler> = {
     skipped: 0,
     dryRun: dryRun as boolean,
     errors: [],
+    warnings: [],
     entries: []
   }),
   export_entries: () => null,
@@ -229,6 +230,7 @@ const DEFAULTS: Record<string, Handler> = {
   generate_otp: () => ({ code: '123456', time: 30 }),
   get_audit: () => ({}),
   fetch_favicon: () => null,
+  fetch_emblem: () => null,
   copy_to_clipboard: () => undefined,
   hide_window: () => undefined,
   scan_image: reject({ kind: 'unrecognized', message: 'nothing recognized' }),

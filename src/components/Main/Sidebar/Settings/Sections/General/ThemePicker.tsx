@@ -5,7 +5,7 @@ import { prefersDark, type ThemePreference } from '@/theme'
 import type { TKey } from '@/i18n'
 import { useRadioNav } from '@/hooks/useRadioNav'
 import { cx } from '@/utils/cx'
-import { META } from '@/components/elements/tokens'
+import { META, PICK_CARD, PICKED, UNPICKED } from '@/components/elements/tokens'
 import ThemeMockup from './ThemeMockup'
 
 const THEMES: { value: ThemePreference; label: TKey }[] = [
@@ -58,12 +58,7 @@ export default function ThemePicker() {
             tabIndex={active || (!selected && index === 0) ? 0 : -1}
             data-testid={`settings-theme-${value}`}
             onClick={() => choose(value)}
-            className={cx(
-              'cursor-pointer rounded-lg border bg-card p-1.5 text-left transition-[border-color,box-shadow]',
-              active
-                ? 'border-accent ring-[3px] ring-accent-soft'
-                : 'border-line hover:border-accent-line'
-            )}
+            className={cx(PICK_CARD, 'p-1.5', active ? PICKED : UNPICKED)}
           >
             <ThemeMockup theme={value} />
             <span className="flex items-center gap-2 px-1.5 pt-2.5 pb-1">

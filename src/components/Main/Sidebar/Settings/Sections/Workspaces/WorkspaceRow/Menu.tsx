@@ -30,11 +30,12 @@ export default function Menu({ id, last, onEdit, onDelete }: Props) {
         expanded={open}
         testid={`workspace-menu-${id}`}
         onClick={() => setOpen(value => !value)}
+        className="any-pointer-coarse:h-11 any-pointer-coarse:w-11"
       >
         <MoreGlyph />
       </IconButton>
       {open && (
-        <Dropdown onBlur={() => setOpen(false)} className="right-0 top-9 w-[220px]">
+        <Dropdown onBlur={() => setOpen(false)} className="right-0 top-full mt-2 w-[220px]">
           <DropdownItem testid={`workspace-edit-${id}`} onClick={pick(onEdit)}>
             <PencilGlyph />
             {t('Edit…')}
@@ -55,7 +56,7 @@ export default function Menu({ id, last, onEdit, onDelete }: Props) {
           </fieldset>
           {last && (
             <p className={`${META} px-2 pb-1 pt-0.5`}>
-              {t('Your only workspace cannot be deleted. Add another one first.')}
+              {t('Your only lockbox cannot be deleted. Add another one first.')}
             </p>
           )}
         </Dropdown>

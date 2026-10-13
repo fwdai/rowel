@@ -28,19 +28,19 @@ interface Definition<K extends Key> {
 export const SUBPAGES: { [K in Key]: Definition<K> } = {
   'new-workspace': {
     crumb: 'workspaces',
-    title: 'New workspace',
+    title: 'New lockbox',
     description: 'Its own encrypted database, unlocked alongside your others.',
     Body: NewWorkspace
   },
   'edit-workspace': {
     crumb: 'workspaces',
-    title: 'Edit workspace',
-    description: 'Change how this workspace is named and told apart.',
+    title: 'Edit lockbox',
+    description: 'Change how this lockbox is named and told apart.',
     Body: EditWorkspace
   },
   'delete-workspace': {
     crumb: 'workspaces',
-    title: 'Delete workspace',
+    title: 'Delete lockbox',
     description: 'There is no undo, so it takes two proofs first.',
     Body: DeleteWorkspace
   }

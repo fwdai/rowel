@@ -45,7 +45,7 @@ export default function ColorSwatches({ value, onChange, label, disabled, testid
       role="radiogroup"
       aria-label={label}
       onKeyDown={onKeyDown}
-      className="flex flex-wrap items-center gap-2.5"
+      className="flex flex-wrap items-center gap-2.5 any-pointer-coarse:gap-3"
     >
       {WORKSPACE_COLORS.map((key, index) => {
         const active = key === value
@@ -64,7 +64,7 @@ export default function ColorSwatches({ value, onChange, label, disabled, testid
             data-testid={`${testidPrefix}-color-${key}`}
             onClick={() => onChange(key)}
             className={cx(
-              'grid h-7 w-7 cursor-pointer place-items-center rounded-full text-white transition-[transform,box-shadow] disabled:cursor-default',
+              'grid h-7 w-7 cursor-pointer place-items-center rounded-full text-white transition-[transform,box-shadow] disabled:cursor-default any-pointer-coarse:h-8 any-pointer-coarse:w-8',
               bg,
               active
                 ? cx('ring-2 ring-offset-2 ring-offset-card', ring)

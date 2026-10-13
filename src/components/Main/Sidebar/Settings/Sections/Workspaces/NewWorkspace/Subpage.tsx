@@ -8,6 +8,7 @@ import { PRIMARY_WORKSPACE, workspaceLabel } from '@/lib/workspace'
 import { firstUnusedColor, type WorkspaceColor } from '@/lib/workspaceColor'
 import { cx } from '@/utils/cx'
 import Field from '@/components/elements/Field'
+import Note from '@/components/elements/Note'
 import { inputClass } from '@/components/elements/formStyles'
 import { verbatimInput } from '@/components/elements/inputProps'
 import { CARD, LABEL } from '@/components/elements/tokens'
@@ -77,7 +78,7 @@ export default function NewWorkspaceSubpage() {
     <SubpageFrame
       footer={{
         hint: ready ? t('Ready') : t('Name and master password required'),
-        cta: t('Create workspace'),
+        cta: t('Create lockbox'),
         disabled: !ready,
         loading: busy,
         // The frame's Enter covers the password field too: its own onEnter
@@ -117,15 +118,15 @@ export default function NewWorkspaceSubpage() {
             }}
           />
           {error && (
-            <p data-testid="workspace-new-error" className="text-sm text-bad">
+            <Note tone="bad" testid="workspace-new-error">
               {error}
-            </p>
+            </Note>
           )}
-          <p className="text-sm text-text2">
-            {t('Sealed with the master password of {{name}}, the primary workspace on this device.', {
+          <Note>
+            {t('Sealed with the master password of {{name}}, the primary lockbox on this device.', {
               name: primaryName
             })}
-          </p>
+          </Note>
         </Field>
       </div>
     </SubpageFrame>

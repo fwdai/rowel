@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
 import AuthShell from '@/components/elements/AuthShell'
@@ -554,16 +554,16 @@ describe('compact shell', () => {
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
 
     act(() => lockSettings(true))
     expect(screen.getByTestId('settings-back')).toBeDisabled()
     await userEvent.click(screen.getByTestId('settings-back'))
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     // Leaving Settings from the tab bar goes through the guarded `closeSettings`.
     await userEvent.click(screen.getByTestId('tab-items'))
     expect(useUi.getState().settings).toBe(true)
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
 
     act(() => lockSettings(false))
     await userEvent.click(screen.getByTestId('settings-back'))
@@ -578,15 +578,36 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
     await userEvent.click(screen.getByTestId('workspace-new-row'))
 
-    expect(screen.getByRole('heading', { name: 'New workspace' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Workspaces')
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
     // The section stays under its sub-page, inert, as the root stays under it.
     expect(screen.getByTestId('settings-back').closest('[inert]')).not.toBeNull()
     expect(screen.getByTestId('settings-subpage-back').closest('[inert]')).toBeNull()
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-back').closest('[inert]')).toBeNull()
+  })
+
+  // The sub-page's action is the slab every pushed screen puts where a thumb
+  // is, not the desktop's bar: Back is the Cancel, and the hint goes with it.
+  it('puts a sub-page action at the bottom edge, dimmed until the form is ready', async () => {
+    seed()
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    await userEvent.click(screen.getByTestId('workspace-new-row'))
+
+    const create = screen.getByTestId('workspace-create')
+    expect(create).toBeDisabled()
+    expect(create).toHaveClass('absolute')
+    expect(screen.queryByTestId('settings-subpage-cancel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-hint')).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByTestId('workspace-new-name'), 'Work')
+    await userEvent.type(screen.getByTestId('workspace-new-password'), 'pass')
+    expect(create).toBeEnabled()
   })
 
   // The chip's default is the wide modal's section state, which a pushed pane
@@ -873,7 +894,7 @@ describe('swipe back', () => {
     act(() => lockSettings(true))
     fireEvent.pointerUp(pane, { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 100 })
     await act(() => new Promise(resolve => setTimeout(resolve, 200)))
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(pane.style.translate).toBe('0 0')
   })
 
@@ -887,15 +908,44 @@ describe('swipe back', () => {
     act(() => lockSettings(true))
     swipe(screen.getByTestId('settings-subpage'), { dx: 200 })
     await act(() => new Promise(resolve => setTimeout(resolve, 200)))
-    expect(screen.getByRole('heading', { name: 'New workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
 
     act(() => lockSettings(false))
     swipe(screen.getByTestId('settings-subpage'), { dx: 200 })
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     )
     swipe(screen.getByTestId('settings-pane'), { dx: 200 })
     await waitFor(() => expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument())
+  })
+
+  // The strip the drag starts on lies over the scroller's first points and the
+  // back control's arrow, so a tap — or a mouse click, which never swipes — is
+  // handed to what it covers. What is found there may be the arrow's SVG, so
+  // the click has to bubble up to its button rather than be `click()`ed.
+  it('lays a strip on the edge and passes a click on it to the control under', async () => {
+    seed()
+    render(<Main />)
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    const pane = screen.getByTestId('settings-pane')
+    const strip = within(pane).getByTestId('swipe-edge')
+    expect(pane).toContainElement(strip)
+    expect(strip).toHaveClass('touch-none')
+
+    const arrow = screen.getByTestId('settings-back').querySelector('svg')!
+    const found: number[][] = []
+    document.elementFromPoint = (x, y) => {
+      found.push([x, y, strip.style.pointerEvents === 'none' ? 1 : 0])
+      return arrow
+    }
+    fireEvent.click(strip, { clientX: 8, clientY: 30 })
+    // Looked up with the strip out of the way, and once.
+    expect(found).toEqual([[8, 30, 1]])
+    expect(strip.style.pointerEvents).toBe('')
+    // The back control answered: the pane is gone, the root alone remains.
+    await waitFor(() => expect(screen.queryByTestId('settings-pane')).not.toBeInTheDocument())
+    expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument()
   })
 })
 

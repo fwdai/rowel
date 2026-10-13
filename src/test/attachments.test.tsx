@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Show from '@/components/Main/Body/Aside/Show'
 import Main from '@/components/Main'
@@ -106,18 +106,47 @@ describe('attachments on an entry', () => {
     expect(screen.queryByTestId('attachments-section')).not.toBeInTheDocument()
   })
 
-  // The row carries no controls on either shell: the file opens, and saving
-  // and removing are the preview's.
   it('saves from the open file, by id', async () => {
     mockCommand('attachment_list', () => [file()])
     render(<Show entry={loginMeta()} />)
 
-    const row = await screen.findByTestId('attachment-row')
-    expect(row.querySelectorAll('button')).toHaveLength(1)
-    await userEvent.click(screen.getByTestId('attachment-open-button'))
+    await userEvent.click(await screen.findByTestId('attachment-open-button'))
     await userEvent.click(screen.getByTestId('preview-save-button'))
 
     expect(calls('attachment_save')).toEqual([{ id: 'a1' }])
+  })
+
+  // A pointer saves a file from its line, without opening it first: the
+  // line's end carries the two actions the preview's bar has, shown on hover.
+  it('saves from the line’s hover action without opening the file', async () => {
+    mockCommand('attachment_list', () => [file()])
+    render(<Show entry={loginMeta()} />)
+
+    const row = await screen.findByTestId('attachment-row')
+    expect(row.querySelectorAll('button')).toHaveLength(3)
+    await userEvent.click(screen.getByTestId('row-save-button'))
+
+    expect(calls('attachment_save')).toEqual([{ id: 'a1' }])
+    expect(calls('attachment_read')).toEqual([])
+    expect(screen.queryByTestId('attachment-preview')).not.toBeInTheDocument()
+  })
+
+  it('asks before removing from the line, naming the file', async () => {
+    seedAttachments([file()])
+    render(<Show entry={loginMeta()} />)
+
+    await userEvent.click(await screen.findByTestId('row-remove-button'))
+    expect(calls('attachment_delete')).toEqual([])
+    expect(screen.getByTestId('attachment-remove-sheet')).toHaveTextContent(
+      'Remove “contract.pdf”?'
+    )
+
+    await userEvent.click(screen.getByTestId('attachment-remove-confirm'))
+
+    expect(calls('attachment_delete')).toEqual([{ id: 'a1' }])
+    await waitFor(() =>
+      expect(screen.queryByTestId('attachments-section')).not.toBeInTheDocument()
+    )
   })
 
   it('asks before removing, naming the file, then removes and closes', async () => {
@@ -184,7 +213,7 @@ describe('opening a file', () => {
     expect(image.getAttribute('src')).not.toBe(thumb.getAttribute('src'))
     expect(calls('attachment_read')).toEqual([{ id: 'a1' }])
 
-    await userEvent.click(screen.getByTestId('attachment-preview-close'))
+    await userEvent.click(screen.getByTestId('attachment-preview-esc'))
     expect(screen.queryByTestId('attachment-preview')).not.toBeInTheDocument()
   })
 
@@ -291,6 +320,73 @@ describe('opening a file', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not open this file.')
   })
 
+  // A picture with more pixels than the stage shows is a press away from its
+  // actual size, and a second press fits it again; one that fits stays put.
+  it('shows a large picture at its actual size on a press, and fits it again', async () => {
+    seedAttachments([file({ name: 'scan.png', mime: 'image/png' })])
+    mockCommand('attachment_read', () => bytesOf('png'))
+    render(<Show entry={loginMeta()} />)
+
+    await userEvent.click(await screen.findByTestId('attachment-open-button'))
+    const image = await screen.findByTestId('preview-image')
+    expect(image).toHaveAttribute('data-zoom', 'fit')
+
+    // jsdom lays nothing out: a picture of no size fits any stage.
+    await userEvent.click(image)
+    expect(image).toHaveAttribute('data-zoom', 'fit')
+
+    Object.defineProperty(image, 'naturalWidth', { value: 4000 })
+    Object.defineProperty(image, 'naturalHeight', { value: 3000 })
+    fireEvent.load(image)
+    // Fitted, it is bounded by the stage and by itself — never blown up.
+    expect(image.style.maxWidth).toBe('min(100%, 4000px)')
+    expect(image.style.maxHeight).toBe('min(100%, 3000px)')
+    expect(image).toHaveAttribute('title', 'Actual size')
+    await userEvent.click(image)
+    expect(image).toHaveAttribute('data-zoom', 'actual')
+    expect(image).toHaveAttribute('title', 'Fit to window')
+    await userEvent.click(image)
+    expect(image).toHaveAttribute('data-zoom', 'fit')
+    expect(screen.getByTestId('attachment-preview')).toBeInTheDocument()
+  })
+
+  // An engine that can decode off-screen (every real one; jsdom cannot) is
+  // asked first, and the picture is mounted with its bound already on it —
+  // never a first frame at the stage's size and a second at its own.
+  it('decodes a picture before showing it, so it mounts at its size', async () => {
+    let decoded: () => void = () => {}
+    const decode = vi.fn(function (this: HTMLImageElement) {
+      Object.defineProperty(this, 'naturalWidth', { value: 800 })
+      Object.defineProperty(this, 'naturalHeight', { value: 600 })
+      return new Promise<void>(resolve => {
+        decoded = resolve
+      })
+    })
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      value: decode,
+      configurable: true
+    })
+    // `canProbe` is read when the module loads: load it fresh under the stub.
+    vi.resetModules()
+    const { default: Picture } = await import(
+      '@/components/Main/Body/Aside/Show/Attachments/Preview/Picture'
+    )
+    try {
+      render(<Picture url="blob:x" name="scan.png" onError={() => {}} />)
+
+      expect(decode).toHaveBeenCalledTimes(1)
+      expect(screen.queryByTestId('preview-image')).not.toBeInTheDocument()
+
+      await act(async () => decoded())
+      const image = screen.getByTestId('preview-image')
+      expect(image.style.maxWidth).toBe('min(100%, 800px)')
+      expect(image.style.maxHeight).toBe('min(100%, 600px)')
+    } finally {
+      delete (HTMLImageElement.prototype as { decode?: unknown }).decode
+      vi.resetModules()
+    }
+  })
+
   it('closes on a press on the ground beside the file, not on the file', async () => {
     seedAttachments([file({ name: 'IMG_0971.png', mime: 'image/png' })])
     mockCommand('attachment_read', () => bytesOf('png'))
@@ -303,6 +399,183 @@ describe('opening a file', () => {
 
     await userEvent.click(image.parentElement!)
     expect(screen.queryByTestId('attachment-preview')).not.toBeInTheDocument()
+  })
+})
+
+describe('stepping through the files', () => {
+  const three = () =>
+    seedAttachments([
+      file({ id: 'a1', name: 'first.txt', mime: 'text/plain' }),
+      file({ id: 'a2', name: 'second.txt', mime: 'text/plain' }),
+      file({ id: 'a3', name: 'third.txt', mime: 'text/plain' })
+    ])
+
+  it('moves to the neighbours by arrow key and by the edge controls, and stops at the ends', async () => {
+    three()
+    mockCommand('attachment_read', () => bytesOf('text'))
+    render(<Show entry={loginMeta()} />)
+
+    const [first] = await screen.findAllByTestId('attachment-open-button')
+    await userEvent.click(first)
+    const preview = screen.getByTestId('attachment-preview')
+    expect(preview).toHaveTextContent('first.txt')
+    expect(screen.getByTestId('preview-caption')).toHaveTextContent('1 of 3')
+    expect(screen.getByTestId('preview-previous-button')).toBeDisabled()
+
+    await userEvent.keyboard('{ArrowRight}')
+    expect(preview).toHaveTextContent('second.txt')
+    expect(screen.getByTestId('preview-caption')).toHaveTextContent('2 of 3')
+    await waitFor(() => expect(calls('attachment_read')).toEqual([{ id: 'a1' }, { id: 'a2' }]))
+
+    await userEvent.click(screen.getByTestId('preview-next-button'))
+    expect(preview).toHaveTextContent('third.txt')
+    expect(screen.getByTestId('preview-next-button')).toBeDisabled()
+    await userEvent.keyboard('{ArrowRight}')
+    expect(preview).toHaveTextContent('third.txt')
+
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(preview).toHaveTextContent('second.txt')
+    await userEvent.click(screen.getByTestId('preview-previous-button'))
+    expect(preview).toHaveTextContent('first.txt')
+  })
+
+  // The desktop lightbox leaves the window's chrome bar — and the traffic
+  // lights in it — to the window.
+  it('starts under the chrome bar on the desktop', async () => {
+    seedAttachments([file()])
+    render(<Show entry={loginMeta()} />)
+
+    await userEvent.click(await screen.findByTestId('attachment-open-button'))
+
+    expect(screen.getByTestId('attachment-preview')).toHaveClass('md:top-[38px]')
+  })
+
+  // The desktop's way out is the same `esc` close every dialog header has,
+  // at the right end of the bar.
+  it('closes from the esc control at the bar’s right end', async () => {
+    seedAttachments([file()])
+    render(<Show entry={loginMeta()} />)
+
+    await userEvent.click(await screen.findByTestId('attachment-open-button'))
+    const close = screen.getByTestId('attachment-preview-esc')
+    expect(close).toHaveTextContent('esc')
+    await userEvent.click(close)
+
+    expect(screen.queryByTestId('attachment-preview')).not.toBeInTheDocument()
+  })
+
+  // The view stays mounted while it steps, so a slow read of the file left
+  // behind can land after the next file's read has started. It is dropped:
+  // the first file's bytes never show under the second file's name.
+  it('drops a read of the file stepped away from, however late it lands', async () => {
+    three()
+    const pending = new Map<string, (bytes: ArrayBuffer) => void>()
+    mockCommand(
+      'attachment_read',
+      ({ id }) =>
+        new Promise<ArrayBuffer>(resolve => {
+          pending.set(id as string, resolve)
+        })
+    )
+    const made = vi.spyOn(URL, 'createObjectURL')
+    render(<Show entry={loginMeta()} />)
+
+    const [first] = await screen.findAllByTestId('attachment-open-button')
+    await userEvent.click(first)
+    await userEvent.keyboard('{ArrowRight}')
+    await waitFor(() => expect(pending.has('a2')).toBe(true))
+    expect(screen.queryByTestId('preview-text')).not.toBeInTheDocument()
+
+    // The second file answers first and is shown.
+    await act(async () => pending.get('a2')!(bytesOf('second')))
+    expect(await screen.findByTestId('preview-text')).toHaveTextContent('second')
+    const shown = made.mock.calls.length
+
+    // Then the first file's answer arrives, late: nothing changes.
+    await act(async () => pending.get('a1')!(bytesOf('first')))
+    expect(screen.getByTestId('preview-text')).toHaveTextContent('second')
+    expect(made.mock.calls.length).toBe(shown)
+    made.mockRestore()
+  })
+
+  // Stepping away from a file already shown: the render that carries the
+  // new name must not carry the old bytes, not even for the one render
+  // before the effect that clears them — React may paint it.
+  it('never answers one file’s name with another file’s bytes, not for a render', async () => {
+    const { useAttachmentUrl } = await import(
+      '@/components/Main/Body/Aside/Show/Attachments/useAttachmentUrl'
+    )
+    const a1 = file({ id: 'a1', name: 'first.txt', mime: 'text/plain' })
+    const a2 = file({ id: 'a2', name: 'second.txt', mime: 'text/plain' })
+    mockCommand('attachment_read', ({ id }) =>
+      id === 'a1' ? bytesOf('first') : new Promise<ArrayBuffer>(() => {})
+    )
+    // Every render's answer, as the view would see it.
+    const seen: [string, string | null][] = []
+    const { rerender } = renderHook(
+      ({ attachment }: { attachment: Attachment }) => {
+        const held = useAttachmentUrl(attachment, true)
+        seen.push([attachment.id, held.url])
+        return held
+      },
+      { initialProps: { attachment: a1 } }
+    )
+    const last = () => seen[seen.length - 1]
+    await waitFor(() => expect(last()[1]).toMatch(/^blob:/))
+    const firstUrl = last()[1]
+
+    rerender({ attachment: a2 })
+
+    expect(seen.filter(([id]) => id === 'a2').every(([, url]) => url === null)).toBe(true)
+    expect(seen.some(([id, url]) => id === 'a2' && url === firstUrl)).toBe(false)
+  })
+
+  it('offers no step for a lone file', async () => {
+    seedAttachments([file()])
+    render(<Show entry={loginMeta()} />)
+
+    await userEvent.click(await screen.findByTestId('attachment-open-button'))
+
+    expect(screen.getByTestId('preview-caption')).toHaveTextContent('1.5 KB · PDF')
+    expect(screen.getByTestId('preview-caption')).not.toHaveTextContent('of')
+    expect(screen.queryByTestId('preview-next-button')).not.toBeInTheDocument()
+  })
+
+  // The remove sheet is the dialog on top: the arrows are its while it is up.
+  it('does not step from under the remove question', async () => {
+    three()
+    mockCommand('attachment_read', () => bytesOf('text'))
+    render(<Show entry={loginMeta()} />)
+
+    const [first] = await screen.findAllByTestId('attachment-open-button')
+    await userEvent.click(first)
+    await userEvent.click(screen.getByTestId('preview-remove-button'))
+    await userEvent.keyboard('{ArrowRight}')
+
+    expect(screen.getByTestId('attachment-preview')).toHaveTextContent('first.txt')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByTestId('attachment-remove-sheet')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('attachment-preview')).toBeInTheDocument()
+  })
+
+  // Removing the open file moves on to the next, so a run of files is
+  // cleaned up without going back to the list each time.
+  it('shows the next file once the open one is removed', async () => {
+    three()
+    mockCommand('attachment_read', () => bytesOf('text'))
+    render(<Show entry={loginMeta()} />)
+
+    const [first] = await screen.findAllByTestId('attachment-open-button')
+    await userEvent.click(first)
+    await userEvent.click(screen.getByTestId('preview-remove-button'))
+    await userEvent.click(screen.getByTestId('attachment-remove-confirm'))
+
+    expect(calls('attachment_delete')).toEqual([{ id: 'a1' }])
+    const preview = screen.getByTestId('attachment-preview')
+    expect(preview).toHaveTextContent('second.txt')
+    await waitFor(() => expect(screen.getByTestId('preview-caption')).toHaveTextContent('1 of 2'))
   })
 })
 

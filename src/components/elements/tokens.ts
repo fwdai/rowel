@@ -6,6 +6,29 @@ import type { CSSProperties } from 'react'
 export const CARD =
   'overflow-hidden rounded-lg border border-line bg-card shadow-card max-md:rounded-xl'
 
+// The same card with its overflow open, for one whose rows hang a menu past
+// its edge (the language picker, a workspace's ⋯). Its rows paint no ground of
+// their own, so nothing needs the corner clip.
+export const CARD_OPEN = 'rounded-lg border border-line bg-card shadow-card max-md:rounded-xl'
+
+// A card that is one choice among a few (a theme, an export format, an app to
+// import from): PICK_CARD is the shape, and the chosen one wears PICKED — the
+// accent edge under a soft ring — while the rest wait in UNPICKED.
+export const PICK_CARD =
+  'cursor-pointer rounded-lg border bg-card text-left transition-[border-color,box-shadow]'
+export const PICKED = 'border-accent ring-[3px] ring-accent-soft'
+export const UNPICKED = 'border-line hover:border-accent-line'
+
+// A section's lead card (the vault's health, the Drive account): the card with
+// a soft accent light from its top-left corner, so it reads as the one thing
+// on the page that is a state rather than a setting.
+export const HERO_WASH =
+  'bg-[radial-gradient(120%_140%_at_0%_0%,color-mix(in_srgb,var(--c-accent)_10%,transparent),transparent_55%)]'
+
+// An action set in a sentence: "How it works" after a description, "Review"
+// under a count. The accent ink, underlined under the pointer, nothing more.
+export const TEXT_LINK = 'cursor-pointer text-accent hover:underline'
+
 // The rule under a list row, dropped on the card's last row — and on the row a
 // band gutter follows (see `BAND_GUTTER`), where the cut is rule enough.
 export const ROW_HAIRLINE =
@@ -136,3 +159,11 @@ export const BLOCK_DOTS = '•'.repeat(24)
 
 // An input cannot fake dots, so a masked editor box hides its own text instead.
 export const MASK_INPUT = { WebkitTextSecurity: 'disc' } as CSSProperties
+
+// The wide shell's top chrome bar (`Main/Header`): 38px, the band the macOS
+// traffic lights are pinned in. A full-window overlay that puts controls of
+// its own at the top (the file preview) starts under it, so nothing of the
+// app's ever sits on the window's. One number, spelled twice because Tailwind
+// reads class names, not arithmetic.
+export const CHROME_BAR = 'h-[38px]'
+export const BELOW_CHROME = 'md:top-[38px]'

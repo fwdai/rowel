@@ -3,7 +3,7 @@ import type { ExportFormat } from '@/api/imports'
 import type { TKey } from '@/i18n'
 import { useRadioNav } from '@/hooks/useRadioNav'
 import { cx } from '@/utils/cx'
-import { META } from '@/components/elements/tokens'
+import { META, PICK_CARD, PICKED, UNPICKED } from '@/components/elements/tokens'
 
 const FORMATS: { value: ExportFormat; name: TKey; extension: string; hint: TKey }[] = [
   {
@@ -59,12 +59,7 @@ export default function Formats({ value, onChange, label }: Props) {
             tabIndex={active ? 0 : -1}
             data-testid={`settings-export-format-${format.value}`}
             onClick={() => onChange(format.value)}
-            className={cx(
-              'cursor-pointer rounded-lg border bg-card p-3.5 text-left transition-[border-color,box-shadow]',
-              active
-                ? 'border-accent ring-[3px] ring-accent-soft'
-                : 'border-line hover:border-accent-line'
-            )}
+            className={cx(PICK_CARD, 'p-4', active ? PICKED : UNPICKED)}
           >
             <div className="flex items-center gap-2">
               <span

@@ -1,6 +1,6 @@
 {
   "name": "rowel",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Modern, Lightweight, Fast and Free Password Manager",
   "type": "module",
   "repository": "https://github.com/fwdai/rowel.git",
@@ -39,6 +39,7 @@
     "release:local": "bash scripts/release-local.sh"
   },
   "dependencies": {
+    "@floating-ui/react": "^0.27.20",
     "@tauri-apps/api": "^2.12.0",
     "@tauri-apps/plugin-dialog": "^2.8.1",
     "@tauri-apps/plugin-opener": "^2.7.0",

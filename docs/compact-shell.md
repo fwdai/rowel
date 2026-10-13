@@ -96,7 +96,11 @@ switch, `Generator/Panel`, a bottom Use & copy), and opened from a password row
 it is `Generator/Attached` — the same `Dialog` the wide shell mounts, framed as
 a page sheet. Both take `useGeneratorDialog`, so the two shells generate the
 same way. Settings is a root list of rows over the desktop's own `Section`
-panes, and carries the lock control the vanished top bar used to.
+panes, and carries the lock control the vanished top bar used to. The rows
+step up to the phone's type tier through `max-md:` inside `SettingsRow`, and
+a sub-page's one action (Create, Save, Delete) is the same bottom slab the
+generator root draws, lifted over the tab bar; the nav row's Back is its
+Cancel.
 
 The three pushed headers — the entry's, the form's, a settings pane's — are one
 `Compact/NavBar` (leading · title · trailing) with `Compact/BackButton` in the
@@ -164,7 +168,9 @@ a card and not a gallery (`Show/Attachments/Row`): each a line with a 40px
 thumbnail — the picture for an image, the kind's page for anything else —
 beside its name and "670 KB · PNG", hairlines between the lines, on the
 screen's own ground with nothing around them, as Mail and Notes list
-attachments. The lines, their "Attachments" heading
+attachments. On the desktop the lines are rounded tiles instead — lit on
+hover, reaching 8px past the content on each side, air between them and no
+hairlines — since a hairline under a rounded tile reads as the tile's edge. The lines, their "Attachments" heading
 (`SECTION_LABEL_FLUSH`), the verbs under the sections and the notes under
 them all stand on the pane outside any card, so they share the cards' margin
 and not the inset of the text within one — through one wrapper, `EDGE_GUTTER`,
@@ -172,15 +178,35 @@ and not the inset of the text within one — through one wrapper, `EDGE_GUTTER`,
 as starting before it), and none of them carries an inset of its own. A label
 over a card (`SECTION_LABEL`) keeps the card's inset, aligned with its
 captions as iOS aligns a group's header with its cells.
-No controls on a line, on either shell: the whole line
+No controls on a line on the phone: the whole line
 opens the file, and saving and removing live in the preview
 (`Attachments/Preview`), one view for both shells — the screen on the phone,
 a lightbox over the dimmed window on the desktop, told apart by
 `max-md:`/`md:` on the same elements — with the
-file's name in its bar and a Quick Look-style close on the left. Removing
-asks first through `elements/ConfirmSheet`: the platform's action sheet on the
-phone, a red verb over a bold Cancel from the bottom edge, and the same two
-rows on a small card on the desktop. The bytes come to the webview only for
+file's name centred in its bar, Close at the bar's left on the phone (where
+a pushed screen keeps its back) and the `esc` close at its right on the
+desktop (`elements/EscClose`, the one every dialog header draws), after the
+file's own actions, which stand on glass tiles there (`bg-glass`, white
+under the pointer) since bare glyphs on the blurred ground read as
+watermarks. A picture is fitted to the stage but never past its actual size
+(one image pixel per device pixel). The
+lightbox starts under the wide shell's 38px chrome bar (`BELOW_CHROME`, the
+same number as the bar's `CHROME_BAR`), so its Close never sits on the
+macOS traffic lights and the bar stays the window's drag handle. On the
+desktop the same two actions also stand at the line's end, shown to the
+pointer and to a Tab (`HOVER_ONLY`, gated on `isMobile` rather than a
+breakpoint, since it is the hover that a phone lacks), as every value row
+offers its copy. The preview knows its list: the caption counts ("2 of 5"),
+the arrow keys step to the neighbours, and the desktop floats a round control
+at each edge of the stage for the pointer; removing the open file moves on to
+the next. A picture larger than the stage is a press away from its actual
+size on the desktop (`Preview/Picture`), the pointer saying which way.
+Which file is open and which is being removed are the section's
+(`Attachments/index`), so a row's action and the preview's bar ask through
+one `ConfirmSheet`, rendered after the preview so it is the dialog on top.
+Removing asks first through `elements/ConfirmSheet`: the platform's action
+sheet on the phone, a red verb over a bold Cancel from the bottom edge, and
+the same two rows on a small card on the desktop. The bytes come to the webview only for
 the file being shown (`attachment_read`), never with the list — a row's
 thumbnail is the backend's small PNG of the picture (`attachment_thumbnail`),
 turned the way its EXIF says, asked for as the row comes on screen and made
@@ -248,7 +274,7 @@ both driven by `Auth/useUnlock` (attempt phase, lockout countdown, mascot gaze,
 the eyebrow's text and tone). The desktop leads with the passphrase card and
 keeps biometrics as its end segment, centred as one block on the auth ground.
 The phone lays the same parts out in three bands over the whole ground
-(`AuthShell fill`): the brand and the vault chip under the safe area; at the
+(`AuthShell fill`): the brand and the lockbox chip under the safe area; at the
 exact centre of the screen the status line over the 88px biometric tile when
 a key is enrolled, or over the card; and by the footer "Enter Master Password"
 as a plain 44px text control — the backup for the day Face ID does not
@@ -292,10 +318,13 @@ flick) slides it the rest of the way out and runs the same handler its back
 control does (`Compact/useSwipeBack`, on the entry screen and both settings
 panes, under the same `settingsLocked`); short of that, both spring back. The
 form is not among them: it rose from the bottom and its only exit is the
-guarded Cancel. Every one of these screens scrolls through `SCREEN_SCROLLER`
-(`Compact/chrome`): its `overscroll-contain` is what stops the webview's own
-scroll gesture from taking the drag and cancelling the swipe — see the note on
-the token.
+guarded Cancel. The drag starts on a 24px strip the screen lays over the left
+edge of its scroller, `touch-action: none` — the way the bottom sheet's
+grabber owns its drag. A touch that starts inside a scroller is the webview's
+to scroll the moment it moves on an axis the scroller has room on, and the
+pointer under the swipe is cancelled mid-drag; on the strip there is no
+scroller to claim it. A tap on the strip is passed on to what lies under it.
+Every one of these screens scrolls through `SCREEN_SCROLLER` (`Compact/chrome`).
 
 ## iOS conventions to follow
 
@@ -387,17 +416,17 @@ on — never with a prop.
 - The list stays flat and sorted (no Pinned/Recent groups).
 - Unlock leads with the biometric tile when biometrics are enrolled, else the
   passphrase card. No auto-prompt on launch.
-- Not adopted from the prototype: share button, recent searches, vault
+- Not adopted from the prototype: share button, recent searches, lockbox
   switcher, card face art. The Rowel mascot stays on the lock screen.
 
 ## Follow-ups
 
 What the six slices deliberately left behind, smallest first:
 
-- **Generator controls have no touch tier.** The length slider and the toggle
-  rows are the desktop's sizes inside `Generator/Panel`, which both shells
-  share; giving them a touch tier means sizing them through the panel rather
-  than around it.
+- **The length slider has no touch tier.** The switches, segments, chips and
+  inline buttons the generator and Settings share take theirs through
+  `any-pointer-coarse:` inside each element; the range input is the one
+  control still at the desktop's size.
 - **`big` secrets truncate when stacked.** A long SSH private key in a narrow
   container clips rather than wrapping; the stacked row needs its own
   presentation for the multi-line value tier.

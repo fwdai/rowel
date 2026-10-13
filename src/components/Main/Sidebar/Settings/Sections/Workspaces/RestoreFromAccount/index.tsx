@@ -12,6 +12,7 @@ import { providerName } from '@/api/provider'
 import SettingsRow from '@/components/elements/SettingsRow'
 import Button from '@/components/elements/Button'
 import AccountRestoreForm from '@/components/elements/AccountRestoreForm'
+import Note from '@/components/elements/Note'
 import ProviderButtons from '@/components/elements/ProviderButtons'
 import ProviderMark from '@/components/elements/ProviderMark'
 import { CloudGlyph } from '@/components/Main/icons'
@@ -56,7 +57,7 @@ export default function RestoreFromAccount() {
         )
       }
       description={t(
-        'Sign in and pick one of the vaults the account already holds. It arrives as a workspace of its own, unlocked with its own master password and syncing to the same pack.'
+        'Sign in and pick one of the lockboxes the account already holds. It arrives as a separate lockbox, unlocked with its own master password and syncing to the same pack.'
       )}
       testid="workspace-restore-row"
       control={
@@ -82,21 +83,21 @@ export default function RestoreFromAccount() {
       }
     >
       {account.status === 'pending' && (
-        <p data-testid="workspace-restore-waiting" className="text-sm text-text2">
+        <Note testid="workspace-restore-waiting">
           {name ? t('Waiting for {{provider}}…', name) : t('Waiting for the browser…')}
-        </p>
+        </Note>
       )}
       {account.status === 'empty' && (
-        <p data-testid="workspace-restore-empty" className="text-sm text-text2">
+        <Note testid="workspace-restore-empty">
           {name
             ? t('This {{provider}} account has nothing to restore', name)
             : t('This account has nothing to restore')}
-        </p>
+        </Note>
       )}
       {account.status === 'error' && (
-        <p data-testid="workspace-restore-error" className="text-sm text-bad">
+        <Note tone="bad" testid="workspace-restore-error">
           {account.error || t('Something went wrong')}
-        </p>
+        </Note>
       )}
       {(account.status === 'found' || restoring) && (
         <AccountRestoreForm

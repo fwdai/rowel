@@ -1,5 +1,5 @@
 //! The commands whose work lives outside `commands/`: the file picker, image
-//! scanning and favicon lookup. Each module owns its logic; this is only where
+//! scanning, and favicon and emblem lookup. Each module owns its logic; this is only where
 //! the IPC surface is declared.
 
 use std::path::Path;
@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 use crate::grants::{PathGrants, Purpose};
 use crate::scan::ScanResult;
 use crate::state::AppState;
-use crate::{favicon, scan};
+use crate::{emblem, favicon, scan};
 
 /// The OS file dialog, for a file the backend will then read: `kind` is
 /// `"image"` (filtered to what the scanner opens), `"env"` (any file, since
@@ -152,4 +152,19 @@ pub async fn fetch_favicon(
         return Ok(None);
     };
     favicon::fetch(&app, &host, epoch).await
+}
+
+/// The coat of arms a passport from `country` (ISO 3166-1 alpha-3) wears on
+/// its cover. Gated like [`fetch_favicon`], for the same reasons: the country
+/// comes out of the vault, and a locked app answers "none".
+#[tauri::command]
+pub async fn fetch_emblem(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    country: String,
+) -> Result<Option<String>> {
+    let Ok(epoch) = super::unlocked_epoch(&state) else {
+        return Ok(None);
+    };
+    emblem::fetch(&app, &country, epoch).await
 }

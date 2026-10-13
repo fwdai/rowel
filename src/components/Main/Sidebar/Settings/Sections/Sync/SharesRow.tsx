@@ -8,11 +8,10 @@ import { kindOf } from '@/kinds'
 import { useNow } from '@/hooks/useNow'
 import { useLatestRequest } from '@/hooks/useLatestRequest'
 import { relativeUntil } from '@/utils/time'
-import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
-import { ROW_HAIRLINE } from '@/components/elements/tokens'
-import { ChevronRightGlyph, LinkGlyph } from '../../../../icons'
-import RowHead from './RowHead'
+import Note from '@/components/elements/Note'
+import { LinkGlyph } from '../../../../icons'
+import ExpandableRow from '../ExpandableRow'
 
 // How often the countdowns are re-read. A minute is the finest unit they show.
 const TICK_MS = 60_000
@@ -72,20 +71,14 @@ function Shares() {
 
   if (error)
     return (
-      <div data-testid="settings-shares-error" className="text-sm text-bad">
+      <Note tone="bad" testid="settings-shares-error">
         {error}
-      </div>
+      </Note>
     )
 
-  if (!shares)
-    return <div className="text-base text-text3">{t('Loading…')}</div>
+  if (!shares) return <Note>{t('Loading…')}</Note>
 
-  if (shares.length === 0)
-    return (
-      <div data-testid="settings-shares-empty" className="text-base text-text3">
-        {t('No active links')}
-      </div>
-    )
+  if (shares.length === 0) return <Note testid="settings-shares-empty">{t('No active links')}</Note>
 
   return (
     <ul data-testid="settings-shares-list" className="flex flex-col gap-2">
@@ -105,9 +98,9 @@ function Shares() {
               </span>
             </span>
             <Button
-              variant="pale"
+              variant="pale-danger"
               size="md"
-              className="flex-none text-bad hover:text-bad"
+              className="flex-none"
               onClick={() => revoke(share.fileId)}
               testid={`settings-share-revoke-${share.fileId}`}
             >
@@ -122,36 +115,20 @@ function Shares() {
 
 // Every link still out there, and the way to take one back before its 24 hours
 // are up. Only shown with Drive connected: without it there is nowhere a share
-// could have been put, so there is nothing this row could ever list. The whole
-// row is the disclosure — it has nothing else to press.
+// could have been put, so there is nothing this row could ever list.
 export default function SharesRow() {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
 
   return (
-    <div className={ROW_HAIRLINE}>
-      <button
-        type="button"
-        data-testid="settings-shares-row"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        className="flex w-full cursor-pointer items-center gap-3.5 px-4 py-3.5 text-left transition-colors hover:bg-hover"
-      >
-        <RowHead
-          icon={<LinkGlyph />}
-          label={t('Shared links')}
-          description={t("Links you've sent stay live until they expire or you revoke them")}
-        />
-        <ChevronRightGlyph
-          className={cx('flex-none text-text2 transition-transform', open && 'rotate-90')}
-        />
-      </button>
-      {/* Lines up under the label, past the tile, as SettingsRow's does. */}
-      {open && (
-        <div className="px-4 pb-3.5 pl-[62px]">
-          <Shares />
-        </div>
-      )}
-    </div>
+    <ExpandableRow
+      label={t('Shared links')}
+      description={t("Links you've sent stay live until they expire or you revoke them")}
+      icon={<LinkGlyph />}
+      action={t('Show')}
+      collapse={t('Hide')}
+      testid="settings-shares-row"
+    >
+      <Shares />
+    </ExpandableRow>
   )
 }

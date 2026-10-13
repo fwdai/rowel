@@ -2,6 +2,7 @@ import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
 import Field from '@/components/elements/Field'
+import Note from '@/components/elements/Note'
 import { inputClass } from '@/components/elements/formStyles'
 
 interface Props {
@@ -33,9 +34,9 @@ export default function NameField({ value, onChange, duplicate, disabled, testid
         onChange={event => onChange(event.target.value)}
       />
       {duplicate && (
-        <p data-testid={`${testidPrefix}-duplicate`} className="text-sm text-bad">
-          {t('You already have a workspace with this name.')}
-        </p>
+        <Note tone="bad" testid={`${testidPrefix}-duplicate`}>
+          {t('You already have a lockbox with this name.')}
+        </Note>
       )}
     </Field>
   )

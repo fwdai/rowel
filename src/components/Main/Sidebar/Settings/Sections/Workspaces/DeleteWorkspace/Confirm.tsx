@@ -6,6 +6,7 @@ import { unsealError } from '@/components/Start/shared/errors'
 import { workspaceLabel } from '@/lib/workspace'
 import { cx } from '@/utils/cx'
 import Field from '@/components/elements/Field'
+import Note from '@/components/elements/Note'
 import Segmented from '@/components/elements/Segmented'
 import { inputClass } from '@/components/elements/formStyles'
 import { verbatimInput } from '@/components/elements/inputProps'
@@ -59,7 +60,7 @@ export default function Confirm({ workspace }: { workspace: Workspace }) {
     deleteWorkspace(workspace.id, password, everywhere)
       .then(close)
       .catch((err: unknown) => {
-        setError(unsealError(t, err, t('That is not this workspace’s master password')))
+        setError(unsealError(t, err, t('That is not this lockbox’s master password')))
         setBusy(false)
       })
   }
@@ -104,25 +105,25 @@ export default function Confirm({ workspace }: { workspace: Workspace }) {
               />
             </Field>
           )}
-          <p className="text-sm text-text2">
+          <Note>
             {!provider
-              ? t('This removes the workspace and everything in it from this device.')
+              ? t('This removes the lockbox and everything in it from this device.')
               : everywhere
                 ? t(
-                    'This removes the workspace from this device and deletes its copy in {{provider}}. Your other devices will stop syncing it.',
+                    'This removes the lockbox from this device and deletes its copy in {{provider}}. Your other devices will stop syncing it.',
                     { provider: providerName(provider) }
                   )
                 : t(
-                    'This removes the workspace and everything in it from this device. A copy in {{provider}} is left where it is, so the account still holds it.',
+                    'This removes the lockbox and everything in it from this device. A copy in {{provider}} is left where it is, so the account still holds it.',
                     { provider: providerName(provider) }
                   )}
-          </p>
+          </Note>
         </div>
       </div>
 
       <div className={cx(LABEL, 'mt-6 mb-2')}>{t("Confirm it's you")}</div>
       <div className={cx(CARD, 'flex flex-col gap-4 p-5')}>
-        <Field id={passwordId} label={t('Master password of this workspace')}>
+        <Field id={passwordId} label={t('Master password of this lockbox')}>
           <input
             id={passwordId}
             type="password"
@@ -139,9 +140,9 @@ export default function Confirm({ workspace }: { workspace: Workspace }) {
             }}
           />
           {error && (
-            <p data-testid="workspace-delete-error" className="text-sm text-bad">
+            <Note tone="bad" testid="workspace-delete-error">
               {error}
-            </p>
+            </Note>
           )}
         </Field>
         <Field id={confirmId} label={t('Type {{name}} to confirm', { name: label })}>

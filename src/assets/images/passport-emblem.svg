@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="7 7 50 45">
+  <circle cx="32" cy="27" r="14" fill="none" stroke="#000" stroke-width="2.2"/>
+  <ellipse cx="32" cy="27" rx="6" ry="14" fill="none" stroke="#000" stroke-width="1.76"/>
+  <path d="M32 13V41M18 27H46" stroke="#000" stroke-width="1.76"/>
+  <path d="M20.18 19.5H43.82" stroke="#000" stroke-width="1.54"/>
+  <path d="M20.18 34.5H43.82" stroke="#000" stroke-width="1.54"/>
+  <ellipse cx="14.19" cy="15.87" rx="3.6" ry="1.5" transform="rotate(337.0 14.19 15.87)"/>
+  <ellipse cx="12.03" cy="20.51" rx="3.6" ry="1.5" transform="rotate(323.0 12.03 20.51)"/>
+  <ellipse cx="11.05" cy="25.54" rx="3.6" ry="1.5" transform="rotate(309.0 11.05 25.54)"/>
+  <ellipse cx="11.32" cy="30.65" rx="3.6" ry="1.5" transform="rotate(295.0 11.32 30.65)"/>
+  <ellipse cx="12.82" cy="35.54" rx="3.6" ry="1.5" transform="rotate(281.0 12.82 35.54)"/>
+  <ellipse cx="15.45" cy="39.93" rx="3.6" ry="1.5" transform="rotate(267.0 15.45 39.93)"/>
+  <ellipse cx="19.07" cy="43.55" rx="3.6" ry="1.5" transform="rotate(253.0 19.07 43.55)"/>
+  <ellipse cx="23.46" cy="46.18" rx="3.6" ry="1.5" transform="rotate(239.0 23.46 46.18)"/>
+  <ellipse cx="49.81" cy="15.87" rx="3.6" ry="1.5" transform="rotate(23.0 49.81 15.87)"/>
+  <ellipse cx="51.97" cy="20.51" rx="3.6" ry="1.5" transform="rotate(37.0 51.97 20.51)"/>
+  <ellipse cx="52.95" cy="25.54" rx="3.6" ry="1.5" transform="rotate(51.0 52.95 25.54)"/>
+  <ellipse cx="52.68" cy="30.65" rx="3.6" ry="1.5" transform="rotate(65.0 52.68 30.65)"/>
+  <ellipse cx="51.18" cy="35.54" rx="3.6" ry="1.5" transform="rotate(79.0 51.18 35.54)"/>
+  <ellipse cx="48.55" cy="39.93" rx="3.6" ry="1.5" transform="rotate(93.0 48.55 39.93)"/>
+  <ellipse cx="44.93" cy="43.55" rx="3.6" ry="1.5" transform="rotate(107.0 44.93 43.55)"/>
+  <ellipse cx="40.54" cy="46.18" rx="3.6" ry="1.5" transform="rotate(121.0 40.54 46.18)"/>
+  <path d="M15.01 14.66A21 21 0 0 0 29.08 47.80" fill="none" stroke="#000" stroke-width="1.2"/>
+  <path d="M48.99 14.66A21 21 0 0 1 34.92 47.80" fill="none" stroke="#000" stroke-width="1.2"/>
+</svg>

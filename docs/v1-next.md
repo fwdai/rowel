@@ -40,86 +40,93 @@ products solve it, don't patch symptoms.
 > written into the vault's `meta` mid-run, at the one point that is past a fetched, decoded and
 > merged pull and short of every push: a failed import never leaves a vault pointed at a pack it
 > did not merge, and no pack is ever uploaded under an id the vault does not already answer to.
+> The packs folder stays `Rowel/Vaults/` for now and is read as `Rowel/Lockboxes/` too. A client
+> from before the lockbox rename that finds no `Vaults/` recreates it and uploads there, so while
+> such clients are supported no client may create or rename to `Lockboxes/` — a fresh account under
+> the new name would fork the first time one of them synced. The cutover (rename in place, new name
+> for fresh accounts) is a later release; finding both folders at once stops the run rather than
+> picking a side.
 >
-> Onboarding's probe lists every live pack it finds and the first run picks which vault to
+> Onboarding's probe lists every live pack it finds and the first run picks which lockbox to
 > restore or to archive, so an account holding two installs' primaries never has one chosen
 > for it.
 >
-> **Per-workspace sync** — every workspace now connects its own Drive account and syncs its own
+> **Per-lockbox sync** — every lockbox (a *workspace* in the code: `workspace.rs`,
+> `workspaces.json`) now connects its own Drive account and syncs its own
 > pack, so `guard_primary` is left covering biometric unlock alone (one keychain slot per
-> install). Archive-by-rename went with it (and "start fresh" beside an existing vault went
+> install). Archive-by-rename went with it (and "start fresh" beside an existing lockbox went
 > after it — see *Join, don't fork* below). Shares carry a
-> `vaultId` appProperty so each vault lists only its own, while the sweep stays account-wide.
-> Workspaces share no credentials and no pack, but they do share the OAuth *grant*: Google
-> retires one per account and client, across every workspace and every device. Disconnecting
-> a workspace therefore deletes only its own token file and never revokes at Google — a
-> workspace cannot tell who else holds a token for the account (other token files are sealed
+> `vaultId` appProperty so each lockbox lists only its own, while the sweep stays account-wide.
+> Lockboxes share no credentials and no pack, but they do share the OAuth *grant*: Google
+> retires one per account and client, across every lockbox and every device. Disconnecting
+> a lockbox therefore deletes only its own token file and never revokes at Google — a
+> lockbox cannot tell who else holds a token for the account (other token files are sealed
 > under keys it does not have, and other devices are invisible to it), so any revocation it
 > attempted would be either too broad or, guessed from local files alone, wrong.
 >
-> **Restore into a workspace** — Settings › Workspaces can now add a workspace by restoring one
-> of the connected account's *other* vaults, so a second device reaches every vault on the
+> **Restore into a lockbox** — Settings › Lockboxes can now add a lockbox by restoring one
+> of the connected account's *other* lockboxes, so a second device reaches every lockbox on the
 > account rather than only the one onboarding picked. It reuses onboarding's keyless connect,
 > probe and picker outright (`commands::setup::connect_pending`) and mirrors `workspace_create`
-> for the rest; a pack that is already a workspace on the device is refused by vault id. The
-> open workspace is asked live; every other one is locked and unreadable, so the registry
-> records each workspace's vault id as its syncs settle it (`Workspace::vault_id`, not a
+> for the rest; a pack that is already a lockbox on the device is refused by lockbox id. The
+> open lockbox is asked live; every other one is locked and unreadable, so the registry
+> records each lockbox's id as its syncs settle it (`Workspace::vault_id`, not a
 > secret — it is the pack's file name in the user's own Drive) and the restore asks that.
 > While a restore runs, Settings cannot be closed or moved off the section: the backend holds
 > the pending account for its length, so a Cancel or a navigation that appeared to back out
-> would have let the restore finish and switch workspaces behind the user's back.
+> would have let the restore finish and switch lockboxes behind the user's back.
 >
-> **Join, don't fork** — the account is the source of truth for which vaults exist: every
-> device connected to it syncs the vaults it holds, and a new pack is minted only into an
-> empty account (the first device) or by creating a workspace on a device that is already
-> connected. Connecting a vault (Settings › Sync › Connect on a phone that "started fresh",
+> **Join, don't fork** — the account is the source of truth for which lockboxes exist: every
+> device connected to it syncs the lockboxes it holds, and a new pack is minted only into an
+> empty account (the first device) or by creating a lockbox on a device that is already
+> connected. Connecting a lockbox (Settings › Sync › Connect on a phone that "started fresh",
 > say) used to mint a second pack beside the desktop's; every connect now goes through
-> onboarding's keyless connect and probe (`sync_connect`, with no fork — a vault is given an
+> onboarding's keyless connect and probe (`sync_connect`, with no fork — a lockbox is given an
 > id at creation, so the id says nothing about whether it has synced), and
 > `sync_adopt_pending` lists the account's packs with the pending tokens and adopts only an
-> *empty* account or one that already holds this vault's id. Otherwise it refuses
-> (`vaultNotInAccount`), the tokens stay pending, and Settings shows the account's vaults
-> with the same picker and restore form Settings › Workspaces uses. The first run's
+> *empty* account or one that already holds this lockbox's id. Otherwise it refuses
+> (`vaultNotInAccount`), the tokens stay pending, and Settings shows the account's lockboxes
+> with the same picker and restore form Settings › Lockboxes uses. The first run's
 > conflict screen lost "Start a new vault" for the same reason, and `plan_vault_id` refuses
-> to mint beside an existing vault as belt and braces. "Import from Google Drive" (the
-> `Intent::Import` merge) is gone: a pack is sealed under its own vault's KDF salt, so a vault
-> with a salt of its own could never decode it — the empty-vault hero's restore only ever
-> worked for a vault restored from that very pack. Joining therefore *is* the restore; the
-> vault that was open stays as a workspace of its own.
+> to mint beside an existing lockbox as belt and braces. "Import from Google Drive" (the
+> `Intent::Import` merge) is gone: a pack is sealed under its own lockbox's KDF salt, so a
+> lockbox with a salt of its own could never decode it — the empty-vault hero's restore only
+> ever worked for a lockbox restored from that very pack. Joining therefore *is* the restore;
+> the lockbox that was open stays beside the restored one.
 >
-> **Every vault on every device** — the second half of the same principle. Each sync run
-> lists the account's packs anyway (to settle the vault id), so it now reports the ones no
-> workspace on this device holds (`sync::publish_remote_vaults` → `workspaces:remote`,
-> registry vault ids plus the run's own), and Settings › Workspaces offers them under "In
+> **Every lockbox on every device** — the second half of the same principle. Each sync run
+> lists the account's packs anyway (to settle the lockbox id), so it now reports the ones no
+> lockbox on this device holds (`sync::publish_remote_vaults` → `workspaces:remote`,
+> registry lockbox ids plus the run's own), and Settings › Lockboxes offers them under "In
 > your Google account" with the shared picker and restore form. The restore
 > (`workspace_restore_from_account`) is `workspace_restore_from_pending` with the sign-in taken
-> out: the open workspace's own tokens do the download and a copy is sealed under the restored
-> key — one account, connected once, in as many workspaces as the account has vaults. In the
+> out: the open lockbox's own tokens do the download and a copy is sealed under the restored
+> key — one account, connected once, in as many lockboxes as the account has packs. In the
 > other direction, `workspace_create` on a connected device inherits the account: the tokens
-> are sealed under the new key and the vault is stamped with a minted id *at creation*, so
-> its first sync addresses a pack of its own rather than being refused as a nameless vault
+> are sealed under the new key and the lockbox is stamped with a minted id *at creation*, so
+> its first sync addresses a pack of its own rather than being refused as a nameless lockbox
 > beside the account's others; the pack then shows up on every other device's list after their
 > next sync.
 >
 > **Same password, no prompts** — the moment a password is in hand (a password unlock, a
-> first-run restore, a workspace restore) it is tried against the account's packs this device
-> lacks, and the ones it opens become workspaces beside the open one without switching to them
-> (`commands::autojoin`, reporting `workspaces:added` per vault and a refreshed
+> first-run restore, a lockbox restore) it is tried against the account's packs this device
+> lacks, and the ones it opens become lockboxes beside the open one without switching to them
+> (`commands::autojoin`, reporting `workspaces:added` per lockbox and a refreshed
 > `workspaces:remote`; the frontend re-probes and shows a passing notice). The password lives
 > exactly as long as that blocking-pool task, as a second `Zeroizing` copy, and is never
 > written; the task stops starting candidates after a 60-second budget, so that is the budget
 > plus one download — see the threat model's unlock section. The task is bound to the account
-> it began on: the refreshed tokens are written back to the originating workspace under the
+> it began on: the refreshed tokens are written back to the originating lockbox under the
 > generation guard before each install, a disconnect meanwhile ends the task, and the
-> "already a workspace here" refusal is asked again with the step held and once more inside
+> "already a lockbox here" refusal is asked again with the step held and once more inside
 > the registry write. A pack sealed with a different password stays on offer in Settings ›
-> Workspaces. Biometric unlock has a key and no password, so it cannot do this. Follow-up: pull on foreground and on a timer, since an idle device only syncs
+> Lockboxes. Biometric unlock has a key and no password, so it cannot do this. Follow-up: pull on foreground and on a timer, since an idle device only syncs
 > on unlock and after its own writes.
 >
 > **Follow-ups (not blockers):** wire `sync::restore` into onboarding ("Restore from Drive"
 > on a fresh install); cross-device master-password-change flow (currently fails safe with a
 > foreign-vault error); OAuth scope audit (`drive.file`); an explicitly global "Revoke Google
-> access" action, the one place the grant is retired (a per-workspace disconnect deliberately
+> access" action, the one place the grant is retired (a per-lockbox disconnect deliberately
 > never does); **release gate: a production Google OAuth client ID (owner task)**.
 
 Re-enable Google Drive sync on the new SQLite storage engine. Postponed during remediation;

@@ -15,7 +15,7 @@ import { chord } from '@/lib/platform'
 import { copyValue, type EntryValue } from '@/services/entries'
 import {
   CopyGlyph,
-  DicesGlyph,
+  GeneratorGlyph,
   GearGlyph,
   LockGlyph,
   MoonGlyph,
@@ -88,7 +88,7 @@ export const useCommands = (): Command[] => {
       id: 'generate-password',
       label: t('Generate a password'),
       shortcut: chord('G'),
-      glyph: DicesGlyph,
+      glyph: GeneratorGlyph,
       // The standalone form: nothing to apply the value to, so it copies.
       run: () => openGenerator()
     },
