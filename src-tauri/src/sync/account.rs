@@ -3,9 +3,15 @@
 //!
 //! The flow is the same for every provider; what differs — endpoints, consent
 //! parameters, the client id, the redirect a phone registers — is data, an
-//! [`OAuthConfig`] per provider (see [`super::provider::oauth_config`]). Which
-//! config a call uses comes from the tokens' own [`Provider`], or, before there
-//! are tokens, from the provider the caller is connecting.
+//! [`OAuthConfig`] per provider (see [`Provider::oauth`]). Which config a call
+//! uses comes from the tokens' own [`Provider`], or, before there are tokens,
+//! from the provider the caller is connecting.
+//!
+//! One provider has no flow at all: iCloud's account is the device's own, so
+//! its connect is a check that there is one ([`device_account_tokens`]) and
+//! its token file holds nothing but the name. Every rule about the file —
+//! one per workspace, the generation guard, disconnect, re-seal — applies to
+//! it unchanged.
 //!
 //! Desktop talks to a Desktop-app client: the consent URL opens in the browser
 //! and a one-shot loopback listener on 127.0.0.1 captures the auth code, so the
@@ -48,7 +54,7 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
-use super::provider::{oauth_config, Provider};
+use super::provider::Provider;
 #[cfg(desktop)]
 use crate::app::APP_NAME;
 use crate::error::{Error, Result};
@@ -230,8 +236,9 @@ impl Credentials {
 /// does.
 #[cfg(mobile)]
 pub fn redirect_matches(app: &AppHandle, provider: Provider, url: &Url) -> bool {
-    Credentials::resolve(app, oauth_config(provider))
-        .is_ok_and(|c| matches_redirect_uri(url, &c.redirect_uri))
+    provider.oauth().is_some_and(|config| {
+        Credentials::resolve(app, config).is_ok_and(|c| matches_redirect_uri(url, &c.redirect_uri))
+    })
 }
 
 /// Whether a deep link is `provider`'s "the user cancelled" landing for this
@@ -239,8 +246,23 @@ pub fn redirect_matches(app: &AppHandle, provider: Provider, url: &Url) -> bool 
 /// it says nothing about which request it ends; the caller decides that.
 #[cfg(mobile)]
 pub fn cancel_matches(app: &AppHandle, provider: Provider, url: &Url) -> bool {
-    (oauth_config(provider).mobile_cancel_uri)(app)
+    provider
+        .oauth()
+        .and_then(|config| (config.mobile_cancel_uri)(app))
         .is_some_and(|uri| matches_redirect_uri(url, &uri))
+}
+
+/// `provider`'s OAuth client, for a flow that cannot do without one. A
+/// provider that has no sign-in of its own (iCloud) never reaches these flows
+/// — [`device_account_tokens`] is its connect, and nothing refreshes a token
+/// it does not hold — so this is a programming error surfaced, not a case.
+fn oauth_config(provider: Provider) -> Result<&'static OAuthConfig> {
+    provider.oauth().ok_or_else(|| {
+        Error::Other(format!(
+            "{} has no sign-in of its own",
+            provider.display_name()
+        ))
+    })
 }
 
 /// `url` is `redirect_uri` plus, at most, a query: same scheme (schemes are
@@ -536,8 +558,19 @@ pub fn sealed_provider(app: &AppHandle) -> Provider {
         .unwrap_or_default()
 }
 
+/// Whether the open workspace has an account to sync through: a sealed file
+/// holding a grant — or, for a provider whose account is the device's own
+/// (iCloud), holding nothing but the provider's name, which is all there is.
 pub fn is_configured(app: &AppHandle, cryptor: &Cryptor) -> bool {
-    read_tokens(app, cryptor).is_some_and(|t| t.access_token.is_some() || t.refresh_token.is_some())
+    read_tokens(app, cryptor).is_some_and(|tokens| holds_an_account(&tokens))
+}
+
+/// Whether `tokens` are an account at all: a grant for a provider that signs
+/// in, or merely the name of one that does not.
+fn holds_an_account(tokens: &Tokens) -> bool {
+    !tokens.provider.signs_in_with_oauth()
+        || tokens.access_token.is_some()
+        || tokens.refresh_token.is_some()
 }
 
 /// Forget the account: the token file goes, so nothing survives to mint a new
@@ -620,7 +653,12 @@ fn open_consent(
 pub fn obtain_tokens(app: &AppHandle, provider: Provider, attempt: u64) -> Result<Tokens> {
     let cancelled = || superseded(&app_state(app).setup_attempt, attempt);
 
-    let config = oauth_config(provider);
+    // No consent page to open: the device's own account is the grant. A
+    // cancel racing this is still honoured — the caller drops a result for
+    // an attempt that is no longer current.
+    let Some(config) = provider.oauth() else {
+        return device_account_tokens(provider);
+    };
     let listener = bind_loopback(config.loopback_ports)?;
     let port = listener.local_addr()?.port();
     let credentials = Credentials::resolve(app, config)?.with_loopback(port);
@@ -673,11 +711,36 @@ fn bind_loopback(ports: &[u16]) -> Result<TcpListener> {
         })
 }
 
+/// The "tokens" of a provider whose account is the device's own (iCloud): the
+/// twin of [`obtain_tokens`] for a connect with no consent page. There is
+/// nothing to hold but the provider's name, and the one thing to check is
+/// that the device has such an account at all — a workspace sealed to iCloud
+/// on a device signed out of it would fail every run from then on. Blocking
+/// (the account query is a round trip to the system): call it off the main
+/// thread, on the blocking pool like every consent.
+pub fn device_account_tokens(provider: Provider) -> Result<Tokens> {
+    match provider {
+        Provider::ICloud => {
+            tauri::async_runtime::block_on(super::providers::icloud::check_account())?
+        }
+        Provider::GoogleDrive | Provider::Dropbox => {
+            return Err(Error::Other(format!(
+                "{} is connected by signing in, not from the device",
+                provider.display_name()
+            )));
+        }
+    }
+    Ok(Tokens {
+        provider,
+        ..Tokens::default()
+    })
+}
+
 /// Mobile, first half: open `provider`'s consent page and hand back what the
 /// caller must keep until the redirect arrives.
 #[cfg(mobile)]
 pub fn begin(app: &AppHandle, provider: Provider) -> Result<Started> {
-    let config = oauth_config(provider);
+    let config = oauth_config(provider)?;
     open_consent(app, config, &Credentials::resolve(app, config)?)
 }
 
@@ -691,7 +754,7 @@ pub async fn exchange_for_tokens(
     code: &str,
     verifier: &str,
 ) -> Result<Tokens> {
-    let config = oauth_config(provider);
+    let config = oauth_config(provider)?;
     let credentials = Credentials::resolve(app, config)?;
     exchange_code(&super::http_client(), config, &credentials, code, verifier).await
 }
@@ -846,7 +909,7 @@ pub async fn fresh_access_token(
             .refresh_token
             .clone()
             .ok_or(Error::SyncNotConfigured)?;
-        let config = oauth_config(tokens.provider);
+        let config = oauth_config(tokens.provider)?;
         let fresh = refresh(
             client,
             config,
@@ -1159,6 +1222,40 @@ fn response_html(error: Option<&Error>, provider: Provider) -> String {
 mod tests {
     use super::*;
 
+    // An OAuth provider's file is an account only while it holds a grant —
+    // what stops a disconnect-by-emptying from reading back as connected —
+    // while iCloud's never holds one and is an account by its name alone.
+    #[test]
+    fn an_account_is_a_grant_or_a_provider_that_needs_none() {
+        let empty = |provider| Tokens {
+            provider,
+            ..Tokens::default()
+        };
+        assert!(!holds_an_account(&empty(Provider::GoogleDrive)));
+        assert!(!holds_an_account(&empty(Provider::Dropbox)));
+        assert!(holds_an_account(&empty(Provider::ICloud)));
+        assert!(holds_an_account(&Tokens {
+            refresh_token: Some("r".into()),
+            ..empty(Provider::Dropbox)
+        }));
+        assert!(holds_an_account(&Tokens {
+            access_token: Some("a".into()),
+            ..empty(Provider::GoogleDrive)
+        }));
+    }
+
+    // Only a provider without a sign-in can be connected from the device; an
+    // OAuth provider asked this way is a programming error, said plainly.
+    #[test]
+    fn oauth_providers_are_not_connected_from_the_device() {
+        for provider in [Provider::GoogleDrive, Provider::Dropbox] {
+            let err = device_account_tokens(provider).unwrap_err().to_string();
+            assert!(err.contains(provider.display_name()), "{err}");
+            assert!(oauth_config(provider).is_ok());
+        }
+        assert!(oauth_config(Provider::ICloud).is_err());
+    }
+
     #[test]
     fn pkce_challenge_is_url_safe_sha256() {
         // Known RFC 7636 test vector.
@@ -1443,7 +1540,7 @@ mod tests {
             redirect_uri: "com.googleusercontent.apps.1-a:/oauth2redirect".into(),
             secret: None,
         };
-        let config = oauth_config(Provider::GoogleDrive);
+        let config = oauth_config(Provider::GoogleDrive).unwrap();
         let url = Url::parse(&auth_url(config, &credentials, "chal", "nonce-1").unwrap()).unwrap();
         let state = url
             .query_pairs()
@@ -1461,7 +1558,7 @@ mod tests {
             redirect_uri: "http://127.0.0.1:1/auth/callback".into(),
             secret: None,
         };
-        let config = oauth_config(Provider::GoogleDrive);
+        let config = oauth_config(Provider::GoogleDrive).unwrap();
         let url = Url::parse(&auth_url(config, &credentials, "chal", "n").unwrap()).unwrap();
         let keys: Vec<String> = url.query_pairs().map(|(k, _)| k.into_owned()).collect();
         assert_eq!(
@@ -1903,7 +2000,7 @@ mod tests {
             redirect_uri: "http://127.0.0.1:53682/auth/callback".into(),
             secret: None,
         };
-        let config = oauth_config(Provider::Dropbox);
+        let config = oauth_config(Provider::Dropbox).unwrap();
         let url = Url::parse(&auth_url(config, &credentials, "chal", "n").unwrap()).unwrap();
         assert!(url
             .as_str()

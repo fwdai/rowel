@@ -1,6 +1,7 @@
 import { call } from './client'
 import type { SyncStatus } from './sync'
 import type { GeneratorOptions } from './tools'
+import type { Provider } from './provider'
 import type { BiometricMode, BiometryType, Workspace } from './types'
 import type { Accent, ThemePreference } from '@/theme'
 
@@ -72,6 +73,13 @@ export interface AppStatus {
    * place for every screen to read "does this vault sync" from.
    */
   sync: SyncStatus
+  /**
+   * The providers this build can connect, in picker order. Google Drive and
+   * Dropbox are always there; iCloud only on a macOS or iOS build signed for
+   * it. Every picker draws exactly this list, so the frontend never has to know
+   * which platform or entitlement decides.
+   */
+  providers: Provider[]
   /**
    * Whether this platform has a text recognizer at all. False on Linux and on a
    * Windows without an OCR language pack, where the UI offers no scanning.

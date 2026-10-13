@@ -6,7 +6,9 @@ Goal: keep one sync engine and one set of rules about vault identity, naming
 and conflict resolution, and plug cloud providers in underneath. Google Drive
 is the first adapter (it exists today, fused into the core). Dropbox is the
 second. A third should be a new directory under `sync/providers/` plus one
-enum variant, and nothing else.
+enum variant, and nothing else. iCloud is the third (§9), and it was almost
+that: the storage half fit as planned, the account half needed one new
+concept — a provider with no sign-in of its own.
 
 ## 1. What the code looks like today
 
@@ -485,3 +487,105 @@ Error kind `driveNotConnected` → `accountNotConnected`.
 3. Onboarding entry: two buttons on Welcome, or one "Restore from cloud" that
    leads to a picker (proposal: two buttons; the phone screen has room).
 4. Shares: Drive-only until PR 4 (proposal: yes).
+
+## 9. iCloud adapter
+
+Status: implemented (`sync/providers/icloud/`), Apple platforms only.
+
+iCloud is not an HTTP service with an OAuth client. There is no sign-in: the
+account is whichever Apple ID the device is signed into, and the app reaches
+it through CloudKit, a system framework that needs entitlements rather than
+tokens. Two things follow, one on each side of the core/adapter line.
+
+### 9.1 Storage: CloudKit, not iCloud Drive
+
+The adapter is a `VaultStore` over CloudKit's **private database**, default
+zone, in the container `iCloud.app.rowel` shared by the macOS and iOS apps.
+Not an iCloud Drive (ubiquity) container: that is a local folder the system
+syncs in the background, so a `stat` there answers from a cache by definition,
+nothing carries a server revision, and conflicts surface as `NSFileVersion`
+siblings — every one of the invariants in §5 that `head_revision` relies on.
+CloudKit is a round trip per call, which is exactly what `PackRemote` assumes.
+
+One record type, `VaultEntry`. The **record name is the entry name** the core
+passes (`<vault-id>.rowel`, `<vault-id>.deleted`); fields `pack` (a `CKAsset`
+holding the bytes) and `size` (Int64). The handle the core holds is the record
+name, the revision is the record's `recordChangeTag`, and the time the probe
+orders by is its `modificationDate`.
+
+| `VaultStore` | CloudKit |
+|---|---|
+| `list_vaults` | `CKQueryOperation` on the type, `TRUEPREDICATE`, cursor followed to the end; `desiredKeys = [size]` so a listing never downloads an asset |
+| `stat` | fetch by record id; `UnknownItem` is `None` |
+| `read` | the fetched record's asset file, size-checked against the cap before it is read whole |
+| `create` | a new record saved with `ifServerRecordUnchanged`: one already there fails (`ServerRecordChanged`) rather than being overwritten |
+| `update(entry)` | fetch, compare the server's change tag to the revision the run pulled, refuse on a mismatch, then save with `ifServerRecordUnchanged` — a compare-and-swap, like Dropbox's `update <rev>` |
+| `delete` | delete by record id; `UnknownItem` counts as deleted |
+
+The schema has to exist in the container's **Production** environment before
+a distribution build can use it; CloudKit creates types on the fly only in
+Development. The one-time console steps are in `docs/releasing.md`.
+
+### 9.2 Account: a provider without a sign-in
+
+`Provider::oauth()` is `Option<&OAuthConfig>`, `None` for iCloud, and
+`signs_in_with_oauth()` reads it. Everything that needed an OAuth client
+already took the config from the provider, so the OAuth paths are unchanged
+and simply never see iCloud:
+
+- **Connect** is `account::device_account_tokens`: ask CloudKit for the
+  account status, refuse unless it is `Available` (with a sentence saying
+  what to do — sign in to iCloud in System Settings), and hand back `Tokens`
+  holding nothing but the provider. Desktop reaches it through
+  `obtain_tokens`; the phone's `connect_pending` takes it explicitly, since
+  its consent flow is cut in two around Safari and there is no Safari here.
+  Both report through the same `setup:account:*` events.
+- **The token file** `auth/icloud.swftx` holds `{"provider":"iCloud"}` and
+  nothing else, and is still what says "this workspace syncs through iCloud".
+  One file per workspace, the generation guard, disconnect, re-seal and the
+  locked-workspace provider all read it unchanged. `is_configured` accepts a
+  file with no grant when the provider has none to hold.
+- **The store** takes an `Auth` like every adapter, so `into_tokens` and the
+  pending-store round trip work, but never asks it for an access token.
+- **Refresh** cannot happen: `fresh_access_token` is only reached from an
+  OAuth adapter's `access_token`, and a provider without a config fails it
+  rather than silently continuing.
+
+### 9.3 Availability: the first provider that is not everywhere
+
+Google and Dropbox exist on every build. iCloud exists on Apple targets, and
+on macOS only in a binary **signed with the iCloud entitlements**: `tauri dev`
+and an unsigned build have none, and CloudKit aborts the process with an
+Objective-C exception on first use rather than returning an error. So:
+
+- `Provider::supported()` is `false` off Apple; `true` on iOS (the committed
+  entitlements carry the keys, and `check-ipa-entitlements.sh` refuses an IPA
+  that lost them); on macOS it reads the running binary's own signature
+  (`SecTaskCopyValueForEntitlement` for `com.apple.developer.icloud-services`)
+  once and caches the answer.
+- `app_status` carries `providers: Provider[]`, the providers this build can
+  connect, in picker order. Every picker in the frontend renders that list,
+  never the static one. A connect command for an unsupported provider is
+  refused before an attempt begins (`ensure_offered`).
+- Moving a workspace that syncs through iCloud to Windows or Linux leaves it
+  connected to a provider that build cannot reach; every run fails with the
+  same "only available on Apple devices" error until the user disconnects.
+  Saying so in the UI is a follow-up.
+
+### 9.4 Entitlements
+
+Both apps ask for `com.apple.developer.icloud-services = [CloudKit]` and
+`com.apple.developer.icloud-container-identifiers = [iCloud.app.rowel]`. On
+macOS both are profile-gated like `keychain-access-groups`, so the Developer
+ID profile must grant them, which it does only once the App ID has the iCloud
+capability — `check-macos-entitlements.mjs` fails the release until then. The
+AutoFill and Safari extensions do not sync and do not get them.
+
+### 9.5 Not done
+
+- Shares: none through iCloud, like Dropbox (the link format has no provider
+  tag yet). `CKShare` would be the mechanism.
+- Packs larger than a single `CKAsset` comfortably holds are not special-cased;
+  `MAX_PACK_BYTES` (256 MiB) is within CloudKit's asset limit.
+- A `CKSubscription` push could trigger a run when another device writes;
+  today a run is scheduled exactly as for the other providers.

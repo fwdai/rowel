@@ -232,6 +232,7 @@
   "Not connected": "Inte ansluten",
   "Waiting for {{provider}}…": "Väntar på {{provider}}…",
   "Waiting for the browser…": "Väntar på webbläsaren…",
+  "Checking your {{provider}} account…": "Kontrollerar ditt {{provider}}-konto…",
   "Connect": "Anslut",
   "Disconnect": "Koppla från",
   "Last synced": "Senast synkad",

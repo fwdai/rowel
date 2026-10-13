@@ -6,7 +6,7 @@ import type { RemotePack } from '@/api/setup'
 import { open } from '@tauri-apps/plugin-dialog'
 import { fileOpened, setupAccountProbed, setupAccountFailed, useApp } from '@/store'
 import { evaluate, MIN_LENGTH, type Strength } from '@/services/strength'
-import { calls, mockCommandOnce } from './ipc'
+import { appStatusDefault, calls, mockCommandOnce } from './ipc'
 import { deferred, seedApp } from './utils'
 
 // The real `evaluate` awaits an 848 kB zxcvbn chunk. The specs below have to
@@ -97,6 +97,35 @@ describe('welcome', () => {
     expect(useApp.getState().setupAccount).toMatchObject({ status: 'pending', provider })
   })
 
+  // Which providers are offered is the build's to say, not the frontend's: an
+  // Apple build signed for iCloud reports a third, and every other build the
+  // same two as before.
+  it('offers iCloud only on a build that reports it', async () => {
+    const { unmount } = render(<Start />)
+    expect(screen.queryByTestId('start-icloud-button')).not.toBeInTheDocument()
+    unmount()
+
+    seedApp({ providers: ['googleDrive', 'dropbox', 'iCloud'] })
+    render(<Start />)
+    const icloud = screen.getByTestId('start-icloud-button')
+    expect(icloud).toHaveTextContent('Continue with iCloud')
+
+    await userEvent.click(icloud)
+    expect(calls('setup_connect')).toEqual([{ provider: 'iCloud' }])
+    expect(useApp.getState().setupAccount).toMatchObject({ status: 'pending', provider: 'iCloud' })
+  })
+
+  // An iCloud connect opens no browser, so the wait must not say it is waiting
+  // on one; a consent flow's wait keeps naming the provider it is out with.
+  it('says it is checking the account while an iCloud connect is out', async () => {
+    seedApp({ providers: ['googleDrive', 'dropbox', 'iCloud'] })
+    render(<Start />)
+
+    await userEvent.click(screen.getByTestId('start-icloud-button'))
+    expect(screen.getByTestId('drive-spinner')).toHaveTextContent('Checking your iCloud account…')
+    expect(screen.queryByText('Waiting for iCloud…')).not.toBeInTheDocument()
+  })
+
   // The mascot belongs to the flow, not the screen: the same element stays
   // mounted from step to step and brightens as the steps go by.
   it('keeps one mascot through the steps and brightens it', async () => {
@@ -131,6 +160,10 @@ describe('welcome', () => {
     vi.doMock('@/lib/platform', () => ({ isIOS: true, isAndroid: false, isMobile: true }))
     try {
       const { default: Welcome } = await import('@/components/Start/Welcome')
+      // The reset gave the screen a fresh store, which the suite's boot never
+      // seeded: the probe has to have answered for any provider to be offered.
+      const store = await import('@/store')
+      store.useApp.setState({ status: appStatusDefault() })
       render(<Welcome onFresh={() => {}} onConnect={() => {}} onFile={() => {}} />)
 
       expect(screen.getByTestId('start-drive-button')).toBeInTheDocument()

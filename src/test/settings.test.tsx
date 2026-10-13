@@ -170,6 +170,8 @@ describe('Settings › sync', () => {
     await openSync()
     expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Cloud sync')
     expect(screen.getByTestId('settings-drive-connect')).toHaveTextContent('Connect Google Drive')
+    // Only the two every build has: a third needs the build to report it.
+    expect(screen.queryByTestId('settings-icloud-connect')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('settings-dropbox-connect'))
 
@@ -177,6 +179,36 @@ describe('Settings › sync', () => {
     expect(screen.getByText('Waiting for Dropbox…')).toBeInTheDocument()
     expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Dropbox')
     expect(screen.queryByTestId('settings-drive-connect')).not.toBeInTheDocument()
+  })
+
+  // The picker draws what the build reported it can connect: an Apple build
+  // signed for iCloud reports a third, after the two every build has.
+  it('offers iCloud on a build that reports it', async () => {
+    seedApp({ providers: ['googleDrive', 'dropbox', 'iCloud'] })
+    await openSync()
+
+    const row = screen.getByTestId('settings-drive-row')
+    const ids = [...row.querySelectorAll('[data-testid$="-connect"]')].map(node =>
+      node.getAttribute('data-testid')
+    )
+    expect(ids).toEqual([
+      'settings-drive-connect',
+      'settings-dropbox-connect',
+      'settings-icloud-connect'
+    ])
+    expect(screen.getByTestId('settings-icloud-connect')).toHaveTextContent('Connect iCloud')
+  })
+
+  // iCloud asks no browser for consent, so the wait is a check of the account
+  // rather than a wait on a page the user has to come back from.
+  it('says it is checking the account while an iCloud connect is out', async () => {
+    seedApp({ providers: ['googleDrive', 'dropbox', 'iCloud'] })
+    await openSync()
+    await userEvent.click(screen.getByTestId('settings-icloud-connect'))
+
+    expect(calls('sync_connect')).toEqual([{ provider: 'iCloud' }])
+    expect(screen.getByText('Checking your iCloud account…')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-account-name')).toHaveTextContent('iCloud')
   })
 
   // Connected, the card names the account's provider — and Sharing, which only

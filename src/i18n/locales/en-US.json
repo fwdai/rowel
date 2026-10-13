@@ -238,6 +238,7 @@
   "Not connected": "Not connected",
   "Waiting for {{provider}}…": "Waiting for {{provider}}…",
   "Waiting for the browser…": "Waiting for the browser…",
+  "Checking your {{provider}} account…": "Checking your {{provider}} account…",
   "Connect": "Connect",
   "Disconnect": "Disconnect",
   "Last synced": "Last synced",

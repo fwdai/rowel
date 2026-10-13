@@ -4,6 +4,7 @@ import { providerName, type Provider } from '@/api/provider'
 import { cx } from '@/utils/cx'
 import { META } from '@/components/elements/tokens'
 import ProviderMark from '@/components/elements/ProviderMark'
+import { waitingFor } from '@/components/elements/providerCopy'
 import { CloudGlyph } from '@/components/Main/icons'
 import StatusPill from './StatusPill'
 import Control from './Control'
@@ -23,9 +24,7 @@ export default function Header({ provider, probing, offered, restoring }: Props)
   const sync = useApp(state => state.sync)
   const name = provider && providerName(provider)
 
-  const waiting = name
-    ? t('Waiting for {{provider}}…', { provider: name })
-    : t('Waiting for the browser…')
+  const waiting = waitingFor(t, provider)
   // A connection the backend reports outranks a probe the press left pending:
   // the vault is this account's whatever the slice still says.
   const description = sync.pending

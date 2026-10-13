@@ -135,6 +135,43 @@ which covers any group under the team prefix.
 Renewing is step 2 onwards — the App ID persists. If the team id ever changes,
 update the group in `Entitlements.plist` too.
 
+### iCloud sync: the App ID capability and the CloudKit schema
+
+`Entitlements.plist` also asks for `com.apple.developer.icloud-services`
+(`CloudKit`) and `com.apple.developer.icloud-container-identifiers`
+(`iCloud.app.rowel`), which iCloud sync runs on
+(`src-tauri/src/sync/providers/icloud`). Both are profile-gated exactly like
+`keychain-access-groups`, so the profile has to grant them — and a profile only
+does once the App ID has the capability. The check script fails the build until
+then, with "profile does not grant …", which is the intended outcome: a build
+that asked for them without a grant would be SIGKILLed at launch.
+
+One-time, in the Developer portal, before regenerating the profile:
+
+1. **Create the container.** [Identifiers](https://developer.apple.com/account/resources/identifiers/list)
+   → **+** → *iCloud Containers* → `iCloud.app.rowel`. One container for both
+   platforms: the iOS app (`app.rowel.mobile`) syncs to the same one.
+2. **Enable iCloud on both App IDs.** `app.rowel.desktop` and `app.rowel.mobile`
+   → *iCloud* → tick *CloudKit* → *Configure* → select `iCloud.app.rowel`.
+3. **Regenerate the Developer ID profile** (step 2 of the list above: the
+   capability change invalidates the existing profile), commit it, and run
+   `bun scripts/check-macos-entitlements.mjs`. It should now report the two
+   iCloud keys among the granted ones.
+4. **Deploy the schema.** In the [CloudKit Console](https://icloud.developer.apple.com/)
+   for `iCloud.app.rowel`, Development environment, record type `VaultEntry`
+   with fields `pack` (Asset) and `size` (Int64), and an index on
+   `recordName` marked *Queryable* (the listing is a `TRUEPREDICATE` query on
+   the type and CloudKit refuses it without that index). Then *Deploy Schema
+   Changes…* to Production. Builds signed for distribution talk to Production;
+   nothing synced from Xcode is visible to them, and a type that was never
+   deployed makes every run fail with "did not find record type".
+
+Until all four are done, a signed macOS build does not launch at all if the
+entitlements are in and the profile is not, and a build without the
+entitlements simply does not offer iCloud: the app reads its own signature at
+startup (`icloud::supported`) and lists only the providers it can connect in
+`app_status`. `tauri dev` is unsigned and never offers it.
+
 The profile does **not** grant `com.apple.security.application-groups`, and
 does not need to: the app and its Safari extension share
 `UFBL3F444A.app.rowel.desktop`, a macOS-style group (team id, dot, name) that

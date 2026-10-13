@@ -90,6 +90,9 @@ export const appStatusDefault = (): AppStatus => ({
     lastSyncedAt: null,
     seq: 0
   },
+  // The two every build has. iCloud is an Apple-signed build's to report, so a
+  // suite about it seeds the third.
+  providers: ['googleDrive', 'dropbox'],
   // Off by default, so no suite sees a scan affordance it did not ask for.
   scanSupported: false,
   // The desktop's gate, and what every pre-existing spec asserts by name.

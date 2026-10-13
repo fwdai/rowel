@@ -22,7 +22,7 @@
 - Secure notes to store sensitive information
 - One-click Strong Password Generation
 - Time-based One Time Passwords support (TOTP)
-- Google Drive Sync (optional)
+- Sync through Google Drive, Dropbox or iCloud (optional; iCloud on Mac and iPhone)
 - Browser autofill through the KeePassXC-Browser extension (see below)
 - No data is leaving your computer:
   - Your vault is a locally stored, encrypted SQLite database (SQLCipher); each

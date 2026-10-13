@@ -232,6 +232,7 @@
   "Not connected": "Bağlı değil",
   "Waiting for {{provider}}…": "{{provider}} bekleniyor…",
   "Waiting for the browser…": "Tarayıcı bekleniyor…",
+  "Checking your {{provider}} account…": "{{provider}} hesabınız kontrol ediliyor…",
   "Connect": "Bağlan",
   "Disconnect": "Bağlantıyı kes",
   "Last synced": "Son eşitleme",

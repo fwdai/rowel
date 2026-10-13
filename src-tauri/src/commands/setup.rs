@@ -77,22 +77,15 @@ pub fn setup_connect(
 /// soon as its guards have passed, and the frontend listens for the events.
 #[cfg(desktop)]
 pub(crate) fn connect_pending(app: &AppHandle, provider: Provider) -> Result<()> {
+    ensure_offered(provider)?;
     ensure_idle(&app.state::<AppState>())?;
     let attempt = begin_attempt(&app.state::<AppState>());
     events::setup_account_pending(app);
-
-    let app = app.clone();
-    super::detached(move || {
-        // The attempt begun above, not whatever is current once this thread
-        // runs: a cancel in between must reach the flow before it opens the
-        // browser or holds a port.
-        let probed = sync::obtain_tokens(&app, provider, attempt).and_then(|mut tokens| {
-            // `block_on` is legal here because a blocking-pool thread is not one
-            // of the async runtime's workers. Same rule as a sync run.
-            let files = tauri::async_runtime::block_on(probe(&app, &mut tokens))?;
-            Ok((tokens, files))
-        });
-        report(&app, attempt, probed);
+    // The attempt begun above, not whatever is current once the thread runs:
+    // a cancel in between must reach the flow before it opens the browser or
+    // holds a port.
+    connect_detached(app, attempt, move |app| {
+        sync::obtain_tokens(app, provider, attempt)
     });
     Ok(())
 }
@@ -104,11 +97,55 @@ pub(crate) fn connect_pending(app: &AppHandle, provider: Provider) -> Result<()>
 /// redirect does when it comes back, and that is identical here: redeem the
 /// code, probe, and leave the tokens pending. Which flow asked is the
 /// frontend's to remember, not the deep-link handler's.
+///
+/// A provider with no consent page (iCloud) has nothing for Safari to do:
+/// the device's own account is checked and probed on the blocking pool, as
+/// desktop does for every provider, and the same events report it.
 #[cfg(mobile)]
 pub(crate) fn connect_pending(app: &AppHandle, state: &AppState, provider: Provider) -> Result<()> {
+    ensure_offered(provider)?;
     ensure_idle(state)?;
-    begin_attempt(state);
+    let attempt = begin_attempt(state);
+    if !provider.signs_in_with_oauth() {
+        events::setup_account_pending(app);
+        connect_detached(app, attempt, move |_| sync::device_account_tokens(provider));
+        return Ok(());
+    }
     crate::commands::sync::start_consent(app, state, crate::state::AuthPurpose::Setup, provider)
+}
+
+/// A provider this build cannot connect is refused before an attempt begins,
+/// rather than failing the probe later with a less honest error. The frontend
+/// only offers what `app_status` lists, so this is a backstop.
+fn ensure_offered(provider: Provider) -> Result<()> {
+    if provider.supported() {
+        Ok(())
+    } else {
+        Err(Error::Other(format!(
+            "{} sync is not available on this device",
+            provider.display_name()
+        )))
+    }
+}
+
+/// The rest of a connect once it is known to be `attempt`'s: obtain the
+/// account's tokens with `obtain`, probe what it holds, and report — all on
+/// the blocking pool, since both halves are round trips.
+fn connect_detached(
+    app: &AppHandle,
+    attempt: u64,
+    obtain: impl FnOnce(&AppHandle) -> Result<sync::Tokens> + Send + 'static,
+) {
+    let app = app.clone();
+    super::detached(move || {
+        let probed = obtain(&app).and_then(|mut tokens| {
+            // `block_on` is legal here because a blocking-pool thread is not one
+            // of the async runtime's workers. Same rule as a sync run.
+            let files = tauri::async_runtime::block_on(probe(&app, &mut tokens))?;
+            Ok((tokens, files))
+        });
+        report(&app, attempt, probed);
+    });
 }
 
 /// Mobile, second half: redeem the code the deep-link handler accepted, with

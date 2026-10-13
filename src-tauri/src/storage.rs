@@ -29,6 +29,9 @@ pub const SETTINGS_FILE: &str = "settings.json";
 // still connected after an update, with nothing to migrate.
 pub const GDRIVE_FILE: &str = "auth/gdrive.swftx";
 pub const DROPBOX_FILE: &str = "auth/dropbox.swftx";
+// Holds no token (the device's iCloud account is the credential), but it is
+// the one record that the workspace syncs through iCloud.
+pub const ICLOUD_FILE: &str = "auth/icloud.swftx";
 // Working space for the sync engine, inside the workspace's own directory (see
 // `sync_scratch_dir`).
 const SYNC_SCRATCH_DIR: &str = "sync-scratch";
@@ -49,12 +52,13 @@ const SYNC_SCRATCH_DIR: &str = "sync-scratch";
 // whatever `-wal`/`-shm` siblings it has (see `db_files`), a sidecar is the one
 // file.
 const VAULT_DB_FILES: [&str; 2] = [DB_FILE, DB_REKEY_BACKUP_FILE];
-const VAULT_SIDECAR_FILES: [&str; 6] = [
+const VAULT_SIDECAR_FILES: [&str; 7] = [
     KDF_SIDECAR_FILE,
     KDF_SIDECAR_REKEY_BACKUP_FILE,
     LOCKOUT_SIDECAR_FILE,
     GDRIVE_FILE,
     DROPBOX_FILE,
+    ICLOUD_FILE,
     WRAPPED_KEY_FILE,
 ];
 
@@ -770,7 +774,7 @@ mod tests {
     use super::{
         move_data_dir, move_vault_files, move_workspace_files, read_backup,
         read_regular_file_capped, remove_if_present, settle_data_dir, Error, BIOMETRIC_FILE,
-        DB_FILE, DB_REKEY_BACKUP_FILE, DROPBOX_FILE, GDRIVE_FILE, KDF_SIDECAR_FILE,
+        DB_FILE, DB_REKEY_BACKUP_FILE, DROPBOX_FILE, GDRIVE_FILE, ICLOUD_FILE, KDF_SIDECAR_FILE,
         KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, STALE_SUFFIX, SYNC_SCRATCH_DIR,
         WRAPPED_KEY_FILE,
     };
@@ -845,7 +849,7 @@ mod tests {
     }
 
     // Every file of the set, laid out as a workspace holds them.
-    fn seed_vault(dir: &Path) -> [&'static str; 8] {
+    fn seed_vault(dir: &Path) -> [&'static str; 9] {
         let files = [
             DB_FILE,
             DB_REKEY_BACKUP_FILE,
@@ -854,6 +858,7 @@ mod tests {
             LOCKOUT_SIDECAR_FILE,
             GDRIVE_FILE,
             DROPBOX_FILE,
+            ICLOUD_FILE,
             WRAPPED_KEY_FILE,
         ];
         fs::create_dir_all(dir.join("auth")).unwrap();

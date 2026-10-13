@@ -7,6 +7,7 @@ import { isMobile } from '@/lib/platform'
 import type { UnlockResult } from '@/api/types'
 import { setupRestoreFromAccount } from '@/api/setup'
 import { providerName } from '@/api/provider'
+import { waitingFor } from '@/components/elements/providerCopy'
 import {
   useApp,
   selectedRemotePack,
@@ -122,7 +123,7 @@ export default function Account({ onStartFresh, onUseFile, onRestored }: Props) 
       <>
         <StepHeader eyebrow={eyebrow} busy title={t('Looking for your data…')} />
         <div className={`${COLUMN} mt-9`}>
-          <SpinnerCard testid="drive-spinner" caption={t('Waiting for {{provider}}…', name)} />
+          <SpinnerCard testid="drive-spinner" caption={waitingFor(t, provider)} />
         </div>
       </>
     )

@@ -232,6 +232,7 @@
   "Not connected": "Nicht verbunden",
   "Waiting for {{provider}}…": "Warten auf {{provider}}…",
   "Waiting for the browser…": "Warten auf den Browser…",
+  "Checking your {{provider}} account…": "Ihr {{provider}}-Konto wird geprüft…",
   "Connect": "Verbinden",
   "Disconnect": "Trennen",
   "Last synced": "Zuletzt synchronisiert",

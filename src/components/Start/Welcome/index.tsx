@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import Button from '@/components/elements/Button'
 import ProviderMark from '@/components/elements/ProviderMark'
-import { PROVIDERS, providerName, providerSlug, type Provider } from '@/api/provider'
+import { providerName, providerSlug, type Provider } from '@/api/provider'
+import { useProviders } from '@/store'
 import { LABEL } from '@/components/elements/tokens'
 import { DiskGlyph } from '@/components/Main/icons'
 import { isMobile } from '@/lib/platform'
@@ -17,11 +18,13 @@ interface Props {
 
 // The first screen of the first run. One thing to press if this is a new
 // device and nothing else exists yet; below the rule, the two places the app's
-// own data can already be. Three ways in and nothing else: what restoring
-// asks for is said on the screen that asks for it. A phone has no file system
-// to hand a backup from, so there it is Drive or nothing.
+// own data can already be: one row per provider this build can connect, and
+// a backup file. What restoring asks for is said on the screen that asks for
+// it. A phone has no file system to hand a backup from, so there it is a cloud
+// account or nothing.
 export default function Welcome({ onFresh, onConnect, onFile }: Props) {
   const { t } = useTranslation()
+  const providers = useProviders()
 
   return (
     <>
@@ -47,7 +50,7 @@ export default function Welcome({ onFresh, onConnect, onFile }: Props) {
       </div>
 
       <div className={`${COLUMN} mt-7 flex flex-col gap-2`}>
-        {PROVIDERS.map(provider => (
+        {providers.map(provider => (
           <RestoreAction
             key={provider}
             mark={<ProviderMark provider={provider} size={18} />}

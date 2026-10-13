@@ -8,5 +8,19 @@
 	<array>
 		<string>group.app.rowel.mobile</string>
 	</array>
+	<!--
+	  iCloud sync (src-tauri/src/sync/providers/icloud): CloudKit in the
+	  container both the iOS and the macOS app share. The App ID needs the
+	  iCloud capability with this container attached (docs/releasing-ios.md);
+	  the AutoFill extension does not sync and does not get it.
+	-->
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.app.rowel</string>
+	</array>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudKit</string>
+	</array>
 </dict>
 </plist>

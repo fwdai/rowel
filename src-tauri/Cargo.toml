@@ -178,6 +178,26 @@ objc2-vision = { version = "0.3.2", default-features = false, features = [
 # OSX_10_15 enables the data-protection keychain required for biometric ACLs on
 # macOS; on iOS every keychain item already lives there, so the feature is inert.
 security-framework = { version = "3.6.0", features = ["OSX_10_15"] }
+# CloudKit, for the iCloud sync adapter (`sync::providers::icloud`): the
+# container and its private database, records carrying an asset, the query and
+# fetch operations (the convenience calls cannot take `desiredKeys`, and a
+# `stat` must not download the pack) and the error codes the adapter maps.
+# `block2` gates every completion handler.
+objc2-cloud-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "CKContainer",
+  "CKDatabase",
+  "CKDatabaseOperation",
+  "CKOperation",
+  "CKRecord",
+  "CKRecordID",
+  "CKAsset",
+  "CKQuery",
+  "CKQueryOperation",
+  "CKFetchRecordsOperation",
+  "CKError",
+] }
 
 # Mobile-only. The OAuth redirect for a public (iOS/Android) client comes back
 # on the app's own URL scheme, which is what this registers and listens for;

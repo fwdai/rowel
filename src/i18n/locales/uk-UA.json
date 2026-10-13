@@ -232,6 +232,7 @@
   "Not connected": "Не підключено",
   "Waiting for {{provider}}…": "Очікування {{provider}}…",
   "Waiting for the browser…": "Очікування браузера…",
+  "Checking your {{provider}} account…": "Перевіряємо ваш обліковий запис {{provider}}…",
   "Connect": "Підключити",
   "Disconnect": "Відключити",
   "Last synced": "Востаннє синхронізовано",

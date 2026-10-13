@@ -53,4 +53,19 @@ for bundle in "$APP_DIR" "$APPEX_DIR"; do
   fi
 done
 
+# iCloud sync is the app's alone (rowel_iOS.entitlements). The app assumes a
+# phone build carries it (sync::providers::icloud::supported), and CloudKit
+# aborts the process on first use when it does not — so a build that lost the
+# entitlement must not ship.
+CONTAINER=iCloud.app.rowel
+codesign -d --entitlements - --xml "$TMP/$APP_DIR" 2>/dev/null > "$TMP/ents.plist"
+if ! entitlement com.apple.developer.icloud-services | grep -qxE "[[:space:]]*CloudKit"; then
+  echo "error: $(basename "$APP_DIR") in the IPA is not signed with icloud-services = CloudKit." >&2
+  exit 1
+fi
+if ! entitlement com.apple.developer.icloud-container-identifiers | grep -qxE "[[:space:]]*${CONTAINER//./\\.}"; then
+  echo "error: $(basename "$APP_DIR") in the IPA is not signed with the iCloud container $CONTAINER." >&2
+  exit 1
+fi
+
 echo "check-ipa-entitlements: app and AutoFill extension carry their entitlements"

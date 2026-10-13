@@ -26,7 +26,7 @@ use tauri::async_runtime::block_on;
 
 use super::account::{Auth, Tokens};
 use super::engine::{Remote, RemoteFile};
-use super::providers::{dropbox, gdrive};
+use super::providers::{dropbox, gdrive, icloud};
 use super::{layout, pack, Provider};
 use crate::error::{Error, Result};
 
@@ -86,6 +86,7 @@ pub trait VaultStore {
 pub enum AnyStore {
     GoogleDrive(gdrive::Store),
     Dropbox(dropbox::Store),
+    ICloud(icloud::Store),
 }
 
 /// The store for `auth`'s account, picked by its provider.
@@ -93,6 +94,7 @@ pub fn store_for(auth: Auth) -> AnyStore {
     match auth.provider() {
         Provider::GoogleDrive => AnyStore::GoogleDrive(gdrive::Store::new(auth)),
         Provider::Dropbox => AnyStore::Dropbox(dropbox::Store::new(auth)),
+        Provider::ICloud => AnyStore::ICloud(icloud::Store::new(auth)),
     }
 }
 
@@ -105,6 +107,7 @@ impl AnyStore {
         match self {
             AnyStore::GoogleDrive(store) => store.into_auth().into_tokens(),
             AnyStore::Dropbox(store) => store.into_auth().into_tokens(),
+            AnyStore::ICloud(store) => store.into_auth().into_tokens(),
         }
     }
 }
@@ -114,6 +117,7 @@ impl VaultStore for AnyStore {
         match self {
             AnyStore::GoogleDrive(store) => store.provider(),
             AnyStore::Dropbox(store) => store.provider(),
+            AnyStore::ICloud(store) => store.provider(),
         }
     }
 
@@ -121,6 +125,7 @@ impl VaultStore for AnyStore {
         match self {
             AnyStore::GoogleDrive(store) => store.list_vaults().await,
             AnyStore::Dropbox(store) => store.list_vaults().await,
+            AnyStore::ICloud(store) => store.list_vaults().await,
         }
     }
 
@@ -128,6 +133,7 @@ impl VaultStore for AnyStore {
         match self {
             AnyStore::GoogleDrive(store) => store.stat(name).await,
             AnyStore::Dropbox(store) => store.stat(name).await,
+            AnyStore::ICloud(store) => store.stat(name).await,
         }
     }
 
@@ -135,6 +141,7 @@ impl VaultStore for AnyStore {
         match self {
             AnyStore::GoogleDrive(store) => store.read(handle, max_bytes).await,
             AnyStore::Dropbox(store) => store.read(handle, max_bytes).await,
+            AnyStore::ICloud(store) => store.read(handle, max_bytes).await,
         }
     }
 
@@ -142,6 +149,7 @@ impl VaultStore for AnyStore {
         match self {
             AnyStore::GoogleDrive(store) => store.create(name, bytes).await,
             AnyStore::Dropbox(store) => store.create(name, bytes).await,
+            AnyStore::ICloud(store) => store.create(name, bytes).await,
         }
     }
 
@@ -149,6 +157,7 @@ impl VaultStore for AnyStore {
         match self {
             AnyStore::GoogleDrive(store) => store.update(entry, bytes).await,
             AnyStore::Dropbox(store) => store.update(entry, bytes).await,
+            AnyStore::ICloud(store) => store.update(entry, bytes).await,
         }
     }
 
@@ -156,6 +165,7 @@ impl VaultStore for AnyStore {
         match self {
             AnyStore::GoogleDrive(store) => store.delete(handle).await,
             AnyStore::Dropbox(store) => store.delete(handle).await,
+            AnyStore::ICloud(store) => store.delete(handle).await,
         }
     }
 }

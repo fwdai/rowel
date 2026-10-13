@@ -49,6 +49,16 @@
   a profile granting it the process is refused exactly as above. Never write a
   `group.` id here. check-macos-entitlements.mjs accepts a group under the
   team id without a profile and refuses any other.
+  The two iCloud keys are what iCloud sync (src-tauri/src/sync/providers/icloud)
+  runs on: CloudKit, in the container the iOS app shares. Both are profile-gated
+  like keychain-access-groups, so the Developer ID profile has to grant them —
+  which means the App ID has the iCloud capability with this container attached
+  before the profile is (re)generated (docs/releasing.md). The app checks at
+  runtime whether its own signature carries icloud-services and offers iCloud
+  only then, so `tauri dev` and an unsigned build simply lack the provider
+  rather than crash; a signed build that asked for the entitlement without a
+  profile granting it would never launch, which check-macos-entitlements.mjs
+  catches before the release is cut.
 -->
 <plist version="1.0">
   <dict>
@@ -59,6 +69,14 @@
     <key>com.apple.security.application-groups</key>
     <array>
       <string>UFBL3F444A.app.rowel.desktop</string>
+    </array>
+    <key>com.apple.developer.icloud-container-identifiers</key>
+    <array>
+      <string>iCloud.app.rowel</string>
+    </array>
+    <key>com.apple.developer.icloud-services</key>
+    <array>
+      <string>CloudKit</string>
     </array>
   </dict>
 </plist>
