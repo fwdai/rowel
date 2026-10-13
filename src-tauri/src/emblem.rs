@@ -26,10 +26,11 @@
 //! else — so that shape is all that is accepted ([`is_emblem`]); anything with
 //! one character more is a miss.
 
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use tauri::async_runtime::Mutex;
 use tauri::AppHandle;
-use tokio::sync::Mutex;
 use url::Url;
 
 use crate::app::WEBSITE;
@@ -50,8 +51,10 @@ const SET_KEY: &str = "@set";
 
 /// The website's version of the set as last read, and when it was asked for.
 /// Behind an async lock held across the request, so the first covers drawn
-/// after launch wait for one check instead of each making their own.
-static CHECKED: Mutex<Option<(Option<String>, Instant)>> = Mutex::const_new(None);
+/// after launch wait for one check instead of each making their own. Tauri's
+/// re-export of tokio's lock: tokio itself is a desktop-only dependency here.
+type Checked = Option<(Option<String>, Instant)>;
+static CHECKED: OnceLock<Mutex<Checked>> = OnceLock::new();
 
 /// The emblem for `country` (ISO 3166-1 alpha-3) as a data: URI, or None when
 /// there is none. Gated, cached and cut short by a lock exactly as
@@ -94,7 +97,7 @@ pub async fn fetch(app: &AppHandle, country: &str, epoch: Epoch) -> Result<Optio
 /// [`RECHECK`], and otherwise the answer from last time. None until a check
 /// has succeeded — the cache is then used as it stands.
 async fn current_set(allowed: &impl Fn() -> bool) -> Option<String> {
-    let mut checked = CHECKED.lock().await;
+    let mut checked = CHECKED.get_or_init(|| Mutex::new(None)).lock().await;
     if let Some((set, at)) = checked.as_ref() {
         if at.elapsed() < RECHECK {
             return set.clone();
