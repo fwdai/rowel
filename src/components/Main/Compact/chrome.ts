@@ -86,12 +86,16 @@ export const TAB_BAR_CLEARANCE = 'pb-36'
 export const TAB_BAR_FADE = 'h-36'
 
 /**
- * The face of a screen's bottom action: an accent slab a thumb can land on
- * without aiming. Shared so the detail screen's Copy and the generator's Use
- * are visibly the same control, put on different footings below.
+ * The face of a screen's bottom action: a slab a thumb can land on without
+ * aiming. Shared so the detail screen's Copy, the generator's Use and a
+ * settings sub-page's Create are visibly the same control, put on different
+ * footings below. The fill is separate so the one destructive slab (Delete
+ * workspace) can take the warning's instead of the accent's.
  */
 export const ACTION_BUTTON =
-  'absolute flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-accent text-lg font-semibold text-accent-fg shadow-float transition-opacity disabled:cursor-default'
+  'absolute flex cursor-pointer items-center justify-center gap-2 rounded-xl text-lg font-semibold shadow-float transition-opacity disabled:cursor-default'
+export const ACTION_FILL = 'bg-accent text-accent-fg'
+export const ACTION_FILL_DANGER = 'bg-bad text-white'
 
 /**
  * A pushed screen's bottom action, on the same footing: a 54px button on

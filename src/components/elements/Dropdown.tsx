@@ -20,6 +20,9 @@ interface DropdownProps {
   header?: ReactNode
   // The items' own scrolling body — a max height, for a list that can run long.
   listClassName?: string
+  // The same cap measured at open time, in px: the room the menu has on the
+  // side it opens to, inside whatever scrolls around it.
+  listMaxHeight?: number
   children: ReactNode
 }
 
@@ -29,6 +32,7 @@ export function Dropdown({
   className,
   header,
   listClassName,
+  listMaxHeight,
   children
 }: DropdownProps) {
   const ref = useRef<HTMLDivElement>(null)
@@ -105,6 +109,7 @@ export function Dropdown({
         <div
           id={listbox}
           role={listbox && 'listbox'}
+          style={listMaxHeight === undefined ? undefined : { maxHeight: listMaxHeight }}
           className={cx('flex flex-col overflow-y-auto p-[5px]', listClassName)}
         >
           {children}

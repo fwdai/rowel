@@ -31,7 +31,7 @@ export default function RowErrors({ rows, kind }: Props) {
         {open ? '▾' : '▸'}
       </span>
       {open && (
-        <ul className="mt-1.5 max-h-[140px] list-disc overflow-y-auto pl-5 text-text3">
+        <ul className="mt-1.5 max-h-[140px] list-disc overflow-y-auto pl-5 text-text2">
           {rows.slice(0, MAX_SHOWN).map((e, i) => (
             <li key={i}>
               {t('Row {{row}}', { row: e.row })}: {e.message}

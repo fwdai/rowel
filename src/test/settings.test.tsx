@@ -382,7 +382,7 @@ describe('Settings › sync', () => {
     const pill = () => screen.getByTestId('settings-drive-status')
 
     expect(pill()).toHaveTextContent('Not connected')
-    expect(pill()).toHaveAttribute('data-tone', 'idle')
+    expect(pill()).toHaveAttribute('data-tone', 'neutral')
 
     act(() => report({ configured: true }))
     expect(pill()).toHaveTextContent('Up to date')
@@ -390,7 +390,7 @@ describe('Settings › sync', () => {
 
     act(() => report({ configured: true, inProgress: true }))
     expect(pill()).toHaveTextContent('Syncing')
-    expect(pill()).toHaveAttribute('data-tone', 'busy')
+    expect(pill()).toHaveAttribute('data-tone', 'accent')
 
     act(() => report({ configured: true, error: 'Drive API 503' }))
     expect(pill()).toHaveTextContent('Last attempt failed')
@@ -431,7 +431,7 @@ describe('Settings › security', () => {
     await userEvent.click(screen.getByTestId('change-password-submit'))
 
     expect(calls('change_master_password')).toContainEqual({ current: 'old', new: 'newpass' })
-    expect(await screen.findByText('Successfully changed password')).toBeInTheDocument()
+    expect(await screen.findByText('Password changed')).toBeInTheDocument()
   })
 
   // A workspace on a password of its own is left on it, and so is one whose own
@@ -619,15 +619,15 @@ describe('Settings › security', () => {
     await go('security')
     await userEvent.click(screen.getByText('Change…'))
 
-    await userEvent.type(screen.getByLabelText('New Password'), 'newpass')
-    await userEvent.type(screen.getByLabelText('Repeat New Password'), 'newpa')
+    await userEvent.type(screen.getByLabelText('New password'), 'newpass')
+    await userEvent.type(screen.getByLabelText('Repeat new password'), 'newpa')
     expect(screen.getByText("Passwords don't match yet.")).toBeInTheDocument()
     expect(screen.getByTestId('change-password-submit')).toBeDisabled()
 
-    await userEvent.type(screen.getByLabelText('Repeat New Password'), 'ss')
+    await userEvent.type(screen.getByLabelText('Repeat new password'), 'ss')
     expect(screen.queryByText("Passwords don't match yet.")).not.toBeInTheDocument()
 
-    const field = screen.getByLabelText('New Password')
+    const field = screen.getByLabelText('New password')
     expect(field).toHaveAttribute('type', 'password')
     await userEvent.click(screen.getByRole('button', { name: 'Show' }))
     expect(field).toHaveAttribute('type', 'text')
@@ -691,10 +691,11 @@ describe('Settings › vault audit', () => {
     expect(screen.getByTestId('settings-audit-verdict')).toHaveTextContent('Weak')
     expect(screen.getByText('2 items')).toBeInTheDocument()
     const strip = screen.getByTestId('settings-audit-counts')
-    expect(strip).toHaveTextContent('1weak')
-    expect(strip).toHaveTextContent('1reused')
-    // Breaches are not counted while monitoring is off; the strip offers it.
-    expect(strip).toHaveTextContent('—breached')
+    expect(strip).toHaveTextContent('weak1')
+    expect(strip).toHaveTextContent('reused1')
+    // The label sits over its figure. Breaches are not counted while
+    // monitoring is off; the strip offers it.
+    expect(strip).toHaveTextContent('breached—')
     expect(screen.getByTestId('settings-breach-enable')).toHaveTextContent('Turn on monitoring')
   })
 

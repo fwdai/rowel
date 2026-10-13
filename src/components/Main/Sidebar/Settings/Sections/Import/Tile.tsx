@@ -1,6 +1,6 @@
 import { forwardRef, type ReactNode } from 'react'
 import { cx } from '@/utils/cx'
-import { CARD, META, META_TYPE } from '@/components/elements/tokens'
+import { META, META_TYPE, PICK_CARD, PICKED, UNPICKED } from '@/components/elements/tokens'
 
 interface Props {
   badge: ReactNode
@@ -16,7 +16,8 @@ interface Props {
 }
 
 // One card in the import grid: a badge, the app's name and what file it
-// exports. The same shape whether it opens the file picker or a menu.
+// exports. The same shape whether it opens the file picker or a menu, and the
+// same picked state as the theme and format cards.
 const Tile = forwardRef<HTMLButtonElement, Props>(function Tile(
   { badge, name, hint, active, disabled, onClick, testid, haspopup, expanded },
   ref
@@ -31,9 +32,9 @@ const Tile = forwardRef<HTMLButtonElement, Props>(function Tile(
       aria-expanded={expanded}
       onClick={onClick}
       className={cx(
-        CARD,
-        'flex w-full cursor-pointer items-center gap-3 p-3 text-left transition-colors hover:border-accent-line',
-        active && 'border-accent-line',
+        PICK_CARD,
+        'flex w-full items-center gap-3 px-4 py-3',
+        active ? PICKED : UNPICKED,
         disabled && 'cursor-default opacity-50'
       )}
     >

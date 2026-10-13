@@ -353,8 +353,8 @@ describe('Settings › Shared links', () => {
     seed()
     render(<Settings />)
     openSettings('sync')
-    // The whole row is the disclosure.
-    const row = await screen.findByTestId('settings-shares-row')
+    // The row's button is the disclosure.
+    const row = await screen.findByTestId('settings-shares-row-toggle')
     expect(row).toHaveAttribute('aria-expanded', 'false')
     await userEvent.click(row)
     expect(row).toHaveAttribute('aria-expanded', 'true')
@@ -446,7 +446,7 @@ describe('Settings › Shared links', () => {
       seed()
       render(<Settings />)
       openSettings('sync')
-      await user.click(await screen.findByTestId('settings-shares-row'))
+      await user.click(await screen.findByTestId('settings-shares-row-toggle'))
       expect(await screen.findByTestId('settings-share-f1')).toHaveTextContent(
         'Expires in 2 minutes'
       )
@@ -490,7 +490,7 @@ describe('Settings › Shared links', () => {
       seed()
       render(<Settings />)
       openSettings('sync')
-      await user.click(await screen.findByTestId('settings-shares-row'))
+      await user.click(await screen.findByTestId('settings-shares-row-toggle'))
       expect(await screen.findByTestId('settings-share-f1')).toBeInTheDocument()
 
       await act(async () => {
@@ -533,7 +533,7 @@ describe('Settings › Shared links', () => {
       seed()
       render(<Settings />)
       openSettings('sync')
-      await user.click(await screen.findByTestId('settings-shares-row'))
+      await user.click(await screen.findByTestId('settings-shares-row-toggle'))
       expect(await screen.findByTestId('settings-share-f1')).toBeInTheDocument()
 
       await act(async () => {

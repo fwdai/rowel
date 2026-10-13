@@ -589,6 +589,27 @@ describe('compact shell', () => {
     expect(screen.getByTestId('settings-back').closest('[inert]')).toBeNull()
   })
 
+  // The sub-page's action is the slab every pushed screen puts where a thumb
+  // is, not the desktop's bar: Back is the Cancel, and the hint goes with it.
+  it('puts a sub-page action at the bottom edge, dimmed until the form is ready', async () => {
+    seed()
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    await userEvent.click(screen.getByTestId('workspace-new-row'))
+
+    const create = screen.getByTestId('workspace-create')
+    expect(create).toBeDisabled()
+    expect(create).toHaveClass('absolute')
+    expect(screen.queryByTestId('settings-subpage-cancel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-hint')).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByTestId('workspace-new-name'), 'Work')
+    await userEvent.type(screen.getByTestId('workspace-new-password'), 'pass')
+    expect(create).toBeEnabled()
+  })
+
   // The chip's default is the wide modal's section state, which a pushed pane
   // does not read — on this shell it navigates the way the rows do.
   it('opens the Sync pane from the sync chip on the settings root', async () => {
