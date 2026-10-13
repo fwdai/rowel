@@ -1,6 +1,7 @@
 import { IdentityGlyph } from '@/components/Main/icons'
 import { useEmblem } from '@/hooks/useEmblem'
 import { coverColor } from './colors'
+import Foil from './Foil'
 
 // The foil a cover's printing is stamped in. Fixed, like the cover under it:
 // a passport is the same object in the dark theme.
@@ -15,10 +16,10 @@ interface Props {
 
 /**
  * A passport as its cover shows it: the issuing country's colour, with its coat
- * of arms on it — fetched once per country and kept in the vault (see
- * `src-tauri/src/emblem`). Until it arrives, or when the country has none, the
- * identity mark stands in, stamped in foil. Fills the tile it is set in, the
- * way a favicon does.
+ * of arms stamped on it in foil — fetched once per country and kept in the
+ * vault (see `src-tauri/src/emblem`). Until it arrives, or when the country has
+ * none, the identity mark stands in, in the same foil. Fills the tile it is set
+ * in, the way a favicon does.
  */
 export default function Cover({ country, size }: Props) {
   const emblem = useEmblem(country)
@@ -31,7 +32,7 @@ export default function Cover({ country, size }: Props) {
       style={{ backgroundColor: coverColor(country), color: FOIL }}
     >
       {emblem ? (
-        <img src={emblem} alt="" className="h-[68%] w-[68%] object-contain" />
+        <Foil src={emblem} className="h-[68%] w-[68%]" />
       ) : (
         <IdentityGlyph size={size} />
       )}

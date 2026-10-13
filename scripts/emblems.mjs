@@ -16,8 +16,8 @@ import { readFileSync, writeFileSync } from 'node:fs'
 
 const OUT = 'src-tauri/src/emblem/emblems.json'
 
-// India's lion capital is drawn in black, which disappears into its navy cover;
-// the passport stamps it in gold.
+// India's lion capital is drawn in black, which the cover's foil turns into its
+// darkest shade, nearly lost on a navy cover; the gold drawing stamps brighter.
 const OVERRIDES = {
   IND: 'Emblem of India (gold).svg'
 }

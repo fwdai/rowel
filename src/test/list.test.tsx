@@ -156,7 +156,7 @@ describe('Entry list', () => {
     render(<ListColumn />)
 
     await waitFor(() =>
-      expect(document.querySelectorAll(`img[src="${emblem}"]`)).toHaveLength(2)
+      expect(document.querySelectorAll(`image[href="${emblem}"]`)).toHaveLength(2)
     )
     expect(calls('fetch_emblem')).toEqual([{ country: 'UKR' }])
     setFilterType(null)
