@@ -30,11 +30,12 @@ export default function Menu({ id, last, onEdit, onDelete }: Props) {
         expanded={open}
         testid={`workspace-menu-${id}`}
         onClick={() => setOpen(value => !value)}
+        className="any-pointer-coarse:h-11 any-pointer-coarse:w-11"
       >
         <MoreGlyph />
       </IconButton>
       {open && (
-        <Dropdown onBlur={() => setOpen(false)} className="right-0 top-9 w-[220px]">
+        <Dropdown onBlur={() => setOpen(false)} className="right-0 top-full mt-2 w-[220px]">
           <DropdownItem testid={`workspace-edit-${id}`} onClick={pick(onEdit)}>
             <PencilGlyph />
             {t('Edit…')}

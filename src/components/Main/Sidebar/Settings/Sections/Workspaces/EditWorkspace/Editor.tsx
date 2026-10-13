@@ -13,6 +13,7 @@ import { workspaceRename, workspaceSetColor } from '@/api/workspace'
 import { describeError } from '@/api/errors'
 import { workspaceLabel } from '@/lib/workspace'
 import { isWorkspaceColor, type WorkspaceColor } from '@/lib/workspaceColor'
+import Note from '@/components/elements/Note'
 import SubpageFrame from '../../../SubpageFrame'
 import { useSubpage } from '../../../sectionNav'
 import WorkspaceForm from '../WorkspaceForm'
@@ -103,9 +104,9 @@ export default function Editor({ workspace }: { workspace: Workspace }) {
         testidPrefix="workspace-edit"
       />
       {error && (
-        <p data-testid="workspace-edit-error" className="mt-3 text-sm text-bad">
+        <Note tone="bad" testid="workspace-edit-error" className="mt-3">
           {error}
-        </p>
+        </Note>
       )}
     </SubpageFrame>
   )

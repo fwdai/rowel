@@ -3,7 +3,7 @@ import type { Entry, EntryMeta } from '@/api/types'
 import { cx } from '@/utils/cx'
 import { usePrimaryAction } from '../../Body/Aside/Show/usePrimaryAction'
 import { CheckGlyph, CopyGlyph } from '../../icons'
-import { ACTION_BUTTON, PRIMARY_ACTION } from '../chrome'
+import { ACTION_BUTTON, ACTION_FILL, PRIMARY_ACTION } from '../chrome'
 
 interface Props {
   entry: EntryMeta
@@ -34,7 +34,7 @@ export default function PrimaryAction({ entry, revealed }: Props) {
         // copies '' is worse than one that is plainly not ready yet.
         disabled={!secret}
         onClick={copy}
-        className={cx(ACTION_BUTTON, PRIMARY_ACTION, !secret && 'opacity-50')}
+        className={cx(ACTION_BUTTON, ACTION_FILL, PRIMARY_ACTION, !secret && 'opacity-50')}
       >
         {copied ? (
           <>

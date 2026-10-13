@@ -58,7 +58,7 @@ export default function CharsetChips({
               if (!last) onChange({ [flag]: !active } as Partial<GeneratorSettings>)
             }}
             className={cx(
-              'flex items-center gap-1.5 rounded-sm border px-2.5 text-base transition-colors',
+              'flex items-center gap-1.5 rounded-sm border px-2.5 text-base transition-colors any-pointer-coarse:h-11',
               size === 'lg' ? 'h-9' : 'h-7',
               active
                 ? 'border-accent-line bg-accent-soft text-text'

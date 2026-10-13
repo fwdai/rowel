@@ -34,7 +34,7 @@ export default function AccentSwatches({ value, onChange, name, testidPrefix }: 
       role="radiogroup"
       aria-label={name}
       onKeyDown={onKeyDown}
-      className="flex items-center gap-2"
+      className="flex items-center gap-2 any-pointer-coarse:gap-3"
     >
       {ACCENTS.map(({ id, label }) => {
         const active = id === value
@@ -51,7 +51,7 @@ export default function AccentSwatches({ value, onChange, name, testidPrefix }: 
             data-testid={testidPrefix && `${testidPrefix}-${id}`}
             onClick={() => onChange(id)}
             className={cx(
-              'grid h-6 w-6 cursor-pointer place-items-center rounded-full bg-accent text-accent-fg transition-[transform,box-shadow] hover:scale-110',
+              'grid h-6 w-6 cursor-pointer place-items-center rounded-full bg-accent text-accent-fg transition-[transform,box-shadow] hover:scale-110 any-pointer-coarse:h-8 any-pointer-coarse:w-8',
               active && 'ring-2 ring-text ring-offset-2 ring-offset-detail'
             )}
           >

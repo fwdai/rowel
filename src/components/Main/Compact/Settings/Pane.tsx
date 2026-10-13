@@ -44,7 +44,7 @@ export default function Pane({
   return (
     <Stack
       under={
-        <div {...swipe} data-testid="settings-pane" className={PUSHED_SCREEN}>
+        <div {...swipe.screen} data-testid="settings-pane" className={PUSHED_SCREEN}>
           <NavBar
             leading={
               <BackButton
@@ -63,9 +63,10 @@ export default function Pane({
             <h1 className="truncate text-2xl font-semibold tracking-display text-text">
               {titleOf(section)}
             </h1>
-            <p className="mt-1 mb-5 text-sm text-text2">{descriptionOf(section)}</p>
+            <p className="mt-1 mb-5 text-base text-text2">{descriptionOf(section)}</p>
             <Section section={section} />
           </div>
+          <div {...swipe.edge} />
         </div>
       }
       over={subpage && <SubpagePane subpage={subpage} locked={locked} />}
@@ -74,13 +75,14 @@ export default function Pane({
 }
 
 // The heading stays put above the body: the frame scrolls itself and keeps the
-// tab bar's clearance, so the column has no scroller of its own.
+// tab bar's clearance, so the column has no scroller of its own. `relative`:
+// what the frame's bottom action is pinned to.
 function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean }) {
   const { close } = useSubpage()
   const swipe = useSwipeBack(close, locked)
 
   return (
-    <div {...swipe} data-testid="settings-subpage" className={PUSHED_SCREEN}>
+    <div {...swipe.screen} data-testid="settings-subpage" className={cx('relative', PUSHED_SCREEN)}>
       <NavBar
         leading={
           <BackButton
@@ -95,11 +97,12 @@ function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean })
         <h1 className="truncate text-2xl font-semibold tracking-display text-text">
           {subpageTitleOf(subpage)}
         </h1>
-        <p className="mt-1 text-sm text-text2">{subpageDescriptionOf(subpage)}</p>
+        <p className="mt-1 text-base text-text2">{subpageDescriptionOf(subpage)}</p>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <SubpageBody subpage={subpage} />
       </div>
+      <div {...swipe.edge} />
     </div>
   )
 }

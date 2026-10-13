@@ -11,6 +11,7 @@ import {
 import SettingsRow from '@/components/elements/SettingsRow'
 import Button from '@/components/elements/Button'
 import DriveRestoreForm from '@/components/elements/DriveRestoreForm'
+import Note from '@/components/elements/Note'
 import { CloudGlyph } from '@/components/Main/icons'
 
 // Adding a workspace that already exists somewhere else.
@@ -69,19 +70,17 @@ export default function RestoreFromDrive() {
       }
     >
       {drive.status === 'pending' && (
-        <p data-testid="workspace-restore-waiting" className="text-sm text-text2">
-          {t('Waiting for Google…')}
-        </p>
+        <Note testid="workspace-restore-waiting">{t('Waiting for Google…')}</Note>
       )}
       {drive.status === 'empty' && (
-        <p data-testid="workspace-restore-empty" className="text-sm text-text2">
+        <Note testid="workspace-restore-empty">
           {t('This Google account has nothing to restore')}
-        </p>
+        </Note>
       )}
       {drive.status === 'error' && (
-        <p data-testid="workspace-restore-error" className="text-sm text-bad">
+        <Note tone="bad" testid="workspace-restore-error">
           {drive.error || t('Something went wrong')}
-        </p>
+        </Note>
       )}
       {(drive.status === 'found' || restoring) && (
         <DriveRestoreForm

@@ -5,6 +5,8 @@ import { selectClass } from './formStyles'
 
 interface Props {
   name?: string
+  // The accessible name, for a select no visible <label> is tied to.
+  label?: string
   value: string
   disabled?: boolean
   onChange: (e: ChangeEvent<HTMLSelectElement>) => void
@@ -16,6 +18,7 @@ interface Props {
 // test's `selectOptions` keep working.
 export default function Select({
   name,
+  label,
   value,
   disabled,
   onChange,
@@ -26,6 +29,7 @@ export default function Select({
     <div className={cx('relative', className)}>
       <select
         name={name}
+        aria-label={label}
         value={value}
         disabled={disabled}
         onChange={onChange}
