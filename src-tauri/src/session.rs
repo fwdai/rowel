@@ -381,7 +381,8 @@ pub fn open_snapshot_source(app: &AppHandle, key: &[u8]) -> Result<SqliteStore> 
 // An env row's `file_name` and `var_count` follow the `card_brand` shape: the
 // count is `Some` for every stamped env entry, so a NULL count is the marker,
 // and a file that simply has no name stays NULL there without re-running.
-// A login's `username` follows the same shape.
+// A login's `username` follows the same shape, and so does an identity's
+// `doc_type` and `doc_country`, with the type as the marker.
 pub(crate) fn backfill_derived_columns(store: &SqliteStore, key: &VaultKey) {
     let Ok(metas) = store.list() else { return };
     let cipher = key.payload_cipher();
@@ -390,7 +391,13 @@ pub(crate) fn backfill_derived_columns(store: &SqliteStore, key: &VaultKey) {
         let passkey_unflagged = meta.kind == "login" && !meta.has_passkey;
         let env_unstamped = meta.kind == "env" && meta.var_count.is_none();
         let username_unstamped = meta.kind == "login" && meta.username.is_none();
-        if !brand_missing && !passkey_unflagged && !env_unstamped && !username_unstamped {
+        let doc_unstamped = meta.kind == "identity" && meta.doc_type.is_none();
+        if !brand_missing
+            && !passkey_unflagged
+            && !env_unstamped
+            && !username_unstamped
+            && !doc_unstamped
+        {
             continue;
         }
         let Ok(Some(record)) = store.get(&meta.id) else {
@@ -418,6 +425,12 @@ pub(crate) fn backfill_derived_columns(store: &SqliteStore, key: &VaultKey) {
         if username_unstamped {
             if let Some(username) = crate::store::migrate::derived_username(&entry) {
                 let _ = store.set_username(&meta.id, &username);
+            }
+        }
+        if doc_unstamped {
+            if let Some(doc_type) = crate::store::migrate::derived_doc_type(&entry) {
+                let country = crate::store::migrate::derived_doc_country(&entry);
+                let _ = store.set_doc_meta(&meta.id, &doc_type, country.as_deref());
             }
         }
     }

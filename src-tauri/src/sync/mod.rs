@@ -1,7 +1,9 @@
 //! Sync: one engine and one set of rules about vault identity, over whichever
 //! cloud provider the workspace is connected to. Finds (or creates)
-//! `Rowel/Vaults/` and the `<vault-id>.rowel` pack inside it, and reads/writes
-//! that one file. Every name it uses comes from [`layout`].
+//! `Rowel/Vaults/` — read as `Rowel/Lockboxes/` once a later release has
+//! renamed it, see [`store::pick_packs_folder`] — and the `<vault-id>.rowel`
+//! pack inside it, and reads/writes that one file. Every name it uses comes
+//! from [`layout`].
 //!
 //! Which pack is *this* vault's is settled once per run, before the engine
 //! starts: see [`resolve_vault_id`].
@@ -400,7 +402,7 @@ enum VaultIdPlan {
 /// Decide which vault id this run addresses.
 ///
 /// `local` is the id in this vault's `meta` table and `live` the ids of the
-/// packs found in `Vaults/` (an absent folder is simply none of them).
+/// packs found in the packs folder (an absent folder is simply none of them).
 ///
 /// The rule underneath the arms: the account is the source of truth for which
 /// vaults exist. A vault that already has a name keeps it; one that has none
@@ -453,8 +455,8 @@ struct Resolved {
 /// is what keeps a failed run from leaving a vault pointed at a pack it never
 /// read.
 async fn resolve_vault_id(store: &impl VaultStore, local: &impl LocalVault) -> Result<Resolved> {
-    // The same listing onboarding's probe makes: a missing `Rowel/` or
-    // `Vaults/` is an account nothing has ever synced to, which is the same
+    // The same listing onboarding's probe makes: a missing `Rowel/` or packs
+    // folder is an account nothing has ever synced to, which is the same
     // answer as an empty folder.
     let packs = setup::find_packs(store).await?;
     let live: Vec<&str> = packs.iter().map(|pack| pack.vault_id.as_str()).collect();

@@ -107,12 +107,56 @@ fn migration_list() -> Vec<M<'static>> {
          );
          CREATE INDEX attachments_entry ON attachments (entry_id);",
         ),
+        // An ID document's type and issuing country, derived from the payload
+        // at save time so the list can draw a passport's cover without
+        // unsealing it. Neither is a secret: a passport says what it is and who
+        // issued it on its cover. NULL `doc_type` = not yet derived (backfilled
+        // on unlock); NULL `doc_country` is also simply the truth for a document
+        // whose country is not an ISO code, so the type is the marker.
+        M::up(
+            "ALTER TABLE entries ADD COLUMN doc_type TEXT;
+             ALTER TABLE entries ADD COLUMN doc_country TEXT;",
+        ),
+        // The coat of arms a passport's cover is stamped with, by ISO alpha-3
+        // country, fetched once and kept like a favicon (see `favicons` above):
+        // in here, which countries the vault's passports are from is SQLCipher
+        // at rest rather than a set of file names beside it.
+        M::up(
+            "CREATE TABLE emblems (
+           country    TEXT PRIMARY KEY,
+           uri        TEXT,
+           fetched_at INTEGER NOT NULL
+         );",
+        ),
     ]
 }
 
+/// The image caches the vault keeps, all one shape — a key, the image as a
+/// `data:` URI or NULL for a recorded miss, and when it was fetched — and read
+/// and written by the same rules (see [`SqliteStore::get_image`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageCache {
+    /// Website favicons, by host.
+    Favicons,
+    /// Passport-cover emblems, by ISO 3166-1 alpha-3 country, beside one
+    /// `@set` row: the version of the website's set they were fetched under.
+    Emblems,
+}
+
+impl ImageCache {
+    // The table and its key column. Fixed strings, never input, which is what
+    // makes splicing them into the SQL safe.
+    fn table(self) -> (&'static str, &'static str) {
+        match self {
+            ImageCache::Favicons => ("favicons", "host"),
+            ImageCache::Emblems => ("emblems", "country"),
+        }
+    }
+}
+
 // New columns are appended last so pre-existing column indexes stay put.
-const COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, payload, card_brand, favorite, has_passkey, file_name, var_count, username";
-const META_COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, card_brand, favorite, has_passkey, file_name, var_count, username";
+const COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, payload, card_brand, favorite, has_passkey, file_name, var_count, username, doc_type, doc_country";
+const META_COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, card_brand, favorite, has_passkey, file_name, var_count, username, doc_type, doc_country";
 
 const ATT_META_COLS: &str = "id, entry_id, name, mime, size, created_at, updated_at, deleted_at";
 const ATT_COLS: &str = "id, entry_id, name, mime, size, created_at, updated_at, deleted_at, blob";
@@ -398,6 +442,17 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Stamp an identity row's derived document type and country without
+    /// touching `updated_at`, for the same reason [`SqliteStore::set_card_brand`]
+    /// does not.
+    pub fn set_doc_meta(&self, id: &str, doc_type: &str, doc_country: Option<&str>) -> Result<()> {
+        self.lock()?.execute(
+            "UPDATE entries SET doc_type = ?1, doc_country = ?2 WHERE id = ?3",
+            params![doc_type, doc_country, id],
+        )?;
+        Ok(())
+    }
+
     /// Stamp a login row's derived username without touching `updated_at`.
     pub fn set_username(&self, id: &str, username: &str) -> Result<()> {
         self.lock()?.execute(
@@ -540,25 +595,31 @@ impl SqliteStore {
         Ok(reclaimed)
     }
 
-    /// The cached favicon for `host`, if the cache still answers for it:
+    /// The cached image for `key` in `cache`, if the cache still answers for it:
     ///
-    /// - `None` — nothing usable. Either the host was never looked up, or the
+    /// - `None` — nothing usable. Either the key was never looked up, or the
     ///   only thing recorded is a miss older than `miss_ttl_ms`, which is due
     ///   to be retried.
-    /// - `Some(None)` — a fresh miss: the host was looked up and has no icon.
-    /// - `Some(Some(uri))` — the cached icon.
+    /// - `Some(None)` — a fresh miss: the key was looked up and has no image.
+    /// - `Some(Some(uri))` — the cached image.
     ///
     /// A hit never ages out: an icon that was right once stays rendered, and
     /// re-fetching every site's artwork on a timer would be a periodic
     /// broadcast of the vault's host list. Only misses expire, so a site that
     /// gains an icon (or was offline when we asked) is asked again. The TTL is
     /// the caller's policy, not the store's.
-    pub fn get_favicon(&self, host: &str, miss_ttl_ms: i64) -> Result<Option<Option<String>>> {
+    pub fn get_image(
+        &self,
+        cache: ImageCache,
+        key: &str,
+        miss_ttl_ms: i64,
+    ) -> Result<Option<Option<String>>> {
+        let (table, column) = cache.table();
         let row: Option<(Option<String>, i64)> = self
             .lock()?
             .query_row(
-                "SELECT uri, fetched_at FROM favicons WHERE host = ?1",
-                params![host],
+                &format!("SELECT uri, fetched_at FROM {table} WHERE {column} = ?1"),
+                params![key],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
@@ -571,14 +632,24 @@ impl SqliteStore {
         })
     }
 
-    /// Record the lookup for `host`: its icon, or `None` for "has none".
-    /// Re-stamps `fetched_at`, so a repeated miss restarts its TTL rather than
-    /// being retried on every launch once the first one aged out.
-    pub fn put_favicon(&self, host: &str, uri: Option<&str>) -> Result<()> {
+    /// Forget everything `cache` holds, hits and misses alike.
+    pub fn clear_images(&self, cache: ImageCache) -> Result<()> {
+        let (table, _) = cache.table();
+        self.lock()?.execute(&format!("DELETE FROM {table}"), [])?;
+        Ok(())
+    }
+
+    /// Record the lookup for `key` in `cache`: its image, or `None` for "has
+    /// none". Re-stamps `fetched_at`, so a repeated miss restarts its TTL rather
+    /// than being retried on every launch once the first one aged out.
+    pub fn put_image(&self, cache: ImageCache, key: &str, uri: Option<&str>) -> Result<()> {
+        let (table, column) = cache.table();
         self.lock()?.execute(
-            "INSERT INTO favicons (host, uri, fetched_at) VALUES (?1, ?2, ?3)
-             ON CONFLICT(host) DO UPDATE SET uri = excluded.uri, fetched_at = excluded.fetched_at",
-            params![host, uri, now_ms()],
+            &format!(
+                "INSERT INTO {table} ({column}, uri, fetched_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT({column}) DO UPDATE SET uri = excluded.uri, fetched_at = excluded.fetched_at"
+            ),
+            params![key, uri, now_ms()],
         )?;
         Ok(())
     }
@@ -589,9 +660,12 @@ impl SqliteStore {
     /// existing vault. Keep in step with `migration_list`.
     #[cfg(test)]
     pub(crate) fn drop_favicons_for_test(&self) -> Result<()> {
-        let previous = schema_version() - 3;
+        let previous = schema_version() - 5;
         self.lock()?.execute_batch(&format!(
-            "DROP TABLE attachments;
+            "DROP TABLE emblems;
+             ALTER TABLE entries DROP COLUMN doc_type;
+             ALTER TABLE entries DROP COLUMN doc_country;
+             DROP TABLE attachments;
              ALTER TABLE entries DROP COLUMN username;
              DROP TABLE favicons;
              PRAGMA user_version = {previous};"
@@ -732,14 +806,15 @@ impl VaultStore for SqliteStore {
         // written, so a save that drops the last passkey has to clear it.
         conn.execute(
             &format!(
-                "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+                "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
                  ON CONFLICT(id) DO UPDATE SET
                    kind=excluded.kind, title=excluded.title, tags=excluded.tags,
                    url_host=excluded.url_host, updated_at=excluded.updated_at,
                    deleted_at=excluded.deleted_at, payload=excluded.payload,
                    card_brand=excluded.card_brand, has_passkey=excluded.has_passkey,
                    file_name=excluded.file_name, var_count=excluded.var_count,
-                   username=excluded.username"
+                   username=excluded.username, doc_type=excluded.doc_type,
+                   doc_country=excluded.doc_country"
             ),
             params![
                 rec.id,
@@ -761,6 +836,8 @@ impl VaultStore for SqliteStore {
                 rec.file_name,
                 rec.var_count,
                 rec.username,
+                rec.doc_type,
+                rec.doc_country,
             ],
         )?;
         Ok(())
@@ -826,6 +903,7 @@ impl VaultStore for SqliteStore {
              SET payload = x'', title = '', tags = '[]', url_host = '',
                  card_brand = NULL, favorite = 0, has_passkey = 0,
                  file_name = NULL, var_count = NULL, username = NULL,
+                 doc_type = NULL, doc_country = NULL,
                  updated_at = ?1
              WHERE id = ?2 AND deleted_at IS NOT NULL",
             params![now, id],
@@ -1161,7 +1239,7 @@ fn row_to_attachment(row: &Row) -> rusqlite::Result<Attachment> {
 // sync-in paths (import, merge_records) need.
 fn verbatim_upsert() -> String {
     format!(
-        "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+        "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
          ON CONFLICT(id) DO UPDATE SET
            kind=excluded.kind, title=excluded.title, tags=excluded.tags,
            url_host=excluded.url_host, created_at=excluded.created_at,
@@ -1169,7 +1247,8 @@ fn verbatim_upsert() -> String {
            payload=excluded.payload, card_brand=excluded.card_brand,
            favorite=excluded.favorite, has_passkey=excluded.has_passkey,
            file_name=excluded.file_name, var_count=excluded.var_count,
-           username=excluded.username"
+           username=excluded.username, doc_type=excluded.doc_type,
+           doc_country=excluded.doc_country"
     )
 }
 
@@ -1202,6 +1281,8 @@ fn exec_record(stmt: &mut Statement, r: &Record) -> rusqlite::Result<usize> {
         r.file_name,
         r.var_count,
         r.username,
+        r.doc_type,
+        r.doc_country,
     ])
 }
 
@@ -1222,6 +1303,8 @@ fn row_to_record(row: &Row) -> rusqlite::Result<Record> {
         file_name: row.get(12)?,
         var_count: row.get(13)?,
         username: row.get(14)?,
+        doc_type: row.get(15)?,
+        doc_country: row.get(16)?,
     })
 }
 
@@ -1241,6 +1324,8 @@ fn row_to_meta(row: &Row) -> rusqlite::Result<EntryMeta> {
         file_name: row.get(11)?,
         var_count: row.get(12)?,
         username: row.get(13)?,
+        doc_type: row.get(14)?,
+        doc_country: row.get(15)?,
     })
 }
 

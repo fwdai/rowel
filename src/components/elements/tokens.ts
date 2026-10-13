@@ -159,3 +159,11 @@ export const BLOCK_DOTS = '•'.repeat(24)
 
 // An input cannot fake dots, so a masked editor box hides its own text instead.
 export const MASK_INPUT = { WebkitTextSecurity: 'disc' } as CSSProperties
+
+// The wide shell's top chrome bar (`Main/Header`): 38px, the band the macOS
+// traffic lights are pinned in. A full-window overlay that puts controls of
+// its own at the top (the file preview) starts under it, so nothing of the
+// app's ever sits on the window's. One number, spelled twice because Tailwind
+// reads class names, not arithmetic.
+export const CHROME_BAR = 'h-[38px]'
+export const BELOW_CHROME = 'md:top-[38px]'
