@@ -20,7 +20,7 @@ pub mod identity;
 mod tests;
 
 pub use hash::{record_hash, state_digest, vault_digest};
-pub use sqlite::{create_private_dir, SqliteStore, SYNC_META_PREFIX};
+pub use sqlite::{create_private_dir, ImageCache, SqliteStore, SYNC_META_PREFIX};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -86,6 +86,13 @@ pub struct Record {
     /// A login's username, derived from the payload at save time. `Some` for
     /// every stamped login (`""` when it has none), `None` otherwise.
     pub username: Option<String>,
+    /// An identity's document type (`passport`, …) and issuing country as an
+    /// ISO 3166-1 alpha-3 code, derived from the payload at save time so the
+    /// list can draw a passport's cover. `doc_type` is `Some` for every stamped
+    /// identity (`""` when it has none); `doc_country` only when the country is
+    /// a code. Both `None` on every other kind.
+    pub doc_type: Option<String>,
+    pub doc_country: Option<String>,
 }
 
 /// A row's metadata without its payload (what listings need).
@@ -105,6 +112,8 @@ pub struct EntryMeta {
     pub file_name: Option<String>,
     pub var_count: Option<i64>,
     pub username: Option<String>,
+    pub doc_type: Option<String>,
+    pub doc_country: Option<String>,
 }
 
 /// A file attached to an entry, without the file: what the entry's list of

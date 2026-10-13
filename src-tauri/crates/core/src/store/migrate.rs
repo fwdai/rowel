@@ -39,6 +39,8 @@ pub fn build_record(entry: &Entry, payload: Vec<u8>) -> Result<Record> {
         file_name: derived_file_name(entry),
         var_count: derived_var_count(entry),
         username: derived_username(entry),
+        doc_type: derived_doc_type(entry),
+        doc_country: derived_doc_country(entry),
     })
 }
 
@@ -125,6 +127,29 @@ pub fn derived_username(entry: &Entry) -> Option<String> {
             .trim()
             .to_string()
     })
+}
+
+/// The stored document type of an identity: `Some` for every identity (so a
+/// stamped row is distinguishable from a pre-column NULL), `None` for every
+/// other kind.
+pub fn derived_doc_type(entry: &Entry) -> Option<String> {
+    (entry.kind == "identity").then(|| {
+        entry
+            .doc_type
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    })
+}
+
+/// An identity's issuing country, when it is written as an ISO 3166-1 alpha-3
+/// code — the only form the list can draw a cover for. The field is free text,
+/// and a country spelled out ("United Kingdom") stays in the payload.
+pub fn derived_doc_country(entry: &Entry) -> Option<String> {
+    let code = entry.country.as_deref()?.trim().to_ascii_uppercase();
+    (entry.kind == "identity" && code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase()))
+        .then_some(code)
 }
 
 /// Whether the entry holds any passkey — the plaintext flag a listing reads

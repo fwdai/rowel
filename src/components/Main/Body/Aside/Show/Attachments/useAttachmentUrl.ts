@@ -23,9 +23,18 @@ export interface AttachmentUrl {
 type Held = Omit<AttachmentUrl, 'degrade'> & {
   /** Which bytes `url` points at: the file's own, or the PNG made of them. */
   rendition: boolean
+  /** Whose bytes they are. State outlives a change of file by one render. */
+  id: string | null
 }
 
-const EMPTY: Held = { url: null, bytes: null, failed: false, unsupported: false, rendition: false }
+const EMPTY: Held = {
+  url: null,
+  bytes: null,
+  failed: false,
+  unsupported: false,
+  rendition: false,
+  id: null
+}
 
 /**
  * One attachment's bytes as something the DOM can point at — an `<img>`, an
@@ -42,48 +51,66 @@ const EMPTY: Held = { url: null, bytes: null, failed: false, unsupported: false,
  */
 export function useAttachmentUrl(attachment: Attachment, enabled: boolean): AttachmentUrl {
   const [held, setHeld] = useState<Held>(EMPTY)
-  // Whether the view that asked is still there, and the URL it holds — kept
-  // out of state so the cleanup and a late `degrade` see the latest.
-  const alive = useRef(false)
+  // Which file is being asked for, counted up on every change of file (and
+  // on unmount), and the URL held for it — kept out of state so the cleanup
+  // and a late answer see the latest. Every read and rendition carries the
+  // generation it was started under and is dropped if that has moved on:
+  // the view stays mounted while the preview steps from one file to the
+  // next, and a slow read of the first file landing after the second's had
+  // started would otherwise show the first file under the second's name.
+  const generation = useRef(0)
   const current = useRef<string | null>(null)
   const type = typeOf(attachment)
 
+  const id = attachment.id
+
   const hold = useCallback(
-    (bytes: Uint8Array<ArrayBuffer>, rendition: boolean) => {
-      if (!alive.current) return
+    (bytes: Uint8Array<ArrayBuffer>, rendition: boolean, asked: number) => {
+      if (asked !== generation.current) return
       if (current.current) URL.revokeObjectURL(current.current)
       current.current = URL.createObjectURL(
         new Blob([bytes], { type: rendition ? 'image/png' : type })
       )
-      setHeld({ ...EMPTY, url: current.current, bytes, rendition })
+      setHeld({ ...EMPTY, url: current.current, bytes, rendition, id })
     },
-    [type]
+    [type, id]
   )
 
   useEffect(() => {
     if (!enabled) return
-    alive.current = true
-    readAttachment(attachment.id)
-      .then(bytes => hold(bytes, false))
-      .catch(() => alive.current && setHeld({ ...EMPTY, failed: true }))
+    // The same counter, under a name the cleanup may read: it is a box, not a
+    // node, so the lint's worry about a stale `.current` does not apply.
+    const asks = generation
+    const asked = ++asks.current
+    readAttachment(id)
+      .then(bytes => hold(bytes, false, asked))
+      .catch(() => asked === asks.current && setHeld({ ...EMPTY, failed: true, id }))
     return () => {
-      alive.current = false
+      // Anything still on its way answers a question no longer asked.
+      asks.current++
       if (current.current) URL.revokeObjectURL(current.current)
       current.current = null
       setHeld(EMPTY)
     }
-  }, [attachment.id, enabled, hold])
+  }, [id, enabled, hold])
 
   const degrade = useCallback(() => {
-    const giveUp = () => alive.current && setHeld(h => ({ ...h, unsupported: true }))
+    const asked = generation.current
+    const giveUp = () =>
+      asked === generation.current && setHeld(h => ({ ...h, unsupported: true }))
     if (!held.url) return
     if (held.rendition) return giveUp()
-    renderAttachment(attachment.id)
-      .then(bytes => hold(bytes, true))
+    renderAttachment(id)
+      .then(bytes => hold(bytes, true, asked))
       .catch(giveUp)
-  }, [attachment.id, held.url, held.rendition, hold])
+  }, [id, held.url, held.rendition, hold])
 
-  const { url, bytes, failed, unsupported } = held
+  // What is held is the last file's until the effect that follows this
+  // render clears it, and React may paint in between: the view keyed on the
+  // new file would mount with the old one's picture for a frame. So the
+  // answer is tied to the file it was read for, and another file gets
+  // nothing until its own bytes arrive.
+  const { url, bytes, failed, unsupported } = held.id === id ? held : EMPTY
   return { url, bytes, failed, unsupported, degrade }
 }
 
