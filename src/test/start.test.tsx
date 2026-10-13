@@ -35,7 +35,7 @@ const STRONG = 'my-strong-vault-passphrase-2026'
 
 // What the probe reports for a pack in `Rowel/Vaults/`: the file name is the
 // vault's own id, which says nothing to a user, so the screens title it
-// "Rowel vault" and let the meta line do the distinguishing.
+// "Rowel lockbox" and let the meta line do the distinguishing.
 const REMOTE: SetupDriveFile = {
   id: 'drive-file-1',
   name: '9f3c1a2b4d5e6f708192a3b4c5d6e7f8.rowel',
@@ -339,7 +339,7 @@ describe('a Drive that already holds data', () => {
     expect(await screen.findByText('This Drive already has Rowel data')).toBeInTheDocument()
     // The hex file name means nothing to a user; the card is titled for what it
     // is, and the meta line is what tells two of them apart.
-    expect(screen.getByTestId('setup-conflict-file')).toHaveTextContent('Rowel vault')
+    expect(screen.getByTestId('setup-conflict-file')).toHaveTextContent('Rowel lockbox')
     expect(screen.getByTestId('setup-conflict-file')).not.toHaveTextContent(REMOTE.name)
     expect(calls('setup_create')).toHaveLength(0)
   })
@@ -383,7 +383,7 @@ describe('restoring from Google Drive', () => {
     await act(async () => setupDriveProbed([REMOTE]))
     // One vault: the card, not a choice — and titled for what it is rather
     // than by the opaque id its file is named after.
-    expect(screen.getByTestId('drive-found-file')).toHaveTextContent('Rowel vault')
+    expect(screen.getByTestId('drive-found-file')).toHaveTextContent('Rowel lockbox')
     expect(screen.queryByTestId(`drive-vault-${REMOTE.id}`)).not.toBeInTheDocument()
 
     await userEvent.type(screen.getByTestId('drive-password-input'), STRONG)

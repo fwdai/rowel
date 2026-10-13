@@ -153,7 +153,7 @@ pub async fn sync_adopt_pending(app: AppHandle, state: State<'_, AppState>) -> R
         if !still_the_same_workspace(&state, &workspace, vault_id.as_deref())? {
             super::setup::take_pending_attempt(&state, attempt);
             return Err(Error::Other(format!(
-                "the workspace changed while {} was answering; connect again from the workspace you want to sync",
+                "the lockbox changed while {} was answering; connect again from the lockbox you want to sync",
                 tokens.provider.account_name()
             )));
         }

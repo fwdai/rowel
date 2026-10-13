@@ -252,7 +252,7 @@ both driven by `Auth/useUnlock` (attempt phase, lockout countdown, mascot gaze,
 the eyebrow's text and tone). The desktop leads with the passphrase card and
 keeps biometrics as its end segment, centred as one block on the auth ground.
 The phone lays the same parts out in three bands over the whole ground
-(`AuthShell fill`): the brand and the vault chip under the safe area; at the
+(`AuthShell fill`): the brand and the lockbox chip under the safe area; at the
 exact centre of the screen the status line over the 88px biometric tile when
 a key is enrolled, or over the card; and by the footer "Enter Master Password"
 as a plain 44px text control — the backup for the day Face ID does not
@@ -394,7 +394,7 @@ on — never with a prop.
 - The list stays flat and sorted (no Pinned/Recent groups).
 - Unlock leads with the biometric tile when biometrics are enrolled, else the
   passphrase card. No auto-prompt on launch.
-- Not adopted from the prototype: share button, recent searches, vault
+- Not adopted from the prototype: share button, recent searches, lockbox
   switcher, card face art. The Rowel mascot stays on the lock screen.
 
 ## Follow-ups

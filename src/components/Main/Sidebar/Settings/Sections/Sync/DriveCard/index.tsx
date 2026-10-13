@@ -34,7 +34,7 @@ export default function DriveCard({ probing, offered, restoring }: Props) {
     sync.pending || probing
       ? t('Waiting for Google…')
       : offered
-        ? t('This account already holds a vault')
+        ? t('This account already holds a lockbox')
         : sync.configured
           ? t('Connected')
           : t('Not connected')
@@ -69,7 +69,7 @@ export default function DriveCard({ probing, offered, restoring }: Props) {
         <div className="flex flex-col gap-3 px-5 pb-5">
           <p data-testid="settings-drive-found" className="text-sm text-text2">
             {t(
-              'Restore it here to sync the same data on this device. The vault open now stays as a workspace of its own.'
+              'Restore it here to sync the same data on this device. The lockbox open now is kept alongside it.'
             )}
           </p>
           <DriveRestoreForm
