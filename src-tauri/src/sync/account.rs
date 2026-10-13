@@ -149,6 +149,13 @@ pub struct Tokens {
     pub refresh_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
+    /// Which account, for a provider whose grant does not say: iCloud's is the
+    /// device's, and a device can change its Apple ID under a workspace. The
+    /// adapter refuses to sync when the account it reaches is not this one,
+    /// which is what the OAuth tokens do for the other providers by being
+    /// useless anywhere else. An opaque id (CloudKit's user record name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
 }
 
 impl std::fmt::Debug for Tokens {
@@ -161,6 +168,7 @@ impl std::fmt::Debug for Tokens {
             .field("access_token", &redacted(&self.access_token))
             .field("refresh_token", &redacted(&self.refresh_token))
             .field("expires_at", &self.expires_at)
+            .field("account", &redacted(&self.account))
             .finish()
     }
 }
@@ -712,14 +720,15 @@ fn bind_loopback(ports: &[u16]) -> Result<TcpListener> {
 }
 
 /// The "tokens" of a provider whose account is the device's own (iCloud): the
-/// twin of [`obtain_tokens`] for a connect with no consent page. There is
-/// nothing to hold but the provider's name, and the one thing to check is
-/// that the device has such an account at all — a workspace sealed to iCloud
-/// on a device signed out of it would fail every run from then on. Blocking
-/// (the account query is a round trip to the system): call it off the main
-/// thread, on the blocking pool like every consent.
+/// twin of [`obtain_tokens`] for a connect with no consent page. There is no
+/// grant to hold, only *which* account this is — the device has to have one
+/// at all (a workspace sealed to iCloud on a device signed out of it would
+/// fail every run from then on), and the adapter holds every later run to the
+/// same one ([`Tokens::account`]). Blocking (the account query is a round
+/// trip to the system): call it off the main thread, on the blocking pool
+/// like every consent.
 pub fn device_account_tokens(provider: Provider) -> Result<Tokens> {
-    match provider {
+    let account = match provider {
         Provider::ICloud => {
             tauri::async_runtime::block_on(super::providers::icloud::check_account())?
         }
@@ -729,9 +738,10 @@ pub fn device_account_tokens(provider: Provider) -> Result<Tokens> {
                 provider.display_name()
             )));
         }
-    }
+    };
     Ok(Tokens {
         provider,
+        account: Some(account),
         ..Tokens::default()
     })
 }
@@ -857,6 +867,16 @@ impl Auth {
         match self {
             Auth::Sealed { app, .. } => sealed_provider(app),
             Auth::Pending { tokens, .. } => tokens.lock().unwrap().provider,
+        }
+    }
+
+    /// The account these credentials were bound to, for a provider that
+    /// records one ([`Tokens::account`]); `None` for one whose grant is the
+    /// binding, or for a file that predates the field.
+    pub fn bound_account(&self) -> Option<String> {
+        match self {
+            Auth::Sealed { app, cryptor } => read_tokens(app, cryptor).and_then(|t| t.account),
+            Auth::Pending { tokens, .. } => tokens.lock().unwrap().account.clone(),
         }
     }
 
@@ -1018,6 +1038,8 @@ async fn post_token(
         expires_at: parsed
             .expires_in
             .map(|s| chrono::Utc::now().timestamp() + s),
+        // Named by the grant itself: a token is no use in any other account.
+        account: None,
     })
 }
 
@@ -1242,6 +1264,28 @@ mod tests {
             access_token: Some("a".into()),
             ..empty(Provider::GoogleDrive)
         }));
+    }
+
+    // The account id rides in the sealed file beside the grant, and a file
+    // sealed before there was one reads back without it rather than failing.
+    #[test]
+    fn the_bound_account_round_trips_through_the_token_file() {
+        let tokens = Tokens {
+            provider: Provider::ICloud,
+            account: Some("_1a2b3c".into()),
+            ..Tokens::default()
+        };
+        let json = serde_json::to_string(&tokens).unwrap();
+        assert!(json.contains("\"account\":\"_1a2b3c\""));
+        assert!(!json.contains("access_token"));
+        let back: Tokens = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.account.as_deref(), Some("_1a2b3c"));
+
+        let old: Tokens =
+            serde_json::from_str(r#"{"provider":"dropbox","refresh_token":"r"}"#).unwrap();
+        assert_eq!(old.account, None);
+        // Never in a log line.
+        assert!(!format!("{tokens:?}").contains("_1a2b3c"));
     }
 
     // Only a provider without a sign-in can be connected from the device; an
@@ -1701,6 +1745,7 @@ mod tests {
             access_token: Some(access.into()),
             refresh_token: Some("refresh-1".into()),
             expires_at: Some(4_102_444_800),
+            account: None,
         }
     }
 

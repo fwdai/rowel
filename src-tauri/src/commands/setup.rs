@@ -664,6 +664,7 @@ mod tests {
             access_token: Some(access.into()),
             refresh_token: Some("refresh".into()),
             expires_at: Some(4_102_444_800),
+            account: None,
         }
     }
 

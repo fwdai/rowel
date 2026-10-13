@@ -79,24 +79,70 @@ const ACCOUNT_TEMPORARILY_UNAVAILABLE: isize = 4;
 const SIGN_IN: &str = "Sign in to iCloud on this device in System Settings, then try again.";
 const UNSUPPORTED: &str = "iCloud sync is only available on Apple devices";
 const UNSIGNED: &str = "this build is not signed for iCloud";
+const ACCOUNT_CHANGED: &str = "this device is signed into a different iCloud account than the one \
+                               this vault syncs through; disconnect, then connect iCloud again";
+const NOT_BOUND: &str =
+    "this vault's iCloud connection does not say which account; disconnect, then connect again";
 
-/// [`VaultStore`] over the device's iCloud account.
+/// [`VaultStore`] over the device's iCloud account — the one the workspace was
+/// connected to, and no other.
 ///
 /// Nothing is cached and nothing is held: the container is looked up per call
 /// (CloudKit keeps one instance per identifier), and every `stat` asks the
 /// server, which is what `head_revision` relies on to see another device's
-/// write.
+/// write. The one thing settled once per store is *whose* account the device
+/// is signed into ([`Store::bound`]): a store lives for one run, and the
+/// device cannot change its Apple ID in the middle of one.
 pub struct Store {
     auth: Auth,
+    /// The account the token file names, read when the store is built.
+    expected: Option<String>,
+    /// Whether the device's account has been checked against it.
+    bound: std::sync::Mutex<bool>,
 }
 
 impl Store {
     pub fn new(auth: Auth) -> Self {
-        Self { auth }
+        let expected = auth.bound_account();
+        Self {
+            auth,
+            expected,
+            bound: std::sync::Mutex::new(false),
+        }
     }
 
     pub fn into_auth(self) -> Auth {
         self.auth
+    }
+
+    /// Every call's first step: this build can reach CloudKit, and the account
+    /// it reaches is the one the workspace was connected to. The device's
+    /// account is asked once per store; a mismatch fails every call the same
+    /// way until the user reconnects, so a vault is never pushed into an
+    /// account it was not connected to because the device changed Apple ID.
+    async fn bound(&self) -> Result<()> {
+        ready()?;
+        if *self.bound.lock().unwrap() {
+            return Ok(());
+        }
+        // No lock across the round trip: a second call racing this one asks
+        // too, and both compare against the same expectation.
+        let current = imp::user_record_name().await?;
+        same_account(self.expected.as_deref(), &current)?;
+        *self.bound.lock().unwrap() = true;
+        Ok(())
+    }
+}
+
+/// Whether the account the device reaches is the one the workspace is bound
+/// to. No binding at all is a connect that never finished recording one, and
+/// is treated like a stranger's account: reconnecting is the only way to say
+/// which account was meant.
+fn same_account(expected: Option<&str>, current: &str) -> Result<()> {
+    match expected {
+        Some(expected) if expected == current => Ok(()),
+        Some(_) => Err(Error::Other(ACCOUNT_CHANGED.into())),
+        None => Err(Error::Other(NOT_BOUND.into())),
     }
 }
 
@@ -111,12 +157,17 @@ pub fn supported() -> bool {
     imp::supported()
 }
 
-/// The device's iCloud account can be used: `CKContainer.accountStatus` is
-/// `Available`. Anything else is an error that says what the user can do.
-pub async fn check_account() -> Result<()> {
+/// The device's iCloud account can be used — `CKContainer.accountStatus` is
+/// `Available`; anything else is an error that says what the user can do —
+/// and which account it is: CloudKit's user record name for this container,
+/// an opaque id that is stable for one Apple ID and differs for another. The
+/// connect seals it ([`crate::sync::account::Tokens::account`]) and every
+/// store checks the device against it ([`Store::bound`]).
+pub async fn check_account() -> Result<String> {
     ready()?;
     let (status, detail) = imp::account_status().await?;
-    account_error(status, detail.as_deref())
+    account_error(status, detail.as_deref())?;
+    imp::user_record_name().await
 }
 
 /// The gate every call passes first. Off Apple, or in a build CloudKit would
@@ -283,17 +334,17 @@ impl VaultStore for Store {
     // A query over every `VaultEntry`, cursor followed to the end: an account
     // nothing has synced to simply matches nothing.
     async fn list_vaults(&self) -> Result<Vec<RemoteEntry>> {
-        ready()?;
+        self.bound().await?;
         imp::list().await
     }
 
     async fn stat(&self, name: &str) -> Result<Option<RemoteEntry>> {
-        ready()?;
+        self.bound().await?;
         imp::stat(record_name(name)?).await
     }
 
     async fn read(&self, handle: &str, max_bytes: usize) -> Result<Vec<u8>> {
-        ready()?;
+        self.bound().await?;
         imp::read(record_name(handle)?, max_bytes).await
     }
 
@@ -301,7 +352,7 @@ impl VaultStore for Store {
     // already exists — another device's first push landing between the core's
     // `stat` and this call — fails rather than being replaced.
     async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
-        ready()?;
+        self.bound().await?;
         imp::create(record_name(name)?, bytes).await
     }
 
@@ -309,13 +360,13 @@ impl VaultStore for Store {
     // on the record as fetched. A record that is gone is an error, never a
     // create: the core asks about the deletion marker on the create path only.
     async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>> {
-        ready()?;
+        self.bound().await?;
         let expected = entry.revision.as_deref().filter(|rev| !rev.is_empty());
         imp::update(record_name(&entry.handle)?, expected, bytes).await
     }
 
     async fn delete(&self, handle: &str) -> Result<()> {
-        ready()?;
+        self.bound().await?;
         imp::delete(record_name(handle)?).await
     }
 }
@@ -339,6 +390,10 @@ mod imp {
     }
 
     pub(super) async fn account_status() -> Result<(isize, Option<String>)> {
+        unsupported()
+    }
+
+    pub(super) async fn user_record_name() -> Result<String> {
         unsupported()
     }
 
@@ -513,6 +568,23 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(account_error(99, None).is_err());
+    }
+
+    // The device's account has to be the one the workspace was connected to:
+    // another Apple ID is a different, empty private database, and a run
+    // there would push the vault into it. A connection that never recorded
+    // its account is sent back to connect, not waved through.
+    #[test]
+    fn only_the_bound_account_is_synced_to() {
+        assert!(same_account(Some("_1a2b"), "_1a2b").is_ok());
+        match same_account(Some("_1a2b"), "_9z8y") {
+            Err(Error::Other(why)) => assert!(why.contains("different iCloud account"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match same_account(None, "_1a2b") {
+            Err(Error::Other(why)) => assert!(why.contains("connect again"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     // The compare half of the compare-and-swap: a known revision that differs

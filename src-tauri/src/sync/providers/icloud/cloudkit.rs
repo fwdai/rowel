@@ -273,6 +273,30 @@ fn start_account_status() -> Completion<(isize, Option<String>)> {
     done
 }
 
+/// The signed-in user's record name in this container: opaque, stable for one
+/// Apple ID, different for another. What a connection is bound to.
+pub(super) async fn user_record_name() -> Result<String> {
+    start_user_record_name().await
+}
+
+fn start_user_record_name() -> Completion<Result<String>> {
+    let done = Completion::new();
+    let reply = {
+        let done = done.clone();
+        RcBlock::new(move |id: *mut CKRecordID, error: *mut NSError| {
+            let outcome = match unsafe { id.as_ref() } {
+                Some(id) => Ok(unsafe { id.recordName() }.to_string()),
+                None => Err(unsafe { error_at(error) }
+                    .unwrap_or_else(no_answer)
+                    .into_error()),
+            };
+            done.resolve(outcome);
+        })
+    };
+    unsafe { container().fetchUserRecordIDWithCompletionHandler(&reply) };
+    done
+}
+
 /// Every `VaultEntry`, size field only, cursor followed to the end.
 pub(super) async fn list() -> Result<Vec<RemoteEntry>> {
     start_list().await

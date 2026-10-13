@@ -735,6 +735,7 @@ mod tests {
             access_token: None,
             refresh_token: Some("refresh".into()),
             expires_at: None,
+            account: None,
         };
         crate::sync::persist_tokens_in(dir.path(), &old.cryptor(), &tokens).unwrap();
 

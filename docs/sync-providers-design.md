@@ -540,11 +540,22 @@ and simply never see iCloud:
   `obtain_tokens`; the phone's `connect_pending` takes it explicitly, since
   its consent flow is cut in two around Safari and there is no Safari here.
   Both report through the same `setup:account:*` events.
-- **The token file** `auth/icloud.swftx` holds `{"provider":"iCloud"}` and
-  nothing else, and is still what says "this workspace syncs through iCloud".
-  One file per workspace, the generation guard, disconnect, re-seal and the
-  locked-workspace provider all read it unchanged. `is_configured` accepts a
-  file with no grant when the provider has none to hold.
+- **The token file** `auth/icloud.swftx` holds `{"provider":"iCloud",
+  "account":"<user record name>"}` and nothing else, and is still what says
+  "this workspace syncs through iCloud". One file per workspace, the
+  generation guard, disconnect, re-seal and the locked-workspace provider all
+  read it unchanged. `is_configured` accepts a file with no grant when the
+  provider has none to hold.
+- **The account is bound, not assumed.** An OAuth token is useless in any
+  other account; iCloud's "token" would follow whichever Apple ID the device
+  is signed into, and `plan_vault_id` keeps a vault's id whatever the account
+  holds — so a device that changed Apple ID would push the vault into the new
+  account's empty database on its next run. The connect therefore records
+  CloudKit's user record name for the container (opaque, stable per Apple
+  ID), and every store checks the device's current one against it once per
+  run, one extra round trip; a mismatch fails every call with "signed into a
+  different iCloud account; disconnect, then connect again". A file with no
+  account recorded is treated the same way.
 - **The store** takes an `Auth` like every adapter, so `into_tokens` and the
   pending-store round trip work, but never asks it for an access token.
 - **Refresh** cannot happen: `fresh_access_token` is only reached from an
