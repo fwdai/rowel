@@ -1,0 +1,12 @@
+{
+  "BIH": { "drop": ["blue"] },
+  "DZA": { "lines": true },
+  "GIB": { "drop": ["white"] },
+  "GLP": { "drop": ["blue", "black"] },
+  "GNB": { "lines": true },
+  "KIR": { "drop": ["red"] },
+  "MAF": { "drop": ["blue"] },
+  "MSR": { "drop": ["blue"] },
+  "SVK": { "drop": ["red"] },
+  "WLF": { "skip": true }
+}
