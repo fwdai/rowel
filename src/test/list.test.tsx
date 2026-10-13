@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ListColumn from '@/components/Main/Body/ListColumn'
 import SortMenu from '@/components/Main/Body/List/SortMenu'
 import { type Audit } from '@/api/tools'
 import { useVault, useUi, setView, setFilterType, clearSession } from '@/store'
+import { resetEmblems } from '@/hooks/useEmblem'
 import { resetFavicons } from '@/hooks/useFavicon'
 import { withEntries, loginEntry, loginMeta } from './utils'
 import { calls, mockCommand, clearCalls } from './ipc'
@@ -32,7 +33,9 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(NOW)
   resetFavicons()
+  resetEmblems()
   clearCalls('fetch_favicon')
+  clearCalls('fetch_emblem')
 })
 
 afterEach(() => vi.useRealTimers())
@@ -120,6 +123,48 @@ describe('Entry list', () => {
     expect(document.querySelector('svg[aria-label="visa"]')).toBeInTheDocument()
     // The brandless card falls back to the generic glyph, not an empty tile.
     expect(document.querySelectorAll('svg[aria-label]')).toHaveLength(1)
+    setFilterType(null)
+  })
+
+  it('draws a passport with a known country as its cover', () => {
+    const identity = { type: 'identity' as const, urlHost: '' }
+    withEntries([
+      loginMeta({ id: 'p1', title: 'My passport', docType: 'passport', docCountry: 'UKR', ...identity }),
+      loginMeta({ id: 'p2', title: 'Licence', docType: 'driver_license', docCountry: 'UKR', ...identity }),
+      loginMeta({ id: 'p3', title: 'Odd code', docType: 'passport', docCountry: 'XYZ', ...identity })
+    ])
+    setFilterType('identity')
+    render(<ListColumn />)
+
+    // Only the passport gets a cover: a licence has none, and a code that is no
+    // country has no colour to draw.
+    const covers = screen.getAllByTestId('passport-cover')
+    expect(covers.map(cover => cover.dataset.country)).toEqual(['UKR'])
+    expect(covers[0]).toHaveStyle({ backgroundColor: '#17305D' })
+    // No emblem for the country (the IPC default): the generic one, not a gap.
+    expect(covers[0].dataset.emblem).toBe('generic')
+    expect(within(covers[0]).getByTestId('passport-emblem')).toBeInTheDocument()
+    setFilterType(null)
+  })
+
+  it('stamps the cover with the country’s emblem, asked for once per country', async () => {
+    const emblem = 'data:image/svg+xml;base64,EMBLEM'
+    mockCommand('fetch_emblem', () => emblem)
+    const passport = { type: 'identity' as const, urlHost: '', docType: 'passport' }
+    withEntries([
+      loginMeta({ id: 'p1', title: 'Mine', docCountry: 'UKR', ...passport }),
+      loginMeta({ id: 'p2', title: 'Old one', docCountry: 'UKR', ...passport })
+    ])
+    setFilterType('identity')
+    render(<ListColumn />)
+
+    // The generic emblem stands in until the country's arrives.
+    await waitFor(() =>
+      expect(
+        screen.getAllByTestId('passport-cover').map(cover => cover.dataset.emblem)
+      ).toEqual(['country', 'country'])
+    )
+    expect(calls('fetch_emblem')).toEqual([{ country: 'UKR' }])
     setFilterType(null)
   })
 

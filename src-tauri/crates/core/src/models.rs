@@ -470,6 +470,12 @@ pub struct EntryMetaDto {
     pub var_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
+    // An identity's document type and ISO alpha-3 issuing country, derived at
+    // save time like `card_brand` so the list can draw a passport's cover.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_country: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     // Set only on the tombstones the Trash lists; absent for live entries.
@@ -496,6 +502,8 @@ impl From<&crate::store::EntryMeta> for EntryMetaDto {
             file_name: m.file_name.clone(),
             var_count: m.var_count,
             username: m.username.clone().filter(|u| !u.is_empty()),
+            doc_type: m.doc_type.clone().filter(|t| !t.is_empty()),
+            doc_country: m.doc_country.clone(),
             created_at: iso(m.created_at),
             updated_at: iso(m.updated_at),
             deleted_at: m.deleted_at.and_then(iso),
@@ -1130,6 +1138,8 @@ mod tests {
             file_name: None,
             var_count: None,
             username: None,
+            doc_type: None,
+            doc_country: None,
         }
     }
 
@@ -1187,5 +1197,27 @@ mod tests {
 
         let bare = serde_json::to_value(EntryMetaDto::from(&meta(false))).unwrap();
         assert!(bare.get("username").is_none());
+    }
+
+    #[test]
+    fn meta_dto_carries_the_document_type_and_country_only_when_stamped() {
+        let passport = crate::store::EntryMeta {
+            kind: "identity".into(),
+            doc_type: Some("passport".into()),
+            doc_country: Some("UKR".into()),
+            ..meta(false)
+        };
+        let out = serde_json::to_value(EntryMetaDto::from(&passport)).unwrap();
+        assert_eq!(out["docType"], "passport");
+        assert_eq!(out["docCountry"], "UKR");
+
+        let untyped = crate::store::EntryMeta {
+            kind: "identity".into(),
+            doc_type: Some("".into()),
+            ..meta(false)
+        };
+        let out = serde_json::to_value(EntryMetaDto::from(&untyped)).unwrap();
+        assert!(out.get("docType").is_none());
+        assert!(out.get("docCountry").is_none());
     }
 }

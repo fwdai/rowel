@@ -76,6 +76,8 @@ pub fn record_hash(r: &Record) -> [u8; 32] {
     opt_field(&mut h, r.file_name.as_deref());
     opt_i64(&mut h, r.var_count);
     opt_field(&mut h, r.username.as_deref());
+    opt_field(&mut h, r.doc_type.as_deref());
+    opt_field(&mut h, r.doc_country.as_deref());
     h.finalize().into()
 }
 
@@ -91,7 +93,10 @@ pub fn record_hash(r: &Record) -> [u8; 32] {
 /// `has_passkey` is left out because `false` is also what a stamped login with
 /// no passkey holds — counting it would bias real edit conflicts.
 pub fn derived_rank(r: &Record) -> u8 {
-    r.card_brand.is_some() as u8 + r.var_count.is_some() as u8 + r.username.is_some() as u8
+    r.card_brand.is_some() as u8
+        + r.var_count.is_some() as u8
+        + r.username.is_some() as u8
+        + r.doc_type.is_some() as u8
 }
 
 /// SHA-256 over an entire entry set — tombstones included — as
