@@ -40,12 +40,7 @@ export default function Read({ entry, revealed }: Props) {
   const swipe = useSwipeBack(setNoEntry)
 
   return (
-    // `relative`: what the bottom action and its fade are pinned to.
-    <div
-      {...swipe}
-      data-testid="entry-screen"
-      className={cx('relative text-text', PUSHED_SCREEN)}
-    >
+    <div {...swipe.screen} data-testid="entry-screen" className={cx('text-text', PUSHED_SCREEN)}>
       <NavRow entry={entry} onDelete={remove} />
 
       <div
@@ -78,6 +73,7 @@ export default function Read({ entry, revealed }: Props) {
       {/* `reveal_entry` does not serve deleted rows, so a tombstone has no
           secret to offer and nothing to offer it with. */}
       {!entry.deletedAt && <PrimaryAction entry={entry} revealed={revealed} />}
+      <div {...swipe.edge} />
     </div>
   )
 }

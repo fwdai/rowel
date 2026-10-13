@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { useApp, selectWorkspaces } from '@/store'
 import { cx } from '@/utils/cx'
 import SettingsGroup from '@/components/elements/SettingsGroup'
-import { CARD, LABEL } from '@/components/elements/tokens'
+import { CARD_OPEN, LABEL } from '@/components/elements/tokens'
 import WorkspaceList from './WorkspaceList'
 import NewWorkspace from './NewWorkspace'
 import InfoTiles from './InfoTiles'
@@ -22,7 +22,7 @@ export default function Workspaces() {
         <div className={cx(LABEL, 'mb-2')}>
           {t('On this device')} · {count}
         </div>
-        <div className={cx(CARD, 'overflow-visible!')}>
+        <div className={CARD_OPEN}>
           <WorkspaceList />
           <NewWorkspace />
         </div>

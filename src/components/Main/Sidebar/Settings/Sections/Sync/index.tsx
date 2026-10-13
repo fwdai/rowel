@@ -3,15 +3,17 @@ import { useTranslation } from 'react-i18next'
 import { useApp, forgetDrive, setupDriveFailed, setupDriveReset } from '@/store'
 import { syncAdoptPending, syncErrorText } from '@/api/sync'
 import { describeError, errorKind } from '@/api/errors'
+import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import DriveCard from './DriveCard'
 import BackupRow from './BackupRow'
 import SharesRow from './SharesRow'
 
+// Under the card, at its own inset.
 const ErrorNote = ({ message }: { message: string }) => (
-  <div data-testid="settings-sync-error" className="px-[18px] pt-2.5 text-sm text-bad">
+  <Note tone="bad" testid="settings-sync-error" className="px-5 pt-2.5">
     {message}
-  </div>
+  </Note>
 )
 
 export default function Sync() {

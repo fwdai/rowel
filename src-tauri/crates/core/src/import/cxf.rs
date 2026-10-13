@@ -15,7 +15,8 @@ use super::export::{
     PUBLIC_KEY_LABEL, SCOPES_LABEL,
 };
 use super::{
-    non_empty, take_labelled, EntryKind, ImportResult, ImportedEntry, ImportedPasskey, Importer,
+    non_empty, rfc3339, take_labelled, EntryKind, ImportResult, ImportedEntry, ImportedPasskey,
+    Importer,
 };
 use crate::models::ExtraField;
 use crate::otp::{self, OtpAlgorithm, OtpParams};
@@ -159,6 +160,10 @@ impl Importer for Cxf {
 
 /// `rowel` says the document is one of ours, and so may hold fields of ours.
 fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
+    // A warning says "this row imported, minus something"; if the item is
+    // turned down below, its warnings go with it, or the row would be listed
+    // as both lost and imported.
+    let kept = result.warnings.len();
     let Item {
         title,
         creation_at,
@@ -210,7 +215,7 @@ fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
             }
             "passkey" => match passkey(&cred, created_at.clone()) {
                 Some(p) => passkeys.push(p),
-                None => result.push_err(row, "incomplete passkey"),
+                None => result.push_warn(row, "incomplete passkey"),
             },
             // The app keeps a single seed per entry, so the first usable one
             // wins. The parameters beside it are part of that seed — dropping
@@ -221,7 +226,7 @@ fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
             "totp" if otp.is_none() => match totp_params(&cred) {
                 Ok(Some(p)) => otp = Some(otp::to_stored(&p)),
                 Ok(None) => {}
-                Err(e) => result.push_err(row, format!("totp credential skipped: {e}")),
+                Err(e) => result.push_warn(row, format!("totp credential skipped: {e}")),
             },
             "note" => note = note.or_else(|| Some(text(&cred.content).unwrap_or_default())),
             _ => {}
@@ -304,6 +309,7 @@ fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
             ..Default::default()
         }
     } else {
+        result.warnings.truncate(kept);
         result.push_err(row, "item has no supported credential");
         return;
     };
@@ -424,10 +430,4 @@ fn totp_number(v: &Value) -> Option<u64> {
         Value::String(s) => s.trim().parse().ok(),
         _ => None,
     }
-}
-
-/// CXF timestamps are Unix seconds; the app stores RFC 3339 strings.
-fn rfc3339(secs: u64) -> Option<String> {
-    let secs = i64::try_from(secs).ok()?;
-    chrono::DateTime::from_timestamp(secs, 0).map(|t| t.to_rfc3339())
 }

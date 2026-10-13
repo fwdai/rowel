@@ -15,7 +15,9 @@ interface Props<T extends string> {
 // THE two-to-five-way switch (generator mode, timeout, theme): a tile trough
 // with the active segment raised on the lens — the same "you are here" key the
 // rail and the phone tab bar use, so a chosen segment is a place rather than a
-// wash of accent. Labels arrive already translated.
+// wash of accent. Labels arrive already translated. On the phone it spans its
+// row with the segments sharing the width, as the system's does, and where a
+// finger is a pointer the segments are 44px tall.
 export default function Segmented<T extends string>({
   options,
   value,
@@ -41,7 +43,10 @@ export default function Segmented<T extends string>({
       role="radiogroup"
       aria-label={name}
       onKeyDown={onKeyDown}
-      className={cx('flex gap-0.5 rounded-lg bg-tile p-[3px]', className)}
+      className={cx(
+        'flex gap-0.5 rounded-lg bg-tile p-[3px] max-md:w-full max-md:[&>button]:flex-1',
+        className
+      )}
     >
       {options.map((option, index) => {
         const active = option.value === value
@@ -55,7 +60,7 @@ export default function Segmented<T extends string>({
             data-testid={testidPrefix && `${testidPrefix}-${option.value}`}
             onClick={() => onChange(option.value)}
             className={cx(
-              'h-[26px] cursor-pointer whitespace-nowrap rounded-sm px-2.5 text-base tabular-nums transition-[color,background-color,box-shadow]',
+              'h-[26px] cursor-pointer whitespace-nowrap rounded-sm px-2.5 text-base tabular-nums transition-[color,background-color,box-shadow] any-pointer-coarse:h-11',
               active
                 ? 'bg-lens font-medium text-text shadow-lens'
                 : 'text-text2 hover:text-text'

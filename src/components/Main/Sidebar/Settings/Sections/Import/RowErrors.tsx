@@ -4,31 +4,42 @@ import type { RowError } from '@/api/imports'
 
 const MAX_SHOWN = 20
 
-// A collapsible list of per-row parse errors. A bad row never aborts the batch,
-// so this is informational — the good rows still import.
-export default function RowErrors({ errors }: { errors: RowError[] }) {
+interface Props {
+  rows: RowError[]
+  // An error's row was not read; a warning's row was, with a note about what
+  // it left behind. The heading and its colour say which.
+  kind: 'error' | 'warning'
+}
+
+export default function RowErrors({ rows, kind }: Props) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  if (errors.length === 0) return null
+  if (rows.length === 0) return null
+  // The heading counts rows, not messages: one row can carry several notes
+  // (a login with four unusable passkeys) and is still one row.
+  const count = new Set(rows.map(e => e.row)).size
 
   return (
-    <div className="text-base">
+    <div className="text-base" data-testid={`import-row-${kind}s`}>
       <span
-        className="cursor-pointer select-none text-bad"
+        className={`cursor-pointer select-none ${kind === 'error' ? 'text-bad' : 'text-text2'}`}
         onClick={() => setOpen(!open)}
       >
-        {t('{{count}} rows could not be read', { count: errors.length })} {open ? '▾' : '▸'}
+        {kind === 'error'
+          ? t('{{count}} rows could not be read', { count })
+          : t('{{count}} rows imported with a note', { count })}{' '}
+        {open ? '▾' : '▸'}
       </span>
       {open && (
-        <ul className="mt-1.5 max-h-[140px] list-disc overflow-y-auto pl-5 text-text3">
-          {errors.slice(0, MAX_SHOWN).map((e, i) => (
+        <ul className="mt-1.5 max-h-[140px] list-disc overflow-y-auto pl-5 text-text2">
+          {rows.slice(0, MAX_SHOWN).map((e, i) => (
             <li key={i}>
               {t('Row {{row}}', { row: e.row })}: {e.message}
             </li>
           ))}
-          {errors.length > MAX_SHOWN && (
+          {rows.length > MAX_SHOWN && (
             <li>
-              … {t('{{count}} more', { count: errors.length - MAX_SHOWN })}
+              … {t('{{count}} more', { count: rows.length - MAX_SHOWN })}
             </li>
           )}
         </ul>

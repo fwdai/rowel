@@ -6,7 +6,7 @@ import {
   switchWorkspaceDriveAccount
 } from '@/store'
 import { cx } from '@/utils/cx'
-import { CARD, META } from '@/components/elements/tokens'
+import { CARD, HERO_WASH, META } from '@/components/elements/tokens'
 import DriveRestoreForm from '@/components/elements/DriveRestoreForm'
 import GoogleDriveMark from '@/components/elements/GoogleDriveMark'
 import StatusPill from './StatusPill'
@@ -22,10 +22,6 @@ interface Props {
   offered: boolean
   restoring: boolean
 }
-
-// A soft accent wash from the top-left corner, over the card's own ground.
-const WASH =
-  'bg-[radial-gradient(120%_140%_at_0%_0%,color-mix(in_srgb,var(--c-accent)_10%,transparent),transparent_55%)]'
 
 // Google Drive as the one account this section is about: where it stands, the
 // control that moves it on, and — once connected — what it holds and the way out.
@@ -50,8 +46,8 @@ export default function DriveCard({ probing, offered, restoring }: Props) {
       : t('Last attempt failed')
 
   return (
-    <div data-testid="settings-drive-row" className={cx(CARD, WASH)}>
-      <div className="flex items-center gap-4 p-[18px]">
+    <div data-testid="settings-drive-row" className={cx(CARD, HERO_WASH)}>
+      <div className="flex items-center gap-4 p-5">
         <div className="grid h-11 w-11 flex-none place-items-center rounded-lg bg-accent-soft text-accent">
           <GoogleDriveMark size={22} />
         </div>
@@ -70,7 +66,7 @@ export default function DriveCard({ probing, offered, restoring }: Props) {
       </div>
 
       {offered && (
-        <div className="flex flex-col gap-3 px-[18px] pb-[18px]">
+        <div className="flex flex-col gap-3 px-5 pb-5">
           <p data-testid="settings-drive-found" className="text-sm text-text2">
             {t(
               'Restore it here to sync the same data on this device. The vault open now stays as a workspace of its own.'

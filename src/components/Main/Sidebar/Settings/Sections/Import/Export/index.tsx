@@ -5,7 +5,8 @@ import { describeError } from '@/api/errors'
 import { useVault } from '@/store'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
-import { LABEL } from '@/components/elements/tokens'
+import Note from '@/components/elements/Note'
+import { LABEL, TEXT_LINK } from '@/components/elements/tokens'
 import { useSectionNav } from '../../../sectionNav'
 import Formats from './Formats'
 import Warning from './Warning'
@@ -50,13 +51,12 @@ export default function ExportPane() {
             type="button"
             data-testid="settings-export-backup-link"
             onClick={() => go('sync')}
-            className="cursor-pointer text-accent hover:underline"
+            className={TEXT_LINK}
           >
             {t('Save an encrypted backup instead')}
           </button>
         </p>
         <Button
-          size="md"
           disabled={!acknowledged}
           loading={running}
           onClick={run}
@@ -66,15 +66,15 @@ export default function ExportPane() {
         </Button>
       </div>
 
-      {(error || saved) && (
-        <div className="mt-3 text-base">
-          {error && <span className="text-bad">{error}</span>}
-          {saved && (
-            <span className="text-good">
-              {t('Saved to')} {fileName(saved)}
-            </span>
-          )}
-        </div>
+      {error && (
+        <Note tone="bad" className="mt-3">
+          {error}
+        </Note>
+      )}
+      {saved && (
+        <Note tone="good" className="mt-3">
+          {t('Saved to')} {fileName(saved)}
+        </Note>
       )}
     </div>
   )

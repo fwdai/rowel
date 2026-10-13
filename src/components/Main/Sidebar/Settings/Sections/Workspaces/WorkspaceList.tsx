@@ -11,6 +11,7 @@ import { messageOf } from '@/api/errors'
 import type { Workspace } from '@/api/types'
 import { syncDeletedRemotely, syncErrorText } from '@/api/sync'
 import Button from '@/components/elements/Button'
+import Note from '@/components/elements/Note'
 import { useSubpage } from '../../sectionNav'
 import WorkspaceRow from './WorkspaceRow'
 import { workspaceAbout, workspaceSyncs } from './about'
@@ -66,13 +67,12 @@ export default function WorkspaceList() {
       {strandedHere && (
         <div
           data-testid="workspace-deleted-remotely"
-          className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm text-text2 inset-shadow-hairline"
+          className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 inset-shadow-hairline"
         >
-          <span className="text-bad">{syncErrorText(sync)}</span>
+          <Note tone="bad">{syncErrorText(sync)}</Note>
           <Button
-            variant="pale"
+            variant="pale-danger"
             size="md"
-            className="text-bad hover:text-bad"
             testid="workspace-delete-stranded"
             disabled={last}
             onClick={() => askDelete(active)}
@@ -82,20 +82,14 @@ export default function WorkspaceList() {
         </div>
       )}
       {last && (
-        <div
-          data-testid="workspace-delete-last"
-          className="px-4 py-3 text-sm text-text2 inset-shadow-hairline"
-        >
+        <Note testid="workspace-delete-last" className="px-4 py-3 inset-shadow-hairline">
           {t('Your only workspace cannot be deleted. Add another one first.')}
-        </div>
+        </Note>
       )}
       {error && (
-        <div
-          data-testid="workspace-switch-error"
-          className="px-4 py-3 text-sm text-bad inset-shadow-hairline"
-        >
+        <Note tone="bad" testid="workspace-switch-error" className="px-4 py-3 inset-shadow-hairline">
           {error}
-        </div>
+        </Note>
       )}
     </>
   )

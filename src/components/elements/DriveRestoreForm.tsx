@@ -1,10 +1,13 @@
-import { useState, type ChangeEvent } from 'react'
+import { useId, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SetupDriveFile } from '@/api/setup'
+import { cx } from '@/utils/cx'
 import DriveVaults from './DriveVaults'
-import Masterpass from './Masterpass'
 import Button from './Button'
+import Field from './Field'
+import Note from './Note'
 import { inputClass } from './formStyles'
+import { verbatimInput } from './inputProps'
 import { unsealError } from '@/components/Start/shared/errors'
 
 interface Props {
@@ -38,6 +41,9 @@ interface Props {
  *
  * The name is optional: a vault carries its own, given wherever it was made,
  * and most restores want exactly that one. Typing one renames it everywhere.
+ *
+ * Plain labelled fields, like every other form in Settings: the lock screen's
+ * card is for the lock screen.
  */
 export default function DriveRestoreForm({
   files,
@@ -50,14 +56,10 @@ export default function DriveRestoreForm({
   pickerTestid = 'drive'
 }: Props) {
   const { t } = useTranslation()
+  const id = useId()
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
-
-  const change = (event: ChangeEvent<HTMLInputElement>) => {
-    setError(null)
-    setPassword(event.currentTarget.value)
-  }
 
   const submit = () => {
     if (busy || !selectedId) return
@@ -73,38 +75,55 @@ export default function DriveRestoreForm({
     })
   }
 
+  // Not while an IME is composing: that Enter confirms the characters, and a
+  // restore started on it would carry a half-typed name across devices.
+  const onEnter = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' && !event.nativeEvent.isComposing) submit()
+  }
+
   return (
-    <div className="flex max-w-xs flex-col gap-3">
+    <div className="flex max-w-sm flex-col gap-3">
       <DriveVaults files={files} selectedId={selectedId} onSelect={onSelect} testid={pickerTestid} />
-      <input
-        type="text"
-        className={inputClass}
-        data-testid={`${testid}-name`}
-        placeholder={t('Workspace name (optional)')}
-        value={name}
-        disabled={busy}
-        onChange={event => setName(event.target.value)}
-      />
-      <Masterpass
-        placeholder={t('Master password')}
-        testid={`${testid}-password`}
-        autoFocus={false}
-        disabled={busy}
-        error={error}
-        onEnter={submit}
-        onChange={change}
-      />
-      <div className="flex items-center gap-4">
-        <Button size="md" testid={`${testid}-submit`} loading={busy} onClick={submit}>
+      <Field id={`${id}-name`} label={t('Workspace name (optional)')}>
+        <input
+          id={`${id}-name`}
+          type="text"
+          className={inputClass}
+          data-testid={`${testid}-name`}
+          value={name}
+          disabled={busy}
+          onChange={event => setName(event.target.value)}
+          onKeyDown={onEnter}
+        />
+      </Field>
+      <Field id={`${id}-password`} label={t('Master password')}>
+        <input
+          id={`${id}-password`}
+          type="password"
+          {...verbatimInput}
+          className={cx(inputClass, error && 'border-bad')}
+          data-testid={`${testid}-password`}
+          aria-invalid={!!error}
+          value={password}
+          disabled={busy}
+          onChange={event => {
+            setError(null)
+            setPassword(event.target.value)
+          }}
+          onKeyDown={onEnter}
+        />
+        {error && (
+          <Note tone="bad" testid="form-error">
+            {error}
+          </Note>
+        )}
+      </Field>
+      <div className="flex items-center gap-3">
+        <Button testid={`${testid}-submit`} loading={busy} onClick={submit}>
           {busy ? t('Restoring…') : t('Restore')}
         </Button>
         {!busy && onSwitchAccount && (
-          <Button
-            variant="pale"
-            size="md"
-            testid={`${testid}-switch-account`}
-            onClick={onSwitchAccount}
-          >
+          <Button variant="pale" testid={`${testid}-switch-account`} onClick={onSwitchAccount}>
             {t('Switch account')}
           </Button>
         )}

@@ -1611,6 +1611,7 @@ version = "2.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
 dependencies = [
+ "pkcs8",
  "signature",
 ]
 
@@ -4605,7 +4606,7 @@ dependencies = [
 
 [[package]]
 name = "rowel"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "base64 0.23.1",
  "block2",
@@ -4662,6 +4663,7 @@ dependencies = [
  "windows 0.62.2",
  "windows-registry 0.100.0",
  "zeroize",
+ "zip",
  "zxcvbn",
 ]
 
@@ -4695,9 +4697,12 @@ dependencies = [
  "chrono",
  "coset",
  "csv",
+ "ed25519-dalek",
  "hex",
  "log",
  "p256",
+ "p384",
+ "p521",
  "passkey-authenticator",
  "passkey-client",
  "passkey-types",
@@ -4709,12 +4714,14 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "ssh-key",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "url",
  "windows 0.62.2",
  "zeroize",
+ "zip",
 ]
 
 [[package]]
@@ -8087,6 +8094,7 @@ checksum = "caa8cd6af31c3b31c6631b8f483848b91589021b28fffe50adada48d4f4d2ed1"
 dependencies = [
  "arbitrary",
  "crc32fast",
+ "flate2",
  "indexmap 2.14.1",
  "memchr",
 ]

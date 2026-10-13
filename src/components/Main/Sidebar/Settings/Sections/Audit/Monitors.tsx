@@ -1,10 +1,11 @@
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { usePrefs } from '@/store'
+import Chip from '@/components/elements/Chip'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
 import Toggle from '@/components/elements/Toggle'
-import { META } from '@/components/elements/tokens'
+import { TEXT_LINK } from '@/components/elements/tokens'
 import { ActivityGlyph, LockGlyph, ShieldGlyph } from '@/components/Main/icons'
 import BreachExplainer from './BreachExplainer'
 import { setBreachCheck } from './breach'
@@ -30,7 +31,7 @@ export default function Monitors() {
               aria-expanded={explained}
               aria-controls={explainerId}
               onClick={() => setExplained(open => !open)}
-              className="cursor-pointer text-accent hover:underline"
+              className={TEXT_LINK}
             >
               {explained ? t('Hide details') : t('How it works')}
             </button>
@@ -55,12 +56,10 @@ export default function Monitors() {
         description={t('Checked on this device every time an item changes')}
         icon={<ActivityGlyph />}
         control={
-          <span
-            className={`flex h-6 items-center gap-1.5 rounded-full bg-tile px-2.5 ${META} font-medium`}
-          >
+          <Chip>
             <LockGlyph size={11} />
             {t('Always on')}
-          </span>
+          </Chip>
         }
       />
     </SettingsGroup>

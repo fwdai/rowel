@@ -96,7 +96,11 @@ switch, `Generator/Panel`, a bottom Use & copy), and opened from a password row
 it is `Generator/Attached` — the same `Dialog` the wide shell mounts, framed as
 a page sheet. Both take `useGeneratorDialog`, so the two shells generate the
 same way. Settings is a root list of rows over the desktop's own `Section`
-panes, and carries the lock control the vanished top bar used to.
+panes, and carries the lock control the vanished top bar used to. The rows
+step up to the phone's type tier through `max-md:` inside `SettingsRow`, and
+a sub-page's one action (Create, Save, Delete) is the same bottom slab the
+generator root draws, lifted over the tab bar; the nav row's Back is its
+Cancel.
 
 The three pushed headers — the entry's, the form's, a settings pane's — are one
 `Compact/NavBar` (leading · title · trailing) with `Compact/BackButton` in the
@@ -292,10 +296,13 @@ flick) slides it the rest of the way out and runs the same handler its back
 control does (`Compact/useSwipeBack`, on the entry screen and both settings
 panes, under the same `settingsLocked`); short of that, both spring back. The
 form is not among them: it rose from the bottom and its only exit is the
-guarded Cancel. Every one of these screens scrolls through `SCREEN_SCROLLER`
-(`Compact/chrome`): its `overscroll-contain` is what stops the webview's own
-scroll gesture from taking the drag and cancelling the swipe — see the note on
-the token.
+guarded Cancel. The drag starts on a 24px strip the screen lays over the left
+edge of its scroller, `touch-action: none` — the way the bottom sheet's
+grabber owns its drag. A touch that starts inside a scroller is the webview's
+to scroll the moment it moves on an axis the scroller has room on, and the
+pointer under the swipe is cancelled mid-drag; on the strip there is no
+scroller to claim it. A tap on the strip is passed on to what lies under it.
+Every one of these screens scrolls through `SCREEN_SCROLLER` (`Compact/chrome`).
 
 ## iOS conventions to follow
 
@@ -394,10 +401,10 @@ on — never with a prop.
 
 What the six slices deliberately left behind, smallest first:
 
-- **Generator controls have no touch tier.** The length slider and the toggle
-  rows are the desktop's sizes inside `Generator/Panel`, which both shells
-  share; giving them a touch tier means sizing them through the panel rather
-  than around it.
+- **The length slider has no touch tier.** The switches, segments, chips and
+  inline buttons the generator and Settings share take theirs through
+  `any-pointer-coarse:` inside each element; the range input is the one
+  control still at the desktop's size.
 - **`big` secrets truncate when stacked.** A long SSH private key in a narrow
   container clips rather than wrapping; the stacked row needs its own
   presentation for the multi-line value tier.
