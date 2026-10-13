@@ -74,7 +74,8 @@ message, rather than arriving as a username and nothing else.
 
 ```
 Rowel/                      the existing sync folder
-  Vaults/
+  Vaults/                   one pack per lockbox; becomes Lockboxes/ in a later
+                            release, once every supported client reads both
     <vault-id>.rowel        a vault pack, untouched by sharing
   Shares/
     <random>.rowelshare     one share, appProperties: rowelShare, entryId, kind,
