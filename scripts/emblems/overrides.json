@@ -1,7 +1,9 @@
 {
   "ARM": { "lines": 200 },
+  "DNK": { "credit": { "author": "Galico, adapted from Royal coat of arms of Denmark.svg by Sodacan" } },
   "GIB": { "drop": ["white"] },
   "GLP": { "drop": ["blue", "black"] },
+  "JEY": { "credit": { "author": "PaD, based on Government Ensign of Jersey.svg (sole upload, 2006)" } },
   "KIR": { "drop": ["red"] },
   "LBN": { "drop": ["red", "white"] },
   "MAF": { "drop": ["blue"] },

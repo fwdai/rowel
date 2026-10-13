@@ -39,9 +39,10 @@ how hard a change of colour has to be to be cut (`EDGE` by default; higher
 for art so heavily shaded that its lines would dissolve it, false for none).
 `"skip": true` leaves a country out.
 
-Alongside the SVGs it writes `version.json`, `credits.json` (each source file's author and
-licence, from Commons: derived from CC-BY-SA art, ours need the credit too),
-and contact sheets to review every country on its own cover colour.
+Alongside the SVGs it writes `version.json`, the attribution every emblem
+owes its source as `credits.json` and the `credits.html` page the website links
+to (see credits.py — the build stops if any is incomplete), and contact sheets
+to review every country on its own cover colour.
 """
 
 import argparse
@@ -63,6 +64,8 @@ import potrace
 from PIL import Image, ImageDraw
 from scipy import ndimage
 from scipy.spatial import ConvexHull
+
+import credits
 
 ROOT = Path(__file__).resolve().parents[2]
 COUNTRIES = ROOT / "src/utils/countries.ts"
@@ -316,40 +319,18 @@ def build(job: tuple[str, str, dict]) -> tuple[str, str | None, np.ndarray | Non
     return code, svg(mask), mask
 
 
-def credits(files: dict[str, str]) -> dict[str, dict]:
-    """Author and licence of every source file, from Commons' own metadata."""
-    titles = {f"File:{file}": code for code, file in files.items()}
-    out: dict[str, dict] = {}
-    names = list(titles)
-    for at in range(0, len(names), 50):
-        url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(
-            {
-                "action": "query",
-                "format": "json",
-                "prop": "imageinfo",
-                "iiprop": "extmetadata|url",
-                "iiextmetadatafilter": "Artist|LicenseShortName|LicenseUrl",
-                "titles": "|".join(names[at : at + 50]),
-            }
-        )
-        data = json.loads(get(url))
-        normalized = {n["to"]: n["from"] for n in data["query"].get("normalized", [])}
-        for page in data["query"]["pages"].values():
-            title = normalized.get(page["title"], page["title"])
-            info = (page.get("imageinfo") or [{}])[0]
-            meta = info.get("extmetadata", {})
-            text = lambda key: html.unescape(  # noqa: E731
-                re.sub(r"<[^>]+>", "", meta.get(key, {}).get("value", ""))
-            ).strip()
-            out[titles[title]] = {
-                "source": title,
-                "url": info.get("descriptionurl", ""),
-                "author": text("Artist"),
-                "license": text("LicenseShortName"),
-                "licenseUrl": text("LicenseUrl"),
-            }
-        time.sleep(PAUSE)
-    return dict(sorted(out.items()))
+def write_credits(out: Path, files: dict[str, str], overrides: dict) -> None:
+    """credits.json and credits.html for the emblems in `files`, merged into
+    what `out` already credits — so a rebuild of a few countries keeps the
+    rest — and checked complete before anything is written (see credits.py)."""
+    path = out / "credits.json"
+    known = json.loads(path.read_text()) if path.exists() else {}
+    published = {p.stem for p in out.glob("*.svg")}
+    fetched = credits.fetch(files, get, PAUSE)
+    records = {c: r for c, r in {**known, **fetched}.items() if c in published}
+    records = credits.complete(records, overrides)
+    path.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n")
+    (out / "credits.html").write_text(credits.page(records))
 
 
 def sheets(masks: dict[str, np.ndarray], originals: dict[str, Path], review: Path) -> None:
@@ -397,6 +378,9 @@ def main() -> None:
     parser.add_argument("--cache", type=Path, default=Path(tempfile.gettempdir()) / "rowel-emblems/cache")
     parser.add_argument("--review", type=Path, default=Path(tempfile.gettempdir()) / "rowel-emblems/review")
     parser.add_argument("--only", nargs="*", help="rebuild just these codes")
+    parser.add_argument(
+        "--credits", action="store_true", help="only rewrite the credits for what --out holds"
+    )
     args = parser.parse_args()
     for folder in (args.out, args.cache, args.review):
         folder.mkdir(parents=True, exist_ok=True)
@@ -405,6 +389,9 @@ def main() -> None:
     files = sources(overrides)
     if args.only:
         files = {code: files[code] for code in args.only}
+    if args.credits:
+        write_credits(args.out, files, overrides)
+        return
 
     originals = {}
     for i, (code, file) in enumerate(files.items(), start=1):
@@ -425,10 +412,7 @@ def main() -> None:
             (args.out / f"{code}.svg").write_text(markup)
             masks[code] = mask
 
-    if not args.only:
-        (args.out / "credits.json").write_text(
-            json.dumps(credits({c: files[c] for c in masks}), indent=2, ensure_ascii=False) + "\n"
-        )
+    write_credits(args.out, {c: files[c] for c in masks}, overrides)
     sheets(masks, originals, args.review)
     version = write_version(args.out)
     print(
