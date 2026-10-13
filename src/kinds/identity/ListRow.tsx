@@ -11,7 +11,7 @@ export default function ListRow({ entry, flag }: ContentProps) {
 
   return (
     <Row
-      glyph={country ? <Cover country={country} size={16} /> : <IdentityGlyph size={16} />}
+      glyph={country ? <Cover country={country} /> : <IdentityGlyph size={16} />}
       tint={country ? undefined : 'identity'}
       title={entry.title}
       sub={listSubtitle(entry)}

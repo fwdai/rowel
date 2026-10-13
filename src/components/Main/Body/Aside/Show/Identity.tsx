@@ -51,7 +51,7 @@ export default function Identity({ entry, tile, glyph, className, children }: Pr
         ) : hasBrandMark(entry.cardBrand) ? (
           <CardBrandMark brand={entry.cardBrand} size={mark} />
         ) : country ? (
-          <Cover country={country} size={glyph} />
+          <Cover country={country} />
         ) : (
           <Glyph size={glyph} />
         )}

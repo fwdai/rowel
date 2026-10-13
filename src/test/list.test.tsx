@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ListColumn from '@/components/Main/Body/ListColumn'
 import SortMenu from '@/components/Main/Body/List/SortMenu'
@@ -141,6 +141,9 @@ describe('Entry list', () => {
     const covers = screen.getAllByTestId('passport-cover')
     expect(covers.map(cover => cover.dataset.country)).toEqual(['UKR'])
     expect(covers[0]).toHaveStyle({ backgroundColor: '#17305D' })
+    // No emblem for the country (the IPC default): the generic one, not a gap.
+    expect(covers[0].dataset.emblem).toBe('generic')
+    expect(within(covers[0]).getByTestId('passport-emblem')).toBeInTheDocument()
     setFilterType(null)
   })
 
@@ -155,7 +158,12 @@ describe('Entry list', () => {
     setFilterType('identity')
     render(<ListColumn />)
 
-    await waitFor(() => expect(screen.getAllByTestId('passport-emblem')).toHaveLength(2))
+    // The generic emblem stands in until the country's arrives.
+    await waitFor(() =>
+      expect(
+        screen.getAllByTestId('passport-cover').map(cover => cover.dataset.emblem)
+      ).toEqual(['country', 'country'])
+    )
     expect(calls('fetch_emblem')).toEqual([{ country: 'UKR' }])
     setFilterType(null)
   })

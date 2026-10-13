@@ -20,7 +20,8 @@ const mask = (src: string): CSSProperties => {
 }
 
 interface Props {
-  /** The emblem: a one-colour SVG as a data: URI, used only for its shape. */
+  /** The emblem: a one-colour SVG, as a data: URI or an asset URL, used only
+   * for its shape. */
   src: string
   className?: string
 }
