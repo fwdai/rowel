@@ -21,11 +21,26 @@ interface Props<T extends string> {
   testidPrefix?: string
 }
 
+// The breath the menu keeps from the edge it is measured against.
+const MARGIN = 8
+
+// What the menu must stay inside: the nearest ancestor that scrolls (the
+// settings modal's section scroller, the phone's pane), else the window. A
+// menu that runs past a scroller's starting edge is cut off for good — nothing
+// scrolls up to it — so the window's room is not the room there is.
+const roomOf = (el: HTMLElement) => {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY
+    if (overflow === 'auto' || overflow === 'scroll') return node.getBoundingClientRect()
+  }
+  return { top: 0, bottom: window.innerHeight }
+}
+
 // A single choice from a field-shaped trigger naming the current option, opening
 // a menu of all of them. For options too many or too wide to sit side by side.
 // On the phone the field spans its row and the menu spans the field; wherever
-// it is, the menu opens upward when there is more room above the field than
-// below it, so it never runs off the bottom of a screen.
+// it is, the menu opens to the side of the field with more room inside what
+// scrolls around it, and is capped to that room, so it never runs off an edge.
 export default function MenuSelect<T extends string>({
   label,
   options,
@@ -35,13 +50,18 @@ export default function MenuSelect<T extends string>({
 }: Props<T>) {
   const [open, setOpen] = useState(false)
   const [up, setUp] = useState(false)
+  const [room, setRoom] = useState<number>()
   const trigger = useRef<HTMLButtonElement>(null)
   const current = options.find(option => option.value === value)
 
   const toggle = () => {
     if (!open && trigger.current) {
       const { top, bottom } = trigger.current.getBoundingClientRect()
-      setUp(top > window.innerHeight - bottom)
+      const bounds = roomOf(trigger.current)
+      const above = top - bounds.top
+      const below = bounds.bottom - bottom
+      setUp(above > below)
+      setRoom(Math.max(above, below) - MARGIN)
     }
     setOpen(!open)
   }
@@ -75,7 +95,7 @@ export default function MenuSelect<T extends string>({
             'right-0 w-[260px] max-md:left-0 max-md:w-auto',
             up ? 'bottom-full mb-1 origin-bottom' : 'top-full mt-1'
           )}
-          listClassName="max-h-[40vh]"
+          listMaxHeight={room}
         >
           {options.map(option => (
             <DropdownItem
