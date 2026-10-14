@@ -497,6 +497,11 @@ Error kind `driveNotConnected` → `accountNotConnected`.
    (proposal: rename in PR 3, in one place, with the frontend).
 3. Onboarding entry: two buttons on Welcome, or one "Restore from cloud" that
    leads to a picker (proposal: two buttons; the phone screen has room).
+   Revisited 2026-10-14 with the third provider: the welcome now offers three
+   ways in — Start fresh, Continue with a cloud account, Restore from a backup
+   file — and the cloud row opens a picker listing the providers the build can
+   connect (`Start/CloudPicker`), so the welcome stays the same however many
+   providers follow (OneDrive, WebDAV).
 4. Shares: Drive-only until PR 4 (proposal: yes).
 
 ## 9. iCloud adapter
