@@ -130,12 +130,15 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
                 .level_for("rowel_lib", log::LevelFilter::Debug)
-                .target(tauri_plugin_log::Target::new(
-                    tauri_plugin_log::TargetKind::Stderr,
-                ))
-                .target(tauri_plugin_log::Target::new(
-                    tauri_plugin_log::TargetKind::LogDir { file_name: None },
-                ))
+                // `targets` replaces the plugin's defaults (stdout + log dir);
+                // `target` would append to them, and every line would reach
+                // the terminal and the file twice.
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stderr),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: None,
+                    }),
+                ])
                 .build(),
         )
         .manage(AppState::default())
