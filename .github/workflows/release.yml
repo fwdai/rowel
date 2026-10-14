@@ -3,6 +3,11 @@
 # tauri-plugin-updater reads from `releases/latest/download/latest.json`.
 # Publishing the draft is what makes a version visible to installed apps.
 #
+# Alongside the bundler's versioned installers, each job uploads a second copy
+# of its own installers under a version-free name (`Rowel_universal.dmg` and
+# friends), so `releases/latest/download/<name>` is a permanent download link.
+# README.md and rowel.app point at those.
+#
 # One-time secret setup and the per-release procedure: docs/releasing.md.
 # The same build can be run locally with scripts/release-local.sh (macOS only).
 #
@@ -49,13 +54,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `latestAssets` is the version-free copies this job owns, as
+        # `<glob of the built file>=<name to publish it under>` pairs. A glob
+        # that matches nothing fails the job: a silently missing copy would
+        # leave a dead link on README.md and rowel.app.
         include:
           - platform: macos-latest
             args: '--target universal-apple-darwin'
             bundlePath: src-tauri/target/universal-apple-darwin/release/bundle
+            latestAssets: '*_universal.dmg=Rowel_universal.dmg'
           - platform: ubuntu-latest
             args: ''
             bundlePath: src-tauri/target/release/bundle
+            latestAssets: '*_amd64.deb=Rowel_amd64.deb *_amd64.AppImage=Rowel_amd64.AppImage *.x86_64.rpm=Rowel_x86_64.rpm'
           # NSIS only. The MSI (WiX) bundler rejects a pre-release identifier
           # that is not purely numeric ("1.0.0-alpha.1" -> "optional pre-release
           # identifier in app version must be numeric-only"), and the updater
@@ -64,6 +75,7 @@ jobs:
           - platform: windows-latest
             args: '--bundles nsis'
             bundlePath: src-tauri/target/release/bundle
+            latestAssets: '*_x64-setup.exe=Rowel_x64-setup.exe'
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -228,10 +240,52 @@ jobs:
             gh release edit "$TAG" --notes "$NOTES"
           fi
 
+      # --- Version-free "latest" copies -----------------------------------
+      # Every name the bundler produces carries the version
+      # (`Rowel_1.0.2_universal.dmg`), so no `releases/latest/download/<name>`
+      # URL built from one can survive the next release. So each job copies its
+      # own installers to the fixed names in `matrix.latestAssets` and uploads
+      # those to the same release, byte-for-byte identical to (and signed and
+      # notarized exactly like) the versioned asset they came from.
+      #
+      # Nothing else changes: the versioned installers, the updater bundles,
+      # their `.sig` files and `latest.json` are still what tauri-action
+      # uploaded, and the updater keeps reading the versioned URLs out of
+      # `latest.json`. The copies are only there for humans, and — like every
+      # other asset — they are reachable through `/releases/latest` only once
+      # the draft is published.
+      - name: Copy the installers to version-free names
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p latest-assets
+          for pair in ${{ matrix.latestAssets }}; do
+            pattern="${pair%%=*}"
+            dest="${pair#*=}"
+            # One bundler directory per format: bundle/dmg, bundle/nsis, …
+            built=''
+            for candidate in "${{ matrix.bundlePath }}"/*/$pattern; do
+              [ -f "$candidate" ] || continue
+              built="$candidate"
+              break
+            done
+            if [ -z "$built" ]; then
+              echo "::error::nothing under ${{ matrix.bundlePath }} matches $pattern, so $dest cannot be produced (did the bundler's naming change?)"
+              exit 1
+            fi
+            cp "$built" "latest-assets/$dest"
+            echo "$built -> latest-assets/$dest"
+          done
+
       # --- SLSA build provenance (T-CI-4) ---------------------------------
       # Attest the installers this platform produced. Each pattern that matches
       # nothing is simply skipped; every platform matches at least its own
       # installers, so the attestation always has a subject.
+      #
+      # The version-free copies are attested under their own names in the same
+      # call, which costs one extra subject each. Their bytes are unchanged, so
+      # `gh attestation verify` (which looks an artifact up by digest) would
+      # accept them either way.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
@@ -243,6 +297,20 @@ jobs:
             ${{ matrix.bundlePath }}/**/*.AppImage
             ${{ matrix.bundlePath }}/**/*.msi
             ${{ matrix.bundlePath }}/**/*-setup.exe
+            latest-assets/*
+
+      # Uploaded after the attestation so a copy is never downloadable without
+      # its provenance. `--clobber` keeps a re-run against an existing draft
+      # idempotent; the names are disjoint per platform, so the three jobs do
+      # not race each other.
+      - name: Upload the version-free copies to the release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v$(jq -r .version src-tauri/tauri.conf.json)"
+          gh release upload "$TAG" latest-assets/* --clobber
 
       # --- CycloneDX SBOM (T-CI-4) ----------------------------------------
       # Generated once, on Linux, and attached to the release. The Rust SBOM is
