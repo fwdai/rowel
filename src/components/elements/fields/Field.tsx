@@ -6,7 +6,8 @@ import { EyeGlyph, EyeOffGlyph } from '../../Main/icons'
 import CopyButton from '../CopyButton'
 import IconButton from '../IconButton'
 import { verbatimInput } from '../inputProps'
-import { HOVER_ONLY, MASK_DOTS, MASK_INPUT, ROW_COPY, VALUE_LINE } from '../tokens'
+import Mask from '../Mask'
+import { HOVER_ONLY, MASK_INPUT, ROW_COPY, VALUE_LINE } from '../tokens'
 import { useField } from './context'
 import CopyValue from './CopyValue'
 import { requiredError } from './formats'
@@ -164,7 +165,7 @@ export default function Field({
               testid={`entry-value-${name}`}
               className={cx(ink, masked ? 'text-text2 max-md:text-text' : 'text-text')}
             >
-              {masked ? MASK_DOTS : shown}
+              {masked ? <Mask /> : shown}
             </CopyValue>
             {gloss && (
               <span className="min-w-0 flex-none truncate text-base leading-6 text-text3 max-md:text-md">

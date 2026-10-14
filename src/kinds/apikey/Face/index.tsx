@@ -7,7 +7,8 @@ import Paper from '@/components/elements/Face'
 import Cell from '@/components/elements/Face/Cell'
 import FaceIconButton from '@/components/elements/Face/IconButton'
 import { useField } from '@/components/elements/fields'
-import { LABEL_TYPE, MASK_DOTS } from '@/components/elements/tokens'
+import Mask from '@/components/elements/Mask'
+import { LABEL_TYPE } from '@/components/elements/tokens'
 import { CheckGlyph, CopyGlyph, EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import { ENVIRONMENT_LABELS, environmentOf } from '../environment'
 import { hostPath, splitKey } from '../keyInfo'
@@ -57,14 +58,14 @@ export default function Face() {
           className="-mx-1.5 min-w-0 flex-1 cursor-pointer rounded-sm px-1.5 py-1 text-left transition-colors hover:bg-(--face-hover)"
         >
           {/* Wraps rather than clips: a value you cannot see is worse than a
-              strip two lines tall. Masked, the dots are a fixed length and say
+              strip two lines tall. Masked, the mask is a fixed length and says
               nothing about the key's. */}
           <span
             className="block break-all font-mono text-lg leading-[1.4] tracking-[0.06em]"
             data-testid="entry-value-apiKey"
           >
             {prefix && <span className="text-(--face-ink2)">{prefix}</span>}
-            {shown ? body : MASK_DOTS}
+            {shown ? body : <Mask />}
           </span>
         </button>
         <FaceIconButton

@@ -14,13 +14,8 @@ import {
   STACK_LABEL,
   STACK_RAIL
 } from '@/components/elements/fields'
-import {
-  HOVER_ONLY,
-  MASK_DOTS,
-  ROW_COPY,
-  ROW_HAIRLINE,
-  VALUE
-} from '@/components/elements/tokens'
+import Mask from '@/components/elements/Mask'
+import { HOVER_ONLY, ROW_COPY, ROW_HAIRLINE, VALUE } from '@/components/elements/tokens'
 import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import type { EnvVar } from '../parse'
 import { KEY_COL, STACK_VALUE } from './styles'
@@ -65,7 +60,7 @@ export default function Row({ v, revealed, onReveal }: Props) {
               STACK_VALUE
             )}
           >
-            {masked ? MASK_DOTS : v.value}
+            {masked ? <Mask /> : v.value}
           </CopyValue>
           {/* Comments come from the same encrypted body as the value and may
               themselves contain secrets, so the row's eye governs both. */}

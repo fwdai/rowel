@@ -75,6 +75,6 @@ describe('an API key, read', () => {
     read({ ...KEY, apiKey: 'deadbeef-1234-4abc-8def-123456789abc' })
     const strip = screen.getByTestId('entry-value-apiKey')
     expect(strip).not.toHaveTextContent('deadbeef')
-    expect(strip).toHaveTextContent('••••')
+    expect(strip.querySelector('[data-testid="mask"]')).not.toBeNull()
   })
 })

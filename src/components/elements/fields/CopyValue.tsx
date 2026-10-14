@@ -7,8 +7,8 @@ interface Props {
   /** What pressing hands over — the real value, whatever is shown. */
   value: string
   /**
-   * The accessible name. A masked value's text is twelve dots and names
-   * nothing, so the row says what it is and what pressing does instead:
+   * The accessible name. A masked value is a row of glyphs and names nothing,
+   * so the row says what it is and what pressing does instead:
    * "Password · Copy".
    */
   label: string

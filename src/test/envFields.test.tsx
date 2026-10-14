@@ -3,7 +3,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FieldsProvider } from '@/components/elements/fields'
-import { BLOCK_DOTS, MASK_DOTS } from '@/components/elements/tokens'
 import type { DraftValue, EntryDraft } from '@/kinds/draft'
 import { copy } from '@/services/copy'
 import Fields from '@/kinds/env/Fields'
@@ -40,7 +39,11 @@ const LONG = [
   ''
 ].join('\n')
 
-const DOTS = MASK_DOTS
+// A masked value shows the mask glyphs and no text at all.
+const expectMasked = (el: HTMLElement) => {
+  expect(el.querySelector('[data-testid="mask"]')).not.toBeNull()
+  expect(el).toHaveTextContent(/^$/)
+}
 
 const draft = (body: string, fileName = ''): EntryDraft => ({
   type: 'env',
@@ -103,7 +106,7 @@ describe('Env fields, reading', () => {
     expect(screen.getByText('4 variables')).toBeInTheDocument()
     for (const key of ['DATABASE_URL', 'DB_POOL', 'STRIPE_KEY', 'PORT']) {
       expect(screen.getByText(key)).toBeInTheDocument()
-      expect(value(BODY, key)).toHaveTextContent(DOTS)
+      expectMasked(value(BODY, key))
     }
     // Nothing secret is on screen.
     expect(document.body.textContent).not.toContain('sk_live_1')
@@ -115,7 +118,7 @@ describe('Env fields, reading', () => {
 
     expect(value(BODY, 'PORT')).toHaveTextContent('3000')
     expect(screen.getByText('· dev')).toBeInTheDocument()
-    expect(value(BODY, 'DATABASE_URL')).toHaveTextContent(DOTS)
+    expectMasked(value(BODY, 'DATABASE_URL'))
     // A band caption is not owned by the one row that happened to be revealed.
     expect(screen.queryByText('Stripe')).not.toBeInTheDocument()
   })
@@ -193,7 +196,7 @@ describe('Env fields, reading', () => {
     renderRead()
     await userEvent.click(screen.getByTestId('env-tab-file'))
 
-    expect(screen.getByTestId('entry-value-body')).toHaveTextContent(BLOCK_DOTS)
+    expectMasked(screen.getByTestId('entry-value-body'))
     expect(screen.queryByTestId('env-reveal-all')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('reveal-body'))
@@ -427,7 +430,7 @@ describe('Env fields, review regressions', () => {
 
     await userEvent.click(screen.getByTestId('env-tab-file'))
     await userEvent.click(screen.getByTestId('env-tab-variables'))
-    expect(value(BODY, 'STRIPE_KEY')).toHaveTextContent(DOTS)
+    expectMasked(value(BODY, 'STRIPE_KEY'))
   })
 
   // The editor hears Escape on `document` as Cancel; clearing a filter must not
