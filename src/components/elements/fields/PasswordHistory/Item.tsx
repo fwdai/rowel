@@ -6,7 +6,8 @@ import { cx } from '@/utils/cx'
 import { EyeGlyph, EyeOffGlyph } from '../../../Main/icons'
 import CopyButton from '../../CopyButton'
 import IconButton from '../../IconButton'
-import { MASK_DOTS, META, ROW_COPY, ROW_HAIRLINE, VALUE } from '../../tokens'
+import Mask from '../../Mask'
+import { META, ROW_COPY, ROW_HAIRLINE, VALUE } from '../../tokens'
 import CopyValue from '../CopyValue'
 
 // A finger's target where a finger is one of the pointers, as the field rail's.
@@ -30,7 +31,7 @@ export default function Item({ item, index }: { item: PasswordHistoryItem; index
           testid={`password-history-value-${index}`}
           className={cx(VALUE, 'w-full', show ? 'text-text tracking-secret' : 'text-text2')}
         >
-          {show ? item.password : MASK_DOTS}
+          {show ? item.password : <Mask />}
         </CopyValue>
         {when && <div className={META}>{t('Replaced {{when}}', { when })}</div>}
       </div>
