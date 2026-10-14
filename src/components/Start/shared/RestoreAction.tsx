@@ -20,14 +20,16 @@ interface Props {
 
 // The glyph chip. A soft wash of the accent, lit from the top-left like the
 // cards around it, with the glyph inked in the accent itself: a tinted tile,
-// not a grey one. It answers the row's hover by filling in a step, so the
-// chip moves with the row instead of sitting on it.
+// not a grey one. It answers the row's hover by deepening a shade — a fill
+// under the wash at less than half the tint's strength, eased in — so the
+// chip moves with the row instead of sitting on it, without flashing solid.
 const GLYPH_CHIP = cx(
   'text-accent',
   'bg-[linear-gradient(135deg,var(--c-accent-soft),transparent_80%)]',
   'ring-1 ring-inset ring-accent-soft',
   'shadow-[inset_0_1px_0_var(--topglow)]',
-  'transition-[background-color,box-shadow] duration-300 group-hover:bg-accent-soft'
+  'transition-[background-color] duration-300',
+  'group-hover:bg-[color:color-mix(in_srgb,var(--c-accent-soft)_40%,transparent)]'
 )
 
 // The plate: a provider's own mark in its own colours, on a neutral ground
