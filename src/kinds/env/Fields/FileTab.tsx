@@ -10,7 +10,8 @@ import Panel from '@/components/elements/Panel'
 import { grow, useField } from '@/components/elements/fields'
 import { requiredError } from '@/components/elements/fields/formats'
 import { verbatimInput } from '@/components/elements/inputProps'
-import { BLOCK_DOTS } from '@/components/elements/tokens'
+import Mask from '@/components/elements/Mask'
+import { BLOCK_LENGTH } from '@/components/elements/tokens'
 import { DownloadGlyph, EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import { BOX, BOX_LINE } from './styles'
 
@@ -77,7 +78,7 @@ export default function FileTab() {
                 show ? 'whitespace-pre-wrap text-text' : 'text-text2'
               )}
             >
-              {show ? value : BLOCK_DOTS}
+              {show ? value : <Mask count={BLOCK_LENGTH} className="flex-wrap" />}
             </div>
           </div>
           {/* Three controls, not the detail rows' two: this block lines up with

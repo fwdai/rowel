@@ -6,9 +6,9 @@ import { EyeGlyph, EyeOffGlyph, TrashGlyph } from '../../../Main/icons'
 import CopyButton from '../../CopyButton'
 import IconButton from '../../IconButton'
 import { verbatimInput } from '../../inputProps'
+import Mask from '../../Mask'
 import {
   HOVER_ONLY,
-  MASK_DOTS,
   MASK_INPUT,
   ROW_COPY,
   ROW_HAIRLINE,
@@ -166,7 +166,7 @@ export default function CustomFieldRow({
             testid={`entry-extra-value-${index}`}
             className={cx(ink(masked), masked ? 'text-text2 max-md:text-text' : 'text-text')}
           >
-            {masked ? MASK_DOTS : field.value}
+            {masked ? <Mask /> : field.value}
           </CopyValue>
         )}
       </div>
