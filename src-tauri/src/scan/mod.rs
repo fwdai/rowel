@@ -15,6 +15,8 @@ mod mrz;
 mod ocr_apple;
 #[cfg(target_os = "windows")]
 mod ocr_windows;
+#[cfg(any(target_vendor = "apple", test))]
+mod rows;
 #[cfg(test)]
 mod tests;
 
@@ -78,12 +80,20 @@ pub fn platform_ocr() -> Option<Box<dyn Ocr>> {
 /// to agree, so the lines cannot be anything else. A card, by contrast, is
 /// recognized from a Luhn-valid digit run — and an identity document can carry
 /// one of those by chance.
+///
+/// An MRZ whose digits did not verify is still an MRZ: a worse photo of one,
+/// not a card. Its data line is a run of digits long enough to hold a
+/// Luhn-valid window by chance, so the card parser is not asked about it, and
+/// the user is asked for a better photo instead.
 pub fn scan_lines(lines: &[String]) -> Option<ScanResult> {
     if let Some(fields) = mrz::parse(lines) {
         return Some(ScanResult {
             kind: "identity".into(),
             fields,
         });
+    }
+    if mrz::present(lines) {
+        return None;
     }
     card::parse(lines).map(|fields| ScanResult {
         kind: "card".into(),
@@ -161,6 +171,10 @@ fn local_path(path: &str) -> std::path::PathBuf {
         .and_then(|u| u.to_file_path().ok())
         .unwrap_or_else(|| std::path::PathBuf::from(path))
 }
+
+/// The largest photo `scan_bytes` is handed — far past any phone camera's
+/// JPEG, there only so a body cannot be arbitrarily large.
+pub(crate) const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 
 /// The image types both OCR backends load and both entry points offer — the
 /// file dialog's filter (`commands::tools::pick_file`) and the window drop's

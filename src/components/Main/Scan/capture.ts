@@ -1,11 +1,13 @@
 import { scanFinished, scanStarted, useApp } from '@/store'
+import { shrinkPhoto } from '@/lib/photo'
 import { runScan } from './run'
 
 /**
  * Scan a photo the phone's camera just took through the webview's capture
  * input (the "Take Photo" row of the source sheet). It is a `File` with no
  * path the backend could be pointed at — it was never written anywhere — so
- * its bytes are what travels.
+ * its bytes are what travels, cut down first (`shrinkPhoto`): a card reads as
+ * well from a fraction of the camera's pixels, and recognition runs faster.
  *
  * The read is an await with nothing of the session in hand, so it is stamped
  * like a Rust command's: a lock while it runs (and whatever unlock follows,
@@ -23,7 +25,7 @@ export const scanCapture = async (file: File): Promise<void> => {
   scanStarted()
   let image: Uint8Array
   try {
-    image = new Uint8Array(await file.arrayBuffer())
+    image = new Uint8Array(await (await shrinkPhoto(file)).arrayBuffer())
   } catch {
     if (useApp.getState().locks === session) scanFinished('failed')
     return

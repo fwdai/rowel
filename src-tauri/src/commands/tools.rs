@@ -110,8 +110,8 @@ pub async fn scan_image(
 /// *path* is the webview naming a file on disk it never read, whereas these
 /// bytes are already the webview's own. Nothing on disk is opened for them.
 /// The bytes travel as the request's raw body (a `Uint8Array` argument on the
-/// JS side), not as JSON, so a photo is not spelled out as an array of numbers.
-/// Unlocked vaults only, and the session must still be the one that asked, as
+/// JS side), or as a JSON array of them when Tauri has fallen back to its
+/// `postMessage` transport (see `body_bytes`). Unlocked vaults only, and the session must still be the one that asked, as
 /// for `scan_image`.
 #[tauri::command]
 pub async fn scan_image_bytes(
@@ -119,15 +119,11 @@ pub async fn scan_image_bytes(
     request: tauri::ipc::Request<'_>,
 ) -> Result<ScanResult> {
     let epoch = super::unlocked_epoch(&state)?;
-    let tauri::ipc::InvokeBody::Raw(image) = request.body() else {
-        return Err(Error::Unsupported(
-            "the photo has to be sent as bytes".into(),
-        ));
-    };
-    // `Request` only lends the body, so the scanner works on a clone: that
-    // copy is what gets zeroized (see `scan_bytes`); the body Tauri holds is
+    // `Request` only lends the body, so the scanner works on a copy: that copy
+    // is what gets zeroized (see `scan_bytes`); the body Tauri holds is
     // dropped with the request like any other.
-    let result = scan::scan_bytes(image.clone()).await?;
+    let image = super::body_bytes(request.body(), scan::MAX_IMAGE_BYTES)?;
+    let result = scan::scan_bytes(image).await?;
     super::same_session(&state, epoch)?;
     Ok(result)
 }

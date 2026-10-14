@@ -96,7 +96,7 @@ export const scanImage = (path: string): Promise<ScanResult> => call('scan_image
 /**
  * Recognize a card or an identity document in a photo the webview holds —
  * what the phone's system picker handed its file input, which has no path on
- * disk. The bytes go over as the request's raw body, not as JSON. No grant is
+ * disk. The bytes go over as the request's raw body (see `call`). No grant is
  * involved: nothing on disk is read for them.
  */
 export const scanImageBytes = (image: Uint8Array): Promise<ScanResult> =>

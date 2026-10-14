@@ -4,12 +4,12 @@ import {
   openAddPicker,
   openGenerator,
   openSettings,
-  startEntry,
   toggleTheme,
   useCurrentEntry
 } from '@/store'
 import type { EntryMeta } from '@/api/types'
 import { KINDS, addLabel, kindOf } from '@/kinds'
+import { addEntry } from '@/components/Main/AddSecret/add'
 import { t, type TKey } from '@/i18n'
 import { chord } from '@/lib/platform'
 import { copyValue, type EntryValue } from '@/services/entries'
@@ -75,7 +75,7 @@ export const useCommands = (): Command[] => {
       id: `new-${kind.type}`,
       label: addLabel(kind.type),
       glyph: kind.Glyph,
-      run: () => startEntry(kind.type)
+      run: () => addEntry(kind.type)
     })),
     {
       id: 'add-secret',

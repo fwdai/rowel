@@ -57,7 +57,7 @@ function safari() {
         sent,
         warnings,
         connect() {
-            const port = vm.runInContext("browser.runtime.connectNative('app.rowel.browser')", context);
+            const port = vm.runInContext("rowelConnectNative('app.rowel.browser')", context);
             const heard = [];
             let disconnects = 0;
             port.onMessage.addListener((m) => heard.push(m.action));
@@ -237,35 +237,53 @@ test('after a disconnect a new port connects afresh', async () => {
     assert.equal(again.disconnects(), 0);
 });
 
-test('the port is installed through the polyfill\'s wrapped runtime', async () => {
+test('the port is a global, behind the polyfill and a runtime that ignores what is set on it', async () => {
+    // A runtime shaped like Safari's: connectNative is a fresh function on
+    // every read and writes to it are accepted but ignored, sendNativeMessage
+    // returns a promise, and runtime.id is set so the polyfill wraps nothing.
     const sent = [];
-    const chrome = {
-        runtime: {
-            id: 'rowel',
-            lastError: null,
-            getURL: () => 'safari-web-extension://rowel/',
-            connectNative: () => ({
-                onMessage: { addListener: () => {} },
-                onDisconnect: { addListener: () => {} },
-                disconnect: () => {},
-                postMessage: () => {},
-            }),
-            sendNativeMessage: (name, envelope, callback) => {
-                sent.push(envelope);
-                setImmediate(() => callback({ events: [ reply('change-public-keys') ], after: 0, connected: true }));
-            },
+    const nativePort = () => ({
+        onMessage: { addListener: () => {} },
+        onDisconnect: { addListener: () => {} },
+        disconnect: () => {},
+        postMessage: () => {},
+    });
+    const runtime = new Proxy({
+        id: 'rowel',
+        lastError: null,
+        getURL: () => 'safari-web-extension://rowel/',
+        sendNativeMessage: (name, envelope) => {
+            sent.push(envelope);
+            return Promise.resolve({ events: [ reply('change-public-keys') ], after: 0, connected: true });
         },
-    };
-    const context = vm.createContext({ chrome, console: { log: () => {}, warn: () => {}, error: () => {} }, setInterval, clearInterval });
+    }, {
+        has: (target, prop) => prop === 'connectNative' || prop in target,
+        get: (target, prop) => (prop === 'connectNative' ? () => nativePort() : target[prop]),
+        set: () => true,
+        defineProperty: () => true,
+    });
+    const errors = [];
+    const browser = { runtime };
+    const context = vm.createContext({
+        chrome: browser,
+        browser,
+        console: { log: () => {}, warn: () => {}, error: (...a) => errors.push(a.join(' ')) },
+        setInterval,
+        clearInterval,
+    });
     context.globalThis = context;
     vm.runInContext(POLYFILL, context);
     vm.runInContext(SHIM, context);
-    const port = vm.runInContext("browser.runtime.connectNative('app.rowel.browser')", context);
+    assert.equal(vm.runInContext('browser.runtime', context), runtime, 'the polyfill leaves Safari\'s runtime as it is');
+    assert.deepEqual(errors, []);
+
+    const port = vm.runInContext("globalThis.rowelConnectNative('app.rowel.browser')", context);
     assert.equal(port.constructor.name, 'SafariNativePort');
     const heard = [];
     port.onMessage.addListener((m) => heard.push(m.action));
     port.postMessage({ action: 'change-public-keys' });
     await settle();
     assert.deepEqual(heard, [ 'change-public-keys' ]);
+    assert.equal(sent.length, 1, 'the request went through the native sendNativeMessage');
     port.disconnect();
 });
