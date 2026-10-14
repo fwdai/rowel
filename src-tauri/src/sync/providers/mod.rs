@@ -4,6 +4,7 @@
 
 pub mod dropbox;
 pub mod gdrive;
+pub mod icloud;
 
 /// The first deep-link scheme in this build's `plugins.deep-link.mobile`
 /// configuration that starts with `prefix`. A phone build registers one scheme

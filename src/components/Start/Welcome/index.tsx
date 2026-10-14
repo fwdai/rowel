@@ -1,9 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import Button from '@/components/elements/Button'
-import ProviderMark from '@/components/elements/ProviderMark'
-import { PROVIDERS, providerName, providerSlug, type Provider } from '@/api/provider'
 import { LABEL } from '@/components/elements/tokens'
-import { DiskGlyph } from '@/components/Main/icons'
+import { CloudGlyph, DiskGlyph } from '@/components/Main/icons'
 import { isMobile } from '@/lib/platform'
 import StepHeader from '../shared/StepHeader'
 import RestoreAction from '../shared/RestoreAction'
@@ -11,16 +9,17 @@ import { COLUMN } from '../shared/layout'
 
 interface Props {
   onFresh: () => void
-  onConnect: (provider: Provider) => void
+  onCloud: () => void
   onFile: () => void
 }
 
-// The first screen of the first run. One thing to press if this is a new
-// device and nothing else exists yet; below the rule, the two places the app's
-// own data can already be. Three ways in and nothing else: what restoring
-// asks for is said on the screen that asks for it. A phone has no file system
-// to hand a backup from, so there it is Drive or nothing.
-export default function Welcome({ onFresh, onConnect, onFile }: Props) {
+// The first screen asks one thing: start fresh, or pick up where your own
+// data already is. Three ways in and nothing else — a cloud account, behind
+// which the providers wait on their own screen (`CloudPicker`) so this one
+// does not grow a row per provider, and a backup file. What restoring asks
+// for is said on the screen that asks for it. A phone has no file system to
+// hand a backup from, so there it is a cloud account or nothing.
+export default function Welcome({ onFresh, onCloud, onFile }: Props) {
   const { t } = useTranslation()
 
   return (
@@ -37,9 +36,6 @@ export default function Welcome({ onFresh, onConnect, onFile }: Props) {
         </Button>
       </div>
 
-      {/* The rule sits midway between the button above and the rows below:
-          the same air on both sides, and enough of it that the two groups read
-          as two, not as one stack with a caption in it. */}
       <div className={`${COLUMN} mt-7 flex items-center gap-3`}>
         <span aria-hidden className="h-px flex-1 bg-line" />
         <span className={LABEL}>{t('Already using Rowel?')}</span>
@@ -47,19 +43,20 @@ export default function Welcome({ onFresh, onConnect, onFile }: Props) {
       </div>
 
       <div className={`${COLUMN} mt-7 flex flex-col gap-2`}>
-        {PROVIDERS.map(provider => (
-          <RestoreAction
-            key={provider}
-            mark={<ProviderMark provider={provider} size={18} />}
-            title={t('Continue with {{provider}}', { provider: providerName(provider) })}
-            body={t('Sync your data to this device.')}
-            onClick={() => onConnect(provider)}
-            testid={`start-${providerSlug(provider)}-button`}
-          />
-        ))}
+        {/* Both rows are sources without a brand: the same muted chip and the
+            same glyph size, so neither reads as the preferred one. The plate
+            chip is for a provider's own mark, one step on. */}
+        <RestoreAction
+          mark={<CloudGlyph size={16} />}
+          title={t('Continue with a cloud account')}
+          body={t('Sync your data to this device.')}
+          muted
+          onClick={onCloud}
+          testid="start-cloud-button"
+        />
         {!isMobile && (
           <RestoreAction
-            mark={<DiskGlyph size={15} />}
+            mark={<DiskGlyph size={16} />}
             title={t('Restore from a backup file')}
             body={t('A .rowel backup saved on another device.')}
             muted

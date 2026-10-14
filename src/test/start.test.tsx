@@ -6,7 +6,7 @@ import type { RemotePack } from '@/api/setup'
 import { open } from '@tauri-apps/plugin-dialog'
 import { fileOpened, setupAccountProbed, setupAccountFailed, useApp } from '@/store'
 import { evaluate, MIN_LENGTH, type Strength } from '@/services/strength'
-import { calls, mockCommandOnce } from './ipc'
+import { appStatusDefault, calls, mockCommandOnce } from './ipc'
 import { deferred, seedApp } from './utils'
 
 // The real `evaluate` awaits an 848 kB zxcvbn chunk. The specs below have to
@@ -69,15 +69,34 @@ const choosePassword = async (password = STRONG, confirmation = password) => {
   await userEvent.click(screen.getByTestId('setup-continue-button'))
 }
 
+// Welcome -> the cloud picker, where the providers are.
+const openCloud = async () => {
+  await userEvent.click(screen.getByTestId('start-cloud-button'))
+}
+
 describe('welcome', () => {
-  it('offers a fresh start and both ways back into existing data', () => {
+  // Three ways in, however many providers there are: the clouds sit one step
+  // behind a single row, so a fourth provider never lengthens this screen.
+  it('offers a fresh start and both ways back into existing data', async () => {
     render(<Start />)
 
     expect(screen.getByText('Keep your secrets to yourself.')).toBeInTheDocument()
     expect(screen.getByTestId('start-setup-button')).toBeInTheDocument()
+    expect(screen.getByTestId('start-cloud-button')).toHaveTextContent(
+      'Continue with a cloud account'
+    )
+    expect(screen.getByTestId('start-restore-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('start-drive-button')).not.toBeInTheDocument()
+
+    await openCloud()
+    expect(screen.getByText('Which cloud do you sync through?')).toBeInTheDocument()
     expect(screen.getByTestId('start-drive-button')).toBeInTheDocument()
     expect(screen.getByTestId('start-dropbox-button')).toBeInTheDocument()
-    expect(screen.getByTestId('start-restore-button')).toBeInTheDocument()
+    expect(calls('setup_connect')).toHaveLength(0)
+
+    // Back from the picker is the welcome again, with nothing started.
+    await userEvent.click(screen.getByTestId('go-back-button'))
+    expect(screen.getByTestId('start-cloud-button')).toBeInTheDocument()
   })
 
   // One button per provider, each starting the consent with its own: the
@@ -87,6 +106,7 @@ describe('welcome', () => {
     ['start-dropbox-button', 'dropbox']
   ])('starts the connect %s names', async (testid, provider) => {
     render(<Start />)
+    await openCloud()
     expect(screen.getByTestId(testid)).toHaveTextContent(
       provider === 'dropbox' ? 'Continue with Dropbox' : 'Continue with Google Drive'
     )
@@ -95,6 +115,38 @@ describe('welcome', () => {
 
     expect(calls('setup_connect')).toEqual([{ provider }])
     expect(useApp.getState().setupAccount).toMatchObject({ status: 'pending', provider })
+  })
+
+  // Which providers are offered is the build's to say, not the frontend's: an
+  // Apple build signed for iCloud reports a third, and every other build the
+  // same two as before.
+  it('offers iCloud only on a build that reports it', async () => {
+    const { unmount } = render(<Start />)
+    await openCloud()
+    expect(screen.queryByTestId('start-icloud-button')).not.toBeInTheDocument()
+    unmount()
+
+    seedApp({ providers: ['googleDrive', 'dropbox', 'iCloud'] })
+    render(<Start />)
+    await openCloud()
+    const icloud = screen.getByTestId('start-icloud-button')
+    expect(icloud).toHaveTextContent('Continue with iCloud')
+
+    await userEvent.click(icloud)
+    expect(calls('setup_connect')).toEqual([{ provider: 'iCloud' }])
+    expect(useApp.getState().setupAccount).toMatchObject({ status: 'pending', provider: 'iCloud' })
+  })
+
+  // An iCloud connect opens no browser, so the wait must not say it is waiting
+  // on one; a consent flow's wait keeps naming the provider it is out with.
+  it('says it is checking the account while an iCloud connect is out', async () => {
+    seedApp({ providers: ['googleDrive', 'dropbox', 'iCloud'] })
+    render(<Start />)
+
+    await openCloud()
+    await userEvent.click(screen.getByTestId('start-icloud-button'))
+    expect(screen.getByTestId('drive-spinner')).toHaveTextContent('Checking your iCloud account…')
+    expect(screen.queryByText('Waiting for iCloud…')).not.toBeInTheDocument()
   })
 
   // The mascot belongs to the flow, not the screen: the same element stays
@@ -131,10 +183,13 @@ describe('welcome', () => {
     vi.doMock('@/lib/platform', () => ({ isIOS: true, isAndroid: false, isMobile: true }))
     try {
       const { default: Welcome } = await import('@/components/Start/Welcome')
-      render(<Welcome onFresh={() => {}} onConnect={() => {}} onFile={() => {}} />)
+      // The reset gave the screen a fresh store, which the suite's boot never
+      // seeded: the probe has to have answered for any provider to be offered.
+      const store = await import('@/store')
+      store.useApp.setState({ status: appStatusDefault() })
+      render(<Welcome onFresh={() => {}} onCloud={() => {}} onFile={() => {}} />)
 
-      expect(screen.getByTestId('start-drive-button')).toBeInTheDocument()
-      expect(screen.getByTestId('start-dropbox-button')).toBeInTheDocument()
+      expect(screen.getByTestId('start-cloud-button')).toBeInTheDocument()
       expect(screen.queryByTestId('start-restore-button')).not.toBeInTheDocument()
     } finally {
       vi.doUnmock('@/lib/platform')
@@ -409,6 +464,7 @@ describe('an account that already holds data', () => {
 
 describe('restoring from Google Drive', () => {
   const openDrive = async () => {
+    await openCloud()
     await userEvent.click(screen.getByTestId('start-drive-button'))
   }
 
@@ -525,6 +581,10 @@ describe('restoring from Google Drive', () => {
       selectedId: null,
       error: null
     })
+    // Back lands on the cloud picker, nothing pending, with the welcome one
+    // more step behind it.
+    expect(screen.getByTestId('start-drive-button')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('go-back-button'))
     expect(screen.getByTestId('start-setup-button')).toBeInTheDocument()
   })
 
@@ -568,6 +628,7 @@ describe('the restore screen under each provider', () => {
     ['start-dropbox-button', 'Dropbox']
   ])('names the provider %s connected while it waits', async (testid, name) => {
     render(<Start />)
+    await openCloud()
     await userEvent.click(screen.getByTestId(testid))
 
     expect(screen.getByText(`Restore · ${name}`)).toBeInTheDocument()
@@ -576,6 +637,7 @@ describe('the restore screen under each provider', () => {
 
   it('says a bare Dropbox account is a Dropbox one', async () => {
     render(<Start />)
+    await openCloud()
     await userEvent.click(screen.getByTestId('start-dropbox-button'))
     await act(async () => setupAccountProbed([]))
 
@@ -587,6 +649,7 @@ describe('the restore screen under each provider', () => {
 
   it('blames Dropbox, and retries with Dropbox, when it does not answer', async () => {
     render(<Start />)
+    await openCloud()
     await userEvent.click(screen.getByTestId('start-dropbox-button'))
     await act(async () => setupAccountFailed('access_denied'))
 
@@ -598,6 +661,7 @@ describe('the restore screen under each provider', () => {
 
   it('restores a Dropbox pack by its Dropbox id', async () => {
     render(<Start />)
+    await openCloud()
     await userEvent.click(screen.getByTestId('start-dropbox-button'))
     await act(async () => setupAccountProbed([DROPBOX_PACK]))
 
@@ -613,6 +677,7 @@ describe('the restore screen under each provider', () => {
   // Switch account stays with the provider the flow is on.
   it('switches account within the same provider', async () => {
     render(<Start />)
+    await openCloud()
     await userEvent.click(screen.getByTestId('start-dropbox-button'))
     await act(async () => setupAccountProbed([DROPBOX_PACK]))
 

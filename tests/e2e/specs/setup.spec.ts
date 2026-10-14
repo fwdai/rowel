@@ -112,8 +112,12 @@ describe("first-run setup", () => {
     await resetPristine();
     await waitFor("start-setup-button");
 
+    await expect($('[data-testid="start-cloud-button"]')).toBeDisplayed();
+    await expect($('[data-testid="start-restore-button"]')).toBeDisplayed();
+
+    // The cloud row leads to the providers this build can connect.
+    await $('[data-testid="start-cloud-button"]').click();
     await expect($('[data-testid="start-drive-button"]')).toBeDisplayed();
     await expect($('[data-testid="start-dropbox-button"]')).toBeDisplayed();
-    await expect($('[data-testid="start-restore-button"]')).toBeDisplayed();
   });
 });

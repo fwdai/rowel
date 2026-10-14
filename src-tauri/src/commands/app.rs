@@ -29,6 +29,11 @@ pub struct AppStatus {
     /// frontend has one place to read "does this vault sync" from instead of
     /// two that drift apart.
     sync: SyncStatus,
+    /// The providers this build can connect, in the order the pickers offer
+    /// them. Google Drive and Dropbox always; iCloud only on an Apple device
+    /// whose binary is signed for CloudKit (`sync::Provider::supported`), so
+    /// the frontend never offers a connect that cannot start.
+    providers: Vec<crate::sync::Provider>,
     scan_supported: bool,
     biometric: Biometric,
     /// Every vault on this install — exactly one until the user makes a second,
@@ -106,6 +111,7 @@ pub fn snapshot(app: &AppHandle) -> Result<AppStatus> {
         locale: locale::resolve_preferred(settings.locale.as_deref()),
         settings,
         sync,
+        providers: crate::sync::Provider::available(),
         scan_supported: scan::is_supported(),
         biometric: Biometric {
             available: hardware && storage::biometric_enrolled(app) && openable,

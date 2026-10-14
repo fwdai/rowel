@@ -30,8 +30,9 @@ In App Store Connect, **Apps → +  → New App**:
 
 - Platform: iOS
 - Bundle ID: `app.rowel.mobile` (register the App ID in the Developer portal
-  first if it is not offered; no special capabilities are needed — Face ID
-  requires only the usage string, not an entitlement)
+  first if it is not offered. Face ID requires only the usage string, not an
+  entitlement; the capabilities the App ID does need are AutoFill Credential
+  Provider, the App Group and iCloud — see 4 below for iCloud)
 - Name, primary language, SKU: free choice
 
 The record must exist before the first upload; `altool` rejects an IPA whose
@@ -78,6 +79,19 @@ reads the key back from it and redirects to `db-<DROPBOX_APP_KEY>://2/token`
 nothing to add in the App Console for the phone: only the OS-level scheme is
 registered (confirm on the first device run; see
 `docs/sync-providers-design.md` §3).
+
+iCloud needs no secret and no scheme: the device's own account is the
+credential. It needs the App ID instead. `rowel_iOS.entitlements` asks for
+`com.apple.developer.icloud-services` (`CloudKit`) and the container
+`iCloud.app.rowel`, and automatic signing can only mint a profile that grants
+them once `app.rowel.mobile` has the *iCloud → CloudKit* capability with that
+container attached in the Developer portal — the same container and the same
+CloudKit schema the desktop build uses, so do the one-time steps under "iCloud
+sync" in [releasing.md](releasing.md) once for both. `check-ipa-entitlements.sh`
+refuses an IPA whose app lost either key: a phone build assumes it carries
+them (`sync::providers::icloud::supported`), and CloudKit aborts the process on
+first use when it does not. The AutoFill extension does not sync and does not
+get them.
 
 ### 5. Repository secrets
 

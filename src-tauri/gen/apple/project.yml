@@ -67,6 +67,10 @@ targets:
     # AutoFill extension; the App ID needs the same group in the developer
     # portal. And the AutoFill credential provider entitlement: App Store
     # Connect wants it on the containing app as well as the extension (90729).
+    # And iCloud (src-tauri/src/sync/providers/icloud): CloudKit in the
+    # container iCloud.app.rowel the macOS app shares, which the App ID needs
+    # attached under its iCloud capability (docs/releasing-ios.md); the
+    # AutoFill extension does not sync and does not get it.
     # The one thing that touches the file is the deep-link plugin's
     # build script, which adds or drops only associated-domains and rewrites
     # the plist through the `plist` crate — so keep the file in that crate's

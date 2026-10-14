@@ -8,11 +8,33 @@ interface Props {
   mark: ReactNode
   title: string
   body: string
-  /** Muted rather than a plate: the quieter of the two, glyph inked in text2. */
+  /**
+   * A glyph chip rather than a plate: for a source with no brand mark of its
+   * own (a cloud, a backup file). Tinted with the accent so it belongs to the
+   * app rather than to a logo, and so it follows the chosen accent and theme.
+   */
   muted?: boolean
   onClick: () => void
   testid?: string
 }
+
+// The glyph chip. A soft wash of the accent, lit from the top-left like the
+// cards around it, with the glyph inked in the accent itself: a tinted tile,
+// not a grey one. It answers the row's hover by deepening a shade — a fill
+// under the wash at less than half the tint's strength, eased in — so the
+// chip moves with the row instead of sitting on it, without flashing solid.
+const GLYPH_CHIP = cx(
+  'text-accent',
+  'bg-[linear-gradient(135deg,var(--c-accent-soft),transparent_80%)]',
+  'ring-1 ring-inset ring-accent-soft',
+  'shadow-[inset_0_1px_0_var(--topglow)]',
+  'transition-[background-color] duration-300',
+  'group-hover:bg-[color:color-mix(in_srgb,var(--c-accent-soft)_40%,transparent)]'
+)
+
+// The plate: a provider's own mark in its own colours, on a neutral ground
+// that lets the brand read as itself.
+const MARK_PLATE = 'bg-detail ring-1 ring-line2 shadow-[0_1px_2px_rgba(20,22,26,0.06)]'
 
 // One way back into your own data, as a row you press: the provider's mark on
 // a plate, what pressing it does, a meta line on what that means, and a
@@ -36,10 +58,8 @@ export default function RestoreAction({ mark, title, body, muted, onClick, testi
     >
       <span
         className={cx(
-          'grid h-8 w-8 flex-none place-items-center rounded-sm',
-          muted
-            ? 'bg-tile text-text2'
-            : 'bg-detail ring-1 ring-line2 shadow-[0_1px_2px_rgba(20,22,26,0.06)]'
+          'grid h-9 w-9 flex-none place-items-center rounded-[10px]',
+          muted ? GLYPH_CHIP : MARK_PLATE
         )}
       >
         {mark}

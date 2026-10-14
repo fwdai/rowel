@@ -315,17 +315,21 @@ for (const key of requestedGated) {
   const grantedValue = profileEntitlements[key]
   const describe = (v) => (Array.isArray(v) ? v.join(', ') : String(v))
 
-  // Group-valued (keychain-access-groups, application-groups): the profile must
-  // cover every group asked for.
+  // List-valued (keychain-access-groups, application-groups, the iCloud
+  // container list and services): the profile must cover every value asked
+  // for. The grant is usually a list too, but Apple writes a blanket grant as
+  // the one string `*` (icloud-services in a Developer ID profile), and a
+  // single-string grant is a list of one.
   if (Array.isArray(requested)) {
-    if (!Array.isArray(grantedValue)) {
-      problems.push(`profile grants "${key}" but not as a list of groups`)
+    const grantedList = Array.isArray(grantedValue) ? grantedValue : [grantedValue]
+    if (!grantedList.every((g) => typeof g === 'string')) {
+      problems.push(`profile grants "${key}" as a value this check cannot compare`)
       continue
     }
     for (const value of requested) {
       if (typeof value !== 'string') {
         problems.push(`cannot verify a non-string value under "${key}"`)
-      } else if (!granted(value, grantedValue)) {
+      } else if (!granted(value, grantedList)) {
         problems.push(
           `profile does not grant "${value}" under "${key}" (it grants: ${describe(grantedValue)})`,
         )

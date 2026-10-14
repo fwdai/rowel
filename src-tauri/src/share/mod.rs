@@ -237,7 +237,7 @@ pub fn remote_for(app: &AppHandle, cryptor: Cryptor) -> Option<AnyShareRemote> {
             app.clone(),
             cryptor,
         ))),
-        Provider::Dropbox => None,
+        Provider::Dropbox | Provider::ICloud => None,
     }
 }
 

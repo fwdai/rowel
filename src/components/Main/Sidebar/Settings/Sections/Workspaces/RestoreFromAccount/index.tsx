@@ -15,6 +15,7 @@ import AccountRestoreForm from '@/components/elements/AccountRestoreForm'
 import Note from '@/components/elements/Note'
 import ProviderButtons from '@/components/elements/ProviderButtons'
 import ProviderMark from '@/components/elements/ProviderMark'
+import { waitingFor } from '@/components/elements/providerCopy'
 import { CloudGlyph } from '@/components/Main/icons'
 
 // Adding a workspace that already exists somewhere else.
@@ -83,9 +84,7 @@ export default function RestoreFromAccount() {
       }
     >
       {account.status === 'pending' && (
-        <Note testid="workspace-restore-waiting">
-          {name ? t('Waiting for {{provider}}…', name) : t('Waiting for the browser…')}
-        </Note>
+        <Note testid="workspace-restore-waiting">{waitingFor(t, account.provider)}</Note>
       )}
       {account.status === 'empty' && (
         <Note testid="workspace-restore-empty">

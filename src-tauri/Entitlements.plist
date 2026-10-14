@@ -49,9 +49,31 @@
   a profile granting it the process is refused exactly as above. Never write a
   `group.` id here. check-macos-entitlements.mjs accepts a group under the
   team id without a profile and refuses any other.
+  The two iCloud keys are what iCloud sync (src-tauri/src/sync/providers/icloud)
+  runs on: CloudKit, in the container the iOS app shares. Both are profile-gated
+  like keychain-access-groups, so the Developer ID profile has to grant them —
+  which means the App ID has the iCloud capability with this container attached
+  before the profile is (re)generated (docs/releasing.md). The app checks at
+  runtime whether its own signature carries icloud-services and offers iCloud
+  only then, so `tauri dev` and an unsigned build simply lack the provider
+  rather than crash; a signed build that asked for the entitlement without a
+  profile granting it would never launch, which check-macos-entitlements.mjs
+  catches before the release is cut.
+
+  CloudKit also needs to know whose app this is: com.apple.application-identifier
+  and com.apple.developer.team-identifier, which Xcode writes into every macOS
+  app it signs for iCloud and Tauri writes only if listed here. Without them
+  the first CloudKit call fails with "Trying to initialize a container without
+  an application ID". Both are profile-gated (the SIGKILL table above shows
+  application-identifier alone killing the alpha, before any profile), and the
+  profile grants both as exact values, which the check script compares.
 -->
 <plist version="1.0">
   <dict>
+    <key>com.apple.application-identifier</key>
+    <string>UFBL3F444A.app.rowel.desktop</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>UFBL3F444A</string>
     <key>keychain-access-groups</key>
     <array>
       <string>UFBL3F444A.app.rowel.desktop</string>
@@ -59,6 +81,14 @@
     <key>com.apple.security.application-groups</key>
     <array>
       <string>UFBL3F444A.app.rowel.desktop</string>
+    </array>
+    <key>com.apple.developer.icloud-container-identifiers</key>
+    <array>
+      <string>iCloud.app.rowel</string>
+    </array>
+    <key>com.apple.developer.icloud-services</key>
+    <array>
+      <string>CloudKit</string>
     </array>
   </dict>
 </plist>

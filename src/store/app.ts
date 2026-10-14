@@ -196,6 +196,16 @@ const newer = (held: SyncStatus, incoming: SyncStatus): SyncStatus =>
  */
 export const useScanSupported = () => useApp(state => state.status?.scanSupported ?? false)
 
+const NO_PROVIDERS: Provider[] = []
+
+/**
+ * The providers this build can connect, as the probe reported them — a fact
+ * about the build, like `scanSupported`. Nothing before the probe lands: every
+ * picker sits on a screen the probe's answer routed to, so none is drawn with
+ * nothing known, and an empty row is the honest fallback if one ever were.
+ */
+export const useProviders = () => useApp(state => state.status?.providers ?? NO_PROVIDERS)
+
 /**
  * Ask again, after something that can change the answer: an unlock, a lock, an
  * enrollment. Resolves with what it stored — or null, keeping the last known

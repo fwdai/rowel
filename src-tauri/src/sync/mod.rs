@@ -151,6 +151,15 @@ pub(crate) fn obtain_tokens(app: &AppHandle, provider: Provider, attempt: u64) -
     account::obtain_tokens(app, provider, attempt)
 }
 
+/// The connect of a provider with no consent page (iCloud): the device's own
+/// account, checked and named. On desktop [`obtain_tokens`] reaches it by
+/// itself; a phone's consent flow is cut in two around Safari and has to take
+/// this path explicitly. Blocking, like every consent.
+#[cfg(mobile)]
+pub(crate) fn device_account_tokens(provider: Provider) -> Result<Tokens> {
+    account::device_account_tokens(provider)
+}
+
 /// The mobile twin of [`obtain_tokens`]: redeem a code the deep-link handler
 /// accepted, and hand the tokens back rather than writing them.
 #[cfg(mobile)]

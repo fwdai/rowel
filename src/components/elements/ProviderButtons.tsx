@@ -1,6 +1,7 @@
 import type { ComponentProps } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PROVIDERS, providerName, providerSlug, type Provider } from '@/api/provider'
+import { providerName, providerSlug, type Provider } from '@/api/provider'
+import { useProviders } from '@/store'
 import Button from './Button'
 import ProviderMark from './ProviderMark'
 
@@ -22,9 +23,9 @@ interface Props {
 }
 
 /**
- * One "Connect <provider>" per provider, for every place a vault or a restore
- * picks where to sync. One account per workspace, so this is a choice made once
- * per connect rather than a setting.
+ * One "Connect <provider>" per provider this build can connect, for every place
+ * a vault or a restore picks where to sync. One account per workspace, so this
+ * is a choice made once per connect rather than a setting.
  */
 export default function ProviderButtons({
   onPick,
@@ -36,9 +37,10 @@ export default function ProviderButtons({
   className = 'flex flex-wrap gap-2'
 }: Props) {
   const { t } = useTranslation()
+  const providers = useProviders()
   return (
     <div className={className}>
-      {PROVIDERS.map(provider => (
+      {providers.map(provider => (
         <Button
           key={provider}
           variant={variant}

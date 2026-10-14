@@ -8,6 +8,7 @@ import AuthShell from '@/components/elements/AuthShell'
 import Mascot, { type MascotState } from '@/components/elements/Mascot'
 import BiometryGlyph from '@/components/elements/BiometryGlyph'
 import Welcome from './Welcome'
+import CloudPicker from './CloudPicker'
 import Password from './Password'
 import Sync from './Sync'
 import Conflict from './Conflict'
@@ -15,13 +16,23 @@ import Account from './Account'
 import File from './File'
 import Biometric from './Biometric'
 
-type Screen = 'welcome' | 'password' | 'sync' | 'conflict' | 'account' | 'file' | 'biometric'
+type Screen =
+  | 'welcome'
+  | 'cloud'
+  | 'password'
+  | 'sync'
+  | 'conflict'
+  | 'account'
+  | 'file'
+  | 'biometric'
 
 // How far along each screen is, as the mascot's smile tells it: neutral on
 // the welcome, brightening through the middle, all the way once the vault is
-// about to exist. The restore path sits half way, as the password step does.
+// about to exist. The restore path sits half way, as the password step does;
+// picking a cloud is a step towards it, not yet on it.
 const JOY: Record<Screen, number> = {
   welcome: 0,
+  cloud: 0.25,
   password: 0.5,
   sync: 1,
   conflict: 0.5,
@@ -99,11 +110,11 @@ export function Start() {
   }
 
   const back = () => {
-    // Stepping out of the account screen towards the welcome gives the tokens
-    // back: the user is no longer restoring from that account. Stepping back
-    // into the conflict question keeps them — that screen is about the very
-    // file this one was showing.
-    if (screen === 'account' && stack[stack.length - 2] === 'welcome') {
+    // Stepping out of the account screen towards the cloud picker gives the
+    // tokens back: the user is no longer restoring from that account.
+    // Stepping back into the conflict question keeps them — that screen is
+    // about the very file this one was showing.
+    if (screen === 'account' && stack[stack.length - 2] === 'cloud') {
       forgetAccount()
       setAccountLinked(false)
     }
@@ -169,10 +180,12 @@ export function Start() {
         return (
           <Welcome
             onFresh={() => go('password')}
-            onConnect={openAccount}
+            onCloud={() => go('cloud')}
             onFile={() => go('file')}
           />
         )
+      case 'cloud':
+        return <CloudPicker onPick={openAccount} />
       case 'password':
         return <Password onContinue={continueFromPassword} />
       case 'sync':
