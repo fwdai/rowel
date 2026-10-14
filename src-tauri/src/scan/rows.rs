@@ -7,15 +7,27 @@
 //! so the parser never tried either, and the digits fell through to the card
 //! parser. The boxes that share a horizontal band are put back together here.
 
+use zeroize::Zeroize;
+
 /// A region of recognized text, in Vision's normalized coordinates: origin at
 /// the image's bottom-left corner, every value in `0..=1`. Its width is not
 /// needed: the left edge orders regions within a line, the vertical extent
 /// assigns them to one.
+///
+/// The text is a piece of the document in the clear, so it is scrubbed when
+/// the region is dropped — on every path, which is what a `Drop` buys over
+/// zeroizing at the one place a region is normally consumed.
 pub(crate) struct Region {
     pub x: f64,
     pub y: f64,
     pub h: f64,
     pub text: String,
+}
+
+impl Drop for Region {
+    fn drop(&mut self) {
+        self.text.zeroize();
+    }
 }
 
 /// The lines the regions make, top to bottom, each the texts of its regions
@@ -26,6 +38,10 @@ pub(crate) struct Region {
 /// half the shorter one's height. A region is measured against the first of
 /// its line, not against a growing union, so a skewed photo cannot chain one
 /// line into the next.
+///
+/// A line of one region keeps that region's own string; a joined line is a
+/// new string and its parts go to the regions' `Drop`. The strings returned
+/// are the caller's to zeroize, as `scan` does.
 pub(crate) fn rows(mut regions: Vec<Region>) -> Vec<String> {
     regions.sort_by(|a, b| (b.y + b.h).total_cmp(&(a.y + a.h)));
 
@@ -40,6 +56,9 @@ pub(crate) fn rows(mut regions: Vec<Region>) -> Vec<String> {
     lines
         .into_iter()
         .map(|mut line| {
+            if line.len() == 1 {
+                return std::mem::take(&mut line[0].text);
+            }
             line.sort_by(|a, b| a.x.total_cmp(&b.x));
             line.iter()
                 .map(|r| r.text.as_str())

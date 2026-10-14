@@ -15,9 +15,10 @@ const WEIGHTS: [u32; 3] = [7, 3, 1];
 
 /// How many fillers a line may be short of its width and still be read. OCR
 /// drops the tail of a long filler run — the end of a name line, or of a
-/// TD1's optional data — and nothing but filler can be missing there: a line
-/// that ends in anything else ends in a check digit, and the check digits are
-/// what catch a line padded wrongly.
+/// TD1's optional data. Only a row that still ends in filler is padded: a name
+/// long enough to reach the edge has no check digit to catch its last letters
+/// going missing, and a data line that lost its check digits is caught by the
+/// arithmetic.
 const MISSING_FILLER: usize = 3;
 
 /// Fillers a document can carry only in its MRZ. Fewer than this on one line
@@ -87,7 +88,8 @@ fn is_filler(c: char) -> bool {
 }
 
 /// `rows` as lines of `width`, or `None` if any of them is not one: too long,
-/// or too short to be one with its trailing filler back.
+/// too short to be one with its trailing filler back, or short without ending
+/// in the filler that would have been dropped.
 fn fit_all(rows: &[String], width: usize) -> Option<Vec<String>> {
     rows.iter().map(|row| fit(row, width)).collect()
 }
@@ -95,7 +97,10 @@ fn fit_all(rows: &[String], width: usize) -> Option<Vec<String>> {
 fn fit(row: &str, width: usize) -> Option<String> {
     // Normalized rows are ASCII, so bytes count characters.
     let len = row.len();
-    if len > width || len + MISSING_FILLER < width {
+    if len == width {
+        return Some(row.to_owned());
+    }
+    if len > width || len + MISSING_FILLER < width || !row.ends_with('<') {
         return None;
     }
     Some(format!("{row}{}", "<".repeat(width - len)))

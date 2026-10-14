@@ -145,6 +145,19 @@ fn does_not_pad_a_line_that_lost_more_than_filler() {
     assert!(mrz::parse(&rows(&[TD3[0], &TD3[1][..42]])).is_none());
 }
 
+// A name long enough to reach the edge of the line has no check digit, so a
+// row that lost its last letters must not be padded into a shorter name.
+#[test]
+fn does_not_pad_a_name_that_reaches_the_edge() {
+    let full = "P<UTOERIKSSON<<ANNA<MARIA<ELISABETH<CHRISTIN";
+    assert_eq!(full.len(), 44);
+    assert_eq!(
+        mrz_of(&[full, TD3[1]])["name"],
+        "ANNA MARIA ELISABETH CHRISTIN ERIKSSON"
+    );
+    assert!(mrz::parse(&rows(&[&full[..42], TD3[1]])).is_none());
+}
+
 #[test]
 fn tells_an_mrz_from_other_print_by_its_filler() {
     assert!(mrz::present(&rows(&[TD3[0]])));
