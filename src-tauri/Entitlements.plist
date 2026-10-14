@@ -59,9 +59,21 @@
   rather than crash; a signed build that asked for the entitlement without a
   profile granting it would never launch, which check-macos-entitlements.mjs
   catches before the release is cut.
+
+  CloudKit also needs to know whose app this is: com.apple.application-identifier
+  and com.apple.developer.team-identifier, which Xcode writes into every macOS
+  app it signs for iCloud and Tauri writes only if listed here. Without them
+  the first CloudKit call fails with "Trying to initialize a container without
+  an application ID". Both are profile-gated (the SIGKILL table above shows
+  application-identifier alone killing the alpha, before any profile), and the
+  profile grants both as exact values, which the check script compares.
 -->
 <plist version="1.0">
   <dict>
+    <key>com.apple.application-identifier</key>
+    <string>UFBL3F444A.app.rowel.desktop</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>UFBL3F444A</string>
     <key>keychain-access-groups</key>
     <array>
       <string>UFBL3F444A.app.rowel.desktop</string>
