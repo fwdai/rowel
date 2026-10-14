@@ -43,16 +43,20 @@ export default function Welcome({ onFresh, onCloud, onFile }: Props) {
       </div>
 
       <div className={`${COLUMN} mt-7 flex flex-col gap-2`}>
+        {/* Both rows are sources without a brand: the same muted chip and the
+            same glyph size, so neither reads as the preferred one. The plate
+            chip is for a provider's own mark, one step on. */}
         <RestoreAction
-          mark={<CloudGlyph size={18} />}
+          mark={<CloudGlyph size={16} />}
           title={t('Continue with a cloud account')}
           body={t('Sync your data to this device.')}
+          muted
           onClick={onCloud}
           testid="start-cloud-button"
         />
         {!isMobile && (
           <RestoreAction
-            mark={<DiskGlyph size={15} />}
+            mark={<DiskGlyph size={16} />}
             title={t('Restore from a backup file')}
             body={t('A .rowel backup saved on another device.')}
             muted
