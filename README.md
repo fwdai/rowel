@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Keep every password, passkey, card, ID, SSH key and `.env` file and more in one encrypted vault on your own devices. No account, no server, no subscription.**
+**Keep every password, passkey, card, ID, SSH key, `.env` file and more in one encrypted vault on your own devices. No account, no server, no subscription.**
 
 [![CI](https://github.com/fwdai/rowel/workflows/CI/badge.svg)](https://github.com/fwdai/rowel/actions)
 [![Release](https://img.shields.io/github/v/release/fwdai/rowel?include_prereleases&label=Release)](https://github.com/fwdai/rowel/releases)
@@ -14,7 +14,7 @@
 <img width="1012" alt="Rowel lock screen — vault sealed, master password prompt with Touch ID" src="docs/screenshots/lock-screen.png">
 
 <div align="center">
-Free and open source for macOS, Windows, Linux and iOS. Sync is optional and goes through your own Google Drive, Dropbox, or iCloud, which only ever stores ciphertext.
+Free and open source, because basic personal security should be. Runs on macOS, Windows, Linux and iOS. Sync is optional and goes through your own cloud, which only ever stores ciphertext.
 
 [rowel.app](https://rowel.app) · [Threat model](docs/threat-model.md) · [Browser extension](docs/browser-extension.md) · [Security policy](SECURITY.md)
 
@@ -30,7 +30,6 @@ Download it directly (v1.0.1; newer versions are on the [releases page](https://
 | Windows (x64)     | [setup .exe](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_x64-setup.exe)                                                                                                                                                                                    |
 | Linux (x86_64)    | [.deb](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_amd64.deb) · [.rpm](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel-1.0.1-1.x86_64.rpm) · [.AppImage](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_amd64.AppImage) |
 
-
 or install with the [GitHub CLI](https://cli.github.com), grab the latest installer for your OS:
 
 ```bash
@@ -41,10 +40,20 @@ Rowel updates itself after that, and it only installs updates whose signature ch
 
 ## Get started
 
-1. **Open Rowel** and choose **Start fresh**. If you already use Rowel on another device, pick **Continue with Google Drive** or **Restore from a backup file** (`.rowel`) instead.
+1. **Open Rowel** and choose **Start fresh**. If you already use Rowel on another device, pick **Continue with a cloud account** or **Restore from a backup file** (`.rowel`) instead.
 2. **Choose a master password** and type it a second time. On supported devices you can then turn on Touch ID / Face ID.
 3. **Bring your items in:** go to Settings → Import and drop in an export from your old password manager or browser. Or add your first login, card or SSH key by hand.
-4. **Optional:** connect Google Drive in Settings to keep your devices in sync.
+4. **Optional:** connect Google Drive, Dropbox or iCloud in Settings to keep your devices in sync.
+
+## Why I'm building this
+
+I believe basic personal security should be available to everyone, for free. Nobody should have to pay a monthly subscription just to keep their passwords and secrets encrypted and safe.
+
+So Rowel is free and open source for personal and family use, and it will stay that way. No trial, no locked "premium" vault, no account.
+
+Down the road there may be a paid option for professional teams that need extra features. That's how the project can keep going, and it will never take anything away from the free app.
+
+- Alex
 
 ## Why Rowel
 
@@ -53,7 +62,7 @@ Rowel updates itself after that, and it only installs updates whose signature ch
 3. **Switch in a few clicks.** Move in from 1Password, LastPass, Bitwarden, KeePass, Enpass, Chrome or Safari. Point Rowel at your export and it brings your items over, with a report for anything it couldn't import.
 4. **Bring your own cloud.** Each lockbox syncs to your Google Drive as one encrypted file, and Rowel can only see the folder it creates. Edits from different devices merge on their own, without conflicts.
 5. **Encrypted even while open.** The vault is encrypted on disk, and each item's secrets are sealed a second time, so they're decrypted only at the moment you reveal or copy them.
-6. **Lockboxes.** Keep Personal, Family, Work or per-client compartments, each in its own encrypted file, all opened with one master password.
+6. **Lockboxes.** Keep separate lockboxes for yourself and your family, each in its own encrypted file, all opened with one master password.
 7. **Private sharing by link.** Share one item through an encrypted link that expires in 24 hours and can be revoked. The key lives only in the link.
 8. **Scan to fill.** Take a photo of a card or passport and Rowel reads it on your device to fill in the fields. Nothing gets uploaded.
 9. **Releases you can verify.** Every installer is signed and comes with proof of how it was built, and updates install only if their signature checks out. See [Verifying a release](#verifying-a-release).

@@ -152,12 +152,14 @@ export const VALUE_LINE = 'block h-6 min-w-0 truncate leading-6'
 
 export const VALUE = `${VALUE_LINE} text-base`
 
-// What a masked secret is read as. Fixed, so the mask says nothing about the
-// secret's length: twelve dots for a value line, twenty-four for a block.
-export const MASK_DOTS = '•'.repeat(12)
-export const BLOCK_DOTS = '•'.repeat(24)
+// How long a masked secret reads (see `Mask`). Fixed, so the mask says nothing
+// about the secret's length: twelve glyphs for a value line, twenty-four for a
+// block.
+export const MASK_LENGTH = 12
+export const BLOCK_LENGTH = 24
 
-// An input cannot fake dots, so a masked editor box hides its own text instead.
+// An input cannot draw the mask glyph, so a masked editor box hides its own
+// text with the browser's dots instead.
 export const MASK_INPUT = { WebkitTextSecurity: 'disc' } as CSSProperties
 
 // The wide shell's top chrome bar (`Main/Header`): 38px, the band the macOS
