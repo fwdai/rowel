@@ -10,6 +10,7 @@ import { kindOf } from '@/kinds'
 import { chord } from '@/lib/platform'
 import { useTranslation } from 'react-i18next'
 import EmptyState from '@/components/elements/EmptyState'
+import { addEntry } from '@/components/Main/AddSecret/add'
 import Mascot from '@/components/elements/Mascot'
 import { ActivityGlyph, ArchiveGlyph, SearchGlyph, StarGlyph, TrashGlyph } from '../../icons'
 import Mark from './Mark'
@@ -130,7 +131,7 @@ export function KindEmpty({ type }: { type: EntryType }) {
       testid="empty-kind"
       mark={<Glyph />}
       title={t(emptyLabel)}
-      primary={{ label: t(addLabel), onClick: () => startEntry(type), testid: 'empty-kind-add' }}
+      primary={{ label: t(addLabel), onClick: () => addEntry(type), testid: 'empty-kind-add' }}
     />
   )
 }

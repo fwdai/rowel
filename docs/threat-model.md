@@ -46,8 +46,9 @@ already chose, not the authorization; the grant is. Two commands read no path
 at all: `scan_image_bytes` and `attachment_add_bytes` take a file the webview
 already holds — the photo the phone's camera just took through its
 `<input type="file" capture>`, which has no path on disk — as the request's
-raw body (and, for an attachment, the entry and the file's name as its
-headers). The photo library and Files on the phone go through `pick_file` and
+raw body, or as a JSON array of the same bytes when Tauri has fallen back to
+its `postMessage` IPC (and, for an attachment, the entry and the file's name as
+its headers). The photo library and Files on the phone go through `pick_file` and
 a grant like any other. No grant applies to the camera's photo because none
 is needed: the bytes are data the webview had anyway, so neither command can be
 used to read anything it did not; the result is the recognized fields, or a

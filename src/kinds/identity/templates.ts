@@ -8,7 +8,8 @@ import type { EntryDraft } from '@/kinds/draft'
  * different sets of the same fields, so the form is data rather than markup:
  * [`FIELDS`] says how one row renders and [`TEMPLATES`] says which rows a
  * document has and which of them it cannot be saved without. `Fields`, `isValid`
- * and the type switch all read from here, so a document type is described once.
+ * and the add picker's list of documents all read from here, so a document type
+ * is described once.
  */
 
 export const DOC_TYPES = [
@@ -180,12 +181,3 @@ const isDocType = (value: unknown): value is DocType =>
  */
 export const docTypeOf = (draft: EntryDraft): DocType =>
   isDocType(draft.doc_type) ? draft.doc_type : 'passport'
-
-/**
- * The keys `from`'s form has that `to`'s does not. Cleared on a type switch, so
- * a row that is no longer on screen cannot save a value nobody can see.
- */
-export const droppedKeys = (from: DocType, to: DocType): IdentityKey[] => {
-  const kept = new Set(TEMPLATES[to].map(row => row.key))
-  return TEMPLATES[from].map(row => row.key).filter(key => !kept.has(key))
-}

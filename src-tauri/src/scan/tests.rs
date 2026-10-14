@@ -2,6 +2,7 @@
 //! picture into lines, and everything that can be wrong about a scan is wrong
 //! about the lines.
 
+use super::rows::{rows as lines_of, Region};
 use super::{card, is_image, local_path, mrz, scan_lines};
 
 // The ICAO 9303 specimen document (Utopia / ANNA MARIA ERIKSSON), the one set
@@ -122,6 +123,95 @@ fn ignores_lines_that_are_not_an_mrz() {
     assert!(mrz::parse(&rows(&["P<UTOERIKSSON<<ANNA", "L898902C36UTO"])).is_none());
 }
 
+// OCR drops the tail of a long filler run. A line that is a filler or three
+// short is read with them back; the check digits still guard the data line.
+#[test]
+fn reads_a_line_that_lost_its_trailing_filler() {
+    let short = &TD3[0][..41];
+    let f = mrz_of(&[short, TD3[1]]);
+    assert_eq!(f["name"], "ANNA MARIA ERIKSSON");
+    assert_eq!(f["number"], "L898902C3");
+
+    let short = &TD1[2][..28];
+    let f = mrz_of(&[TD1[0], TD1[1], short]);
+    assert_eq!(f["name"], "ANNA MARIA ERIKSSON");
+}
+
+#[test]
+fn does_not_pad_a_line_that_lost_more_than_filler() {
+    assert!(mrz::parse(&rows(&[&TD3[0][..40], TD3[1]])).is_none());
+    // The data line's tail is its check digits, not filler: padded back, the
+    // arithmetic says no.
+    assert!(mrz::parse(&rows(&[TD3[0], &TD3[1][..42]])).is_none());
+}
+
+// A name long enough to reach the edge of the line has no check digit, so a
+// row that lost its last letters must not be padded into a shorter name.
+#[test]
+fn does_not_pad_a_name_that_reaches_the_edge() {
+    let full = "P<UTOERIKSSON<<ANNA<MARIA<ELISABETH<CHRISTIN";
+    assert_eq!(full.len(), 44);
+    assert_eq!(
+        mrz_of(&[full, TD3[1]])["name"],
+        "ANNA MARIA ELISABETH CHRISTIN ERIKSSON"
+    );
+    assert!(mrz::parse(&rows(&[&full[..42], TD3[1]])).is_none());
+}
+
+#[test]
+fn tells_an_mrz_from_other_print_by_its_filler() {
+    assert!(mrz::present(&rows(&[TD3[0]])));
+    assert!(mrz::present(&rows(&["<<<<<<<<<<<<<<<<<<<"])));
+    assert!(mrz::present(&rows(&[&TD3[0].replace('<', "«")])));
+    assert!(!mrz::present(&rows(&[
+        "JOHN A SMITH",
+        "4111 1111 1111 1111"
+    ])));
+    assert!(!mrz::present(&rows(&["a < b", "x << y"])));
+}
+
+// Vision cuts a line at a wide gap, and a name line's filler is one. The two
+// boxes share a band, so they are one line again — in reading order, whatever
+// order they were found in.
+#[test]
+fn rebuilds_a_line_the_recognizer_split_at_the_filler() {
+    let region = |x: f64, y: f64, text: &str| Region {
+        x,
+        y,
+        h: 0.05,
+        text: text.into(),
+    };
+    let lines = lines_of(vec![
+        region(0.1, 0.10, "L898902C36UTO7408122F1204159ZE184226B<<<<<10"),
+        region(0.6, 0.17, "<<<<<<<<<<<<<<<<<<<"),
+        region(0.1, 0.80, "PASSPORT"),
+        region(0.1, 0.16, "P<UTOERIKSSON<<ANNA<MARIA"),
+    ]);
+    assert_eq!(
+        lines,
+        [
+            "PASSPORT",
+            "P<UTOERIKSSON<<ANNA<MARIA <<<<<<<<<<<<<<<<<<<",
+            "L898902C36UTO7408122F1204159ZE184226B<<<<<10",
+        ]
+    );
+    let f = mrz_of(&lines.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(f["name"], "ANNA MARIA ERIKSSON");
+}
+
+// The two MRZ lines sit close, but not half a line's height into each other.
+#[test]
+fn keeps_adjacent_lines_apart() {
+    let region = |y: f64, text: &str| Region {
+        x: 0.1,
+        y,
+        h: 0.05,
+        text: text.into(),
+    };
+    let lines = lines_of(vec![region(0.10, "second"), region(0.16, "first")]);
+    assert_eq!(lines, ["first", "second"]);
+}
+
 #[test]
 fn reads_a_card_number_written_in_groups() {
     assert_eq!(
@@ -208,6 +298,20 @@ fn scan_lines_prefers_a_verified_mrz() {
     let found = scan_lines(&rows(&["4111 1111 1111 1111", TD3[0], TD3[1]])).unwrap();
     assert_eq!(found.kind, "identity");
     assert_eq!(found.fields["number"], "L898902C3");
+}
+
+// A passport whose optional data is numeric carries a run of digits long
+// enough to hold a card number by chance. When its check digits fail — a
+// misread, a dropped filler — it is a worse photo of a passport, not a card.
+#[test]
+fn scan_lines_does_not_read_an_unverified_mrz_as_a_card() {
+    // The specimen's optional data and both check digits replaced by a
+    // Luhn-valid Visa number: 44 characters, every check digit wrong.
+    let data = format!("{}4111111111111111", &TD3[1][..28]);
+    let lines = rows(&[TD3[0], &data]);
+    assert!(mrz::parse(&lines).is_none());
+    assert_eq!(card::parse(&lines).unwrap()["number"], "4111111111111111");
+    assert!(scan_lines(&lines).is_none());
 }
 
 #[test]

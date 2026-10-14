@@ -56,6 +56,42 @@ pub(crate) fn same_session(state: &AppState, epoch: Epoch) -> Result<()> {
     }
 }
 
+// --- a file sent as the request's body --------------------------------------
+//
+// `scan_image_bytes` and `attachment_add_bytes` take a file the webview holds,
+// sent as a `Uint8Array`. Over Tauri's custom-protocol IPC that is the raw
+// body. But a call that fails on that transport is retried — and every later
+// call made — over `postMessage`, which carries the same `Uint8Array` as a JSON
+// array of numbers. On iOS that happens around the camera: the full-screen
+// capture takes the webview off screen, a request in flight fails, and the
+// photo it hands back then travels as JSON. Both are the same bytes.
+
+/// The file in `body`, raw or as a JSON array of bytes, refused past `max`
+/// bytes before any copy of it is made.
+pub(crate) fn body_bytes(body: &tauri::ipc::InvokeBody, max: u64) -> Result<Vec<u8>> {
+    use tauri::ipc::InvokeBody;
+    let not_bytes = || Error::Other("the request body is not a file's bytes".into());
+    match body {
+        InvokeBody::Raw(bytes) => {
+            if bytes.len() as u64 > max {
+                return Err(Error::FileTooLarge);
+            }
+            Ok(bytes.clone())
+        }
+        InvokeBody::Json(serde_json::Value::Array(items)) => {
+            if items.len() as u64 > max {
+                return Err(Error::FileTooLarge);
+            }
+            items
+                .iter()
+                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
+                .collect::<Option<Vec<u8>>>()
+                .ok_or_else(not_bytes)
+        }
+        InvokeBody::Json(_) => Err(not_bytes()),
+    }
+}
+
 // --- getting off the async runtime ------------------------------------------
 //
 // A `#[tauri::command] fn` without `async` runs inline on the IPC thread, which
@@ -89,4 +125,46 @@ pub(crate) async fn blocking<T: Send + 'static>(
 /// moment its guards have passed.
 pub(crate) fn detached(work: impl FnOnce() + Send + 'static) {
     tauri::async_runtime::spawn_blocking(work);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tauri::ipc::InvokeBody;
+
+    #[test]
+    fn body_bytes_takes_a_raw_body() {
+        let body = InvokeBody::Raw(vec![0xff, 0xd8, 0xff]);
+        assert_eq!(body_bytes(&body, 3).unwrap(), vec![0xff, 0xd8, 0xff]);
+    }
+
+    #[test]
+    fn body_bytes_takes_the_postmessage_fallbacks_json_array() {
+        let body = InvokeBody::Json(json!([255, 216, 255, 0]));
+        assert_eq!(body_bytes(&body, 4).unwrap(), vec![0xff, 0xd8, 0xff, 0]);
+    }
+
+    #[test]
+    fn body_bytes_refuses_a_body_past_the_cap_in_either_shape() {
+        for body in [
+            InvokeBody::Raw(vec![0; 5]),
+            InvokeBody::Json(json!([0, 0, 0, 0, 0])),
+        ] {
+            assert!(matches!(body_bytes(&body, 4), Err(Error::FileTooLarge)));
+        }
+    }
+
+    #[test]
+    fn body_bytes_refuses_json_that_is_not_bytes() {
+        for value in [
+            json!({ "image": [1, 2] }),
+            json!([1, 256]),
+            json!([1, -1]),
+            json!(["1"]),
+        ] {
+            let body = InvokeBody::Json(value);
+            assert!(matches!(body_bytes(&body, 16), Err(Error::Other(_))));
+        }
+    }
 }

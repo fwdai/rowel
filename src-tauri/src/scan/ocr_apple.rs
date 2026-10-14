@@ -6,6 +6,7 @@ use objc2_vision::{
 };
 use std::path::Path;
 
+use super::rows::{rows, Region};
 use super::Ocr;
 use crate::error::{Error, Result};
 
@@ -42,7 +43,8 @@ impl Ocr for VisionOcr {
 }
 
 /// Run text recognition through `handler`, whatever image it was made over,
-/// and hand back the lines top to bottom.
+/// and hand back the lines top to bottom — the printed lines, which Vision's
+/// regions do not map onto one to one (see `rows`).
 fn recognize_with(handler: &Retained<VNImageRequestHandler>) -> Result<Vec<String>> {
     let request = VNRecognizeTextRequest::new();
     request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
@@ -56,7 +58,7 @@ fn recognize_with(handler: &Retained<VNImageRequestHandler>) -> Result<Vec<Strin
     let Some(observations) = request.results() else {
         return Ok(Vec::new());
     };
-    let mut lines: Vec<(f64, String)> = Vec::new();
+    let mut regions = Vec::new();
     for observation in observations.iter() {
         let Some(best) = observation.topCandidates(1).firstObject() else {
             continue;
@@ -66,8 +68,12 @@ fn recognize_with(handler: &Retained<VNImageRequestHandler>) -> Result<Vec<Strin
             continue;
         }
         let frame = unsafe { observation.boundingBox() };
-        lines.push((frame.origin.y + frame.size.height, text));
+        regions.push(Region {
+            x: frame.origin.x,
+            y: frame.origin.y,
+            h: frame.size.height,
+            text,
+        });
     }
-    lines.sort_by(|a, b| b.0.total_cmp(&a.0));
-    Ok(lines.into_iter().map(|(_, text)| text).collect())
+    Ok(rows(regions))
 }
