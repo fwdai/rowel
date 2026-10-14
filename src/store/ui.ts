@@ -63,6 +63,13 @@ export interface UiState {
    */
   settingsLocked: boolean
   addPicker: boolean
+  /**
+   * The kind whose second question the picker is on (which document an
+   * identity is), or null while it is asking which kind. A surface that
+   * already knows the kind opens the picker here (the palette's "Add an
+   * identity"); the picker itself steps in and back.
+   */
+  addPickerKind: EntryType | null
   generator: Generator
   /** The entry being shared, or null when the send dialog is closed. */
   sendFor: string | null
@@ -136,6 +143,7 @@ export const initialUi: UiState = {
   settingsSection: 'language',
   settingsLocked: false,
   addPicker: false,
+  addPickerKind: null,
   generator: GENERATOR_CLOSED,
   sendFor: null,
   receiveOpen: false,
@@ -272,8 +280,15 @@ export const setSettingsSection = (section: Section) =>
 /** Hold Settings on its current section until `lockSettings(false)`. */
 export const lockSettings = (locked: boolean) => useUi.setState({ settingsLocked: locked })
 
-export const openAddPicker = () => useUi.setState({ palette: false, addPicker: true })
-export const closeAddPicker = () => useUi.setState({ addPicker: false })
+// Parameterless on purpose: it is handed straight to buttons and shortcuts as
+// their handler, and must not read the event they pass as a kind.
+export const openAddPicker = () =>
+  useUi.setState({ palette: false, addPicker: true, addPickerKind: null })
+/** Open the picker past the kinds, on `kind`'s own question. */
+export const openAddPickerAt = (kind: EntryType) =>
+  useUi.setState({ palette: false, addPicker: true, addPickerKind: kind })
+export const setAddPickerKind = (kind: EntryType | null) => useUi.setState({ addPickerKind: kind })
+export const closeAddPicker = () => useUi.setState({ addPicker: false, addPickerKind: null })
 
 export const openGenerator = (apply?: GeneratorApply) =>
   useUi.setState({ generator: { ...GENERATOR_CLOSED, open: true, apply: apply ?? null } })

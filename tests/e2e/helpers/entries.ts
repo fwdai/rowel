@@ -59,7 +59,7 @@ export interface NoteFields {
  */
 export interface IdentityFields {
   title: string;
-  /** Defaults to the passport the form opens on. */
+  /** Which document the picker is answered with; a passport when left out. */
   docType?: DocType;
   name: string;
   number: string;
@@ -78,11 +78,19 @@ export interface IdentityFields {
 // `entry-sheet` is now the editing container inside the detail pane rather
 // than a sliding sheet — the testid is kept so every wait below still reads as
 // "the editor is up".
-async function openForm(kind: Kind): Promise<void> {
+//
+// An identity is asked a second question before its form opens: the picker
+// turns to a page of documents, and the form is cut from the one chosen. The
+// form itself has no type switch any more.
+async function openForm(kind: Kind, docType: DocType = "passport"): Promise<void> {
   await waitFor("add-entry-button");
   await $('[data-testid="add-entry-button"]').click();
   await waitFor("add-secret-modal");
   await $(`[data-testid="add-kind-${kind}"]`).click();
+  if (kind === "identity") {
+    await waitFor(`add-choice-${docType}`);
+    await $(`[data-testid="add-choice-${docType}"]`).click();
+  }
   await waitFor("entry-sheet");
   await $('input[name="title"]').waitForDisplayed({ timeout: 5_000 });
 }
@@ -154,10 +162,9 @@ export async function createNote(fields: NoteFields): Promise<void> {
 }
 
 export async function createIdentity(fields: IdentityFields): Promise<void> {
-  await openForm("identity");
-  // The type goes first: it decides which rows exist, and switching it clears
-  // the ones the new document has no room for.
-  if (fields.docType) await pickDocType(fields.docType);
+  // The document is settled in the picker, before the form: it decides which
+  // rows exist.
+  await openForm("identity", fields.docType);
   await fill("title", fields.title);
   await fill("name", fields.name);
   await fill("number", fields.number);
@@ -177,13 +184,6 @@ export async function createIdentity(fields: IdentityFields): Promise<void> {
   if (fields.note !== undefined) await fill("note", fields.note, "textarea");
   await fillTags(fields.tags);
   await save();
-}
-
-/** Choose the document type in the open identity editor. */
-export async function pickDocType(type: DocType): Promise<void> {
-  const control = $(`[data-testid="identity-doc-type-${type}"]`);
-  await control.waitForDisplayed({ timeout: 5_000 });
-  await control.click();
 }
 
 /**

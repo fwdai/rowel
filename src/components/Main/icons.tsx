@@ -15,10 +15,12 @@ import {
   ArchiveRestore,
   ArrowDownUp,
   AtSign,
+  BookUser,
   Box,
   Braces,
   Calendar,
   Camera,
+  CarFront,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -34,11 +36,13 @@ import {
   EyeOff,
   File,
   FileArchive,
+  FileBadge,
   FileImage,
   FileText,
   Fingerprint,
   Folder,
   Globe,
+  House,
   IdCard,
   Image,
   KeyRound,
@@ -184,6 +188,14 @@ export const LoginGlyph = glyph(Globe, 16)
 export const NoteGlyph = glyph(FileText, 16)
 export const CardGlyph = glyph(CreditCard, 16)
 export const IdentityGlyph = glyph(IdCard, 16)
+// The documents an identity can be, on the add picker's second page. The ID
+// card keeps the kind's own mark; the rest say what they are — a booklet with
+// its holder for the passport, a car for the licence, a house for the permit,
+// and a sealed page for whatever else is official.
+export const PassportGlyph = glyph(BookUser, 16)
+export const LicenseGlyph = glyph(CarFront, 16)
+export const ResidenceGlyph = glyph(House, 16)
+export const DocumentGlyph = glyph(FileBadge, 16)
 // An SSH key. A shell prompt rather than a key: the key glyph is already the
 // passkey's, and the login's is the globe — this has to read as neither.
 export const SshGlyph = glyph(Terminal, 16)

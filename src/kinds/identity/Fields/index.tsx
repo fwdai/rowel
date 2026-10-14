@@ -1,4 +1,5 @@
 import { Fragment } from 'react'
+import { useTranslation } from 'react-i18next'
 import Panel from '@/components/elements/Panel'
 import {
   CustomFieldsField,
@@ -9,18 +10,12 @@ import {
   useFields
 } from '@/components/elements/fields'
 import { filled } from '@/components/elements/fields/formats'
-import { BAND_GUTTER, FACE_ASIDE } from '@/components/elements/tokens'
+import { BAND_GUTTER, FACE_ASIDE, LABEL } from '@/components/elements/tokens'
 import { countryName } from '@/utils/countries'
-import {
-  docTypeOf,
-  droppedKeys,
-  specOf,
-  TEMPLATES,
-  type DocType,
-  type Row
-} from '../templates'
+import { cx } from '@/utils/cx'
+import { docTypeOf, specOf, DOC_TYPE_LABELS, TEMPLATES, type Row } from '../templates'
+import { DOC_GLYPHS } from '../glyphs'
 import Face from '../Face'
-import DocTypeRow from './DocType'
 
 // The template's rows cut into bands wherever the group changes — holder,
 // document, extras. The order is the template's business, so this only has to
@@ -37,18 +32,15 @@ const bands = (rows: Row[]): Row[][] =>
 // and each row is one of the three faces the field set already has (a text row,
 // a date row, the note body). No row is written out here, so adding a field to a
 // document is an entry in `templates.ts` and nothing else.
+//
+// Which document it is was settled before the form opened — the add picker
+// asks, and the answer rides in on the draft — so the form never changes shape
+// under the user: there is no switch here, only a caption saying what it is.
 export default function Fields() {
+  const { t } = useTranslation()
   const { entry, set } = useFields()
   const editing = !!set
   const docType = docTypeOf(entry)
-
-  // Switching the type re-cuts the form. The rows it drops are cleared on the
-  // way out, so a value nobody can see any more never rides along into a save.
-  const switchTo = (next: DocType) => {
-    if (!set) return
-    set('doc_type', next)
-    for (const key of droppedKeys(docType, next)) set(key, '')
-  }
 
   // Reading, the document is an object (see `Face`); the note it carries and
   // any custom fields keep their rows on a panel beside it, as on a credit card.
@@ -68,6 +60,7 @@ export default function Fields() {
   }
 
   const rows = TEMPLATES[docType]
+  const DocGlyph = DOC_GLYPHS[docType]
 
   const row = ({ key, required }: Row) => {
     const spec = specOf(key)
@@ -100,8 +93,12 @@ export default function Fields() {
 
   return (
     <>
-      <div className="mb-3">
-        <DocTypeRow value={docType} onChange={switchTo} />
+      {/* The document's name over its panel, where a grouped list captions a
+          section: inset to the rows' own text edge, with the mark the picker
+          showed it under, so the form says which document it is cut for. */}
+      <div className={cx('mb-2 flex items-center gap-1.5 px-4', LABEL)}>
+        <DocGlyph size={12} />
+        <span data-testid="identity-doc-type">{t(DOC_TYPE_LABELS[docType])}</span>
       </div>
       <Panel>
         {bands(rows).map((band, index) => (
