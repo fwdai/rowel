@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Keep every password, passkey, card, ID, SSH key and `.env` file and more in one encrypted vault on your own devices.<br /> No account, no server, no subscription.**
+**Keep every password, passkey, card, ID, SSH key and `.env` file and more in one encrypted vault on your own devices. No account, no server, no subscription.**
 
 [![CI](https://github.com/fwdai/rowel/workflows/CI/badge.svg)](https://github.com/fwdai/rowel/actions)
 [![Release](https://img.shields.io/github/v/release/fwdai/rowel?include_prereleases&label=Release)](https://github.com/fwdai/rowel/releases)
@@ -29,6 +29,7 @@ Download it directly (v1.0.1; newer versions are on the [releases page](https://
 | macOS (Universal) | [.dmg](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_universal.dmg)                                                                                                                                                                                          |
 | Windows (x64)     | [setup .exe](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_x64-setup.exe)                                                                                                                                                                                    |
 | Linux (x86_64)    | [.deb](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_amd64.deb) · [.rpm](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel-1.0.1-1.x86_64.rpm) · [.AppImage](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_amd64.AppImage) |
+
 
 or install with the [GitHub CLI](https://cli.github.com), grab the latest installer for your OS:
 
