@@ -22,6 +22,15 @@ bump version → run Release manually from Actions → CI builds all three platf
   MSI bundler is skipped while versions carry a pre-release suffix such as
   `1.0.0-alpha.1`; WiX only accepts numeric pre-release identifiers.
 - **Linux:** `.deb`, `.rpm` and `.AppImage`, unsigned.
+- **Version-free copies:** every bundler filename carries the version
+  (`Rowel_1.0.2_universal.dmg`), so each job also uploads a copy of its own
+  installers under a fixed name — `Rowel_universal.dmg`, `Rowel_x64-setup.exe`,
+  `Rowel_amd64.deb`, `Rowel_x86_64.rpm`, `Rowel_amd64.AppImage` — which makes
+  `releases/latest/download/<name>` a permanent download link. Same bytes, same
+  signatures, attested under both names. README.md and rowel.app link to these,
+  so **the names are public API**: renaming one breaks those links. The
+  `latestAssets` entry in the workflow's matrix is the mapping, and a job fails
+  if its glob stops matching.
 - **Update artifacts:** `createUpdaterArtifacts: true` in `tauri.conf.json`
   emits the platform-specific updater bundle plus a `.sig` made with the Rowel
   minisign key. `tauri-action` merges them into one `latest.json`, which the app
@@ -206,11 +215,13 @@ how the current profile was made.
    this workflow creates the draft release, and the iOS run only attaches its
    IPA to a draft that already exists.
 4. Wait for all three platform jobs. They create one **draft** release
-   `Rowel v<version>` with the installers, the updater artifacts, their
-   `.sig` files, `latest.json` and the SBOMs. The Linux job replaces the
-   placeholder body with GitHub's auto-generated release notes.
+   `Rowel v<version>` with the installers, their version-free copies, the
+   updater artifacts, their `.sig` files, `latest.json` and the SBOMs. The
+   Linux job replaces the placeholder body with GitHub's auto-generated release
+   notes.
 5. Review the draft and **Publish** it. Once published, installed apps pick it
-   up on next launch.
+   up on next launch, and the `releases/latest/download/` links on README.md
+   and rowel.app serve this version's installers.
 
 ## Local signed build (macOS)
 
