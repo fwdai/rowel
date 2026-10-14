@@ -19,9 +19,12 @@ The code calls a lockbox a *workspace* (`workspace.rs`, `workspaces.json`);
 see Vocabulary in the README. There is no account server and no backend that
 holds user secrets. The
 webview is locked down by a strict CSP (`default-src 'self'`, `connect-src
-'self'`, `object-src 'none'`, `frame-src 'none'`, `base-uri 'none'`, and no
+'self'`, `object-src 'none'`, `frame-src blob:`, `base-uri 'none'`, and no
 `'unsafe-inline'` anywhere: the two `<style>` blocks in `index.html` run under
-the per-load nonce Tauri adds to `style-src`; see `src-tauri/tauri.conf.json`),
+the per-load nonce Tauri adds to `style-src`; see `src-tauri/tauri.conf.json`.
+`blob:` is allowed for images and frames only: the attachment preview shows a
+picture, or a PDF in the engine's own viewer, through an object URL of bytes
+the webview already holds, and WebKit's `'self'` does not match `blob:`),
 and external links are opened through the OS only for `http`/`https` URLs
 (`opener:allow-open-url` scope in `capabilities/default.json`; plain `http` is
 kept because routers and intranet logins have no other address, and the scope
