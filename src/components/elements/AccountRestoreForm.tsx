@@ -1,8 +1,8 @@
 import { useId, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { SetupDriveFile } from '@/api/setup'
+import type { RemotePack } from '@/api/setup'
 import { cx } from '@/utils/cx'
-import DriveVaults from './DriveVaults'
+import AccountVaults from './AccountVaults'
 import Button from './Button'
 import Field from './Field'
 import Note from './Note'
@@ -11,7 +11,7 @@ import { verbatimInput } from './inputProps'
 import { unsealError } from '@/components/Start/shared/errors'
 
 interface Props {
-  files: SetupDriveFile[]
+  files: RemotePack[]
   selectedId: string | null
   onSelect: (id: string) => void
   /** A restore is in flight; every control stands down. */
@@ -35,7 +35,7 @@ interface Props {
 
 /**
  * Name, password, Restore: the last step of every "make a workspace out of a
- * vault on Drive" flow, whichever account the vault came from. The list and
+ * vault in an account" flow, whichever account the vault came from. The list and
  * the pick are the caller's — they outlive a wrong password — so this only
  * draws them.
  *
@@ -45,7 +45,7 @@ interface Props {
  * Plain labelled fields, like every other form in Settings: the lock screen's
  * card is for the lock screen.
  */
-export default function DriveRestoreForm({
+export default function AccountRestoreForm({
   files,
   selectedId,
   onSelect,
@@ -83,7 +83,12 @@ export default function DriveRestoreForm({
 
   return (
     <div className="flex max-w-sm flex-col gap-3">
-      <DriveVaults files={files} selectedId={selectedId} onSelect={onSelect} testid={pickerTestid} />
+      <AccountVaults
+        files={files}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        testid={pickerTestid}
+      />
       <Field id={`${id}-name`} label={t('Lockbox name (optional)')}>
         <input
           id={`${id}-name`}

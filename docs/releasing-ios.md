@@ -70,6 +70,15 @@ passes the id to the build as the app's deep-link URL scheme through
 "Drive sync on iOS"), and the app derives the client id back from the scheme
 (`src-tauri/src/sync/auth.rs`).
 
+Dropbox works the same way with the app key the desktop build already uses:
+put it in the `DROPBOX_APP_KEY` secret and the workflow registers
+`db-<DROPBOX_APP_KEY>` as a second deep-link scheme beside Google's; the app
+reads the key back from it and redirects to `db-<DROPBOX_APP_KEY>://2/token`
+(`src-tauri/src/sync/providers/dropbox/oauth.rs`). There is no secret, and
+nothing to add in the App Console for the phone: only the OS-level scheme is
+registered (confirm on the first device run; see
+`docs/sync-providers-design.md` §3).
+
 ### 5. Repository secrets
 
 Add under **Settings → Secrets and variables → Actions**:
@@ -81,6 +90,7 @@ Add under **Settings → Secrets and variables → Actions**:
 | `APPLE_API_KEY_P8` | base64 of the `AuthKey_<KEYID>.p8` file |
 | `APPLE_TEAM_ID` | `UFBL3F444A` — **already set** for desktop notarization; reused here as `APPLE_DEVELOPMENT_TEAM` |
 | `GOOGLE_OAUTH_IOS_CLIENT_ID` | Google iOS OAuth client id (no secret) |
+| `DROPBOX_APP_KEY` | Dropbox app key (no secret); **already set** if desktop Dropbox sync is configured |
 
 Base64 the key file (macOS):
 
@@ -113,7 +123,8 @@ bun install
 
 Then put the same values CI uses into `.env` (see `.env.example`):
 `APPLE_API_ISSUER`, `APPLE_API_KEY`, `APPLE_API_KEY_PATH` (path to your
-`AuthKey_<KEYID>.p8`, kept outside the repo) and `GOOGLE_OAUTH_IOS_CLIENT_ID`.
+`AuthKey_<KEYID>.p8`, kept outside the repo), `GOOGLE_OAUTH_IOS_CLIENT_ID`
+and `DROPBOX_APP_KEY`.
 `APPLE_TEAM_ID` is already there for desktop notarization and is reused.
 
 ```sh

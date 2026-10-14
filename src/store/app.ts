@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import type { UnlockResult } from '@/api/types'
 import { appStatus, type AppStatus } from '@/api/app'
 import { lock } from '@/api/auth'
-import type { SetupDriveFile } from '@/api/setup'
+import type { Provider } from '@/api/provider'
+import type { RemotePack } from '@/api/setup'
 import { syncNow, type SyncStatus } from '@/api/sync'
 import { checkForUpdate } from '@/api/autoUpdate'
 import { resetEmblems } from '@/hooks/useEmblem'
@@ -13,8 +14,8 @@ import { hydratePrefs, hydrateFromProbe, prefsMark } from './prefs'
 
 /**
  * State that lives as long as the app does, across locks: which flow is on
- * screen and the lock screen's gate, the backend's sync and first-run Drive
- * status as it reports them, and a staged update.
+ * screen and the lock screen's gate, the backend's sync and first-run account
+ * probe as it reports them, and a staged update.
  */
 
 export type FlowName = 'setup' | 'auth' | 'main'
@@ -29,11 +30,15 @@ export type UpdateCheckStatus = 'checking' | 'uptodate' | 'error' | null
  * `restoring` — a pack from `found` is being unsealed into a workspace; the
  *               account is spoken for until that lands one way or the other
  */
-export type SetupDriveStatus = 'idle' | 'pending' | 'found' | 'empty' | 'error' | 'restoring'
+export type SetupAccountStatus = 'idle' | 'pending' | 'found' | 'empty' | 'error' | 'restoring'
 
 /**
- * The first run's Drive probe, which has no vault behind it yet — so it cannot
- * live in `sync`, whose `enabled` means "this vault syncs".
+ * The first run's account probe, which has no vault behind it yet — so it
+ * cannot live in `sync`, whose `configured` means "this vault syncs".
+ *
+ * `provider` is the cloud the flow is with. The press that starts a connect
+ * sets it, so every screen can name the provider before the probe answers, and
+ * Try again and Switch account go back to the same one.
  *
  * `files` is every vault the account holds, newest first, because one account
  * can hold several: two installs syncing their own primary each mint a vault
@@ -42,9 +47,10 @@ export type SetupDriveStatus = 'idle' | 'pending' | 'found' | 'empty' | 'error' 
  * otherwise, so the single-vault case never asks a question it has one answer
  * to.
  */
-export interface SetupDriveState {
-  status: SetupDriveStatus
-  files: SetupDriveFile[]
+export interface SetupAccountState {
+  status: SetupAccountStatus
+  provider: Provider | null
+  files: RemotePack[]
   selectedId: string | null
   error: string | null
 }
@@ -78,18 +84,18 @@ export interface AppState {
    *
    * The one place "does this vault sync" is read from. It used to be two — a
    * copy on `status` that only the probe refreshed, and this — so connecting
-   * Drive in Settings left the footer on the same screen saying the vault was
+   * an account in Settings left the footer on the same screen saying the vault was
    * local until the next lock.
    */
   sync: SyncStatus
-  setupDrive: SetupDriveState
+  setupAccount: SetupAccountState
   /**
    * The account's vaults that are not workspaces on this device, as the last
    * sync run reported them (`workspaces:remote`). Settings › Workspaces offers
    * to restore them. Dropped with the session: they are the open workspace's
    * account's, and the next unlock's sync says again.
    */
-  remoteVaults: SetupDriveFile[]
+  remoteVaults: RemotePack[]
   /**
    * How many sessions have been dropped (`clearSession`): a stamp for work in
    * the webview that awaits with nothing of the session in hand — a photo being
@@ -115,8 +121,9 @@ export interface AppState {
   }
 }
 
-const DRIVE_IDLE: SetupDriveState = {
+const ACCOUNT_IDLE: SetupAccountState = {
   status: 'idle',
+  provider: null,
   files: [],
   selectedId: null,
   error: null
@@ -131,6 +138,7 @@ export const initialApp: AppState = {
   switching: false,
   sync: {
     configured: false,
+    provider: null,
     pending: false,
     inProgress: false,
     error: null,
@@ -138,7 +146,7 @@ export const initialApp: AppState = {
     lastSyncedAt: null,
     seq: 0
   },
-  setupDrive: DRIVE_IDLE,
+  setupAccount: ACCOUNT_IDLE,
   remoteVaults: [],
   locks: 0,
   openedFile: null,
@@ -265,7 +273,7 @@ export const clearSession = () => {
 }
 
 /** What the last sync run found in the account and not here. */
-export const setRemoteVaults = (files: SetupDriveFile[]) => useApp.setState({ remoteVaults: files })
+export const setRemoteVaults = (files: RemotePack[]) => useApp.setState({ remoteVaults: files })
 
 // Manual lock, from anywhere (top chrome, Settings, palette). Nothing to do
 // here but ask: the backend emits `vault:locked` for every lock there is, and
@@ -283,7 +291,22 @@ export const enterMain = async (result: UnlockResult) => {
   // sync arrives as `sync:status` once a flow or a run happens. No re-probe:
   // `initialized` and `scanSupported` cannot have changed, and this is the one
   // answer an unlock does change.
-  useApp.setState(state => ({ sync: { ...state.sync, configured: result.syncConfigured } }))
+  //
+  // Which provider: the status the launch probe gave for an existing vault,
+  // or — for a vault that was just created or restored behind a first-run or
+  // Settings connect, which no status has described yet — the account that
+  // connect was for. Without that, the gap until the first run's status read
+  // as Google Drive (`syncProvider`'s fallback) and showed Drive-only controls
+  // over a Dropbox vault.
+  useApp.setState(state => ({
+    sync: {
+      ...state.sync,
+      configured: result.syncConfigured,
+      provider: result.syncConfigured
+        ? (state.sync.provider ?? state.setupAccount.provider)
+        : null
+    }
+  }))
   // One run on unlock: this device may have been off while another pushed,
   // and it may itself be holding writes a previous session never published.
   if (result.syncConfigured) syncNow().catch(() => {})
@@ -348,53 +371,71 @@ export const scheduleSync = () => {
 export const setSyncStatus = (sync: SyncStatus) =>
   useApp.setState(state => ({ sync: newer(state.sync, sync) }))
 
-// --- first-run Drive probe ---------------------------------------------------------
+// --- first-run account probe -------------------------------------------------------
 
-export const setupDrivePending = () =>
-  useApp.setState({ setupDrive: { ...DRIVE_IDLE, status: 'pending' } })
-export const setupDriveProbed = (files: SetupDriveFile[]) =>
-  useApp.setState({
-    setupDrive: {
+/**
+ * Consent is out. From a press, `provider` says with whom; from the backend's
+ * `setup:account:pending`, which names nobody, the one already held stays.
+ */
+export const setupAccountPending = (provider?: Provider) =>
+  useApp.setState(state => ({
+    setupAccount: {
+      ...ACCOUNT_IDLE,
+      status: 'pending',
+      provider: provider ?? state.setupAccount.provider
+    }
+  }))
+export const setupAccountProbed = (files: RemotePack[]) =>
+  useApp.setState(state => ({
+    setupAccount: {
       status: files.length > 0 ? 'found' : 'empty',
+      provider: files[0]?.provider ?? state.setupAccount.provider,
       files,
       selectedId: files[0]?.id ?? null,
       error: null
     }
-  })
-export const setupDriveFailed = (error: string) =>
-  useApp.setState({ setupDrive: { ...DRIVE_IDLE, status: 'error', error } })
-export const setupDriveReset = () => useApp.setState({ setupDrive: DRIVE_IDLE })
+  }))
+export const setupAccountFailed = (error: string) =>
+  useApp.setState(state => ({
+    setupAccount: {
+      ...ACCOUNT_IDLE,
+      status: 'error',
+      provider: state.setupAccount.provider,
+      error
+    }
+  }))
+export const setupAccountReset = () => useApp.setState({ setupAccount: ACCOUNT_IDLE })
 
 /**
  * The restore is in flight. The list and the pick stay, because a wrong
  * password comes straight back to them.
  */
-export const setupDriveRestoring = () =>
-  useApp.setState(state => ({ setupDrive: { ...state.setupDrive, status: 'restoring' } }))
+export const setupAccountRestoring = () =>
+  useApp.setState(state => ({ setupAccount: { ...state.setupAccount, status: 'restoring' } }))
 
 /**
  * The restore failed and the form is back in the user's hands. Only from
  * `restoring`: the screen may have been left and reset meanwhile, and a form
  * over an emptied list would be worse than the idle row.
  */
-export const setupDriveRestoreFailed = () =>
+export const setupAccountRestoreFailed = () =>
   useApp.setState(state =>
-    state.setupDrive.status === 'restoring'
-      ? { setupDrive: { ...state.setupDrive, status: 'found' } }
+    state.setupAccount.status === 'restoring'
+      ? { setupAccount: { ...state.setupAccount, status: 'found' } }
       : {}
   )
 
 /** The user picked one of several vaults; every later step follows this. */
-export const setupDriveSelect = (id: string) =>
-  useApp.setState(state => ({ setupDrive: { ...state.setupDrive, selectedId: id } }))
+export const setupAccountSelect = (id: string) =>
+  useApp.setState(state => ({ setupAccount: { ...state.setupAccount, selectedId: id } }))
 
 /**
  * The vault the flow is about, for the screens that describe or act on one.
  * A selector rather than stored state: it is `files` and `selectedId` read
  * together, and there is nothing to keep in step.
  */
-export const selectedDriveFile = (state: AppState): SetupDriveFile | null =>
-  state.setupDrive.files.find(file => file.id === state.setupDrive.selectedId) ?? null
+export const selectedRemotePack = (state: AppState): RemotePack | null =>
+  state.setupAccount.files.find(file => file.id === state.setupAccount.selectedId) ?? null
 
 // --- updates ----------------------------------------------------------------------
 

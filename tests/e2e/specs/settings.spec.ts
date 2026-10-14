@@ -65,12 +65,13 @@ describe("settings", () => {
     await expect($('[data-testid="app-version"]')).toHaveText(/^\d+\.\d+\.\d+/);
   });
 
-  it("offers Google Drive as not connected", async () => {
+  it("offers each sync provider while not connected", async () => {
     await section("sync");
     await expect($('[data-testid="settings-drive-row"]')).toHaveText(
       /Not connected/,
     );
     await expect($('[data-testid="settings-drive-connect"]')).toBeDisplayed();
+    await expect($('[data-testid="settings-dropbox-connect"]')).toBeDisplayed();
   });
 
   it("keeps the encrypted backup form behind its control", async () => {

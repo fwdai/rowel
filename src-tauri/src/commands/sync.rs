@@ -47,7 +47,7 @@ use crate::sync::setup::PackInfo;
 ///
 /// Keyless, always: the account is asked what it holds before anything is
 /// sealed under this vault's key. Consent and probe run on the blocking pool
-/// and report on the `setup:drive:*` events — the ones onboarding and Settings
+/// and report on the `setup:account:*` events — the ones onboarding and Settings
 /// › Workspaces listen to — and the frontend then calls [`sync_adopt_pending`],
 /// which joins the account only if it is empty or already holds this vault,
 /// and otherwise leaves the account's vaults to be restored. Offered only on a
@@ -63,25 +63,34 @@ use crate::sync::setup::PackInfo;
 /// A connect that cannot start (another setup step is still running) is
 /// reported as status as well as rejected, so the frontend never has to turn a
 /// rejected promise into state itself.
+///
+/// The frontend always sends `provider`; it is an `Option` only because a Tauri
+/// argument can be omitted only when it is one, and `None` means Google Drive.
 #[cfg(desktop)]
 #[tauri::command]
-pub fn sync_connect(app: AppHandle) -> Result<()> {
-    super::setup::connect_pending(&app).inspect_err(|e| failed(&app, e))
+pub fn sync_connect(app: AppHandle, provider: Option<sync::Provider>) -> Result<()> {
+    super::setup::connect_pending(&app, provider.unwrap_or_default())
+        .inspect_err(|e| failed(&app, e))
 }
 
 /// Start the consent flow and return — see [`on_redirect`] for the other half.
 ///
 /// Nothing here waits: Safari takes the screen and iOS suspends the app behind
 /// it, so there is no result to wait for. The frontend is told by the
-/// `setup:drive:*` events rather than by this promise, as on desktop.
+/// `setup:account:*` events rather than by this promise, as on desktop.
 ///
 /// Synchronous on purpose, unlike its desktop twin. It does no blocking work,
 /// and running on the IPC (main) thread is what puts the opener plugin's
 /// `UIApplication.open` where UIKit requires it.
 #[cfg(mobile)]
 #[tauri::command]
-pub fn sync_connect(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
-    super::setup::connect_pending(&app, &state).inspect_err(|e| failed(&app, e))
+pub fn sync_connect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: Option<sync::Provider>,
+) -> Result<()> {
+    super::setup::connect_pending(&app, &state, provider.unwrap_or_default())
+        .inspect_err(|e| failed(&app, e))
 }
 
 /// Make the account a connect left pending this vault's — if the account will
@@ -143,9 +152,10 @@ pub async fn sync_adopt_pending(app: AppHandle, state: State<'_, AppState>) -> R
         // retry as before (`Error::Locked` from the read).
         if !still_the_same_workspace(&state, &workspace, vault_id.as_deref())? {
             super::setup::take_pending_attempt(&state, attempt);
-            return Err(Error::Other(
-                "the lockbox changed while Google was answering; connect again from the lockbox you want to sync".into(),
-            ));
+            return Err(Error::Other(format!(
+                "the lockbox changed while {} was answering; connect again from the lockbox you want to sync",
+                tokens.provider.account_name()
+            )));
         }
         let cryptor = state.session.lock().unwrap().cryptor()?;
         // Still the exact consent result we probed? A cancel or another connect
@@ -153,12 +163,12 @@ pub async fn sync_adopt_pending(app: AppHandle, state: State<'_, AppState>) -> R
         // guard through the local write keeps a newer report from being
         // mistaken for this account, while the post-write generation check
         // catches a cancel that arrived during the write itself.
-        let mut pending = state.pending_drive.lock().unwrap();
+        let mut pending = state.pending_account.lock().unwrap();
         let Some(current) = pending.as_mut() else {
-            return Err(Error::DriveNotConnected);
+            return Err(Error::AccountNotConnected);
         };
         if current.attempt != attempt || super::setup::current_attempt(&state) != attempt {
-            return Err(Error::DriveNotConnected);
+            return Err(Error::AccountNotConnected);
         }
         // Keep a refresh-token rotation for a retry if the file write fails.
         current.tokens = tokens.clone();
@@ -182,7 +192,7 @@ pub async fn sync_adopt_pending(app: AppHandle, state: State<'_, AppState>) -> R
             {
                 *pending = None;
             }
-            return Err(Error::DriveNotConnected);
+            return Err(Error::AccountNotConnected);
         }
 
         // Announce the committed connection while both the workspace and its run
@@ -327,47 +337,77 @@ const RESUME_GRACE: Duration = Duration::from_secs(3);
 /// brings back are probed and left pending, and only [`sync_adopt_pending`]
 /// seals them under a vault — under the lock, when that happens.
 #[cfg(mobile)]
-pub(crate) fn start_consent(app: &AppHandle, state: &AppState, purpose: AuthPurpose) -> Result<()> {
+pub(crate) fn start_consent(
+    app: &AppHandle,
+    state: &AppState,
+    purpose: AuthPurpose,
+    provider: sync::Provider,
+) -> Result<()> {
     // One consent at a time, and checked before Safari is opened for a second.
     // Replacing the pending flow would orphan it: its redirect could never be
     // matched again, and its screen would say "waiting" for good. A flow the
     // user walked away from does not block for long — `on_resume` writes it
     // off once the redirect has had its chance to arrive.
-    if state.pending_auth.lock().unwrap().is_some() {
-        return Err(Error::Other(
-            "another Google sign-in is still waiting for its answer; finish or cancel it first"
-                .into(),
-        ));
+    if let Some(pending) = state.pending_auth.lock().unwrap().as_ref() {
+        return Err(Error::Other(format!(
+            "another {} sign-in is still waiting for its answer; finish or cancel it first",
+            pending.provider.account_name()
+        )));
     }
-    let started = sync::begin(app)?;
+    let started = sync::begin(app, provider)?;
     *state.pending_auth.lock().unwrap() = Some(crate::state::PendingAuth {
         verifier: started.verifier,
         state: started.state,
         purpose,
+        provider,
         started: std::time::Instant::now(),
     });
-    // Every connect announces itself on the `setup:drive:*` family: it is the
+    // Every connect announces itself on the `setup:account:*` family: it is the
     // probe's answer the frontend waits for, whichever screen asked.
-    events::setup_drive_pending(app);
+    events::setup_account_pending(app);
     Ok(())
 }
 
-/// iOS reopened the app with a URL. If it is Google's answer to the consent
-/// flow we have pending, finish it; anything else is not ours and leaves the
-/// pending flow exactly as it was.
+/// iOS reopened the app with a URL. If it is the provider's answer to the
+/// consent flow we have pending, finish it; if it is that provider's "the user
+/// cancelled" landing (Dropbox's `db-<APP_KEY>://2/cancel`), end it as denied;
+/// anything else is not ours and leaves the pending flow exactly as it was.
 ///
 /// Registered in `lib.rs`'s `setup`. Returns immediately — the token exchange
 /// is a network round trip and must not run on the URL-open callback.
 #[cfg(mobile)]
 pub fn on_redirect(app: &AppHandle, url: &url::Url) {
-    if !sync::redirect_matches(app, url) {
-        return;
-    }
     let state = app.state::<AppState>();
     let mut slot = state.pending_auth.lock().unwrap();
     let Some(pending) = slot.as_ref() else {
         return;
     };
+    // Whose redirect to look for is the pending flow's to say. Matching reads
+    // this build's configuration only — no I/O under the lock.
+    let provider = pending.provider;
+    if sync::cancel_matches(app, provider, url) {
+        // A cancel that names a request names ours, or it is someone else's.
+        // One that names none is taken at its word: the worst a stray one can
+        // do is end a sign-in the user then starts again.
+        let echoed = url
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.into_owned());
+        if echoed.is_some_and(|s| s != pending.state) {
+            log::warn!("ignoring a cancel that does not answer the pending sign-in");
+            return;
+        }
+        slot.take();
+        drop(slot);
+        fail(
+            app,
+            format!("{} sign-in was cancelled", provider.account_name()),
+        );
+        return;
+    }
+    if !sync::redirect_matches(app, provider, url) {
+        return;
+    }
     // Judge the URL against the pending request *before* consuming it, so a URL
     // that is not the answer costs the real answer nothing.
     let code = match sync::parse_redirect(url, &pending.state) {
@@ -386,7 +426,13 @@ pub fn on_redirect(app: &AppHandle, url: &url::Url) {
     let pending = slot.take().expect("checked above");
     drop(slot);
     if pending.started.elapsed() > CONSENT_TTL {
-        fail(app, "Google sign-in took too long; try again".into());
+        fail(
+            app,
+            format!(
+                "{} sign-in took too long; try again",
+                pending.provider.account_name()
+            ),
+        );
         return;
     }
 
@@ -394,7 +440,7 @@ pub fn on_redirect(app: &AppHandle, url: &url::Url) {
     // one thing every purpose does with a redirect (see `AuthPurpose`).
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        crate::commands::setup::on_consent(&app, &code, &pending.verifier).await;
+        crate::commands::setup::on_consent(&app, pending.provider, &code, &pending.verifier).await;
     });
 }
 
@@ -436,19 +482,25 @@ pub fn on_resume(app: &AppHandle) {
                     _ => None,
                 }
             };
-            if abandoned.is_some() {
-                fail(&handle, "Google sign-in was cancelled".into());
+            if let Some(abandoned) = abandoned {
+                fail(
+                    &handle,
+                    format!(
+                        "{} sign-in was cancelled",
+                        abandoned.provider.account_name()
+                    ),
+                );
             }
         });
 }
 
 /// The consent flow ended without a connection. One place, so every ending
-/// reports the same way — on the `setup:drive:*` family every keyless connect
+/// reports the same way — on the `setup:account:*` family every keyless connect
 /// is started under.
 #[cfg(mobile)]
 fn fail(app: &AppHandle, why: String) {
-    log::warn!("drive setup failed: {why}");
-    events::setup_drive_error(app, &why);
+    log::warn!("account setup failed: {why}");
+    events::setup_account_error(app, &why);
 }
 
 // --- status ------------------------------------------------------------------
@@ -522,7 +574,12 @@ pub(crate) fn status(app: &AppHandle) -> SyncStatus {
         crate::storage::sync_configured(app)
     };
     drop(session);
-    state.sync_run(|run| run.status(configured))
+    // Which provider is the token file's name to say, locked or not; nothing
+    // to say for a vault that is not connected.
+    let provider = configured
+        .then(|| crate::storage::sync_provider(app))
+        .flatten();
+    state.sync_run(|run| run.status(configured, provider))
 }
 
 /// The active workspace changed: say what sync looks like for the new one.
@@ -810,6 +867,7 @@ mod tests {
             vault_id: vault_id.into(),
             size: 0,
             modified_time: String::new(),
+            provider: sync::Provider::GoogleDrive,
         }
     }
 

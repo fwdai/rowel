@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BiometryType, UnlockResult } from '@/api/types'
 import { setupCreate } from '@/api/setup'
-import { claimOpenedFile, connectDrive, enterMain, forgetDrive, useApp } from '@/store'
+import type { Provider } from '@/api/provider'
+import { claimOpenedFile, connectAccount, enterMain, forgetAccount, useApp } from '@/store'
 import { isBackupFile } from '@/lib/backup'
 import AuthShell from '@/components/elements/AuthShell'
 import Mascot, { type MascotState } from '@/components/elements/Mascot'
@@ -10,11 +11,11 @@ import Welcome from './Welcome'
 import Password from './Password'
 import Sync from './Sync'
 import Conflict from './Conflict'
-import Drive from './Drive'
+import Account from './Account'
 import File from './File'
 import Biometric from './Biometric'
 
-type Screen = 'welcome' | 'password' | 'sync' | 'conflict' | 'drive' | 'file' | 'biometric'
+type Screen = 'welcome' | 'password' | 'sync' | 'conflict' | 'account' | 'file' | 'biometric'
 
 // How far along each screen is, as the mascot's smile tells it: neutral on
 // the welcome, brightening through the middle, all the way once the vault is
@@ -24,7 +25,7 @@ const JOY: Record<Screen, number> = {
   password: 0.5,
   sync: 1,
   conflict: 0.5,
-  drive: 0.5,
+  account: 0.5,
   file: 0.5,
   biometric: 1
 }
@@ -79,17 +80,17 @@ export function Start() {
     setStack(['welcome', 'file'])
   }, [opened])
   // Consent already given, on the way through the restore screen: the create
-  // flow adopts those tokens instead of asking for Drive a second time.
-  const [driveLinked, setDriveLinked] = useState(false)
+  // flow adopts those tokens instead of asking for an account a second time.
+  const [accountLinked, setAccountLinked] = useState(false)
   const [result, setResult] = useState<UnlockResult | null>(null)
   const [biometry, setBiometry] = useState<BiometryType>('touch')
 
-  // The Drive probe's state colours the mascot on the screens that are
-  // waiting on it: eyes narrowed while consent is out, a head shake when
-  // Google did not answer.
-  const drive = useApp(state => state.setupDrive.status)
-  const waiting = (screen === 'drive' || screen === 'sync') && drive === 'pending'
-  const failed = screen === 'drive' && drive === 'error'
+  // The account probe's state colours the mascot on the screens that are
+  // waiting on it: eyes narrowed while consent is out, a head shake when the
+  // provider did not answer.
+  const probe = useApp(state => state.setupAccount.status)
+  const waiting = (screen === 'account' || screen === 'sync') && probe === 'pending'
+  const failed = screen === 'account' && probe === 'error'
   const mood: MascotState = failed ? 'error' : waiting ? 'checking' : 'idle'
 
   const go = (next: Screen) => {
@@ -98,23 +99,23 @@ export function Start() {
   }
 
   const back = () => {
-    // Stepping out of the Drive screen towards the welcome gives the tokens
+    // Stepping out of the account screen towards the welcome gives the tokens
     // back: the user is no longer restoring from that account. Stepping back
     // into the conflict question keeps them — that screen is about the very
     // file this one was showing.
-    if (screen === 'drive' && stack[stack.length - 2] === 'welcome') {
-      forgetDrive()
-      setDriveLinked(false)
+    if (screen === 'account' && stack[stack.length - 2] === 'welcome') {
+      forgetAccount()
+      setAccountLinked(false)
     }
     // Backing out of the conflict question is refusing both of its answers, so
     // the account goes with it — the backup step would otherwise re-read the
     // probe still sitting in the store and bounce straight back here.
-    if (screen === 'conflict') forgetDrive()
+    if (screen === 'conflict') forgetAccount()
     // Backing out of the backup step abandons a consent that may still be out
     // with the browser. Without this its late answer would sit in the store,
     // and the next visit to this step would read "empty" and create at once,
     // never having asked.
-    if (screen === 'sync') forgetDrive()
+    if (screen === 'sync') forgetAccount()
     // Leaving the restore step is declining the file the OS opened; the next
     // visit starts from the picker.
     if (screen === 'file') setRestoreFrom(null)
@@ -148,16 +149,16 @@ export function Start() {
 
   const createWithPassword = useCallback(() => create(password), [create, password])
 
-  const openDrive = () => {
-    connectDrive()
-    go('drive')
+  const openAccount = (provider: Provider) => {
+    connectAccount(provider)
+    go('account')
   }
 
   const continueFromPassword = (value: string) => {
     setPassword(value)
-    // Coming back through the restore screen, Drive is already agreed: there is
-    // no second step left to ask about.
-    if (driveLinked) return create(value)
+    // Coming back through the restore screen, the account is already agreed:
+    // there is no second step left to ask about.
+    if (accountLinked) return create(value)
     go('sync')
     return Promise.resolve()
   }
@@ -168,7 +169,7 @@ export function Start() {
         return (
           <Welcome
             onFresh={() => go('password')}
-            onDrive={openDrive}
+            onConnect={openAccount}
             onFile={() => go('file')}
           />
         )
@@ -177,20 +178,20 @@ export function Start() {
       case 'sync':
         return <Sync onCreate={createWithPassword} onConflict={() => go('conflict')} />
       case 'conflict':
-        return <Conflict onUnlockExisting={() => go('drive')} />
-      case 'drive':
+        return <Conflict onUnlockExisting={() => go('account')} />
+      case 'account':
         return (
-          <Drive
+          <Account
             onStartFresh={() => {
-              setDriveLinked(true)
+              setAccountLinked(true)
               go('password')
             }}
             onUseFile={() => {
               // Restoring from a file is leaving this account behind: the
               // tokens it holds would otherwise outlive the flow in the
               // backend's memory.
-              forgetDrive()
-              setDriveLinked(false)
+              forgetAccount()
+              setAccountLinked(false)
               go('file')
             }}
             onRestored={finish}
@@ -225,7 +226,7 @@ export function Start() {
       </div>
       {/* Keyed on the screen: a new key is a fresh element, which is what
           runs the arrival animation. Content changing within a screen (the
-          Drive probe answering) redraws in place. */}
+          account probe answering) redraws in place. */}
       <div
         key={screen}
         className={direction === 'back' ? 'animate-step-back' : 'animate-step-forward'}

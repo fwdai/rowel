@@ -99,7 +99,7 @@ products solve it, don't patch symptoms.
 > lockbox on this device holds (`sync::publish_remote_vaults` → `workspaces:remote`,
 > registry lockbox ids plus the run's own), and Settings › Lockboxes offers them under "In
 > your Google account" with the shared picker and restore form. The restore
-> (`workspace_restore_from_account`) is `workspace_restore_from_drive` with the sign-in taken
+> (`workspace_restore_from_account`) is `workspace_restore_from_pending` with the sign-in taken
 > out: the open lockbox's own tokens do the download and a copy is sealed under the restored
 > key — one account, connected once, in as many lockboxes as the account has packs. In the
 > other direction, `workspace_create` on a connected device inherits the account: the tokens

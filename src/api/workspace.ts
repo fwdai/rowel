@@ -1,4 +1,5 @@
 import { call } from './client'
+import type { Provider } from './provider'
 import type { UnlockResult } from './types'
 
 /**
@@ -8,8 +9,8 @@ import type { UnlockResult } from './types'
  * under the primary's on this device, so moving between them never asks
  * again. A workspace that has never been opened with its password here is the
  * one exception — its first switch lands on its lock screen, and that unlock is
- * what seals its key for the ones after. Each carries its own Drive connection
- * and syncs its own pack.
+ * what seals its key for the ones after. Each carries its own account
+ * connection and syncs its own pack.
  */
 
 /**
@@ -59,12 +60,13 @@ export const workspaceSetColor = (id: string, color: string | null): Promise<voi
  * backend derives from its descriptor and lets the database answer; a wrong one
  * rejects as `invalidPassword` and nothing is removed.
  *
- * Local by default: whatever the vault has on Google Drive is left there, so
+ * Local by default: whatever the vault has in its account is left there, so
  * the account still holds it and it can be restored as a workspace again. With
- * `everywhere`, the vault's copy on Drive goes first and a marker takes its
- * place, which is what has the account's other devices stop syncing it instead
- * of uploading theirs back — and the Drive step runs before anything local is
- * removed, so a network failure leaves the workspace here to try again from.
+ * `everywhere`, the vault's copy in the account goes first and a marker takes
+ * its place, which is what has the account's other devices stop syncing it
+ * instead of uploading theirs back — and the remote step runs before anything
+ * local is removed, so a network failure leaves the workspace here to try again
+ * from.
  *
  * Refused as `lastWorkspace` when it is the only workspace left. Deleting the
  * active one ends its session, so `vault:locked` arrives and the app comes back
@@ -78,16 +80,17 @@ export const workspaceDelete = (
 ): Promise<void> => call('workspace_delete', { id, password, everywhere })
 
 /**
- * Connect a Google account for a workspace that does not exist yet. The
+ * Connect a `provider` account for a workspace that does not exist yet. The
  * onboarding connect with its "no vault here" precondition dropped, so it
- * answers on exactly the same events: `setup:drive:pending`, then one of
- * `setup:drive:probed` / `setup:drive:error`. Nothing comes back through this
- * promise; a rejection is a failure to start at all.
+ * answers on exactly the same events: `setup:account:pending`, then one of
+ * `setup:account:probed` / `setup:account:error`. Nothing comes back through
+ * this promise; a rejection is a failure to start at all.
  *
- * The tokens it leaves pending are forgotten with `setupDriveDisconnect`, which
- * both flows share.
+ * The tokens it leaves pending are forgotten with `setupDisconnect`, which both
+ * flows share.
  */
-export const workspaceDriveConnect = (): Promise<void> => call('workspace_drive_connect')
+export const workspaceConnect = (provider: Provider): Promise<void> =>
+  call('workspace_connect', { provider })
 
 /**
  * Make a new workspace out of one of the connected account's vaults. `fileId`
@@ -99,12 +102,12 @@ export const workspaceDriveConnect = (): Promise<void> => call('workspace_drive_
  * password rejects as `invalidPassword` and changes nothing, so retrying costs
  * only the typing.
  */
-export const workspaceRestoreFromDrive = (
+export const workspaceRestoreFromPending = (
   name: string,
   password: string,
   fileId: string
 ): Promise<UnlockResult> =>
-  call('workspace_restore_from_drive', { name, password, fileId })
+  call('workspace_restore_from_pending', { name, password, fileId })
 
 /**
  * The same, for one of the vaults the open workspace's own account holds and

@@ -18,7 +18,7 @@ import SubpageFrame from '../../../SubpageFrame'
 import { useSubpage } from '../../../sectionNav'
 import WorkspaceForm from '../WorkspaceForm'
 import { nameTaken } from '../WorkspaceForm/nameTaken'
-import { workspaceAbout, workspaceSyncs } from '../about'
+import { workspaceAbout, workspaceProvider } from '../about'
 
 // Any workspace can be edited, the locked ones included — the backend writes a
 // locked vault's name into the registry, and the open one's into the vault as
@@ -76,7 +76,7 @@ export default function Editor({ workspace }: { workspace: Workspace }) {
   const current = workspace.id === active
   const meta = workspaceAbout(
     workspace,
-    { current, syncs: workspaceSyncs(workspace, { active, sync }), liveCount },
+    { current, provider: workspaceProvider(workspace, { active, sync }), liveCount },
     t
   )
 

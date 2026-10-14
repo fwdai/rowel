@@ -28,7 +28,7 @@ pub use rowel_core::workspace::{dir_of, Deletion, Registry, Workspace, PRIMARY_I
 /// true of the workspace right now and is not the registry's to keep.
 ///
 /// `synced` is read off the workspace's own token file at the moment of
-/// asking (see [`crate::storage::sync_configured_in`]). It is not `vault_id`:
+/// asking (see [`crate::storage::sync_provider_in`]). It is not `vault_id`:
 /// that says a pack for the vault exists on Drive, and a disconnect leaves the
 /// pack there, so a workspace disconnected and then locked would otherwise
 /// keep reading as one that syncs — and be offered a delete "everywhere" it
@@ -39,6 +39,10 @@ pub struct WorkspaceStatus {
     #[serde(flatten)]
     pub workspace: Workspace,
     pub synced: bool,
+    /// Which provider it syncs through, off the token file's name — so it is
+    /// known while the workspace is locked. `None` (`null`) exactly when
+    /// `synced` is false.
+    pub provider: Option<crate::sync::Provider>,
 }
 
 /// Every workspace in `registry` with its live sync state, for `app_status`.
@@ -46,9 +50,13 @@ pub fn statuses(registry: &Registry, root: &Path) -> Vec<WorkspaceStatus> {
     registry
         .workspaces
         .iter()
-        .map(|workspace| WorkspaceStatus {
-            synced: storage::sync_configured_in(&dir_of(root, &workspace.id)),
-            workspace: workspace.clone(),
+        .map(|workspace| {
+            let provider = storage::sync_provider_in(&dir_of(root, &workspace.id));
+            WorkspaceStatus {
+                synced: provider.is_some(),
+                provider,
+                workspace: workspace.clone(),
+            }
         })
         .collect()
 }
@@ -526,7 +534,10 @@ mod tests {
             (storage::KDF_SIDECAR_FILE, "kdf"),
             (storage::KDF_SIDECAR_REKEY_BACKUP_FILE, "kdf-backup"),
             (storage::LOCKOUT_SIDECAR_FILE, "lockout"),
-            (storage::GDRIVE_FILE, "token"),
+            (
+                crate::sync::Provider::GoogleDrive.token_file_name(),
+                "token",
+            ),
         ] {
             fs::write(dir.join(file), format!("{tag}-{what}")).unwrap();
         }
@@ -592,7 +603,10 @@ mod tests {
         assert_eq!(read(root.join(storage::DB_FILE)), "work-db");
         assert_eq!(read(wal_of(&root.join(storage::DB_FILE))), "work-wal");
         assert_eq!(read(root.join(storage::KDF_SIDECAR_FILE)), "work-kdf");
-        assert_eq!(read(root.join(storage::GDRIVE_FILE)), "work-token");
+        assert_eq!(
+            read(root.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "work-token"
+        );
         // Left behind, these would strand the promoted vault: the next unlock's
         // recovery would find a snapshot with no pair to roll back to, and the
         // backoff the survivor had earned would be reset.
@@ -636,7 +650,10 @@ mod tests {
 
         assert!(!gone.exists());
         assert_eq!(read(root.join(storage::DB_FILE)), "primary-db");
-        assert_eq!(read(root.join(storage::GDRIVE_FILE)), "primary-token");
+        assert_eq!(
+            read(root.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "primary-token"
+        );
         assert_eq!(Registry::load(&root).workspaces.len(), 1);
         assert!(!staging(&root).exists());
         assert!(!DeleteJournal::path(&root).exists());
@@ -663,7 +680,10 @@ mod tests {
         assert_eq!(read(root.join(storage::DB_FILE)), "primary-db");
         assert_eq!(read(wal_of(&root.join(storage::DB_FILE))), "primary-wal");
         assert_eq!(read(root.join(storage::KDF_SIDECAR_FILE)), "primary-kdf");
-        assert_eq!(read(root.join(storage::GDRIVE_FILE)), "primary-token");
+        assert_eq!(
+            read(root.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "primary-token"
+        );
         assert_eq!(read(root.join(storage::BIOMETRIC_FILE)), "protected");
         assert_eq!(read(from.join(storage::DB_FILE)), "work-db");
         assert_eq!(
@@ -716,7 +736,10 @@ mod tests {
 
         assert_eq!(read(root.join(storage::DB_FILE)), "primary-db");
         assert_eq!(read(wal_of(&root.join(storage::DB_FILE))), "primary-wal");
-        assert_eq!(read(root.join(storage::GDRIVE_FILE)), "primary-token");
+        assert_eq!(
+            read(root.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "primary-token"
+        );
         assert_eq!(read(from.join(storage::DB_FILE)), "work-db");
         assert_eq!(
             read(from.join(storage::DB_REKEY_BACKUP_FILE)),
@@ -749,7 +772,10 @@ mod tests {
 
         assert_eq!(read(from.join(storage::DB_FILE)), "work-db");
         assert_eq!(read(wal_of(&from.join(storage::DB_FILE))), "work-wal");
-        assert_eq!(read(from.join(storage::GDRIVE_FILE)), "work-token");
+        assert_eq!(
+            read(from.join(crate::sync::Provider::GoogleDrive.token_file_name())),
+            "work-token"
+        );
         assert_eq!(read(root.join(storage::DB_FILE)), "primary-db");
         assert_eq!(read(wal_of(&root.join(storage::DB_FILE))), "primary-wal");
         assert_eq!(
@@ -809,7 +835,7 @@ mod tests {
                 },
             ],
         };
-        let token = dir_of(&root, "w2").join(storage::GDRIVE_FILE);
+        let token = dir_of(&root, "w2").join(crate::sync::Provider::GoogleDrive.token_file_name());
         fs::create_dir_all(token.parent().unwrap()).unwrap();
         fs::write(&token, b"sealed").unwrap();
 
@@ -827,5 +853,43 @@ mod tests {
         assert_eq!(json["id"], "w2");
         assert_eq!(json["vaultId"], "cafe");
         assert_eq!(json["synced"], true);
+        assert_eq!(json["provider"], "googleDrive");
+        assert_eq!(
+            serde_json::to_value(&listed[0]).unwrap()["provider"],
+            serde_json::Value::Null
+        );
+    }
+
+    // The provider is the token file's name, readable with the workspace
+    // locked: no key, nothing unsealed.
+    #[test]
+    fn a_locked_workspace_says_which_provider_it_syncs_through() {
+        use crate::sync::Provider;
+        let root = tmp_root();
+        let registry = Registry {
+            active: PRIMARY_ID.to_string(),
+            workspaces: vec![Workspace {
+                id: "w2".into(),
+                name: None,
+                vault_id: Some("cafe".into()),
+                item_count: None,
+                color: None,
+            }],
+        };
+        let token = dir_of(&root, "w2").join(Provider::Dropbox.token_file_name());
+        fs::create_dir_all(token.parent().unwrap()).unwrap();
+        fs::write(&token, b"sealed").unwrap();
+
+        let listed = statuses(&registry, &root);
+        assert!(listed[0].synced);
+        assert_eq!(listed[0].provider, Some(Provider::Dropbox));
+        assert_eq!(
+            serde_json::to_value(&listed[0]).unwrap()["provider"],
+            "dropbox"
+        );
+
+        // Not configured is no provider, whatever the empty file is named.
+        fs::write(&token, b"").unwrap();
+        assert_eq!(statuses(&registry, &root)[0].provider, None);
     }
 }

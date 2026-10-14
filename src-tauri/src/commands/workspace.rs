@@ -470,38 +470,51 @@ fn open_account(app: &AppHandle, state: &AppState) -> Result<Option<(sync::Token
     drop(session);
     sync::current_account(app, &cryptor)
         .map(Some)
-        .ok_or_else(|| Error::Other(account_unreadable_error()))
+        .ok_or_else(|| Error::Other(account_unreadable_error(sync::sealed_provider(app))))
+}
+
+// Surfaced verbatim in the form, so it has to read as a sentence. The provider
+// is the token file's name's to say: the file itself is what would not read.
+fn account_unreadable_error(provider: sync::Provider) -> String {
+    format!(
+        "this workspace's {} account could not be read; disconnect and connect it again, then \
+         retry",
+        provider.account_name()
+    )
 }
 
 // Surfaced verbatim in the form, so it has to read as a sentence.
-fn account_unreadable_error() -> String {
-    "this workspace's Google account could not be read; disconnect and connect it again, then \
-     retry"
-        .into()
+fn disconnected_mid_restore_error(provider: sync::Provider) -> String {
+    format!(
+        "{} was disconnected while the vault was downloading; connect again and retry",
+        provider.display_name()
+    )
 }
 
-// Surfaced verbatim in the form, so it has to read as a sentence.
-fn disconnected_mid_restore_error() -> String {
-    "Google Drive was disconnected while the vault was downloading; connect again and retry".into()
-}
-
-/// Connect a Google account for a workspace that does not exist yet.
+/// Connect an account for a workspace that does not exist yet.
 ///
 /// Onboarding's connect, reached from Settings instead of from the first run:
 /// the tokens are held in memory rather than sealed, because the vault they
-/// belong to is still a pack on Drive. Exactly the same events report it, so
-/// the picker the first run draws is the picker this draws.
+/// belong to is still a pack in the account. Exactly the same events report
+/// it, so the picker the first run draws is the picker this draws.
+///
+/// The frontend always sends `provider`; it is an `Option` only because a Tauri
+/// argument can be omitted only when it is one, and `None` means Google Drive.
 #[cfg(desktop)]
 #[tauri::command]
-pub fn workspace_drive_connect(app: AppHandle) -> Result<()> {
-    setup::connect_pending(&app)
+pub fn workspace_connect(app: AppHandle, provider: Option<sync::Provider>) -> Result<()> {
+    setup::connect_pending(&app, provider.unwrap_or_default())
 }
 
-/// The mobile twin of [`workspace_drive_connect`].
+/// The mobile twin of [`workspace_connect`].
 #[cfg(mobile)]
 #[tauri::command]
-pub fn workspace_drive_connect(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
-    setup::connect_pending(&app, &state)
+pub fn workspace_connect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: Option<sync::Provider>,
+) -> Result<()> {
+    setup::connect_pending(&app, &state, provider.unwrap_or_default())
 }
 
 /// Add a workspace by restoring one of the connected account's vaults into it.
@@ -521,7 +534,7 @@ pub fn workspace_drive_connect(app: AppHandle, state: State<'_, AppState>) -> Re
 /// directory is removed, the workspace the user was in comes back exactly as it
 /// was, and the account stays pending — so the retry is one press away.
 #[tauri::command]
-pub async fn workspace_restore_from_drive(
+pub async fn workspace_restore_from_pending(
     name: String,
     password: Zeroizing<String>,
     file_id: String,
@@ -545,7 +558,7 @@ pub async fn workspace_restore_from_drive(
 /// holds and this device does not — the ones every sync run reports
 /// (`sync::publish_remote_vaults`).
 ///
-/// [`workspace_restore_from_drive`] with the sign-in taken out: the tokens are
+/// [`workspace_restore_from_pending`] with the sign-in taken out: the tokens are
 /// the open workspace's own, read off its token file, and a copy is sealed
 /// under the restored vault's key exactly as a pending account would be. The
 /// device ends up with one account in two workspaces, which is what an account
@@ -655,7 +668,9 @@ async fn restore_workspace(
         if let Account::Open { generation } = account {
             let cryptor = state.session.lock().unwrap().cryptor()?;
             if !sync::persist_tokens_if_current(app, &cryptor, &tokens, generation)? {
-                return Err(Error::Other(disconnected_mid_restore_error()));
+                return Err(Error::Other(disconnected_mid_restore_error(
+                    tokens.provider,
+                )));
             }
         }
         let lease = state.session.lock().unwrap().take_out()?;
@@ -663,7 +678,9 @@ async fn restore_workspace(
         {
             // The paths have not moved yet, so the session goes straight back.
             state.session.lock().unwrap().restore(lease);
-            return Err(Error::Other(disconnected_mid_restore_error()));
+            return Err(Error::Other(disconnected_mid_restore_error(
+                tokens.provider,
+            )));
         }
         let active = std::mem::replace(&mut *state.active_workspace.lock().unwrap(), id.clone());
         (active, lease)
@@ -1083,10 +1100,10 @@ async fn delete_remote_pack(
     let Some(vault_id) = vault_id else {
         return Ok(());
     };
-    let Some(mut tokens) = sync::read_tokens_in(dir, &key.cryptor())? else {
+    let Some(tokens) = sync::read_tokens_in(dir, &key.cryptor())? else {
         return Ok(());
     };
-    sync::delete_pack(app, &mut tokens, &vault_id).await
+    sync::delete_pack(&sync::pending_store(app, tokens), &vault_id).await
 }
 
 // Prove `password` opens the vault in `dir`, and hand back the key that did it.

@@ -1,13 +1,13 @@
 import { useTranslation } from 'react-i18next'
-import type { SetupDriveFile } from '@/api/setup'
+import type { RemotePack } from '@/api/setup'
 import { useDates } from '@/hooks/useDates'
-import { describeDriveFile } from '@/utils/drivePack'
+import { describeRemotePack } from '@/utils/remotePack'
 import RadioList from './RadioList'
 import FoundFileCard from './FoundFileCard'
 
 interface Props {
   /** Every vault on offer, newest first. */
-  files: SetupDriveFile[]
+  files: RemotePack[]
   selectedId: string | null
   onSelect: (id: string) => void
   /**
@@ -30,7 +30,7 @@ interface Props {
  * Shared by the first run, Settings › Sync and Settings › Workspaces, which
  * pick a vault out of the same probe for the same reason.
  */
-export default function DriveVaults({ files, selectedId, onSelect, testid = 'drive' }: Props) {
+export default function AccountVaults({ files, selectedId, onSelect, testid = 'drive' }: Props) {
   const { t } = useTranslation()
   const dates = useDates()
   const file = files.find(candidate => candidate.id === selectedId) ?? null
@@ -45,7 +45,7 @@ export default function DriveVaults({ files, selectedId, onSelect, testid = 'dri
         options={files.map(vault => ({
           value: vault.id,
           label: t('Rowel lockbox'),
-          meta: describeDriveFile(vault, dates)
+          meta: describeRemotePack(vault, dates)
         }))}
       />
     )
@@ -53,10 +53,10 @@ export default function DriveVaults({ files, selectedId, onSelect, testid = 'dri
   return (
     file && (
       <FoundFileCard
-        where="drive"
+        where="cloud"
         testid={`${testid}-found-file`}
         name={t('Rowel lockbox')}
-        meta={describeDriveFile(file, dates)}
+        meta={describeRemotePack(file, dates)}
         encrypted
       />
     )

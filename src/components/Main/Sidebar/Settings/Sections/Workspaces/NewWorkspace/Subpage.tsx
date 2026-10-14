@@ -2,6 +2,8 @@ import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createWorkspace, lockSettings, selectWorkspaces, useApp } from '@/store'
 import { describeError, errorKind } from '@/api/errors'
+import { providerName } from '@/api/provider'
+import { syncProvider } from '@/api/sync'
 import { PRIMARY_WORKSPACE, workspaceLabel } from '@/lib/workspace'
 import { firstUnusedColor, type WorkspaceColor } from '@/lib/workspaceColor'
 import { cx } from '@/utils/cx'
@@ -27,8 +29,8 @@ export default function NewWorkspaceSubpage() {
   const { t } = useTranslation()
   const passwordId = useId()
   const workspaces = useApp(selectWorkspaces)
-  // A new workspace joins the open one's Drive account.
-  const syncs = useApp(state => state.sync.configured)
+  // A new workspace joins the open one's account.
+  const provider = useApp(state => syncProvider(state.sync))
   const [name, setName] = useState('')
   const [color, setColor] = useState<WorkspaceColor>(() =>
     firstUnusedColor(workspaces.map(workspace => workspace.color))
@@ -68,8 +70,8 @@ export default function NewWorkspaceSubpage() {
     }
   }
 
-  const meta = syncs
-    ? `${t('Empty · encrypted')} · ${t('Syncs to Google Drive')}`
+  const meta = provider
+    ? `${t('Empty · encrypted')} · ${t('Syncs to {{provider}}', { provider: providerName(provider) })}`
     : t('Empty · encrypted')
 
   return (

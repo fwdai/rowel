@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 use crate::error::{Error, Result};
+use crate::sync::Provider;
 // The atomic writers, and the names another process has to agree on to open
 // the same vault (the iOS AutoFill extension), are in the core.
 pub use rowel_core::atomic::{atomic_write_file, atomic_write_private};
@@ -22,7 +23,12 @@ pub const LOCKOUT_SIDECAR_FILE: &str = "vault.lock.json";
 // User preferences (theme, locale, auto-lock, …). Plaintext and readable while
 // locked by design: the shell has to know what to draw before the vault opens.
 pub const SETTINGS_FILE: &str = "settings.json";
+// The sealed account a workspace syncs through, one file per provider and at
+// most one of them present (see `sync::Provider::token_file_name`). Google's
+// keeps the name it had before there was a choice, so an existing install is
+// still connected after an update, with nothing to migrate.
 pub const GDRIVE_FILE: &str = "auth/gdrive.swftx";
+pub const DROPBOX_FILE: &str = "auth/dropbox.swftx";
 // Working space for the sync engine, inside the workspace's own directory (see
 // `sync_scratch_dir`).
 const SYNC_SCRATCH_DIR: &str = "sync-scratch";
@@ -43,11 +49,12 @@ const SYNC_SCRATCH_DIR: &str = "sync-scratch";
 // whatever `-wal`/`-shm` siblings it has (see `db_files`), a sidecar is the one
 // file.
 const VAULT_DB_FILES: [&str; 2] = [DB_FILE, DB_REKEY_BACKUP_FILE];
-const VAULT_SIDECAR_FILES: [&str; 5] = [
+const VAULT_SIDECAR_FILES: [&str; 6] = [
     KDF_SIDECAR_FILE,
     KDF_SIDECAR_REKEY_BACKUP_FILE,
     LOCKOUT_SIDECAR_FILE,
     GDRIVE_FILE,
+    DROPBOX_FILE,
     WRAPPED_KEY_FILE,
 ];
 
@@ -387,11 +394,13 @@ pub fn db_exists(app: &AppHandle) -> bool {
         .is_some_and(|m| m.len() > 0)
 }
 
-// Public to the crate because the sync token file's guarded transitions are
-// built on a plain path (`sync::auth::TokenFile`) so they can be exercised
-// without an `AppHandle`.
-pub(crate) fn gdrive_path(app: &AppHandle) -> Result<PathBuf> {
-    Ok(workspace_dir(app)?.join(GDRIVE_FILE))
+// Which provider's token file the workspace at `dir` holds, present at all —
+// empty included, since an empty file is a write that did not finish rather
+// than no connection (`sync::read_tokens_in`). A name alone, no key needed.
+pub(crate) fn token_file_in(dir: &Path) -> Option<Provider> {
+    Provider::ALL
+        .into_iter()
+        .find(|provider| dir.join(provider.token_file_name()).exists())
 }
 
 // Public because the sync restore path addresses the sidecar by path (its core
@@ -650,26 +659,54 @@ pub fn read_backup(path: &str) -> Result<String> {
     String::from_utf8(bytes).map_err(|_| Error::FileNotText)
 }
 
-// The sealed Drive tokens, into a workspace directory named outright rather
+// The sealed account tokens, into a workspace directory named outright rather
 // than the active one: for a workspace being made *beside* the open one, whose
 // paths must stay where they are (`commands::autojoin`). The active
-// workspace's own token file is read and written by `sync::auth::TokenFile`,
+// workspace's own token file is read and written by `sync::account::TokenFile`,
 // which holds its path.
 //
 // Atomic, so a crash mid-write leaves the previous grant rather than a
 // truncated file that reads as "not connected" — and owner-only from creation,
 // like every other secret the app writes: the seal is the real protection, the
 // mode is the second line.
-pub fn write_gdrive_in(dir: &Path, data: &str) -> Result<()> {
-    atomic_write_private(&dir.join(GDRIVE_FILE), data.as_bytes())
+//
+// Exclusive: a workspace syncs through one account, so every other provider's
+// token file goes first ([`remove_other_token_files_in`]). The active
+// workspace's own write does the same under the connection generation
+// (`sync::account::TokenFile::connect`).
+pub fn write_token_file_in(dir: &Path, provider: Provider, data: &str) -> Result<()> {
+    remove_other_token_files_in(dir, provider)?;
+    atomic_write_private(&dir.join(provider.token_file_name()), data.as_bytes())
 }
 
-// Remove the token file, whatever state a failed write left it in. "No file" is
+// Remove every token file in the workspace at `dir` except `keep`'s, and say
+// whether there was one to remove. Before the write that makes `keep` the
+// connection, never after: a crash between the two then leaves no account
+// rather than two, and "at most one" is what lets the file's name say which
+// provider a locked workspace syncs through.
+pub(crate) fn remove_other_token_files_in(dir: &Path, keep: Provider) -> Result<bool> {
+    let mut removed = false;
+    for provider in Provider::ALL.into_iter().filter(|p| *p != keep) {
+        let path = dir.join(provider.token_file_name());
+        if path.exists() {
+            remove_if_present(&path)?;
+            removed = true;
+        }
+    }
+    Ok(removed)
+}
+
+// Remove the token file, whatever state a failed write left it in — every
+// provider's, since it is "no account at all" the caller is after. "No file" is
 // the goal, so an already-absent one is success — but every other failure is
 // reported rather than swallowed: a token file that outlives a disconnect is a
 // live refresh token, and a caller told the delete worked would never know.
-pub fn remove_gdrive(app: &AppHandle) -> Result<()> {
-    remove_if_present(&gdrive_path(app)?)
+pub fn remove_token_files(app: &AppHandle) -> Result<()> {
+    let dir = workspace_dir(app)?;
+    for provider in Provider::ALL {
+        remove_if_present(&dir.join(provider.token_file_name()))?;
+    }
+    Ok(())
 }
 
 // The file-level half, on a plain path so it is testable without an `AppHandle`.
@@ -715,16 +752,28 @@ pub fn set_biometric_marker(app: &AppHandle, marker: Option<&str>) -> Result<()>
 }
 
 pub fn sync_configured(app: &AppHandle) -> bool {
-    workspace_dir(app).is_ok_and(|dir| sync_configured_in(&dir))
+    sync_provider(app).is_some()
 }
 
-/// Whether the workspace at `dir` holds a Drive connection: its token file is
-/// there and non-empty. The one fact about a *locked* workspace's sync that is
-/// readable from outside it — the registry's vault id says a pack exists on
-/// Drive, which outlives a disconnect, not that anything still syncs to it.
-pub fn sync_configured_in(dir: &Path) -> bool {
-    // A single metadata call answers both "exists" and "non-empty".
-    fs::metadata(dir.join(GDRIVE_FILE)).is_ok_and(|m| m.len() > 0)
+/// [`sync_provider_in`] for the active workspace.
+pub fn sync_provider(app: &AppHandle) -> Option<Provider> {
+    workspace_dir(app)
+        .ok()
+        .and_then(|dir| sync_provider_in(&dir))
+}
+
+/// Which provider the workspace at `dir` syncs through: the one whose token
+/// file is there and non-empty, read off the file's name alone. `None` is no
+/// account connection.
+///
+/// The one fact about a *locked* workspace's sync that is readable from outside
+/// it — no key needed. The registry's vault id says a pack exists in the
+/// account, which outlives a disconnect, not that anything still syncs to it.
+pub fn sync_provider_in(dir: &Path) -> Option<Provider> {
+    // A single metadata call per file answers both "exists" and "non-empty".
+    Provider::ALL.into_iter().find(|provider| {
+        fs::metadata(dir.join(provider.token_file_name())).is_ok_and(|m| m.len() > 0)
+    })
 }
 
 #[cfg(test)]
@@ -732,7 +781,7 @@ mod tests {
     use super::{
         move_data_dir, move_vault_files, move_workspace_files, read_backup,
         read_regular_file_capped, remove_if_present, settle_data_dir, Error, BIOMETRIC_FILE,
-        DB_FILE, DB_REKEY_BACKUP_FILE, GDRIVE_FILE, KDF_SIDECAR_FILE,
+        DB_FILE, DB_REKEY_BACKUP_FILE, DROPBOX_FILE, GDRIVE_FILE, KDF_SIDECAR_FILE,
         KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, STALE_SUFFIX, SYNC_SCRATCH_DIR,
         WRAPPED_KEY_FILE,
     };
@@ -807,7 +856,7 @@ mod tests {
     }
 
     // Every file of the set, laid out as a workspace holds them.
-    fn seed_vault(dir: &Path) -> [&'static str; 7] {
+    fn seed_vault(dir: &Path) -> [&'static str; 8] {
         let files = [
             DB_FILE,
             DB_REKEY_BACKUP_FILE,
@@ -815,6 +864,7 @@ mod tests {
             KDF_SIDECAR_REKEY_BACKUP_FILE,
             LOCKOUT_SIDECAR_FILE,
             GDRIVE_FILE,
+            DROPBOX_FILE,
             WRAPPED_KEY_FILE,
         ];
         fs::create_dir_all(dir.join("auth")).unwrap();

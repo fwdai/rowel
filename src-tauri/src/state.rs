@@ -25,7 +25,7 @@ pub enum AuthPurpose {
     /// joins the account only if the account is empty or already holds it —
     /// see `commands::sync::sync_adopt_pending`). What asked is the frontend's
     /// to remember; the redirect does the same thing either way and leaves the
-    /// tokens in [`AppState::pending_drive`].
+    /// tokens in [`AppState::pending_account`].
     Setup,
 }
 
@@ -45,14 +45,18 @@ pub struct PendingAuth {
     pub verifier: String,
     pub state: String,
     pub purpose: AuthPurpose,
+    /// Whose consent page was opened: which redirect (and cancel landing) to
+    /// recognise, and which client redeems the code.
+    pub provider: crate::sync::Provider,
     pub started: std::time::Instant,
 }
 
-/// OAuth tokens produced by one particular Drive consent attempt.
+/// OAuth tokens produced by one particular consent attempt — any provider's;
+/// the tokens name theirs.
 ///
 /// The attempt travels with the tokens so an async consumer cannot mistake a
 /// newer account's pending credentials for the ones it probed before an await.
-pub struct PendingDrive {
+pub struct PendingAccount {
     pub attempt: u64,
     pub tokens: crate::sync::Tokens,
 }
@@ -115,11 +119,12 @@ impl SyncRun {
         self.error = error;
     }
 
-    /// The snapshot the frontend gets. `configured` is the session's to answer,
-    /// so the caller supplies it.
-    pub fn status(&self, configured: bool) -> SyncStatus {
+    /// The snapshot the frontend gets. `configured` is the session's to answer
+    /// and `provider` the token file's, so the caller supplies both.
+    pub fn status(&self, configured: bool, provider: Option<crate::sync::Provider>) -> SyncStatus {
         SyncStatus {
             configured,
+            provider,
             pending: self.pending,
             in_progress: self.in_progress,
             error: self.error.as_ref().map(|e| e.message.clone()),
@@ -164,6 +169,9 @@ impl From<&Error> for SyncFailure {
 pub struct SyncStatus {
     /// This vault has a provider connected.
     pub configured: bool,
+    /// Which provider, read off the workspace's token file; `None` (`null`)
+    /// whenever `configured` is false.
+    pub provider: Option<crate::sync::Provider>,
     pub pending: bool,
     pub in_progress: bool,
     pub error: Option<String>,
@@ -233,14 +241,14 @@ pub struct AppState {
     /// `commands::workspace` reads to refuse a switch while a consent flow or a
     /// run is out. Reached through [`AppState::sync_run`], never directly.
     pub sync_runs: Mutex<HashMap<String, SyncRun>>,
-    /// Drive tokens for an account connected during first-run onboarding.
+    /// Tokens for an account connected during first-run onboarding.
     ///
     /// Memory only, and deliberately so: they are sealed under the vault key,
     /// and on a fresh install that key does not exist yet. They live here from
     /// the moment consent is granted until the restore or create that follows
     /// produces a key to write them under (or the user backs out, which drops
     /// them). Outside `session` because there is no session to put them in.
-    pub pending_drive: Mutex<Option<PendingDrive>>,
+    pub pending_account: Mutex<Option<PendingAccount>>,
     /// A first-run create or restore is writing the vault. Same shape as
     /// `syncing`: the check for "no vault yet" and the writes that follow it
     /// are not one step, so two overlapping requests could both pass the check
@@ -301,7 +309,7 @@ impl Default for AppState {
             sync_rerun: AtomicBool::default(),
             sync_generation: Mutex::default(),
             sync_runs: Mutex::default(),
-            pending_drive: Mutex::default(),
+            pending_account: Mutex::default(),
             setup_busy: AtomicBool::default(),
             setup_attempt: AtomicU64::default(),
             pending_open: Mutex::default(),
@@ -338,27 +346,27 @@ mod tests {
         // A syncs, successfully.
         switch_to(&state, "a");
         finish(&state, None);
-        let a = state.sync_run(|run| run.status(true));
+        let a = state.sync_run(|run| run.status(true, None));
         assert!(a.last_synced_at.is_some());
         assert_eq!(a.error, None);
 
         // B has never synced: neither A's timestamp nor A's (absent) error is
         // any part of what B has to say about itself.
         switch_to(&state, "b");
-        let before = state.sync_run(|run| run.status(true));
+        let before = state.sync_run(|run| run.status(true, None));
         assert_eq!(before.last_synced_at, None);
         assert_eq!(before.error, None);
 
         // A failed run keeps the previous timestamp — B's, which is none. The
         // error is B's own.
         finish(&state, Some("no network"));
-        let failed = state.sync_run(|run| run.status(true));
+        let failed = state.sync_run(|run| run.status(true, None));
         assert_eq!(failed.last_synced_at, None);
         assert_eq!(failed.error.as_deref(), Some("no network"));
 
         // And nothing that happened to B happened to A.
         switch_to(&state, "a");
-        let back = state.sync_run(|run| run.status(true));
+        let back = state.sync_run(|run| run.status(true, None));
         assert_eq!(back.last_synced_at, a.last_synced_at);
         assert_eq!(back.error, None);
     }
@@ -373,12 +381,29 @@ mod tests {
         for _ in 0..3 {
             state.sync_run(|run| run.transition(|_| {}));
         }
-        let held = state.sync_run(|run| run.status(true));
+        let held = state.sync_run(|run| run.status(true, None));
 
         // One transition against a workspace that has never had one: exactly
         // what `commands::sync::switched` does after the repoint.
         switch_to(&state, "b");
         state.sync_run(|run| run.transition(|_| {}));
-        assert!(state.sync_run(|run| run.status(true)).seq > held.seq);
+        assert!(state.sync_run(|run| run.status(true, None)).seq > held.seq);
+    }
+
+    // `provider` is additive to the payload the frontend already reads: the
+    // existing fields keep their names, and a vault with no connection says
+    // `null`.
+    #[test]
+    fn the_status_names_the_connected_provider() {
+        let run = SyncRun::default();
+        let connected =
+            serde_json::to_value(run.status(true, Some(crate::sync::Provider::Dropbox))).unwrap();
+        assert_eq!(connected["configured"], true);
+        assert_eq!(connected["provider"], "dropbox");
+        assert!(connected.get("inProgress").is_some());
+        assert!(connected.get("lastSyncedAt").is_some());
+
+        let local = serde_json::to_value(run.status(false, None)).unwrap();
+        assert_eq!(local["provider"], serde_json::Value::Null);
     }
 }

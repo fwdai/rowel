@@ -79,20 +79,9 @@ pub fn snapshot(app: &AppHandle) -> Result<AppStatus> {
     let hardware = secure_store::is_supported() && gate.available;
     let marker = storage::biometric_marker(app);
 
-    // The session flag only exists after an unlock; while locked, answer from
-    // the persisted (non-secret) settings so e.g. the lock screen can say
-    // where the vault lives.
-    let session = state.session.lock().unwrap();
-    let sync_configured = if session.is_unlocked() {
-        session.sync_configured
-    } else {
-        storage::sync_configured(app)
-    };
-    drop(session);
-
-    // The same snapshot `sync:status` carries, built the same way — and for the
-    // same workspace, since both read the active one's run state.
-    let sync = state.sync_run(|run| run.status(sync_configured));
+    // The same snapshot `sync:status` carries, built by the same function — and
+    // for the same workspace, since both read the active one's run state.
+    let sync = super::sync::status(app);
 
     let settings = settings::current(app);
 

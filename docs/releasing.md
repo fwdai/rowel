@@ -63,6 +63,7 @@ onto the env names the Tauri bundler expects.
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for that key (empty if generated without one). |
 | `GOOGLE_OAUTH_CLIENT_ID` | Desktop-app OAuth client id from Google Cloud Console, baked in at compile time for Google Drive sync (`src-tauri/src/sync/auth.rs`). Unset → Drive sync reports "not configured". |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | The matching client secret. |
+| `DROPBOX_APP_KEY` | App key of the Dropbox **App folder** app (App Console → your app → Settings), baked in at compile time for Dropbox sync (`src-tauri/src/sync/providers/dropbox/oauth.rs`). Public client with PKCE: there is no secret to set. Register `http://127.0.0.1:53682/auth/callback`, `…:53683/…` and `…:53684/…` as redirect URIs. Unset → Dropbox sync reports "not configured". |
 
 `APPLE_SIGNING_IDENTITY` is not a secret (it is the certificate's display
 name) and is written directly in `release.yml`. If the certificate is ever

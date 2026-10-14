@@ -14,7 +14,8 @@ import { CARD, LABEL } from '@/components/elements/tokens'
 import SubpageFrame from '../../../SubpageFrame'
 import { useSubpage } from '../../../sectionNav'
 import Preview from '../WorkspaceForm/Preview'
-import { workspaceAbout, workspaceSyncs } from '../about'
+import { workspaceAbout, workspaceProvider } from '../about'
+import { providerName } from '@/api/provider'
 
 type Scope = 'device' | 'everywhere'
 
@@ -27,9 +28,9 @@ type Scope = 'device' | 'everywhere'
  * opened to check it against the session), and the label typed out, which is
  * what makes "this one" deliberate.
  *
- * A workspace that syncs also gets the choice of taking the vault out of the
- * Google account with it (`syncs`); one that does not is only ever a local
- * delete, and is not offered a scope to pick from at all.
+ * A workspace that syncs also gets the choice of taking the vault out of its
+ * account with it (`provider`); one that does not is only ever a local delete,
+ * and is not offered a scope to pick from at all.
  */
 export default function Confirm({ workspace }: { workspace: Workspace }) {
   const { t } = useTranslation()
@@ -37,8 +38,9 @@ export default function Confirm({ workspace }: { workspace: Workspace }) {
   const active = useApp(selectActiveWorkspace)
   const sync = useApp(state => state.sync)
   const liveCount = useVault(state => state.items.length)
-  // Offer "Delete everywhere" only to a workspace with a vault on Drive.
-  const syncs = workspaceSyncs(workspace, { active, sync })
+  // Offer "Delete everywhere" only to a workspace with a vault in an account.
+  const provider = workspaceProvider(workspace, { active, sync })
+  const syncs = provider !== null
   const passwordId = useId()
   const confirmId = useId()
   const label = workspaceLabel(workspace, t)
@@ -64,7 +66,7 @@ export default function Confirm({ workspace }: { workspace: Workspace }) {
   }
 
   const current = workspace.id === active
-  const meta = workspaceAbout(workspace, { current, syncs, liveCount }, t)
+  const meta = workspaceAbout(workspace, { current, provider, liveCount }, t)
 
   return (
     <SubpageFrame
@@ -104,13 +106,17 @@ export default function Confirm({ workspace }: { workspace: Workspace }) {
             </Field>
           )}
           <Note>
-            {everywhere
-              ? t(
-                  'This removes the lockbox from this device and deletes its copy in Google Drive. Your other devices will stop syncing it.'
-                )
-              : t(
-                  'This removes the lockbox and everything in it from this device. A copy on Google Drive is left where it is, so the account still holds it.'
-                )}
+            {!provider
+              ? t('This removes the lockbox and everything in it from this device.')
+              : everywhere
+                ? t(
+                    'This removes the lockbox from this device and deletes its copy in {{provider}}. Your other devices will stop syncing it.',
+                    { provider: providerName(provider) }
+                  )
+                : t(
+                    'This removes the lockbox and everything in it from this device. A copy in {{provider}} is left where it is, so the account still holds it.',
+                    { provider: providerName(provider) }
+                  )}
           </Note>
         </div>
       </div>

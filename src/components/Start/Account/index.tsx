@@ -2,16 +2,17 @@ import { useState, type ChangeEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import Masterpass from '@/components/elements/Masterpass'
 import Button from '@/components/elements/Button'
-import DriveVaults from '@/components/elements/DriveVaults'
+import AccountVaults from '@/components/elements/AccountVaults'
 import { isMobile } from '@/lib/platform'
 import type { UnlockResult } from '@/api/types'
-import { setupRestoreFromDrive } from '@/api/setup'
+import { setupRestoreFromAccount } from '@/api/setup'
+import { providerName } from '@/api/provider'
 import {
   useApp,
-  selectedDriveFile,
-  setupDriveSelect,
-  connectDrive,
-  switchDriveAccount
+  selectedRemotePack,
+  setupAccountSelect,
+  connectAccount,
+  switchSetupAccount
 } from '@/store'
 import StepHeader from '../shared/StepHeader'
 import SpinnerCard from '../shared/SpinnerCard'
@@ -22,19 +23,22 @@ import { unsealError } from '../shared/errors'
 interface Props {
   /** Nothing in this account: go and make some, with sync already wired up. */
   onStartFresh: () => void
-  /** Desktop's other route in, for a Drive that is not where the data is. */
+  /** Desktop's other route in, for an account that is not where the data is. */
   onUseFile: () => void
   onRestored: (result: UnlockResult) => Promise<void>
 }
 
-// Restoring from Google Drive. Everything on screen follows the probe in the
-// store — pending while consent is out with the browser, then one of found,
-// empty or failed — so a result that arrives while the user is reading simply
-// redraws the screen.
-export default function Drive({ onStartFresh, onUseFile, onRestored }: Props) {
+// Restoring from the account the welcome's press connected. Everything on
+// screen follows the probe in the store — pending while consent is out with the
+// browser, then one of found, empty or failed — so a result that arrives while
+// the user is reading simply redraws the screen.
+export default function Account({ onStartFresh, onUseFile, onRestored }: Props) {
   const { t } = useTranslation()
-  const drive = useApp(state => state.setupDrive)
-  const file = useApp(selectedDriveFile)
+  const account = useApp(state => state.setupAccount)
+  const file = useApp(selectedRemotePack)
+  const provider = account.provider ?? 'googleDrive'
+  const name = { provider: providerName(provider) }
+  const eyebrow = t('Restore · {{provider}}', name)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -48,7 +52,7 @@ export default function Drive({ onStartFresh, onUseFile, onRestored }: Props) {
     if (busy || !password || !file) return
     setBusy(true)
     setError(null)
-    setupRestoreFromDrive(password, file.id)
+    setupRestoreFromAccount(password, file.id)
       .then(onRestored)
       .catch((err: unknown) => {
         setBusy(false)
@@ -67,7 +71,7 @@ export default function Drive({ onStartFresh, onUseFile, onRestored }: Props) {
   // offer is not made, rather than made and then declined.
   const links = busy ? null : (
     <div className={`${FOOTNOTE} flex items-center justify-center gap-4`}>
-      <TextLink testid="drive-switch-account" onClick={switchDriveAccount}>
+      <TextLink testid="drive-switch-account" onClick={switchSetupAccount}>
         {t('Switch account')}
       </TextLink>
       {!isMobile && (
@@ -78,17 +82,17 @@ export default function Drive({ onStartFresh, onUseFile, onRestored }: Props) {
     </div>
   )
 
-  if (drive.status === 'error')
+  if (account.status === 'error')
     return (
       <>
         <StepHeader
-          eyebrow={t('Restore · Google Drive')}
+          eyebrow={eyebrow}
           tone="bad"
-          title={t('Google Drive did not answer')}
-          body={drive.error || t('Something went wrong')}
+          title={t('{{provider}} did not answer', name)}
+          body={account.error || t('Something went wrong')}
         />
         <div className={ACTIONS}>
-          <Button block testid="drive-retry-button" onClick={connectDrive}>
+          <Button block testid="drive-retry-button" onClick={() => connectAccount(provider)}>
             {t('Try again')}
           </Button>
         </div>
@@ -96,13 +100,13 @@ export default function Drive({ onStartFresh, onUseFile, onRestored }: Props) {
       </>
     )
 
-  if (drive.status === 'empty')
+  if (account.status === 'empty')
     return (
       <>
         <StepHeader
-          eyebrow={t('Restore · Google Drive')}
+          eyebrow={eyebrow}
           title={t('Nothing here yet')}
-          body={t('This Google account has no Rowel data. Start fresh and it will sync here.')}
+          body={t('This {{provider}} account has no Rowel data. Start fresh and it will sync here.', name)}
         />
         <div className={ACTIONS}>
           <Button block testid="drive-start-fresh-button" onClick={onStartFresh}>
@@ -113,28 +117,24 @@ export default function Drive({ onStartFresh, onUseFile, onRestored }: Props) {
       </>
     )
 
-  if (drive.status !== 'found')
+  if (account.status !== 'found')
     return (
       <>
-        <StepHeader
-          eyebrow={t('Restore · Google Drive')}
-          busy
-          title={t('Looking for your data…')}
-        />
+        <StepHeader eyebrow={eyebrow} busy title={t('Looking for your data…')} />
         <div className={`${COLUMN} mt-9`}>
-          <SpinnerCard testid="drive-spinner" caption={t('Waiting for Google…')} />
+          <SpinnerCard testid="drive-spinner" caption={t('Waiting for {{provider}}…', name)} />
         </div>
       </>
     )
 
   // What the account holds decides the wording: a choice to make, or one vault
-  // to unlock. `DriveVaults` draws whichever of the two it is.
-  const several = drive.files.length > 1
+  // to unlock. `AccountVaults` draws whichever of the two it is.
+  const several = account.files.length > 1
 
   return (
     <>
       <StepHeader
-        eyebrow={t('Restore · Google Drive')}
+        eyebrow={eyebrow}
         title={t('Welcome back.')}
         body={
           several
@@ -144,10 +144,10 @@ export default function Drive({ onStartFresh, onUseFile, onRestored }: Props) {
       />
 
       <div className={`${COLUMN} mt-9`}>
-        <DriveVaults
-          files={drive.files}
-          selectedId={drive.selectedId}
-          onSelect={setupDriveSelect}
+        <AccountVaults
+          files={account.files}
+          selectedId={account.selectedId}
+          onSelect={setupAccountSelect}
         />
 
         <div className="mt-6">

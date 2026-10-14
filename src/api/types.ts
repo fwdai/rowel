@@ -5,6 +5,8 @@
  * plaintext back to be re-encrypted.
  */
 
+import type { Provider } from './provider'
+
 export type EntryType = 'login' | 'note' | 'card' | 'identity' | 'ssh' | 'env' | 'apikey'
 
 // One free-form field on an entry: a label the user wrote and its value.
@@ -233,17 +235,25 @@ export interface Workspace {
   name: string | null
   /**
    * The vault id of the vault inside, once a sync has settled one. The UI
-   * shows nothing of it; the backend keeps it to turn away a Drive restore of a
-   * pack that is already a workspace here.
+   * shows nothing of it; the backend keeps it to turn away a restore of a pack
+   * that is already a workspace here.
    */
   vaultId?: string
   /**
-   * Whether the workspace is connected to Drive right now, read off its own
-   * token file when the list was built. Distinct from `vaultId`, which
-   * outlives a disconnect: a pack on Drive is not a connection to it. Absent
-   * from a backend built before the flag existed, which reads as not synced.
+   * Whether the workspace is connected to an account right now, read off its
+   * own token file when the list was built. Distinct from `vaultId`, which
+   * outlives a disconnect: a pack in an account is not a connection to it.
+   * Absent from a backend built before the flag existed, which reads as not
+   * synced.
    */
   synced?: boolean
+  /**
+   * Which provider that connection is with, read off the token file's name so
+   * it is known while the workspace is locked. Null when not connected; absent
+   * from a backend built before there was a choice, which only spoke to Google
+   * Drive.
+   */
+  provider?: Provider | null
   /**
    * How many live entries the vault held when it was last open on this
    * device — the one thing about its contents readable while it is locked.

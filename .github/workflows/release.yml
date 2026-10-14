@@ -19,6 +19,8 @@
 #   TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)                minisign key for updater artifact signatures
 #   GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET Desktop OAuth client, baked in at compile time
 #                                                       (src-tauri/src/sync/auth.rs)
+#   DROPBOX_APP_KEY                                     Dropbox app key (no secret), baked in at compile
+#                                                       time (src-tauri/src/sync/providers/dropbox/oauth.rs)
 #   GOOGLE_API_KEY                                      Drive API key for receiving shared secrets, baked
 #                                                       in at compile time (src-tauri/src/share/remote.rs)
 # Windows installers are not code-signed (no certificate). macOS is signed and notarized.
@@ -130,6 +132,8 @@ jobs:
           # Google Drive sync OAuth client, read via option_env! at compile time.
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          # Dropbox sync app key (public, PKCE, no secret), read via option_env! at compile time.
+          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
           # Public Drive API key for receiving shared secrets without a login.
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         with:

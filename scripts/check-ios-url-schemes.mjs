@@ -58,8 +58,9 @@ if (bad.length > 0) {
   console.error(
     '\nApp Store Connect rejects the upload with error 90158. A scheme must start\n' +
       'with a letter and hold only letters, digits, ".", "+" or "-".\n' +
-      'The scheme is the reversed iOS OAuth client id (README, "Drive sync on iOS");\n' +
-      'fix it in the file named, or remove it to ship without Drive sign-in on iOS.',
+      'A scheme is the reversed iOS OAuth client id (README, "Drive sync on iOS") or\n' +
+      'db-<Dropbox app key>; fix it in the file named, or remove it to ship without\n' +
+      "that provider's sign-in on iOS.",
   )
   process.exit(1)
 }

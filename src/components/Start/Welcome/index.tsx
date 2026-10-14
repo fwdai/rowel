@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import Button from '@/components/elements/Button'
-import GoogleDriveMark from '@/components/elements/GoogleDriveMark'
+import ProviderMark from '@/components/elements/ProviderMark'
+import { PROVIDERS, providerName, providerSlug, type Provider } from '@/api/provider'
 import { LABEL } from '@/components/elements/tokens'
 import { DiskGlyph } from '@/components/Main/icons'
 import { isMobile } from '@/lib/platform'
@@ -10,7 +11,7 @@ import { COLUMN } from '../shared/layout'
 
 interface Props {
   onFresh: () => void
-  onDrive: () => void
+  onConnect: (provider: Provider) => void
   onFile: () => void
 }
 
@@ -19,7 +20,7 @@ interface Props {
 // own data can already be. Three ways in and nothing else: what restoring
 // asks for is said on the screen that asks for it. A phone has no file system
 // to hand a backup from, so there it is Drive or nothing.
-export default function Welcome({ onFresh, onDrive, onFile }: Props) {
+export default function Welcome({ onFresh, onConnect, onFile }: Props) {
   const { t } = useTranslation()
 
   return (
@@ -46,13 +47,16 @@ export default function Welcome({ onFresh, onDrive, onFile }: Props) {
       </div>
 
       <div className={`${COLUMN} mt-7 flex flex-col gap-2`}>
-        <RestoreAction
-          mark={<GoogleDriveMark size={18} />}
-          title={t('Continue with Google Drive')}
-          body={t('Sync your data to this device.')}
-          onClick={onDrive}
-          testid="start-drive-button"
-        />
+        {PROVIDERS.map(provider => (
+          <RestoreAction
+            key={provider}
+            mark={<ProviderMark provider={provider} size={18} />}
+            title={t('Continue with {{provider}}', { provider: providerName(provider) })}
+            body={t('Sync your data to this device.')}
+            onClick={() => onConnect(provider)}
+            testid={`start-${providerSlug(provider)}-button`}
+          />
+        ))}
         {!isMobile && (
           <RestoreAction
             mark={<DiskGlyph size={15} />}

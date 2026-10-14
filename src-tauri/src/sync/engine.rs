@@ -22,6 +22,7 @@ use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
 
 use super::pack::{self, PackError};
+use super::Provider;
 use crate::app::APP_NAME;
 use crate::error::{Error, Result};
 use crate::session::{store_err, Session};
@@ -48,8 +49,11 @@ const META_REMOTE_REV: &str = "sync_remote_rev";
 const META_LAST_MS: &str = "sync_last_ms";
 
 // Surfaced verbatim by the sync indicator, so it has to read as a sentence.
-fn foreign_vault_error() -> String {
-    format!("Google Drive holds a vault from a different {APP_NAME} install")
+fn foreign_vault_error(provider: Provider) -> String {
+    format!(
+        "{} holds a vault from a different {APP_NAME} install",
+        provider.display_name()
+    )
 }
 
 fn too_large_to_sync_error() -> String {
@@ -72,7 +76,13 @@ pub trait Remote {
     /// The current revision id without downloading the body.
     fn head_revision(&self) -> Result<Option<String>>;
     /// Replace the contents, returning the resulting revision id.
-    fn upload(&self, bytes: &[u8]) -> Result<String>;
+    ///
+    /// `base_revision` is the revision this run pulled (`None`: it pulled
+    /// nothing). The write is conditional on it as far as the backend allows:
+    /// a remote that has moved past it, or that holds a pack when the run
+    /// pulled none, is an error rather than an overwrite of a write this run
+    /// never merged.
+    fn upload(&self, bytes: &[u8], base_revision: Option<&str>) -> Result<String>;
 }
 
 /// This device's vault, as the engine needs it.
@@ -269,7 +279,10 @@ pub fn sync<R: Remote, L: LocalVault>(
         if bytes.len() > pack::MAX_PACK_BYTES {
             return Err(Error::Other(too_large_to_sync_error()));
         }
-        let revision = remote.upload(&bytes)?;
+        // The pre-flight above narrows the race; the revision passed here
+        // closes it wherever the backend can compare-and-swap, so a push that
+        // lands between the head check and this write is not overwritten.
+        let revision = remote.upload(&bytes, base_revision.as_deref())?;
         local.note_push(&revision, now_ms)?;
         outcome.pushed = true;
         return Ok(outcome);
@@ -296,13 +309,15 @@ pub struct SessionVault {
     key: Zeroizing<Vec<u8>>,
     kdf_params_json: String,
     scratch: PathBuf,
+    /// Whose account the pulled pack came from, for the error that says so.
+    provider: Provider,
 }
 
 impl SessionVault {
     /// Capture what a run needs from the live session. Fails if the vault is
     /// locked, or has no KDF descriptor to put in the pack header — without one
     /// a fresh install could never derive the key to open what we upload.
-    pub fn capture(app: &AppHandle) -> Result<Self> {
+    pub fn capture(app: &AppHandle, provider: Provider) -> Result<Self> {
         let kdf_params_json = storage::read_kdf_sidecar(app)?.ok_or_else(|| {
             Error::Other("this vault predates the key descriptor and cannot be synced".into())
         })?;
@@ -313,6 +328,7 @@ impl SessionVault {
             key: Zeroizing::new(session.key()?.sqlcipher_key().to_vec()),
             kdf_params_json,
             scratch: storage::sync_scratch_dir(app)?,
+            provider,
         })
     }
 
@@ -355,7 +371,13 @@ impl SessionVault {
 
 impl LocalVault for SessionVault {
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-        decode_pack(pack_bytes, &self.kdf_params_json, &self.key, &self.scratch)
+        decode_pack(
+            pack_bytes,
+            &self.kdf_params_json,
+            &self.key,
+            &self.scratch,
+            self.provider,
+        )
     }
 
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
@@ -420,10 +442,11 @@ fn decode_pack(
     expected_kdf_params_json: &str,
     key: &[u8],
     scratch_dir: &Path,
+    provider: Provider,
 ) -> Result<Snapshot> {
     let unpacked = pack::unpack(bytes).map_err(remote_pack_error)?;
     if unpacked.kdf_params_json != expected_kdf_params_json {
-        return Err(Error::Other(foreign_vault_error()));
+        return Err(Error::Other(foreign_vault_error(provider)));
     }
     records_from_snapshot(&unpacked.snapshot, key, scratch_dir)
 }
@@ -624,7 +647,13 @@ mod tests {
 
     impl LocalVault for Device {
         fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-            decode_pack(pack_bytes, &kdf_json(), KEY, &self.scratch)
+            decode_pack(
+                pack_bytes,
+                &kdf_json(),
+                KEY,
+                &self.scratch,
+                Provider::GoogleDrive,
+            )
         }
         fn merge(&self, incoming: &Snapshot) -> Result<usize> {
             merge_snapshot(&self.store, incoming)
@@ -672,6 +701,10 @@ mod tests {
         // Bumped by the test between a pull and the push that follows it, to
         // stand in for another device landing a snapshot mid-run.
         interlopers: Vec<Vec<u8>>,
+        // Landed at the start of the next upload instead: after the head
+        // check has passed, in the window only the upload's own
+        // compare-and-swap can see.
+        upload_interlopers: Vec<Vec<u8>>,
         // Every upload fails: the link dropped, Drive said no. The pull side
         // keeps working, as it would.
         refuse_uploads: bool,
@@ -700,6 +733,12 @@ mod tests {
         // i.e. exactly in the pull/push window.
         fn interlope(&self, bytes: Vec<u8>) {
             self.state.lock().unwrap().interlopers.push(bytes);
+        }
+
+        // Land `bytes` on the drive the next time the engine uploads — after
+        // its head check passed, before its write.
+        fn interlope_at_upload(&self, bytes: Vec<u8>) {
+            self.state.lock().unwrap().upload_interlopers.push(bytes);
         }
 
         fn uploads(&self) -> usize {
@@ -734,10 +773,21 @@ mod tests {
             Ok(state.content.is_some().then(|| state.revision.to_string()))
         }
 
-        fn upload(&self, bytes: &[u8]) -> Result<String> {
+        // A compare-and-swap on the revision the run pulled, as `PackRemote`
+        // over Dropbox is: a remote that moved since is an error, never an
+        // overwrite.
+        fn upload(&self, bytes: &[u8], base_revision: Option<&str>) -> Result<String> {
             let mut state = self.state.lock().unwrap();
             if state.refuse_uploads {
                 return Err(Error::Other("the upload failed".into()));
+            }
+            if let Some(bytes) = state.upload_interlopers.pop() {
+                state.revision += 1;
+                state.content = Some(bytes);
+            }
+            let head = state.content.is_some().then(|| state.revision.to_string());
+            if head.as_deref() != base_revision {
+                return Err(Error::Other("the remote changed since it was read".into()));
             }
             state.revision += 1;
             state.uploads += 1;
@@ -939,6 +989,30 @@ mod tests {
         assert_eq!(remote.uploads(), 1, "only the very first push ever landed");
     }
 
+    // A push that lands after the head check passed is past what the
+    // pre-flight can see. The upload is conditional on the revision the run
+    // pulled, so it fails rather than overwrite C's work, and the next run
+    // pulls C's snapshot and pushes the union.
+    #[test]
+    fn a_push_landing_after_the_head_check_fails_the_upload_rather_than_being_overwritten() {
+        let a = Device::seeded(&[record("1", 200, b"one")]);
+        let remote = FakeRemote::default();
+        sync(&remote, &a, NOW).unwrap();
+        a.store.import(&[record("2", 400, b"two")]).unwrap();
+
+        let c = Device::seeded(&[record("1", 200, b"one"), record("3", 500, b"three")]);
+        let theirs = c.pack_bytes();
+        remote.interlope_at_upload(theirs.clone());
+
+        assert!(sync(&remote, &a, NOW).is_err());
+        assert_eq!(remote.uploads(), 1, "the second push never landed");
+        assert_eq!(remote.content().unwrap(), theirs, "C's push stands");
+
+        assert!(sync(&remote, &a, NOW).unwrap().pushed);
+        let published: Vec<String> = remote_records(&remote).into_iter().map(|r| r.id).collect();
+        assert_eq!(published, vec!["1", "2", "3"]);
+    }
+
     #[test]
     fn a_truncated_remote_errors_and_leaves_the_local_vault_alone() {
         let a = Device::seeded(&[record("1", 200, b"one")]);
@@ -978,10 +1052,23 @@ mod tests {
         let remote = FakeRemote::with(pack::pack(&foreign, &[0u8; 4096]));
 
         match sync(&remote, &a, NOW) {
-            Err(Error::Other(msg)) => assert_eq!(msg, foreign_vault_error()),
+            Err(Error::Other(msg)) => assert_eq!(msg, foreign_vault_error(Provider::GoogleDrive)),
             other => panic!("expected the foreign-vault error, got {other:?}"),
         }
         assert_eq!(remote.uploads(), 0);
+    }
+
+    // The sentence names the provider, in the words the Drive copy always used.
+    #[test]
+    fn the_foreign_vault_error_reads_as_it_always_did_for_drive() {
+        assert_eq!(
+            foreign_vault_error(Provider::GoogleDrive),
+            format!("Google Drive holds a vault from a different {APP_NAME} install")
+        );
+        assert_eq!(
+            foreign_vault_error(Provider::Dropbox),
+            format!("Dropbox holds a vault from a different {APP_NAME} install")
+        );
     }
 
     #[test]
