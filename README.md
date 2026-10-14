@@ -22,18 +22,25 @@ Free and open source, because basic personal security should be. Runs on macOS, 
 
 ## Install
 
-Download it directly (v1.0.1; newer versions are on the [releases page](https://github.com/fwdai/rowel/releases/latest)):
+Download it directly — every link gives you the newest release:
 
-| Platform          | Download                                                                                                                                                                                                                                                                           |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS (Universal) | [.dmg](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_universal.dmg)                                                                                                                                                                                          |
-| Windows (x64)     | [setup .exe](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_x64-setup.exe)                                                                                                                                                                                    |
-| Linux (x86_64)    | [.deb](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_amd64.deb) · [.rpm](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel-1.0.1-1.x86_64.rpm) · [.AppImage](https://github.com/fwdai/rowel/releases/download/v1.0.1/Rowel_1.0.1_amd64.AppImage) |
+| Platform          | Download                                                                                                                                                                                                                                                       |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS (Universal) | [.dmg](https://github.com/fwdai/rowel/releases/latest/download/Rowel_universal.dmg)                                                                                                                                                                            |
+| Windows (x64)     | [setup .exe](https://github.com/fwdai/rowel/releases/latest/download/Rowel_x64-setup.exe)                                                                                                                                                                      |
+| Linux (x86_64)    | [.deb](https://github.com/fwdai/rowel/releases/latest/download/Rowel_amd64.deb) · [.rpm](https://github.com/fwdai/rowel/releases/latest/download/Rowel_x86_64.rpm) · [.AppImage](https://github.com/fwdai/rowel/releases/latest/download/Rowel_amd64.AppImage) |
+| iOS               | [TestFlight beta](https://testflight.apple.com/join/5dmNyYsP)                                                                                                                                                                                                  |
+
+These names have no version in them, so they always resolve to the newest
+release — from the next release onwards. Until that one is out, take the
+versioned installer from the [releases page](https://github.com/fwdai/rowel/releases/latest);
+it stays there alongside the version-free copy either way. iOS has no file to
+download: it comes from Apple, through TestFlight for as long as it is in beta.
 
 or install with the [GitHub CLI](https://cli.github.com), grab the latest installer for your OS:
 
 ```bash
-gh release download --repo fwdai/rowel --pattern '*.dmg'   # macOS; use '*-setup.exe' (Windows), '*.deb', '*.rpm' or '*.AppImage' (Linux)
+gh release download --repo fwdai/rowel --pattern 'Rowel_universal.dmg'   # macOS; use Rowel_x64-setup.exe (Windows), Rowel_amd64.deb, Rowel_x86_64.rpm or Rowel_amd64.AppImage (Linux)
 ```
 
 Rowel updates itself after that, and it only installs updates whose signature checks out.
@@ -102,11 +109,12 @@ Every release is built in GitHub Actions and ships with supply-chain evidence:
   workflow, from this source, with the [GitHub CLI](https://cli.github.com):
 
   ```bash
-  gh attestation verify ./Rowel_1.0.0_amd64.AppImage --repo fwdai/rowel
+  gh attestation verify ./Rowel_amd64.AppImage --repo fwdai/rowel
   ```
 
   (works for the `.dmg`, `.msi`, `-setup.exe`, `.deb`, `.rpm` and `.AppImage`
-  assets — point it at whichever you downloaded).
+  assets — point it at whichever you downloaded, versioned name or not: the
+  version-free copies are the same bytes and are attested as well).
 
   Releases up to and including `v1.0.0-alpha.6` were built before the project
   moved from `swiftyapp/swifty` to `fwdai/rowel`, so their provenance names the
