@@ -83,7 +83,7 @@ export default function WorkspaceList() {
       )}
       {last && (
         <Note testid="workspace-delete-last" className="px-4 py-3 inset-shadow-hairline">
-          {t('Your only workspace cannot be deleted. Add another one first.')}
+          {t('Your only lockbox cannot be deleted. Add another one first.')}
         </Note>
       )}
       {error && (

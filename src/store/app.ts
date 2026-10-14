@@ -6,6 +6,7 @@ import type { Provider } from '@/api/provider'
 import type { RemotePack } from '@/api/setup'
 import { syncNow, type SyncStatus } from '@/api/sync'
 import { checkForUpdate } from '@/api/autoUpdate'
+import { resetEmblems } from '@/hooks/useEmblem'
 import { resetFavicons } from '@/hooks/useFavicon'
 import { setEntries, resetVault, runAudit } from './vault'
 import { openSettings, resetUi } from './ui'
@@ -270,11 +271,13 @@ export const setSwitching = (switching: boolean) => useApp.setState({ switching 
 //
 // The favicon cache goes with them: it is keyed by hostname and holds the icons
 // of the rows that were on screen, so leaving it would carry one vault's sites
-// into the next unlock — of this vault or of another workspace.
+// into the next unlock — of this vault or of another workspace. The emblem
+// cache goes for the same reason, with its passports' countries.
 export const clearSession = () => {
   resetVault()
   resetUi()
   resetFavicons()
+  resetEmblems()
   cancelScheduledSync()
   useApp.setState(state => ({ remoteVaults: [], locks: state.locks + 1 }))
 }

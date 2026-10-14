@@ -96,7 +96,7 @@ export const scanImage = (path: string): Promise<ScanResult> => call('scan_image
 /**
  * Recognize a card or an identity document in a photo the webview holds —
  * what the phone's system picker handed its file input, which has no path on
- * disk. The bytes go over as the request's raw body, not as JSON. No grant is
+ * disk. The bytes go over as the request's raw body (see `call`). No grant is
  * involved: nothing on disk is read for them.
  */
 export const scanImageBytes = (image: Uint8Array): Promise<ScanResult> =>
@@ -107,6 +107,10 @@ export const scanImageBytes = (image: Uint8Array): Promise<ScanResult> =>
 // service) and caches on disk, so repeat calls are a file read.
 export const fetchFavicon = (host: string): Promise<string | null> =>
   call('fetch_favicon', { host })
+
+// A passport cover's coat of arms, by ISO 3166-1 alpha-3 country.
+export const fetchEmblem = (country: string): Promise<string | null> =>
+  call('fetch_emblem', { country })
 
 export const copyToClipboard = (value: string, clearAfterMs?: number): Promise<void> =>
   call('copy_to_clipboard', { value, clearAfterMs })

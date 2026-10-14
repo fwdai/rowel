@@ -1,3 +1,4 @@
+import { CHROME_BAR } from '@/components/elements/tokens'
 import SyncIndicator from './SyncIndicator'
 
 // Top chrome bar (38px): the sync chip alone, in the right corner. The bar is
@@ -22,7 +23,7 @@ export default function Header() {
   return (
     <header
       data-tauri-drag-region="deep"
-      className="relative z-10 flex h-[38px] flex-none items-center border-b border-line bg-chrome pl-[78px] pr-3 backdrop-blur-[14px]"
+      className={`relative z-10 flex ${CHROME_BAR} flex-none items-center border-b border-line bg-chrome pl-[78px] pr-3 backdrop-blur-[14px]`}
     >
       <div className="flex-1" />
       <SyncIndicator />

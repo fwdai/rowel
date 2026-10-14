@@ -13,6 +13,18 @@ use chrono::Datelike;
 // The 7-3-1 weights of every ICAO check digit, applied cyclically.
 const WEIGHTS: [u32; 3] = [7, 3, 1];
 
+/// How many fillers a line may be short of its width and still be read. OCR
+/// drops the tail of a long filler run — the end of a name line, or of a
+/// TD1's optional data. Only a row that still ends in filler is padded: a name
+/// long enough to reach the edge has no check digit to catch its last letters
+/// going missing, and a data line that lost its check digits is caught by the
+/// arithmetic.
+const MISSING_FILLER: usize = 3;
+
+/// Fillers a document can carry only in its MRZ. Fewer than this on one line
+/// is a name written with fillers' worth of spaces, or a misread.
+const FILLER_RUN: usize = 5;
+
 /// Read the first document the lines describe, or `None` if none of them do.
 pub fn parse(lines: &[String]) -> Option<BTreeMap<String, String>> {
     let rows: Vec<String> = lines
@@ -21,26 +33,38 @@ pub fn parse(lines: &[String]) -> Option<BTreeMap<String, String>> {
         .filter(|l| !l.is_empty())
         .collect();
 
-    // The three formats have disjoint line lengths, so the width of a run of
-    // candidate rows already says which one it can be.
+    // The three formats have disjoint line lengths, tolerance included, so the
+    // width of a run of candidate rows already says which one it can be.
     for w in rows.windows(2) {
-        let found = match w[0].len() {
-            44 if w[1].len() == 44 => td3(&w[0], &w[1]),
-            36 if w[1].len() == 36 => td2(&w[0], &w[1]),
-            _ => None,
-        };
-        if found.is_some() {
-            return found;
+        if let Some(l) = fit_all(w, 44) {
+            if let Some(fields) = td3(&l[0], &l[1]) {
+                return Some(fields);
+            }
+        }
+        if let Some(l) = fit_all(w, 36) {
+            if let Some(fields) = td2(&l[0], &l[1]) {
+                return Some(fields);
+            }
         }
     }
     for w in rows.windows(3) {
-        if w.iter().all(|l| l.len() == 30) {
-            if let Some(fields) = td1(&w[0], &w[1], &w[2]) {
+        if let Some(l) = fit_all(w, 30) {
+            if let Some(fields) = td1(&l[0], &l[1], &l[2]) {
                 return Some(fields);
             }
         }
     }
     None
+}
+
+/// Whether the lines hold what only an MRZ prints: a run of filler. `parse`
+/// asks for more — the check digits — so this is what tells an MRZ the OCR
+/// mangled from no MRZ at all. The difference matters to the caller: the
+/// first wants a better photo, and must not be read as something else.
+pub fn present(lines: &[String]) -> bool {
+    lines
+        .iter()
+        .any(|l| l.chars().filter(|&c| is_filler(c)).count() >= FILLER_RUN)
 }
 
 /// An MRZ line reduced to the ICAO alphabet, or `None` when the line holds
@@ -51,12 +75,35 @@ fn normalize(line: &str) -> Option<String> {
     for c in line.trim().to_uppercase().chars() {
         match c {
             c if c.is_whitespace() => continue,
-            '<' | '«' | '‹' | '≪' | '〈' => out.push('<'),
+            c if is_filler(c) => out.push('<'),
             'A'..='Z' | '0'..='9' => out.push(c),
             _ => return None,
         }
     }
     Some(out)
+}
+
+fn is_filler(c: char) -> bool {
+    matches!(c, '<' | '«' | '‹' | '≪' | '〈')
+}
+
+/// `rows` as lines of `width`, or `None` if any of them is not one: too long,
+/// too short to be one with its trailing filler back, or short without ending
+/// in the filler that would have been dropped.
+fn fit_all(rows: &[String], width: usize) -> Option<Vec<String>> {
+    rows.iter().map(|row| fit(row, width)).collect()
+}
+
+fn fit(row: &str, width: usize) -> Option<String> {
+    // Normalized rows are ASCII, so bytes count characters.
+    let len = row.len();
+    if len == width {
+        return Some(row.to_owned());
+    }
+    if len > width || len + MISSING_FILLER < width || !row.ends_with('<') {
+        return None;
+    }
+    Some(format!("{row}{}", "<".repeat(width - len)))
 }
 
 /// The fields of one parsed document, still in MRZ form.

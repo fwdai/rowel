@@ -9,7 +9,6 @@ export {
   createCard,
   createNote,
   createIdentity,
-  pickDocType,
   entryItems,
   visibleTitles,
   expectTitles,

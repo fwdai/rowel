@@ -61,7 +61,7 @@ export default function AccountCard({ probing, offered, restoring }: Props) {
         <div className="flex flex-col gap-3 px-5 pb-5">
           <p data-testid="settings-drive-found" className="text-sm text-text2">
             {t(
-              'Restore it here to sync the same data on this device. The vault open now stays as a workspace of its own.'
+              'Restore it here to sync the same data on this device. The lockbox open now is kept alongside it.'
             )}
           </p>
           <AccountRestoreForm

@@ -32,7 +32,7 @@ export default function Conflict({ onUnlockExisting }: Props) {
         tone="warn"
         title={t('This {{provider}} already has Rowel data', { provider: providerName(provider) })}
         body={t(
-          "It's sealed with its own master password. Unlock that vault here and this device will sync the same data as your others."
+          "It's sealed with its own master password. Unlock that lockbox here and this device will sync the same data as your others."
         )}
       />
 
@@ -41,7 +41,7 @@ export default function Conflict({ onUnlockExisting }: Props) {
           <FoundFileCard
             where="cloud"
             testid="setup-conflict-file"
-            name={t('Rowel vault')}
+            name={t('Rowel lockbox')}
             meta={describeRemotePack(file, dates)}
             encrypted
           />

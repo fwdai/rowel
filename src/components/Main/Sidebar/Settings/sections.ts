@@ -6,7 +6,7 @@ import {
   GeneralGlyph,
   ShieldGlyph,
   ActivityGlyph,
-  LayersGlyph,
+  BoxGlyph,
   CloudGlyph,
   TransferGlyph,
   ExtensionGlyph
@@ -67,9 +67,9 @@ const ALL: {
   {
     key: 'workspaces',
     group: 'vault',
-    label: 'Workspaces',
-    description: 'Separate encrypted vaults that open with one master password.',
-    Glyph: LayersGlyph
+    label: 'Lockboxes',
+    description: 'Separate encrypted lockboxes inside your vault, opened by one master password.',
+    Glyph: BoxGlyph
   },
   {
     key: 'sync',

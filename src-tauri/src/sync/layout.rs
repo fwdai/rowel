@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! Rowel/
-//!   Vaults/
+//!   Vaults/                (`Lockboxes/` once a later release renames it)
 //!     <vault-id>.rowel     one pack per vault
 //!   Shares/
 //!     <random>.rowelshare              one outstanding share
@@ -23,8 +23,26 @@
 
 /// The one folder Rowel owns in the account.
 pub const ROOT_FOLDER: &str = "Rowel";
-/// Subfolder of [`ROOT_FOLDER`] holding one pack per vault.
+/// Subfolder of [`ROOT_FOLDER`] holding one pack per lockbox: the folder every
+/// client creates, and the one every account has today.
+///
+/// It keeps its pre-rename name on purpose. A client from before the lockbox
+/// rename that finds `Rowel/` but no `Vaults/` reads the account as never
+/// pushed, creates `Vaults/` and uploads its own pack there — so for as long
+/// as such clients are supported, *any* client that files packs anywhere else
+/// forks the account the moment one of them syncs. Neither renaming this
+/// folder in place (a `files.update` of its name) nor giving fresh accounts
+/// the new name is safe until then.
 pub const VAULTS_FOLDER: &str = "Vaults";
+/// The name the packs folder takes once every supported client knows it: the
+/// cutover is a later release, which renames [`VAULTS_FOLDER`] in place and
+/// creates this one for fresh accounts. This release only *reads* it, so a
+/// client of this release keeps syncing across that cutover.
+pub const LOCKBOXES_FOLDER: &str = "Lockboxes";
+/// Every name the packs folder can have. An account has exactly one of them:
+/// both at once means two generations of client have filed packs apart, and a
+/// run refuses to pick a side (see `sync::find_packs_folder`).
+pub const PACKS_FOLDERS: [&str; 2] = [VAULTS_FOLDER, LOCKBOXES_FOLDER];
 /// Subfolder of [`ROOT_FOLDER`] holding outstanding shares.
 pub const SHARES_FOLDER: &str = "Shares";
 
@@ -45,7 +63,8 @@ pub fn vault_file_name(vault_id: &str) -> String {
     format!("{vault_id}.{VAULT_EXTENSION}")
 }
 
-/// The vault id a file in [`VAULTS_FOLDER`] is the pack of, if it is one.
+/// The vault id a file in the packs folder ([`PACKS_FOLDERS`]) is the pack of,
+/// if it is one.
 ///
 /// Exact: `<id>.rowel` where `<id>` is non-empty lowercase hex. This is the
 /// user's own Drive folder, so anything else they have put in it — a copy, a

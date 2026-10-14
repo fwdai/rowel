@@ -62,7 +62,7 @@ export default function MasterPasswordRow() {
         // its own keeps it, and so does one whose own re-key failed.
         setSuccess(
           unchanged?.length
-            ? t('Password changed. Some workspaces on this device kept their own password.')
+            ? t('Password changed. Some lockboxes on this device kept their own password.')
             : t('Password changed')
         )
       })
@@ -74,7 +74,7 @@ export default function MasterPasswordRow() {
     <ExpandableRow
       label={t('Master password')}
       description={t(
-        'Every workspace on this device that shares this password changes with it'
+        'Every lockbox on this device that shares this password changes with it'
       )}
       icon={<KeyGlyph size={16} />}
       action={t('Change…')}

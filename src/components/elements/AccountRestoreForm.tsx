@@ -89,7 +89,7 @@ export default function AccountRestoreForm({
         onSelect={onSelect}
         testid={pickerTestid}
       />
-      <Field id={`${id}-name`} label={t('Workspace name (optional)')}>
+      <Field id={`${id}-name`} label={t('Lockbox name (optional)')}>
         <input
           id={`${id}-name`}
           type="text"

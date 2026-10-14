@@ -4,18 +4,18 @@ import {
   openAddPicker,
   openGenerator,
   openSettings,
-  startEntry,
   toggleTheme,
   useCurrentEntry
 } from '@/store'
 import type { EntryMeta } from '@/api/types'
 import { KINDS, addLabel, kindOf } from '@/kinds'
+import { addEntry } from '@/components/Main/AddSecret/add'
 import { t, type TKey } from '@/i18n'
 import { chord } from '@/lib/platform'
 import { copyValue, type EntryValue } from '@/services/entries'
 import {
   CopyGlyph,
-  DicesGlyph,
+  GeneratorGlyph,
   GearGlyph,
   LockGlyph,
   MoonGlyph,
@@ -75,7 +75,7 @@ export const useCommands = (): Command[] => {
       id: `new-${kind.type}`,
       label: addLabel(kind.type),
       glyph: kind.Glyph,
-      run: () => startEntry(kind.type)
+      run: () => addEntry(kind.type)
     })),
     {
       id: 'add-secret',
@@ -88,7 +88,7 @@ export const useCommands = (): Command[] => {
       id: 'generate-password',
       label: t('Generate a password'),
       shortcut: chord('G'),
-      glyph: DicesGlyph,
+      glyph: GeneratorGlyph,
       // The standalone form: nothing to apply the value to, so it copies.
       run: () => openGenerator()
     },

@@ -168,7 +168,9 @@ a card and not a gallery (`Show/Attachments/Row`): each a line with a 40px
 thumbnail — the picture for an image, the kind's page for anything else —
 beside its name and "670 KB · PNG", hairlines between the lines, on the
 screen's own ground with nothing around them, as Mail and Notes list
-attachments. The lines, their "Attachments" heading
+attachments. On the desktop the lines are rounded tiles instead — lit on
+hover, reaching 8px past the content on each side, air between them and no
+hairlines — since a hairline under a rounded tile reads as the tile's edge. The lines, their "Attachments" heading
 (`SECTION_LABEL_FLUSH`), the verbs under the sections and the notes under
 them all stand on the pane outside any card, so they share the cards' margin
 and not the inset of the text within one — through one wrapper, `EDGE_GUTTER`,
@@ -176,15 +178,35 @@ and not the inset of the text within one — through one wrapper, `EDGE_GUTTER`,
 as starting before it), and none of them carries an inset of its own. A label
 over a card (`SECTION_LABEL`) keeps the card's inset, aligned with its
 captions as iOS aligns a group's header with its cells.
-No controls on a line, on either shell: the whole line
+No controls on a line on the phone: the whole line
 opens the file, and saving and removing live in the preview
 (`Attachments/Preview`), one view for both shells — the screen on the phone,
 a lightbox over the dimmed window on the desktop, told apart by
 `max-md:`/`md:` on the same elements — with the
-file's name in its bar and a Quick Look-style close on the left. Removing
-asks first through `elements/ConfirmSheet`: the platform's action sheet on the
-phone, a red verb over a bold Cancel from the bottom edge, and the same two
-rows on a small card on the desktop. The bytes come to the webview only for
+file's name centred in its bar, Close at the bar's left on the phone (where
+a pushed screen keeps its back) and the `esc` close at its right on the
+desktop (`elements/EscClose`, the one every dialog header draws), after the
+file's own actions, which stand on glass tiles there (`bg-glass`, white
+under the pointer) since bare glyphs on the blurred ground read as
+watermarks. A picture is fitted to the stage but never past its actual size
+(one image pixel per device pixel). The
+lightbox starts under the wide shell's 38px chrome bar (`BELOW_CHROME`, the
+same number as the bar's `CHROME_BAR`), so its Close never sits on the
+macOS traffic lights and the bar stays the window's drag handle. On the
+desktop the same two actions also stand at the line's end, shown to the
+pointer and to a Tab (`HOVER_ONLY`, gated on `isMobile` rather than a
+breakpoint, since it is the hover that a phone lacks), as every value row
+offers its copy. The preview knows its list: the caption counts ("2 of 5"),
+the arrow keys step to the neighbours, and the desktop floats a round control
+at each edge of the stage for the pointer; removing the open file moves on to
+the next. A picture larger than the stage is a press away from its actual
+size on the desktop (`Preview/Picture`), the pointer saying which way.
+Which file is open and which is being removed are the section's
+(`Attachments/index`), so a row's action and the preview's bar ask through
+one `ConfirmSheet`, rendered after the preview so it is the dialog on top.
+Removing asks first through `elements/ConfirmSheet`: the platform's action
+sheet on the phone, a red verb over a bold Cancel from the bottom edge, and
+the same two rows on a small card on the desktop. The bytes come to the webview only for
 the file being shown (`attachment_read`), never with the list — a row's
 thumbnail is the backend's small PNG of the picture (`attachment_thumbnail`),
 turned the way its EXIF says, asked for as the row comes on screen and made
@@ -270,6 +292,16 @@ user has typed into it, it stays even if `biometric` flips true underneath
 Overlays that stay overlays on a phone: the add picker (`fit="content"`, so a
 bottom sheet) and the generator opened from a password row (a page sheet). Both
 go through `Frame`.
+
+The add picker is two pages in one frame. The first is the kinds; a kind that
+declares `choices` (an identity's document) turns the page to a list of its
+answers under a Back control — the settings sub-page step (`animate-step-forward`
+/ `-back`), with the column holding the height it had so the sheet's top edge
+stays put. The answer rides into the draft as a prefill, the road a scan already
+takes, so the form opens cut to it and carries no type switch. A surface that
+already knows the kind (the palette's "Add an identity", a filtered list's
+empty pane) goes through `AddSecret/add.ts`, which opens the picker on that
+page instead of the form.
 
 Tabs (labels are the desktop's i18n keys): **All Items · Favorites · Generator
 · Settings**. Archive is a row in Settings on compact. A list tab closes

@@ -114,9 +114,9 @@ export const describeError = (error: unknown): string => {
     case 'entryTooLargeToShare':
       return t('This entry is too large to share. Shorten its note or fields.')
     case 'shareNotOwned':
-      return t('This share was created in another workspace')
+      return t('This share was created in another lockbox')
     case 'shareNeedsSync':
-      return t('Sync this workspace once before sharing from it')
+      return t('Sync this lockbox once before sharing from it')
     case 'setupBusy':
       return t('Another setup step is still running')
     case 'syncBusy':
@@ -128,19 +128,19 @@ export const describeError = (error: unknown): string => {
     case 'alreadySetUp':
       return t('This device is already set up')
     case 'primaryWorkspaceOnly':
-      return t('Unlock the primary workspace first')
+      return t('Unlock the primary lockbox first')
     case 'workspaceNameRequired':
-      return t('A workspace needs a name')
+      return t('A lockbox needs a name')
     case 'workspacePasswordRequired':
-      return t('A workspace needs a master password')
+      return t('A lockbox needs a master password')
     case 'lastWorkspace':
-      return t('This is the only workspace on this device')
+      return t('This is the only lockbox on this device')
     case 'vaultAlreadyOpen':
-      return t('This vault is already a workspace on this device')
+      return t('This lockbox is already on this device')
     case 'vaultNotInAccount':
-      return t('This account holds other vaults')
+      return t('This account holds other lockboxes')
     case 'vaultDeletedRemotely':
-      return t('This vault was deleted from its account on another device.')
+      return t('This lockbox was deleted from its account on another device.')
     case 'fileTooLarge':
       return t('This file is too large')
     case 'fileNotText':

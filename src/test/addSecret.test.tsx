@@ -149,6 +149,109 @@ describe('add a secret', () => {
     expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
   })
 
+  // An identity is cut from its document, so the picker asks which before it
+  // opens the form — on a second page of the same frame, never from a switch
+  // inside the form.
+  describe('a kind with a question of its own', () => {
+    const document = () => screen.getByTestId('identity-doc-type')
+
+    it('turns the page to the documents instead of opening the form', async () => {
+      seed()
+      render(<Main />)
+      await openFromRail()
+
+      await userEvent.click(screen.getByTestId('add-kind-identity'))
+
+      const dialog = screen.getByTestId('add-secret-modal')
+      expect(dialog).toHaveAccessibleName('Which document?')
+      expect(within(dialog).queryByTestId('add-kind-login')).not.toBeInTheDocument()
+      for (const [value, label] of [
+        ['passport', 'Passport'],
+        ['id_card', 'ID card'],
+        ['driver_license', 'Driver license'],
+        ['residence_permit', 'Residence permit'],
+        ['other', 'Other document']
+      ])
+        expect(within(dialog).getByTestId(`add-choice-${value}`)).toHaveTextContent(label)
+      // The first answer takes the focus, as the first tile did.
+      expect(screen.getByTestId('add-choice-passport')).toHaveFocus()
+      expect(useVault.getState().creating).toBeNull()
+    })
+
+    it('starts the identity cut to the chosen document', async () => {
+      seed()
+      render(<Main />)
+      await openFromRail()
+      await userEvent.click(screen.getByTestId('add-kind-identity'))
+
+      await userEvent.click(screen.getByTestId('add-choice-driver_license'))
+
+      expect(useVault.getState().creating).toBe('identity')
+      expect(modal()).not.toBeInTheDocument()
+      expect(document()).toHaveTextContent('Driver license')
+      expect(screen.queryByLabelText('Nationality')).not.toBeInTheDocument()
+    })
+
+    it('answers from the keyboard: a digit for the kind, a digit for the document', async () => {
+      seed()
+      render(<Main />)
+      await openFromRail()
+
+      await userEvent.keyboard('4')
+      expect(screen.getByTestId('add-secret-modal')).toHaveAccessibleName('Which document?')
+      await userEvent.keyboard('{ArrowDown}')
+      expect(screen.getByTestId('add-choice-id_card')).toHaveFocus()
+      await userEvent.keyboard('2')
+
+      expect(useVault.getState().creating).toBe('identity')
+      expect(document()).toHaveTextContent('ID card')
+    })
+
+    it('steps back to the kinds, with the tile it left focused', async () => {
+      seed()
+      render(<Main />)
+      await openFromRail()
+      await userEvent.click(screen.getByTestId('add-kind-identity'))
+
+      await userEvent.click(screen.getByTestId('add-secret-back'))
+
+      expect(screen.getByTestId('add-secret-modal')).toHaveAccessibleName('Add a secret')
+      expect(screen.getByTestId('add-kind-identity')).toHaveFocus()
+      expect(screen.queryByTestId('add-choice-passport')).not.toBeInTheDocument()
+      expect(useVault.getState().creating).toBeNull()
+    })
+
+    it('closes on Escape from the second page, and reopens on the kinds', async () => {
+      seed()
+      render(<Main />)
+      await openFromRail()
+      await userEvent.click(screen.getByTestId('add-kind-identity'))
+
+      await userEvent.keyboard('{Escape}')
+      expect(modal()).not.toBeInTheDocument()
+      expect(useVault.getState().creating).toBeNull()
+
+      await openFromRail()
+      expect(screen.getByTestId('add-secret-modal')).toHaveAccessibleName('Add a secret')
+    })
+
+    it('opens straight on the documents from a surface that already knows the kind', async () => {
+      seed()
+      render(<Main />)
+      await userEvent.keyboard('{Meta>}k{/Meta}')
+
+      const palette = within(screen.getByTestId('command-palette'))
+      await userEvent.click(palette.getByText('Add an identity'))
+
+      // Not the form: the question comes first wherever the kind was named.
+      expect(useVault.getState().creating).toBeNull()
+      expect(screen.getByTestId('add-secret-modal')).toHaveAccessibleName('Which document?')
+      await userEvent.click(screen.getByTestId('add-choice-passport'))
+      expect(useVault.getState().creating).toBe('identity')
+      expect(document()).toHaveTextContent('Passport')
+    })
+  })
+
   describe('from the palette', () => {
     const openPalette = () => userEvent.keyboard('{Meta>}k{/Meta}')
 

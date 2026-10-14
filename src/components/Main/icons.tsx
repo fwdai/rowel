@@ -15,9 +15,12 @@ import {
   ArchiveRestore,
   ArrowDownUp,
   AtSign,
+  BookUser,
+  Box,
   Braces,
   Calendar,
   Camera,
+  CarFront,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -26,7 +29,6 @@ import {
   Cloud,
   Copy,
   CreditCard,
-  Dices,
   Download,
   HardDrive,
   ExternalLink,
@@ -34,16 +36,17 @@ import {
   EyeOff,
   File,
   FileArchive,
+  FileBadge,
   FileImage,
   FileText,
   Fingerprint,
   Folder,
   Globe,
+  House,
   IdCard,
   Image,
   KeyRound,
   KeySquare,
-  Layers,
   LayoutGrid,
   Link,
   Lock,
@@ -62,6 +65,7 @@ import {
   Settings2,
   Share2,
   ShieldCheck,
+  SquareAsterisk,
   Star,
   Sun,
   Tags,
@@ -184,6 +188,14 @@ export const LoginGlyph = glyph(Globe, 16)
 export const NoteGlyph = glyph(FileText, 16)
 export const CardGlyph = glyph(CreditCard, 16)
 export const IdentityGlyph = glyph(IdCard, 16)
+// The documents an identity can be, on the add picker's second page. The ID
+// card keeps the kind's own mark; the rest say what they are — a booklet with
+// its holder for the passport, a car for the licence, a house for the permit,
+// and a sealed page for whatever else is official.
+export const PassportGlyph = glyph(BookUser, 16)
+export const LicenseGlyph = glyph(CarFront, 16)
+export const ResidenceGlyph = glyph(House, 16)
+export const DocumentGlyph = glyph(FileBadge, 16)
 // An SSH key. A shell prompt rather than a key: the key glyph is already the
 // passkey's, and the login's is the globe — this has to read as neither.
 export const SshGlyph = glyph(Terminal, 16)
@@ -198,11 +210,12 @@ export const ScanGlyph = glyph(ScanLine, 16)
 // The camera, on the phone's scan source sheet (its other row is ImageGlyph).
 export const CameraGlyph = glyph(Camera, 16)
 // The generator, as a row (the palette's command, the Add picker's action).
-export const DicesGlyph = glyph(Dices, 16)
+export const GeneratorGlyph = glyph(SquareAsterisk, 16)
 export const ShieldGlyph = glyph(ShieldCheck, 16)
 export const GlobeGlyph = glyph(Globe, 16)
 export const ActivityGlyph = glyph(Activity, 16)
-export const LayersGlyph = glyph(Layers, 16)
+// Settings › Lockboxes: one sealed container among several in the vault.
+export const BoxGlyph = glyph(Box, 16)
 // Settings › General: the app's own preferences, as sliders rather than the gear
 // the rail already uses for Settings as a whole.
 export const GeneralGlyph = glyph(Settings2, 16)
@@ -235,5 +248,6 @@ export const StarRailGlyph = glyph(Star, 20)
 export const TagsRailGlyph = glyph(Tags, 20)
 export const ArchiveRailGlyph = glyph(Archive, 20)
 export const LockRailGlyph = glyph(Lock, 20)
-export const DicesRailGlyph = glyph(Dices, 20)
+export const GeneratorRailGlyph = glyph(SquareAsterisk, 20)
 export const BackGlyph = glyph(ChevronLeft, 20)
+export const NextGlyph = glyph(ChevronRight, 20)

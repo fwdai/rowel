@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Show from '@/components/Main/Body/Aside/Show'
 import type { Entry, ExtraField, LoginEntry, Passkey } from '@/api/types'
+import { setPrefill } from '@/store'
 import { loginEntry, loginMeta } from './utils'
 import { calls, mockCommand } from './ipc'
 import { toEntryMeta } from './meta'
@@ -134,43 +135,50 @@ describe('Type-aware fields', () => {
   })
 
   // The identity form is cut from its document's template, so the rows on
-  // screen are the document's — and switching the document swaps them.
-  it('renders the rows the chosen document has, and only those', async () => {
+  // screen are the document's. Which document was settled by the add picker
+  // before the form opened; its answer rides in on the vault's prefill.
+  it('renders the rows the chosen document has, and only those', () => {
     render(<Show type="identity" editing />)
 
+    // Nothing chosen: a passport, the document the defaults start from.
+    expect(screen.getByTestId('identity-doc-type')).toHaveTextContent('Passport')
     expect(screen.getByLabelText('Full name')).toBe(input('name'))
     expect(screen.getByLabelText('Number')).toBe(input('number'))
     expect(screen.getByLabelText('Nationality')).toBe(input('nationality'))
     expect(screen.getByLabelText('Personal no.')).toBe(input('personal_number'))
+  })
 
-    await userEvent.click(screen.getByTestId('identity-doc-type-driver_license'))
+  it('cuts the form to the document the picker chose', () => {
+    setPrefill({ doc_type: 'driver_license' })
+    render(<Show type="identity" editing />)
 
+    expect(screen.getByTestId('identity-doc-type')).toHaveTextContent('Driver license')
     // A licence has neither, and says so by not offering them.
     expect(screen.queryByLabelText('Nationality')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Personal no.')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Number')).toBe(input('number'))
+    // No switch: the document is not changed from inside its own form.
+    expect(screen.queryByTestId('identity-doc-type-trigger')).not.toBeInTheDocument()
   })
 
-  it('clears what the new document type has no room for', async () => {
+  it('saves the document type the picker chose', async () => {
+    setPrefill({ doc_type: 'driver_license' })
     render(<Show type="identity" editing />)
     await userEvent.type(input('title'), 'Ada')
     await userEvent.type(input('name'), 'ADA LOVELACE')
     await userEvent.type(input('number'), 'X1234567')
     await userEvent.type(input('country'), 'GBR')
-    await userEvent.type(input('nationality'), 'GBR')
     await userEvent.type(input('expiry_date'), '06/01/2035')
 
-    await userEvent.click(screen.getByTestId('identity-doc-type-driver_license'))
     await userEvent.click(screen.getByText('Save'))
 
-    // Nothing invisible rides along: the licence saves without the nationality
-    // the passport form had collected.
-    expect(calls('save_entry')).toContainEqual({ entry: expect.objectContaining({
+    expect(calls('save_entry')).toContainEqual({
+      entry: expect.objectContaining({
         type: 'identity',
         doc_type: 'driver_license',
-        number: 'X1234567',
-        nationality: ''
-      }) })
+        number: 'X1234567'
+      })
+    })
   })
 
   it('stores a date as ISO and reads it back in the user’s pattern', async () => {

@@ -74,6 +74,18 @@ impl Provider {
         }
     }
 
+    /// Rowel's folder as the user sees it in the account, for copy that names
+    /// a path inside it: `Rowel` on Drive, `Apps/Rowel` in Dropbox, where an
+    /// App folder app lives under `Apps/`. iCloud has no folder the user can
+    /// open — the packs are CloudKit records — so its adapter never looks a
+    /// packs folder up and no copy names one; the root's name stands in.
+    pub fn packs_root_label(self) -> &'static str {
+        match self {
+            Provider::GoogleDrive | Provider::ICloud => super::layout::ROOT_FOLDER,
+            Provider::Dropbox => dropbox::APP_FOLDER,
+        }
+    }
+
     /// The sealed token file, relative to a workspace directory. At most one of
     /// these exists per workspace, so the file's name alone says which provider
     /// a *locked* workspace syncs through.

@@ -1,5 +1,7 @@
-//! Google Drive: finds (or creates) `Rowel/Vaults/` and reads and writes the
-//! files inside it. Every name it uses comes from [`layout`] or from the core.
+//! Google Drive: finds (or creates) `Rowel/Vaults/` — read as
+//! `Rowel/Lockboxes/` once a later release has renamed it, by the core's rule
+//! ([`crate::sync::store::pick_packs_folder`]) — and reads and writes the files
+//! inside it. Every name it uses comes from [`layout`] or from the core.
 //!
 //! What is Drive's alone stays here: `q`-escaping, pagination and multipart
 //! uploads ([`api`]), `appProperties` ([`share`]), and **oldest-wins** among
@@ -16,7 +18,7 @@ use tauri::AppHandle;
 
 use crate::error::Result;
 use crate::sync::account::{Auth, OAuthConfig};
-use crate::sync::store::{RemoteEntry, VaultStore};
+use crate::sync::store::{ensure_packs_folder, find_packs_folder, RemoteEntry, VaultStore};
 use crate::sync::{http_client, layout, Provider};
 use api::DriveFile;
 
@@ -121,22 +123,41 @@ fn deep_link_scheme(app: &AppHandle) -> Result<String> {
         .ok_or_else(|| crate::sync::account::no_client(&OAUTH))
 }
 
-/// `Rowel/Vaults`, with either folder created if this account has never had it.
-/// The root id comes back too, so a caller that caches the pair
-/// ([`Store::ensure_vaults`]) does not list it a second time.
+/// `Rowel/Vaults` (or `Rowel/Lockboxes` after the cutover), with either level
+/// created if this account has never had it — the packs folder only ever as
+/// `Vaults`, see [`ensure_packs_folder`]. The root id comes back too, so a
+/// caller that caches the pair ([`Store::ensure_vaults`]) does not list it a
+/// second time.
 async fn ensure_vaults_path(client: &reqwest::Client, token: &str) -> Result<(String, String)> {
     let root = match api::folder_id(client, token, layout::ROOT_FOLDER).await? {
         Some(id) => id,
         None => api::create_folder(client, token, layout::ROOT_FOLDER).await?,
     };
-    let vaults = match api::folder_id_in(client, token, layout::VAULTS_FOLDER, &root).await? {
-        Some(id) => id,
-        None => api::create_folder_in(client, token, layout::VAULTS_FOLDER, Some(&root)).await?,
-    };
+    let vaults = ensure_packs_folder(
+        Provider::GoogleDrive,
+        |name| api::folder_id_in(client, token, name, &root),
+        |name| api::create_folder_in(client, token, name, Some(&root)),
+    )
+    .await?;
     Ok((root, vaults))
 }
 
-/// [`VaultStore`] over the connected account's `Rowel/Vaults`.
+/// The packs folder inside `Rowel/` (`root`), if the account has one. Every
+/// lookup of it goes through here, so every device settles on the same one:
+/// see [`crate::sync::store::pick_packs_folder`] for the rule.
+async fn packs_folder_in(
+    client: &reqwest::Client,
+    token: &str,
+    root: &str,
+) -> Result<Option<String>> {
+    find_packs_folder(Provider::GoogleDrive, |name| {
+        api::folder_id_in(client, token, name, root)
+    })
+    .await
+}
+
+/// [`VaultStore`] over the connected account's `Rowel/Vaults` (or
+/// `Rowel/Lockboxes` after the cutover).
 ///
 /// Both folder ids are resolved once per instance (one instance per run)
 /// because the selection rule is deterministic and re-listing them would only
@@ -181,7 +202,8 @@ impl Store {
         Ok(found)
     }
 
-    // `Rowel/Vaults`, the same way.
+    // The packs folder (`Rowel/Vaults`, or `Rowel/Lockboxes` after the
+    // cutover), the same way.
     async fn vaults(&self, token: &str) -> Result<Option<String>> {
         if let Some(id) = self.vaults.lock().unwrap().clone() {
             return Ok(Some(id));
@@ -189,7 +211,7 @@ impl Store {
         let Some(root) = self.root(token).await? else {
             return Ok(None);
         };
-        let found = api::folder_id_in(&self.client, token, layout::VAULTS_FOLDER, &root).await?;
+        let found = packs_folder_in(&self.client, token, &root).await?;
         if let Some(id) = &found {
             *self.vaults.lock().unwrap() = Some(id.clone());
         }
@@ -225,8 +247,8 @@ impl VaultStore for Store {
         Provider::GoogleDrive
     }
 
-    // A missing `Rowel/` or `Vaults/` is an account nothing has ever synced to,
-    // which is the same answer as an empty folder.
+    // A missing `Rowel/` or packs folder is an account nothing has ever synced
+    // to, which is the same answer as an empty folder.
     async fn list_vaults(&self) -> Result<Vec<RemoteEntry>> {
         let token = self.token().await?;
         let Some(vaults) = self.vaults(&token).await? else {
