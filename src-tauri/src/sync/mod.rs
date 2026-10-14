@@ -495,10 +495,21 @@ async fn resolve_vault_id(store: &impl VaultStore, local: &impl LocalVault) -> R
 /// calls to the account with a window between them, and a run — on this device
 /// or another — that looks into that window must never find "no pack, no
 /// marker": that is exactly the first-sync reading that puts the pack back. A
-/// marker beside a still-live pack is the harmless half-state instead:
-/// [`PackRemote`]'s fetch only consults it when the pack is missing, and its
-/// create path (`store::may_create_pack`) stops a run that pulled before the
-/// delete from re-creating one after it.
+/// marker beside a still-live pack is the half-state to prefer: the marker is
+/// the account's last word on the vault, and [`PackRemote`] reads it that way
+/// wherever it finds it — a fetch that sees both finishes this delete itself
+/// and stops, and the create path (`store::may_create_pack`) stops a run that
+/// pulled before the delete from re-creating the pack after it.
+///
+/// The create path is two calls as well (check the marker, create the pack),
+/// and a first push whose check ran before the marker landed and whose create
+/// runs after this function's `stat` of the pack would leave the account
+/// holding both. So the create path checks the marker again *after* writing
+/// and removes its own pack when one is there (`PackRemote::create_pack`); a
+/// marker that lands after that re-check lands before the `stat` below, which
+/// then finds the pack and removes it. And should either side's removal fail,
+/// the pair does not outlive the next run on any device: every fetch asks for
+/// the marker and takes the pack out when it finds the two together.
 ///
 /// The folders are created when the account has none (the marker's create
 /// makes them). A vault whose id is settled has a pack up there or had one, and
@@ -584,7 +595,10 @@ mod tests {
     }
 
     // "Delete everywhere" leaves the marker before it takes the pack: a run
-    // looking in between must never find neither.
+    // looking in between must never find neither. The other side of the same
+    // window — a first push creating the pack between these two calls — is
+    // the create path's to close, by re-checking the marker after its write
+    // (see `PackRemote::create_pack` and its test in `store`).
     #[tokio::test]
     async fn a_delete_marks_the_vault_before_it_removes_the_pack() {
         let store = FakeStore::default();

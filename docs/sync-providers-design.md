@@ -365,6 +365,15 @@ Stated here because they are what the Drive code's comments defend:
 4. No lock is held across a network call; adapters are driven with
    `block_on` only on blocking-pool threads (`commands::detached`/`blocking`).
 5. Marker before pack on delete; the core does it, the adapter just writes.
+   The core also closes the other side of that window: a first push re-checks
+   the marker after its `create` and deletes its own pack if one landed in
+   between (`PackRemote::create_pack`), so a "delete everywhere" racing a
+   first push never leaves the account holding both. If a removal fails all
+   the same, the marker still wins: every fetch asks for it, and a run that
+   finds it beside a pack removes the pack and stops (`finish_delete`) —
+   every same-name pack, by the listing, since Drive can hold two first
+   pushes under one name and its `stat` shows only the oldest. The adapter
+   owes this nothing beyond `list_vaults`, `stat` and `delete` being honest.
 6. A revision token is "unknown" rather than fabricated when the API has none.
 
 ## 6. PR plan
