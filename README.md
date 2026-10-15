@@ -47,10 +47,10 @@ On desktop, Rowel updates itself after that, and it only installs updates whose 
 
 ## Get started
 
-1. **Open Rowel** and choose **Start fresh**. If you already use Rowel on another device, pick **Continue with a cloud account** or **Restore from a backup file** (`.rowel`) instead.
+1. **Open Rowel** and choose **Start fresh**. If you already use Rowel on another device, pick **Continue with a cloud account** instead. On desktop you can also choose **Restore from a backup file** (`.rowel`).
 2. **Choose a master password** and type it a second time. On supported devices you can then turn on Touch ID, Face ID or Windows Hello.
 3. **Bring your items in:** go to Settings → Import and drop in an export from your old password manager or browser. Or add your first login, card or SSH key by hand.
-4. **Optional:** connect Google Drive or Dropbox in Settings to keep your devices in sync. On iPhone and on the signed Mac app, iCloud is offered too.
+4. **Optional:** connect Google Drive or Dropbox in Settings to keep your devices in sync. iCloud is offered too on iPhone, and on Mac builds whose signature carries Apple's iCloud entitlement.
 
 ## Why I'm building this
 
@@ -67,7 +67,7 @@ Down the road there may be a paid option for professional teams that need extra 
 1. **No account, no backend.** Your vault is encrypted files on your own disk, and it works fully offline. There's nothing to sign up for and no server that could be breached.
 2. **Built for developers.** SSH keys (generate Ed25519 keys in the app, with their fingerprint drawn as randomart), API keys with environment and scopes, and whole `.env` files are their own item types, not notes you've pasted in.
 3. **Switch in a few clicks.** Move in from 1Password, LastPass, Bitwarden, KeePass (CSV export), Enpass, Chrome, Safari or any FIDO CXF export. Point Rowel at your export and it brings your items over, with a report for anything it couldn't import.
-4. **Bring your own cloud.** Each lockbox syncs to your Google Drive, Dropbox or iCloud as one encrypted file, and Rowel can only reach the folder it creates there. Edits from different devices merge item by item on their own: there are no conflict dialogs, and when two devices change the same item, the newer edit wins.
+4. **Bring your own cloud.** Each lockbox syncs to your Google Drive, Dropbox or iCloud as one encrypted file, and Rowel can only reach its own app-scoped storage there. Edits from different devices merge item by item on their own: there are no conflict dialogs, and when two devices change the same item, the newer edit wins.
 5. **Encrypted even while open.** The vault is encrypted on disk, and each item is sealed a second time inside it. The list and search work without unsealing anything, and the app's interface gets an item's secrets only when you open that item.
 6. **Lockboxes.** One vault, one master password, divided into lockboxes such as Personal, Work or Clients. Each lockbox is kept in its own encrypted file and can sync to its own cloud account.
 7. **Private sharing by link.** Share one item through an encrypted link that expires in 24 hours and can be revoked. The key lives only in the link. Sharing works from a lockbox synced to Google Drive, and the recipient opens the link in Rowel.
