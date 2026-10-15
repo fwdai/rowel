@@ -27,9 +27,10 @@ pub fn reveal_entry(id: String, state: State<'_, AppState>) -> Result<Entry> {
         .map_err(store_err)?
         .ok_or(Error::NotFound)?;
     let mut entry = cipher.unseal(&record.id, &record.payload)?;
-    // A key saved before fingerprints were derived on save shows its plate
-    // too; the next save writes what this fills in.
-    entry.derive_ssh_public();
+    // A key saved before this was done on save shows its plate, and a public
+    // line that is not its own is not shown as if it were; the next save
+    // writes what this settles.
+    entry.reconcile_ssh_public(None);
     Ok(entry.redacted())
 }
 
@@ -46,7 +47,6 @@ pub fn save_entry(
     let store = session.store()?;
 
     merge_stored(&mut entry, store, &cipher, &now())?;
-    entry.derive_ssh_public();
     let payload = cipher.seal(&entry)?;
     let record = migrate::build_record(&entry, payload)?;
     store.upsert(&record).map_err(store_err)?;
@@ -96,6 +96,7 @@ fn merge_stored(
         .map(|record| cipher.unseal(&record.id, &record.payload))
         .transpose()?;
     entry.record_password_change(stored.as_mut(), now);
+    entry.reconcile_ssh_public(stored.as_ref());
     entry.restore_passkey_keys(stored)
 }
 
@@ -567,5 +568,68 @@ mod tests {
             .unwrap()
             .iter()
             .all(|p| p.private_key.is_empty()));
+    }
+
+    fn ssh_entry(pair: &crate::models::SshKeyPair) -> Entry {
+        Entry {
+            id: "l1".into(),
+            kind: "ssh".into(),
+            title: "Server".into(),
+            private_key: Some(pair.private_key.clone()),
+            public_key: Some(pair.public_key.clone()),
+            fingerprint: Some(pair.fingerprint.clone()),
+            ..Entry::default()
+        }
+    }
+
+    // The edit the editor makes when one key is pasted over another: the
+    // private key changes and the old public line and fingerprint ride back
+    // as they were revealed. What lands has to describe the new key, or the
+    // line copied to a server is one the stored key cannot sign for.
+    #[test]
+    fn pasting_a_new_ssh_key_over_an_old_one_replaces_its_public_half() {
+        use crate::commands::generator::generate_ssh_key;
+        let dir = tempfile::tempdir().unwrap();
+        let (store, cipher) = open(&dir);
+        let old = generate_ssh_key(Some("old".into())).unwrap();
+        let new = generate_ssh_key(Some("new".into())).unwrap();
+        save(&store, &cipher, &ssh_entry(&old));
+
+        let mut edit = unsealed(&store, &cipher).redacted();
+        edit.private_key = Some(new.private_key.clone());
+        merge_stored(&mut edit, &store, &cipher, NOW).unwrap();
+        save(&store, &cipher, &edit);
+
+        let stored = unsealed(&store, &cipher);
+        assert_eq!(stored.public_key.as_deref(), Some(new.public_key.as_str()));
+        assert_eq!(
+            stored.fingerprint.as_deref(),
+            Some(new.fingerprint.as_str())
+        );
+    }
+
+    // A replacement that cannot be read, here a paste that lost its middle,
+    // cannot be checked against anything, so the old key's line and
+    // fingerprint go rather than stay beside it as if they were its own.
+    #[test]
+    fn an_unreadable_replacement_ssh_key_keeps_nothing_of_the_old_one() {
+        use crate::commands::generator::generate_ssh_key;
+        let dir = tempfile::tempdir().unwrap();
+        let (store, cipher) = open(&dir);
+        let old = generate_ssh_key(None).unwrap();
+        save(&store, &cipher, &ssh_entry(&old));
+
+        let new = generate_ssh_key(None).unwrap();
+        let lines: Vec<&str> = new.private_key.lines().collect();
+        let truncated = format!("{}\n{}\n{}\n", lines[0], lines[1], lines[lines.len() - 1]);
+
+        let mut edit = unsealed(&store, &cipher).redacted();
+        edit.private_key = Some(truncated);
+        merge_stored(&mut edit, &store, &cipher, NOW).unwrap();
+        save(&store, &cipher, &edit);
+
+        let stored = unsealed(&store, &cipher);
+        assert_eq!(stored.public_key, None);
+        assert_eq!(stored.fingerprint, None);
     }
 }

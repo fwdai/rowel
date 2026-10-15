@@ -223,31 +223,55 @@ impl Entry {
     }
 
     /// Fill an `ssh` entry's fingerprint, and its public line when it has
-    /// none, from the key it holds (see [`crate::ssh::public_of`]).
+    /// none, from the key it holds, and never let either describe another key.
     ///
     /// The generator and some importers hand both over with the key; a key
     /// pasted into the editor arrives with neither, and the detail view draws
-    /// its randomart from the fingerprint. The fingerprint is always taken
-    /// from the key when the key can be read, so replacing the key never
-    /// leaves the old one's fingerprint behind. A public line the user typed
-    /// is kept. When nothing parses, the entry is left as it came.
-    pub fn derive_ssh_public(&mut self) {
+    /// its randomart from the fingerprint. The editor also leaves both alone
+    /// when the private key is replaced, so an edit can come back holding a
+    /// new key beside the old key's public line, which installed on a server
+    /// would let in a key nobody holds.
+    ///
+    /// When the private key can be read ([`crate::ssh::public_half`]) it is
+    /// the authority: the fingerprint is its own, and a public line is kept
+    /// only if it is the same key, which preserves the comment the user gave
+    /// it; any other line is replaced with the key's own. When it cannot be
+    /// read, nothing can be checked against it. If it replaced the stored key
+    /// (`stored` is the row this edit replaces), a public line still as the
+    /// stored row had it, and any fingerprint not printed from a line, are the
+    /// old key's and are dropped. A key left as it was keeps what it came
+    /// with.
+    pub fn reconcile_ssh_public(&mut self, stored: Option<&Entry>) {
         if self.kind != "ssh" {
             return;
         }
-        let Some((line, fingerprint)) =
-            crate::ssh::public_of(self.private_key.as_deref(), self.public_key.as_deref())
-        else {
+        let private_key = self.private_key.as_deref().unwrap_or_default();
+        if let Some(key) = crate::ssh::public_half(private_key) {
+            let same_key = self
+                .public_key
+                .as_deref()
+                .and_then(crate::ssh::parse_public)
+                .is_some_and(|line| line.key_data() == key.key_data());
+            if !same_key {
+                self.public_key = key.to_openssh().ok();
+            }
+            self.fingerprint = Some(crate::ssh::fingerprint(&key));
             return;
-        };
-        if self
+        }
+
+        let replaced = stored.is_some_and(|s| s.private_key != self.private_key);
+        if replaced && stored.is_some_and(|s| s.public_key == self.public_key) {
+            self.public_key = None;
+        }
+        match self
             .public_key
             .as_deref()
-            .is_none_or(|p| p.trim().is_empty())
+            .and_then(crate::ssh::parse_public)
         {
-            self.public_key = Some(line);
+            Some(line) => self.fingerprint = Some(crate::ssh::fingerprint(&line)),
+            None if replaced => self.fingerprint = None,
+            None => {}
         }
-        self.fingerprint = Some(fingerprint);
     }
 
     /// Scrub every passkey private key on this entry, leaving each blank.

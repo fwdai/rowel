@@ -63,22 +63,37 @@ pub fn from_pkcs8(pem: &str) -> Result<Option<OpenSsh>, String> {
     }))
 }
 
-/// What a key says about itself: its one-line public key and its `SHA256:…`
-/// fingerprint, as `ssh-keygen -y` and `ssh-keygen -l` print them.
+/// The public half of a private key, as `ssh-keygen -y` reads it: from an
+/// OpenSSH block, or from a plain PKCS#8 one by way of [`from_pkcs8`]. An
+/// encrypted OpenSSH block needs no passphrase here, since OpenSSH keeps a
+/// key's public half in the clear.
 ///
-/// Read from the OpenSSH private block first, since that is the key an entry
-/// holds, and from the public line when the block is in another form (a
-/// PKCS#8 RSA key, say) or missing. An encrypted block needs no passphrase
-/// here: OpenSSH keeps a key's public half in the clear. `None` when neither
-/// parses, so the caller leaves alone whatever the entry already carries.
-pub fn public_of(private_key: Option<&str>, public_key: Option<&str>) -> Option<(String, String)> {
-    let key = private_key
-        .filter(|block| is_openssh(block))
-        .and_then(|block| PrivateKey::from_openssh(block.trim()).ok())
-        .map(|key| key.public_key().clone())
-        .or_else(|| public_key.and_then(|line| PublicKey::from_openssh(line.trim()).ok()))?;
-    let line = key.to_openssh().ok()?;
-    Some((line, key.fingerprint(HashAlg::Sha256).to_string()))
+/// `None` for anything this cannot read: an RSA PKCS#8 block (see the module
+/// note), another format such as PuTTY's, or a block that is truncated or
+/// otherwise does not decode. The caller cannot vouch for a public line
+/// against such a key, and has to treat what it derived earlier as unproven.
+pub fn public_half(private_key: &str) -> Option<PublicKey> {
+    if is_openssh(private_key) {
+        return PrivateKey::from_openssh(private_key.trim())
+            .ok()
+            .map(|key| key.public_key().clone());
+    }
+    if is_pkcs8(private_key) {
+        let converted = from_pkcs8(private_key).ok()??;
+        return parse_public(&converted.public_key);
+    }
+    None
+}
+
+/// A one-line public key (`ssh-ed25519 AAAA… comment`), or `None` when the
+/// text is not one.
+pub fn parse_public(line: &str) -> Option<PublicKey> {
+    PublicKey::from_openssh(line.trim()).ok()
+}
+
+/// A key's `SHA256:…` fingerprint, as `ssh-keygen -l` prints it.
+pub fn fingerprint(key: &PublicKey) -> String {
+    key.fingerprint(HashAlg::Sha256).to_string()
 }
 
 fn pkcs8_der(pem: &str) -> Result<Vec<u8>, String> {
@@ -284,96 +299,156 @@ HKOXJ/heenSu3KAkr/AAAACXJzYUByb3dlbAE=
 
     const OPENSSH_ECDSA_PUBLIC: &str = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBK86MNn4rWjhQzHkceG+MUbCvIYo8rFKQv22wR09RENj1S+0QOJFj6rQCIBpLbBLbUBbq1QvdTmrdiPVkPQt4kA= ec@rowel";
 
-    #[test]
-    fn a_pasted_private_block_gives_its_public_line_and_fingerprint() {
-        let (line, fingerprint) = public_of(Some(OPENSSH_ED25519), None).unwrap();
-        assert_eq!(line, OPENSSH_ED25519_PUBLIC);
-        assert_eq!(fingerprint, OPENSSH_ED25519_FINGERPRINT);
+    // The first two body lines of OPENSSH_ED25519 and its end line: what a
+    // paste that lost its middle looks like.
+    const OPENSSH_TRUNCATED: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACCMsBkG+92FeO1IQ4QRB95kBxqhxtJBCCMO5vK3bPfY0QAAAJAWWxCmFlsQ
+-----END OPENSSH PRIVATE KEY-----
+";
+
+    fn line_and_print(private_key: &str) -> (String, String) {
+        let key = public_half(private_key).unwrap();
+        (key.to_openssh().unwrap(), fingerprint(&key))
     }
 
     #[test]
-    fn an_encrypted_block_gives_its_fingerprint_without_the_passphrase() {
-        let (line, fingerprint) = public_of(Some(OPENSSH_ENCRYPTED), None).unwrap();
+    fn a_private_block_gives_the_public_line_and_fingerprint_ssh_keygen_does() {
+        assert_eq!(
+            line_and_print(OPENSSH_ED25519),
+            (
+                OPENSSH_ED25519_PUBLIC.to_owned(),
+                OPENSSH_ED25519_FINGERPRINT.to_owned()
+            )
+        );
+        assert_eq!(
+            line_and_print(OPENSSH_RSA).1,
+            "SHA256:yvINds+sIjMNn2Mf8Lzd4aU8MFl+Mp6C/UaT5pZ0JZo"
+        );
+        // A PKCS#8 block is read through the same conversion an import uses.
+        assert_eq!(
+            line_and_print(ED25519).1,
+            "SHA256:NVYSMnDilri+HeSJWIVb9W6V043z6EzNZcY3Tp0hVQo"
+        );
+    }
+
+    #[test]
+    fn an_encrypted_block_gives_its_public_half_without_the_passphrase() {
+        let (line, print) = line_and_print(OPENSSH_ENCRYPTED);
         assert!(line.starts_with(
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBaV7k4YmJ+7kTHZ/Ih8Noc5QrKCu+Aw+iN38JvW4tIk"
         ));
-        assert_eq!(
-            fingerprint,
-            "SHA256:j2Jamcs+CkEep3CunOmyaNg7fVBdxKc+rjIq3msTbYM"
-        );
+        assert_eq!(print, "SHA256:j2Jamcs+CkEep3CunOmyaNg7fVBdxKc+rjIq3msTbYM");
     }
 
     #[test]
-    fn an_rsa_block_is_read_as_well() {
-        let (_, fingerprint) = public_of(Some(OPENSSH_RSA), None).unwrap();
-        assert_eq!(
-            fingerprint,
-            "SHA256:yvINds+sIjMNn2Mf8Lzd4aU8MFl+Mp6C/UaT5pZ0JZo"
-        );
+    fn what_cannot_be_read_gives_nothing() {
+        assert!(public_half(RSA).is_none());
+        assert!(public_half(OPENSSH_TRUNCATED).is_none());
+        assert!(public_half("not a key").is_none());
+        assert!(parse_public("ssh-ed25519 nope").is_none());
     }
 
-    // The private block is the key the entry holds, so it wins over a public
-    // line that names some other key; with no block that parses, the line is
-    // what there is.
-    #[test]
-    fn the_private_block_wins_and_the_public_line_stands_in_for_it() {
-        let (_, fingerprint) =
-            public_of(Some(OPENSSH_ED25519), Some(OPENSSH_ECDSA_PUBLIC)).unwrap();
-        assert_eq!(fingerprint, OPENSSH_ED25519_FINGERPRINT);
-
-        let (line, fingerprint) = public_of(Some(RSA), Some(OPENSSH_ECDSA_PUBLIC)).unwrap();
-        assert_eq!(line, OPENSSH_ECDSA_PUBLIC);
-        assert_eq!(
-            fingerprint,
-            "SHA256:IGlniK29M31+RlxsarcPQhepK09xmUGe/RNs/uM9gNQ"
-        );
-    }
-
-    #[test]
-    fn an_ssh_entry_is_completed_from_its_key_and_nothing_else_is_touched() {
+    mod entry {
+        use super::*;
         use crate::models::Entry;
-        let ssh = |public: Option<&str>, fingerprint: Option<&str>| Entry {
-            kind: "ssh".into(),
-            private_key: Some(OPENSSH_ED25519.into()),
-            public_key: public.map(Into::into),
-            fingerprint: fingerprint.map(Into::into),
-            ..Default::default()
-        };
 
-        // Pasted on its own: both are filled in.
-        let mut pasted = ssh(None, None);
-        pasted.derive_ssh_public();
-        assert_eq!(pasted.public_key.as_deref(), Some(OPENSSH_ED25519_PUBLIC));
-        assert_eq!(
-            pasted.fingerprint.as_deref(),
-            Some(OPENSSH_ED25519_FINGERPRINT)
-        );
+        fn ssh(private_key: &str, public: Option<&str>, print: Option<&str>) -> Entry {
+            Entry {
+                kind: "ssh".into(),
+                private_key: Some(private_key.into()),
+                public_key: public.map(Into::into),
+                fingerprint: print.map(Into::into),
+                ..Default::default()
+            }
+        }
 
-        // A line the user typed stays; a stale fingerprint is replaced.
-        let mut typed = ssh(Some("ssh-ed25519 AAAA my laptop"), Some("SHA256:stale"));
-        typed.derive_ssh_public();
-        assert_eq!(
-            typed.public_key.as_deref(),
-            Some("ssh-ed25519 AAAA my laptop")
-        );
-        assert_eq!(
-            typed.fingerprint.as_deref(),
-            Some(OPENSSH_ED25519_FINGERPRINT)
-        );
+        #[test]
+        fn a_pasted_key_gets_its_public_line_and_fingerprint() {
+            let mut pasted = ssh(OPENSSH_ED25519, None, None);
+            pasted.reconcile_ssh_public(None);
+            assert_eq!(pasted.public_key.as_deref(), Some(OPENSSH_ED25519_PUBLIC));
+            assert_eq!(
+                pasted.fingerprint.as_deref(),
+                Some(OPENSSH_ED25519_FINGERPRINT)
+            );
+        }
 
-        // Another kind with the same fields is not an SSH key.
-        let mut note = Entry {
-            kind: "note".into(),
-            ..ssh(None, None)
-        };
-        note.derive_ssh_public();
-        assert!(note.public_key.is_none() && note.fingerprint.is_none());
-    }
+        // Same key material, the user's own comment: the line is theirs to keep.
+        #[test]
+        fn a_line_for_the_same_key_keeps_its_comment() {
+            let own = OPENSSH_ED25519_PUBLIC.replace("plain@rowel", "my laptop");
+            let mut entry = ssh(OPENSSH_ED25519, Some(&own), Some("SHA256:stale"));
+            entry.reconcile_ssh_public(None);
+            assert_eq!(entry.public_key.as_deref(), Some(own.as_str()));
+            assert_eq!(
+                entry.fingerprint.as_deref(),
+                Some(OPENSSH_ED25519_FINGERPRINT)
+            );
+        }
 
-    #[test]
-    fn nothing_that_parses_gives_nothing() {
-        assert!(public_of(None, None).is_none());
-        assert!(public_of(Some(RSA), None).is_none());
-        assert!(public_of(Some("not a key"), Some("ssh-ed25519 nope")).is_none());
+        // A line for any other key would be installed on a server where the
+        // stored private key cannot use it, so it is replaced, comment and all.
+        #[test]
+        fn a_line_for_another_key_is_replaced() {
+            let mut entry = ssh(OPENSSH_ED25519, Some(OPENSSH_ECDSA_PUBLIC), None);
+            entry.reconcile_ssh_public(None);
+            assert_eq!(entry.public_key.as_deref(), Some(OPENSSH_ED25519_PUBLIC));
+            assert_eq!(
+                entry.fingerprint.as_deref(),
+                Some(OPENSSH_ED25519_FINGERPRINT)
+            );
+        }
+
+        // An unreadable replacement cannot vouch for anything: what was
+        // derived from the key it replaced goes, and is not passed off as its.
+        #[test]
+        fn an_unreadable_replacement_drops_what_the_old_key_left() {
+            let stored = ssh(
+                OPENSSH_ED25519,
+                Some(OPENSSH_ED25519_PUBLIC),
+                Some(OPENSSH_ED25519_FINGERPRINT),
+            );
+            let mut edit = ssh(
+                OPENSSH_TRUNCATED,
+                Some(OPENSSH_ED25519_PUBLIC),
+                Some(OPENSSH_ED25519_FINGERPRINT),
+            );
+            edit.reconcile_ssh_public(Some(&stored));
+            assert!(edit.public_key.is_none() && edit.fingerprint.is_none());
+
+            // A line the user typed alongside it is kept, and printed.
+            let mut typed = ssh(OPENSSH_TRUNCATED, Some(OPENSSH_ECDSA_PUBLIC), None);
+            typed.reconcile_ssh_public(Some(&stored));
+            assert_eq!(typed.public_key.as_deref(), Some(OPENSSH_ECDSA_PUBLIC));
+            assert_eq!(
+                typed.fingerprint.as_deref(),
+                Some("SHA256:IGlniK29M31+RlxsarcPQhepK09xmUGe/RNs/uM9gNQ")
+            );
+        }
+
+        // A key this cannot read, left as it was (an imported PKCS#8 RSA
+        // block): nothing is proven either way, so what it came with stays.
+        #[test]
+        fn an_unchanged_unreadable_key_keeps_what_it_came_with() {
+            let stored = ssh(RSA, None, Some("SHA256:from-the-exporter"));
+            let mut edit = stored.clone();
+            edit.title = "Renamed".into();
+            edit.reconcile_ssh_public(Some(&stored));
+            assert_eq!(
+                edit.fingerprint.as_deref(),
+                Some("SHA256:from-the-exporter")
+            );
+        }
+
+        #[test]
+        fn another_kind_is_not_touched() {
+            let mut note = Entry {
+                kind: "note".into(),
+                ..ssh(OPENSSH_ED25519, None, None)
+            };
+            note.reconcile_ssh_public(None);
+            assert!(note.public_key.is_none() && note.fingerprint.is_none());
+        }
     }
 }
