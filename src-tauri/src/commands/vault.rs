@@ -26,7 +26,11 @@ pub fn reveal_entry(id: String, state: State<'_, AppState>) -> Result<Entry> {
         .get(&id)
         .map_err(store_err)?
         .ok_or(Error::NotFound)?;
-    Ok(cipher.unseal(&record.id, &record.payload)?.redacted())
+    let mut entry = cipher.unseal(&record.id, &record.payload)?;
+    // A key saved before fingerprints were derived on save shows its plate
+    // too; the next save writes what this fills in.
+    entry.derive_ssh_public();
+    Ok(entry.redacted())
 }
 
 // Persist one entry: seal it into a fresh payload and upsert a single row
@@ -42,6 +46,7 @@ pub fn save_entry(
     let store = session.store()?;
 
     merge_stored(&mut entry, store, &cipher, &now())?;
+    entry.derive_ssh_public();
     let payload = cipher.seal(&entry)?;
     let record = migrate::build_record(&entry, payload)?;
     store.upsert(&record).map_err(store_err)?;

@@ -16,7 +16,7 @@ use base64::Engine;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::pkcs8::{DecodePrivateKey, ObjectIdentifier, PrivateKeyInfo};
 use ssh_key::private::{EcdsaKeypair, Ed25519Keypair, KeypairData};
-use ssh_key::{HashAlg, LineEnding, PrivateKey};
+use ssh_key::{HashAlg, LineEnding, PrivateKey, PublicKey};
 
 pub const OPENSSH_HEADER: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
 const PKCS8_HEADER: &str = "-----BEGIN PRIVATE KEY-----";
@@ -61,6 +61,24 @@ pub fn from_pkcs8(pem: &str) -> Result<Option<OpenSsh>, String> {
         public_key: key.public_key().to_openssh().map_err(|e| e.to_string())?,
         fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
     }))
+}
+
+/// What a key says about itself: its one-line public key and its `SHA256:…`
+/// fingerprint, as `ssh-keygen -y` and `ssh-keygen -l` print them.
+///
+/// Read from the OpenSSH private block first, since that is the key an entry
+/// holds, and from the public line when the block is in another form (a
+/// PKCS#8 RSA key, say) or missing. An encrypted block needs no passphrase
+/// here: OpenSSH keeps a key's public half in the clear. `None` when neither
+/// parses, so the caller leaves alone whatever the entry already carries.
+pub fn public_of(private_key: Option<&str>, public_key: Option<&str>) -> Option<(String, String)> {
+    let key = private_key
+        .filter(|block| is_openssh(block))
+        .and_then(|block| PrivateKey::from_openssh(block.trim()).ok())
+        .map(|key| key.public_key().clone())
+        .or_else(|| public_key.and_then(|line| PublicKey::from_openssh(line.trim()).ok()))?;
+    let line = key.to_openssh().ok()?;
+    Some((line, key.fingerprint(HashAlg::Sha256).to_string()))
 }
 
 fn pkcs8_der(pem: &str) -> Result<Vec<u8>, String> {
@@ -218,5 +236,144 @@ aaCAATJ9YwXsBBP9K3kLDy3+474w67jM8vIp310yl3WZlyCXLreyk0cp\n\
             from_pkcs8("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----").unwrap_err(),
             "not a PKCS#8 key"
         );
+    }
+
+    // Throwaway keys `ssh-keygen` wrote for these tests, with the public line
+    // it wrote beside each and the fingerprint `ssh-keygen -l -E sha256`
+    // printed for it.
+    const OPENSSH_ED25519: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACCMsBkG+92FeO1IQ4QRB95kBxqhxtJBCCMO5vK3bPfY0QAAAJAWWxCmFlsQ
+pgAAAAtzc2gtZWQyNTUxOQAAACCMsBkG+92FeO1IQ4QRB95kBxqhxtJBCCMO5vK3bPfY0Q
+AAAECsxtAPvmVXd9tYi9tmkGVfy+u9tAH5TC3ZeXz9Ic6g4IywGQb73YV47UhDhBEH3mQH
+GqHG0kEIIw7m8rds99jRAAAAC3BsYWluQHJvd2VsAQI=
+-----END OPENSSH PRIVATE KEY-----
+";
+    const OPENSSH_ED25519_PUBLIC: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIywGQb73YV47UhDhBEH3mQHGqHG0kEIIw7m8rds99jR plain@rowel";
+    const OPENSSH_ED25519_FINGERPRINT: &str = "SHA256:MvV+b7yWsyADqckWJezjL66WS1klaUagTWUU4Svymg4";
+
+    // Protected with the passphrase "hunter2", which nothing here is given.
+    const OPENSSH_ENCRYPTED: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABCDtOmhQu
+Z7zkATqwvAOzmTAAAAGAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIBaV7k4YmJ+7kTHZ
+/Ih8Noc5QrKCu+Aw+iN38JvW4tIkAAAAkFcAXXyZXaIBk+QtQ6/iRSFXcE/M9rDFHwOCmW
+oy0ozpOVx5fHWZN+W2j0eW3OT3SYIYIPZ+sHUwDScXS7GgFEij+d7zZ6MoW9Q4nv37miHY
+Ysz9hhTh42lCoXwZ9ScbKbP2LVAKfXe7uKvFlCVDIeIcN7eU2NEJ9xB6cWmXtV9DZtqB5k
+47NekuCCdEOaAIcw==
+-----END OPENSSH PRIVATE KEY-----
+";
+
+    const OPENSSH_RSA: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAlwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAIEAxKHe2s9qukhhQ0/EI8e/MqwDm+o9IPCJ4+QCb1NnJ23LHP9UUdeM
+wBqbyNcGMNHc9Lm2YOLABE2SLSGHgskFIeiApyr0ZlviRqgYZxsSreWnbBOcb41jtkvSbQ
+fQ+M8Uk49zO7DMs2lgLl9AGs9dBTNgVTgT9ve3WnSQMNRWNIkAAAIACybC4AsmwuAAAAAH
+c3NoLXJzYQAAAIEAxKHe2s9qukhhQ0/EI8e/MqwDm+o9IPCJ4+QCb1NnJ23LHP9UUdeMwB
+qbyNcGMNHc9Lm2YOLABE2SLSGHgskFIeiApyr0ZlviRqgYZxsSreWnbBOcb41jtkvSbQfQ
++M8Uk49zO7DMs2lgLl9AGs9dBTNgVTgT9ve3WnSQMNRWNIkAAAADAQABAAAAgQCdQ9m5p6
+r00m74JxP4igmhvXIlgXLipX+jhPltkIcwQd/xkUUfMAainqV6PH/3C+Js2RvE4ZYx2tjO
+v8JiF+TBkwIzwQjVNtPoJSXibMla8lro7TfC4yjYQ8PbdcW1rFnp+n3wmn1vseFp4kv87+
+uM6xOCkIEvjlv7MDnuCcu/AQAAAEAH3dPZGPgQ6eBc474hz/oUdfFsJKDWnlpQw4wfjI9p
+rsExEZHICi1KDq4Ap5V1epaGvY+SFk+yZ3b6QLIEjG1MAAAAQQDkNVUeLQeXC9wSqjGfy9
+53mIxcq8F7yxZJm/8vaWuDn5zv8ockGd5fFxl1rOKIYxJ7EEUM78W41xE36Yd58qh3AAAA
+QQDclB4lfS5SO9o1FqaLARFniyVhInUMYaJKl8zmTvVzY/mmLzmWeeTAHw+UmpGxrgHs+t
+HKOXJ/heenSu3KAkr/AAAACXJzYUByb3dlbAE=
+-----END OPENSSH PRIVATE KEY-----
+";
+
+    const OPENSSH_ECDSA_PUBLIC: &str = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBK86MNn4rWjhQzHkceG+MUbCvIYo8rFKQv22wR09RENj1S+0QOJFj6rQCIBpLbBLbUBbq1QvdTmrdiPVkPQt4kA= ec@rowel";
+
+    #[test]
+    fn a_pasted_private_block_gives_its_public_line_and_fingerprint() {
+        let (line, fingerprint) = public_of(Some(OPENSSH_ED25519), None).unwrap();
+        assert_eq!(line, OPENSSH_ED25519_PUBLIC);
+        assert_eq!(fingerprint, OPENSSH_ED25519_FINGERPRINT);
+    }
+
+    #[test]
+    fn an_encrypted_block_gives_its_fingerprint_without_the_passphrase() {
+        let (line, fingerprint) = public_of(Some(OPENSSH_ENCRYPTED), None).unwrap();
+        assert!(line.starts_with(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBaV7k4YmJ+7kTHZ/Ih8Noc5QrKCu+Aw+iN38JvW4tIk"
+        ));
+        assert_eq!(
+            fingerprint,
+            "SHA256:j2Jamcs+CkEep3CunOmyaNg7fVBdxKc+rjIq3msTbYM"
+        );
+    }
+
+    #[test]
+    fn an_rsa_block_is_read_as_well() {
+        let (_, fingerprint) = public_of(Some(OPENSSH_RSA), None).unwrap();
+        assert_eq!(
+            fingerprint,
+            "SHA256:yvINds+sIjMNn2Mf8Lzd4aU8MFl+Mp6C/UaT5pZ0JZo"
+        );
+    }
+
+    // The private block is the key the entry holds, so it wins over a public
+    // line that names some other key; with no block that parses, the line is
+    // what there is.
+    #[test]
+    fn the_private_block_wins_and_the_public_line_stands_in_for_it() {
+        let (_, fingerprint) =
+            public_of(Some(OPENSSH_ED25519), Some(OPENSSH_ECDSA_PUBLIC)).unwrap();
+        assert_eq!(fingerprint, OPENSSH_ED25519_FINGERPRINT);
+
+        let (line, fingerprint) = public_of(Some(RSA), Some(OPENSSH_ECDSA_PUBLIC)).unwrap();
+        assert_eq!(line, OPENSSH_ECDSA_PUBLIC);
+        assert_eq!(
+            fingerprint,
+            "SHA256:IGlniK29M31+RlxsarcPQhepK09xmUGe/RNs/uM9gNQ"
+        );
+    }
+
+    #[test]
+    fn an_ssh_entry_is_completed_from_its_key_and_nothing_else_is_touched() {
+        use crate::models::Entry;
+        let ssh = |public: Option<&str>, fingerprint: Option<&str>| Entry {
+            kind: "ssh".into(),
+            private_key: Some(OPENSSH_ED25519.into()),
+            public_key: public.map(Into::into),
+            fingerprint: fingerprint.map(Into::into),
+            ..Default::default()
+        };
+
+        // Pasted on its own: both are filled in.
+        let mut pasted = ssh(None, None);
+        pasted.derive_ssh_public();
+        assert_eq!(pasted.public_key.as_deref(), Some(OPENSSH_ED25519_PUBLIC));
+        assert_eq!(
+            pasted.fingerprint.as_deref(),
+            Some(OPENSSH_ED25519_FINGERPRINT)
+        );
+
+        // A line the user typed stays; a stale fingerprint is replaced.
+        let mut typed = ssh(Some("ssh-ed25519 AAAA my laptop"), Some("SHA256:stale"));
+        typed.derive_ssh_public();
+        assert_eq!(
+            typed.public_key.as_deref(),
+            Some("ssh-ed25519 AAAA my laptop")
+        );
+        assert_eq!(
+            typed.fingerprint.as_deref(),
+            Some(OPENSSH_ED25519_FINGERPRINT)
+        );
+
+        // Another kind with the same fields is not an SSH key.
+        let mut note = Entry {
+            kind: "note".into(),
+            ..ssh(None, None)
+        };
+        note.derive_ssh_public();
+        assert!(note.public_key.is_none() && note.fingerprint.is_none());
+    }
+
+    #[test]
+    fn nothing_that_parses_gives_nothing() {
+        assert!(public_of(None, None).is_none());
+        assert!(public_of(Some(RSA), None).is_none());
+        assert!(public_of(Some("not a key"), Some("ssh-ed25519 nope")).is_none());
     }
 }

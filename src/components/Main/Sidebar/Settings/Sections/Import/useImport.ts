@@ -3,7 +3,7 @@ import { claimOpenedFile, setEntries, useApp } from '@/store'
 import { importSwftx } from '@/api/vault'
 import { importEntries, type ImportFormat, type ImportReport } from '@/api/imports'
 import { syncNow } from '@/api/sync'
-import { pickImportFile, pickBackup } from '@/api/pickers'
+import { pickImportFile, pickImportBackup } from '@/api/pickers'
 import { describeError, errorKind } from '@/api/errors'
 import { isBackupFile } from '@/lib/backup'
 import { t } from '@/i18n'
@@ -13,11 +13,18 @@ import { useProgress } from './useProgress'
 // `.swftx` vault, which is independently encrypted and needs its own password,
 // or a `.rowel` backup — which is a whole sealed database and restores a fresh
 // install rather than merging into this one, so it is only ever named here to
-// say so (it arrives through the OS opening it with the app, never a tile).
+// say so.
 export type Picked =
   | { kind: 'format'; format: ImportFormat; path: string }
   | { kind: 'swftx'; path: string }
   | { kind: 'rowel'; path: string }
+
+// A backup by its extension: ours is a `.rowel`, anything else the card or the
+// OS hands over is taken for a legacy `.swftx` and asked for its password.
+const pickedBackup = (path: string): Picked => ({
+  kind: isBackupFile(path) ? 'rowel' : 'swftx',
+  path
+})
 
 // One import flow for every tile: pick or drop a file, preview it (dry run),
 // then commit. Preview and result both surface per-row errors.
@@ -46,14 +53,13 @@ export function useImport() {
       .finally(() => setRunning(false))
   }, [])
 
-  // A backup the OS opened with the app, once this section is on screen: a
-  // legacy `.swftx` is picked as the tile would have picked it; a `.rowel` is
-  // named and turned down (see `Picked`).
+  // A backup the OS opened with the app, once this section is on screen,
+  // taken as the backup card would take it.
   const opened = useApp(state => state.openedFile)
   useEffect(() => {
     if (!opened) return
     claimOpenedFile()
-    start({ kind: isBackupFile(opened) ? 'rowel' : 'swftx', path: opened })
+    start(pickedBackup(opened))
   }, [opened, start])
 
   const chooseFile = useCallback(
@@ -66,8 +72,8 @@ export function useImport() {
 
   const chooseBackup = useCallback(
     () =>
-      pickBackup().then(path => {
-        if (path) start({ kind: 'swftx', path })
+      pickImportBackup().then(path => {
+        if (path) start(pickedBackup(path))
       }),
     [start]
   )
@@ -88,6 +94,8 @@ export function useImport() {
         setEntries(report.entries)
         setResult(report)
         setPreview(null)
+        // Publish the imported entries; a no-op when sync is not configured.
+        if (report.imported > 0) syncNow().catch(() => {})
       })
       .catch((e: unknown) => setError(describeError(e)))
       .finally(() => setRunning(false))

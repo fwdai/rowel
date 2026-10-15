@@ -871,6 +871,52 @@ describe('Settings › import', () => {
     expect(calls('import_swftx')).toEqual([])
   })
 
+  // The backup card offers our own `.rowel` too, and takes it as the OS-opened
+  // one above: named and explained, never sent to the legacy importer.
+  it('explains a .rowel picked on the backup card instead of importing it', async () => {
+    vi.mocked(openDialog).mockResolvedValue('/tmp/Rowel backup 2026-09-15.rowel')
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-swftx'))
+
+    expect(await screen.findByTestId('import-rowel-notice')).toBeInTheDocument()
+    expect(document.querySelector('input[name="import_password"]')).not.toBeInTheDocument()
+    expect(calls('import_swftx')).toEqual([])
+  })
+
+  // Imported rows are published like any other edit, so another device has
+  // them without waiting for the next change made here.
+  it('syncs after an export is imported, and not after one that added nothing', async () => {
+    vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
+    let imported = 2
+    mockCommand('import_entries', args => {
+      const dryRun = args.dryRun === true
+      return {
+      total: 2,
+      imported: dryRun ? 0 : imported,
+      skipped: 0,
+      duplicates: dryRun ? 0 : 2 - imported,
+      dryRun,
+      errors: [],
+      warnings: [],
+      entries: []
+      }
+    })
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-enpass'))
+    await userEvent.click(await screen.findByTestId('import-commit'))
+    await waitFor(() => expect(calls('sync_now')).toHaveLength(1))
+
+    imported = 0
+    await userEvent.click(screen.getByTestId('import-tile-enpass'))
+    await userEvent.click(await screen.findByTestId('import-commit'))
+    await waitFor(() => expect(calls('import_entries')).toHaveLength(4))
+    expect(calls('sync_now')).toHaveLength(1)
+  })
+
   // Six tiles, three to a row: the apps most people are leaving, in order, and
   // a sixth whose menu holds the rest, so they are on offer without being
   // advertised on the same level.

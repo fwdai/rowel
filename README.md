@@ -65,7 +65,7 @@ Down the road there may be a paid option for professional teams that need extra 
 ## Why Rowel
 
 1. **No account, no backend.** Your vault is encrypted files on your own disk, and it works fully offline. There's nothing to sign up for and no server that could be breached.
-2. **Built for developers.** SSH keys (generate Ed25519 keys in the app, with their fingerprint drawn as randomart), API keys with environment and scopes, and whole `.env` files are their own item types, not notes you've pasted in.
+2. **Built for developers.** SSH keys (with fingerprint randomart, and Ed25519 keys generated in the app), API keys with environment and scopes, and whole `.env` files are their own item types, not notes you've pasted in.
 3. **Switch in a few clicks.** Move in from 1Password, LastPass, Bitwarden, KeePass (CSV export), Enpass, Chrome, Safari or any FIDO CXF export. Point Rowel at your export and it brings your items over, with a report for anything it couldn't import.
 4. **Bring your own cloud.** Each lockbox syncs to your Google Drive, Dropbox or iCloud as one encrypted file, and Rowel can only reach the folder it creates there. Edits from different devices merge item by item on their own: there are no conflict dialogs, and when two devices change the same item, the newer edit wins.
 5. **Encrypted even while open.** The vault is encrypted on disk, and each item is sealed a second time inside it. The list and search work without unsealing anything, and the app's interface gets an item's secrets only when you open that item.
@@ -81,7 +81,7 @@ Down the road there may be a paid option for professional teams that need extra 
 - Logins, credit cards, identities and documents, secure notes, and file attachments
 - Passkeys and TOTP codes, plus a password and passphrase generator
 - Vault Health: strength scoring, reused-password checks, and an optional private breach check that never sends your password
-- Browser autofill for Chrome, Edge, Brave, Vivaldi and Firefox, plus Safari on macOS ([details](docs/browser-extension.md)). Passkeys work there too once you turn them on in the extension's options
+- Browser autofill and passkeys for Chrome, Edge, Brave, Vivaldi and Firefox, plus Safari on macOS ([details](docs/browser-extension.md)). Passkeys are on by default from extension 0.1.1; an earlier install turns them on in the extension's options
 - iOS AutoFill for passwords and passkeys, unlocked with Face ID (passkeys need iOS 17 or later)
 - Touch ID, Face ID or Windows Hello unlock
 - Locks itself when you're inactive and clears copied secrets from the clipboard

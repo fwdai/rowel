@@ -27,8 +27,9 @@ export default function Result({ flow }: { flow: ReturnType<typeof useImport> })
       <div className={META}>{fileName(picked.path)}</div>
 
       {picked.kind === 'rowel' ? (
-        // The OS opened one of our own backups with the app, but a vault is
-        // already open: it is a whole sealed database, not rows to merge.
+        // One of our own backups, picked on the backup card or opened by the
+        // OS, while a vault is already open: it is a whole sealed database,
+        // not rows to merge.
         <Note testid="import-rowel-notice">
           {t('Backups restore a fresh install and are not imported into an existing vault.')}
         </Note>

@@ -1,14 +1,14 @@
 {
   "name": "rowel",
   "version": "1.0.2",
-  "description": "Modern, Lightweight, Fast and Free Password Manager",
+  "description": "Local-first secret manager for passwords, passkeys, cards, IDs, SSH keys, API keys and .env files",
   "type": "module",
   "repository": "https://github.com/fwdai/rowel.git",
   "author": {
     "name": "Alex Chaplinsky",
     "email": "alchaplinsky@gmail.com"
   },
-  "license": "MIT",
+  "license": "GPL-3.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

@@ -222,6 +222,34 @@ impl Entry {
         self
     }
 
+    /// Fill an `ssh` entry's fingerprint, and its public line when it has
+    /// none, from the key it holds (see [`crate::ssh::public_of`]).
+    ///
+    /// The generator and some importers hand both over with the key; a key
+    /// pasted into the editor arrives with neither, and the detail view draws
+    /// its randomart from the fingerprint. The fingerprint is always taken
+    /// from the key when the key can be read, so replacing the key never
+    /// leaves the old one's fingerprint behind. A public line the user typed
+    /// is kept. When nothing parses, the entry is left as it came.
+    pub fn derive_ssh_public(&mut self) {
+        if self.kind != "ssh" {
+            return;
+        }
+        let Some((line, fingerprint)) =
+            crate::ssh::public_of(self.private_key.as_deref(), self.public_key.as_deref())
+        else {
+            return;
+        };
+        if self
+            .public_key
+            .as_deref()
+            .is_none_or(|p| p.trim().is_empty())
+        {
+            self.public_key = Some(line);
+        }
+        self.fingerprint = Some(fingerprint);
+    }
+
     /// Scrub every passkey private key on this entry, leaving each blank.
     /// [`Zeroize`] for `String` overwrites the bytes before emptying it, which
     /// `String::clear` on its own does not.
