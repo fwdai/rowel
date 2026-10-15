@@ -1,7 +1,7 @@
 [package]
 name = "rowel"
 version = "1.0.2"
-description = "Modern, Lightweight, Fast and Free Password Manager"
+description = "Local-first secret manager for passwords, passkeys, cards, IDs, SSH keys, API keys and .env files"
 authors = ["Alex Chaplinsky"]
 edition = "2021"
 # Floor set by the locked dependency graph: glib/gio-sys 0.22 (pulled in by the

@@ -28,7 +28,7 @@ const defaultSettings = {
     defaultPasswordManager: false,
     defaultGroupAlwaysAsk: false,
     downloadFaviconAfterSave: false,
-    passkeys: false,
+    passkeys: true,
     passkeysFallback: true,
     redirectAllowance: 3,
     saveDomainOnly: true,

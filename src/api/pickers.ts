@@ -23,6 +23,14 @@ const pickFile = async (filters?: Filter[]): Promise<string | null> => {
 export const pickBackup = (): Promise<string | null> =>
   pickFile([{ name: t('Rowel backup'), extensions: ['rowel'] }])
 
+/**
+ * Either backup a user may reach for from Settings › Import: a legacy
+ * `.swftx`, which merges into the open vault, or a `.rowel`, which is offered
+ * so the import can say where it restores instead of hiding it from the dialog.
+ */
+export const pickImportBackup = (): Promise<string | null> =>
+  pickFile([{ name: t('Rowel backup'), extensions: ['rowel', 'swftx'] }])
+
 export const pickImportFile = (): Promise<string | null> =>
   pickFile([{ name: t('Password exports'), extensions: ['json', 'csv', '1pux'] }])
 
