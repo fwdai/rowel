@@ -69,7 +69,7 @@ async-trait = "0.1"
 ssh-key = { version = "0.6.7", default-features = false, features = ["ed25519", "p256", "p384", "p521", "std"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["pkcs8"] }
 p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"] }
-p521 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"] }
+p521 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # `Win32_Security*` + `Win32_System_Threading` build the owner-only DACL for
