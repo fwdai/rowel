@@ -67,7 +67,7 @@ async-trait = "0.1"
 # one Rust RSA crate carries an open timing advisory (RUSTSEC-2023-0071) the
 # supply-chain gate refuses, and OpenSSH reads a PKCS#8 RSA key as it is.
 ssh-key = { version = "0.6.7", default-features = false, features = ["ed25519", "p256", "p384", "p521", "std"] }
-ed25519-dalek = { version = "2", default-features = false, features = ["pkcs8"] }
+ed25519-dalek = { version = "3", default-features = false, features = ["pkcs8"] }
 p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"] }
 p521 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"] }
 
