@@ -27,7 +27,7 @@ csv = "1"
 # Reads 1Password's `.1pux` export, a zip around a JSON file. Only the one
 # codec that format uses: the default feature set brings a dozen more, and the
 # zlib-rs backend is the flate2 the locked graph already builds.
-zip = { version = "4", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 thiserror = "2"
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
 rusqlite_migration = "1"
