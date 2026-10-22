@@ -95,10 +95,6 @@ wildcards = "deny"
 allow-wildcard-paths = true
 
 [sources]
-# Only crates.io (and explicitly allow-listed git sources, if any) are trusted.
+# Only crates.io is trusted; a git source needs an explicit allow-git entry.
 unknown-registry = "deny"
 unknown-git = "deny"
-# swift-rs is pinned to a fork (Cargo.toml [patch.crates-io]) until upstream
-# releases the Xcode 27 fix from Brendonovich/swift-rs#80. The pin is to an
-# exact rev, so the source is as fixed as a registry checksum.
-allow-git = ["https://github.com/alchaplinsky/swift-rs"]

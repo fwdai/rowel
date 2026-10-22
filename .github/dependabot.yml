@@ -104,13 +104,11 @@ updates:
       # Drop once a later libc or num_threads release builds for iOS again.
       - dependency-name: libc
         versions: ['0.2.190']
-      # Every current Tauri release (tauri >= 2.12.3, tauri-utils >= 2.10.2,
-      # tauri-plugin >= 2.7.2 under all the plugins, tauri-plugin-log >= 2.10.1)
-      # requires swift-rs ^1.0.9, which drops the [patch.crates-io] swift-rs
-      # fork (1.0.8 + PR #80) that keeps the iOS cdylib linking on Xcode 27.
-      # CI cannot see the breakage: the iOS job only runs clippy, the link
-      # fails in the release build. Lift once the fork is rebased on 1.0.9 or
-      # swift-rs ships Brendonovich/swift-rs#80.
+      # Held while the move from the patched swift-rs fork to the stock 1.0.9
+      # crate is verified by an iOS release link (CI cannot see that link: the
+      # iOS job only runs clippy). Every current Tauri release requires
+      # swift-rs ^1.0.9, so lifting this is the next step once that link is
+      # green: bump the Tauri crates and the npm @tauri-apps packages together.
       - dependency-name: tauri
       - dependency-name: 'tauri-*'
 

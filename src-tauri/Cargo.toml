@@ -271,16 +271,3 @@ tokio = { version = "1", features = ["rt", "macros"] }
 # Writes the `.1pux` archives the import tests read; the codec is the one the
 # core reads them with.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-
-[patch.crates-io]
-# Xcode 27's SwiftPM prelinks each Swift module into one object and demotes the
-# SwiftRs runtime `@_cdecl` exports (retain_object, release_object,
-# string_from_bytes) to local symbols, so the iOS cdylib fails to link with
-# "Undefined symbols for architecture arm64". swift-rs 1.0.8 only re-globalizes
-# each package's own member, never SwiftRs.o where these live.
-#
-# This is 1.0.8 + upstream PR Brendonovich/swift-rs#80: the symbols are made
-# global in the ONE archive named by SWIFT_RS_RUNTIME_ARCHIVE (set to `Tauri` in
-# the repo-root .cargo/config.toml). Drop this pin once a swift-rs release
-# includes that PR.
-swift-rs = { git = "https://github.com/alchaplinsky/swift-rs", rev = "aaf38d45ab3a4b10a5af3a3dbc64424e998fae8c" }
