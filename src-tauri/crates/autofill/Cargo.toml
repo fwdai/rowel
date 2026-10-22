@@ -35,7 +35,7 @@ zeroize = "1.8.2"
 # The CTAP2 requests the core's passkey authenticator takes, in the versions
 # the core itself uses; tokio's current-thread runtime drives its async traits,
 # as it does for the browser host.
-passkey-types = "0.5"
+passkey-types = "0.6"
 coset = "0.4"
 tokio = { version = "1", features = ["rt"] }
 
@@ -44,6 +44,6 @@ serde_json = "1"
 tempfile = "3"
 # A relying party's half of a passkey test: read the attestation, verify the
 # signature under the key it attested.
-passkey-authenticator = "0.5"
+passkey-authenticator = "0.6"
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 sha2 = "0.11"
