@@ -270,7 +270,7 @@ rowel-core = { path = "crates/core", features = ["test-support"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 # Writes the `.1pux` archives the import tests read; the codec is the one the
 # core reads them with.
-zip = { version = "4", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [patch.crates-io]
 # Xcode 27's SwiftPM prelinks each Swift module into one object and demotes the

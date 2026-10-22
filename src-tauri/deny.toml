@@ -16,9 +16,11 @@ all-features = false
 
 [advisories]
 # RustSec advisory DB. Yanked and *vulnerable* crates still fail the build —
-# the ignores below are ALL `unmaintained`/informational advisories (no CVE,
+# the ignores below are `unmaintained`/informational advisories (no CVE,
 # no code fix), pulled in transitively by Tauri itself with no safe upgrade
-# available. Reviewed 2026-08-31; revisit when Tauri migrates off GTK3 (gtk4-rs)
+# available, plus ONE scoped vulnerability exception (zip, at the end) that
+# names the unreachable code path and the release that lifts it.
+# Reviewed 2026-08-31; revisit when Tauri migrates off GTK3 (gtk4-rs)
 # and when the transitive proc-macro/unic crates are replaced upstream.
 ignore = [
   # --- Tauri's Linux GTK3 stack (gtk-rs archived; awaiting Tauri gtk4 move) ---
@@ -46,6 +48,17 @@ ignore = [
   { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
+  # --- zip 4.x extraction vulnerabilities (SUID bits, symlink escape) ---
+  # The app's own zip use (1Password import) is on zip 9. The 4.x copy is
+  # tauri-plugin-updater's Windows-only `zip` feature, which extracts legacy
+  # `.zip` update bundles: Rowel ships NSIS `-setup.exe` with v2 updater
+  # artifacts, so `extract_zip` is never entered (the bytes are not a zip), and
+  # every download is minisign-verified before any extraction. The plugin is
+  # frozen with the rest of Tauri (see dependabot.yml, swift-rs); lift when the
+  # Tauri train moves and the plugin resolves zip >= 9.
+  { id = "RUSTSEC-2026-0367", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); frozen with Tauri — 2026-10-22" },
+  { id = "RUSTSEC-2026-0368", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); frozen with Tauri — 2026-10-22" },
+  { id = "RUSTSEC-2026-0369", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); frozen with Tauri — 2026-10-22" },
 ]
 
 [licenses]
