@@ -40,6 +40,12 @@ ignore = [
   { id = "RUSTSEC-2025-0081", reason = "unic-char-property unmaintained; transitive dep, no fix upstream — 2026-08-31" },
   { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version unmaintained; transitive dep, no fix upstream — 2026-08-31" },
   { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident unmaintained; transitive dep, no fix upstream — 2026-08-31" },
+  # zbus 5 split crates, folded into zbus 6 (names/zvariant modules). Linux
+  # only, via tauri-plugin-opener, tauri-plugin-single-instance and the app's
+  # D-Bus deps; lift when Tauri and those move to zbus 6.
+  { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
 ]
 
 [licenses]
