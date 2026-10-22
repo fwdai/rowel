@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TKey } from '@/i18n'
 import { cx } from '@/utils/cx'
@@ -26,6 +26,10 @@ interface Props {
   /** Lines kept legible around the seal — a key's BEGIN and END armor. */
   head?: string | null
   foot?: string | null
+  /** A kind-local head action, such as saving an environment body as a file. */
+  actions?: ReactNode
+  /** A body-specific cap or overflow rule. */
+  bodyClassName?: string
   className?: string
 }
 
@@ -49,6 +53,8 @@ export default function SealedBlock({
   lines,
   head,
   foot,
+  actions,
+  bodyClassName,
   className
 }: Props) {
   const { t } = useTranslation()
@@ -65,6 +71,7 @@ export default function SealedBlock({
         {meta && (
           <span className={`${META} min-w-0 flex-1 truncate text-right font-mono`}>{meta}</span>
         )}
+        {actions}
         <IconButton
           title={shown ? t('Hide') : t('Reveal')}
           active={shown}
@@ -82,7 +89,8 @@ export default function SealedBlock({
           'relative flex-1 whitespace-pre-wrap bg-field px-3.5 py-3 text-text max-md:px-4',
           mono
             ? 'break-all font-mono text-xs leading-[1.65]'
-            : 'break-words text-base leading-relaxed max-md:text-md'
+            : 'break-words text-base leading-relaxed max-md:text-md',
+          bodyClassName
         )}
         data-testid={`entry-value-${name}`}
       >

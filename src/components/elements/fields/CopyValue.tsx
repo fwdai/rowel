@@ -55,7 +55,7 @@ export default function CopyValue({ value, label, id, testid, className, childre
       <Copied copied={copied} left="left-1.5">
         {children}
       </Copied>
-      <CopyHint center />
+      <CopyHint center copied={copied} />
     </button>
   )
 }

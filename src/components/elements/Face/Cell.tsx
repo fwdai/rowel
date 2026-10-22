@@ -73,7 +73,7 @@ export default function Cell({
           {display}
         </Copied>
       </span>
-      <CopyHint />
+      <CopyHint copied={copied} />
     </button>
   )
 }

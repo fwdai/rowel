@@ -23,11 +23,15 @@ describe('CopyValue', () => {
 
     expect(calls('copy_to_clipboard')[0]).toMatchObject({ value: 'hunter2' })
     expect(screen.getByTestId('copied-mark')).toBeInTheDocument()
+    // The pointer is still over the value after a click; the hover copy glyph
+    // must stay suppressed while the single confirmation mark is up.
+    expect(screen.getByTestId('copy-hint')).not.toHaveClass('group-hover:opacity-60')
     // The check is a glyph, so the value is still the button's whole text.
     expect(screen.getByTestId('value')).toHaveTextContent(/^••••$/)
     expect(useUi.getState().copied).toBe(false)
 
     act(() => void vi.advanceTimersByTime(1200))
     expect(screen.queryByTestId('copied-mark')).not.toBeInTheDocument()
+    expect(screen.getByTestId('copy-hint')).toHaveClass('group-hover:opacity-60')
   })
 })

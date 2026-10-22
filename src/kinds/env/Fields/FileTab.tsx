@@ -4,25 +4,23 @@ import { cx } from '@/utils/cx'
 import { isMobile } from '@/lib/platform'
 import { saveEnvFile } from '@/api/vault'
 import { describeError } from '@/api/errors'
-import CopyButton from '@/components/elements/CopyButton'
 import IconButton from '@/components/elements/IconButton'
 import Panel from '@/components/elements/Panel'
+import SealedBlock from '@/components/elements/SealedBlock'
 import { grow, useField } from '@/components/elements/fields'
 import { requiredError } from '@/components/elements/fields/formats'
 import { verbatimInput } from '@/components/elements/inputProps'
-import Mask from '@/components/elements/Mask'
-import { BLOCK_LENGTH } from '@/components/elements/tokens'
-import { DownloadGlyph, EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
+import { DownloadGlyph } from '@/components/Main/icons'
 import { BOX, BOX_LINE } from './styles'
 
 // Long files scroll inside the well rather than pushing the metadata line off
 // the screen; the same cap holds the editor, which grows to it and then scrolls.
 const WELL = 'max-h-[60vh] overflow-y-auto'
 
-// The raw text. Reading, it is the SSH private-key block, taller: masked as one
-// block until the rail's eye is pressed, with copy always at hand. Editing, a
-// plain textarea over the same string — power users fix quoting or comments
-// here, and the table is never out of date because there is only one source.
+// The raw text. Reading, it is the shared sealed block a private key or secure
+// note uses, taller for a file. Editing, a plain textarea over the same string
+// — power users fix quoting or comments here, and the table is never out of
+// date because there is only one source.
 //
 // "Save as file…" sits in this rail rather than the header's ⋯ menu: it is the
 // file tab's own action, and keeping it kind-local means the shared header
@@ -32,7 +30,6 @@ export default function FileTab() {
   const { t } = useTranslation()
   const { value, set, editing, attempted } = useField('body')
   const { value: fileName } = useField('fileName')
-  const [show, setShow] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const validationError = requiredError(value, true, attempted)
 
@@ -43,9 +40,9 @@ export default function FileTab() {
     saveEnvFile(fileName, value).catch((e: unknown) => setSaveError(describeError(e)))
   }
 
-  return (
-    <Panel>
-      {editing ? (
+  if (editing)
+    return (
+      <Panel>
         <div className="px-3.5 py-3">
           <textarea
             name="body"
@@ -68,44 +65,32 @@ export default function FileTab() {
           />
           {validationError && <div className="mt-1.5 text-base text-bad">{validationError}</div>}
         </div>
-      ) : (
-        <div className="flex flex-wrap items-start gap-3 px-3.5 py-3">
-          <div className={cx('min-w-0 flex-1', WELL)}>
-            <div
-              data-testid="entry-value-body"
-              className={cx(
-                'break-all font-mono text-base leading-relaxed',
-                show ? 'whitespace-pre-wrap text-text' : 'text-text2'
-              )}
-            >
-              {show ? value : <Mask count={BLOCK_LENGTH} className="flex-wrap" />}
-            </div>
-          </div>
-          {/* Three controls, not the detail rows' two: this block lines up with
-              no row, so the rail sizes to what it holds. */}
-          <div className="flex flex-none items-center gap-1">
-            <CopyButton value={value} title={t('Copy')} />
-            {!isMobile && (
-              <IconButton title={t('Save as file…')} testid="env-save-file" onClick={save}>
-                <DownloadGlyph />
-              </IconButton>
-            )}
-            <IconButton
-              title={show ? t('Hide') : t('Reveal')}
-              active={show}
-              testid="reveal-body"
-              onClick={() => setShow(!show)}
-            >
-              {show ? <EyeOffGlyph /> : <EyeGlyph />}
+      </Panel>
+    )
+
+  return (
+    <>
+      <SealedBlock
+        label="File"
+        name="body"
+        value={value}
+        meta={fileName || undefined}
+        mono
+        lines={[value]}
+        bodyClassName={WELL}
+        actions={
+          !isMobile && (
+            <IconButton title={t('Save as file…')} testid="env-save-file" onClick={save}>
+              <DownloadGlyph />
             </IconButton>
-          </div>
-          {saveError && (
-            <div data-testid="env-save-error" className="basis-full text-base text-bad">
-              {saveError}
-            </div>
-          )}
+          )
+        }
+      />
+      {saveError && (
+        <div data-testid="env-save-error" className="mt-2 px-3.5 text-base text-bad">
+          {saveError}
         </div>
       )}
-    </Panel>
+    </>
   )
 }

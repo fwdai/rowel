@@ -138,7 +138,7 @@ export default function Value({
     >
       {caption}
       {line}
-      <CopyHint center={!label} />
+      <CopyHint center={!label} copied={copied} />
     </button>
   )
 }

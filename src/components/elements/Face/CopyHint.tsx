@@ -8,12 +8,14 @@ import { CopyGlyph } from '@/components/Main/icons'
 // on a bare line. The values themselves stay plain, so a card keeps looking
 // like a card and a row like a row. A finger cannot hover, and never sees it:
 // on touch the value is the copy control with no hint needed.
-export default function CopyHint({ center }: { center?: boolean }) {
+export default function CopyHint({ center, copied }: { center?: boolean; copied?: boolean }) {
   return (
     <span
       aria-hidden
+      data-testid="copy-hint"
       className={cx(
-        'pointer-events-none absolute right-1.5 opacity-0 transition-opacity group-hover:opacity-60',
+        'pointer-events-none absolute right-1.5 opacity-0 transition-opacity',
+        !copied && 'group-hover:opacity-60',
         center ? 'top-1/2 -translate-y-1/2' : 'top-1.5'
       )}
     >

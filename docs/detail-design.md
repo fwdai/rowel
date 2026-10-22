@@ -10,7 +10,7 @@ inventing its own.
 | Surface | What it is for | Where |
 |---|---|---|
 | **Face** | The entry as the physical object it stands for: a credit card, an ID document, an SSH key's fingerprint plate, an API key card. | `elements/Face` |
-| **Sealed block** | A body-sized secret that is read rather than taken: a secure note's body, an SSH private key. | `elements/SealedBlock` |
+| **Sealed block** | A body-sized secret that is read rather than taken: a secure note's body, an SSH private key, a raw environment file. | `elements/SealedBlock` |
 | **Rows** | The grouped list every value without a shape of its own goes in: a login's credentials, a URL, a date, the user's own fields. | `elements/fields/Row` |
 
 A kind composes these top to bottom: the face first if it has one, then its
@@ -46,7 +46,8 @@ same tier a revealed password takes in a row.
 A panel whose head names the body (`ROW_LABEL`, so on the phone it is the
 grouped list's caption), says what it weighs in a mono meta chip (`OPENSSH ·
 283 bytes`, `86 chars`), and carries the two controls the body itself cannot
-be: a reveal and a copy. The body is a blurred seal until the eye or the seal
+be: a reveal and a copy, plus a kind-local action when the body has one (the
+environment file's save). The body is a blurred seal until the eye or the seal
 is pressed; revealed, it reads in the primary ink, with a key's armor lines in
 the second ink. The editor of a body is a page: a tall box with no underline
 (`NoteField` without a label; `PrivateKey` three lines deep).

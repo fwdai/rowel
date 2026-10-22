@@ -69,7 +69,7 @@ export default function Face() {
               {shown ? body : <Mask />}
             </Copied>
           </span>
-          <CopyHint />
+          <CopyHint copied={copied} />
         </button>
         <Eye shown={shown} onToggle={() => setShown(!shown)} testid="reveal-apiKey" />
       </div>
