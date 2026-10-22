@@ -42,6 +42,18 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # The Tauri crates are frozen below (swift-rs), and a npm minor bump
+      # breaks the major.minor lockstep with the frozen crate. Patch bumps stay
+      # within the same minor and are fine. Lift together with the cargo rule.
+      - dependency-name: '@tauri-apps/*'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      # 0.5.6 counts `export const X = Ctx.Provider` as a component, so the
+      # context modules (fields/context.tsx, Settings/sectionNav.tsx) that also
+      # export their hooks fail `--max-warnings 0`. Lift once the rule stops
+      # treating a Provider alias as a component, or those files are split.
+      - dependency-name: eslint-plugin-react-refresh
+        versions: ['>=0.5.6']
 
   # Rust backend — src-tauri/Cargo.toml + Cargo.lock.
   - package-ecosystem: cargo
@@ -92,6 +104,15 @@ updates:
       # Drop once a later libc or num_threads release builds for iOS again.
       - dependency-name: libc
         versions: ['0.2.190']
+      # Every current Tauri release (tauri >= 2.12.3, tauri-utils >= 2.10.2,
+      # tauri-plugin >= 2.7.2 under all the plugins, tauri-plugin-log >= 2.10.1)
+      # requires swift-rs ^1.0.9, which drops the [patch.crates-io] swift-rs
+      # fork (1.0.8 + PR #80) that keeps the iOS cdylib linking on Xcode 27.
+      # CI cannot see the breakage: the iOS job only runs clippy, the link
+      # fails in the release build. Lift once the fork is rebased on 1.0.9 or
+      # swift-rs ships Brendonovich/swift-rs#80.
+      - dependency-name: tauri
+      - dependency-name: 'tauri-*'
 
   # Browser extension — extension/package.json + package-lock.json. A fork of
   # KeePassXC-Browser with dev-only tooling, so one monthly PR is enough.
