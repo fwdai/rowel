@@ -3,6 +3,7 @@ import type { TKey } from '@/i18n'
 import { useDates } from '@/hooks/useDates'
 import { specOf, type IdentityKey } from '../templates'
 import Cell from '@/components/elements/Face/Cell'
+import Mask from '@/components/elements/Mask'
 
 /** What a face reads from: the document's values, and whether its secrets show. */
 export interface Doc {
@@ -24,13 +25,12 @@ interface Props {
   className?: string
 }
 
-const DOTS = '•'.repeat(10)
-
 // One row of the template, printed on the face. The template's spec says what
 // the value is — a date, a secret — and this turns that into how it shows, the
-// same way the form's rows do for the editor. How long the document has left is
-// not a cell: it belongs to the document rather than to any one of its dates,
-// so the face states it once, in the status beside the number.
+// same way the form's rows do for the editor: a secret is the brand mask every
+// masked value line in the vault wears, fixed in length. How long the document
+// has left is not a cell: it belongs to the document rather than to any one of
+// its dates, so the face states it once, in the status beside the number.
 export default function DocCell({ doc, name, bare, label, ink, wrap, className }: Props) {
   const { formatDate } = useDates()
   const spec = specOf(name)
@@ -44,8 +44,8 @@ export default function DocCell({ doc, name, bare, label, ink, wrap, className }
       name={name}
       label={bare ? undefined : (label ?? spec.label)}
       value={value}
-      display={masked ? DOTS : spec.date ? formatDate(value) : value}
-      ink={cx(ink ?? 'text-base', masked && 'text-(--face-ink2)')}
+      display={masked ? <Mask count={8} /> : spec.date ? formatDate(value) : value}
+      ink={cx(ink ?? 'text-base leading-tight', masked && 'text-(--face-ink2)')}
       wrap={wrap && !masked}
       className={className}
     />

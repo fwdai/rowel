@@ -6,31 +6,16 @@ import type { TKey } from '@/i18n'
 /** Dot masks used as empty-state placeholders on the card face. */
 type Mask = '•••' | '••••' | '••/••' | '•••• •••• •••• ••••'
 import { useCopied } from '@/hooks/useCopied'
+import Copied from '@/components/elements/Copied'
+import { PRESS } from '@/components/elements/Face'
+import { CAPTION } from '@/components/elements/Face/Cell'
+import CopyHint from '@/components/elements/Face/CopyHint'
 import { useFields } from '@/components/elements/fields'
 import { verbatimInput } from '@/components/elements/inputProps'
-import { CheckGlyph, CopyGlyph } from '@/components/Main/icons'
-import { LABEL_TYPE, META_TYPE } from '@/components/elements/tokens'
+import { META_TYPE } from '@/components/elements/tokens'
 
 /** A mask is decoration rather than copy, so it never goes through `t()`. */
 const isMask = (placeholder: TKey | Mask): placeholder is Mask => placeholder.startsWith('•')
-
-// Opaque version of the hover wash (white/10 composited over the card's
-// ground), so a click doesn't visibly shift the ground but the value is fully
-// hidden under the check — no text/icon overlap. The card face is a gradient,
-// so the composite differs per zone: 'top' matches the lighter head of the
-// card (the name), 'base' the dark body (number and bottom row).
-function CopiedMark({ zone }: { zone: 'top' | 'base' }) {
-  return (
-    <span
-      data-testid="copied-mark"
-      className={`absolute -inset-x-1 inset-y-0 grid place-items-center rounded-[3px] text-white ${
-        zone === 'top' ? 'bg-[#3F4247]' : 'bg-[#2B2D31]'
-      }`}
-    >
-      <CheckGlyph size={12} />
-    </span>
-  )
-}
 
 interface Props {
   /** The input's `name` — the selector the e2e suite owns. */
@@ -63,15 +48,16 @@ interface Props {
   invalid?: boolean
   /** A marker beside the read value — the expiry's "Expired" pill. */
   flag?: ReactNode
-  zone?: 'top' | 'base'
   className?: string
 }
 
 // One data point on the card face, in whichever mode the pane is in. Reading,
 // the whole value is a click-to-copy target (the 1Password pattern — no
 // per-field buttons, so the face stays a card, not a toolbar) and copy always
-// copies the true value, masked or not. Editing, the same slot is the input:
-// the face IS the form.
+// copies the true value, masked or not; the shared mark confirms it in place
+// in the card's own ink (see `elements/Copied`). Editing, the same slot is the
+// input: the face IS the form. Every ink here is the face's (`--face-*`), so
+// the card is one object with the other faces and never a palette of its own.
 export default function Value({
   name,
   label,
@@ -86,7 +72,6 @@ export default function Value({
   required,
   invalid: invalidOverride,
   flag,
-  zone = 'base',
   className
 }: Props) {
   const { t } = useTranslation()
@@ -94,12 +79,10 @@ export default function Value({
   const { copied, copy } = useCopied()
 
   const caption = label && (
-    <span className={`block ${LABEL_TYPE} opacity-50`}>{t(label)}</span>
+    <span className={`block ${CAPTION} text-(--face-ink2)`}>{t(label)}</span>
   )
 
   if (set) {
-    // The face's own error ink: `text-bad` is tuned for the app ground, not for
-    // dark plastic, so the card uses a lighter red like every other hex on it.
     const invalid = invalidOverride ?? (required && attempted && !value.trim())
     return (
       <label className={cx('block min-w-0 px-1.5 py-1', className)}>
@@ -112,14 +95,16 @@ export default function Value({
           {...verbatimInput}
           onChange={event => onChange(event.target.value)}
           className={cx(
-            'block w-full min-w-0 truncate border-b bg-transparent outline-none transition-colors placeholder:text-white/25',
-            invalid ? 'border-[#FF8A8A]' : 'border-white/25 focus:border-white/70',
+            'block w-full min-w-0 truncate border-b bg-transparent outline-none transition-colors placeholder:text-(--face-ink2)',
+            invalid
+              ? 'border-(--face-bad)'
+              : 'border-(--face-rule) focus:border-(--face-ink2)',
             label && 'mt-1',
             ink
           )}
         />
         {invalid && (
-          <span className={`mt-1 block ${META_TYPE} text-[#FF8A8A]`}>{t('Required')}</span>
+          <span className={`mt-1 block ${META_TYPE} text-(--face-bad)`}>{t('Required')}</span>
         )}
       </label>
     )
@@ -127,17 +112,18 @@ export default function Value({
 
   const line = (
     <span className={cx('relative flex min-w-0 items-center gap-1.5', label && 'mt-1')}>
-      <span className={cx('block truncate', ink)} data-testid={testid}>
-        {display}
-      </span>
-      {flag}
-      {copied && <CopiedMark zone={zone} />}
+      <Copied copied={copied} ink="text-(--face-ink)">
+        <span className={cx('block truncate', ink)} data-testid={testid}>
+          {display}
+        </span>
+        {flag}
+      </Copied>
     </span>
   )
 
   if (!copyValue)
     return (
-      <div className={cx('min-w-0 px-1.5 py-1 opacity-50', className)}>
+      <div className={cx('min-w-0 px-1.5 py-1 text-(--face-ink2)', className)}>
         {caption}
         {line}
       </div>
@@ -148,18 +134,11 @@ export default function Value({
       type="button"
       onClick={() => copy(copyValue)}
       title={t('Copy')}
-      className={cx(
-        'group relative min-w-0 cursor-pointer rounded-sm px-1.5 py-1 text-left transition-colors hover:bg-white/10',
-        className
-      )}
+      className={cx(PRESS, 'min-w-0 px-1.5 py-1', className)}
     >
       {caption}
       {line}
-      {/* The only hint that the face is clickable — the values themselves stay
-          plain, so the card keeps looking like a card. */}
-      <span className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-60">
-        <CopyGlyph size={12} />
-      </span>
+      <CopyHint center={!label} />
     </button>
   )
 }

@@ -103,6 +103,7 @@
   "Passphrase": "Lösenfras",
   "Comment": "Kommentar",
   "Sealed · click to reveal": "Förseglad · klicka för att visa",
+  "Sealed · tap to reveal": "Förseglad · tryck för att visa",
   "{{size}} bytes": "{{size}} byte",
   "Secret key": "Hemlig nyckel",
   "Copy key": "Kopiera nyckeln",

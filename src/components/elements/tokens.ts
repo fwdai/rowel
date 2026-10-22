@@ -37,8 +37,14 @@ export const ROW_HAIRLINE =
 // A gutter cut through a card between two bands of rows: the pane's own ground
 // showing through, so the bands read apart without a heading over each (the
 // identity editor's holder / document / extras, every kind's fixed rows / the
-// user's own). Nothing to cut when it would be the card's first child.
-export const BAND_GUTTER = 'h-2 bg-app first:hidden'
+// user's own). Nothing to cut when it would be the card's first child. The
+// phone's screens are painted on `screen`, not `app`, so the cut shows that.
+export const BAND_GUTTER = 'h-2 bg-app first:hidden max-md:bg-screen'
+
+// A 28px control raised to the 44px target where a finger is one of the
+// pointers: a sealed block's eye and copy, a previous password's. The field
+// rail does the same through `STACK_RAIL`; this is for a control outside one.
+export const TOUCH_TARGET = 'any-pointer-coarse:h-11 any-pointer-coarse:w-11'
 
 // A 460px face (a credit card, an ID document) with its note panel: stacked,
 // and side by side once the *pane* is wide enough for both — 460 plus a note

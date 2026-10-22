@@ -50,7 +50,8 @@ export default function Fields() {
       <div className={aside ? FACE_ASIDE : undefined}>
         <Face />
         {aside && (
-          <Panel>
+          // Its own container, so its rows fold beside the face (see the card).
+          <Panel className="@container">
             <NoteField label="Note" />
             <CustomFieldsField />
           </Panel>

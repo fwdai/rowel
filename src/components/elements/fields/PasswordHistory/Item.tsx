@@ -7,11 +7,8 @@ import { EyeGlyph, EyeOffGlyph } from '../../../Main/icons'
 import CopyButton from '../../CopyButton'
 import IconButton from '../../IconButton'
 import Mask from '../../Mask'
-import { META, ROW_COPY, ROW_HAIRLINE, VALUE } from '../../tokens'
+import { META, ROW_COPY, ROW_HAIRLINE, TOUCH_TARGET, VALUE } from '../../tokens'
 import CopyValue from '../CopyValue'
-
-// A finger's target where a finger is one of the pointers, as the field rail's.
-const TOUCH = 'any-pointer-coarse:h-11 any-pointer-coarse:w-11'
 
 // One previous password: masked until its eye is pressed, copyable either way
 // (the value itself is the copy affordance, as on every read row — and on the
@@ -38,7 +35,7 @@ export default function Item({ item, index }: { item: PasswordHistoryItem; index
       <IconButton
         title={show ? t('Hide') : t('Reveal')}
         active={show}
-        className={TOUCH}
+        className={TOUCH_TARGET}
         testid={`password-history-reveal-${index}`}
         onClick={() => setShow(!show)}
       >
@@ -48,7 +45,7 @@ export default function Item({ item, index }: { item: PasswordHistoryItem; index
         <CopyButton
           value={item.password}
           title={t('Copy')}
-          className={TOUCH}
+          className={TOUCH_TARGET}
           testid={`password-history-copy-${index}`}
         />
       </span>

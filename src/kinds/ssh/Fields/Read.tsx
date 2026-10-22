@@ -34,14 +34,20 @@ export default function Read() {
 
   return (
     <div className="grid gap-3">
-      {/* The plate keeps its column at every width — never stacked over the
-          rows. 250px on the full sheet, as the prototype has it; on a narrower
-          pane it gives way to the rows down to the 160px the randomart needs
-          (see `Face`, which tightens itself to fit). The two columns stretch to
-          one height: the taller sets it, the plate spreads out to match, and
-          on the other side the sealed block grows to fill. */}
+      {/* The plate keeps its column at every pane width — 250px on the full
+          sheet, as the prototype has it; on a narrower pane it gives way to
+          the rows down to the 160px the randomart needs (see `Face`, which
+          tightens itself to fit). The two columns stretch to one height: the
+          taller sets it, the plate spreads out to match, and on the other side
+          the sealed block grows to fill. The phone is the one place the two
+          stack: beside 44px rails a 160px plate left the rows a sliver and
+          stretched itself to the sealed block's height, so there the plate is
+          the screen's first card, like every other kind's face. */}
       <div
-        className={cx('grid gap-3', plate && 'grid-cols-[clamp(160px,30%,250px)_minmax(0,1fr)]')}
+        className={cx(
+          'grid gap-3',
+          plate && 'md:grid-cols-[clamp(160px,30%,250px)_minmax(0,1fr)]'
+        )}
       >
         {plate && <Face />}
         <div className="flex flex-col gap-3">

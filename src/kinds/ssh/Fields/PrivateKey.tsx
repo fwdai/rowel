@@ -61,7 +61,9 @@ export default function PrivateKey() {
             grow(event.currentTarget)
             set(event.target.value)
           }}
-          className="block min-h-6 w-full resize-none overflow-hidden border-b border-line2 bg-transparent font-mono text-base leading-relaxed text-text outline-none transition-colors placeholder:text-text2 focus:border-accent-line"
+          // Three lines deep before anything is pasted: a block's editor
+          // reads as a block, never as a one-line field for a PEM file.
+          className="block min-h-[72px] w-full resize-none overflow-hidden border-b border-line2 bg-transparent font-mono text-base leading-relaxed text-text outline-none transition-colors placeholder:text-text2 focus:border-accent-line"
         />
       )}
     </FieldRow>

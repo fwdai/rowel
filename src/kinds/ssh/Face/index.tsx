@@ -1,9 +1,7 @@
-import { useTranslation } from 'react-i18next'
-import { useCopied } from '@/hooks/useCopied'
 import Paper from '@/components/elements/Face'
+import Cell from '@/components/elements/Face/Cell'
+import FaceHeader from '@/components/elements/Face/Header'
 import { useField } from '@/components/elements/fields'
-import { LABEL_TYPE } from '@/components/elements/tokens'
-import { CheckGlyph, CopyGlyph } from '@/components/Main/icons'
 import { randomart } from '@/utils/randomart'
 import { keyLabel, parsePublicKey } from '../keyInfo'
 
@@ -16,8 +14,6 @@ import { keyLabel, parsePublicKey } from '../keyInfo'
  * the fingerprint is never typed, so the editor keeps its plain row.
  */
 export default function Face() {
-  const { t } = useTranslation()
-  const { copied, copy } = useCopied()
   const fingerprint = useField('fingerprint').value.trim()
   const info = parsePublicKey(useField('publicKey').value)
 
@@ -35,25 +31,18 @@ export default function Face() {
     // below 200px the plate draws in — tighter padding, the art a tier down — so
     // the 19-column picture still fits at the 160px floor its column can shrink
     // to (see `Read`). A flex column, because the grid stretches it to the rows'
-    // height: the label stays at the head and the digest at the foot, and the
+    // height: the head stays at the top and the digest at the foot, and the
     // art takes the middle, whatever is left of it.
     <Paper
       tone="slate"
       data-testid="ssh-face"
       className="@container flex flex-col p-5 @max-[200px]:p-4"
     >
-      {/* Wraps rather than clips: on a narrow plate the chip drops under the label. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={`flex-1 ${LABEL_TYPE} text-(--face-ink2)`}>{t('Fingerprint')}</span>
-        {chip && (
-          <span className="rounded-xs border border-(--face-rule) px-1.5 py-0.5 font-mono text-2xs tracking-label text-(--face-ink2)">
-            {chip}
-          </span>
-        )}
-      </div>
+      <FaceHeader label="Fingerprint" chip={chip || undefined} />
 
-      {/* The middle: the art centred in whatever height the rows leave it. */}
-      <div className="flex flex-1 items-center py-4">
+      {/* The middle: the art centred in whatever height the rows leave it —
+          and, on the phone's full-width plate, across it too, as a picture. */}
+      <div className="flex flex-1 items-center py-4 max-md:justify-center">
         {art && (
           <div
             aria-hidden
@@ -66,30 +55,17 @@ export default function Face() {
         )}
       </div>
 
-      {hash && (
-        <div className="text-2xs uppercase tracking-label text-(--face-ink2)">{hash}</div>
-      )}
-      <button
-        type="button"
-        onClick={() => copy(fingerprint)}
-        title={t('Copy')}
-        aria-label={`${t('Fingerprint')} · ${t('Copy')}`}
-        className="group relative -mx-1.5 mt-1 flex cursor-pointer items-start gap-2 rounded-sm px-1.5 py-0.5 text-left transition-colors hover:bg-(--face-hover)"
-      >
-        <span
-          className="min-w-0 flex-1 break-all font-mono text-xs leading-[1.5]"
-          data-testid="entry-value-fingerprint"
-        >
-          {digest}
-        </span>
-        <span className="flex-none pt-px text-(--face-ink2)">
-          {copied ? (
-            <CheckGlyph size={12} />
-          ) : (
-            <CopyGlyph size={12} className="opacity-0 transition-opacity group-hover:opacity-100" />
-          )}
-        </span>
-      </button>
+      {/* The digest is a cell like any printed on a face: the hash as its
+          caption, a press to copy, the mark in the plate's ink. */}
+      <Cell
+        name="fingerprint"
+        label="Fingerprint"
+        caption={hash}
+        value={fingerprint}
+        display={digest}
+        ink="font-mono text-xs leading-[1.5]"
+        wrap
+      />
     </Paper>
   )
 }

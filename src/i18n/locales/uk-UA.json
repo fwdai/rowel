@@ -103,6 +103,7 @@
   "Passphrase": "Кодова фраза",
   "Comment": "Коментар",
   "Sealed · click to reveal": "Під замком · натисніть, щоб показати",
+  "Sealed · tap to reveal": "Під замком · торкніться, щоб показати",
   "{{size}} bytes": "{{size}} байт",
   "Secret key": "Секретний ключ",
   "Copy key": "Копіювати ключ",

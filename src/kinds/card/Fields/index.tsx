@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { cardBrandOf, cardDigits, groupCardNumber, hasBrandMark } from '@/utils/cardBrand'
 import CardBrandMark from '@/components/elements/CardBrandMark'
+import Face from '@/components/elements/Face'
+import { CAPTION } from '@/components/elements/Face/Cell'
+import Eye from '@/components/elements/Face/Eye'
 import Panel from '@/components/elements/Panel'
 import { FACE_ASIDE } from '@/components/elements/tokens'
 import {
@@ -11,7 +14,6 @@ import {
   useFields
 } from '@/components/elements/fields'
 import { useTranslation } from 'react-i18next'
-import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import { CARD_MASK } from '../meta'
 import { formatExpiry, isExpired, splitExpiry } from '../expiry'
 import Value from './Value'
@@ -52,19 +54,21 @@ export default function Fields() {
 
   return (
     <div className={aside ? FACE_ASIDE : undefined}>
-      {/* Card art: an always-dark plastic-card visual, deliberately off-system.
-          Its gradient, hex inks, 16/4px radii, unleaded type sizes and the
-          number's wide letter-spacing imitate a real card, so they are exempt
-          from the type/radius/tracking scales. */}
+      {/* The vault's shared face (see elements/Face) in its plastic tone: black
+          plastic on both palettes, every ink and rule on it the tone's own. The
+          number's wide tracking and the bullet masks imitate a real card, so
+          those alone stay the card's. */}
       {/* A real card's proportions — ISO 7810 ID-1, 85.60 × 53.98 mm — from the
           width, whatever the width is: 460px on the desktop, the screen's
           gutters on a phone. A fixed height gave a squat 1.24:1 slab wherever
           the width was squeezed. The height is a floor, not a cap: with more
           rows than the face has room for, it grows rather than clipping. */}
-      <div className="relative flex aspect-[1.586] w-[460px] max-w-full flex-col overflow-hidden rounded-[16px] border border-line2 bg-[linear-gradient(150deg,#2A2D33,#14161A_62%)] p-6 text-[#EDEEF0] tabular-nums shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
-        <div className="absolute -right-10 -top-16 h-[240px] w-[240px] rounded-full bg-[radial-gradient(circle,rgba(255,255,255,.07),transparent_70%)]" />
-
-        <div className="relative flex items-start justify-between gap-4">
+      <Face
+        tone="plastic"
+        data-testid="card-face"
+        className="flex aspect-[1.586] w-[460px] max-w-full flex-col p-5"
+      >
+        <div className="flex items-start justify-between gap-4">
           <Value
             name="name"
             display={name.value || t('Card')}
@@ -74,14 +78,13 @@ export default function Fields() {
             testid="entry-value-name"
             placeholder="Cardholder"
             maxLength={40}
-            ink="text-base uppercase tracking-label opacity-90"
-            zone="top"
+            ink="text-base uppercase tracking-label"
             className="-mx-1.5 flex-1"
           />
           {hasBrandMark(brand) ? (
             <CardBrandMark brand={brand} size={22} tone="light" />
           ) : (
-            <div className="h-7 w-[40px] flex-none rounded-xs border border-white/15 bg-white/10" />
+            <div className="h-7 w-[40px] flex-none rounded-xs border border-(--face-rule) bg-(--face-hover)" />
           )}
         </div>
 
@@ -105,9 +108,9 @@ export default function Fields() {
           placeholder={CARD_MASK}
           required
           maxLength={23}
-          // A shrunk card cannot hold 19 glyphs at 24px; below 768px it steps
-          // down a tier so the number still fits its plastic.
-          ink="text-[19px] tracking-[0.14em] md:text-[24px]"
+          // The headline-secret tier every face's number takes (a document's,
+          // a revealed password's): 20px, tracked for reading aloud.
+          ink="text-xl tracking-secret"
           className="-mx-1.5 self-stretch"
         />
 
@@ -115,7 +118,7 @@ export default function Fields() {
             held open while editing too, so the row is the same in both modes.
             The slot is 28 + the 6px the -mx pulls in, so the eye sits on the
             card's padding edge like the brand mark above it. */}
-        <div className="relative -mx-1.5 mt-5 grid grid-cols-[repeat(3,minmax(0,1fr))_34px] items-end gap-3.5">
+        <div className="-mx-1.5 mt-5 grid grid-cols-[repeat(3,minmax(0,1fr))_34px] items-end gap-3.5">
           <Value
             name="expiry"
             label="Expires"
@@ -133,9 +136,7 @@ export default function Fields() {
             ink="text-base"
             flag={
               expired && (
-                <span className="flex-none text-2xs uppercase tracking-label text-[#FF8A8A]">
-                  {t('Expired')}
-                </span>
+                <span className={`flex-none ${CAPTION} text-(--face-bad)`}>{t('Expired')}</span>
               )
             }
           />
@@ -166,22 +167,23 @@ export default function Fields() {
             maxLength={6}
             ink="text-base"
           />
+          {/* The face's one control, where the card's masks are. */}
           {!editing && (
-            <button
-              type="button"
-              onClick={() => setShow(!show)}
-              title={show ? t('Hide') : t('Reveal')}
-              data-testid="card-reveal-button"
-              className="mr-1.5 grid h-7 w-7 cursor-pointer place-items-center justify-self-end rounded-sm text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              {show ? <EyeOffGlyph /> : <EyeGlyph />}
-            </button>
+            <Eye
+              shown={show}
+              onToggle={() => setShow(!show)}
+              testid="card-reveal-button"
+              className="mr-1.5 justify-self-end"
+            />
           )}
         </div>
-      </div>
+      </Face>
 
       {aside && (
-        <Panel>
+        // Its own container: beside a 460px face the column is under the
+        // 420px the label column needs, so its rows fold label-over-value
+        // (see fields/Row) rather than squeezing a sentence into a sliver.
+        <Panel className="@container">
           <NoteField label="Note" />
           <CustomFieldsField />
         </Panel>

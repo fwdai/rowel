@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import Eye from '@/components/elements/Face/Eye'
 import { LABEL_TYPE } from '@/components/elements/tokens'
 import { countryName } from '@/utils/countries'
 import { daysUntil, relativeFuture } from '@/utils/time'
@@ -6,7 +7,6 @@ import { DOC_TYPE_LABELS, type DocType } from '../templates'
 import DocCell, { type Doc } from './DocCell'
 import Frame from './Frame'
 import Portrait from './Portrait'
-import Reveal from './Reveal'
 import { mrz } from './mrz'
 
 interface Props {
@@ -194,7 +194,7 @@ export default function Document({ docType, doc }: Props) {
             className="min-w-0 flex-1"
           />
           <Status iso={doc.value('expiry_date')} />
-          <Reveal shown={doc.shown} onToggle={doc.toggle} className="mb-0.5" />
+          <Eye shown={doc.shown} onToggle={doc.toggle} testid="reveal-number" className="mb-0.5" />
         </div>
       </div>
 
