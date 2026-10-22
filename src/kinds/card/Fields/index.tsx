@@ -1,8 +1,9 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { cardBrandOf, cardDigits, groupCardNumber, hasBrandMark } from '@/utils/cardBrand'
 import CardBrandMark from '@/components/elements/CardBrandMark'
 import Face from '@/components/elements/Face'
-import { CAPTION } from '@/components/elements/Face/Cell'
+import Cell, { CAPTION } from '@/components/elements/Face/Cell'
 import Eye from '@/components/elements/Face/Eye'
 import Panel from '@/components/elements/Panel'
 import { FACE_ASIDE } from '@/components/elements/tokens'
@@ -13,20 +14,19 @@ import {
   useField,
   useFields
 } from '@/components/elements/fields'
-import { useTranslation } from 'react-i18next'
 import { CARD_MASK } from '../meta'
 import { formatExpiry, isExpired, splitExpiry } from '../expiry'
-import Value from './Value'
 
 // The card, with what the plastic has no room for — the note and the user's
-// own rows — on a panel beside it.
+// own rows — on a panel beside it. In both modes: the face IS the form, each
+// printed value an input in the same place (see `Face/Cell`).
 export default function Fields() {
   const { t } = useTranslation()
   const { entry, set, attempted } = useFields()
   const editing = !!set
-  const [show, setShow] = useState(false)
-  // Editing shows what is being typed; reading hides it until asked.
-  const reveal = editing || show
+  // Editing starts revealed, since typing into dots is guesswork; the same
+  // eye takes it back in either mode.
+  const [show, setShow] = useState(editing)
 
   const name = useField('name')
   const number = useField('number')
@@ -69,17 +69,15 @@ export default function Fields() {
         className="flex aspect-[1.586] w-[460px] max-w-full flex-col p-5"
       >
         <div className="flex items-start justify-between gap-4">
-          <Value
+          <Cell
             name="name"
             display={name.value || t('Card')}
-            copyValue={name.value}
             value={name.value}
             onChange={name.set}
-            testid="entry-value-name"
-            placeholder="Cardholder"
+            placeholder={t('Cardholder')}
             maxLength={40}
             ink="text-base uppercase tracking-label"
-            className="-mx-1.5 flex-1"
+            className="flex-1"
           />
           {hasBrandMark(brand) ? (
             <CardBrandMark brand={brand} size={22} tone="light" />
@@ -90,92 +88,81 @@ export default function Fields() {
 
         <div className="flex-1" />
 
-        <Value
+        <Cell
           name="number"
           display={
             number.value
-              ? reveal
+              ? show
                 ? grouped
                 : `•••• •••• •••• ${cardDigits(number.value).slice(-4)}`
               : CARD_MASK
           }
-          copyValue={number.value}
-          value={grouped}
+          value={number.value}
+          box={grouped}
           onChange={next => number.set(cardDigits(next))}
-          testid="entry-value-number"
-          // Mask, not real catalog copy — it has no translation and falls
-          // through to itself.
+          // Mask, not real catalog copy — it has no translation.
           placeholder={CARD_MASK}
           required
           maxLength={23}
+          masked={!show}
           // The headline-secret tier every face's number takes (a document's,
           // a revealed password's): 20px, tracked for reading aloud.
           ink="text-xl tracking-secret"
-          className="-mx-1.5 self-stretch"
+          className="self-stretch"
         />
 
-        {/* Three equal columns on the number's width, plus the reveal's slot —
-            held open while editing too, so the row is the same in both modes.
-            The slot is 28 + the 6px the -mx pulls in, so the eye sits on the
-            card's padding edge like the brand mark above it. */}
-        <div className="-mx-1.5 mt-5 grid grid-cols-[repeat(3,minmax(0,1fr))_34px] items-end gap-3.5">
-          <Value
+        {/* Three equal columns on the number's width, plus the eye's slot. */}
+        <div className="mt-5 grid grid-cols-[repeat(3,minmax(0,1fr))_28px] items-end gap-3.5">
+          <Cell
             name="expiry"
             label="Expires"
             display={expiry || '••/••'}
-            copyValue={expiry}
             value={expiry}
             onChange={setExpiry}
-            testid="entry-value-expires"
-            placeholder="MM/YY"
+            placeholder={t('MM/YY')}
             required
             // One box, two draft keys: "12" fills the box but not the pair,
             // and `isValid` wants both — so the box has to say so itself.
             invalid={attempted && !(month.value && year.value)}
             maxLength={5}
             ink="text-base"
+            testid="entry-value-expires"
             flag={
               expired && (
                 <span className={`flex-none ${CAPTION} text-(--face-bad)`}>{t('Expired')}</span>
               )
             }
           />
-          <Value
+          <Cell
             name="cvc"
             label="CVC"
-            display={reveal ? cvc.value : '•••'}
-            copyValue={cvc.value}
+            display={show ? cvc.value : '•••'}
             value={cvc.value}
             onChange={next => cvc.set(cardDigits(next))}
-            testid="entry-value-cvc"
-            // Mask, not real catalog copy — falls through to itself.
             placeholder="•••"
             required
             maxLength={4}
+            masked={!show}
             ink="text-base"
           />
-          <Value
+          <Cell
             name="pin"
             label="Pin"
-            display={reveal ? pin.value : '••••'}
-            copyValue={pin.value}
+            display={show ? pin.value : '••••'}
             value={pin.value}
             onChange={next => pin.set(cardDigits(next))}
-            testid="entry-value-pin"
-            // Mask, not real catalog copy — falls through to itself.
             placeholder="••••"
             maxLength={6}
+            masked={!show}
             ink="text-base"
           />
           {/* The face's one control, where the card's masks are. */}
-          {!editing && (
-            <Eye
-              shown={show}
-              onToggle={() => setShow(!show)}
-              testid="card-reveal-button"
-              className="mr-1.5 justify-self-end"
-            />
-          )}
+          <Eye
+            shown={show}
+            onToggle={() => setShow(!show)}
+            testid="card-reveal-button"
+            className="justify-self-end"
+          />
         </div>
       </Face>
 

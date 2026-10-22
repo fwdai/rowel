@@ -4,6 +4,9 @@ import type { TKey } from '@/i18n'
 import { cx } from '@/utils/cx'
 import { useCopied } from '@/hooks/useCopied'
 import Copied from '../Copied'
+import { useFields } from '../fields/context'
+import { verbatimInput } from '../inputProps'
+import { MASK_INPUT, META_TYPE } from '../tokens'
 import { PRESS } from '.'
 import CopyHint from './CopyHint'
 
@@ -14,7 +17,7 @@ import CopyHint from './CopyHint'
 export const CAPTION = 'text-2xs uppercase tracking-[0.1em]'
 
 interface Props {
-  /** The draft key — `entry-value-<name>` is the selector the e2e suite owns. */
+  /** The draft key: the input's `name`, and `entry-value-<name>` when read. */
   name: string
   /** Untranslated: the caption over the value, and what names the control. */
   label?: TKey
@@ -35,12 +38,43 @@ interface Props {
   ink?: string
   /** Wrap rather than truncate: a document number is never worth clipping. */
   wrap?: boolean
+  /** A marker beside the read value — the expiry's "Expired" pill. */
+  flag?: ReactNode
+  /** The read value's selector, when it is not `entry-value-<name>`. */
+  testid?: string
   className?: string
+
+  /**
+   * Editing. Given a writer, the cell is the input in the same place — the
+   * face IS the form. Left off, a cell on a face being edited is printed, not
+   * pressed: a derived value has nothing to type.
+   */
+  onChange?: (typed: string) => void
+  /** What the box holds while editing, when not the value: a grouped number. */
+  box?: string
+  /** Already spelled: a catalogue string, a date pattern, or a dot mask. */
+  placeholder?: string
+  maxLength?: number
+  /** The box's width in characters; without it the cell's own. */
+  size?: number
+  /** Blocks the save while empty and marks the box after the first attempt. */
+  required?: boolean
+  /** Overrides the box's own emptiness test (a half-typed MM/YY). */
+  invalid?: boolean
+  /** Typed → stored, on blur: a date back to ISO. */
+  normalize?: (typed: string) => string
+  /** The box hides its text, as the face's eye says. */
+  masked?: boolean
 }
+
+// What both faces of the value line wear: the input draws its underline, the
+// read value a transparent one, so the two are the same height to the pixel.
+const LINE = 'relative block min-w-0 border-b'
 
 // One printed value on a face: a micro-label, the value, and a copy on click —
 // the same gesture every face teaches, confirmed in place by the shared mark
 // in the face's own ink (see `Copied`), hinted at by the glyph in the corner.
+// Editing, the same slot is the input, caption and all, in the face's inks.
 export default function Cell({
   name,
   label,
@@ -49,12 +83,85 @@ export default function Cell({
   display = value,
   ink = 'text-base leading-tight',
   wrap,
-  className
+  flag,
+  testid,
+  className,
+  onChange,
+  box,
+  placeholder,
+  maxLength,
+  size,
+  required,
+  invalid,
+  normalize,
+  masked
 }: Props) {
   const { t } = useTranslation()
+  const { set, attempted } = useFields()
   const { copied, copy } = useCopied()
   const named = label ? t(label) : caption
   const head = caption ?? named
+  const cap = head && <span className={`block truncate ${CAPTION} text-(--face-ink2)`}>{head}</span>
+  const pad = '-mx-1.5 -my-0.5 min-w-0 px-1.5 py-0.5'
+
+  if (set && onChange) {
+    const bad = invalid ?? (required && attempted && !value.trim())
+    const held = box ?? value
+    return (
+      <label className={cx('block', pad, className)}>
+        {cap}
+        <input
+          name={name}
+          value={held}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          size={size}
+          aria-label={head ? undefined : named}
+          {...verbatimInput}
+          style={masked ? MASK_INPUT : undefined}
+          onChange={event => onChange(event.target.value)}
+          onBlur={normalize ? () => onChange(normalize(held)) : undefined}
+          className={cx(
+            LINE,
+            'truncate bg-transparent outline-none transition-colors placeholder:text-(--face-ink2)',
+            size ? 'w-auto' : 'w-full',
+            bad ? 'border-(--face-bad)' : 'border-(--face-rule) focus:border-(--face-ink2)',
+            ink
+          )}
+        />
+        {bad && <span className={`mt-1 block ${META_TYPE} text-(--face-bad)`}>{t('Required')}</span>}
+      </label>
+    )
+  }
+
+  const line = (
+    <span
+      className={cx(LINE, 'border-transparent', wrap ? 'break-all' : 'truncate', ink)}
+      data-testid={testid ?? `entry-value-${name}`}
+    >
+      <Copied copied={copied} ink="text-(--face-ink)">
+        {display}
+      </Copied>
+    </span>
+  )
+  const body = flag ? (
+    <span className="flex min-w-0 items-center gap-1.5">
+      {line}
+      {flag}
+    </span>
+  ) : (
+    line
+  )
+
+  // Nothing to take: a value not yet there, dimmed, or a derived one printed
+  // on a face being edited.
+  if (!value || set)
+    return (
+      <div className={cx(pad, !value && 'text-(--face-ink2)', className)}>
+        {cap}
+        {body}
+      </div>
+    )
 
   return (
     <button
@@ -62,17 +169,10 @@ export default function Cell({
       onClick={() => copy(value)}
       title={t('Copy')}
       aria-label={named ? `${named} · ${t('Copy')}` : t('Copy')}
-      className={cx(PRESS, '-mx-1.5 -my-0.5 min-w-0 px-1.5 py-0.5', className)}
+      className={cx(PRESS, pad, className)}
     >
-      {head && <span className={`block truncate ${CAPTION} text-(--face-ink2)`}>{head}</span>}
-      <span
-        className={cx('relative block min-w-0', wrap ? 'break-all' : 'truncate', ink)}
-        data-testid={`entry-value-${name}`}
-      >
-        <Copied copied={copied} ink="text-(--face-ink)">
-          {display}
-        </Copied>
-      </span>
+      {cap}
+      {body}
       <CopyHint copied={copied} />
     </button>
   )

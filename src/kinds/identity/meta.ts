@@ -53,5 +53,7 @@ export const listSubtitle = (entry: EntryMeta): string => entry.tags.join(' · '
  * row's metadata — or undefined for any other document, and for a passport whose
  * country is not a code we know.
  */
-export const passportCountry = (entry: EntryMeta): string | undefined =>
+export const passportCountry = (
+  entry: Pick<EntryMeta, 'docType' | 'docCountry'>
+): string | undefined =>
   entry.docType === 'passport' && entry.docCountry ? countryCode(entry.docCountry) : undefined

@@ -6,15 +6,7 @@ import { ExternalGlyph, GlobeGlyph } from '../../Main/icons'
 import IconButton from '../IconButton'
 import Field from './Field'
 import { useField } from './context'
-import { normalizeUrl } from './formats'
-
-const hostOf = (url: string): string => {
-  try {
-    return new URL(url).hostname
-  } catch {
-    return ''
-  }
-}
+import { hostOf, normalizeUrl } from './formats'
 
 export default function UrlField({
   name = 'website',

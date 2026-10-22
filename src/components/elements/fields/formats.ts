@@ -13,6 +13,15 @@ export const normalizeUrl = (value: string): string => {
   return `https://${url}`
 }
 
+/** The host of a URL as typed, or '' for anything that is not one yet. */
+export const hostOf = (url: string): string => {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return ''
+  }
+}
+
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /** Deliberately shallow: enough to catch a typo, never enough to reject a real address. */

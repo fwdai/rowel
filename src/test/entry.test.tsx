@@ -182,8 +182,11 @@ describe('Editing in the pane', () => {
     await waitFor(() =>
       expect(field('publicKey').value).toBe('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI')
     )
+    // The plate goes up as the key lands: the hash as its caption, the digest
+    // as its value.
+    expect(screen.getByTestId('ssh-face')).toHaveTextContent('SHA256')
     expect(screen.getByTestId('entry-value-fingerprint')).toHaveTextContent(
-      'SHA256:GeneratedFingerprint'
+      'GeneratedFingerprint'
     )
 
     await userEvent.click(screen.getByText('Save'))
