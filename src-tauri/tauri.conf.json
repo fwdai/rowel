@@ -35,6 +35,9 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "license": "GPL-3.0-only",
+    "homepage": "https://rowel.app",
+    "longDescription": "Keep every password, passkey, card, ID, SSH key, .env file and more in one\nencrypted vault on your own devices. No account, no server, no subscription.\nSync is optional and goes through your own cloud, which only ever stores\nciphertext.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -46,6 +49,13 @@
       "entitlements": "./Entitlements.plist",
       "files": {
         "embedded.provisionprofile": "./embedded.provisionprofile"
+      }
+    },
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/doc/rowel/copyright": "./linux/copyright"
+        }
       }
     },
     "iOS": {
