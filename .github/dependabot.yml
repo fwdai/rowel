@@ -43,11 +43,6 @@ updates:
           - minor
           - patch
     ignore:
-      # The Tauri crates are frozen below (swift-rs), and a npm minor bump
-      # breaks the major.minor lockstep with the frozen crate. Patch bumps stay
-      # within the same minor and are fine. Lift together with the cargo rule.
-      - dependency-name: '@tauri-apps/*'
-        update-types: ['version-update:semver-major', 'version-update:semver-minor']
       # 0.5.6 counts `export const X = Ctx.Provider` as a component, so the
       # context modules (fields/context.tsx, Settings/sectionNav.tsx) that also
       # export their hooks fail `--max-warnings 0`. Lift once the rule stops
@@ -104,13 +99,6 @@ updates:
       # Drop once a later libc or num_threads release builds for iOS again.
       - dependency-name: libc
         versions: ['0.2.190']
-      # Held while the move from the patched swift-rs fork to the stock 1.0.9
-      # crate is verified by an iOS release link (CI cannot see that link: the
-      # iOS job only runs clippy). Every current Tauri release requires
-      # swift-rs ^1.0.9, so lifting this is the next step once that link is
-      # green: bump the Tauri crates and the npm @tauri-apps packages together.
-      - dependency-name: tauri
-      - dependency-name: 'tauri-*'
 
   # Browser extension — extension/package.json + package-lock.json. A fork of
   # KeePassXC-Browser with dev-only tooling, so one monthly PR is enough.

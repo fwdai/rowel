@@ -53,12 +53,12 @@ ignore = [
   # tauri-plugin-updater's Windows-only `zip` feature, which extracts legacy
   # `.zip` update bundles: Rowel ships NSIS `-setup.exe` with v2 updater
   # artifacts, so `extract_zip` is never entered (the bytes are not a zip), and
-  # every download is minisign-verified before any extraction. The plugin is
-  # frozen with the rest of Tauri (see dependabot.yml, swift-rs); lift when the
-  # Tauri train moves and the plugin resolves zip >= 9.
-  { id = "RUSTSEC-2026-0367", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); frozen with Tauri — 2026-10-22" },
-  { id = "RUSTSEC-2026-0368", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); frozen with Tauri — 2026-10-22" },
-  { id = "RUSTSEC-2026-0369", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); frozen with Tauri — 2026-10-22" },
+  # every download is minisign-verified before any extraction. The current
+  # plugin (2.14.0) still declares `zip = "4"`; lift when a release moves it to
+  # zip >= 9.
+  { id = "RUSTSEC-2026-0367", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); plugin still on zip 4 — 2026-10-22" },
+  { id = "RUSTSEC-2026-0368", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); plugin still on zip 4 — 2026-10-22" },
+  { id = "RUSTSEC-2026-0369", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); plugin still on zip 4 — 2026-10-22" },
 ]
 
 [licenses]
