@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import CopyButton from '@/components/elements/CopyButton'
 import { CopyValue, FieldRow, useField } from '@/components/elements/fields'
-import { ROW_COPY, VALUE } from '@/components/elements/tokens'
+import { VALUE } from '@/components/elements/tokens'
 
 // Derived, never typed: the generator stamps it with the key, so the editor's
 // row is read-only, and a key pasted in by hand simply has none to show. The
@@ -13,14 +12,7 @@ export default function Fingerprint() {
   if (value === '') return null
 
   return (
-    <FieldRow
-      label="Fingerprint"
-      actions={
-        <span className={ROW_COPY}>
-          <CopyButton value={value} title={t('Copy')} />
-        </span>
-      }
-    >
+    <FieldRow label="Fingerprint">
       {() => (
         <CopyValue
           value={value}

@@ -11,6 +11,13 @@ interface Props {
    * object — the pane's green has no business on black plastic or on paper.
    */
   ink?: string
+  /**
+   * Where the check stands: on the value's first glyph. That is the relative
+   * box's own left edge for a bare value line; a box that carries the wash's
+   * padding itself (a row's `CopyValue`) says so, so the check keeps the 6px
+   * from the wash's edge a cell on a face has.
+   */
+  left?: string
   /** The value as it shows at rest. */
   children: ReactNode
 }
@@ -29,7 +36,7 @@ interface Props {
  * check has something to sit in. `contents`, so a chip row's chips are still
  * the button's flex items while they are hidden.
  */
-export default function Copied({ copied, ink = 'text-good', children }: Props) {
+export default function Copied({ copied, ink = 'text-good', left = 'left-0', children }: Props) {
   if (!copied) return <>{children}</>
 
   return (
@@ -39,7 +46,7 @@ export default function Copied({ copied, ink = 'text-good', children }: Props) {
       </span>
       <span
         data-testid="copied-mark"
-        className={cx('pointer-events-none absolute inset-y-0 left-0 flex items-center', ink)}
+        className={cx('pointer-events-none absolute inset-y-0 flex items-center', left, ink)}
       >
         <CheckGlyph className="size-[1.2em]" />
       </span>

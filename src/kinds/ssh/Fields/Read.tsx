@@ -1,5 +1,4 @@
 import { useTranslation } from 'react-i18next'
-import CopyButton from '@/components/elements/CopyButton'
 import Panel from '@/components/elements/Panel'
 import {
   CopyValue,
@@ -11,7 +10,7 @@ import {
   useFields
 } from '@/components/elements/fields'
 import { filled } from '@/components/elements/fields/formats'
-import { HOVER_ONLY, ROW_COPY, VALUE } from '@/components/elements/tokens'
+import { VALUE } from '@/components/elements/tokens'
 import { cx } from '@/utils/cx'
 import Face from '../Face'
 import { parsePublicKey } from '../keyInfo'
@@ -55,14 +54,7 @@ export default function Read() {
             <Panel>
               <Field name="publicKey" label="Public key" />
               {comment && (
-                <FieldRow
-                  label="Comment"
-                  actions={
-                    <span className={cx(HOVER_ONLY, ROW_COPY)}>
-                      <CopyButton value={comment} title={t('Copy')} />
-                    </span>
-                  }
-                >
+                <FieldRow label="Comment">
                   {() => (
                     <CopyValue
                       value={comment}

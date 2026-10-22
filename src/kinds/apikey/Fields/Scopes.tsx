@@ -1,9 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { cx } from '@/utils/cx'
-import CopyButton from '@/components/elements/CopyButton'
 import { CopyValue, Field, FieldRow, useField } from '@/components/elements/fields'
 import { CHIP } from '@/components/elements/fields/chip'
-import { HOVER_ONLY, ROW_COPY } from '@/components/elements/tokens'
 import { scopesOf } from '../keyInfo'
 
 // What the key may do. Typed as one line, however the issuer lists them; read
@@ -21,14 +18,7 @@ export default function Scopes() {
   const line = scopes.join(' ')
 
   return (
-    <FieldRow
-      label="Scopes"
-      actions={
-        <span className={cx(HOVER_ONLY, ROW_COPY)}>
-          <CopyButton value={line} title={t('Copy')} />
-        </span>
-      }
-    >
+    <FieldRow label="Scopes">
       {() => (
         <CopyValue
           value={line}

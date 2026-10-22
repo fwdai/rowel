@@ -4,15 +4,14 @@ import type { PasswordHistoryItem } from '@/api/types'
 import { useDates } from '@/hooks/useDates'
 import { cx } from '@/utils/cx'
 import { EyeGlyph, EyeOffGlyph } from '../../../Main/icons'
-import CopyButton from '../../CopyButton'
 import IconButton from '../../IconButton'
 import Mask from '../../Mask'
-import { META, ROW_COPY, ROW_HAIRLINE, TOUCH_TARGET, VALUE } from '../../tokens'
+import { META, ROW_HAIRLINE, TOUCH_TARGET, VALUE } from '../../tokens'
 import CopyValue from '../CopyValue'
 
 // One previous password: masked until its eye is pressed, copyable either way
-// (the value itself is the copy affordance, as on every read row — and on the
-// phone the only one, see `ROW_COPY`), and when it was replaced.
+// (the value is the copy control, as on every read row), and when it was
+// replaced.
 export default function Item({ item, index }: { item: PasswordHistoryItem; index: number }) {
   const { t } = useTranslation()
   const { relativeLong } = useDates()
@@ -41,14 +40,6 @@ export default function Item({ item, index }: { item: PasswordHistoryItem; index
       >
         {show ? <EyeOffGlyph /> : <EyeGlyph />}
       </IconButton>
-      <span className={ROW_COPY}>
-        <CopyButton
-          value={item.password}
-          title={t('Copy')}
-          className={TOUCH_TARGET}
-          testid={`password-history-copy-${index}`}
-        />
-      </span>
     </div>
   )
 }

@@ -3,18 +3,10 @@ import { useTranslation } from 'react-i18next'
 import type { ExtraField } from '@/api/types'
 import { cx } from '@/utils/cx'
 import { EyeGlyph, EyeOffGlyph, TrashGlyph } from '../../../Main/icons'
-import CopyButton from '../../CopyButton'
 import IconButton from '../../IconButton'
 import { verbatimInput } from '../../inputProps'
 import Mask from '../../Mask'
-import {
-  HOVER_ONLY,
-  MASK_INPUT,
-  ROW_COPY,
-  ROW_HAIRLINE,
-  ROW_LABEL,
-  VALUE_LINE
-} from '../../tokens'
+import { MASK_INPUT, ROW_HAIRLINE, ROW_LABEL, VALUE_LINE } from '../../tokens'
 import CopyValue from '../CopyValue'
 import {
   PHONE,
@@ -67,8 +59,7 @@ const EDIT_CONTROL =
 
 // One label/value pair, in the detail row's geometry: the label takes the w-32
 // label column the fixed rows use, the value the rest, the rail the controls.
-// Reading, the value is the copy control like any other's, with a copy button
-// beside it where there is a pointer to hover; editing, the label is typed
+// Reading, the value is the copy control like any other's; editing, the label is typed
 // too — it is the user's word for this field, not a translated one — in the
 // fixed labels' face and ink, so the row still reads as a row. On the phone,
 // where the label is the caption over the value, it has no underline at all,
@@ -82,7 +73,7 @@ const EDIT_CONTROL =
 // concealed value is typed into dots like a password.
 //
 // A concealed pair reads like a secure Field: dots until the eye is pressed,
-// its copy button always in sight. In a narrow container the row folds
+// a press on them copying the real value. In a narrow container the row folds
 // label-over-value as the fixed rows do, and on the phone it takes their grid
 // (see FieldRow for both).
 export default function CustomFieldRow({
@@ -203,12 +194,6 @@ export default function CustomFieldRow({
               {revealed ? <EyeOffGlyph /> : <EyeGlyph />}
             </IconButton>
           )}
-          {/* Quiet until the row is under the cursor or the keyboard, like
-              the fixed rows' own copy button — bar a concealed one, which
-              has a control rail already, as a secure Field does. */}
-          <span className={cx(!field.secret && HOVER_ONLY, ROW_COPY)}>
-            <CopyButton value={field.value} title={t('Copy')} />
-          </span>
         </div>
       )}
     </div>

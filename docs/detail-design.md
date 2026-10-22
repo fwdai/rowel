@@ -60,15 +60,16 @@ list is.
 
 ## Four interactions
 
-**Copy.** Pressing a value copies it, everywhere: a row's value
-(`CopyValue`), a cell on a face (`Cell`), the card's number, the API key
-strip. On a pointer device a row also shows its copy button in the rail on
-hover (a secure row keeps it in sight, since it has a rail already), and a face
-shows a small copy glyph in the cell's corner (`CopyHint`). Faces carry **no
-persistent copy button**: their one control is the eye, and the header's
-primary action copies the headline secret. Sealed blocks, whose body cannot be
-pressed to copy, carry the copy in their head. On the phone, copy buttons are
-hidden (`ROW_COPY`) and the value is the whole control.
+**Copy.** Pressing a value copies it, and the value is the only copy control
+there is: a row's value (`CopyValue`), a cell on a face (`Cell`), the card's
+number, the API key strip. Under a pointer the value takes a wash and a small
+copy glyph at its right edge (`CopyHint`), the same on a row as on a card; on
+touch there is no hover and the value is simply pressed. A rail holds only
+what means something else — the eye, the open-link, generate, the countdown —
+so there is **no copy button** on a row or a face, and the header's primary
+action copies the headline secret. The one exception is a sealed block, whose
+body is read rather than pressed: it carries the copy in its head, beside the
+eye.
 
 **Copy feedback.** One behaviour, one component (`elements/Copied`): the
 value's glyphs go invisible and a single check takes their place for 1.2s, then

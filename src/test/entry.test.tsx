@@ -301,9 +301,8 @@ describe('Show', () => {
     mockCommand('reveal_entry', () => loginEntry({ username: 'copyme' }))
     render(<Show entry={loginMeta()} />)
     await screen.findByText('copyme')
-    // One copy button per rendered row, in row order: the credentials band
-    // opens the card, so the username's is the first.
-    await userEvent.click(screen.getAllByTitle('Copy')[0])
+    // The value is the row's copy control; there is no button beside it.
+    await userEvent.click(screen.getByTestId('entry-value-username'))
     expect(calls('copy_to_clipboard')).toContainEqual(
       { value: 'copyme', clearAfterMs: expect.any(Number) }
     )

@@ -478,8 +478,11 @@ describe('Custom fields', () => {
     expect(await screen.findByTestId('entry-extra-label-0')).toHaveTextContent('Categories')
     expect(screen.getByTestId('entry-extra-value-0')).toHaveTextContent('B, BE')
     expect(screen.getByTestId('entry-extra-label-1')).toHaveTextContent('Blood type')
-    // A value is copyable, like any other row's.
-    expect(screen.getAllByTitle('Copy').length).toBeGreaterThan(0)
+    // A value is the copy control, like any other row's.
+    await userEvent.click(screen.getByTestId('entry-extra-value-0'))
+    expect(calls('copy_to_clipboard')).toContainEqual(
+      expect.objectContaining({ value: 'B, BE' })
+    )
   })
 
   it('shows nothing at all when the entry has no extra fields', async () => {
