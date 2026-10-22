@@ -2,6 +2,7 @@ import type { Entry, EntryMeta, EntryType } from '@/api/types'
 import { kindOf } from '@/kinds'
 import Body from '../../Body/Aside/Show/Edit/Body'
 import Title from '../../Body/Aside/Show/Edit/Title'
+import Eyebrow from '../../Body/Aside/Show/Eyebrow'
 import { useDraft } from '../../Body/Aside/Show/Edit/useDraft'
 import { SCREEN_SCROLLER } from '../chrome'
 import Meta from '../Detail/Meta'
@@ -41,7 +42,11 @@ export default function Editor({ entry, type, revealed }: Props) {
       <div
         className={`@container ${SCREEN_SCROLLER} px-4 pt-1 pb-[calc(env(safe-area-inset-bottom)+40px)]`}
       >
-        {/* 56px of indent under the message: the 44px tile plus the row's gap. */}
+        {/* 56px of indent under the message: the 44px tile plus the row's gap.
+            The read screen's header, input for title: the same line under it
+            where the kind has something to say (a document's type, a key's
+            environment), read off the draft as it is typed, so the header
+            keeps its height between the two faces. */}
         <Title
           draft={draft}
           kind={kind}
@@ -49,7 +54,11 @@ export default function Editor({ entry, type, revealed }: Props) {
           glyph={22}
           className="flex items-center gap-3"
           message="pl-14"
-        />
+        >
+          {kind.eyebrow && (
+            <Eyebrow entry={{ type }} revealed={draft.model} bare className="mt-0.5 truncate" />
+          )}
+        </Title>
 
         {/* The read screen's footer, so a tag is picked and drawn the same way
             in both faces. */}

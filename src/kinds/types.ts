@@ -59,7 +59,7 @@ export interface Kind {
    * phrase its own; `null` when the entry has nothing to add. Offered only
    * once the secrets are in hand, so it can name what is inside the payload.
    */
-  eyebrow?: (entry: Entry) => { text: string; testid: string } | null
+  eyebrow?: (entry: EntryDraft) => { text: string; testid: string } | null
   /**
    * A second question the add picker asks before the form opens — which
    * document an identity is. Answered once, as a value seeded into `field` on

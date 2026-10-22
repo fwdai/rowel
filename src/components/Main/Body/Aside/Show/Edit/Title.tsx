@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Kind } from '@/kinds'
 import { cx } from '@/utils/cx'
@@ -17,14 +18,17 @@ interface Props {
   className?: string
   /** The indent that lines the Required message up under the input. */
   message?: string
+  /** An eyebrow to share the input's column with, as the read header's does. */
+  children?: ReactNode
 }
 
 // What the entry is called, and what it looks like: the read header's own tile
 // — drawn from the draft, so the favicon arrives as the address is typed —
-// beside a title you can type in, at the read title's exact size. Both shells
-// draw the same pair, only bigger where there is room — so the sizes arrive as
-// classes rather than as a shell to ask about.
-export default function Title({ draft, kind, tile, glyph, className, message }: Props) {
+// beside a title you can type in, at the read title's exact size, with the
+// same eyebrow under it where the shell puts one there. Both shells draw the
+// same pair, only bigger where there is room — so the sizes arrive as classes
+// rather than as a shell to ask about.
+export default function Title({ draft, kind, tile, glyph, className, message, children }: Props) {
   const { t } = useTranslation()
   const title = typeof draft.model.title === 'string' ? draft.model.title : ''
 
@@ -32,16 +36,19 @@ export default function Title({ draft, kind, tile, glyph, className, message }: 
     <>
       <div className={className}>
         <Tile look={lookOf(draft.model)} tile={tile} glyph={glyph} />
-        <input
-          name="title"
-          value={title}
-          maxLength={40}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder={t(kind.untitledLabel)}
-          onChange={event => draft.set('title', event.target.value)}
-          className={`min-w-0 flex-1 truncate border-line2 bg-transparent outline-none transition-colors placeholder:text-text2 focus:border-accent-line ${TITLE}`}
-        />
+        <div className="min-w-0 flex-1">
+          <input
+            name="title"
+            value={title}
+            maxLength={40}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={t(kind.untitledLabel)}
+            onChange={event => draft.set('title', event.target.value)}
+            className={`block w-full truncate border-line2 bg-transparent outline-none transition-colors placeholder:text-text2 focus:border-accent-line ${TITLE}`}
+          />
+          {children}
+        </div>
       </div>
       {/* Every kind requires a title, so the editor owns this one message. */}
       {draft.attempted && !title.trim() && (

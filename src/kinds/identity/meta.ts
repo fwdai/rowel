@@ -37,9 +37,9 @@ export const primarySecret = (entry: Entry): string =>
 // The document type is in the encrypted payload, so it can only be named once
 // the entry is revealed — and then it belongs in the eyebrow, next to the kind,
 // rather than on a line of its own above the rows.
-export const eyebrow = (entry: Entry) =>
+export const eyebrow = (entry: EntryDraft) =>
   entry.type === 'identity'
-    ? { text: t(DOC_TYPE_LABELS[docTypeOf({ ...entry })]), testid: 'entry-value-doc_type' }
+    ? { text: t(DOC_TYPE_LABELS[docTypeOf(entry)]), testid: 'entry-value-doc_type' }
     : null
 
 // The document number is a secret, and a passport's type and country already

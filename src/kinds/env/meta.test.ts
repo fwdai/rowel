@@ -52,15 +52,15 @@ describe('env listSubtitle', () => {
 
 describe('env eyebrow', () => {
   it('names the file once the entry is revealed', () => {
-    expect(eyebrow(entry('.env.production'))).toEqual({
+    expect(eyebrow({ ...entry('.env.production') })).toEqual({
       text: '.env.production',
       testid: 'entry-value-fileName'
     })
-    expect(eyebrow(entry('  .env  '))).toEqual({ text: '.env', testid: 'entry-value-fileName' })
+    expect(eyebrow({ ...entry('  .env  ') })).toEqual({ text: '.env', testid: 'entry-value-fileName' })
   })
 
   it('adds nothing for a file without a name', () => {
-    expect(eyebrow(entry(''))).toBeNull()
-    expect(eyebrow(entry('   '))).toBeNull()
+    expect(eyebrow({ ...entry('') })).toBeNull()
+    expect(eyebrow({ ...entry('   ') })).toBeNull()
   })
 })

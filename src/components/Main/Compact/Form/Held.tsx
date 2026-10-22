@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { EntryMeta, EntryType } from '@/api/types'
 import { setNoEntry } from '@/store'
 import NavBar from '../NavBar'
+import NavButton from '../NavButton'
 import { useHeading } from './useHeading'
 
 interface Props {
@@ -35,14 +36,9 @@ export default function Held({ entry, type, children }: Props) {
       <NavBar
         title={heading}
         leading={
-          <button
-            type="button"
-            data-testid="cancel-entry-button"
-            onClick={setNoEntry}
-            className="flex h-14 min-w-11 cursor-pointer items-center px-2 text-md text-accent"
-          >
+          <NavButton testid="cancel-entry-button" onClick={setNoEntry}>
             {t('Cancel')}
-          </button>
+          </NavButton>
         }
       />
       <div className="flex min-h-0 flex-1 flex-col px-4">{children}</div>

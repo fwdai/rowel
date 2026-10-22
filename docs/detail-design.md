@@ -128,3 +128,15 @@ are typed), and the same surfaces:
 A kind composes its editor from the same parts in the same order as its read
 view, so there is one `Fields` per kind and no `Read` beside it. Reading, an
 empty panel is left out; editing, every panel is there to be filled.
+
+## The phone
+
+Nothing on the phone is a second implementation of the above. The compact
+shell (`Main/Compact`) chooses where the shared parts go — a nav row over one
+scroller, the primary action at the bottom edge, the footer's facts as
+sections — and the parts themselves adapt by CSS: rows fold by container
+query, faces take the screen's width, touch targets grow through
+`any-pointer-coarse`. The read screen and the form screen draw the same
+header (tile, title, the kind's own eyebrow under it) from the entry or the
+draft, so stepping into edit changes the nav row and nothing else. The nav
+row's worded controls are one `Compact/NavButton`.

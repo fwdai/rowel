@@ -25,8 +25,9 @@ export const primarySecret = (entry: Entry): string =>
 // only be named once the entry is revealed, and then it belongs next to the
 // kind, the way an identity's document type does: `ENV FILE · .env.production`.
 // (`fileName` is optional on the wire — a peer's entry may not carry the key.)
-export const eyebrow = (entry: Entry) => {
-  const name = entry.type === 'env' ? (entry.fileName ?? '').trim() : ''
+export const eyebrow = (entry: EntryDraft) => {
+  const raw = entry.type === 'env' ? entry.fileName : ''
+  const name = typeof raw === 'string' ? raw.trim() : ''
   return name ? { text: name, testid: 'entry-value-fileName' } : null
 }
 
