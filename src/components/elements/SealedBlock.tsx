@@ -123,7 +123,10 @@ export default function SealedBlock({
             grow(event.currentTarget)
             onChange(event.target.value)
           }}
-          className={cx('block w-full flex-1 resize-none overflow-hidden outline-none placeholder:text-text2', body)}
+          // Not a flex item that grows: a textarea's minimum as one is its
+          // `rows`, and the panel would hold it to four lines however much
+          // was typed. `grow` sets its height, and the panel follows.
+          className={cx('block w-full resize-none overflow-hidden outline-none placeholder:text-text2', body)}
         />
       ) : (
         <div className={cx('relative flex-1', body)} data-testid={`entry-value-${name}`}>

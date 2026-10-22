@@ -55,7 +55,12 @@ interface Props {
   /** Already spelled: a catalogue string, a date pattern, or a dot mask. */
   placeholder?: string
   maxLength?: number
-  /** The box's width in characters; without it the cell's own. */
+  /**
+   * The cell's width in characters, in both modes — the box's width while
+   * editing, and the least the printed value takes while reading, so the
+   * cells flow the same way on the face whichever mode it is in. Without it
+   * the cell is as wide as its line.
+   */
   size?: number
   /** Blocks the save while empty and marks the box after the first attempt. */
   required?: boolean
@@ -103,6 +108,8 @@ export default function Cell({
   const head = caption ?? named
   const cap = head && <span className={`block truncate ${CAPTION} text-(--face-ink2)`}>{head}</span>
   const pad = '-mx-1.5 -my-0.5 min-w-0 px-1.5 py-0.5'
+  // One measure for both faces of the line, in the line's own type.
+  const width = size ? `${size}ch` : undefined
 
   if (set && onChange) {
     const bad = invalid ?? (required && attempted && !value.trim())
@@ -115,16 +122,15 @@ export default function Cell({
           value={held}
           placeholder={placeholder}
           maxLength={maxLength}
-          size={size}
           aria-label={head ? undefined : named}
           {...verbatimInput}
-          style={masked ? MASK_INPUT : undefined}
+          style={{ ...(masked ? MASK_INPUT : {}), width }}
           onChange={event => onChange(event.target.value)}
           onBlur={normalize ? () => onChange(normalize(held)) : undefined}
           className={cx(
             LINE,
             'truncate bg-transparent outline-none transition-colors placeholder:text-(--face-ink2)',
-            size ? 'w-auto' : 'w-full',
+            !size && 'w-full',
             bad ? 'border-(--face-bad)' : 'border-(--face-rule) focus:border-(--face-ink2)',
             ink
           )}
@@ -137,6 +143,7 @@ export default function Cell({
   const line = (
     <span
       className={cx(LINE, 'border-transparent', wrap ? 'break-all' : 'truncate', ink)}
+      style={{ minWidth: width }}
       data-testid={testid ?? `entry-value-${name}`}
     >
       <Copied copied={copied} ink="text-(--face-ink)">

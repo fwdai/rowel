@@ -101,3 +101,30 @@ face's `Eye`, so a face's layout does not move. The seal's plate says
 "tap" where a finger is one of the pointers and "click" otherwise. Themes are
 the tones' business: `paper` and `plastic` are fixed, `slate` and every panel
 follow `data-theme`.
+
+## Editing
+
+The editor is the read view with inputs in the values' places. Switching
+between the two moves nothing: the same shell (`Show/Edit`, a ring inside the
+pane rather than a border around it), the same title line (the read `h1` and
+the editor's input share `TITLE` and an underline the read one draws
+transparent), the same tile (`Show/Identity`'s `Tile`, reading a `Look` off
+the draft so the favicon, brand mark or passport cover is there as the fields
+are typed), and the same surfaces:
+
+- **Rows** swap `CopyValue` for the input under the same label, as
+  `fields/Field` always has. The one-time code proves its secret with the
+  read row's countdown ring in the rail, not a line under the box.
+- **Faces** are the form. `Face/Cell` takes a writer (`onChange`) and is then
+  the input in its place, caption and all, in the face's inks; a derived
+  value (the SSH plate, an API key's host) stays printed. A cell's `size` is
+  its width in characters in both modes, so the cells flow the same way
+  whichever mode the face is in. The eye is the same control, lit while the
+  editor starts revealed.
+- **Sealed blocks** take a writer and become a page to type on under the same
+  head, the eye hiding the typing, the copy standing down; the generator
+  sits in the head of the SSH key's block.
+
+A kind composes its editor from the same parts in the same order as its read
+view, so there is one `Fields` per kind and no `Read` beside it. Reading, an
+empty panel is left out; editing, every panel is there to be filled.

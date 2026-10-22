@@ -41,8 +41,10 @@ export default function NoteField({
             className="block min-h-6 w-full resize-none overflow-hidden border-b border-line2 bg-transparent text-base leading-relaxed text-text outline-none transition-colors placeholder:text-text2 focus:border-accent-line max-md:text-md"
           />
         ) : (
+          // At least the box's one line tall, so the row's label sits where it
+          // does over the editor.
           <div
-            className="whitespace-pre-wrap break-words text-base leading-relaxed text-text2 max-md:text-md"
+            className="min-h-6 whitespace-pre-wrap break-words text-base leading-relaxed text-text2 max-md:text-md"
             data-testid={`entry-value-${name}`}
           >
             {value}
