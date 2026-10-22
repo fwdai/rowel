@@ -182,8 +182,11 @@ describe('Editing in the pane', () => {
     await waitFor(() =>
       expect(field('publicKey').value).toBe('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI')
     )
+    // The plate goes up as the key lands: the hash as its caption, the digest
+    // as its value.
+    expect(screen.getByTestId('ssh-face')).toHaveTextContent('SHA256')
     expect(screen.getByTestId('entry-value-fingerprint')).toHaveTextContent(
-      'SHA256:GeneratedFingerprint'
+      'GeneratedFingerprint'
     )
 
     await userEvent.click(screen.getByText('Save'))
@@ -301,8 +304,8 @@ describe('Show', () => {
     mockCommand('reveal_entry', () => loginEntry({ username: 'copyme' }))
     render(<Show entry={loginMeta()} />)
     await screen.findByText('copyme')
-    // One copy button per rendered row, in row order: URL, then username.
-    await userEvent.click(screen.getAllByTitle('Copy')[1])
+    // The value is the row's copy control; there is no button beside it.
+    await userEvent.click(screen.getByTestId('entry-value-username'))
     expect(calls('copy_to_clipboard')).toContainEqual(
       { value: 'copyme', clearAfterMs: expect.any(Number) }
     )

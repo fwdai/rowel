@@ -85,7 +85,7 @@ describe('Password history', () => {
     await userEvent.click(toggle)
     await userEvent.click(screen.getByTestId('password-history-reveal-0'))
     expect(screen.getByTestId('password-history-value-0')).toHaveTextContent('second-old')
-    await userEvent.click(screen.getByTestId('password-history-copy-1'))
+    await userEvent.click(screen.getByTestId('password-history-value-1'))
     expect(calls('copy_to_clipboard')).toContainEqual(
       expect.objectContaining({ value: 'first-old' })
     )
@@ -114,20 +114,16 @@ describe('Password history', () => {
     expect(first).toHaveTextContent('second-old')
     expect(screen.getByTestId('password-history-value-1')).not.toHaveTextContent('first-old')
 
-    await userEvent.click(screen.getByTestId('password-history-copy-1'))
+    // The value is the row's copy control, masked or not, like every other
+    // row's: a press on it copies the real password.
+    await userEvent.click(screen.getByTestId('password-history-value-1'))
     expect(calls('copy_to_clipboard')).toContainEqual(
       expect.objectContaining({ value: 'first-old' })
     )
-
-    // On the phone the value is the row's only copy control: a press on it
-    // copies, and the copy button sits in the phone-hidden wrapper
-    // (`ROW_COPY`; jsdom applies no stylesheet, so the wrapper is the
-    // assertion), like every other row's.
     await userEvent.click(first)
     expect(calls('copy_to_clipboard')).toContainEqual(
       expect.objectContaining({ value: 'second-old' })
     )
-    expect(screen.getByTestId('password-history-copy-0').closest('.max-md\\:hidden')).not.toBeNull()
   })
 
   // Two presses, like the editor's Cancel: the first only asks.

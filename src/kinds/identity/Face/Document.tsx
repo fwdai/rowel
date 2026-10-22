@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import Eye from '@/components/elements/Face/Eye'
 import { LABEL_TYPE } from '@/components/elements/tokens'
 import { countryName } from '@/utils/countries'
 import { daysUntil, relativeFuture } from '@/utils/time'
@@ -6,7 +7,6 @@ import { DOC_TYPE_LABELS, type DocType } from '../templates'
 import DocCell, { type Doc } from './DocCell'
 import Frame from './Frame'
 import Portrait from './Portrait'
-import Reveal from './Reveal'
 import { mrz } from './mrz'
 
 interface Props {
@@ -145,7 +145,7 @@ export default function Document({ docType, doc }: Props) {
       <div className="relative flex min-w-0 flex-1 flex-col px-5 pb-3 pt-3">
         <header className="flex flex-none items-center justify-between gap-3 text-(--face-ink2)">
           <span className={`truncate ${LABEL_TYPE}`}>
-            {t(DOC_TYPE_LABELS[docType])}
+            <span data-testid="identity-doc-type">{t(DOC_TYPE_LABELS[docType])}</span>
             {place && ` · ${place}`}
           </span>
           <DocCell
@@ -153,6 +153,7 @@ export default function Document({ docType, doc }: Props) {
             name="country"
             bare
             ink={`${LABEL_TYPE} font-medium text-(--face-ink)`}
+            size={4}
             className="flex-none"
           />
         </header>
@@ -171,13 +172,15 @@ export default function Document({ docType, doc }: Props) {
               wrap
               className="w-full"
             />
-            <DocCell doc={doc} name="nationality" />
-            <DocCell doc={doc} name="birth_date" />
-            <DocCell doc={doc} name="sex" />
-            <DocCell doc={doc} name="issue_date" />
-            <DocCell doc={doc} name="expiry_date" />
-            <DocCell doc={doc} name="authority" />
-            <DocCell doc={doc} name="personal_number" />
+            {/* Editing, a cell is as wide as its box; the sizes are about what
+                each value runs to, so the flow stays the document's. */}
+            <DocCell doc={doc} name="nationality" size={5} />
+            <DocCell doc={doc} name="birth_date" size={11} />
+            <DocCell doc={doc} name="sex" size={3} />
+            <DocCell doc={doc} name="issue_date" size={11} />
+            <DocCell doc={doc} name="expiry_date" size={11} />
+            <DocCell doc={doc} name="authority" size={16} />
+            <DocCell doc={doc} name="personal_number" size={14} />
           </div>
         </div>
 
@@ -194,7 +197,7 @@ export default function Document({ docType, doc }: Props) {
             className="min-w-0 flex-1"
           />
           <Status iso={doc.value('expiry_date')} />
-          <Reveal shown={doc.shown} onToggle={doc.toggle} className="mb-0.5" />
+          <Eye shown={doc.shown} onToggle={doc.toggle} testid="reveal-number" className="mb-0.5" />
         </div>
       </div>
 

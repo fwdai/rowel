@@ -106,8 +106,7 @@ export default function FieldRow({ label, prefix, actions, below, error, childre
   return (
     // Editing, each input draws its own underline, so the hairline between
     // rows would be a second line for the same job; the read view keeps it.
-    // `group`: the read row's copy button only shows up on hover (see Field).
-    <div className={cx('item group', ROW_PAD, !set && ROW_HAIRLINE)}>
+    <div className={cx('item', ROW_PAD, !set && ROW_HAIRLINE)}>
       <div className={`flex items-center gap-3 ${STACK} ${PHONE}`}>
         {labelled && (
           <>

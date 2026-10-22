@@ -29,8 +29,9 @@ export const url = (entry: Entry): string => (entry.type === 'apikey' ? entry.ba
 // `API KEY · PRODUCTION`: the environment beside the kind, the way an identity
 // names its document — and loud on purpose, since a production key pasted into
 // a test script is the mistake this line exists to prevent.
-export const eyebrow = (entry: Entry) => {
-  const environment = entry.type === 'apikey' ? environmentOf(entry.environment) : null
+export const eyebrow = (entry: EntryDraft) => {
+  const raw = entry.type === 'apikey' ? entry.environment : null
+  const environment = typeof raw === 'string' ? environmentOf(raw) : null
   return environment
     ? { text: t(ENVIRONMENT_LABELS[environment]), testid: 'entry-eyebrow-environment' }
     : null

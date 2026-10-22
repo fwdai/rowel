@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
-import { cx } from '@/utils/cx'
 import type { Draft } from '../../Body/Aside/Show/Edit/useDraft'
 import NavBar from '../NavBar'
+import NavButton from '../NavButton'
 
 interface Props {
   draft: Draft
@@ -26,28 +26,24 @@ export default function NavRow({ draft, title }: Props) {
       title={title}
       leading={
         // Same element for both presses: arm, then discard.
-        <button
-          type="button"
-          data-testid="cancel-entry-button"
+        <NavButton
+          testid="cancel-entry-button"
+          danger={draft.confirmDiscard}
           onClick={draft.cancel}
-          className={cx(
-            'flex h-14 min-w-11 cursor-pointer items-center px-2 text-md',
-            draft.confirmDiscard ? 'text-bad' : 'text-accent'
-          )}
         >
           {draft.confirmDiscard ? t('Discard changes?') : t('Cancel')}
-        </button>
+        </NavButton>
       }
       trailing={
-        <button
-          type="button"
-          data-testid="save-entry-button"
+        <NavButton
+          testid="save-entry-button"
+          primary
+          trailing
           disabled={draft.saving}
           onClick={draft.save}
-          className="flex h-14 min-w-11 cursor-pointer items-center justify-end px-2 text-md font-semibold text-accent disabled:cursor-default disabled:opacity-50"
         >
           {t('Save')}
-        </button>
+        </NavButton>
       }
     />
   )

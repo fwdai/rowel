@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import type { TKey } from '@/i18n'
 import { cx } from '@/utils/cx'
 import { useOtp } from '@/hooks/useOtp'
-import { META, VALUE_LINE } from '../../tokens'
+import { VALUE_LINE } from '../../tokens'
 import { useField } from '../context'
 import CopyValue from '../CopyValue'
 import Field from '../Field'
@@ -18,9 +18,8 @@ import { groupDigits, otpSecret, otpStored } from './secret'
  * Reading, the current code is the value, with how long it has left as a ring
  * in the rail; the value is the copy control, as every row's is. Editing, the
  * row is the secret's own box, like every other field's, and once the secret
- * parses the live code sits under it as the one proof that what was pasted
- * actually works. The preview is not copyable: while typing, the code is
- * evidence, not a thing to take.
+ * parses the same ring appears in the rail, ticking, as the one proof that
+ * what was pasted actually works.
  */
 export default function OtpField({
   name = 'otp',
@@ -48,15 +47,10 @@ export default function OtpField({
         // own, which the link is the only place to keep.
         normalize={typed => otpStored(typed) || typed.trim()}
         check={typed => (otpSecret(typed) ? '' : t('Not a one-time-password secret'))}
-        below={
-          code && (
-            <span className={cx(META, 'flex items-baseline gap-1.5')}>
-              <span className="font-medium text-text">{groupDigits(code)}</span>
-              <span aria-hidden>·</span>
-              <span>{t('refreshes in {{n}}s', { n: time })}</span>
-            </span>
-          )
-        }
+        // The proof that what was pasted works is the same ring the read row
+        // carries in its rail, ticking: the row keeps its height, so nothing
+        // under it moves between reading and writing.
+        actions={code ? <Countdown code={code} time={time} period={period} /> : undefined}
       />
     )
 

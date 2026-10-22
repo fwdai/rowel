@@ -196,7 +196,8 @@ describe('Env fields, reading', () => {
     renderRead()
     await userEvent.click(screen.getByTestId('env-tab-file'))
 
-    expectMasked(screen.getByTestId('entry-value-body'))
+    expect(screen.getByTestId('unseal-body')).toBeInTheDocument()
+    expect(screen.getByTestId('entry-value-body')).not.toHaveTextContent(BODY)
     expect(screen.queryByTestId('env-reveal-all')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('reveal-body'))

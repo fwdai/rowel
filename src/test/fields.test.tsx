@@ -101,7 +101,8 @@ describe('Type-aware fields', () => {
     await userEvent.type(input('number'), '4111111111111111')
 
     expect(input('number').value).toBe('4111 1111 1111 1111')
-    expect(screen.getByLabelText('visa')).toBeInTheDocument()
+    // On the card, and on the header's tile beside the title, as it is read.
+    expect(screen.getAllByLabelText('visa')).toHaveLength(2)
   })
 
   it('splits the one MM/YY box back into the month and year the vault stores', async () => {
@@ -142,7 +143,7 @@ describe('Type-aware fields', () => {
 
     // Nothing chosen: a passport, the document the defaults start from.
     expect(screen.getByTestId('identity-doc-type')).toHaveTextContent('Passport')
-    expect(screen.getByLabelText('Full name')).toBe(input('name'))
+    expect(screen.getByLabelText('Holder')).toBe(input('name'))
     expect(screen.getByLabelText('Number')).toBe(input('number'))
     expect(screen.getByLabelText('Nationality')).toBe(input('nationality'))
     expect(screen.getByLabelText('Personal no.')).toBe(input('personal_number'))
@@ -253,7 +254,10 @@ describe('Type-aware fields', () => {
     mockCommand('reveal_entry', () => loginEntry({ otp: 'JBSWY3DPEHPK3PXP' }))
     render(<Show entry={loginMeta()} editing />)
 
-    expect(await screen.findByText('123 456')).toBeInTheDocument()
+    // The proof the secret parses is the ring in the rail, as when read; the
+    // code itself is not on the editor to be taken.
+    expect(await screen.findByTestId('otp-countdown')).toBeInTheDocument()
+    expect(screen.queryByText('123 456')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Copy code')).not.toBeInTheDocument()
   })
 
@@ -263,8 +267,10 @@ describe('Type-aware fields', () => {
     render(<Show entry={loginMeta()} editing />)
 
     await waitFor(() => expect(input('otp').value).toBe('JBSWY3DPEHPK3PXP'))
-    expect(await screen.findByText('123 456')).toBeInTheDocument()
-    expect(screen.getByText('refreshes in 25s')).toBeInTheDocument()
+    expect(await screen.findByTestId('otp-countdown')).toHaveAttribute(
+      'aria-label',
+      'refreshes in 25s'
+    )
   })
 
   // The draft is seeded from the reveal, so an editor offered before the reveal
@@ -478,8 +484,11 @@ describe('Custom fields', () => {
     expect(await screen.findByTestId('entry-extra-label-0')).toHaveTextContent('Categories')
     expect(screen.getByTestId('entry-extra-value-0')).toHaveTextContent('B, BE')
     expect(screen.getByTestId('entry-extra-label-1')).toHaveTextContent('Blood type')
-    // A value is copyable, like any other row's.
-    expect(screen.getAllByTitle('Copy').length).toBeGreaterThan(0)
+    // A value is the copy control, like any other row's.
+    await userEvent.click(screen.getByTestId('entry-extra-value-0'))
+    expect(calls('copy_to_clipboard')).toContainEqual(
+      expect.objectContaining({ value: 'B, BE' })
+    )
   })
 
   it('shows nothing at all when the entry has no extra fields', async () => {
@@ -617,7 +626,10 @@ describe('Custom fields', () => {
     render(<Show entry={identityMeta()} editing />)
 
     await waitFor(() => expect(input('extra-value-0').value).toBe('O+'))
-    const panel = input('name').closest('.rounded-lg')!
+    // The document's own cells are on its face; the user's pairs share the
+    // note's panel beside it, with the row that adds one.
+    const panel = document.querySelector('textarea[name="note"]')!.closest('.rounded-lg')!
+    expect(panel).not.toContainElement(input('name'))
     expect(panel).toContainElement(input('extra-label-0'))
     expect(panel).toContainElement(screen.getByTestId('add-extra-field'))
   })
@@ -704,6 +716,8 @@ describe('Identity read view', () => {
     render(<Show entry={identityMeta()} />)
 
     expect(await screen.findByTestId('entry-value-country')).toHaveTextContent('GBR')
-    expect(screen.getByText(/Passport · United Kingdom/)).toBeInTheDocument()
+    expect(screen.getByTestId('identity-doc-type').parentElement).toHaveTextContent(
+      'Passport · United Kingdom'
+    )
   })
 })

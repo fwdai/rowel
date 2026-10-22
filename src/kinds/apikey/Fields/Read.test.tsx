@@ -55,7 +55,8 @@ describe('an API key, read', () => {
       'https://api.coupler.io/v1/'
     )
     const scopes = screen.getByTestId('entry-value-scopes')
-    expect(scopes.children).toHaveLength(2)
+    // One chip per scope; the copy hint beside them is not one.
+    expect(scopes.querySelectorAll('.font-mono')).toHaveLength(2)
     expect(scopes).toHaveTextContent('read:data')
     expect(scopes).toHaveTextContent('write:data')
   })

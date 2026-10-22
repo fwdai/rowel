@@ -3,11 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
 import type { TKey } from '@/i18n'
 import { EyeGlyph, EyeOffGlyph } from '../../Main/icons'
-import CopyButton from '../CopyButton'
 import IconButton from '../IconButton'
 import { verbatimInput } from '../inputProps'
 import Mask from '../Mask'
-import { HOVER_ONLY, MASK_INPUT, ROW_COPY, VALUE_LINE } from '../tokens'
+import { MASK_INPUT, VALUE_LINE } from '../tokens'
 import { useField } from './context'
 import CopyValue from './CopyValue'
 import { requiredError } from './formats'
@@ -42,7 +41,7 @@ export interface FieldProps {
   /**
    * Reading only: a muted gloss after the value, from the value itself — the
    * country an alpha-3 code names. Decoration, never storage: what is shown in
-   * the editor and what the copy button hands over are both untouched.
+   * the editor and what a press hands over are both untouched.
    */
   suffix?: (value: string) => string | undefined
   /** A format complaint about a non-empty value, or ''. */
@@ -50,7 +49,7 @@ export interface FieldProps {
 }
 
 // One field, both modes. Reading, it is the detail row it has always been:
-// the value, reveal toggle, copy button, hidden when empty. Editing, the same
+// the value (the copy control), the reveal toggle, hidden when empty. Editing, the same
 // row with the value swapped for an underlined borderless input. Every
 // type-aware field in this folder is a thin wrapper around it.
 export default function Field({
@@ -121,15 +120,6 @@ export default function Field({
             >
               {show ? <EyeOffGlyph /> : <EyeGlyph />}
             </IconButton>
-          )}
-          {!editing && (
-            // A row with a reveal has a control rail already; a plain one keeps
-            // its copy button quiet until the row is hovered or focused. The
-            // phone has none at all (see `ROW_COPY`): the value is the copy
-            // control.
-            <span className={cx(!secure && HOVER_ONLY, ROW_COPY)}>
-              <CopyButton value={shown} title={t('Copy')} />
-            </span>
           )}
         </>
       }

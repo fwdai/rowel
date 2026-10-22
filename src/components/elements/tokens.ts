@@ -37,8 +37,14 @@ export const ROW_HAIRLINE =
 // A gutter cut through a card between two bands of rows: the pane's own ground
 // showing through, so the bands read apart without a heading over each (the
 // identity editor's holder / document / extras, every kind's fixed rows / the
-// user's own). Nothing to cut when it would be the card's first child.
-export const BAND_GUTTER = 'h-2 bg-app first:hidden'
+// user's own). Nothing to cut when it would be the card's first child. The
+// phone's screens are painted on `screen`, not `app`, so the cut shows that.
+export const BAND_GUTTER = 'h-2 bg-app first:hidden max-md:bg-screen'
+
+// A 28px control raised to the 44px target where a finger is one of the
+// pointers: a sealed block's eye and copy, a previous password's. The field
+// rail does the same through `STACK_RAIL`; this is for a control outside one.
+export const TOUCH_TARGET = 'any-pointer-coarse:h-11 any-pointer-coarse:w-11'
 
 // A 460px face (a credit card, an ID document) with its note panel: stacked,
 // and side by side once the *pane* is wide enough for both — 460 plus a note
@@ -64,13 +70,6 @@ export const PANE_BLEED = 'md:-mt-[26px] md:-mx-[34px] md:-mb-[60px]'
 // laptop hiding the control from the finger that is also on the device.
 export const HOVER_ONLY =
   'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 any-pointer-coarse:opacity-100'
-
-// A row's copy button, which the phone does without: there the value is the
-// row's copy control (`fields/CopyValue`), its own check confirms a press, and the
-// screen's bottom button covers the main secret — as Passwords and 1Password
-// draw their rows. Every row that offers a copy button wraps it in this, so a
-// phone rail holds only what means something else: the eye, the open-link.
-export const ROW_COPY = 'max-md:hidden'
 
 // App-level transient feedback (the update prompt, the scan status): a floating
 // panel on the detail surface. Each toast places itself — two of them in the

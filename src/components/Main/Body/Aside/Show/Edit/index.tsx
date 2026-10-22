@@ -1,7 +1,7 @@
 import type { Entry, EntryType } from '@/api/types'
 import { kindOf } from '@/kinds'
 import { useTranslation } from 'react-i18next'
-import { LABEL_TYPE } from '@/components/elements/tokens'
+import { LABEL } from '@/components/elements/tokens'
 import Actions from './Actions'
 import Body from './Body'
 import Title from './Title'
@@ -30,21 +30,25 @@ export default function Edit({ type, revealed }: Props) {
     // A container, like the read view's root: the editor renders the same rows
     // through the same geometry, so it folds where they fold.
     <div className="@container mx-auto w-full max-w-sheet">
-      {/* Negative margin cancels the frame's padding, so the content sits
-          exactly where the read view puts it. */}
+      {/* Negative margin cancels the frame's padding, and the frame is an inset
+          ring rather than a border, so the content sits exactly where the read
+          view puts it — not a pixel in or down. */}
       <div
         data-testid="entry-sheet"
-        className="-m-4 rounded-xl border border-accent-line p-4"
+        className="-m-4 rounded-xl p-4 ring-1 ring-accent-line ring-inset"
       >
         {/* The eyebrow shares its line with the actions, so the title input below
-            runs the full content width and its underline ends where the rows do. */}
+            runs the full content width and its underline ends where the rows do.
+            The read eyebrow's shape — the kind, then what the kind has to say —
+            with "Editing" in the accent where the host was, so the kind's name
+            stays put and only the second segment changes. */}
         <div className="flex items-center justify-between gap-4">
           <div
-            className={`flex min-w-0 flex-1 items-center gap-2 truncate whitespace-nowrap ${LABEL_TYPE} text-accent`}
+            className={`flex min-w-0 flex-1 items-center gap-2 truncate whitespace-nowrap ${LABEL}`}
           >
-            <span>{t('Editing')}</span>
-            <span>·</span>
             <span>{t(kind.label)}</span>
+            <span>·</span>
+            <span className="text-accent">{t('Editing')}</span>
           </div>
           <Actions draft={draft} />
         </div>

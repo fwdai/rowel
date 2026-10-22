@@ -275,12 +275,11 @@ describe('compact shell', () => {
   })
 
   // The rows that draw their own geometry — a custom pair, an env variable —
-  // follow the typed rows: the value is the copy control, and every copy
-  // button on the screen is in the phone-hidden wrapper (`ROW_COPY`; jsdom
-  // applies no stylesheet, so the wrapper itself is the assertion).
+  // follow the typed rows: the value is the copy control, and the only one.
+  // Everything titled "Copy" on the screen is a value, named "<what> · Copy".
   const noCopyButtons = () => {
     for (const button of screen.getAllByTitle('Copy')) {
-      expect(button.closest('.max-md\\:hidden')).not.toBeNull()
+      expect(button).toHaveAttribute('aria-label', expect.stringMatching(/· Copy$/))
     }
   }
 

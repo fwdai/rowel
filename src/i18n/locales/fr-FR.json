@@ -103,6 +103,7 @@
   "Passphrase": "Phrase secrète",
   "Comment": "Commentaire",
   "Sealed · click to reveal": "Scellé · cliquez pour afficher",
+  "Sealed · tap to reveal": "Scellé · touchez pour afficher",
   "{{size}} bytes": "{{size}} octets",
   "Secret key": "Clé secrète",
   "Copy key": "Copier la clé",

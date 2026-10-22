@@ -103,6 +103,7 @@
   "Passphrase": "口令",
   "Comment": "注释",
   "Sealed · click to reveal": "已加密 · 点按查看",
+  "Sealed · tap to reveal": "已加密 · 轻点查看",
   "{{size}} bytes": "{{size}} 字节",
   "Secret key": "密钥",
   "Copy key": "复制密钥",

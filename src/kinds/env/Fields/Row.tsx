@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
-import CopyButton from '@/components/elements/CopyButton'
 import IconButton from '@/components/elements/IconButton'
 import {
   CopyValue,
@@ -15,7 +14,7 @@ import {
   STACK_RAIL
 } from '@/components/elements/fields'
 import Mask from '@/components/elements/Mask'
-import { HOVER_ONLY, ROW_COPY, ROW_HAIRLINE, VALUE } from '@/components/elements/tokens'
+import { ROW_HAIRLINE, VALUE } from '@/components/elements/tokens'
 import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import type { EnvVar } from '../parse'
 import { KEY_COL, STACK_VALUE } from './styles'
@@ -36,9 +35,7 @@ export default function Row({ v, revealed, onReveal }: Props) {
   const masked = !revealed
 
   return (
-    <div
-      className={cx('group flex items-center gap-3', ROW_PAD, ROW_HAIRLINE, STACK, PHONE)}
-    >
+    <div className={cx('flex items-center gap-3', ROW_PAD, ROW_HAIRLINE, STACK, PHONE)}>
       <span
         data-testid={`env-key-${v.index}`}
         className={cx(KEY_COL, 'truncate text-text2', STACK_LABEL, PHONE_LABEL)}
@@ -47,8 +44,7 @@ export default function Row({ v, revealed, onReveal }: Props) {
       </span>
       <div className={cx('min-w-0 flex-1', PHONE_VALUE)}>
         <span className="flex min-w-0 items-baseline gap-1.5">
-          {/* Masked, it hands over the real value, exactly as the button
-              beside it does. */}
+          {/* Masked, it hands over the real value, as every value does. */}
           <CopyValue
             value={v.value}
             label={`${v.key} · ${t('Copy')}`}
@@ -80,9 +76,6 @@ export default function Row({ v, revealed, onReveal }: Props) {
         >
           {revealed ? <EyeOffGlyph /> : <EyeGlyph />}
         </IconButton>
-        <span className={cx(HOVER_ONLY, ROW_COPY)}>
-          <CopyButton value={v.value} title={t('Copy')} />
-        </span>
       </div>
     </div>
   )

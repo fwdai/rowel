@@ -857,8 +857,12 @@
    * The faces (see elements/Face): the stock an object in the vault is cut
    * from. `paper` is the ID document's, and it is not overridden on the dark
    * palette — a document stays light when the app goes dark. `slate` is the SSH
-   * fingerprint plate's: this same paper on the light palette, and on the dark
-   * one (below) a slab a shade off the pane.
+   * fingerprint plate's and the API key card's: this same paper on the light
+   * palette, and on the dark one (below) a slab a shade off the pane.
+   * `plastic` is the credit card's: black plastic on both palettes, so the
+   * same card is in the wallet whatever the theme. Each set ends in `bad`,
+   * the one verdict ink a face prints (an expired card, a production key):
+   * the app's `--c-bad` is tuned for the pane and would sit wrong on plastic.
    */
   --paper-bg: linear-gradient(160deg, #fbfbfc, #eceef2 58%, #f4f5f8);
   --paper-sheen: radial-gradient(
@@ -876,6 +880,7 @@
   --paper-rule: rgba(20, 22, 26, 0.09);
   --paper-tail: rgba(20, 22, 26, 0.035);
   --paper-hover: rgba(20, 22, 26, 0.055);
+  --paper-bad: #b3261e;
   --slate-bg: var(--paper-bg);
   --slate-sheen: var(--paper-sheen);
   --slate-edge: var(--paper-edge);
@@ -885,6 +890,26 @@
   --slate-rule: var(--paper-rule);
   --slate-tail: var(--paper-tail);
   --slate-hover: var(--paper-hover);
+  --slate-bad: var(--paper-bad);
+  /* The card: a dark gradient lit from its top-right corner, light ink on
+   * it, and every rule and wash a white at low alpha. Fixed hex, so it
+   * reads the same on both palettes. */
+  --plastic-bg: linear-gradient(150deg, #2a2d33, #14161a 62%);
+  --plastic-sheen: radial-gradient(
+    circle 120px at calc(100% - 80px) 56px,
+    rgba(255, 255, 255, 0.07),
+    rgba(255, 255, 255, 0) 70%
+  );
+  --plastic-edge: rgba(255, 255, 255, 0.14);
+  --plastic-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --plastic-ink: #edeef0;
+  --plastic-ink2: rgba(237, 238, 240, 0.55);
+  --plastic-rule: rgba(255, 255, 255, 0.18);
+  --plastic-tail: rgba(255, 255, 255, 0.04);
+  --plastic-hover: rgba(255, 255, 255, 0.1);
+  --plastic-bad: #ff8a8a;
 }
 
 :root[data-theme='dark'] {
@@ -1005,6 +1030,8 @@
   --slate-rule: rgba(255, 255, 255, 0.14);
   --slate-tail: rgba(255, 255, 255, 0.04);
   --slate-hover: rgba(255, 255, 255, 0.07);
+  /* A dark slab takes the pane's own verdict ink, which is lifted for it. */
+  --slate-bad: var(--c-bad);
 }
 
 /*
