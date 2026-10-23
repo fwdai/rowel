@@ -1,14 +1,15 @@
 import { useId, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RemotePack } from '@/api/setup'
-import { cx } from '@/utils/cx'
-import AccountVaults from './AccountVaults'
-import Button from './Button'
-import Field from './Field'
-import Note from './Note'
-import { inputClass } from './formStyles'
-import { verbatimInput } from './inputProps'
+import { vaultPasswordRequiredFor } from '@/api/errors'
+import { moveRestoredLockbox } from '@/store'
+import AccountVaults from '../AccountVaults'
+import Button from '../Button'
+import Field from '../Field'
+import Note from '../Note'
+import { inputClass } from '../formStyles'
 import { unsealError } from '@/components/Start/shared/errors'
+import SecretField from './SecretField'
 
 interface Props {
   files: RemotePack[]
@@ -34,6 +35,16 @@ interface Props {
 }
 
 /**
+ * The lockbox a restore installed closed, because the password that opened it
+ * is not the vault password, and that password — the one the move proves it
+ * with.
+ */
+interface Moving {
+  workspaceId: string
+  lockboxPassword: string
+}
+
+/**
  * Name, password, Restore: the last step of every "make a workspace out of a
  * vault in an account" flow, whichever account the vault came from. The list and
  * the pick are the caller's — they outlive a wrong password — so this only
@@ -41,6 +52,11 @@ interface Props {
  *
  * The name is optional: a vault carries its own, given wherever it was made,
  * and most restores want exactly that one. Typing one renames it everywhere.
+ *
+ * A vault sealed under a password other than the vault password is restored
+ * closed (`vaultPasswordRequired`). The form then asks for the vault password
+ * as well, and Restore moves the lockbox onto it and opens it: every lockbox
+ * opens with the one password.
  *
  * Plain labelled fields, like every other form in Settings: the lock screen's
  * card is for the lock screen.
@@ -60,11 +76,22 @@ export default function AccountRestoreForm({
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [moving, setMoving] = useState<Moving | null>(null)
+  const [vaultPassword, setVaultPassword] = useState('')
+  const [vaultError, setVaultError] = useState<string | null>(null)
+  const [movingBusy, setMovingBusy] = useState(false)
+  const working = busy || movingBusy
 
-  const submit = () => {
+  const restore = () => {
     if (busy || !selectedId) return
     setError(null)
-    onRestore(name.trim(), password, selectedId).catch((err: unknown) => {
+    const typed = password
+    onRestore(name.trim(), typed, selectedId).catch((err: unknown) => {
+      const workspaceId = vaultPasswordRequiredFor(err)
+      if (workspaceId) {
+        setMoving({ workspaceId, lockboxPassword: typed })
+        return
+      }
       setError(
         unsealError(
           t,
@@ -74,6 +101,19 @@ export default function AccountRestoreForm({
       )
     })
   }
+
+  const move = () => {
+    if (!moving || working || !vaultPassword) return
+    setVaultError(null)
+    setMovingBusy(true)
+    moveRestoredLockbox(moving.workspaceId, moving.lockboxPassword, vaultPassword)
+      .catch((err: unknown) => {
+        setVaultError(unsealError(t, err, t('Incorrect Master Password')))
+      })
+      .finally(() => setMovingBusy(false))
+  }
+
+  const submit = moving ? move : restore
 
   // Not while an IME is composing: that Enter confirms the characters, and a
   // restore started on it would carry a half-typed name across devices.
@@ -96,38 +136,51 @@ export default function AccountRestoreForm({
           className={inputClass}
           data-testid={`${testid}-name`}
           value={name}
-          disabled={busy}
+          disabled={working || !!moving}
           onChange={event => setName(event.target.value)}
           onKeyDown={onEnter}
         />
       </Field>
-      <Field id={`${id}-password`} label={t('Master password')}>
-        <input
-          id={`${id}-password`}
-          type="password"
-          {...verbatimInput}
-          className={cx(inputClass, error && 'border-bad')}
-          data-testid={`${testid}-password`}
-          aria-invalid={!!error}
-          value={password}
-          disabled={busy}
-          onChange={event => {
-            setError(null)
-            setPassword(event.target.value)
-          }}
-          onKeyDown={onEnter}
-        />
-        {error && (
-          <Note tone="bad" testid="form-error">
-            {error}
+      <SecretField
+        id={`${id}-password`}
+        label={t('Master password')}
+        value={password}
+        disabled={working || !!moving}
+        error={error}
+        testid={`${testid}-password`}
+        onChange={value => {
+          setError(null)
+          setPassword(value)
+        }}
+        onKeyDown={onEnter}
+      />
+      {moving && (
+        <>
+          <Note testid={`${testid}-vault-password-why`}>
+            {t(
+              'Rowel opens every lockbox with your vault password. Enter it to move this lockbox over.'
+            )}
           </Note>
-        )}
-      </Field>
+          <SecretField
+            id={`${id}-vault-password`}
+            label={t('Vault password')}
+            value={vaultPassword}
+            disabled={working}
+            error={vaultError}
+            testid={`${testid}-vault-password`}
+            onChange={value => {
+              setVaultError(null)
+              setVaultPassword(value)
+            }}
+            onKeyDown={onEnter}
+          />
+        </>
+      )}
       <div className="flex items-center gap-3">
-        <Button testid={`${testid}-submit`} loading={busy} onClick={submit}>
-          {busy ? t('Restoring…') : t('Restore')}
+        <Button testid={`${testid}-submit`} loading={working} onClick={submit}>
+          {working ? t('Restoring…') : t('Restore')}
         </Button>
-        {!busy && onSwitchAccount && (
+        {!working && !moving && onSwitchAccount && (
           <Button variant="pale" testid={`${testid}-switch-account`} onClick={onSwitchAccount}>
             {t('Switch account')}
           </Button>

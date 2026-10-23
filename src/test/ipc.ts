@@ -145,6 +145,9 @@ const DEFAULTS: Record<string, Handler> = {
   // announced like any other. (One it does hold answers like an unlock — a
   // spec that wants that path mocks the command with a session.)
   workspace_select: () => emitEventSoon(EVENTS.vaultLocked, undefined),
+  // A lockbox that opened with a password of its own, moved onto the vault
+  // password. A spec about a wrong vault password rejects `invalidPassword`.
+  workspace_adopt_vault_password: () => undefined,
   workspace_rename: () => undefined,
   // Registry only in Rust, and the fake keeps no registry: the list a spec
   // sees is the `app_status` it mocks, so a recolour there is the spec's to set.

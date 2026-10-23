@@ -80,6 +80,23 @@ export const workspaceDelete = (
 ): Promise<void> => call('workspace_delete', { id, password, everywhere })
 
 /**
+ * Move lockbox `workspaceId` onto the vault password: the answer to a
+ * `vaultPasswordRequired` rejection from an unlock or a restore, which carries
+ * the id. `lockboxPassword` is the one that just opened it, `vaultPassword` the
+ * one that opens the primary; each is proved under its own backoff, so a wrong
+ * one rejects as `invalidPassword` (or `tooManyAttempts`). Afterwards the
+ * lockbox opens with the vault password and is sealed under the app key, so a
+ * switch to it opens it without asking — and its other devices are asked for
+ * the vault password, as after a password change.
+ */
+export const workspaceAdoptVaultPassword = (
+  workspaceId: string,
+  lockboxPassword: string,
+  vaultPassword: string
+): Promise<void> =>
+  call('workspace_adopt_vault_password', { workspaceId, lockboxPassword, vaultPassword })
+
+/**
  * Connect a `provider` account for a workspace that does not exist yet. The
  * onboarding connect with its "no vault here" precondition dropped, so it
  * answers on exactly the same events: `setup:account:pending`, then one of

@@ -88,6 +88,7 @@ export default function LockScreen({ biometric, biometry = 'touch' }: Props) {
                 biometric={biometric}
                 biometry={biometry}
                 testid="unlock-password-input"
+                placeholder={field.placeholder}
                 invalid={field.invalid}
                 success={field.success}
                 pending={field.pending}

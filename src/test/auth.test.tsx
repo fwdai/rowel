@@ -231,6 +231,60 @@ describe('Auth', () => {
     }
   })
 
+  // A lockbox that opened with a password of its own stays sealed: the card
+  // asks for the vault password next, moves the lockbox onto it, and opens it
+  // with it.
+  describe('a lockbox on a password of its own', () => {
+    const offPassword = () =>
+      mockCommandOnce('unlock', () =>
+        Promise.reject({
+          kind: 'vaultPasswordRequired',
+          message: 'this lockbox has a different password; enter the vault password to move it over',
+          workspaceId: 'w2'
+        })
+      )
+
+    it('asks for the vault password, moves the lockbox and opens it', async () => {
+      seedApp({ workspaces: [PRIMARY, WORK], activeWorkspace: 'w2' })
+      offPassword()
+      render(<Auth biometric={false} />)
+
+      await userEvent.type(screen.getByPlaceholderText('Master Password'), 'its-own{Enter}')
+
+      expect(await screen.findByTestId('unlock-status')).toHaveTextContent(
+        'Rowel opens every lockbox with your vault password. Enter it to move this lockbox over.'
+      )
+      const field = screen.getByPlaceholderText('Vault password')
+      expect(field).toHaveValue('')
+
+      await userEvent.type(field, 'the-vault{Enter}')
+
+      expect(calls('workspace_adopt_vault_password')).toEqual([
+        { workspaceId: 'w2', lockboxPassword: 'its-own', vaultPassword: 'the-vault' }
+      ])
+      await waitFor(() =>
+        expect(calls('unlock')).toEqual([{ password: 'its-own' }, { password: 'the-vault' }])
+      )
+      await waitFor(() => expect(useApp.getState().flow).toBe('main'))
+    })
+
+    it('keeps asking for the vault password after a wrong one', async () => {
+      seedApp({ workspaces: [PRIMARY, WORK], activeWorkspace: 'w2' })
+      offPassword()
+      mockCommandOnce('workspace_adopt_vault_password', () =>
+        Promise.reject({ kind: 'invalidPassword', message: 'invalid master password' })
+      )
+      render(<Auth biometric={false} />)
+
+      await userEvent.type(screen.getByPlaceholderText('Master Password'), 'its-own{Enter}')
+      await userEvent.type(await screen.findByPlaceholderText('Vault password'), 'nope{Enter}')
+
+      expect(await screen.findByText('Incorrect Master Password')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('Vault password')).toBeInTheDocument()
+      expect(calls('unlock')).toHaveLength(1)
+    })
+  })
+
   // A passphrase typed for one vault must not be the one submitted to the next.
   it('starts the next vault on an empty field', async () => {
     seedApp({ workspaces: [PRIMARY, WORK], activeWorkspace: 'default' })
