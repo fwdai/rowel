@@ -8,9 +8,6 @@ import { pickFileToRead } from './tools'
  * The dialog opens in Rust (`pickFileToRead`), like every other pick of a file
  * the backend then reads: the path is granted for that one purpose before it
  * comes back here, and the restore or import refuses a path it was not.
- *
- * The first run's restore takes a `.rowel` backup or a legacy `.swftx` vault;
- * the extension says which command the restore step calls.
  */
 export const pickBackup = (): Promise<string | null> =>
   pickFileToRead('backup', t('Rowel backup'))

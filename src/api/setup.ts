@@ -68,11 +68,9 @@ export const setupRestoreFromFile = (
 ): Promise<UnlockResult> => call('setup_restore_from_file', { path, password })
 
 /**
- * First run only: make a legacy `.swftx` vault this device's. The file is
- * opened under `password` first — a wrong one rejects `invalidPassword` with
- * nothing written — then a vault is created under that same password and the
- * entries re-sealed into it. Resolves `syncConfigured: false`, as a file
- * restore does.
+ * First run only: make a legacy `.swftx` vault this device's, under the
+ * password it was sealed with. A wrong one rejects `invalidPassword` with
+ * nothing written.
  */
 export const setupRestoreFromLegacy = (
   path: string,

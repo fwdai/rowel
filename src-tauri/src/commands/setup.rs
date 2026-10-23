@@ -336,20 +336,16 @@ pub async fn setup_restore_from_file(
 
 /// Restore from a legacy `.swftx` vault on disk. Onboarding only.
 ///
-/// A `.swftx` is not a pack but the old app's whole vault under its own
-/// password, which `commands::vault::import_swftx` can only merge into a vault
-/// that already exists. On a fresh install there is none, so this makes one:
-/// the file is opened first — a wrong password fails here with nothing
-/// written, as the pack restore does — then a vault is created under that same
-/// password, the entries are re-sealed into it, and it is adopted exactly as a
-/// restored pack is. Settings › Change password is one step away for whoever
-/// wants a different one.
+/// A `.swftx` is the old app's whole vault under its own password, which
+/// `commands::vault::import_swftx` can only merge into a vault that exists. On
+/// a fresh install this makes one: the file is opened first — a wrong password
+/// writes nothing — then a vault is created under that same password, the
+/// entries are re-sealed into it, and it is adopted as a restored pack is.
 ///
-/// All or nothing past the open: a re-seal or a write that fails takes the
-/// fresh vault with it (`discard_fresh_vault`), so a retry starts from a fresh
-/// install rather than from a half-filled vault `guard_no_vault` refuses to
-/// replace. The grant is held across a mistyped password and spent by the
-/// restore that succeeds, as for a pack.
+/// All or nothing past the open: a failed re-seal or write takes the fresh
+/// vault with it, so a retry starts from a fresh install rather than from a
+/// vault `guard_no_vault` refuses to replace. The grant is held across a
+/// mistyped password and spent by the restore that succeeds, as for a pack.
 #[tauri::command]
 pub async fn setup_restore_from_legacy(
     path: String,

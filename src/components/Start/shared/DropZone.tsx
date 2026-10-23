@@ -10,10 +10,8 @@ interface Props {
 }
 
 // A backup is a file, so the target is the file's own shape: drop it anywhere
-// on the window, or press to open the picker. Takes a `.rowel` backup or a
-// legacy `.swftx` vault, as the picker behind it does. Desktop only — the
-// screen that draws it is not offered on a phone, where nothing drags a file
-// anywhere.
+// on the window, or press to open the picker. Desktop only — the screen that
+// draws it is not offered on a phone, where nothing drags a file anywhere.
 export default function DropZone({ onPick }: Props) {
   const { t } = useTranslation()
 

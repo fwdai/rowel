@@ -259,15 +259,12 @@ pub async fn import_swftx(
 }
 
 /// Open the `.swftx` at `path` under `password`: the legacy cryptor it was
-/// sealed with, and the vault it holds. The password is checked here and
-/// nowhere else — a wrong one is [`Error::InvalidPassword`], before anything
-/// downstream is touched. The blob goes in by value: the file is freed as
-/// soon as it has been decoded, so the caller runs with the decrypted vault
-/// alone, not with the file it came out of still beside it.
+/// sealed with, and the vault it holds. A wrong password is
+/// [`Error::InvalidPassword`], before anything downstream is touched. The blob
+/// goes in by value, so the file is freed as soon as it has been decoded.
 ///
 /// Shared by the merge above and the first run's restore
-/// (`commands::setup::setup_restore_from_legacy`), which creates the vault
-/// only once this has opened the file.
+/// (`commands::setup::setup_restore_from_legacy`).
 pub(crate) fn open_legacy_backup(
     path: &str,
     password: &str,

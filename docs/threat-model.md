@@ -562,9 +562,8 @@ Bringing existing data forward is an **explicit** action, and there are three pa
   `commands/setup.rs`): the first-run twin of the import above, for an install
   with no vault to merge into. The `.swftx` is opened under its own password
   first — a wrong one writes nothing — then a vault is created under that same
-  password, the entries are re-sealed into it by the same loop, and it is
-  adopted exactly as a restored pack is. A failure past the open removes the
-  fresh vault again, so a retry starts from a fresh install.
+  password and the entries are re-sealed into it by the same loop. A failure
+  past the open removes the fresh vault again.
 
 ## What Rowel defends against
 
