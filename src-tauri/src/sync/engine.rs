@@ -339,15 +339,7 @@ pub fn replace<R: Remote, L: LocalVault>(remote: &R, local: &L, now_ms: i64) -> 
 pub struct SessionVault {
     app: AppHandle,
     key: Zeroizing<Vec<u8>>,
-    /// The session's whole key, for carrying a pack opened under a retired
-    /// epoch onto it.
-    vault_key: VaultKey,
-    /// The epochs this vault was re-keyed away from, read once per run.
-    retired: Vec<RetiredKey>,
-    kdf_params_json: String,
-    scratch: PathBuf,
-    /// Whose account the pulled pack came from, for the error that says so.
-    provider: Provider,
+    keys: PackKeys,
 }
 
 impl SessionVault {
@@ -355,9 +347,7 @@ impl SessionVault {
     /// locked, or has no KDF descriptor to put in the pack header — without one
     /// a fresh install could never derive the key to open what we upload.
     pub fn capture(app: &AppHandle, provider: Provider) -> Result<Self> {
-        let kdf_params_json = storage::read_kdf_sidecar(app)?.ok_or_else(|| {
-            Error::Other("this vault predates the key descriptor and cannot be synced".into())
-        })?;
+        let kdf_params_json = storage::read_kdf_sidecar(app)?.ok_or_else(no_descriptor)?;
         let state = app.state::<AppState>();
         let (key, material) = {
             let session = state.session.lock().unwrap();
@@ -378,11 +368,13 @@ impl SessionVault {
         Ok(Self {
             app: app.clone(),
             key,
-            vault_key,
-            retired,
-            kdf_params_json,
-            scratch: storage::sync_scratch_dir(app)?,
-            provider,
+            keys: PackKeys {
+                vault_key,
+                retired,
+                kdf_params_json,
+                scratch: storage::sync_scratch_dir(app)?,
+                provider,
+            },
         })
     }
 
@@ -390,10 +382,7 @@ impl SessionVault {
     /// written just before a password change reached this device is still the
     /// account's word on the vault.
     pub fn retired_marker_keys(&self) -> Vec<MarkerKey> {
-        self.retired
-            .iter()
-            .map(|r| r.key().delete_marker_key())
-            .collect()
+        self.keys.retired_marker_keys()
     }
 
     // Hold the session lock for one operation. The captured key is checked
@@ -435,14 +424,7 @@ impl SessionVault {
 
 impl LocalVault for SessionVault {
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-        decode_pack(
-            pack_bytes,
-            &self.kdf_params_json,
-            &self.vault_key,
-            &self.retired,
-            &self.scratch,
-            self.provider,
-        )
+        self.keys.decode(pack_bytes)
     }
 
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
@@ -450,7 +432,7 @@ impl LocalVault for SessionVault {
     }
 
     fn digest(&self) -> Result<[u8; 32]> {
-        self.with_store(|store| store.state_digest().map_err(store_err))
+        self.with_store(digest_of)
     }
 
     // The one step of a run that is not measured in rows: the pack copies the
@@ -465,7 +447,7 @@ impl LocalVault for SessionVault {
     // taken under a key that is no longer the vault's is never uploaded.
     fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>> {
         let source = self.reclaim_and_open(cutoff_ms)?;
-        let bytes = pack::pack_store(&source, &self.key, &self.kdf_params_json, &self.scratch)?;
+        let bytes = self.keys.pack(&source)?;
         drop(source);
         self.check_key()?;
         Ok(bytes)
@@ -476,23 +458,188 @@ impl LocalVault for SessionVault {
     }
 
     fn vault_id(&self) -> Result<Option<String>> {
-        self.with_store(|store| identity::vault_id(store).map_err(store_err))
+        self.with_store(vault_id_of)
     }
 
     fn adopt_vault_id(&self, id: &str) -> Result<()> {
-        self.with_store(|store| identity::adopt_vault_id(store, id).map_err(store_err))
+        self.with_store(|store| adopt_vault_id_in(store, id))
     }
 
     fn name(&self) -> Result<(Option<String>, i64)> {
-        self.with_store(|store| identity::vault_name(store).map_err(store_err))
+        self.with_store(name_of)
     }
 
     fn adopt_name(&self, name: &str, at_ms: i64) -> Result<()> {
-        self.with_store(|store| identity::set_vault_name(store, name, at_ms).map_err(store_err))
+        self.with_store(|store| adopt_name_in(store, name, at_ms))
+    }
+}
+
+// --- the local side, over a lockbox that is not open -------------------------
+
+/// [`LocalVault`] over a lockbox the session does not have open: its own
+/// directory, opened here with `key`.
+///
+/// What a password change uses to re-seal the account copy of every lockbox it
+/// re-keyed beside the open one (`commands::auth::rekey_beside`), and a move
+/// onto the vault password the copy of the lockbox it moved. There is no
+/// session to borrow the store from or to check the key against: the store is
+/// this vault's own connection, and the caller holds the setup step, so nothing
+/// re-keys or opens the lockbox under it for the length of the run.
+pub struct WorkspaceVault {
+    store: SqliteStore,
+    keys: PackKeys,
+}
+
+impl WorkspaceVault {
+    /// Open the lockbox in `dir` — `workspace_id` in the registry — with `key`.
+    /// Fails as [`SessionVault::capture`] does on a lockbox with no descriptor,
+    /// and as an unlock does on a key that does not open it.
+    pub fn open(dir: &Path, workspace_id: &str, key: VaultKey, provider: Provider) -> Result<Self> {
+        let kdf_params_json = match fs::read_to_string(dir.join(storage::KDF_SIDECAR_FILE)) {
+            Ok(json) => json,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(no_descriptor()),
+            Err(e) => return Err(e.into()),
+        };
+        let store =
+            SqliteStore::open(&dir.join(storage::DB_FILE), &*key.sqlcipher_key()).map_err(|e| {
+                match e {
+                    StoreError::WrongKey => Error::InvalidPassword,
+                    StoreError::SchemaNewer => Error::VaultTooNew,
+                    e => Error::Other(format!("could not open the vault: {e}")),
+                }
+            })?;
+        let retired = crate::retired::load(dir, &key, workspace_id);
+        Ok(Self {
+            store,
+            keys: PackKeys {
+                vault_key: key,
+                retired,
+                kdf_params_json,
+                scratch: storage::sync_scratch_dir_in(dir),
+                provider,
+            },
+        })
+    }
+
+    /// See [`SessionVault::retired_marker_keys`].
+    pub fn retired_marker_keys(&self) -> Vec<MarkerKey> {
+        self.keys.retired_marker_keys()
+    }
+}
+
+impl LocalVault for WorkspaceVault {
+    fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+        self.keys.decode(pack_bytes)
+    }
+
+    fn merge(&self, incoming: &Snapshot) -> Result<usize> {
+        merge_snapshot(&self.store, incoming)
+    }
+
+    fn digest(&self) -> Result<[u8; 32]> {
+        digest_of(&self.store)
+    }
+
+    // The store is this run's alone, so the pack reads through it directly
+    // rather than through a second connection.
+    fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>> {
+        self.store
+            .purge_tombstones_before(cutoff_ms)
+            .map_err(store_err)?;
+        self.keys.pack(&self.store)
+    }
+
+    fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
+        note_push(&self.store, revision, at_ms)
+    }
+
+    fn vault_id(&self) -> Result<Option<String>> {
+        vault_id_of(&self.store)
+    }
+
+    fn adopt_vault_id(&self, id: &str) -> Result<()> {
+        adopt_vault_id_in(&self.store, id)
+    }
+
+    fn name(&self) -> Result<(Option<String>, i64)> {
+        name_of(&self.store)
+    }
+
+    fn adopt_name(&self, name: &str, at_ms: i64) -> Result<()> {
+        adopt_name_in(&self.store, name, at_ms)
     }
 }
 
 // --- shared implementations -------------------------------------------------
+
+fn no_descriptor() -> Error {
+    Error::Other("this vault predates the key descriptor and cannot be synced".into())
+}
+
+/// What both local vaults open and seal packs with: the key epoch the vault is
+/// on and the ones it has retired, the descriptor that goes in the header, and
+/// where a pulled pack is opened.
+struct PackKeys {
+    /// The vault's whole key, for carrying a pack opened under a retired epoch
+    /// onto it.
+    vault_key: VaultKey,
+    /// The epochs this vault was re-keyed away from, read once per run.
+    retired: Vec<RetiredKey>,
+    kdf_params_json: String,
+    scratch: PathBuf,
+    /// Whose account the pulled pack came from, for the error that says so.
+    provider: Provider,
+}
+
+impl PackKeys {
+    fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+        decode_pack(
+            pack_bytes,
+            &self.kdf_params_json,
+            &self.vault_key,
+            &self.retired,
+            &self.scratch,
+            self.provider,
+        )
+    }
+
+    // `source` is a connection keyed to this epoch, reclaimed already.
+    fn pack(&self, source: &SqliteStore) -> Result<Vec<u8>> {
+        Ok(pack::pack_store(
+            source,
+            &*self.vault_key.sqlcipher_key(),
+            &self.kdf_params_json,
+            &self.scratch,
+        )?)
+    }
+
+    fn retired_marker_keys(&self) -> Vec<MarkerKey> {
+        self.retired
+            .iter()
+            .map(|r| r.key().delete_marker_key())
+            .collect()
+    }
+}
+
+fn digest_of(store: &SqliteStore) -> Result<[u8; 32]> {
+    store.state_digest().map_err(store_err)
+}
+
+fn vault_id_of(store: &SqliteStore) -> Result<Option<String>> {
+    identity::vault_id(store).map_err(store_err)
+}
+
+fn adopt_vault_id_in(store: &SqliteStore, id: &str) -> Result<()> {
+    identity::adopt_vault_id(store, id).map_err(store_err)
+}
+
+fn name_of(store: &SqliteStore) -> Result<(Option<String>, i64)> {
+    identity::vault_name(store).map_err(store_err)
+}
+
+fn adopt_name_in(store: &SqliteStore, name: &str, at_ms: i64) -> Result<()> {
+    identity::set_vault_name(store, name, at_ms).map_err(store_err)
+}
 
 /// Read a pulled pack, by the key epoch its header names.
 ///

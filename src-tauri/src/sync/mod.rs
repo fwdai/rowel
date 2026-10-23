@@ -322,6 +322,83 @@ pub fn run(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<S
     Ok(outcome)
 }
 
+/// One full sync of a lockbox the session does not have open: the one in `dir`,
+/// `workspace_id` in the registry, on `key`. [`run`]'s sibling, for the flows
+/// that re-key lockboxes beside the open one — a password change, an adopt, a
+/// move onto the vault password — so the account copy of each is re-sealed
+/// under its new key at once rather than whenever it is next opened.
+///
+/// The account is the lockbox's own, read off its token file with `key`
+/// (`SyncNotConfigured` when it has none), and its refreshes are written back
+/// there. The vault id is resolved and settled exactly as [`run`] does; the
+/// registry learns it, and a newer name the pull carried, under this lockbox's
+/// id rather than the active one's. Nothing about the open lockbox's sync is
+/// touched: no status, no remote-vault list, no share sweep. Blocking, and the
+/// caller holds the run claim.
+pub(crate) fn run_workspace(
+    app: &AppHandle,
+    dir: &std::path::Path,
+    workspace_id: &str,
+    key: crate::crypto::VaultKey,
+) -> Result<SyncOutcome> {
+    let cryptor = key.cryptor();
+    let tokens = read_tokens_in(dir, &cryptor)?.ok_or(Error::SyncNotConfigured)?;
+    let store = pending_store(app, tokens);
+    let marker_key = key.delete_marker_key();
+    let local = engine::WorkspaceVault::open(dir, workspace_id, key, store.provider())?;
+    let (ran, store) = run_closed(store, &local, marker_key, now_ms());
+    // Kept whether or not the run got anywhere: a rotated refresh token that
+    // lived only in memory would leave the lockbox holding a retired one.
+    if let Some(tokens) = store.into_tokens() {
+        if let Err(e) = persist_tokens_in(dir, &cryptor, &tokens) {
+            log::warn!("could not keep lockbox {workspace_id}'s refreshed account: {e}");
+        }
+    }
+    let (outcome, vault_id) = ran?;
+    if let Err(e) = crate::workspace::record_vault_id_of(app, workspace_id, &vault_id) {
+        log::warn!("could not record lockbox {workspace_id}'s vault id in the registry: {e}");
+    }
+    if outcome.renamed {
+        if let Ok((Some(name), _)) = local.name() {
+            match crate::workspace::record_vault_name_of(app, workspace_id, &name) {
+                Ok(()) => crate::events::workspace_renamed(app),
+                Err(e) => log::warn!("could not record lockbox {workspace_id}'s name: {e}"),
+            }
+        }
+    }
+    Ok(outcome)
+}
+
+/// The account half of [`run_workspace`], over any store: resolve the vault
+/// id, then run the engine with the marker keys of the current epoch and every
+/// retired one, settling a minted id mid-run as [`run`] does. The store comes
+/// back with the outcome and the id the run addressed, so the caller can keep
+/// whatever refresh it made.
+pub(crate) fn run_closed<S: VaultStore>(
+    store: S,
+    local: &engine::WorkspaceVault,
+    marker_key: MarkerKey,
+    now_ms: i64,
+) -> (Result<(SyncOutcome, String)>, S) {
+    let resolved = match block_on(resolve_vault_id(&store, local)) {
+        Ok(resolved) => resolved,
+        Err(e) => return (Err(e), store),
+    };
+    let mut marker_keys = vec![marker_key];
+    marker_keys.extend(local.retired_marker_keys());
+    let remote = PackRemote::new(store, resolved.id.clone(), marker_keys);
+    let outcome = engine::sync(&remote, local, now_ms, || {
+        if resolved.persist {
+            local.adopt_vault_id(&resolved.id)?;
+        }
+        Ok(())
+    });
+    (
+        outcome.map(|outcome| (outcome, resolved.id)),
+        remote.into_store(),
+    )
+}
+
 /// The account's pack for `vault_id`, read through `store` exactly as a run's
 /// pull reads it: `None` when there is none, `VaultDeletedRemotely` when a
 /// deletion marker that opens under one of `marker_keys` sits there. Blocking,

@@ -298,6 +298,23 @@ pub fn record_vault_name(app: &AppHandle, name: &str) -> Result<()> {
     update_active(app, named(name))
 }
 
+/// [`record_vault_id`] for workspace `id` rather than the active one: a run of
+/// a lockbox the session does not have open (`sync::run_workspace`).
+pub fn record_vault_id_of(app: &AppHandle, id: &str, vault_id: &str) -> Result<()> {
+    update_of(app, id, |workspace| {
+        if workspace.vault_id.as_deref() == Some(vault_id) {
+            return false;
+        }
+        workspace.vault_id = Some(vault_id.to_string());
+        true
+    })
+}
+
+/// [`record_vault_name`] for workspace `id` rather than the active one.
+pub fn record_vault_name_of(app: &AppHandle, id: &str, name: &str) -> Result<()> {
+    update_of(app, id, named(name))
+}
+
 /// [`record_vault_name`] for a caller that already holds `workspace_lock`.
 ///
 /// What `workspace_rename` mirrors through: it writes the vault's own copy and
@@ -393,6 +410,14 @@ fn update_active(app: &AppHandle, change: impl FnOnce(&mut Workspace) -> bool) -
     let _paths = state.workspace_lock.lock().unwrap();
     let active = state.active_workspace.lock().unwrap().clone();
     update_active_locked(&root, &active, change)
+}
+
+// [`update_active`] for a named workspace, under the same lock.
+fn update_of(app: &AppHandle, id: &str, change: impl FnOnce(&mut Workspace) -> bool) -> Result<()> {
+    let root = storage::root_dir(app)?;
+    let state = app.state::<AppState>();
+    let _paths = state.workspace_lock.lock().unwrap();
+    update_active_locked(&root, id, change)
 }
 
 /// [`update_active`]'s core, for a caller that already holds `workspace_lock`
