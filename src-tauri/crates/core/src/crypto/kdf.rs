@@ -57,6 +57,10 @@ fn err<E: std::fmt::Display>(e: E) -> Error {
     Error::Crypto(e.to_string())
 }
 
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 /// A self-describing KDF descriptor. Serializes to a compact JSON object tagged
 /// by `algo`, e.g.
 /// `{"algo":"argon2id","m_cost":65536,"t_cost":3,"p_cost":4,"salt":"<base64>"}`
@@ -76,6 +80,13 @@ pub enum KdfParams {
         p_cost: u32,
         /// base64(salt).
         salt: String,
+        /// Key generation of the lockbox this descriptor belongs to: bumped
+        /// by every re-key, so a device can tell "the password changed
+        /// elsewhere" (higher) from "a copy under a password this device
+        /// already replaced" (lower). Written only when non-zero, so every
+        /// descriptor written before the field existed keeps its exact bytes.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        gen: u32,
     },
     /// PBKDF2-HMAC-SHA512 fallback / legacy shape.
     #[serde(rename = "pbkdf2-sha512")]
@@ -106,6 +117,36 @@ impl KdfParams {
             t_cost,
             p_cost,
             salt: STANDARD.encode(salt),
+            gen: 0,
+        }
+    }
+
+    /// The key generation this descriptor carries (0 when it has none).
+    pub fn gen(&self) -> u32 {
+        match self {
+            Self::Argon2id { gen, .. } => *gen,
+            Self::Pbkdf2Sha512 { .. } => 0,
+        }
+    }
+
+    /// The descriptor for the next re-key of the same lockbox: default
+    /// Argon2id costs, a fresh salt, and the generation one past this one.
+    pub fn next_generation(&self) -> Self {
+        match Self::default_argon2id() {
+            Self::Argon2id {
+                m_cost,
+                t_cost,
+                p_cost,
+                salt,
+                ..
+            } => Self::Argon2id {
+                m_cost,
+                t_cost,
+                p_cost,
+                salt,
+                gen: self.gen().saturating_add(1),
+            },
+            other => other,
         }
     }
 
@@ -189,6 +230,7 @@ pub fn derive(password: &[u8], params: &KdfParams) -> Result<Zeroizing<Vec<u8>>>
             t_cost,
             p_cost,
             salt,
+            ..
         } => {
             let salt = KdfParams::decoded_salt(salt)?;
             let params =
@@ -307,6 +349,71 @@ mod tests {
         assert_eq!(p, back);
     }
 
+    // Every descriptor written before `gen` existed must keep its exact bytes
+    // through a parse and re-serialize, or every synced device would read its
+    // own sidecar as "a different install".
+    #[test]
+    fn gen_round_trips_byte_for_byte_and_is_absent_when_zero() {
+        let legacy = format!(
+            r#"{{"algo":"argon2id","m_cost":65536,"t_cost":3,"p_cost":4,"salt":"{}"}}"#,
+            STANDARD.encode(SALT_A)
+        );
+        let parsed = KdfParams::from_json(&legacy).unwrap();
+        assert_eq!(parsed.gen(), 0);
+        assert_eq!(parsed.to_json().unwrap(), legacy);
+        assert!(!KdfParams::default_argon2id()
+            .to_json()
+            .unwrap()
+            .contains("gen"));
+
+        let bumped = parsed.next_generation();
+        let json = bumped.to_json().unwrap();
+        assert!(json.ends_with(r#","gen":1}"#), "{json}");
+        let back = KdfParams::from_json(&json).unwrap();
+        assert_eq!(back, bumped);
+        assert_eq!(back.to_json().unwrap(), json);
+
+        let pbkdf2 = KdfParams::pbkdf2_sha512(SALT_A, 1000).to_json().unwrap();
+        assert_eq!(
+            KdfParams::from_json(&pbkdf2).unwrap().to_json().unwrap(),
+            pbkdf2
+        );
+    }
+
+    #[test]
+    fn next_generation_bumps_and_resalts() {
+        let first = KdfParams::argon2id(SALT_A, 256, 1, 1);
+        let second = first.next_generation();
+        let third = second.next_generation();
+        assert_eq!((second.gen(), third.gen()), (1, 2));
+        match (&first, &second) {
+            (KdfParams::Argon2id { salt: a, .. }, KdfParams::Argon2id { salt: b, .. }) => {
+                assert_ne!(a, b)
+            }
+            _ => panic!("next_generation must be Argon2id"),
+        }
+        assert!(second.validate().is_ok());
+        assert_eq!(
+            KdfParams::pbkdf2_sha512(SALT_A, 1).next_generation().gen(),
+            1
+        );
+    }
+
+    // The generation is not an input to the derivation: a descriptor that
+    // differs only by `gen` derives the same key (older builds ignore it).
+    #[test]
+    fn gen_does_not_change_the_derived_key() {
+        let base = KdfParams::argon2id(SALT_A, 256, 1, 1);
+        let mut later = base.clone();
+        if let KdfParams::Argon2id { gen, .. } = &mut later {
+            *gen = 7;
+        }
+        assert_eq!(
+            &*derive(b"pw", &base).unwrap(),
+            &*derive(b"pw", &later).unwrap()
+        );
+    }
+
     #[test]
     fn default_argon2id_uses_owasp_params_and_fresh_salt() {
         let a = KdfParams::default_argon2id();
@@ -318,10 +425,12 @@ mod tests {
                     t_cost,
                     p_cost,
                     salt: salt_a,
+                    gen,
                 },
                 KdfParams::Argon2id { salt: salt_b, .. },
             ) => {
                 assert_eq!((*m_cost, *t_cost, *p_cost), (65_536, 3, 4));
+                assert_eq!(*gen, 0, "a fresh vault starts at generation 0");
                 assert_ne!(salt_a, salt_b, "each call must generate a fresh salt");
             }
             _ => panic!("default_argon2id must be Argon2id"),
