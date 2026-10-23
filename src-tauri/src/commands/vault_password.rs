@@ -158,6 +158,50 @@ pub(crate) async fn prove_lockbox_password(
     }
 }
 
+/// What the lockbox a move onto the vault password targets turned out to open
+/// under.
+enum Adoption {
+    /// Its own password, as asked: the key it proved, for the re-key.
+    Rekey(VaultKey),
+    /// The vault password already — an earlier move went through and what came
+    /// after it did not. Its key as it stands; nothing is re-keyed.
+    AlreadyMoved(VaultKey),
+}
+
+/// Prove the lockbox in `dir` for a move onto the vault password, under its own
+/// backoff. `lockbox_password` is tried first, so a move that has not happened
+/// yet costs one derive, as before. Only when that does not open the lockbox is
+/// `vault_password` derived against the lockbox's own descriptor: the caller
+/// has already proved it against the primary, so it is not a guess, and if it
+/// opens the lockbox the move is done and [`Adoption::AlreadyMoved`] says so
+/// without a penalty. When neither opens it, the lockbox password was wrong and
+/// is recorded against the backoff once, exactly as [`prove_lockbox_password`]
+/// records it.
+///
+/// Blocking: up to two Argon2id derives and SQLCipher opens.
+fn prove_for_adoption_in(
+    dir: &Path,
+    lockbox_password: &str,
+    vault_password: &str,
+) -> Result<Adoption> {
+    let lockout = LockoutState::load_in(dir)?;
+    let now = auth::now_ms();
+    if let Some(refusal) = auth::locked_out(lockout, now) {
+        return Err(refusal);
+    }
+    let adoption = match verify_password_in(dir, lockbox_password) {
+        Ok(key) => Adoption::Rekey(key),
+        Err(Error::InvalidPassword) => match verify_password_in(dir, vault_password) {
+            Ok(key) => Adoption::AlreadyMoved(key),
+            Err(Error::InvalidPassword) => return Err(penalize(lockout, now, dir)),
+            Err(e) => return Err(e),
+        },
+        Err(e) => return Err(e),
+    };
+    reset_lockout(lockout, dir);
+    Ok(adoption)
+}
+
 fn reset_lockout(lockout: LockoutState, dir: &Path) {
     if lockout != LockoutState::default() {
         if let Err(e) = LockoutState::default().save_in(dir) {
@@ -188,6 +232,17 @@ fn penalize(lockout: LockoutState, now: i64, dir: &Path) -> Error {
 /// account's token file is re-sealed under the new key. Only once that is on
 /// disk is its key sealed under the app key. Its account copy is then synced
 /// under the new key straight away (`sync::run_workspace`), best effort.
+///
+/// Idempotent once the lockbox opens under the vault password. The re-key is
+/// the one step that cannot be taken back, and what the UI does next (an
+/// unlock, a switch) can still fail after it; a retry then sends the lockbox
+/// password that no longer opens anything. So when the lockbox password does
+/// not open the lockbox, the vault password — already proved against the
+/// primary — is tried against the lockbox's own descriptor, and if it opens it
+/// the move is already done: nothing is re-keyed or penalized, its key is
+/// sealed under the app key (a no-op when it already is) and the same sync
+/// runs. Only when neither opens it is the lockbox password counted as wrong,
+/// once, against the lockbox's backoff (`prove_for_adoption_in`).
 ///
 /// The lockbox must not be the one the session has open: it is re-keyed on its
 /// own files, as a password change re-keys every lockbox beside the open one.
@@ -236,12 +291,21 @@ pub async fn workspace_adopt_vault_password(
         let dir = dir.clone();
         blocking(move || auth::recover_interrupted_rekey_in(&dir)).await?;
     }
-    let old_key = prove_lockbox_password(&dir, lockbox_password).await?;
-    let held = Zeroizing::new(old_key.biometric_material().to_vec());
-
-    let material = {
-        let (dir, id) = (dir.clone(), workspace_id.clone());
-        blocking(move || super::auth::rekey_one(&dir, &id, Some(held), "", &vault_password)).await?
+    let adoption = {
+        let (dir, vault_password) = (dir.clone(), vault_password.clone());
+        blocking(move || prove_for_adoption_in(&dir, &lockbox_password, &vault_password)).await?
+    };
+    let material = match adoption {
+        Adoption::Rekey(old_key) => {
+            let held = Zeroizing::new(old_key.biometric_material().to_vec());
+            let (dir, id) = (dir.clone(), workspace_id.clone());
+            blocking(move || super::auth::rekey_one(&dir, &id, Some(held), "", &vault_password))
+                .await?
+        }
+        Adoption::AlreadyMoved(key) => {
+            log::info!("lockbox {workspace_id} already opens with the vault password");
+            Zeroizing::new(key.biometric_material().to_vec())
+        }
     };
     appkey::seal_under(&app, &workspace_id, &app_key, &material);
 
@@ -259,4 +323,87 @@ pub async fn workspace_adopt_vault_password(
         None => log::warn!("a sync run is in flight; lockbox {workspace_id} syncs on its next"),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::KdfParams;
+    use crate::store::SqliteStore;
+
+    // A lockbox on disk that opens with `password`, under a descriptor cheap
+    // enough to derive in a test.
+    fn lockbox_under(password: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let params = KdfParams::argon2id(b"salt-0123456789012345", 256, 1, 1);
+        storage::atomic_write_file(
+            &dir.path().join(storage::KDF_SIDECAR_FILE),
+            &params.to_json().unwrap(),
+        )
+        .unwrap();
+        let key = VaultKey::Argon2 {
+            master: crate::crypto::derive(password.as_bytes(), &params).unwrap(),
+        };
+        drop(SqliteStore::open(&dir.path().join(storage::DB_FILE), &*key.sqlcipher_key()).unwrap());
+        dir
+    }
+
+    fn lockout(dir: &Path) -> LockoutState {
+        LockoutState::load_in(dir).unwrap()
+    }
+
+    // The move as it has always run: the lockbox's own password opens it, and
+    // that is the key the re-key starts from.
+    #[test]
+    fn a_lockbox_on_its_own_password_is_re_keyed() {
+        let dir = lockbox_under("lockbox-pw");
+
+        let adoption = prove_for_adoption_in(dir.path(), "lockbox-pw", "vault-pw").unwrap();
+
+        assert!(matches!(adoption, Adoption::Rekey(_)));
+        assert_eq!(lockout(dir.path()), LockoutState::default());
+    }
+
+    // The trap: an earlier move re-keyed the lockbox and the unlock or switch
+    // after it failed, so the retry sends a lockbox password that no longer
+    // opens it. The vault password does, so the move is already done — and the
+    // retry is not counted against the lockbox's backoff.
+    #[test]
+    fn a_lockbox_already_on_the_vault_password_is_left_as_it_is() {
+        let dir = lockbox_under("vault-pw");
+
+        let adoption = prove_for_adoption_in(dir.path(), "lockbox-pw", "vault-pw").unwrap();
+
+        assert!(matches!(adoption, Adoption::AlreadyMoved(_)));
+        assert_eq!(lockout(dir.path()), LockoutState::default());
+    }
+
+    // Neither opens it: the lockbox password was wrong, and it counts once.
+    #[test]
+    fn a_wrong_lockbox_password_is_penalized_once() {
+        let dir = lockbox_under("lockbox-pw");
+
+        let refused = prove_for_adoption_in(dir.path(), "wrong", "vault-pw");
+
+        assert!(matches!(refused, Err(Error::InvalidPassword)));
+        let (once, _) = auth::penalize(LockoutState::default(), auth::now_ms());
+        assert_eq!(lockout(dir.path()), once);
+    }
+
+    // A lockbox locked out by earlier wrong tries refuses before anything is
+    // derived, whichever password would have opened it.
+    #[test]
+    fn a_locked_out_lockbox_refuses_before_deriving() {
+        let dir = lockbox_under("vault-pw");
+        let mut state = LockoutState::default();
+        for _ in 0..6 {
+            state = auth::penalize(state, auth::now_ms()).0;
+        }
+        state.save_in(dir.path()).unwrap();
+
+        let refused = prove_for_adoption_in(dir.path(), "lockbox-pw", "vault-pw");
+
+        assert!(matches!(refused, Err(Error::TooManyAttempts { .. })));
+        assert_eq!(lockout(dir.path()), state);
+    }
 }
