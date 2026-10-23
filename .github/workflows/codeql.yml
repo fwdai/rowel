@@ -10,9 +10,9 @@ name: CodeQL
 
 on:
   push:
-    branches: [master, v1-0-0]
+    branches: [main]
   pull_request:
-    branches: [master, v1-0-0]
+    branches: [main]
   schedule:
     # Weekly re-scan so advisories added to the CodeQL packs after merge surface.
     - cron: '27 3 * * 1'
