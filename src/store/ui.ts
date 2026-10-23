@@ -120,6 +120,13 @@ export interface UiState {
    * moves; nothing renders the number itself.
    */
   browserClientsSeq: number
+  /**
+   * The prompt for the master password another device changed this vault to
+   * is up (`PasswordChanged`). Raised from wherever the failure is shown —
+   * Settings › Lockboxes, the header's sync chip — and mounted once, in
+   * `Main`, so both open the same dialog.
+   */
+  passwordPrompt: boolean
 }
 
 const GENERATOR_CLOSED: Generator = { open: false, apply: null, ssh: null }
@@ -155,7 +162,8 @@ export const initialUi: UiState = {
   copied: false,
   notice: null,
   consentAsk: null,
-  browserClientsSeq: 0
+  browserClientsSeq: 0,
+  passwordPrompt: false
 }
 
 export const useUi = create<UiState>()(() => initialUi)
@@ -323,6 +331,9 @@ export const browserClientsChanged = () =>
 // --- scanning ---------------------------------------------------------------------
 
 // A new run replaces the previous run's complaint: the user is answering it.
+export const openPasswordPrompt = () => useUi.setState({ passwordPrompt: true })
+export const closePasswordPrompt = () => useUi.setState({ passwordPrompt: false })
+
 export const scanStarted = () => useUi.setState({ scanBusy: true, scanError: null })
 export const scanFinished = (error?: ScanError | null) =>
   useUi.setState({ scanBusy: false, scanError: error ?? null })

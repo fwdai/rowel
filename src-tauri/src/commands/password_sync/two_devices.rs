@@ -1,0 +1,450 @@
+//! Two devices, one account: a master-password change made on one of them
+//! reaches the other (design section 9, "Commands").
+//!
+//! The commands need an `AppHandle`, which this harness has no way to build,
+//! so the same sequence runs one layer down, on the pieces they are made of:
+//! real workspace directories (database, sidecar, retired list), the re-key
+//! saga (`auth::rekey`, `auth::rekey_workspace`), the engine (`engine::sync`
+//! over `PackRemote`), the adopt's proof (`key_for_pack`), and the restore
+//! (`restore::restore_at`) — all over one `FakeStore`.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use tempfile::TempDir;
+use zeroize::Zeroizing;
+
+use super::key_for_pack;
+use crate::auth::{self, LockoutState, RekeyPaths};
+use crate::crypto::{self, KdfParams, VaultKey};
+use crate::error::{Error, Result};
+use crate::models::Entry;
+use crate::retired;
+use crate::session::store_err;
+use crate::storage;
+use crate::store::{identity, migrate, SqliteStore, VaultStore};
+use crate::sync::engine::{self, LocalVault, Snapshot, SyncOutcome};
+use crate::sync::store::fake::FakeStore;
+use crate::sync::{layout, pack, restore, PackRemote, Provider};
+
+const NOW: i64 = 1_700_000_000_000;
+const OLD: &str = "old password";
+const NEW: &str = "new password";
+
+// Cheap Argon2id at a given generation, so the suite stays fast; the app's
+// own re-keys use the default costs.
+fn params(salt: u8, gen: u32) -> String {
+    KdfParams::Argon2id {
+        m_cost: 256,
+        t_cost: 1,
+        p_cost: 1,
+        salt: base64_salt(salt),
+        gen,
+    }
+    .to_json()
+    .unwrap()
+}
+
+fn base64_salt(salt: u8) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    STANDARD.encode([salt; 32])
+}
+
+fn derive(password: &str, params_json: &str) -> VaultKey {
+    VaultKey::Argon2 {
+        master: crypto::derive(
+            password.as_bytes(),
+            &KdfParams::from_json(params_json).unwrap(),
+        )
+        .unwrap(),
+    }
+}
+
+fn copy(key: &VaultKey) -> VaultKey {
+    VaultKey::from_material(Zeroizing::new(key.biometric_material().to_vec()), true)
+}
+
+/// One lockbox on one device: its directory, the key its session holds, and
+/// its open store.
+struct Device {
+    dir: TempDir,
+    id: &'static str,
+    vault: String,
+    key: VaultKey,
+    store: Option<SqliteStore>,
+}
+
+impl Device {
+    /// A new lockbox under `password` and descriptor `params_json`.
+    fn create(id: &'static str, vault: &str, password: &str, params_json: &str) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        storage::atomic_write_file(&dir.path().join(storage::KDF_SIDECAR_FILE), params_json)
+            .unwrap();
+        let key = derive(password, params_json);
+        let store =
+            SqliteStore::open(&dir.path().join(storage::DB_FILE), &*key.sqlcipher_key()).unwrap();
+        Self {
+            dir,
+            id,
+            vault: vault.into(),
+            key,
+            store: Some(store),
+        }
+    }
+
+    /// A device joining the lockbox from the account, as a restore does.
+    fn restore(id: &'static str, vault: &str, account: &FakeStore, password: &str) -> Result<Self> {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = account.bytes(&layout::vault_file_name(vault)).unwrap();
+        let (key, store) = restore::restore_at(
+            &dir.path().join(storage::DB_FILE),
+            &dir.path().join(storage::KDF_SIDECAR_FILE),
+            &bytes,
+            password,
+        )?;
+        Ok(Self {
+            dir,
+            id,
+            vault: vault.into(),
+            key,
+            store: Some(store),
+        })
+    }
+
+    fn path(&self) -> &Path {
+        self.dir.path()
+    }
+
+    fn store(&self) -> &SqliteStore {
+        self.store.as_ref().unwrap()
+    }
+
+    fn sidecar(&self) -> String {
+        fs::read_to_string(self.path().join(storage::KDF_SIDECAR_FILE)).unwrap()
+    }
+
+    fn gen(&self) -> u32 {
+        KdfParams::from_json(&self.sidecar()).unwrap().gen()
+    }
+
+    fn retired(&self) -> Vec<String> {
+        retired::load(self.path(), &self.key, self.id)
+            .into_iter()
+            .map(|r| r.kdf)
+            .collect()
+    }
+
+    fn scratch(&self) -> PathBuf {
+        storage::sync_scratch_dir_in(self.path())
+    }
+
+    fn write(&self, id: &str, title: &str) {
+        let entry = Entry {
+            id: id.into(),
+            title: title.into(),
+            ..Default::default()
+        };
+        let payload = self.key.payload_cipher().seal(&entry).unwrap();
+        self.store()
+            .upsert(&migrate::build_record(&entry, payload).unwrap())
+            .unwrap();
+    }
+
+    fn title(&self, id: &str) -> Option<String> {
+        let record = self.store().get(id).unwrap()?;
+        Some(
+            self.key
+                .payload_cipher()
+                .unseal(id, &record.payload)
+                .unwrap()
+                .title,
+        )
+    }
+
+    fn digest(&self) -> [u8; 32] {
+        self.store().state_digest().unwrap()
+    }
+
+    /// One run against the account, as `sync::run` makes it: the marker keys
+    /// of the current epoch and of every retired one.
+    fn sync(&self, account: &FakeStore) -> Result<SyncOutcome> {
+        let mut marker_keys = vec![self.key.delete_marker_key()];
+        marker_keys.extend(
+            retired::load(self.path(), &self.key, self.id)
+                .iter()
+                .map(|r| r.key().delete_marker_key()),
+        );
+        let remote = PackRemote::new(account, self.vault.clone(), marker_keys);
+        engine::sync(&remote, self, NOW, || Ok(()))
+    }
+
+    /// The saga a password change (or an adopt) runs on the open workspace —
+    /// `rekey_open_workspace` minus the session around it.
+    fn rekey(&mut self, new_key: VaultKey, params_json: &str) {
+        let store = self.store.take().unwrap();
+        let (key, store) = auth::rekey(
+            store,
+            copy(&self.key),
+            new_key,
+            params_json,
+            &RekeyPaths::in_dir(self.path()),
+            self.id,
+        )
+        .unwrap_or_else(|rollback| panic!("the re-key rolled back: {}", rollback.error));
+        self.key = key;
+        self.store = Some(store);
+    }
+
+    /// The account's pack, proved and keyed under `password` — the adopt's
+    /// first half (`key_for_pack`), fetched as the command fetches it.
+    fn key_for_account(
+        &self,
+        account: &FakeStore,
+        password: &str,
+    ) -> Result<Option<(String, VaultKey)>> {
+        let bytes = account
+            .bytes(&layout::vault_file_name(&self.vault))
+            .unwrap();
+        key_for_pack(self.path(), self.id, &self.key, &bytes, password)
+    }
+}
+
+impl LocalVault for Device {
+    fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+        engine::decode_pack(
+            pack_bytes,
+            &self.sidecar(),
+            &self.key,
+            &retired::load(self.path(), &self.key, self.id),
+            &self.scratch(),
+            Provider::GoogleDrive,
+        )
+    }
+    fn merge(&self, incoming: &Snapshot) -> Result<usize> {
+        self.store()
+            .merge(&incoming.records, &incoming.attachments)
+            .map_err(store_err)
+    }
+    fn digest(&self) -> Result<[u8; 32]> {
+        self.store().state_digest().map_err(store_err)
+    }
+    fn pack(&self, _cutoff_ms: i64) -> Result<Vec<u8>> {
+        Ok(pack::pack_store(
+            self.store(),
+            &*self.key.sqlcipher_key(),
+            &self.sidecar(),
+            &self.scratch(),
+        )?)
+    }
+    fn note_push(&self, _revision: &str, _at_ms: i64) -> Result<()> {
+        Ok(())
+    }
+    fn vault_id(&self) -> Result<Option<String>> {
+        identity::vault_id(self.store()).map_err(store_err)
+    }
+    fn adopt_vault_id(&self, id: &str) -> Result<()> {
+        identity::adopt_vault_id(self.store(), id).map_err(store_err)
+    }
+    fn name(&self) -> Result<(Option<String>, i64)> {
+        identity::vault_name(self.store()).map_err(store_err)
+    }
+    fn adopt_name(&self, name: &str, at_ms: i64) -> Result<()> {
+        identity::set_vault_name(self.store(), name, at_ms).map_err(store_err)
+    }
+}
+
+fn header(account: &FakeStore, vault: &str) -> String {
+    pack::unpack(&account.bytes(&layout::vault_file_name(vault)).unwrap())
+        .unwrap()
+        .kdf_params_json
+}
+
+#[test]
+fn a_password_change_on_one_device_reaches_the_other() {
+    let account = FakeStore::default();
+    let gen0 = params(1, 0);
+
+    // 1. A and B hold the same lockbox and have synced.
+    let mut a = Device::create("a", "v1", OLD, &gen0);
+    a.write("1", "first");
+    assert!(a.sync(&account).unwrap().pushed);
+    let gen0_pack = account.bytes(&layout::vault_file_name("v1")).unwrap();
+    let mut b = Device::restore("b", "v1", &account, OLD).unwrap();
+    assert!(!b.sync(&account).unwrap().pushed);
+    assert_eq!(a.digest(), b.digest());
+
+    // 2. A changes the password: generation 1, the old epoch retired, and the
+    //    run after the change re-seals the account's pack under it.
+    let gen1 = params(2, 1);
+    a.rekey(derive(NEW, &gen1), &gen1);
+    assert_eq!(a.gen(), 1);
+    assert_eq!(a.retired(), std::slice::from_ref(&gen0));
+    let outcome = a.sync(&account).unwrap();
+    assert!(outcome.pushed && outcome.rekeyed_remote);
+    assert_eq!(header(&account, "v1"), gen1);
+
+    // 3. B edits, and its run stops: the password changed elsewhere. The edit
+    //    is intact and nothing went up.
+    b.write("2", "made on b");
+    let before = account.bytes(&layout::vault_file_name("v1"));
+    assert!(matches!(
+        b.sync(&account),
+        Err(Error::PasswordChangedRemotely)
+    ));
+    assert_eq!(account.bytes(&layout::vault_file_name("v1")), before);
+    assert_eq!(b.title("2").as_deref(), Some("made on b"));
+
+    // 4. A wrong password proves nothing, changes nothing, and counts as a
+    //    failed attempt against B's backoff.
+    assert!(matches!(
+        b.key_for_account(&account, "not it"),
+        Err(Error::InvalidPassword)
+    ));
+    let (penalized, _) = auth::penalize(LockoutState::load_in(b.path()).unwrap(), NOW);
+    penalized.save_in(b.path()).unwrap();
+    assert_ne!(
+        LockoutState::load_in(b.path()).unwrap(),
+        LockoutState::default()
+    );
+    assert_eq!(b.sidecar(), gen0);
+    assert!(b.retired().is_empty());
+    assert_eq!(b.title("2").as_deref(), Some("made on b"));
+
+    // 5. The new password: B takes the account's descriptor byte for byte,
+    //    retires its own, and its next run pushes its edit; A's has it.
+    let (adopted, key) = b.key_for_account(&account, NEW).unwrap().unwrap();
+    assert_eq!(adopted, gen1);
+    b.rekey(key, &adopted);
+    assert_eq!(b.sidecar(), a.sidecar());
+    assert_eq!(b.retired(), std::slice::from_ref(&gen0));
+    assert!(SqliteStore::open(
+        &b.path().join(storage::DB_FILE),
+        &*derive(NEW, &gen1).sqlcipher_key()
+    )
+    .is_ok());
+    assert!(b.sync(&account).unwrap().pushed);
+    // B's edit, and possibly B's re-sealed copy of entry 1: each side sealed
+    // it afresh under the same key (new nonce, same stamp), and the tie-break
+    // on the row hash picks one copy for both.
+    assert!(a.sync(&account).unwrap().merged >= 1);
+    assert_eq!(a.title("2").as_deref(), Some("made on b"));
+    assert_eq!(a.digest(), b.digest());
+    // Adopting again is a no-op: the account is on B's descriptor now.
+    assert!(b.key_for_account(&account, NEW).unwrap().is_none());
+
+    // 6. A device still on generation 0 puts its copy back, with an entry of
+    //    its own. A and B merge it with their retired key and re-seal it.
+    let old_account = FakeStore::default();
+    old_account.put(&layout::vault_file_name("v1"), &gen0_pack);
+    let c = Device::restore("c", "v1", &old_account, OLD).unwrap();
+    c.write("3", "from the old epoch");
+    let c_pack = pack::pack_store(
+        c.store(),
+        &*c.key.sqlcipher_key(),
+        &c.sidecar(),
+        &c.scratch(),
+    )
+    .unwrap();
+    account.put(&layout::vault_file_name("v1"), &c_pack);
+    let outcome = a.sync(&account).unwrap();
+    assert!(outcome.pushed && outcome.rekeyed_remote);
+    assert_eq!(a.title("3").as_deref(), Some("from the old epoch"));
+    assert_eq!(header(&account, "v1"), gen1);
+    b.sync(&account).unwrap();
+    assert_eq!(b.title("3").as_deref(), Some("from the old epoch"));
+    assert_eq!(a.digest(), b.digest());
+    // ...and C, on the retired epoch, is told the password changed.
+    assert!(matches!(
+        c.sync(&account),
+        Err(Error::PasswordChangedRemotely)
+    ));
+
+    // 7. A fresh device restores generation 1 verbatim, under the new password
+    //    only.
+    assert!(matches!(
+        Device::restore("d", "v1", &account, OLD),
+        Err(Error::InvalidPassword)
+    ));
+    let d = Device::restore("d", "v1", &account, NEW).unwrap();
+    assert_eq!(d.sidecar(), gen1);
+    assert_eq!(d.title("2").as_deref(), Some("made on b"));
+}
+
+// A device that retired an epoch and lost its key (here: never held it) finds
+// the account under that epoch: it neither opens nor overwrites it, until the
+// user confirms the replace.
+#[test]
+fn a_pack_under_an_epoch_this_device_cannot_open_waits_for_the_replace() {
+    let account = FakeStore::default();
+    let gen0 = params(1, 0);
+    let gen1 = params(2, 1);
+    let stale = Device::create("s", "v1", OLD, &gen0);
+    stale.write("1", "only in the account");
+    stale.sync(&account).unwrap();
+    let current = Device::create("c", "v1", NEW, &gen1);
+    current.write("2", "only here");
+
+    assert!(matches!(
+        current.sync(&account),
+        Err(Error::VaultUnderRetiredPassword)
+    ));
+    assert_eq!(header(&account, "v1"), gen0);
+
+    let remote = PackRemote::new(&account, "v1".into(), vec![current.key.delete_marker_key()]);
+    engine::replace(&remote, &current, NOW).unwrap();
+    assert_eq!(header(&account, "v1"), gen1);
+    assert!(!current.sync(&account).unwrap().pushed);
+    // The stale device is now the one asked for the new password.
+    assert!(matches!(
+        stale.sync(&account),
+        Err(Error::PasswordChangedRemotely)
+    ));
+}
+
+// The lockboxes beside the one adopted: one on the same password follows (its
+// own pack, its own salt), one on a password of its own is left alone.
+#[test]
+fn lockboxes_beside_follow_only_on_the_same_password() {
+    let account = FakeStore::default();
+
+    // A second lockbox on the shared password, synced to both devices; A moves
+    // it to the new password as `rekey_one` does (its own next generation).
+    let shared0 = params(3, 0);
+    let mut a2 = Device::create("a2", "v2", OLD, &shared0);
+    a2.write("x", "shared");
+    a2.sync(&account).unwrap();
+    let mut b2 = Device::restore("b2", "v2", &account, OLD).unwrap();
+    let shared1 = params(4, 1);
+    a2.rekey(derive(NEW, &shared1), &shared1);
+    a2.sync(&account).unwrap();
+
+    // A third on a password of its own, which changed on A to another one.
+    let own0 = params(5, 0);
+    let a3 = Device::create("a3", "v3", "own password", &own0);
+    a3.sync(&account).unwrap();
+    let b3 = Device::restore("b3", "v3", &account, "own password").unwrap();
+    let own1 = params(6, 1);
+    let mut a3 = a3;
+    a3.rekey(derive("another own password", &own1), &own1);
+    a3.sync(&account).unwrap();
+
+    // B's adopt, beside: what `adopt_one` does after its fetch, on a lockbox
+    // that is not open (so its store is closed).
+    let (h2, k2) = b2.key_for_account(&account, NEW).unwrap().unwrap();
+    b2.store = None;
+    auth::rekey_workspace(b2.path(), b2.id, copy(&b2.key), k2, &h2).unwrap();
+    assert_eq!(
+        fs::read_to_string(b2.path().join(storage::KDF_SIDECAR_FILE)).unwrap(),
+        shared1
+    );
+    assert_eq!(
+        retired::load(b2.path(), &derive(NEW, &shared1), "b2")[0].kdf,
+        shared0
+    );
+
+    assert!(matches!(
+        b3.key_for_account(&account, NEW),
+        Err(Error::InvalidPassword)
+    ));
+    assert_eq!(b3.sidecar(), own0, "left on its own password");
+}

@@ -32,6 +32,7 @@ mod hibp;
 mod locale;
 // Backups the OS asks the app to open (the `.rowel`/`.swftx` file associations).
 mod opened;
+mod retired;
 mod save;
 // Local image scanning (card / identity document). `pub` so `examples/scan.rs`
 // can drive the OCR backend without the app around it.
@@ -267,6 +268,8 @@ pub fn run() {
             commands::sync::sync_now,
             commands::sync::sync_adopt_pending,
             commands::sync::sync_reupload,
+            commands::password_sync::sync_adopt_password,
+            commands::password_sync::sync_replace_remote,
             commands::share::share_create,
             commands::share::share_open,
             commands::share::share_revoke,

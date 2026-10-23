@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::session::{backfill_derived_columns, record_kdf_meta, store_err};
 use crate::state::AppState;
 use crate::storage;
-use crate::store::{Record, SqliteStore, StoreError, VaultStore};
+use crate::store::{Attachment, Record, SqliteStore, StoreError, VaultStore};
 
 // --- Failed-unlock backoff (T-AUTH-3) ---------------------------------------
 //
@@ -160,6 +160,10 @@ pub struct RekeyPaths {
     staging: PathBuf,
     pub sidecar: PathBuf,
     pub sidecar_backup: PathBuf,
+    /// The retired-keys list (`crate::retired`), sealed under the key the
+    /// sidecar names, and so snapshotted and rolled back with it.
+    pub retired: PathBuf,
+    pub retired_backup: PathBuf,
 }
 
 impl RekeyPaths {
@@ -173,24 +177,35 @@ impl RekeyPaths {
             staging: PathBuf::from(staging),
             sidecar: dir.join(storage::KDF_SIDECAR_FILE),
             sidecar_backup: dir.join(storage::KDF_SIDECAR_REKEY_BACKUP_FILE),
+            retired: dir.join(storage::RETIRED_KEYS_FILE),
+            retired_backup: dir.join(storage::RETIRED_KEYS_REKEY_BACKUP_FILE),
         }
     }
 
     /// The active workspace's paths. The lookup happens under the workspace
-    /// lock so all five agree on which vault they belong to; the lock is
+    /// lock so all of them agree on which vault they belong to; the lock is
     /// released before any file work, per its documented discipline.
     pub fn resolve(app: &AppHandle, state: &AppState) -> Result<Self> {
-        let dir = {
+        Ok(Self::resolve_with_id(app, state)?.0)
+    }
+
+    /// [`RekeyPaths::resolve`], with the id of the workspace they belong to
+    /// read in the same lookup: the retired-keys list is bound to it.
+    pub fn resolve_with_id(app: &AppHandle, state: &AppState) -> Result<(Self, String)> {
+        let (dir, id) = {
             let _paths = state.workspace_lock.lock().unwrap();
-            storage::workspace_dir(app)?
+            let id = crate::workspace::active_id(app);
+            (crate::workspace::dir_of(&storage::root_dir(app)?, &id), id)
         };
-        Ok(Self::in_dir(&dir))
+        Ok((Self::in_dir(&dir), id))
     }
 }
 
 /// The whole destructive half of a password change: snapshot, re-seal every
-/// payload under `new_key`, re-key the database, rewrite the KDF sidecar.
-/// Correct even if slow: touches every row once.
+/// payload under `new_key`, re-key the database, rewrite the KDF sidecar with
+/// `params_json` (written verbatim: an adopted pack header has to match the
+/// account's byte for byte), and keep the epoch being left in the retired-keys
+/// list of `workspace_id`. Correct even if slow: touches every row once.
 ///
 /// Crash-consistency: the destructive on-disk steps (import -> rekey -> sidecar)
 /// are guarded by snapshots of *both* files that decide whether the vault opens —
@@ -226,8 +241,9 @@ pub fn rekey(
     store: SqliteStore,
     old_key: VaultKey,
     new_key: VaultKey,
-    params: &KdfParams,
+    params_json: &str,
     paths: &RekeyPaths,
+    workspace_id: &str,
 ) -> std::result::Result<(VaultKey, SqliteStore), Rollback> {
     // Recovery point: snapshot the pre-change (old-keyed) DB and the sidecar
     // that names its key, and publish the pair.
@@ -247,7 +263,7 @@ pub fn rekey(
     }
 
     // Destructive sequence. On any error, roll back to the snapshot.
-    if let Err(error) = rekey_vault(&store, &old_key, &new_key, params, &paths.sidecar) {
+    if let Err(error) = rekey_vault(&store, &old_key, &new_key, params_json, paths, workspace_id) {
         // Close the (possibly re-keyed) connection before the file it holds is
         // replaced. The current password is unchanged, so the restored pair
         // opens under the OLD key.
@@ -290,9 +306,10 @@ pub fn rekey(
 /// blocking pool.
 pub fn rekey_workspace(
     dir: &Path,
+    workspace_id: &str,
     old_key: VaultKey,
     new_key: VaultKey,
-    params: &KdfParams,
+    params_json: &str,
 ) -> Result<()> {
     let paths = RekeyPaths::in_dir(dir);
     let store = SqliteStore::open(&paths.db, &*old_key.sqlcipher_key()).map_err(|e| match e {
@@ -300,7 +317,8 @@ pub fn rekey_workspace(
         StoreError::SchemaNewer => Error::VaultTooNew,
         e => Error::Other(format!("could not open the vault: {e}")),
     })?;
-    rekey(store, old_key, new_key, params, &paths).map_err(|rollback| rollback.error)?;
+    rekey(store, old_key, new_key, params_json, &paths, workspace_id)
+        .map_err(|rollback| rollback.error)?;
     Ok(())
 }
 
@@ -365,6 +383,14 @@ fn publish_snapshot(store: &SqliteStore, old_key: &VaultKey, paths: &RekeyPaths)
         }
         Err(e) => return Err(e.into()),
     }
+    // The retired-keys list the same way: absent means "restore to none".
+    match fs::read(&paths.retired) {
+        Ok(sealed) => storage::atomic_write_private(&paths.retired_backup, &sealed)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let _ = fs::remove_file(&paths.retired_backup);
+        }
+        Err(e) => return Err(e.into()),
+    }
     fs::rename(&paths.staging, &paths.db_backup)?;
     Ok(())
 }
@@ -378,6 +404,7 @@ fn publish_snapshot(store: &SqliteStore, old_key: &VaultKey, paths: &RekeyPaths)
 fn discard_snapshot(paths: &RekeyPaths) -> Result<()> {
     remove_marker(&paths.db_backup)?;
     let _ = fs::remove_file(&paths.sidecar_backup);
+    let _ = fs::remove_file(&paths.retired_backup);
     Ok(())
 }
 
@@ -463,39 +490,61 @@ fn restore_rekey_backup(paths: &RekeyPaths) -> Result<bool> {
     } else {
         let _ = fs::remove_file(&paths.sidecar);
     }
+    // The retired-keys list is sealed under the key the sidecar names, so it
+    // goes back with it — to none, when the vault had none.
+    if paths.retired_backup.exists() {
+        fs::copy(&paths.retired_backup, &paths.retired)?;
+    } else {
+        let _ = fs::remove_file(&paths.retired);
+    }
     // Both go only once the pair is back in place: until then a second crash has
     // to find the marker still there and try again. A marker that will not go
     // is an error — the vault is on the restored pair, but must not open as a
     // writable session while recovery still has a snapshot to apply over it.
     remove_marker(&paths.db_backup)?;
     let _ = fs::remove_file(&paths.sidecar_backup);
+    let _ = fs::remove_file(&paths.retired_backup);
     let _ = fs::remove_file(&paths.staging);
     Ok(true)
 }
 
 // The destructive on-disk sequence, isolated so a single `?` failure triggers the
-// snapshot rollback in the caller. Sidecar (atomic) written last, after the rekey.
+// snapshot rollback in the caller. The retired-keys list and the sidecar (both
+// atomic) are written last, after the rekey: the list first, while the sidecar
+// still names the epoch it is about to retire.
 fn rekey_vault(
     store: &SqliteStore,
     old_key: &VaultKey,
     new_key: &VaultKey,
-    params: &KdfParams,
-    sidecar: &Path,
+    params_json: &str,
+    paths: &RekeyPaths,
+    workspace_id: &str,
 ) -> Result<()> {
-    let old_cipher = old_key.payload_cipher();
-    let new_cipher = new_key.payload_cipher();
+    let params = KdfParams::from_json(params_json)?;
     // Re-seal every row's payload under the new payload key (timestamps + tombstones kept).
-    let resealed: Vec<Record> = store
-        .export_for_sync()
-        .map_err(store_err)?
-        .into_iter()
-        .map(|r| reseal_record(r, &old_cipher, &new_cipher))
-        .collect::<Result<_>>()?;
+    let resealed = reseal_records(
+        store.export_for_sync().map_err(store_err)?,
+        old_key,
+        new_key,
+    )?;
     store.import(&resealed).map_err(store_err)?;
     reseal_attachments(store, old_key, new_key)?;
     store.rekey(&*new_key.sqlcipher_key()).map_err(store_err)?;
-    record_kdf_meta(store, params)?;
-    storage::atomic_write_file(sidecar, &params.to_json()?)?;
+    record_kdf_meta(store, &params)?;
+    let old_kdf = match fs::read_to_string(&paths.sidecar) {
+        Ok(json) => Some(json),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    crate::retired::retire(
+        &paths.retired,
+        workspace_id,
+        old_key,
+        old_kdf.as_deref(),
+        new_key,
+        params_json,
+    )?;
+    storage::atomic_write_file(&paths.sidecar, params_json)?;
     Ok(())
 }
 
@@ -523,19 +572,52 @@ fn reseal_attachments(store: &SqliteStore, old_key: &VaultKey, new_key: &VaultKe
     if atts.is_empty() {
         return Ok(());
     }
-    let refused = || Error::Unsupported("this vault's key scheme cannot hold attachments".into());
-    let old = old_key.attachment_cipher().ok_or_else(refused)?;
-    let new = new_key.attachment_cipher().ok_or_else(refused)?;
-    for a in &mut atts {
-        let file = old.unseal(&a.meta.id, &a.blob)?;
-        a.blob = new.seal(&a.meta.id, &file)?;
-    }
+    reseal_attachment_blobs(&mut atts, old_key, new_key)?;
     store.import_attachments(&atts).map_err(store_err)
 }
 
+/// Every record's payload carried from `old_key` onto `new_key`, metadata
+/// untouched. Shared with the sync engine, which carries a pack sealed under a
+/// retired key epoch onto the current one before merging it.
+pub(crate) fn reseal_records(
+    records: Vec<Record>,
+    old_key: &VaultKey,
+    new_key: &VaultKey,
+) -> Result<Vec<Record>> {
+    let (old, new) = (old_key.payload_cipher(), new_key.payload_cipher());
+    records
+        .into_iter()
+        .map(|r| reseal_record(r, &old, &new))
+        .collect()
+}
+
+/// Every attached file's blob carried from `old_key` onto `new_key`. A purged
+/// shell has no blob, and keeps none.
+pub(crate) fn reseal_attachment_blobs(
+    atts: &mut [Attachment],
+    old_key: &VaultKey,
+    new_key: &VaultKey,
+) -> Result<()> {
+    if atts.iter().all(|a| a.blob.is_empty()) {
+        return Ok(());
+    }
+    let refused = || Error::Unsupported("this vault's key scheme cannot hold attachments".into());
+    let old = old_key.attachment_cipher().ok_or_else(refused)?;
+    let new = new_key.attachment_cipher().ok_or_else(refused)?;
+    for a in atts.iter_mut().filter(|a| !a.blob.is_empty()) {
+        let file = old.unseal(&a.meta.id, &a.blob)?;
+        a.blob = new.seal(&a.meta.id, &file)?;
+    }
+    Ok(())
+}
+
 // Unseal a record's payload under the old cipher and re-seal it under the new one,
-// preserving all metadata (id/kind/title/tags/url_host/timestamps/tombstone).
+// preserving all metadata (id/kind/title/tags/url_host/timestamps/tombstone). A
+// purged row's payload is empty — there is nothing sealed to carry — and stays so.
 fn reseal_record(mut r: Record, old: &PayloadCipher, new: &PayloadCipher) -> Result<Record> {
+    if r.payload.is_empty() {
+        return Ok(r);
+    }
     let entry = old.unseal(&r.id, &r.payload)?;
     r.payload = new.seal(&entry)?;
     Ok(r)
@@ -1022,7 +1104,7 @@ mod recovery_tests {
             master: crate::crypto::derive(b"new-pw", &params).unwrap(),
         };
 
-        rekey_workspace(dir.path(), old, new, &params).unwrap();
+        rekey_workspace(dir.path(), "ws", old, new, &params.to_json().unwrap()).unwrap();
 
         let new = VaultKey::Argon2 {
             master: crate::crypto::derive(b"new-pw", &params).unwrap(),
@@ -1078,7 +1160,7 @@ mod recovery_tests {
             master: crate::crypto::derive(b"new-pw", &params).unwrap(),
         };
 
-        rekey_workspace(dir.path(), old, derive(), &params).unwrap();
+        rekey_workspace(dir.path(), "ws", old, derive(), &params.to_json().unwrap()).unwrap();
 
         let new = derive();
         let store = SqliteStore::open(&p.db, &*new.sqlcipher_key()).unwrap();
@@ -1089,6 +1171,108 @@ mod recovery_tests {
             .unseal("f1", &stored.blob)
             .unwrap();
         assert_eq!(&**file, b"file");
+    }
+
+    // --- the retired-keys list rides with the sidecar ----------------------------
+
+    fn argon(byte: u8) -> VaultKey {
+        VaultKey::Argon2 {
+            master: zeroize::Zeroizing::new(vec![byte; 32]),
+        }
+    }
+
+    fn cheap_params_json() -> String {
+        KdfParams::argon2id(b"salt-0123456789012345", 256, 1, 1)
+            .next_generation()
+            .to_json()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_rekey_keeps_the_epoch_it_leaves_in_the_retired_list() {
+        let (dir, p) = paths();
+        let old = argon(1);
+        fs::write(&p.sidecar, "old-params").unwrap();
+        drop(store_with_one_entry(&p.db, &old));
+        let new_json = cheap_params_json();
+
+        rekey_workspace(dir.path(), "ws", old, argon(2), &new_json).unwrap();
+
+        assert_eq!(fs::read_to_string(&p.sidecar).unwrap(), new_json);
+        let retired = crate::retired::load(dir.path(), &argon(2), "ws");
+        assert_eq!(retired.len(), 1);
+        assert_eq!(retired[0].kdf, "old-params");
+        assert_eq!(&*retired[0].material, &[1u8; 32][..]);
+        assert!(!p.retired_backup.exists());
+    }
+
+    // A crash after the list and the sidecar were both written, before the
+    // snapshot was retired: recovery puts the old key back, and with it the
+    // list sealed under that key — not the one sealed under the new key.
+    #[test]
+    fn a_rolled_back_change_restores_the_retired_list_with_the_sidecar() {
+        let (_dir, p) = paths();
+        let old = argon(1);
+        fs::write(&p.sidecar, "old-params").unwrap();
+        crate::retired::retire(
+            &p.retired,
+            "ws",
+            &argon(9),
+            Some("older"),
+            &old,
+            "old-params",
+        )
+        .unwrap();
+        let before = fs::read(&p.retired).unwrap();
+        let store = store_with_one_entry(&p.db, &old);
+
+        publish_snapshot(&store, &old, &p).unwrap();
+        assert_eq!(fs::read(&p.retired_backup).unwrap(), before);
+        rekey_vault(&store, &old, &argon(2), &cheap_params_json(), &p, "ws").unwrap();
+        drop(store);
+        assert_ne!(fs::read(&p.retired).unwrap(), before);
+
+        assert!(restore_rekey_backup(&p).unwrap());
+
+        assert_eq!(fs::read(&p.retired).unwrap(), before);
+        assert_eq!(fs::read_to_string(&p.sidecar).unwrap(), "old-params");
+        assert!(!p.retired_backup.exists());
+        let list = crate::retired::load(p.db.parent().unwrap(), &old, "ws");
+        assert_eq!(list[0].kdf, "older");
+    }
+
+    // A purged row keeps its id and stamps but no payload: nothing to re-seal,
+    // and no reason for the change to fail on it.
+    #[test]
+    fn a_purged_entry_does_not_stop_a_password_change() {
+        let (dir, p) = paths();
+        let old = argon(1);
+        fs::write(&p.sidecar, "old-params").unwrap();
+        {
+            let store = store_with_one_entry(&p.db, &old);
+            store.delete("1").unwrap();
+            store.purge("1").unwrap();
+        }
+
+        rekey_workspace(dir.path(), "ws", old, argon(2), &cheap_params_json()).unwrap();
+
+        let store = SqliteStore::open(&p.db, &*argon(2).sqlcipher_key()).unwrap();
+        assert!(store.export_for_sync().unwrap()[0].payload.is_empty());
+    }
+
+    // A vault that had no list before the change has none after a rollback.
+    #[test]
+    fn a_rollback_to_a_vault_without_a_list_removes_the_new_one() {
+        let (_dir, p) = paths();
+        fs::write(&p.db, "new-keyed").unwrap();
+        fs::write(&p.db_backup, "old-keyed").unwrap();
+        fs::write(&p.sidecar, "new-params").unwrap();
+        fs::write(&p.sidecar_backup, "old-params").unwrap();
+        fs::write(&p.retired, "sealed under the new key").unwrap();
+
+        assert!(restore_rekey_backup(&p).unwrap());
+
+        assert!(!p.retired.exists());
     }
 
     // The workspace is on a password of its own. Nothing is touched, and the
@@ -1104,9 +1288,10 @@ mod recovery_tests {
         let params = KdfParams::default_argon2id();
         let refusal = rekey_workspace(
             dir.path(),
+            "ws",
             VaultKey::legacy_from_password("someone-elses-pw"),
             VaultKey::legacy_from_password("new-pw"),
-            &params,
+            &params.to_json().unwrap(),
         );
 
         assert!(matches!(refusal, Err(Error::InvalidPassword)));

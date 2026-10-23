@@ -34,6 +34,14 @@ pub const DB_REKEY_BACKUP_FILE: &str = "vault.db.rekey-backup";
 /// Rolling the DB back to its old key is only half a rollback: the descriptor
 /// that says how to derive that key has to roll back with it, or nothing opens.
 pub const KDF_SIDECAR_REKEY_BACKUP_FILE: &str = "vault.kdf.json.rekey-backup";
+/// The key epochs this device has re-keyed away from, sealed under the current
+/// key: what lets it still open a sync pack a slower device pushed under a
+/// password this one has already replaced. Never leaves the device.
+pub const RETIRED_KEYS_FILE: &str = "vault.retired.sealed";
+/// Pre-change recovery snapshot of [`RETIRED_KEYS_FILE`], taken with the other
+/// two: a rollback that restored the old key but kept the new list would hold
+/// a list nothing on this device can open.
+pub const RETIRED_KEYS_REKEY_BACKUP_FILE: &str = "vault.retired.sealed.rekey-backup";
 
 /// Dev builds share the prod identifier, so isolate their data in a subdir
 /// to avoid mutating the real vault while iterating.

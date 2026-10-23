@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { useApp, openSettings } from '@/store'
+import { useApp, openSettings, openPasswordPrompt } from '@/store'
+import { syncPasswordChangedRemotely } from '@/api/sync'
 import { cx } from '@/utils/cx'
 import Tooltip from '@/components/elements/Tooltip'
 import { CloudGlyph, DiskGlyph, CheckGlyph, AlertGlyph } from '../../icons'
@@ -30,6 +31,10 @@ const BADGE: Partial<Record<SyncTone, string>> = {
 // that section; a shell whose settings are a screen of its own (the phone's)
 // passes its own way of pushing the same pane -- the store's `settingsSection`
 // is the modal's nav selection and means nothing there.
+//
+// One failure is answered here rather than in Settings: a password changed on
+// another device needs only the new password typed in, so the chip opens that
+// prompt directly, in either shell.
 interface Props {
   className?: string
   onClick?: () => void
@@ -55,7 +60,11 @@ export default function SyncIndicator({ className, onClick }: Props) {
         data-testid="sync-indicator"
         data-tone={tone}
         aria-label={label}
-        onClick={onClick ?? (() => openSettings('sync'))}
+        onClick={
+          syncPasswordChangedRemotely(sync)
+            ? openPasswordPrompt
+            : (onClick ?? (() => openSettings('sync')))
+        }
         className={cx(
           'relative grid h-7 w-7 flex-none cursor-pointer place-items-center rounded-full text-text2 transition-colors hover:bg-hover hover:text-text',
           className

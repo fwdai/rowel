@@ -56,6 +56,23 @@ export const syncDeletedRemotely = (sync: SyncStatus): boolean =>
   sync.errorKind === 'vaultDeletedRemotely'
 
 /**
+ * The account's pack is sealed under a newer master password than this
+ * device's — another device changed it — so runs stop here until the user
+ * types the new one in (`syncAdoptPassword`).
+ */
+export const syncPasswordChangedRemotely = (sync: SyncStatus): boolean =>
+  sync.errorKind === 'passwordChangedRemotely'
+
+/**
+ * The account holds this vault under a password this device has already
+ * replaced and no longer has the key for, so runs stop here without pushing.
+ * Either the device that wrote it adopts the new password on its next run, or
+ * the user overwrites the account's copy with this one (`syncReplaceRemote`).
+ */
+export const syncUnderRetiredPassword = (sync: SyncStatus): boolean =>
+  sync.errorKind === 'vaultUnderRetiredPassword'
+
+/**
  * The provider this vault syncs through, or null when it does not. A backend
  * from before there was a choice reports a connection with no provider, and
  * the only one it ever spoke to was Google Drive.
@@ -88,6 +105,25 @@ export const syncNow = (): Promise<void> => call('sync_now')
  * `sync:status` like any run.
  */
 export const syncReupload = (): Promise<void> => call('sync_reupload')
+
+/**
+ * Switch the open vault to the master password another device changed it to.
+ * The backend checks `password` by opening the account's pack with it, re-keys
+ * this vault (and every lockbox beside it on the same old password) and starts
+ * a run. Resolves to the ids of lockboxes beside it that it could not move,
+ * like `changeMasterPassword`. A wrong password rejects with `invalidPassword`
+ * and counts against the unlock backoff (`tooManyAttempts`).
+ */
+export const syncAdoptPassword = (password: string): Promise<string[]> =>
+  call('sync_adopt_password', { password })
+
+/**
+ * Overwrite the account's copy of the open vault, held under a password this
+ * device has retired, with this device's, then start a run. Edits only the
+ * account's copy had are lost; the device that wrote them is asked for the new
+ * password on its next run.
+ */
+export const syncReplaceRemote = (): Promise<void> => call('sync_replace_remote')
 
 /**
  * Ask the backend to make the account a probe left pending this vault's. It

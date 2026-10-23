@@ -32,6 +32,9 @@ const INFO_LEGACY_CRYPTOR: &[u8] = b"legacy-cryptor-secret";
 // Seals the "deleted everywhere" marker a sync account holds in place of a
 // vault's pack, so only a holder of this vault's key can write one.
 const INFO_DELETE_MARKER: &[u8] = b"sync-delete-marker-key";
+// Seals the list of key epochs this vault was re-keyed away from, kept on the
+// device so a sync pack sealed under one of them still opens.
+const INFO_RETIRED_KEYS: &[u8] = b"retired-keys-key";
 
 /// The active vault key. Held by the session; scrubbed on drop.
 pub enum VaultKey {
@@ -100,6 +103,14 @@ impl VaultKey {
     /// Derived from the legacy secret the same way for a legacy-keyed vault.
     pub fn delete_marker_key(&self) -> Zeroizing<[u8; KEY_LEN]> {
         Zeroizing::new(hkdf_subkey(self.biometric_material(), INFO_DELETE_MARKER))
+    }
+
+    /// The AES-256-GCM key that seals this vault's list of retired key epochs
+    /// (the app's `vault.retired.sealed`). A subkey of the *current* key, so
+    /// the list is readable only by someone who already holds it: keeping the
+    /// old keys does not weaken a rotation.
+    pub fn retired_keys_key(&self) -> Zeroizing<[u8; KEY_LEN]> {
+        Zeroizing::new(hkdf_subkey(self.biometric_material(), INFO_RETIRED_KEYS))
     }
 
     /// The opaque bytes to persist in the OS secure store for biometric unlock,
@@ -258,6 +269,15 @@ mod tests {
         let legacy = VaultKey::legacy_from_password("pw");
         assert_ne!(*legacy.delete_marker_key(), *legacy.sqlcipher_key());
         assert_ne!(*legacy.delete_marker_key(), *marker);
+    }
+
+    #[test]
+    fn the_retired_keys_key_is_its_own_and_deterministic() {
+        let k = argon2_key();
+        let retired = k.retired_keys_key();
+        assert_ne!(*retired, *k.sqlcipher_key());
+        assert_ne!(*retired, *k.delete_marker_key());
+        assert_eq!(*retired, *argon2_key().retired_keys_key());
     }
 
     #[test]

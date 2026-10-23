@@ -13,7 +13,7 @@ use crate::sync::Provider;
 pub use rowel_core::atomic::{atomic_write_file, atomic_write_private};
 pub use rowel_core::layout::{
     BIOMETRIC_FILE, DB_FILE, DB_REKEY_BACKUP_FILE, KDF_SIDECAR_FILE, KDF_SIDECAR_REKEY_BACKUP_FILE,
-    WRAPPED_KEY_FILE,
+    RETIRED_KEYS_FILE, RETIRED_KEYS_REKEY_BACKUP_FILE, WRAPPED_KEY_FILE,
 };
 // Plaintext failed-unlock backoff state (T-AUTH-3), stored next to the DB for the
 // same reason as the KDF sidecar: a wrong password never opens the encrypted DB,
@@ -52,9 +52,11 @@ const SYNC_SCRATCH_DIR: &str = "sync-scratch";
 // whatever `-wal`/`-shm` siblings it has (see `db_files`), a sidecar is the one
 // file.
 const VAULT_DB_FILES: [&str; 2] = [DB_FILE, DB_REKEY_BACKUP_FILE];
-const VAULT_SIDECAR_FILES: [&str; 7] = [
+const VAULT_SIDECAR_FILES: [&str; 9] = [
     KDF_SIDECAR_FILE,
     KDF_SIDECAR_REKEY_BACKUP_FILE,
+    RETIRED_KEYS_FILE,
+    RETIRED_KEYS_REKEY_BACKUP_FILE,
     LOCKOUT_SIDECAR_FILE,
     GDRIVE_FILE,
     DROPBOX_FILE,
@@ -364,7 +366,12 @@ pub fn db_path(app: &AppHandle) -> Result<PathBuf> {
 // inherit the 0700 directory mode. Everything written here is SQLCipher
 // ciphertext, and every writer removes its own files (see `pack::Scratch`).
 pub fn sync_scratch_dir(app: &AppHandle) -> Result<PathBuf> {
-    Ok(workspace_dir(app)?.join(SYNC_SCRATCH_DIR))
+    Ok(sync_scratch_dir_in(&workspace_dir(app)?))
+}
+
+// The same, for a workspace directory that is not the active one.
+pub(crate) fn sync_scratch_dir_in(dir: &Path) -> PathBuf {
+    dir.join(SYNC_SCRATCH_DIR)
 }
 
 // Favicons used to be cached as loose `{host}.uri` / `{host}.miss` files here.
@@ -786,8 +793,8 @@ mod tests {
         move_data_dir, move_vault_files, move_workspace_files, read_backup,
         read_regular_file_capped, remove_if_present, settle_data_dir, Error, BIOMETRIC_FILE,
         DB_FILE, DB_REKEY_BACKUP_FILE, DROPBOX_FILE, GDRIVE_FILE, ICLOUD_FILE, KDF_SIDECAR_FILE,
-        KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, STALE_SUFFIX, SYNC_SCRATCH_DIR,
-        WRAPPED_KEY_FILE,
+        KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, RETIRED_KEYS_FILE,
+        RETIRED_KEYS_REKEY_BACKUP_FILE, STALE_SUFFIX, SYNC_SCRATCH_DIR, WRAPPED_KEY_FILE,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -860,12 +867,14 @@ mod tests {
     }
 
     // Every file of the set, laid out as a workspace holds them.
-    fn seed_vault(dir: &Path) -> [&'static str; 9] {
+    fn seed_vault(dir: &Path) -> [&'static str; 11] {
         let files = [
             DB_FILE,
             DB_REKEY_BACKUP_FILE,
             KDF_SIDECAR_FILE,
             KDF_SIDECAR_REKEY_BACKUP_FILE,
+            RETIRED_KEYS_FILE,
+            RETIRED_KEYS_REKEY_BACKUP_FILE,
             LOCKOUT_SIDECAR_FILE,
             GDRIVE_FILE,
             DROPBOX_FILE,

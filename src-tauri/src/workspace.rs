@@ -533,6 +533,7 @@ mod tests {
             (storage::DB_REKEY_BACKUP_FILE, "db-backup"),
             (storage::KDF_SIDECAR_FILE, "kdf"),
             (storage::KDF_SIDECAR_REKEY_BACKUP_FILE, "kdf-backup"),
+            (storage::RETIRED_KEYS_FILE, "retired"),
             (storage::LOCKOUT_SIDECAR_FILE, "lockout"),
             (
                 crate::sync::Provider::GoogleDrive.token_file_name(),
@@ -603,6 +604,7 @@ mod tests {
         assert_eq!(read(root.join(storage::DB_FILE)), "work-db");
         assert_eq!(read(wal_of(&root.join(storage::DB_FILE))), "work-wal");
         assert_eq!(read(root.join(storage::KDF_SIDECAR_FILE)), "work-kdf");
+        assert_eq!(read(root.join(storage::RETIRED_KEYS_FILE)), "work-retired");
         assert_eq!(
             read(root.join(crate::sync::Provider::GoogleDrive.token_file_name())),
             "work-token"

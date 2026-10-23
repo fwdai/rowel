@@ -276,7 +276,9 @@ pub fn run(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<S
     // pulled. A failure here is a sync failure like any other: addressing the
     // wrong pack — or a second one — is the one mistake the merge cannot undo.
     let resolved = block_on(resolve_vault_id(&store, &local))?;
-    let remote = PackRemote::new(store, resolved.id.clone(), marker_key);
+    let mut marker_keys = vec![marker_key];
+    marker_keys.extend(local.retired_marker_keys());
+    let remote = PackRemote::new(store, resolved.id.clone(), marker_keys);
 
     // The id is written from inside the run, at the one moment that satisfies
     // both of the things this ordering has to guarantee (see [`engine::sync`],
@@ -318,6 +320,48 @@ pub fn run(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<S
     publish_remote_vaults(app, &resolved.id, resolved.packs);
     sweep_shares(app);
     Ok(outcome)
+}
+
+/// The account's pack for `vault_id`, read through `store` exactly as a run's
+/// pull reads it: `None` when there is none, `VaultDeletedRemotely` when a
+/// deletion marker that opens under one of `marker_keys` sits there. Blocking,
+/// like [`run`]. For the flows that need the pack's header before they can
+/// decide anything — adopting a password changed on another device — and so
+/// cannot hand the pull to the engine.
+pub(crate) fn fetch_pack(
+    store: AnyStore,
+    vault_id: String,
+    marker_keys: Vec<MarkerKey>,
+) -> Result<(Option<engine::RemoteFile>, AnyStore)> {
+    use engine::Remote;
+    let remote = PackRemote::new(store, vault_id, marker_keys);
+    let fetched = remote.fetch();
+    let store = remote.into_store();
+    Ok((fetched?, store))
+}
+
+/// Push this device's pack over the account's, whatever the account holds, and
+/// do nothing else: the user's explicit answer to a pack this device cannot
+/// open (`PasswordChangedRemotely`, `VaultUnderRetiredPassword`). Conditional
+/// on the head revision read just before, so a push another device lands in
+/// between still wins and this fails. Blocking, like [`run`].
+pub fn replace_remote(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<()> {
+    if !is_configured(app, &cryptor) {
+        return Err(Error::SyncNotConfigured);
+    }
+    let store = store_for(Auth::Sealed {
+        app: app.clone(),
+        cryptor,
+    });
+    let local = SessionVault::capture(app, store.provider())?;
+    let resolved = block_on(resolve_vault_id(&store, &local))?;
+    if resolved.persist {
+        local.adopt_vault_id(&resolved.id)?;
+    }
+    let mut marker_keys = vec![marker_key];
+    marker_keys.extend(local.retired_marker_keys());
+    let remote = PackRemote::new(store, resolved.id, marker_keys);
+    engine::replace(&remote, &local, now_ms())
 }
 
 /// The run pulled a newer name for this vault. The vault's own copy is already
@@ -543,7 +587,7 @@ pub(crate) async fn delete_pack(
             store.create(&name, &sealed).await?;
         }
         Some(entry) => {
-            if !marker::verified(store, &entry, marker_key, vault_id).await? {
+            if !marker::verified(store, &entry, &[marker_key], vault_id).await? {
                 store.update(&entry, &sealed).await?;
             }
         }

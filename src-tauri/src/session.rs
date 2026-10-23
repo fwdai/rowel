@@ -600,13 +600,21 @@ mod lock_scope {
 
     #[test]
     fn a_password_change_derives_and_re_keys_outside_the_guard() {
-        let body = body_of(
+        let change = body_of(
             include_str!("commands/auth.rs"),
             "pub async fn change_master_password(",
         );
         assert!(
-            at(&body, "derive_both") < at(&body, "session.lock()"),
+            !change.contains("session.lock()"),
+            "the change itself takes no session lock"
+        );
+        assert!(
+            at(&change, "derive_both") < at(&change, "rekey_open_workspace"),
             "both Argon2id derives belong before the lock is taken"
+        );
+        let body = body_of(
+            include_str!("commands/auth.rs"),
+            "pub(crate) async fn rekey_open_workspace(",
         );
         assert!(
             at(&body, "session.lock()") < at(&body, "blocking("),

@@ -188,8 +188,9 @@ its header so another device can derive the key for the snapshot inside.
 >   `session::derive_key` re-derives it from that sidecar on every unlock,
 >   feeding the password to Argon2id directly — no `SHA-512` pre-hash on this
 >   path. A restore derives from the descriptor the pack carries in its header,
->   and a password change writes fresh params and a fresh sidecar (rolling both
->   back together if it is interrupted). A database that exists with *no*
+>   and a password change writes fresh params (one generation on) and a fresh
+>   sidecar, keeping the old epoch in the retired-keys list (rolling all three
+>   back together if it is interrupted; see "Key lifecycle" 5). A database that exists with *no*
 >   sidecar predates this wiring (an interim/dev vault) and still opens under the
 >   old deterministic key, but it cannot sync — `SessionVault::capture` refuses a
 >   vault with no descriptor to put in the pack header.
@@ -482,6 +483,57 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
    proved), and one whose re-key fails stays on the passphrase it had; both are
    reported back so the UI can say the new passphrase does not open everything
    on the device.
+
+5. **A passphrase change reaches the other devices of a synced lockbox**
+   (`docs/password-change-sync-design.md`). Every re-key moves the lockbox to a
+   new *key epoch*: a descriptor with a fresh salt and a generation one past
+   the old one (`KdfParams::gen`, written only when non-zero so every older
+   descriptor keeps its bytes). The epoch left behind — the old descriptor
+   verbatim and the old key material — is kept beside the vault in
+   `vault.retired.sealed`, newest first and at most three, sealed with
+   AES-256-GCM under a subkey of the *current* key
+   (`VaultKey::retired_keys_key`) with the workspace id as associated data. It
+   is only readable by someone who already holds the current key, so keeping it
+   does not weaken the rotation, and it is never written to the account. It is
+   written inside the re-key saga and snapshotted and rolled back with the
+   sidecar; a list that does not open reads as empty, which only costs the
+   merge of an old-epoch pack. (A primary deleted and replaced by a promoted
+   lockbox changes that lockbox's id, so its list stops opening; the same
+   degradation.)
+
+   The changing device syncs once before the change and starts a run after it;
+   that run opens the account's pack with the retired key, merges it, and
+   pushes it under the new epoch even when nothing else differs. A pack under
+   a retired epoch — a slower device's push, or an old revision put back — is
+   always *merged* and re-sealed, never installed, so it cannot move a device
+   back onto the replaced passphrase. A pack whose header is neither current
+   nor retired is told apart by generation: the same or later is "changed on
+   another device" (`PasswordChangedRemotely`), earlier is "under a passphrase
+   this device replaced and lost the key of" (`VaultUnderRetiredPassword`), and
+   two generation-0 descriptors are another install's vault, as before. None of
+   those runs pushes. A "delete everywhere" marker opens under the current
+   marker key or any retired epoch's.
+
+   The account's header is attacker-writable. Adopting the new passphrase
+   (`sync_adopt_password`) derives the typed passphrase under that header —
+   bounded by the KDF ceilings, so the worst a hostile header asks for is a
+   1 GiB derive — and proves it only by opening the pack's snapshot with the
+   result, which shows the pack was sealed by someone who knew that
+   passphrase. A wrong one leaks nothing and is penalized exactly like a wrong
+   unlock (the same backoff, consulted first), so the prompt is not a free
+   oracle against the pack. The adopted header becomes the sidecar byte for
+   byte, through the same saga a local change runs; lockboxes beside it that
+   the ring holds and that share the passphrase follow, and the rest are
+   reported. Replacing the account's copy with this device's
+   (`sync_replace_remote`) is allowed only while the last run failed with one
+   of the two errors above — including "changed on another device", for a user
+   who never changed the passphrase and is looking at a copy that is not
+   theirs — behind a confirmation that names the loss: what only the account's
+   copy held is gone. The upload is conditional on the head revision it read.
+   A device that joined after an epoch cannot verify a pack from before it, and
+   that replace is the one place a user can lose edits through this flow; they
+   are told. Old revisions the provider keeps stay sealed under the passphrase
+   they were written with.
 
 ## Fresh start and explicit import
 
@@ -833,7 +885,12 @@ runs and publishes its identities; until then the sheet's list offers it.
   deletion marker has the same limit: it carries no counter, so a copy of a
   genuine sealed marker put back after the user re-uploaded the lockbox is
   honoured again. That stops sync and nothing more — the pack is never deleted
-  on a marker's word — and re-uploading clears it again.
+  on a marker's word — and re-uploading clears it again. After a passphrase
+  change, old revisions stay sealed under the passphrase they were written
+  with: rotating a leaked passphrase does not re-encrypt the provider's
+  history, and anyone holding that passphrase and the account can still read
+  them. Putting one back is merged and re-sealed under the current passphrase
+  by every device that holds the retired key (see "Key lifecycle" 5).
 - **Physical memory attacks.** Cold-boot or DMA attacks against an unlocked
   session are out of scope.
 

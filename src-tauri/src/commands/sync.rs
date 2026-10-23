@@ -330,6 +330,60 @@ pub async fn sync_reupload(app: AppHandle, state: State<'_, AppState>) -> Result
     Ok(())
 }
 
+/// How long a password change waits for a run already in flight before it
+/// goes ahead without its own. A run's network stalls are bounded by the
+/// client's own deadlines, so this is only ever reached by a run that is
+/// making slow progress — and the retired key covers whatever it misses.
+const PRE_REKEY_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// One run to completion before a master-password change, holding the run
+/// claim for the caller to keep across the change: the claim is the lock, so a
+/// run in flight is waited for rather than raced. A vault that does not sync
+/// takes the claim and runs nothing. `None` when the wait ran out; the change
+/// goes ahead regardless.
+///
+/// A failed run (offline, say) is reported on `sync:status` like any other
+/// and does not stop the change: a pack another device pushes under the old
+/// password afterwards still opens here, with the key the change retires.
+pub(super) async fn sync_before_rekey(app: &AppHandle) -> Option<RunClaim> {
+    let app = app.clone();
+    super::blocking(move || {
+        let state = app.state::<AppState>();
+        let Some(claim) = wait_for_claim(&state) else {
+            log::warn!("a sync run is still in flight; changing the password without one");
+            return Ok(None);
+        };
+        let configured = state.session.lock().unwrap().sync_configured;
+        if configured {
+            if let Some((cryptor, marker_key)) = session_keys(&state) {
+                started(&app);
+                report(&app, sync::run(&app, cryptor, marker_key));
+            }
+        }
+        Ok(Some(claim))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// The run claim, waiting up to [`PRE_REKEY_WAIT`] for a run in flight to
+/// release it: for the flows that re-key the open vault and must not have a
+/// run beside them. Blocking — it sleeps between tries — so only ever called
+/// on the blocking pool. `None` when the wait ran out.
+pub(super) fn wait_for_claim(state: &AppState) -> Option<RunClaim> {
+    let deadline = std::time::Instant::now() + PRE_REKEY_WAIT;
+    loop {
+        if let Some(claim) = claim_run(&state.syncing) {
+            return Some(claim);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 /// Ask for a run after a local change, on a vault that can serve one.
 ///
 /// A locked or unconnected vault is a silent no-op rather than an error. This

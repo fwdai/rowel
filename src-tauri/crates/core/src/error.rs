@@ -138,6 +138,21 @@ pub enum Error {
     #[error("this vault was deleted from Google Drive on another device")]
     VaultDeletedRemotely,
 
+    /// The account's pack is sealed under a key descriptor of the same or a
+    /// later generation than this device's: another device changed the master
+    /// password. The run stops until the user enters the new one
+    /// (`sync_adopt_password` in the app).
+    #[error("the master password of this lockbox was changed on another device")]
+    PasswordChangedRemotely,
+
+    /// The account's pack is sealed under an earlier generation this device
+    /// has re-keyed away from and no longer holds the key of. It can neither
+    /// be opened nor pushed over without losing what is in it; the run stops
+    /// until that device catches up or the user replaces the account's copy
+    /// (`sync_replace_remote` in the app).
+    #[error("the account holds this lockbox under a password this device has already replaced")]
+    VaultUnderRetiredPassword,
+
     #[error("the file is too large")]
     FileTooLarge,
 
@@ -206,6 +221,8 @@ impl Error {
             Error::VaultAlreadyOpen => "vaultAlreadyOpen",
             Error::VaultNotInAccount => "vaultNotInAccount",
             Error::VaultDeletedRemotely => "vaultDeletedRemotely",
+            Error::PasswordChangedRemotely => "passwordChangedRemotely",
+            Error::VaultUnderRetiredPassword => "vaultUnderRetiredPassword",
             Error::FileTooLarge => "fileTooLarge",
             Error::FileNotText => "fileNotText",
             Error::VaultFull => "vaultFull",
@@ -256,6 +273,22 @@ mod tests {
         assert_eq!(json["kind"], "locked");
         assert_eq!(json["message"], "vault is locked");
         assert!(json.get("retryAfterSecs").is_none());
+    }
+
+    #[test]
+    fn the_password_epoch_errors_carry_their_kinds() {
+        let json = serde_json::to_value(Error::PasswordChangedRemotely).unwrap();
+        assert_eq!(json["kind"], "passwordChangedRemotely");
+        assert_eq!(
+            json["message"],
+            "the master password of this lockbox was changed on another device"
+        );
+        let json = serde_json::to_value(Error::VaultUnderRetiredPassword).unwrap();
+        assert_eq!(json["kind"], "vaultUnderRetiredPassword");
+        assert_eq!(
+            json["message"],
+            "the account holds this lockbox under a password this device has already replaced"
+        );
     }
 
     #[test]
