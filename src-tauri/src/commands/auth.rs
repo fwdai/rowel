@@ -571,6 +571,13 @@ pub(super) async fn restore_enrollment(app: &AppHandle, material: Zeroizing<Vec<
 // user typed is not its password, and this command is not a way to take one
 // over.
 //
+// Each one re-keyed has its account copy re-sealed right after, under the run
+// claim the change holds (`sync::run_workspace`): the change is the one action
+// that touches every lockbox, so it is the one place to sync them all, and the
+// user's other devices then get one "password changed" prompt for all of them
+// rather than one per lockbox as each is next opened here. Best effort: a run
+// that fails is logged, and the lockbox's retired key covers its next run.
+//
 // One workspace at a time, each on the blocking pool: an Argon2id derive and a
 // whole-vault re-seal apiece, and nothing here goes faster in parallel on a
 // machine whose cores Argon2id is already meant to saturate.
@@ -612,15 +619,16 @@ async fn rekey_beside(
         // own (`appkey`); the change on disk is the user's either way.
         let held = state.keyring.lock().unwrap().get(&id);
         let (current, new) = (current.clone(), new.clone());
-        let workspace_id = id.clone();
-        match blocking(move || rekey_one(&dir, &workspace_id, held, &current, &new)).await {
+        let (rekeyed, workspace_id) = (dir.clone(), id.clone());
+        match blocking(move || rekey_one(&rekeyed, &workspace_id, held, &current, &new)).await {
             Ok(material) => {
                 if id == PRIMARY_ID {
                     appkey::replace_app_key(app, &material);
-                    restore_enrollment(app, material).await;
+                    restore_enrollment(app, material.clone()).await;
                 } else {
                     appkey::adopt(app, &id, &material);
                 }
+                super::sync::sync_rekeyed(app, &dir, &id, &material).await;
             }
             Err(Error::InvalidPassword) => {
                 log::error!(

@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use subtle::ConstantTimeEq;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroizing;
 
 use super::blocking;
@@ -186,7 +186,8 @@ fn penalize(lockout: LockoutState, now: i64, dir: &Path) -> Error {
 /// password exactly as after a password change), through the same saga a
 /// change runs — which keeps the epoch it leaves in its retired list — and its
 /// account's token file is re-sealed under the new key. Only once that is on
-/// disk is its key sealed under the app key.
+/// disk is its key sealed under the app key. Its account copy is then synced
+/// under the new key straight away (`sync::run_workspace`), best effort.
 ///
 /// The lockbox must not be the one the session has open: it is re-keyed on its
 /// own files, as a password change re-keys every lockbox beside the open one.
@@ -243,5 +244,19 @@ pub async fn workspace_adopt_vault_password(
         blocking(move || super::auth::rekey_one(&dir, &id, Some(held), "", &vault_password)).await?
     };
     appkey::seal_under(&app, &workspace_id, &app_key, &material);
+
+    // The account's copy, re-sealed under the vault password now rather than
+    // at the lockbox's next open — best effort, as after a password change:
+    // the retired key covers a run that fails here. Under the run claim, so no
+    // run of the open lockbox lands beside it; one that will not end in time
+    // is not waited out.
+    let claim = {
+        let app = app.clone();
+        blocking(move || Ok(super::sync::wait_for_claim(&app.state::<AppState>()))).await?
+    };
+    match claim {
+        Some(_claim) => super::sync::sync_rekeyed(&app, &dir, &workspace_id, &material).await,
+        None => log::warn!("a sync run is in flight; lockbox {workspace_id} syncs on its next"),
+    }
     Ok(())
 }
