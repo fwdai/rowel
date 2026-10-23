@@ -20,8 +20,9 @@ Rowel is a [Tauri 2](https://v2.tauri.app) app: a Rust core (`src-tauri/`, with 
 
 - [Bun](https://bun.sh) 1.3.3 or newer (what CI pins) — the package manager and
   script runner for this repo; `bun.lock` is the committed lockfile
-- [Node.js](https://nodejs.org) 22 (what `.nvmrc` and CI pin) — only the E2E
-  suite needs it, since WebdriverIO runs under Node
+- [Node.js](https://nodejs.org) 24.22.1 (what `.nvmrc` pins; CI reads it from
+  there) — the E2E suite needs it, since WebdriverIO runs under Node, and so
+  does the browser extension's tooling
 - [Rust](https://rustup.rs) (stable toolchain)
 - Platform build dependencies for Tauri — see the
   [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/)
