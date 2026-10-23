@@ -248,8 +248,8 @@ pub async fn workspace_adopt_vault_password(
     // The account's copy, re-sealed under the vault password now rather than
     // at the lockbox's next open — best effort, as after a password change:
     // the retired key covers a run that fails here. Under the run claim, so no
-    // run of the open lockbox lands beside it; one that will not end in time
-    // is not waited out.
+    // run of the open lockbox lands beside it; a run in flight is waited for
+    // briefly, and one that outlasts the wait leaves this lockbox to its next.
     let claim = {
         let app = app.clone();
         blocking(move || Ok(super::sync::wait_for_claim(&app.state::<AppState>()))).await?
