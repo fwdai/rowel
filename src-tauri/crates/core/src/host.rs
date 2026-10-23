@@ -32,6 +32,57 @@ pub fn host_matches(site: &str, entry: &str) -> bool {
     site == entry || (site.ends_with(&format!(".{entry}")) && !is_public_suffix(entry))
 }
 
+/// Whether a login saved for `saved` (its website field, as the user typed or
+/// an importer wrote it) may be served to the page at `page_url`: its host
+/// matches by [`host_matches`], and the page is no weaker than what was saved.
+///
+/// - Saved for `https://` and asked for by an `http://` page: refused, since
+///   anyone on the network can serve that page. A page on the machine itself
+///   (`localhost`, `127.0.0.1`, `::1`) is the one exception.
+/// - Saved with an explicit port (`https://bank.com:8443`): the page has to be
+///   on that port. Another port on the same host is another server.
+/// - Saved with no scheme at all (`bank.com`): the host is all the user said,
+///   so the host is all that is checked.
+///
+/// A saved URL whose scheme is there but that does not parse is served to no
+/// page.
+pub fn site_matches(page_url: &str, saved: &str) -> bool {
+    let Ok(page) = url::Url::parse(page_url) else {
+        return false;
+    };
+    let Some(site) = page.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    let saved = saved.trim();
+    let Some((_, rest)) = saved.split_once("://") else {
+        // No scheme: the `url_host` column is the whole of it.
+        return host_matches(&site, saved.split('/').next().unwrap_or(""));
+    };
+    if !host_matches(&site, rest.split('/').next().unwrap_or("")) {
+        return false;
+    }
+    let Ok(saved) = url::Url::parse(saved) else {
+        return false;
+    };
+    if saved.scheme() == "https" && page.scheme() == "http" && !is_loopback(&page) {
+        return false;
+    }
+    match saved.port() {
+        Some(port) => page.port_or_known_default() == Some(port),
+        None => true,
+    }
+}
+
+/// Whether `url` names this machine: `localhost` or a loopback address.
+fn is_loopback(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 /// The host in a `url_host` column, or `None` when what was typed there does
 /// not read as one.
 fn entry_host(entry: &str) -> Option<String> {
@@ -100,5 +151,133 @@ mod tests {
         assert!(host_matches("example.com", "example.com#top"));
         assert!(!host_matches("example.com", "example.com:notaport"));
         assert!(host_matches("192.168.1.1", "192.168.1.1:8080"));
+    }
+
+    // The host rule is unchanged underneath: subdomains still get the
+    // parent's login, lookalikes and public suffixes still get nothing.
+    #[test]
+    fn a_site_match_is_a_host_match_first() {
+        assert!(site_matches("https://bank.com/login", "https://bank.com"));
+        assert!(site_matches(
+            "https://online.bank.com/",
+            "https://bank.com/"
+        ));
+        assert!(!site_matches(
+            "https://bank.com/",
+            "https://online.bank.com"
+        ));
+        assert!(!site_matches("https://notbank.com/", "https://bank.com"));
+        assert!(!site_matches("https://bank.co.uk/", "https://co.uk"));
+        assert!(!site_matches("not a url", "https://bank.com"));
+        assert!(!site_matches("https://bank.com/", ""));
+        // A scheme that does not parse as a URL is served nowhere.
+        assert!(!site_matches(
+            "https://bank.com/",
+            "https://bank.com:notaport"
+        ));
+    }
+
+    // Saved for HTTPS, never served to plain HTTP — the page anyone on the
+    // network can stand up — except on the machine itself.
+    #[test]
+    fn an_https_login_is_not_served_to_an_http_page() {
+        assert!(!site_matches("http://bank.com/login", "https://bank.com"));
+        assert!(!site_matches("http://online.bank.com/", "https://bank.com"));
+        assert!(!site_matches("HTTP://BANK.COM/", "HTTPS://bank.com"));
+        assert!(site_matches("https://bank.com/", "http://bank.com"));
+        assert!(site_matches("http://bank.com/", "http://bank.com"));
+
+        assert!(site_matches(
+            "http://localhost:3000/",
+            "https://localhost:3000"
+        ));
+        assert!(site_matches("http://127.0.0.1/", "https://127.0.0.1"));
+        assert!(site_matches("http://[::1]/", "https://[::1]"));
+    }
+
+    // An explicit port is part of what was saved: another port on the same
+    // host is another server. A default port written out is no constraint.
+    #[test]
+    fn an_explicit_port_has_to_match() {
+        assert!(site_matches(
+            "https://bank.com:8443/",
+            "https://bank.com:8443/login"
+        ));
+        assert!(!site_matches("https://bank.com/", "https://bank.com:8443"));
+        assert!(!site_matches(
+            "https://bank.com:9443/",
+            "https://bank.com:8443"
+        ));
+        assert!(site_matches(
+            "https://bank.com:443/",
+            "https://bank.com:443"
+        ));
+        assert!(site_matches("https://bank.com/", "https://bank.com:443"));
+        assert!(site_matches(
+            "http://bank.com:8080/",
+            "http://bank.com:8080"
+        ));
+        // No port saved: any port on the host, as before.
+        assert!(site_matches("https://bank.com:8443/", "https://bank.com"));
+    }
+
+    // Typed without a scheme, the host is all the user said.
+    #[test]
+    fn a_login_saved_without_a_scheme_is_host_only() {
+        assert!(site_matches("http://bank.com/", "bank.com"));
+        assert!(site_matches("https://bank.com:8443/", "bank.com"));
+        assert!(site_matches("http://bank.com:9000/", "bank.com:8443"));
+        assert!(site_matches("https://www.bank.com/", "bank.com/login"));
+        assert!(!site_matches("https://notbank.com/", "bank.com"));
+    }
+
+    // Internationalised names compare in their ASCII form, whichever way each
+    // side spelled them.
+    #[test]
+    fn idn_hosts_match_in_either_spelling() {
+        assert!(site_matches(
+            "https://xn--bcher-kva.example/",
+            "https://bücher.example"
+        ));
+        assert!(site_matches(
+            "https://bücher.example/",
+            "https://xn--bcher-kva.example"
+        ));
+        assert!(site_matches(
+            "https://shop.bücher.example/",
+            "bücher.example"
+        ));
+        assert!(!site_matches(
+            "http://bücher.example/",
+            "https://bücher.example"
+        ));
+        assert!(!site_matches(
+            "https://bucher.example/",
+            "https://bücher.example"
+        ));
+    }
+
+    #[test]
+    fn ipv6_hosts_match_with_their_ports() {
+        assert!(site_matches(
+            "https://[2001:db8::1]/",
+            "https://[2001:db8::1]"
+        ));
+        assert!(site_matches(
+            "https://[2001:db8::1]:8443/",
+            "https://[2001:db8::1]:8443/x"
+        ));
+        assert!(!site_matches(
+            "https://[2001:db8::1]/",
+            "https://[2001:db8::1]:8443"
+        ));
+        assert!(!site_matches(
+            "http://[2001:db8::1]/",
+            "https://[2001:db8::1]"
+        ));
+        assert!(!site_matches(
+            "https://[2001:db8::2]/",
+            "https://[2001:db8::1]"
+        ));
     }
 }

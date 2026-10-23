@@ -614,8 +614,15 @@ exposed process than the webview, and it is not ours.
 - **What the extension can reach** is what the user could copy out of the app
   for the site in front of them: the logins whose website is the page's host or
   a parent of it (`accounts.example.com` gets `example.com`'s, not the other
-  way round, and `notexample.com` gets neither), the current TOTP code of one
-  of those, a password generated to the Settings defaults, and the lock. It
+  way round, and `notexample.com` gets neither). The page's scheme and port
+  count too (`host::site_matches`): a login saved for `https://` is not served
+  to an `http://` page (bar `localhost`, `127.0.0.1` and `::1`), one saved with
+  an explicit port only to that port, and one typed with no scheme at all by
+  host alone. That is decided on the website inside the entry's sealed
+  payload, after it is opened; the plaintext `url_host` column only picks the
+  candidates, so a row re-pointed at another site by someone holding the
+  SQLCipher key is not served there. Also within reach: the current TOTP code
+  of one of those, a password generated to the Settings defaults, and the lock. It
   can also save a login: a new one for the page, or a new username and
   password over a login it was handed. Every one of these but a generated
   password needs an association, the lock included, so a stranger on the

@@ -473,47 +473,13 @@ impl Host for AppHost {
         Ok(name)
     }
 
-    fn logins_for(&self, host: &str) -> Vec<Login> {
+    fn logins_for(&self, page_url: &str, host: &str) -> Vec<Login> {
         let state = self.0.state::<AppState>();
         let session = state.session.lock().unwrap();
         let (Ok(cipher), Ok(store)) = (session.payload_cipher(), session.store()) else {
             return Vec::new();
         };
-        let metas = match store.list() {
-            Ok(metas) => metas,
-            Err(e) => {
-                log::warn!("browser host: could not list the vault: {e}");
-                return Vec::new();
-            }
-        };
-        let mut logins = Vec::new();
-        for meta in metas
-            .iter()
-            .filter(|m| m.kind == "login" && actions::host_matches(host, &m.url_host))
-        {
-            let Ok(Some(record)) = store.get(&meta.id) else {
-                continue;
-            };
-            let Ok(entry) = cipher.unseal(&record.id, &record.payload) else {
-                log::warn!("browser host: entry {} does not open", meta.id);
-                continue;
-            };
-            let username = entry.login_name().unwrap_or_default().to_string();
-            let totp = entry
-                .otp
-                .as_deref()
-                .filter(|otp| !otp.is_empty())
-                .and_then(|otp| commands::generator::generate_otp(otp.to_string()).ok())
-                .map(|otp| otp.code);
-            logins.push(Login {
-                id: entry.id.clone(),
-                title: entry.title.clone(),
-                username,
-                password: entry.password.clone().unwrap_or_default(),
-                totp,
-            });
-        }
-        logins
+        logins_in(store, &cipher, page_url, host)
     }
 
     fn totp(&self, id: &str) -> Option<String> {
@@ -633,6 +599,75 @@ impl AppHost {
         // from the editor schedules it.
         commands::sync::request_run_if_ready(&self.0, &state);
     }
+}
+
+/// Every login in `store` for the page at `page_url` (whose host is `host`),
+/// secrets unsealed.
+///
+/// Two passes. The plaintext `url_host` column picks the candidates cheaply,
+/// without unsealing a payload per row; but it is not authenticated — anyone
+/// holding the SQLCipher key could re-point a row at another site — so it
+/// only narrows. What decides is the website inside the sealed payload, which
+/// each candidate is checked against once it is open, by the full rule
+/// ([`actions::site_matches`]: host, then scheme and port). A login with no
+/// website is held to the passkey rpId its column was derived from, exactly
+/// as `migrate::build_record` derives it.
+pub(crate) fn logins_in(
+    store: &SqliteStore,
+    cipher: &PayloadCipher,
+    page_url: &str,
+    host: &str,
+) -> Vec<Login> {
+    let metas = match store.list() {
+        Ok(metas) => metas,
+        Err(e) => {
+            log::warn!("browser host: could not list the vault: {e}");
+            return Vec::new();
+        }
+    };
+    let mut logins = Vec::new();
+    for meta in metas
+        .iter()
+        .filter(|m| m.kind == "login" && actions::host_matches(host, &m.url_host))
+    {
+        let Ok(Some(record)) = store.get(&meta.id) else {
+            continue;
+        };
+        let Ok(entry) = cipher.unseal(&record.id, &record.payload) else {
+            log::warn!("browser host: entry {} does not open", meta.id);
+            continue;
+        };
+        let saved = entry
+            .website
+            .as_deref()
+            .filter(|website| !website.trim().is_empty())
+            .or_else(|| {
+                entry
+                    .passkeys
+                    .as_deref()
+                    .and_then(|keys| keys.first())
+                    .map(|key| key.rp_id.as_str())
+            })
+            .unwrap_or_default();
+        if !actions::site_matches(page_url, saved) {
+            continue;
+        }
+        let username = entry.login_name().unwrap_or_default().to_string();
+        let totp = entry
+            .otp
+            .as_deref()
+            .filter(|otp| !otp.is_empty())
+            .and_then(|otp| commands::generator::generate_otp(otp.to_string()).ok())
+            .map(|otp| otp.code);
+        logins.push(Login {
+            id: entry.id.clone(),
+            title: entry.title.clone(),
+            username,
+            password: entry.password.clone().unwrap_or_default(),
+            totp,
+        });
+    }
+    logins
 }
 
 fn save_failed(e: crate::error::Error) -> Code {
