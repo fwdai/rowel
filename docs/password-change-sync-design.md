@@ -196,7 +196,10 @@ beside it that stayed on another password, like `change_master_password`).
    nothing to do; otherwise derive `password` against that header, verify by
    opening its snapshot, and `rekey_workspace(dir, ring_key, K_i, header_i)`
    with the token re-seal `rekey_one` does. A workspace whose verification
-   fails is reported in the returned list and left alone.
+   fails is reported in the returned list and left alone. (Amended: each
+   workspace moved here is then synced at once, as the changing device's are —
+   see section 5 — so an edit this device made in it under the old password
+   goes up without the lockbox being opened.)
 7. Launch a normal run for the open workspace. Its pull now opens (header ==
    sidecar), merges, and pushes this device's unsynced edits.
 
@@ -214,6 +217,22 @@ beside it that stayed on another password, like `change_master_password`).
   opens it with the retired key, merges, and pushes the pack under the new
   epoch (forced by `opened_under_retired`). The account is re-sealed within
   one run of the change.
+- (Amended.) **Every re-keyed lockbox syncs, not only the open one.** Only
+  the open lockbox has a session to run on, so without more the other
+  lockboxes' packs stayed under the old password until each was next opened
+  here, and every other device got one "password changed" prompt per lockbox,
+  spread over time. The change is the one action that touches every lockbox,
+  so it is the one place to sync them all: right after each successful
+  `rekey_one`, `rekey_beside` runs `sync::run_workspace(app, dir, id, key)`
+  for that lockbox if it syncs — a `LocalVault` over its closed directory
+  (`engine::WorkspaceVault`: its own store, key, descriptor, retired list and
+  scratch), its own token file for the account, and the marker keys of its
+  current and retired epochs. One at a time, under the run claim the change
+  already holds, best effort: a failure is logged and never fails the change,
+  and the retired key covers that lockbox's next run. `adopt_beside` does the
+  same for each lockbox an adopt moves, and so does a move of a lockbox onto
+  the vault password (`workspace_adopt_vault_password`). The open lockbox's own
+  post-change run is unchanged.
 
 ### 6. The escape hatch: `sync_replace_remote`
 
