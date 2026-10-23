@@ -3,7 +3,7 @@ import type { BiometryType, UnlockResult } from '@/api/types'
 import { setupCreate } from '@/api/setup'
 import type { Provider } from '@/api/provider'
 import { claimOpenedFile, connectAccount, enterMain, forgetAccount, useApp } from '@/store'
-import { isBackupFile } from '@/lib/backup'
+import { isRestorableFile } from '@/lib/backup'
 import AuthShell from '@/components/elements/AuthShell'
 import Mascot, { type MascotState } from '@/components/elements/Mascot'
 import BiometryGlyph from '@/components/elements/BiometryGlyph'
@@ -77,14 +77,13 @@ export function Start() {
   }, [screen])
 
   const [password, setPassword] = useState('')
-  // A `.rowel` the OS opened the app with lands straight on the restore step,
-  // file already picked. Anything else it opened (a legacy `.swftx`) has no
-  // vault to go into yet, so it stays parked for Settings › Import once this
-  // flow has made one (`store/app`).
+  // A `.rowel` or a legacy `.swftx` the OS opened the app with lands straight
+  // on the restore step, file already picked: either becomes this device's
+  // vault from there.
   const [restoreFrom, setRestoreFrom] = useState<string | null>(null)
   const opened = useApp(state => state.openedFile)
   useEffect(() => {
-    if (!opened || !isBackupFile(opened)) return
+    if (!opened || !isRestorableFile(opened)) return
     claimOpenedFile()
     setRestoreFrom(opened)
     setDirection('forward')

@@ -237,23 +237,8 @@ pub async fn import_swftx(
     // under the current payload key — emitting progress as it goes.
     let emitter = app.clone();
     let records = super::blocking(move || -> Result<Vec<Record>> {
-        let blob = storage::read_backup(&path)?;
-        let src_cryptor = crypto::Cryptor::new(&crypto::hash_secret(&password));
-        // Validate the source password before touching the store. The blob goes
-        // in by value: the file is freed as soon as it has been decoded, so the
-        // loop below runs with the decrypted vault alone, not with the file it
-        // came out of still beside it.
-        let src: VaultData = src_cryptor
-            .decrypt_data_owned(blob)
-            .map_err(|_| Error::InvalidPassword)?;
-
-        let total = src.entries.len();
-        let mut records = Vec::with_capacity(total);
-        for (i, obscured) in src.entries.iter().enumerate() {
-            records.push(migrate::reseal_one(obscured, &src_cryptor, &cur_cipher)?);
-            events::import_progress(&emitter, i + 1, total);
-        }
-        Ok(records)
+        let (src_cryptor, src) = open_legacy_backup(&path, &password)?;
+        reseal_legacy(&emitter, &src_cryptor, &src.entries, &cur_cipher)
     })
     .await?;
     if !grants.take(&chosen, Purpose::Backup) {
@@ -271,6 +256,43 @@ pub async fn import_swftx(
         count: records.len(),
         entries: list_metas(store)?,
     })
+}
+
+/// Open the `.swftx` at `path` under `password`: the legacy cryptor it was
+/// sealed with, and the vault it holds. A wrong password is
+/// [`Error::InvalidPassword`], before anything downstream is touched. The blob
+/// goes in by value, so the file is freed as soon as it has been decoded.
+///
+/// Shared by the merge above and the first run's restore
+/// (`commands::setup::setup_restore_from_legacy`).
+pub(crate) fn open_legacy_backup(
+    path: &str,
+    password: &str,
+) -> Result<(crypto::Cryptor, VaultData)> {
+    let blob = storage::read_backup(path)?;
+    let src_cryptor = crypto::Cryptor::new(&crypto::hash_secret(password));
+    let src: VaultData = src_cryptor
+        .decrypt_data_owned(blob)
+        .map_err(|_| Error::InvalidPassword)?;
+    Ok((src_cryptor, src))
+}
+
+/// Re-seal the entries of an opened `.swftx` under `cipher`, emitting
+/// `import:progress` as it goes. CPU-bound: the caller runs it off the UI
+/// thread.
+pub(crate) fn reseal_legacy(
+    emitter: &AppHandle,
+    src: &crypto::Cryptor,
+    entries: &[Entry],
+    cipher: &PayloadCipher,
+) -> Result<Vec<Record>> {
+    let total = entries.len();
+    let mut records = Vec::with_capacity(total);
+    for (i, obscured) in entries.iter().enumerate() {
+        records.push(migrate::reseal_one(obscured, src, cipher)?);
+        events::import_progress(emitter, i + 1, total);
+    }
+    Ok(records)
 }
 
 /// `InvalidPassword` unless `candidate` — derived from a password the user just
@@ -417,6 +439,41 @@ mod tests {
         let store = SqliteStore::open(&dir.path().join("vault.db"), key.sqlcipher_key().as_slice())
             .unwrap();
         (store, key.payload_cipher())
+    }
+
+    // A `.swftx` as the legacy app wrote it: the whole vault, obscured entry by
+    // entry and then sealed as one blob, both under `hash_secret(password)`.
+    fn swftx(dir: &tempfile::TempDir, password: &str, entries: Vec<Entry>) -> String {
+        let cryptor = crypto::Cryptor::new(&crypto::hash_secret(password));
+        let obscured = entries
+            .iter()
+            .map(|e| cryptor.obscure(e).unwrap())
+            .collect();
+        let blob = cryptor
+            .encrypt_data(&VaultData { entries: obscured })
+            .unwrap();
+        let path = dir.path().join("old-vault.swftx");
+        std::fs::write(&path, blob).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_legacy_backup_opens_under_its_own_password_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = swftx(&dir, "old-password", vec![login(vec![])]);
+
+        assert!(matches!(
+            open_legacy_backup(&path, "not-it"),
+            Err(Error::InvalidPassword)
+        ));
+
+        let (src, data) = open_legacy_backup(&path, "old-password").unwrap();
+        assert_eq!(data.entries.len(), 1);
+        // What came out is still obscured: the entries are exposed one at a
+        // time by the re-seal, under the cryptor handed back with them.
+        let plain = src.expose(&data.entries[0]).unwrap();
+        assert_eq!(plain.id, "l1");
+        assert_eq!(plain.title, "Site");
     }
 
     fn save(store: &SqliteStore, cipher: &PayloadCipher, entry: &Entry) {

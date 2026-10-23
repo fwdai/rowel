@@ -764,15 +764,67 @@ describe('restoring from a backup file', () => {
     expect(useApp.getState().openedFile).toBeNull()
   })
 
-  // A legacy `.swftx` cannot be restored — only imported into a vault — so the
-  // first run leaves it parked for Settings › Import once there is one.
-  it('leaves a .swftx the OS opened for the vault this flow ends in', () => {
+  // A legacy `.swftx` is not a pack, so it goes to the command that builds a
+  // vault out of it under its own password — the `.rowel` restore is untouched.
+  it('restores a legacy .swftx as a new vault under its own password', async () => {
+    mockCommand('pick_file', () => '/tmp/old-vault.swftx')
+    render(<Start />)
+
+    await userEvent.click(screen.getByTestId('start-restore-button'))
+    await userEvent.click(screen.getByTestId('restore-dropzone'))
+
+    expect(await screen.findByTestId('restore-found-file')).toHaveTextContent('old-vault.swftx')
+    expect(
+      screen.getByText(
+        'Use the master password of this legacy vault. It becomes your master password here.'
+      )
+    ).toBeInTheDocument()
+
+    await userEvent.type(screen.getByTestId('restore-password-input'), 'old-password')
+    await userEvent.click(screen.getByTestId('restore-confirm-button'))
+
+    expect(calls('setup_restore_from_legacy')).toEqual([
+      { path: '/tmp/old-vault.swftx', password: 'old-password' }
+    ])
+    expect(calls('setup_restore_from_file')).toEqual([])
+    await waitFor(() => expect(useApp.getState().flow).toBe('main'))
+  })
+
+  it('blames the password when the legacy vault will not open', async () => {
+    mockCommand('pick_file', () => '/tmp/old-vault.swftx')
+    mockCommandOnce('setup_restore_from_legacy', () =>
+      Promise.reject({ kind: 'invalidPassword', message: 'invalid master password' })
+    )
+    render(<Start />)
+
+    await userEvent.click(screen.getByTestId('start-restore-button'))
+    await userEvent.click(screen.getByTestId('restore-dropzone'))
+    await screen.findByTestId('restore-found-file')
+
+    await userEvent.type(screen.getByTestId('restore-password-input'), 'not-it')
+    await userEvent.click(screen.getByTestId('restore-confirm-button'))
+
+    expect(await screen.findByText('Invalid password for backup')).toBeInTheDocument()
+    expect(useApp.getState().flow).not.toBe('main')
+  })
+
+  // Double-clicking a legacy vault on a machine with no vault yet is asking to
+  // restore it, the same as a `.rowel`: the flow opens on the restore step
+  // with the file picked, rather than parking it for a Settings › Import that
+  // has no vault to merge into yet.
+  it('opens on the restore step when the OS opened a .swftx with the app', async () => {
     fileOpened('/tmp/old-vault.swftx')
     render(<Start />)
 
-    expect(screen.getByTestId('start-restore-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('restore-found-file')).not.toBeInTheDocument()
-    expect(useApp.getState().openedFile).toBe('/tmp/old-vault.swftx')
+    expect(await screen.findByTestId('restore-found-file')).toHaveTextContent('old-vault.swftx')
+    expect(useApp.getState().openedFile).toBeNull()
+
+    await userEvent.type(screen.getByTestId('restore-password-input'), 'old-password')
+    await userEvent.click(screen.getByTestId('restore-confirm-button'))
+    expect(calls('setup_restore_from_legacy')).toContainEqual({
+      path: '/tmp/old-vault.swftx',
+      password: 'old-password'
+    })
   })
 })
 

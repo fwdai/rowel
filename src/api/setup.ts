@@ -66,3 +66,13 @@ export const setupRestoreFromFile = (
   path: string,
   password: string
 ): Promise<UnlockResult> => call('setup_restore_from_file', { path, password })
+
+/**
+ * First run only: make a legacy `.swftx` vault this device's, under the
+ * password it was sealed with. A wrong one rejects `invalidPassword` with
+ * nothing written.
+ */
+export const setupRestoreFromLegacy = (
+  path: string,
+  password: string
+): Promise<UnlockResult> => call('setup_restore_from_legacy', { path, password })

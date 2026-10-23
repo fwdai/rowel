@@ -2,7 +2,7 @@
 //!
 //! A command that reads a local file (`scan_image`, `read_env_file`,
 //! `attachment_add`, `import_entries`, `import_swftx`,
-//! `setup_restore_from_file`) gets its path from the webview, and the webview's word is not authorization: a
+//! `setup_restore_from_file`, `setup_restore_from_legacy`) gets its path from the webview, and the webview's word is not authorization: a
 //! script that got to run there could name any file on disk — another
 //! project's `.env`, a photo in the user's library — and have the backend hand
 //! it back. What the extension and shape checks in those commands decide is
@@ -50,8 +50,9 @@ pub enum Purpose {
     /// reads, previewing it and then writing its rows into the vault.
     Import,
     /// A `.rowel` or `.swftx` backup: what `commands::vault::import_swftx`
-    /// merges and `commands::setup::setup_restore_from_file` restores, each
-    /// only once the backup's own password has opened it.
+    /// merges and `commands::setup::setup_restore_from_file` /
+    /// `setup_restore_from_legacy` restore, each only once the backup's own
+    /// password has opened it.
     Backup,
 }
 

@@ -157,6 +157,7 @@ const DEFAULTS: Record<string, Handler> = {
   setup_create: () => session,
   setup_restore_from_account: () => ({ entries: [], syncConfigured: true }),
   setup_restore_from_file: () => session,
+  setup_restore_from_legacy: () => session,
 
   reveal_entry: ({ id }) => ({ id, type: 'login', title: '' }),
   save_entry: ({ entry }) => {

@@ -58,7 +58,7 @@ export default function Welcome({ onFresh, onCloud, onFile }: Props) {
           <RestoreAction
             mark={<DiskGlyph size={16} />}
             title={t('Restore from a backup file')}
-            body={t('A .rowel backup saved on another device.')}
+            body={t('A .rowel backup saved on another device, or a legacy .swftx vault.')}
             muted
             onClick={onFile}
             testid="start-restore-button"

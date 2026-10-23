@@ -34,7 +34,7 @@ use crate::models::UnlockResult;
 use crate::session::{create_vault, list_metas, store_err};
 use crate::state::{AppState, PendingAccount};
 use crate::storage;
-use crate::store::SqliteStore;
+use crate::store::{SqliteStore, VaultStore};
 use crate::sync::{self, restore, setup::PackInfo, Provider};
 
 // --- connect ---------------------------------------------------------------
@@ -330,6 +330,66 @@ pub async fn setup_restore_from_file(
     .await?;
     // The step guard keeps any other restore out while this one ran, so the
     // grant checked above is still here to spend.
+    grants.take(&chosen, Purpose::Backup);
+    adopt(&app, &state, key, store, None, None)
+}
+
+/// Restore from a legacy `.swftx` vault on disk. Onboarding only.
+///
+/// A `.swftx` is the old app's whole vault under its own password, which
+/// `commands::vault::import_swftx` can only merge into a vault that exists. On
+/// a fresh install this makes one: the file is opened first — a wrong password
+/// writes nothing — then a vault is created under that same password, the
+/// entries are re-sealed into it, and it is adopted as a restored pack is.
+///
+/// All or nothing past the open: a failed re-seal or write takes the fresh
+/// vault with it, so a retry starts from a fresh install rather than from a
+/// vault `guard_no_vault` refuses to replace. The grant is held across a
+/// mistyped password and spent by the restore that succeeds, as for a pack.
+#[tauri::command]
+pub async fn setup_restore_from_legacy(
+    path: String,
+    password: Zeroizing<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    grants: State<'_, PathGrants>,
+) -> Result<UnlockResult> {
+    guard_no_vault(&app)?;
+    let _step = begin_step(&state)?;
+    let chosen = PathBuf::from(&path);
+    if !grants.holds(&chosen, Purpose::Backup) {
+        return Err(grants::not_chosen());
+    }
+
+    let handle = app.clone();
+    let (key, store) = super::blocking(move || {
+        let (src, data) = super::vault::open_legacy_backup(&path, &password)?;
+        let (key, store) = match create_vault(&handle, &password) {
+            Ok(created) => created,
+            Err(e) => {
+                // `create_vault` writes the KDF sidecar before opening and
+                // initializing the database, so an error can leave either
+                // behind even though no store was returned for us to drop.
+                discard_fresh_vault(&handle);
+                return Err(e);
+            }
+        };
+        let installed =
+            super::vault::reseal_legacy(&handle, &src, &data.entries, &key.payload_cipher())
+                .and_then(|records| {
+                    records
+                        .iter()
+                        .try_for_each(|record| store.upsert(record).map_err(store_err))
+                });
+        if let Err(e) = installed {
+            // The connection has to close before its files can go.
+            drop(store);
+            discard_fresh_vault(&handle);
+            return Err(e);
+        }
+        Ok((key, store))
+    })
+    .await?;
     grants.take(&chosen, Purpose::Backup);
     adopt(&app, &state, key, store, None, None)
 }
