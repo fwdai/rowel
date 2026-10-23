@@ -389,10 +389,15 @@ pub async fn change_master_password(
     // landing between two of them would move the open workspace out from under
     // the session this one is still holding.
     let _step = super::setup::begin_step(&state)?;
-    // Resolved before anything is taken out of the session, so a path that
-    // cannot be resolved leaves the vault open and unchanged.
-    let (paths, workspace_id) = auth::RekeyPaths::resolve_with_id(&app, &state)?;
     let root = storage::root_dir(&app)?;
+
+    // Bring the account up to date under the password being replaced, so the
+    // fewest edits are left for another device to push under it afterwards —
+    // which still works (the retired key covers it), only later. Offline is
+    // logged and the change goes ahead. The run's claim is held until the
+    // change is done: a scheduled run would only fail against a session whose
+    // store is out for the saga.
+    let sync_claim = super::sync::sync_before_rekey(&app).await;
 
     // The passwords themselves are needed again once the open workspace is
     // done: every other workspace derives `current` against its own descriptor
@@ -404,6 +409,42 @@ pub async fn change_master_password(
     // the session entirely — and off the main thread, since Argon2id is the
     // single most expensive thing this app does.
     let (current_key, new_key, params) = derive_both(&app, current, new).await?;
+    let active =
+        rekey_open_workspace(&app, &state, current_key, new_key, params.to_json()?).await?;
+
+    let unchanged = rekey_beside(&app, &state, &root, &active, current_beside, new_beside).await;
+
+    // The account's pack is still under the epoch just retired. This run opens
+    // it with the retired key, merges, and pushes it under the new one.
+    drop(sync_claim);
+    super::sync::request_run_if_ready(&app, &state);
+    Ok(unchanged)
+}
+
+/// Re-key the open workspace from the session's key to `new_key`, writing
+/// `params_json` verbatim as its descriptor: the session-facing half of a
+/// password change, shared by `change_master_password` and
+/// `commands::sync::sync_adopt_password`. Returns the workspace's id.
+///
+/// `current_key` must reproduce the session's key — the proof of the current
+/// password for a change, the key captured before the pack was fetched for an
+/// adopt — or nothing is touched (`InvalidPassword`).
+///
+/// Nothing expensive happens under the session lock: the saga runs on the
+/// blocking pool with the store *out* of the session, and comes back in once
+/// the change is on disk (or rolled back). Then the ring takes the new key,
+/// the token file is re-sealed under it, and — for the primary — the
+/// biometric enrollment is re-stored. The caller holds the setup step.
+pub(crate) async fn rekey_open_workspace(
+    app: &AppHandle,
+    state: &AppState,
+    current_key: VaultKey,
+    new_key: VaultKey,
+    params_json: String,
+) -> Result<String> {
+    // Resolved before anything is taken out of the session, so a path that
+    // cannot be resolved leaves the vault open and unchanged.
+    let (paths, workspace_id) = auth::RekeyPaths::resolve_with_id(app, state)?;
 
     // Take the key and store out on a lease for the duration. A lock that lands
     // while they are away — the user's, or the auto-lock's, which sees the
@@ -422,7 +463,7 @@ pub async fn change_master_password(
     // after the change; the key itself is about to be moved into the saga.
     let old_cryptor = old_key.cryptor();
 
-    let params_json = params.to_json()?;
+    let id = workspace_id.clone();
     let rekeyed = blocking(move || {
         Ok(auth::rekey(
             store,
@@ -430,7 +471,7 @@ pub async fn change_master_password(
             new_key,
             &params_json,
             &paths,
-            &workspace_id,
+            &id,
         ))
     })
     .await?;
@@ -452,7 +493,7 @@ pub async fn change_master_password(
                 // session to hand back, so it ends, and the webview is told
                 // rather than left looking at a vault that is no longer open.
                 None => {
-                    crate::session::lock(&app);
+                    crate::session::lock(app);
                 }
             }
             return Err(rollback.error);
@@ -461,8 +502,7 @@ pub async fn change_master_password(
 
     // Both taken before the key is handed to the session, so what follows needs
     // no second lock to read them back.
-    let active = crate::workspace::active_id(&app);
-    let primary = active == PRIMARY_ID;
+    let primary = workspace_id == PRIMARY_ID;
     let new_material = Zeroizing::new(new_key.biometric_material().to_vec());
     let new_cryptor = new_key.cryptor();
 
@@ -488,9 +528,9 @@ pub async fn change_master_password(
     // one, so a slower proof of the old password cannot undo this. A lock that
     // won while the saga ran has cleared the ring, and neither writes to it.
     if primary {
-        appkey::replace_app_key(&app, &new_material);
+        appkey::replace_app_key(app, &new_material);
     } else {
-        appkey::adopt(&app, &active, &new_material);
+        appkey::adopt(app, &workspace_id, &new_material);
     }
 
     // Re-encrypt the Drive token file under the new key if present (sync parity).
@@ -498,20 +538,19 @@ pub async fn change_master_password(
     // committed on disk, so failing out here would strand the session held-out
     // with no `vault:locked` event and leave the biometric enrollment stale. The
     // worst case is a token the user has to reconnect.
-    if let Err(e) = crate::sync::reseal_tokens(&app, &old_cryptor, &new_cryptor) {
+    if let Err(e) = crate::sync::reseal_tokens(app, &old_cryptor, &new_cryptor) {
         log::warn!("could not re-seal the Drive token under the new key: {e}");
     }
 
     // The enrollment holds the app key, so only a change of the primary's key
     // makes it stale; a change elsewhere leaves the stored bytes exactly as good
-    // as they were. Done here rather than after the workspaces below, which can
-    // take an Argon2id run apiece: the item is stale from the moment the
+    // as they were. Done here rather than after the workspaces beside it, which
+    // can take an Argon2id run apiece: the item is stale from the moment the
     // primary's database is re-keyed, and the shorter that window the better.
     if primary {
-        restore_enrollment(&app, new_material).await;
+        restore_enrollment(app, new_material).await;
     }
-
-    Ok(rekey_beside(&app, &state, &root, &active, current_beside, new_beside).await)
+    Ok(workspace_id)
 }
 
 // The biometric-stored key is the app key, and a change of the primary's key
@@ -646,8 +685,9 @@ fn rekey_one(
         None => super::workspace::verify_password_in(dir, current)?,
     };
     // Its own params, so every workspace keeps its own salt: the one thing a
-    // shared password must not turn into a shared derivation.
-    let params = KdfParams::default_argon2id();
+    // shared password must not turn into a shared derivation. And its own
+    // generation, one past the one it is leaving.
+    let params = next_params(&dir.join(storage::KDF_SIDECAR_FILE))?;
     let new_key = VaultKey::Argon2 {
         master: crypto::derive(new.as_bytes(), &params)?,
     };
@@ -689,13 +729,24 @@ async fn derive_both(
     let app = app.clone();
     blocking(move || {
         let current_key = derive_key(&app, &current)?;
-        let params = KdfParams::default_argon2id();
+        let params = next_params(&storage::kdf_sidecar_path(&app)?)?;
         let new_key = VaultKey::Argon2 {
             master: crypto::derive(new.as_bytes(), &params)?,
         };
         Ok((current_key, new_key, params))
     })
     .await
+}
+
+// The descriptor a re-key moves a vault to: a fresh salt and the generation
+// after the one its sidecar names. A vault with no sidecar (a legacy/dev one)
+// starts at the default.
+pub(crate) fn next_params(sidecar: &Path) -> Result<KdfParams> {
+    match std::fs::read_to_string(sidecar) {
+        Ok(json) => Ok(KdfParams::from_json(&json)?.next_generation()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(KdfParams::default_argon2id()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 #[cfg(test)]
