@@ -196,14 +196,33 @@ kpxcSites.segmentedTotpExceptionFound = function(form) {
 
 kpxcSites.expectedTOTPMaxLength = function() {
     if (document.location.origin.startsWith('https://www.amazon')
-        && document.location.href.includes('/ap/mfa')) {
+        && document.location.pathname.includes('/ap/mfa')) {
         return 20;
     } else if (document.location.origin.startsWith('https://adf.ly')
-        && document.location.href.includes('/index/twoFactorAuthentication')) {
+        && document.location.pathname.includes('/index/twoFactorAuthentication')) {
         return 30;
     }
 
     return MAX_TOTP_INPUT_LENGTH;
+};
+
+/**
+ * The host a form submits to, or '' when its action is not a URL. Site quirks
+ * compare this whole, so a host that merely contains a known one does not match.
+ * @param {object} form     Form element (optional)
+ * @returns {string}        Hostname of the form's action
+ */
+kpxcSites.actionHostname = function(form) {
+    // A form with a field named "action" reflects that element here, not a URL.
+    if (typeof form?.action !== 'string') {
+        return '';
+    }
+
+    try {
+        return new URL(form.action, document.baseURI).hostname;
+    } catch {
+        return '';
+    }
 };
 
 /**
@@ -228,7 +247,7 @@ kpxcSites.formSubmitButtonExceptionFound = function(form) {
                 return i;
             }
         }
-    } else if (form?.action?.includes('signin.aws.amazon.com')) {
+    } else if (form?.action?.startsWith('https://signin.aws.amazon.com/')) {
         // For Amazon AWS the button is outside the form.
         const button = $('#signin_button');
         if (button) {
@@ -241,7 +260,7 @@ kpxcSites.formSubmitButtonExceptionFound = function(form) {
             'odc.officeapps.live.com',
             'login.microsoftonline.com',
             'login.microsoftonline.us',
-        ].some(u => form?.action?.includes(u))) {
+        ].includes(kpxcSites.actionHostname(form))) {
         const buttons = Array.from(form.querySelectorAll(kpxcForm.formButtonQuery));
         if (buttons?.length > 1) {
             return buttons[1];
@@ -249,7 +268,8 @@ kpxcSites.formSubmitButtonExceptionFound = function(form) {
     } else if (form?.action?.startsWith('https://barmerid.id.bconnect.barmer.de')) {
         const loginButton = $('#btn-login');
         return loginButton?.shadowRoot?.children?.[0];
-    } else if (!form && document.location.href.includes('reddit.com/settings')) {
+    } else if (!form && document.location.origin === 'https://www.reddit.com'
+        && document.location.pathname.startsWith('/settings')) {
         // Reddit change password popup
         return $('.button[slot=primary-button]');
     } else if (form?.action === 'https://auth.openai.com/log-in/password') {
@@ -299,7 +319,7 @@ kpxcSites.overlayExceptionFound = function(elem) {
  * @returns {array}             New left and top values as an Array
  */
 kpxcSites.iconOffset = function(left, top, iconSize, inputType) {
-    if (document.location.hostname.includes('idmsa.apple.com')) {
+    if (document.location.hostname === 'idmsa.apple.com') {
         return [ left - (iconSize + 10), top + 3 ];
     } else if (document.location.origin === 'https://secure.royalbank.com' && inputType === 'password') {
         return [ left - (iconSize + 10), top ];
