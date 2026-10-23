@@ -27,12 +27,11 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
-use subtle::ConstantTimeEq;
 use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
 
 use crate::appkey;
-use crate::auth::{self, LockoutState};
+use crate::auth;
 use crate::crypto::{KdfParams, VaultKey};
 use crate::error::{Error, Result};
 use crate::models::{EntryMetaDto, UnlockResult};
@@ -46,6 +45,9 @@ use crate::workspace::{self, Registry, Workspace};
 
 use super::blocking;
 use super::setup::{self, begin_step, create_off_thread};
+use super::vault_password::{
+    prove_lockbox_password, require_vault_password, verify_master_password,
+};
 
 /// Close whatever is open and make `id` the workspace the app addresses.
 ///
@@ -393,63 +395,6 @@ pub async fn workspace_create(
     })
 }
 
-/// Prove `password` is the master password — the one the primary's key derives
-/// from — without opening the primary when that can be avoided. Once the
-/// primary has been opened this session its key is in the ring as the app key,
-/// and a derive with the primary's own descriptor is compared against it.
-/// Before that — another workspace is what is open, unlocked with a password
-/// of its own — the primary's own database is asked, exactly as the unlock's
-/// detached try asks it, and the key it proves opens the app at its level from
-/// here on (`appkey::open_all`), so the next proof is the cheap one.
-///
-/// Under the primary's own failed-attempt backoff, exactly as an unlock of it
-/// and a delete of it run: this proves the primary's password on demand from
-/// an open webview, and without the backoff it would be a way to guess that
-/// password at full Argon2id speed while the lock screen beside it escalates.
-async fn verify_master_password(
-    app: &AppHandle,
-    root: &Path,
-    state: &AppState,
-    password: Zeroizing<String>,
-) -> Result<()> {
-    let lockout = LockoutState::load_in(root)?;
-    let now = auth::now_ms();
-    if let Some(refusal) = auth::locked_out(lockout, now) {
-        return Err(refusal);
-    }
-
-    let dir = root.to_path_buf();
-    let app_key = state.keyring.lock().unwrap().app_key();
-    let proved = match app_key {
-        Some(app_key) => {
-            let derived = blocking(move || derive_in(&dir, &password)).await?;
-            derived.biometric_material().ct_eq(&app_key).into()
-        }
-        None => match blocking(move || verify_password_in(&dir, &password)).await {
-            Ok(key) => {
-                appkey::open_all(app, key.biometric_material());
-                true
-            }
-            Err(Error::InvalidPassword) => false,
-            Err(e) => return Err(e),
-        },
-    };
-    if proved {
-        if lockout != LockoutState::default() {
-            if let Err(e) = LockoutState::default().save_in(root) {
-                log::warn!("failed to reset lockout sidecar: {e}");
-            }
-        }
-        Ok(())
-    } else {
-        let (updated, refusal) = auth::penalize(lockout, now);
-        if let Err(e) = updated.save_in(root) {
-            log::warn!("failed to persist lockout sidecar: {e}");
-        }
-        Err(refusal)
-    }
-}
-
 /// The open workspace's Google account, with the connection generation it was
 /// read under: `None` when it has none, and an error when it has one that
 /// cannot be read. Read under the caller's `workspace_lock`, through the paths
@@ -686,8 +631,9 @@ async fn restore_workspace(
         (active, lease)
     };
 
-    // Kept past the restore for the account's *other* vaults: the ones this
-    // password opens too are added beside this one (`commands::autojoin`).
+    // Kept past the restore: it is proved against the vault password once the
+    // pack has opened, and then tried against the account's *other* vaults —
+    // the ones it opens too are added beside this one (`commands::autojoin`).
     let join = password.clone();
     let restored = restore_vault_in(app, &root, &id, bytes, password, &vault_id, &tokens)
         .await
@@ -705,6 +651,30 @@ async fn restore_workspace(
             return Err(e);
         }
     };
+
+    // One vault password (`commands::vault_password`): the pack opened with the
+    // password typed, and only the vault password gets a lockbox sealed under
+    // the app key. Any other installs it closed, for the user to move over.
+    match require_vault_password(app, &root, state, &id, join.clone()).await {
+        Ok(_) => {}
+        Err(Error::VaultPasswordRequired { .. }) => {
+            drop(store);
+            let workspace = Workspace {
+                id: id.clone(),
+                name: Some(name),
+                vault_id: Some(vault_id),
+                item_count: None,
+                color: None,
+            };
+            return install_closed(state, &root, workspace, previous_active, previous, account);
+        }
+        Err(e) => {
+            drop(store);
+            discard(&root, &id);
+            restore(state, previous_active, previous);
+            return Err(e);
+        }
+    }
 
     // Registry last, for the reason `workspace_create` records it last: an
     // entry only once there is a vault behind it.
@@ -761,6 +731,40 @@ async fn restore_workspace(
         entries,
         sync_configured: true,
     })
+}
+
+/// The end of a restore whose pack opened with a password that is not the vault
+/// password: the lockbox is kept — recorded in the registry, its account sealed
+/// inside it — but closed and not sealed under the app key, and the workspace
+/// the user was in comes back as it was. The refusal names the lockbox, so the
+/// frontend can ask for the vault password and move it over
+/// (`workspace_adopt_vault_password`) without downloading it again.
+///
+/// A registry that will not take it is a failed restore like any other: the
+/// files go, and its error is the answer.
+fn install_closed(
+    state: &AppState,
+    root: &Path,
+    workspace: Workspace,
+    previous_active: String,
+    previous: Lease,
+    account: Account,
+) -> Result<UnlockResult> {
+    let id = workspace.id.clone();
+    let recorded = update_registry(state, root, |registry| {
+        registry.workspaces.push(workspace);
+        Ok(())
+    });
+    restore(state, previous_active, previous);
+    if let Err(e) = recorded {
+        discard(root, &id);
+        return Err(e);
+    }
+    // The account lives inside the lockbox now, as after any restore.
+    if account == Account::Pending {
+        setup::take_pending(state);
+    }
+    Err(Error::VaultPasswordRequired { workspace_id: id })
 }
 
 /// Give a workspace a (new) label. Ids never change; only this does.
@@ -946,41 +950,13 @@ pub async fn workspace_delete(
     // takes no session, so it is reachable from the lock screen — without this
     // it would be a way to guess a workspace's master password at full speed
     // while the unlock beside it escalates.
+    //
+    // On the target's own files, whether it is the open workspace or a locked
+    // one. The key comes back rather than being thrown away: a "delete
+    // everywhere" has to unseal that workspace's own token file with it, and
+    // deriving a second time would be another Argon2id wait for nothing.
     let dir = workspace::dir_of(&root, &id);
-    let lockout = LockoutState::load_in(&dir)?;
-    let now = auth::now_ms();
-    if let Some(refusal) = auth::locked_out(lockout, now) {
-        return Err(refusal);
-    }
-
-    // Argon2id and a SQLCipher open, so off the command thread — and on the
-    // target's own files, whether it is the open workspace or a locked one. The
-    // key comes back rather than being thrown away: a "delete everywhere" has
-    // to unseal that workspace's own token file with it, and deriving a second
-    // time would be another Argon2id wait for nothing.
-    let target = dir.clone();
-    let key = match blocking(move || verify_password_in(&target, &password)).await {
-        Ok(key) => {
-            // Reset here rather than leave it to the removal below: the delete
-            // can still be refused after the proof (a sync in flight, a Drive
-            // failure, a staging failure), and a proven password must not leave
-            // attempts standing against a workspace that is still there.
-            if lockout != LockoutState::default() {
-                if let Err(e) = LockoutState::default().save_in(&dir) {
-                    log::warn!("failed to reset lockout sidecar: {e}");
-                }
-            }
-            key
-        }
-        Err(Error::InvalidPassword) => {
-            let (updated, refusal) = auth::penalize(lockout, now);
-            if let Err(e) = updated.save_in(&dir) {
-                log::warn!("failed to persist lockout sidecar: {e}");
-            }
-            return Err(refusal);
-        }
-        Err(e) => return Err(e),
-    };
+    let key = prove_lockbox_password(&dir, password).await?;
 
     // One exclusion over the whole delete, network included, and the same one a
     // run takes: a run starting beside the Drive work below could read the pack
@@ -1137,7 +1113,7 @@ pub(crate) fn verify_password_in(dir: &Path, password: &str) -> Result<VaultKey>
 // the database, or the legacy scheme for a vault written before the sidecar
 // existed. Nothing is opened; whether it is the right key is the caller's
 // question.
-fn derive_in(dir: &Path, password: &str) -> Result<VaultKey> {
+pub(crate) fn derive_in(dir: &Path, password: &str) -> Result<VaultKey> {
     let sidecar = dir.join(storage::KDF_SIDECAR_FILE);
     if sidecar.exists() {
         let params = KdfParams::from_json(&fs::read_to_string(sidecar)?)?;
@@ -1522,6 +1498,79 @@ mod tests {
             verify_password_in(&dir, "wrong-password"),
             Err(Error::InvalidPassword)
         ));
+    }
+
+    // A restore whose pack opened with a password other than the vault's: the
+    // lockbox is recorded but stays closed, the workspace the user was in comes
+    // back as it was, and the refusal names the lockbox to move.
+    #[test]
+    fn a_lockbox_off_the_vault_password_is_installed_closed() {
+        let root = tmp_root();
+        let state = open_with(store());
+        let previous = state.session.lock().unwrap().take_out().unwrap();
+        *state.active_workspace.lock().unwrap() = "c3d4".into();
+        let workspace = Workspace {
+            id: "c3d4".into(),
+            name: Some("Work".into()),
+            vault_id: Some("cafe".into()),
+            item_count: None,
+            color: None,
+        };
+
+        let refused = install_closed(
+            &state,
+            &root,
+            workspace,
+            PRIMARY_ID.into(),
+            previous,
+            Account::Open { generation: 0 },
+        );
+
+        assert!(matches!(
+            refused,
+            Err(Error::VaultPasswordRequired { workspace_id }) if workspace_id == "c3d4"
+        ));
+        let registry = Registry::load(&root);
+        assert!(registry.contains("c3d4"));
+        assert_eq!(registry.active, PRIMARY_ID, "not the one the app opens");
+        assert_eq!(*state.active_workspace.lock().unwrap(), PRIMARY_ID);
+        assert!(state.session.lock().unwrap().is_unlocked());
+    }
+
+    // The proof a delete and a move ask of a lockbox, under its own backoff: a
+    // wrong password counts, the right one clears what the wrong ones left.
+    #[test]
+    fn a_lockbox_password_is_proved_under_its_own_backoff() {
+        let root = tmp_root();
+        let dir = workspace::dir_of(&root, "a1b2");
+        crate::store::create_private_dir(&dir).unwrap();
+        let params = crate::crypto::KdfParams::argon2id(b"salt-0123456789012345", 256, 1, 1);
+        storage::atomic_write_file(
+            &dir.join(storage::KDF_SIDECAR_FILE),
+            &params.to_json().unwrap(),
+        )
+        .unwrap();
+        let key = VaultKey::Argon2 {
+            master: crate::crypto::derive(b"right-password", &params).unwrap(),
+        };
+        drop(SqliteStore::open(&dir.join(storage::DB_FILE), &*key.sqlcipher_key()).unwrap());
+
+        let prove = |password: &str| {
+            tauri::async_runtime::block_on(prove_lockbox_password(
+                &dir,
+                Zeroizing::new(password.to_string()),
+            ))
+        };
+        assert!(matches!(prove("wrong"), Err(Error::InvalidPassword)));
+        assert_ne!(
+            auth::LockoutState::load_in(&dir).unwrap(),
+            auth::LockoutState::default()
+        );
+        assert!(prove("right-password").is_ok());
+        assert_eq!(
+            auth::LockoutState::load_in(&dir).unwrap(),
+            auth::LockoutState::default()
+        );
     }
 
     // Leaving the field blank is what most restores will do: the vault already
