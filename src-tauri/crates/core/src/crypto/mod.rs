@@ -56,7 +56,17 @@ fn to_nonce(bytes: &[u8]) -> Result<Nonce<U16>> {
     Nonce::<U16>::try_from(bytes).map_err(|_| Error::Crypto("invalid nonce length".into()))
 }
 
-/// `base64( SHA512(pw) )` — the "secret" fed to the cryptor.
+/// `base64( SHA512(pw) )` — the "secret" fed to the legacy [`Cryptor`] and
+/// [`sqlcipher_key`].
+///
+/// A pre-hash, not a password hash: it is never stored or compared, and every
+/// consumer stretches it afterwards — the `Cryptor` runs PBKDF2-HMAC-SHA512
+/// (`ITERATIONS`, random 64-byte salt per ciphertext) over it and
+/// `sqlcipher_key` runs HKDF. CodeQL's `rust/weak-sensitive-data-hashing`
+/// flags the SHA-512 step on its own; that alert is dismissed as a false
+/// positive rather than fixed here, because the function is format-locked:
+/// sidecar-less legacy vaults ([`VaultKey::legacy_from_password`]) and every
+/// `.swftx` backup were written through it. Argon2id vaults never call it.
 pub fn hash_secret(password: &str) -> String {
     STANDARD.encode(Sha512::digest(password.as_bytes()))
 }
