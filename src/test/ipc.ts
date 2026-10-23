@@ -255,6 +255,11 @@ const DEFAULTS: Record<string, Handler> = {
   // `vaultNotInAccount` instead.
   sync_adopt_pending: () => undefined,
   sync_reupload: () => undefined,
+  // The new password accepted, and every lockbox beside it moved along with
+  // it. A spec about a wrong password rejects with `invalidPassword`; one
+  // about a lockbox on its own password resolves its id.
+  sync_adopt_password: () => [],
+  sync_replace_remote: () => undefined,
 
   // Sharing. The link is the shape the backend hands back — file id plus key —
   // and `share_open` resolves a plain login, so a suite only overrides the one

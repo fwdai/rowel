@@ -2004,6 +2004,70 @@ describe('Settings › workspaces › delete', () => {
   })
 })
 
+describe('Settings › workspaces › master password changed elsewhere', () => {
+  const stopped = async (errorKind: SyncStatus['errorKind'], error: string) => {
+    await open()
+    await go('workspaces')
+    await act(async () => report({ configured: true, error, errorKind }))
+  }
+
+  // Another device re-keyed the vault: the row says so and raises the shared
+  // prompt (mounted in `Main`, see passwordChanged.test) for the new password.
+  it('offers to enter the new password when it was changed on another device', async () => {
+    await stopped(
+      'passwordChangedRemotely',
+      'the master password of this lockbox was changed on another device'
+    )
+
+    expect(screen.getByTestId('workspace-password-changed')).toHaveTextContent(
+      'The master password of this lockbox was changed on another device.'
+    )
+    expect(screen.queryByTestId('workspace-replace-remote')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('workspace-adopt-password'))
+
+    expect(useUi.getState().passwordPrompt).toBe(true)
+  })
+
+  // The account's copy is under a password this device already retired: the
+  // only way out from here overwrites it, so it asks first and names the loss.
+  it('replaces the account copy only after a confirm', async () => {
+    await stopped(
+      'vaultUnderRetiredPassword',
+      'the account holds this lockbox under a password this device has already replaced'
+    )
+
+    expect(screen.getByTestId('workspace-retired-password')).toHaveTextContent(
+      'The account holds this lockbox under a master password this device has already replaced'
+    )
+    expect(screen.queryByTestId('workspace-adopt-password')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('workspace-replace-remote'))
+
+    expect(screen.getByTestId('workspace-replace-remote-sheet')).toHaveTextContent(
+      'Edits made only on the other device will be lost. The other device will be asked for the new password.'
+    )
+    expect(calls('sync_replace_remote')).toHaveLength(0)
+
+    await userEvent.click(screen.getByTestId('workspace-replace-remote-confirm'))
+
+    expect(calls('sync_replace_remote')).toHaveLength(1)
+    expect(screen.queryByTestId('workspace-replace-remote-sheet')).not.toBeInTheDocument()
+  })
+
+  it('leaves the account copy alone when the confirm is cancelled', async () => {
+    await stopped(
+      'vaultUnderRetiredPassword',
+      'the account holds this lockbox under a password this device has already replaced'
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-replace-remote'))
+    await userEvent.click(screen.getByTestId('confirm-cancel'))
+
+    expect(screen.queryByTestId('workspace-replace-remote-sheet')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-modal')).toBeInTheDocument()
+    expect(calls('sync_replace_remote')).toHaveLength(0)
+  })
+})
+
 describe('Settings › workspaces › restore from an account', () => {
   // Consent, then the probe's answer — which arrives as an event, never through
   // the connect's promise.

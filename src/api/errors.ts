@@ -36,6 +36,8 @@ export type BackendErrorKind =
   | 'vaultAlreadyOpen'
   | 'vaultNotInAccount'
   | 'vaultDeletedRemotely'
+  | 'passwordChangedRemotely'
+  | 'vaultUnderRetiredPassword'
   | 'fileTooLarge'
   | 'fileNotText'
   | 'vaultFull'
@@ -142,6 +144,14 @@ export const describeError = (error: unknown): string => {
     case 'vaultDeletedRemotely':
       return t(
         'This lockbox was marked as deleted from its account, but it may still be intact. You can re-upload the copy on this device.'
+      )
+    case 'passwordChangedRemotely':
+      return t(
+        'The master password of this lockbox was changed on another device. Enter the new one to keep syncing.'
+      )
+    case 'vaultUnderRetiredPassword':
+      return t(
+        'The account holds this lockbox under a master password this device has already replaced, so syncing has stopped.'
       )
     case 'fileTooLarge':
       return t('This file is too large')

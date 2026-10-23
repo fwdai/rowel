@@ -13,6 +13,7 @@ import AddSecret from './AddSecret'
 import Share from './Share'
 import Scan from './Scan'
 import EnvDrop from './EnvDrop'
+import PasswordChanged from './PasswordChanged'
 import BrowserConsent from './BrowserConsent'
 import { useShortcuts } from './useShortcuts'
 
@@ -43,6 +44,8 @@ export function Main() {
         <Share />
         <Scan />
         <EnvDrop />
+        <PasswordChanged />
+        {/* Last, so an extension's ask is the dialog on top of anything. */}
         <BrowserConsent />
       </FrameProvider>
       <CopyToast />
