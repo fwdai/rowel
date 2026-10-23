@@ -81,10 +81,24 @@ updates:
         update-types:
           - patch
     ignore:
-      # passkey-rs requires p256 ^0.13. 0.14 would link a second copy and
-      # break the COSE key bridge. Lift once passkey-rs moves to p256 0.14.
+      # The curve and signature crates move together as one RustCrypto
+      # generation: p256/p384/p521 0.14, ed25519-dalek 3 and signature 3.
+      # crates/core/src/ssh.rs hands keys decoded by them straight to ssh-key,
+      # and ssh-key 0.6 is still on the 0.13 / dalek 2 generation (0.7, which
+      # moves, is a release candidate). passkey-rs 0.6 is on the new generation
+      # already (passkey-crypto wants p256 0.14 and dalek 3), so it and the
+      # four crates below land together with ssh-key 0.7 in one migration
+      # PR, not one Dependabot bump at a time. Lift all five rules then.
       - dependency-name: p256
         versions: ['>=0.14']
+      - dependency-name: p384
+        versions: ['>=0.14']
+      - dependency-name: p521
+        versions: ['>=0.14']
+      - dependency-name: ed25519-dalek
+        versions: ['>=3']
+      - dependency-name: 'passkey-*'
+        versions: ['>=0.6']
       # passkey-rs caps coset at 0.4.0 (inclusive), so 0.4.0 itself is fine
       # but anything above it splits the tree. Lift together with the p256 rule.
       - dependency-name: coset
