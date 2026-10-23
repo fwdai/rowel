@@ -434,9 +434,32 @@ fn upload_arg(path: &str, mode: &WriteMode) -> Value {
     json!({ "path": path, "mode": mode.to_json(), "mute": true })
 }
 
-/// Write the file at `path` as `mode` says, returning its new `rev`. Parent
-/// folders are created by Dropbox as needed. A lost [`WriteMode::Update`] is an
-/// [`Error::Other`] carrying [`CONFLICT_MESSAGE`].
+/// What `files/upload` says about the file it wrote (its `FileMetadata`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Uploaded {
+    /// `id:...` of the file written. Required in `FileMetadata`; `None` only
+    /// if a response leaves it out.
+    pub id: Option<String>,
+    /// Its new `rev`. `None` is unknown.
+    pub rev: Option<String>,
+}
+
+fn parse_uploaded(value: &Value) -> Uploaded {
+    let field = |key: &str| {
+        value[key]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    Uploaded {
+        id: field("id"),
+        rev: field("rev"),
+    }
+}
+
+/// Write the file at `path` as `mode` says, returning its id and new `rev`.
+/// Parent folders are created by Dropbox as needed. A lost
+/// [`WriteMode::Update`] is an [`Error::Other`] carrying [`CONFLICT_MESSAGE`].
 ///
 /// Single-call upload only, so bodies over [`MAX_UPLOAD_BYTES`] are refused
 /// before sending. TODO(follow-up): upload sessions for larger packs.
@@ -446,7 +469,7 @@ pub async fn upload(
     path: &str,
     mode: &WriteMode,
     bytes: &[u8],
-) -> Result<Option<String>> {
+) -> Result<Uploaded> {
     check_upload_size(bytes.len())?;
     let arg = upload_arg(path, mode);
     let resp = client
@@ -465,11 +488,7 @@ pub async fn upload(
         }
         return Err(failure.into_error());
     }
-    Ok(json_body(resp)
-        .await?
-        .get("rev")
-        .and_then(Value::as_str)
-        .map(String::from))
+    Ok(parse_uploaded(&json_body(resp).await?))
 }
 
 /// Delete a file or folder by path or `id:...`. Already gone counts as
@@ -535,6 +554,33 @@ mod tests {
                 size: Some(2_097_152),
                 rev: Some("a1c10ce0dd78".into()),
                 server_modified: "2024-05-04T10:11:12Z".into(),
+            }
+        );
+    }
+
+    // `files/upload` answers with a bare `FileMetadata` (no `.tag`): the id is
+    // what a create hands back as its handle, the rev its revision.
+    #[test]
+    fn an_upload_response_yields_the_files_id_and_rev() {
+        let uploaded = parse_uploaded(&json!({
+            "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+            "name": "a1b2.rowel",
+            "path_lower": "/vaults/a1b2.rowel",
+            "rev": "a1c10ce0dd78",
+            "size": 2048u64,
+        }));
+        assert_eq!(
+            uploaded,
+            Uploaded {
+                id: Some("id:a4ayc_80_OEAAAAAAAAAXw".into()),
+                rev: Some("a1c10ce0dd78".into()),
+            }
+        );
+        assert_eq!(
+            parse_uploaded(&json!({ "id": "", "name": "x" })),
+            Uploaded {
+                id: None,
+                rev: None
             }
         );
     }

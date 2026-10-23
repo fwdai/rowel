@@ -34,7 +34,9 @@ use tauri::AppHandle;
 
 use crate::error::{Error, Result};
 use crate::sync::account::{Auth, OAuthConfig};
-use crate::sync::store::{ensure_packs_folder, find_packs_folder, RemoteEntry, VaultStore};
+use crate::sync::store::{
+    ensure_packs_folder, find_packs_folder, Created, RemoteEntry, VaultStore,
+};
 use crate::sync::{http_client, Provider};
 use api::{DropboxEntry, WriteMode};
 
@@ -297,17 +299,30 @@ impl VaultStore for Store {
     // `stat` and this call is replaced rather than duplicated — which a full-
     // state merge on that device's next run recovers from; Drive would have
     // made a same-name sibling instead.
-    async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
+    //
+    // The handle is the `id:` the upload reports. Dropbox keeps one file per
+    // path, so that is the file now holding these bytes — the one this call
+    // wrote, even when it replaced another device's.
+    async fn create(&self, name: &str, bytes: &[u8]) -> Result<Created> {
         let token = self.token().await?;
         let folder = self.packs_for_create(&token).await?;
-        api::upload(
+        let uploaded = api::upload(
             &self.client,
             &token,
             &entry_path(&folder, name),
             &WriteMode::Overwrite,
             bytes,
         )
-        .await
+        .await?;
+        let handle = uploaded.id.ok_or_else(|| {
+            Error::Other(format!(
+                "Dropbox reported no id for the {name} it just wrote"
+            ))
+        })?;
+        Ok(Created {
+            handle,
+            revision: uploaded.rev,
+        })
     }
 
     // A compare-and-swap on the rev the core's `stat` just saw
@@ -316,7 +331,9 @@ impl VaultStore for Store {
         let path = id_path(&entry.handle)?;
         let token = self.token().await?;
         let mode = update_mode(entry.revision.as_deref());
-        api::upload(&self.client, &token, path, &mode, bytes).await
+        Ok(api::upload(&self.client, &token, path, &mode, bytes)
+            .await?
+            .rev)
     }
 
     async fn delete(&self, handle: &str) -> Result<()> {

@@ -18,7 +18,9 @@ use tauri::AppHandle;
 
 use crate::error::Result;
 use crate::sync::account::{Auth, OAuthConfig};
-use crate::sync::store::{ensure_packs_folder, find_packs_folder, RemoteEntry, VaultStore};
+use crate::sync::store::{
+    ensure_packs_folder, find_packs_folder, Created, RemoteEntry, VaultStore,
+};
 use crate::sync::{http_client, layout, Provider};
 use api::DriveFile;
 
@@ -273,12 +275,17 @@ impl VaultStore for Store {
         api::read_file(&self.client, &token, handle, max_bytes).await
     }
 
-    async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
+    // The new file's id, from the upload's own response: Drive may hold a
+    // same-name sibling another device created, and only the id tells this
+    // file from it.
+    async fn create(&self, name: &str, bytes: &[u8]) -> Result<Created> {
         let token = self.token().await?;
         let vaults = self.ensure_vaults(&token).await?;
-        Ok(api::create_file(&self.client, &token, name, &vaults, bytes)
-            .await?
-            .head_revision)
+        let file = api::create_file(&self.client, &token, name, &vaults, bytes).await?;
+        Ok(Created {
+            handle: file.id,
+            revision: file.head_revision,
+        })
     }
 
     // By file id alone; the revision is not checked. A Drive file id is never

@@ -38,7 +38,7 @@ mod completion;
 
 use crate::error::{Error, Result};
 use crate::sync::account::Auth;
-use crate::sync::store::{RemoteEntry, VaultStore};
+use crate::sync::store::{Created, RemoteEntry, VaultStore};
 use crate::sync::Provider;
 
 /// The CloudKit container the app is entitled to.
@@ -350,10 +350,16 @@ impl VaultStore for Store {
 
     // A new record under the name, saved `ifServerRecordUnchanged`: one that
     // already exists — another device's first push landing between the core's
-    // `stat` and this call — fails rather than being replaced.
-    async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
+    // `stat` and this call — fails rather than being replaced. So a save that
+    // succeeds made the record under that name, and the name is its handle.
+    async fn create(&self, name: &str, bytes: &[u8]) -> Result<Created> {
         self.bound().await?;
-        imp::create(record_name(name)?, bytes).await
+        let name = record_name(name)?;
+        let revision = imp::create(name, bytes).await?;
+        Ok(Created {
+            handle: name.to_string(),
+            revision,
+        })
     }
 
     // A compare-and-swap on the revision the run pulled (see [`stale`]), then

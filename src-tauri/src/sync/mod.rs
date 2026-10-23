@@ -519,10 +519,12 @@ async fn resolve_vault_id(store: &impl VaultStore, local: &impl LocalVault) -> R
 /// pack), and a first push whose check ran before the marker landed and whose
 /// create runs after the removal below would leave the account holding both.
 /// So the create path checks the marker again *after* writing and removes its
-/// own pack when one is there (`PackRemote::create_pack`); a marker that lands
-/// after that re-check lands before the listing below, which then finds the
-/// pack and removes it. The pack goes by the listing, not a `stat`, so a Drive
-/// account holding two of one name loses both ([`store::remove_all`]).
+/// own pack — that one object, by the handle its create returned — when one
+/// is there (`PackRemote::create_pack`); a marker that lands after that
+/// re-check lands before the listing below, which then finds the pack and
+/// removes it. Here, and only here, the pack goes by name: by the listing, not
+/// a `stat`, so a Drive account holding two of one name loses both
+/// ([`store::remove_all`]).
 ///
 /// The folders are created when the account has none (the marker's create
 /// makes them). A vault whose id is settled has a pack up there or had one, and

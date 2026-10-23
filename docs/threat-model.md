@@ -516,7 +516,8 @@ Bringing existing data forward is an **explicit** action, and there are two path
   And no device deletes a pack because it found a marker, a valid one
   included: only the device that ran "delete everywhere" removes the pack
   (beyond a first upload taking back the pack it has just written, when a
-  valid marker landed while it was writing), so
+  valid marker landed while it was writing — that one file, by the id its
+  upload returned, never another device's pack of the same name), so
   a forged or replayed marker can at most stop sync, and the UI then offers to
   re-upload the copy on the device (which clears the marker) as well as to
   delete it there.

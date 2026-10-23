@@ -13,7 +13,10 @@
 //!
 //! A sealed marker can still be replayed (a copy of a genuine one put back
 //! after the user re-uploaded), which halts sync but destroys nothing: no
-//! device ever deletes a pack because it found a marker.
+//! device deletes a pack because it found a marker, beyond a first push
+//! taking back the one object its own create just wrote, by the handle that
+//! create returned (`PackRemote::create_pack`) — never a pack another device
+//! wrote.
 //!
 //! [`VaultKey::delete_marker_key`]: crate::crypto::VaultKey::delete_marker_key
 
