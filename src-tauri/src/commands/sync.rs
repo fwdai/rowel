@@ -349,16 +349,9 @@ pub(super) async fn sync_before_rekey(app: &AppHandle) -> Option<RunClaim> {
     let app = app.clone();
     super::blocking(move || {
         let state = app.state::<AppState>();
-        let deadline = std::time::Instant::now() + PRE_REKEY_WAIT;
-        let claim = loop {
-            if let Some(claim) = claim_run(&state.syncing) {
-                break claim;
-            }
-            if std::time::Instant::now() >= deadline {
-                log::warn!("a sync run is still in flight; changing the password without one");
-                return Ok(None);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        let Some(claim) = wait_for_claim(&state) else {
+            log::warn!("a sync run is still in flight; changing the password without one");
+            return Ok(None);
         };
         let configured = state.session.lock().unwrap().sync_configured;
         if configured {
@@ -372,6 +365,23 @@ pub(super) async fn sync_before_rekey(app: &AppHandle) -> Option<RunClaim> {
     .await
     .ok()
     .flatten()
+}
+
+/// The run claim, waiting up to [`PRE_REKEY_WAIT`] for a run in flight to
+/// release it: for the flows that re-key the open vault and must not have a
+/// run beside them. Blocking — it sleeps between tries — so only ever called
+/// on the blocking pool. `None` when the wait ran out.
+pub(super) fn wait_for_claim(state: &AppState) -> Option<RunClaim> {
+    let deadline = std::time::Instant::now() + PRE_REKEY_WAIT;
+    loop {
+        if let Some(claim) = claim_run(&state.syncing) {
+            return Some(claim);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 /// Ask for a run after a local change, on a vault that can serve one.

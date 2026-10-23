@@ -17,6 +17,9 @@ pub mod e2e;
 pub mod env;
 pub mod generator;
 pub mod import;
+// A master password changed on another device: adopting it, or replacing the
+// account's copy.
+pub mod password_sync;
 // First-run onboarding (connect Drive before a vault exists).
 pub mod setup;
 pub mod share;

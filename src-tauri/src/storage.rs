@@ -366,7 +366,12 @@ pub fn db_path(app: &AppHandle) -> Result<PathBuf> {
 // inherit the 0700 directory mode. Everything written here is SQLCipher
 // ciphertext, and every writer removes its own files (see `pack::Scratch`).
 pub fn sync_scratch_dir(app: &AppHandle) -> Result<PathBuf> {
-    Ok(workspace_dir(app)?.join(SYNC_SCRATCH_DIR))
+    Ok(sync_scratch_dir_in(&workspace_dir(app)?))
+}
+
+// The same, for a workspace directory that is not the active one.
+pub(crate) fn sync_scratch_dir_in(dir: &Path) -> PathBuf {
+    dir.join(SYNC_SCRATCH_DIR)
 }
 
 // Favicons used to be cached as loose `{host}.uri` / `{host}.miss` files here.

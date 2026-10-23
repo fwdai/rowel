@@ -219,6 +219,12 @@ impl<S: VaultStore> PackRemote<S> {
         }
     }
 
+    /// The store back, with whatever its refreshes left in it (see
+    /// [`AnyStore::into_tokens`]).
+    pub fn into_store(self) -> S {
+        self.store
+    }
+
     async fn locate(&self) -> Result<Option<RemoteEntry>> {
         self.store
             .stat(&layout::vault_file_name(&self.vault_id))

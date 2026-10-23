@@ -559,7 +559,7 @@ pub(crate) async fn rekey_open_workspace(
 // again and the marker refreshed — a build that has since gained (or lost) its
 // entitlement moves the key to the matching mode instead of leaving a
 // mislabelled item. A device that never enrolled has nothing to re-store.
-async fn restore_enrollment(app: &AppHandle, material: Zeroizing<Vec<u8>>) {
+pub(super) async fn restore_enrollment(app: &AppHandle, material: Zeroizing<Vec<u8>>) {
     if !storage::biometric_enrolled(app) {
         return;
     }

@@ -309,6 +309,22 @@ pub fn sync<R: Remote, L: LocalVault>(
     ))
 }
 
+/// Overwrite the remote with this vault's pack without pulling it: the
+/// explicit replace a user confirms when the account holds a pack this device
+/// cannot open. The write is conditional on the head revision read here, so a
+/// push that lands in between is not overwritten (the call fails instead).
+/// Everything only the account's copy held is lost; that is what the user
+/// confirmed.
+pub fn replace<R: Remote, L: LocalVault>(remote: &R, local: &L, now_ms: i64) -> Result<()> {
+    let base_revision = remote.head_revision()?;
+    let bytes = local.pack(now_ms - TOMBSTONE_TTL_MS)?;
+    if bytes.len() > pack::MAX_PACK_BYTES {
+        return Err(Error::Other(too_large_to_sync_error()));
+    }
+    let revision = remote.upload(&bytes, base_revision.as_deref())?;
+    local.note_push(&revision, now_ms)
+}
+
 // --- the local side, backed by the unlocked session -------------------------
 
 /// [`LocalVault`] over the session's open store.
@@ -584,7 +600,7 @@ fn merge_snapshot(store: &SqliteStore, incoming: &Snapshot) -> Result<usize> {
 
 // A pack this build cannot parse is corruption, except for a format stamped by
 // a newer build — same distinction the store draws for its schema.
-fn remote_pack_error(e: PackError) -> Error {
+pub(crate) fn remote_pack_error(e: PackError) -> Error {
     match e {
         PackError::UnknownVersion(_) => Error::VaultTooNew,
         PackError::Io(e) => Error::Io(e),

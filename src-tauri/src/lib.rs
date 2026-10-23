@@ -268,6 +268,8 @@ pub fn run() {
             commands::sync::sync_now,
             commands::sync::sync_adopt_pending,
             commands::sync::sync_reupload,
+            commands::password_sync::sync_adopt_password,
+            commands::password_sync::sync_replace_remote,
             commands::share::share_create,
             commands::share::share_open,
             commands::share::share_revoke,
