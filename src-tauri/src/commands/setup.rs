@@ -364,7 +364,16 @@ pub async fn setup_restore_from_legacy(
     let handle = app.clone();
     let (key, store) = super::blocking(move || {
         let (src, data) = super::vault::open_legacy_backup(&path, &password)?;
-        let (key, store) = create_vault(&handle, &password)?;
+        let (key, store) = match create_vault(&handle, &password) {
+            Ok(created) => created,
+            Err(e) => {
+                // `create_vault` writes the KDF sidecar before opening and
+                // initializing the database, so an error can leave either
+                // behind even though no store was returned for us to drop.
+                discard_fresh_vault(&handle);
+                return Err(e);
+            }
+        };
         let installed =
             super::vault::reseal_legacy(&handle, &src, &data.entries, &key.payload_cipher())
                 .and_then(|records| {
