@@ -262,6 +262,7 @@ pub fn run() {
             commands::setup::setup_disconnect,
             commands::setup::setup_restore_from_account,
             commands::setup::setup_restore_from_file,
+            commands::setup::setup_restore_from_legacy,
             commands::setup::setup_create,
             commands::sync::sync_connect,
             commands::sync::sync_disconnect,

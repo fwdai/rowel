@@ -34,7 +34,7 @@ use crate::models::UnlockResult;
 use crate::session::{create_vault, list_metas, store_err};
 use crate::state::{AppState, PendingAccount};
 use crate::storage;
-use crate::store::SqliteStore;
+use crate::store::{SqliteStore, VaultStore};
 use crate::sync::{self, restore, setup::PackInfo, Provider};
 
 // --- connect ---------------------------------------------------------------
@@ -330,6 +330,61 @@ pub async fn setup_restore_from_file(
     .await?;
     // The step guard keeps any other restore out while this one ran, so the
     // grant checked above is still here to spend.
+    grants.take(&chosen, Purpose::Backup);
+    adopt(&app, &state, key, store, None, None)
+}
+
+/// Restore from a legacy `.swftx` vault on disk. Onboarding only.
+///
+/// A `.swftx` is not a pack but the old app's whole vault under its own
+/// password, which `commands::vault::import_swftx` can only merge into a vault
+/// that already exists. On a fresh install there is none, so this makes one:
+/// the file is opened first — a wrong password fails here with nothing
+/// written, as the pack restore does — then a vault is created under that same
+/// password, the entries are re-sealed into it, and it is adopted exactly as a
+/// restored pack is. Settings › Change password is one step away for whoever
+/// wants a different one.
+///
+/// All or nothing past the open: a re-seal or a write that fails takes the
+/// fresh vault with it (`discard_fresh_vault`), so a retry starts from a fresh
+/// install rather than from a half-filled vault `guard_no_vault` refuses to
+/// replace. The grant is held across a mistyped password and spent by the
+/// restore that succeeds, as for a pack.
+#[tauri::command]
+pub async fn setup_restore_from_legacy(
+    path: String,
+    password: Zeroizing<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    grants: State<'_, PathGrants>,
+) -> Result<UnlockResult> {
+    guard_no_vault(&app)?;
+    let _step = begin_step(&state)?;
+    let chosen = PathBuf::from(&path);
+    if !grants.holds(&chosen, Purpose::Backup) {
+        return Err(grants::not_chosen());
+    }
+
+    let handle = app.clone();
+    let (key, store) = super::blocking(move || {
+        let (src, data) = super::vault::open_legacy_backup(&path, &password)?;
+        let (key, store) = create_vault(&handle, &password)?;
+        let installed =
+            super::vault::reseal_legacy(&handle, &src, &data.entries, &key.payload_cipher())
+                .and_then(|records| {
+                    records
+                        .iter()
+                        .try_for_each(|record| store.upsert(record).map_err(store_err))
+                });
+        if let Err(e) = installed {
+            // The connection has to close before its files can go.
+            drop(store);
+            discard_fresh_vault(&handle);
+            return Err(e);
+        }
+        Ok((key, store))
+    })
+    .await?;
     grants.take(&chosen, Purpose::Backup);
     adopt(&app, &state, key, store, None, None)
 }

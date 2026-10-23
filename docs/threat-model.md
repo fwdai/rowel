@@ -29,12 +29,13 @@ and external links are opened through the OS only for `http`/`https` URLs
 (`opener:allow-open-url` scope in `capabilities/default.json`; plain `http` is
 kept because routers and intranet logins have no other address, and the scope
 exists to shut out `file:`, `javascript:` and custom schemes, not to upgrade
-transport). Six commands read a path the webview names — `scan_image` (a photo
+transport). Seven commands read a path the webview names — `scan_image` (a photo
 of a card or identity document), `read_env_file`, `attachment_add`,
 `import_entries` (a password manager's export), `import_swftx` (a legacy
-backup merged into the open vault) and `setup_restore_from_file` (a `.rowel`
-backup restored on a fresh install) — and none trusts the path it is handed;
-all six read only granted paths. A path is readable only if it was granted by
+backup merged into the open vault), `setup_restore_from_file` (a `.rowel`
+backup restored on a fresh install) and `setup_restore_from_legacy` (a `.swftx`
+made the vault of a fresh install, under its own password) — and none trusts
+the path it is handed; all seven read only granted paths. A path is readable only if it was granted by
 one of three events the core itself observes: the OS file dialog run from Rust
 (`pick_file`; the webview holds no `dialog:allow-open` permission to open one of
 its own), an OS drag-and-drop onto the window, or the OS opening a `.rowel` or
@@ -45,7 +46,7 @@ a file the OS opened a backup — and each reader spends only a grant of its own
 purpose: a path the user chose in an env-file dialog cannot be read by
 `scan_image`, so the dialog's framing is part of what was consented to. The
 one exception is a drop, which `attachment_add`, `import_entries`,
-`import_swftx` and `setup_restore_from_file` may also spend: the file was
+`import_swftx`, `setup_restore_from_file` and `setup_restore_from_legacy` may also spend: the file was
 handed to the app itself, the drop target says what it is, and each of those
 takes the file into the vault and returns no more of it than the kind's own
 reader would. An import's preview and a backup read again after a mistyped
@@ -541,7 +542,7 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
 the encrypted database exists; a legacy `vault.swftx` file alone does **not**
 count. Nothing is migrated automatically on unlock.
 
-Bringing existing data forward is an **explicit** action, and there are two paths:
+Bringing existing data forward is an **explicit** action, and there are three paths:
 
 - **Restore a backup as a new vault** (`setup_restore_from_file`,
   `commands/setup.rs`): a `.rowel` backup is the same pack the sync engine
@@ -556,7 +557,14 @@ Bringing existing data forward is an **explicit** action, and there are two path
   key and re-sealed under the current session key, then merged by id. This
   CPU-bound re-encrypt loop runs **off the UI thread** and emits
   `import:progress` events so the UI can show progress. It is an import feature
-  in Settings, not a first-run path.
+  in Settings, for a vault that already exists.
+- **Restore a legacy vault as a new vault** (`setup_restore_from_legacy`,
+  `commands/setup.rs`): the first-run twin of the import above, for an install
+  with no vault to merge into. The `.swftx` is opened under its own password
+  first — a wrong one writes nothing — then a vault is created under that same
+  password, the entries are re-sealed into it by the same loop, and it is
+  adopted exactly as a restored pack is. A failure past the open removes the
+  fresh vault again, so a retry starts from a fresh install.
 
 ## What Rowel defends against
 

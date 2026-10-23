@@ -4,7 +4,8 @@ import Masterpass from '@/components/elements/Masterpass'
 import Button from '@/components/elements/Button'
 import FoundFileCard from '@/components/elements/FoundFileCard'
 import type { UnlockResult } from '@/api/types'
-import { setupRestoreFromFile } from '@/api/setup'
+import { setupRestoreFromFile, setupRestoreFromLegacy } from '@/api/setup'
+import { isLegacyBackupFile } from '@/lib/backup'
 import StepHeader from '../shared/StepHeader'
 import DropZone from '../shared/DropZone'
 import TextLink from '../shared/TextLink'
@@ -19,9 +20,11 @@ interface Props {
 }
 
 // Restoring from a `.rowel` backup: pick the file, then unseal it with the
-// master password it was sealed under. Desktop only — a phone has nowhere to
-// drag a file from, and the backup it would need was saved on a machine that
-// does.
+// master password it was sealed under. A legacy `.swftx` vault takes the same
+// two steps and a different command: it is not a pack, so the backend opens
+// it under its password and builds this device's vault out of it, under that
+// same password. Desktop only — a phone has nowhere to drag a file from, and
+// the backup it would need was saved on a machine that does.
 export default function File({ onRestored, initialPath = null }: Props) {
   const { t } = useTranslation()
   const [path, setPath] = useState<string | null>(initialPath)
@@ -40,11 +43,14 @@ export default function File({ onRestored, initialPath = null }: Props) {
     setPassword(event.currentTarget.value)
   }
 
+  const legacy = path !== null && isLegacyBackupFile(path)
+
   const restore = () => {
     if (busy || !path || !password) return
     setBusy(true)
     setError(null)
-    setupRestoreFromFile(path, password)
+    const unseal = legacy ? setupRestoreFromLegacy : setupRestoreFromFile
+    unseal(path, password)
       .then(onRestored)
       .catch((err: unknown) => {
         setBusy(false)
@@ -71,7 +77,11 @@ export default function File({ onRestored, initialPath = null }: Props) {
       <StepHeader
         eyebrow={t('Restore · Backup file')}
         title={t('Unlock your backup')}
-        body={t('Use the master password you had when this backup was made.')}
+        body={
+          legacy
+            ? t('Use the master password of this legacy vault. It becomes your master password here.')
+            : t('Use the master password you had when this backup was made.')
+        }
       />
 
       <div className={`${COLUMN} mt-9`}>

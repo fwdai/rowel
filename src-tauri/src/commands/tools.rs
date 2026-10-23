@@ -18,10 +18,10 @@ use crate::{emblem, favicon, scan};
 /// `"image"` (filtered to what the scanner opens), `"env"` (any file, since
 /// an env file may be named anything), `"attachment"` (any file), `"photo"`
 /// (an image to attach — the attachment pick under the image filter),
-/// `"import"` (a password manager's export), `"backup"` (a `.rowel` to
-/// restore) or `"importBackup"` (a `.rowel` or a legacy `.swftx`, for
-/// Settings › Import). The path picked, or `None` when the dialog was
-/// dismissed.
+/// `"import"` (a password manager's export), `"backup"` (a `.rowel` or a
+/// legacy `.swftx` to restore on a fresh install) or `"importBackup"` (the
+/// same two, for Settings › Import). The path picked, or `None` when the
+/// dialog was dismissed.
 ///
 /// On a phone an image filter makes the dialog plugin show the photo library
 /// rather than the file browser (it switches to the media picker when no
@@ -66,7 +66,7 @@ pub async fn pick_file(
         }
         "backup" => {
             let label = label.unwrap_or_else(|| "Rowel backup".into());
-            dialog = dialog.add_filter(label, &[BACKUP_EXTENSION]);
+            dialog = dialog.add_filter(label, &[BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION]);
             Purpose::Backup
         }
         "importBackup" => {

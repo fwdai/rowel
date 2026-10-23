@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { pickBackup } from '@/api/pickers'
 import { useFileDrop } from '@/hooks/useFileDrop'
-import { isBackupFile } from '@/lib/backup'
+import { isRestorableFile } from '@/lib/backup'
 import { DownloadGlyph } from '@/components/Main/icons'
 import { META } from '@/components/elements/tokens'
 
@@ -10,13 +10,15 @@ interface Props {
 }
 
 // A backup is a file, so the target is the file's own shape: drop it anywhere
-// on the window, or press to open the picker. Desktop only — the screen that
-// draws it is not offered on a phone, where nothing drags a file anywhere.
+// on the window, or press to open the picker. Takes a `.rowel` backup or a
+// legacy `.swftx` vault, as the picker behind it does. Desktop only — the
+// screen that draws it is not offered on a phone, where nothing drags a file
+// anywhere.
 export default function DropZone({ onPick }: Props) {
   const { t } = useTranslation()
 
   useFileDrop(paths => {
-    const path = paths.find(isBackupFile)
+    const path = paths.find(isRestorableFile)
     if (path) onPick(path)
   })
 
@@ -37,7 +39,9 @@ export default function DropZone({ onPick }: Props) {
       <span className="text-text2">
         <DownloadGlyph size={24} />
       </span>
-      <span className="text-base font-medium text-text">{t('Drop a .rowel file here')}</span>
+      <span className="text-base font-medium text-text">
+        {t('Drop a .rowel or .swftx file here')}
+      </span>
       <span className={META}>
         <span className="text-accent">{t('or browse…')}</span>
       </span>
