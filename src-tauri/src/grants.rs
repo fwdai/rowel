@@ -1,8 +1,8 @@
 //! Paths the user has pointed the app at.
 //!
 //! A command that reads a local file (`scan_image`, `read_env_file`,
-//! `attachment_add`) gets its
-//! path from the webview, and the webview's word is not authorization: a
+//! `attachment_add`, `import_entries`, `import_swftx`,
+//! `setup_restore_from_file`) gets its path from the webview, and the webview's word is not authorization: a
 //! script that got to run there could name any file on disk — another
 //! project's `.env`, a photo in the user's library — and have the backend hand
 //! it back. What the extension and shape checks in those commands decide is
@@ -32,6 +32,8 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::error::Error;
+
 /// What a granted path may be read as — one variant per reading command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Purpose {
@@ -44,6 +46,18 @@ pub enum Purpose {
     /// A file to attach to an entry: what `commands::attachments::attachment_add`
     /// reads, sealing it into the vault. Nothing of it goes back to the webview.
     Attachment,
+    /// A foreign password export: what `commands::import::import_entries`
+    /// reads, previewing it and then writing its rows into the vault.
+    Import,
+    /// A `.rowel` or `.swftx` backup: what `commands::vault::import_swftx`
+    /// merges and `commands::setup::setup_restore_from_file` restores, each
+    /// only once the backup's own password has opened it.
+    Backup,
+}
+
+/// The refusal every reader gives a path nobody granted it.
+pub fn not_chosen() -> Error {
+    Error::Unsupported("this file was not chosen in the app".into())
 }
 
 /// One path the user chose, and how.
@@ -78,10 +92,12 @@ impl PathGrants {
     }
 
     /// [`PathGrants::grant`] for a file dropped on the window, `purpose` being
-    /// what its kind makes it. A drop is also spendable as an attachment: the
-    /// user handed the file to the app itself rather than to a dialog with a
-    /// framing of its own, and attaching it seals it in the vault and gives
-    /// nothing of it back — less than the kind's own reader exposes.
+    /// what its kind makes it. A drop is also spendable by the readers that take
+    /// a file into the vault — as an attachment, an export to import or a
+    /// backup to merge or restore: the user handed the file to the app itself
+    /// rather than to a dialog with a framing of its own, and which of those it
+    /// becomes is the drop target's to say. None of them hands back more than
+    /// the kind's own reader would — the env reader returns the whole text.
     pub fn grant_drop(&self, path: &Path, purpose: Purpose) {
         self.insert(path, purpose, true);
     }
@@ -114,10 +130,7 @@ impl PathGrants {
             return false;
         };
         let mut paths = self.paths.lock().unwrap();
-        match paths.iter().position(|held| {
-            held.path == path
-                && (held.purpose == purpose || (held.dropped && purpose == Purpose::Attachment))
-        }) {
+        match position(&paths, &path, purpose) {
             Some(at) => {
                 paths.remove(at);
                 true
@@ -125,6 +138,32 @@ impl PathGrants {
             None => false,
         }
     }
+
+    /// Whether `path` is granted as `purpose`, spending nothing. For a reader
+    /// that may read the same choice more than once before it is done with it:
+    /// an import previews the file before it writes it, and a backup is read
+    /// again after a mistyped password. Such a reader checks here before each
+    /// read and [`take`](PathGrants::take)s the grant once the file has done
+    /// what it was chosen for.
+    pub fn holds(&self, path: &Path, purpose: Purpose) -> bool {
+        let Ok(path) = path.canonicalize() else {
+            return false;
+        };
+        position(&self.paths.lock().unwrap(), &path, purpose).is_some()
+    }
+}
+
+/// Where the grant spendable for `path` as `purpose` is held, if anywhere.
+fn position(paths: &VecDeque<Grant>, path: &Path, purpose: Purpose) -> Option<usize> {
+    paths.iter().position(|held| {
+        held.path == path
+            && (held.purpose == purpose
+                || (held.dropped
+                    && matches!(
+                        purpose,
+                        Purpose::Attachment | Purpose::Import | Purpose::Backup
+                    )))
+    })
 }
 
 #[cfg(test)]
@@ -226,6 +265,48 @@ mod tests {
         assert!(!grants.take(&attached, Purpose::Env));
         assert!(!grants.take(&attached, Purpose::Image));
         assert!(grants.take(&attached, Purpose::Attachment));
+    }
+
+    #[test]
+    fn a_dropped_file_can_be_imported_or_restored() {
+        let grants = PathGrants::default();
+        let export = scratch("dropped-export");
+        grants.grant_drop(&export, Purpose::Env);
+        assert!(grants.take(&export, Purpose::Import));
+
+        let backup = scratch("dropped-backup");
+        grants.grant_drop(&backup, Purpose::Env);
+        assert!(grants.take(&backup, Purpose::Backup));
+        assert!(!grants.take(&backup, Purpose::Env), "spent by the restore");
+    }
+
+    #[test]
+    fn a_picked_export_or_backup_reads_only_as_picked() {
+        let grants = PathGrants::default();
+        let export = scratch("picked-export");
+        grants.grant(&export, Purpose::Import);
+        assert!(!grants.take(&export, Purpose::Backup));
+        assert!(!grants.take(&export, Purpose::Env));
+        assert!(grants.take(&export, Purpose::Import));
+
+        let backup = scratch("picked-backup");
+        grants.grant(&backup, Purpose::Backup);
+        assert!(!grants.take(&backup, Purpose::Import));
+        assert!(!grants.take(&backup, Purpose::Attachment));
+        assert!(grants.take(&backup, Purpose::Backup));
+    }
+
+    #[test]
+    fn holding_a_grant_spends_nothing() {
+        let grants = PathGrants::default();
+        let path = scratch("held");
+        assert!(!grants.holds(&path, Purpose::Import));
+        grants.grant(&path, Purpose::Import);
+        assert!(grants.holds(&path, Purpose::Import));
+        assert!(grants.holds(&path, Purpose::Import));
+        assert!(!grants.holds(&path, Purpose::Backup));
+        assert!(grants.take(&path, Purpose::Import));
+        assert!(!grants.holds(&path, Purpose::Import));
     }
 
     #[test]

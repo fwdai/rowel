@@ -7,6 +7,7 @@ use std::path::Path;
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::{DialogExt, PickerMode};
 
+use super::vault::{BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION};
 use crate::error::{Error, Result};
 use crate::grants::{PathGrants, Purpose};
 use crate::scan::ScanResult;
@@ -15,9 +16,12 @@ use crate::{emblem, favicon, scan};
 
 /// The OS file dialog, for a file the backend will then read: `kind` is
 /// `"image"` (filtered to what the scanner opens), `"env"` (any file, since
-/// an env file may be named anything), `"attachment"` (any file) or `"photo"`
-/// (an image to attach — the attachment pick under the image filter). The
-/// path picked, or `None` when the dialog was dismissed.
+/// an env file may be named anything), `"attachment"` (any file), `"photo"`
+/// (an image to attach — the attachment pick under the image filter),
+/// `"import"` (a password manager's export), `"backup"` (a `.rowel` to
+/// restore) or `"importBackup"` (a `.rowel` or a legacy `.swftx`, for
+/// Settings › Import). The path picked, or `None` when the dialog was
+/// dismissed.
 ///
 /// On a phone an image filter makes the dialog plugin show the photo library
 /// rather than the file browser (it switches to the media picker when no
@@ -27,8 +31,8 @@ use crate::{emblem, favicon, scan};
 ///
 /// Run from Rust rather than through the dialog plugin's JS API so the choice
 /// is one the backend witnessed: the picked path is granted (see `grants`)
-/// before the webview hears of it, and `scan_image` / `read_env_file` read
-/// only granted paths. The grant carries the purpose the dialog was opened
+/// before the webview hears of it, and every command that reads a path the
+/// webview names reads only granted ones. The grant carries the purpose the dialog was opened
 /// for, so a file chosen from the env picker cannot be spent on a scan
 /// instead — and a photo picked to attach is only ever attached, never
 /// scanned. `label` is the filter's name in the dialog's own chrome,
@@ -54,6 +58,21 @@ pub async fn pick_file(
             let label = label.unwrap_or_else(|| "Images".into());
             dialog = dialog.add_filter(label, &scan::IMAGE_EXTENSIONS);
             Purpose::Attachment
+        }
+        "import" => {
+            let label = label.unwrap_or_else(|| "Password exports".into());
+            dialog = dialog.add_filter(label, &super::import::EXTENSIONS);
+            Purpose::Import
+        }
+        "backup" => {
+            let label = label.unwrap_or_else(|| "Rowel backup".into());
+            dialog = dialog.add_filter(label, &[BACKUP_EXTENSION]);
+            Purpose::Backup
+        }
+        "importBackup" => {
+            let label = label.unwrap_or_else(|| "Rowel backup".into());
+            dialog = dialog.add_filter(label, &[BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION]);
+            Purpose::Backup
         }
         other => return Err(Error::Unsupported(format!("no {other} picker"))),
     };
@@ -92,9 +111,7 @@ pub async fn scan_image(
 ) -> Result<ScanResult> {
     let epoch = super::unlocked_epoch(&state)?;
     if !grants.take(Path::new(&path), Purpose::Image) {
-        return Err(Error::Unsupported(
-            "this file was not chosen in the app".into(),
-        ));
+        return Err(crate::grants::not_chosen());
     }
     let result = scan::scan(path).await?;
     super::same_session(&state, epoch)?;

@@ -56,8 +56,8 @@ export const getAudit = (checkBreaches: boolean): Promise<Audit> =>
 // and its fields keyed exactly like that kind's draft.
 /**
  * The OS file dialog for a file the backend will then read, opened from Rust
- * rather than through the dialog plugin here: `scanImage` and `readEnvFile`
- * only read a path the backend itself watched the user choose, and the picker
+ * rather than through the dialog plugin here: every command that reads a path
+ * the webview names reads only one the backend itself watched the user choose, and the picker
  * that runs there is what makes the choice one it saw. `null` when the dialog
  * was dismissed.
  *
@@ -66,10 +66,20 @@ export const getAudit = (checkBreaches: boolean): Promise<Audit> =>
  * named anything — and so does `'attachment'`. `'photo'` is an attachment
  * pick under the image filter: on a phone that opens the photo library rather
  * than the file browser, and what it picks is readable only as an attachment.
+ * `'import'` is a password manager's export, `'backup'` a `.rowel` to restore
+ * and `'importBackup'` either backup Settings › Import takes (see
+ * `@/api/pickers`).
  * `browse` asks a phone for the file browser even under an image filter (a
  * photo kept in Files); the desktop's one dialog ignores it.
  */
-export type PickKind = 'image' | 'env' | 'attachment' | 'photo'
+export type PickKind =
+  | 'image'
+  | 'env'
+  | 'attachment'
+  | 'photo'
+  | 'import'
+  | 'backup'
+  | 'importBackup'
 
 export const pickFileToRead = (
   kind: PickKind,

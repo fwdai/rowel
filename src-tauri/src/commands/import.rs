@@ -14,6 +14,7 @@ use tauri::{AppHandle, State};
 use crate::crypto::PayloadCipher;
 use crate::error::{Error, Result};
 use crate::events;
+use crate::grants::{self, PathGrants, Purpose};
 use crate::import::{self, EntryKind, Format, ImportedEntry, RowError};
 use crate::models::{Entry, EntryMetaDto};
 use crate::save;
@@ -25,6 +26,10 @@ use crate::store::{migrate, Record, SqliteStore, VaultStore};
 // Bound the input: a foreign export should never be gigabytes or millions of rows.
 const MAX_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
+
+/// What the import picker offers: the files the importers read. `Format`
+/// detection does not depend on it — a drop of any name is still parsed.
+pub const EXTENSIONS: [&str; 3] = ["json", "csv", "1pux"];
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,6 +81,7 @@ struct Parsed {
 
 // Parse a foreign export and either preview it (dry_run) or write it into the open
 // vault. `format` is an explicit name or "auto" to detect by extension/content.
+// `path` has to be one the user chose as an export (see `chosen`).
 //
 // The read, the parse and the seal loop are one hop onto the blocking pool: a
 // 25 MB export is disk I/O followed by a CPU-bound pass over every row, and
@@ -87,6 +93,7 @@ pub async fn import_entries(
     dry_run: bool,
     app: AppHandle,
     state: State<'_, AppState>,
+    grants: State<'_, PathGrants>,
 ) -> Result<ImportReport> {
     // Taken before the file work, so a locked vault is turned away at once
     // instead of after parsing. A preview writes nothing and so needs no cipher,
@@ -104,6 +111,7 @@ pub async fn import_entries(
             (Some(session.payload_cipher()?), Some(session.epoch()))
         }
     };
+    chosen(&grants, Path::new(&path), dry_run)?;
 
     let emitter = app.clone();
     let parsed = super::blocking(move || -> Result<Parsed> {
@@ -241,6 +249,22 @@ fn resolve_format(format: &str, unpacked: bool, name: &str, bytes: &[u8]) -> Res
 // The archive is told by its signature on the same handle that is then read,
 // not by its name: the `.1pux` suffix is a convention, and a renamed one is
 // the same file.
+// Whether `path` is an export the user chose — picked through the import
+// `pick_file` or dropped on the window (see `grants`). A preview only asks:
+// the write that follows reads the same choice again. The write spends it, so
+// importing the file a second time takes the user's say again.
+fn chosen(grants: &PathGrants, path: &Path, dry_run: bool) -> Result<()> {
+    let granted = match dry_run {
+        true => grants.holds(path, Purpose::Import),
+        false => grants.take(path, Purpose::Import),
+    };
+    if granted {
+        Ok(())
+    } else {
+        Err(grants::not_chosen())
+    }
+}
+
 fn read_import_file(path: &Path) -> Result<(Vec<u8>, bool)> {
     use std::io::{Read, Seek, SeekFrom};
 
@@ -572,6 +596,27 @@ mod tests {
     use crate::crypto::{self, KdfParams, VaultKey};
     use crate::models::PASSWORD_HISTORY_CAP;
     use crate::store::SqliteStore;
+
+    #[test]
+    fn an_export_nobody_chose_is_refused_and_a_preview_spends_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.csv");
+        std::fs::write(&path, b"name,url\n").unwrap();
+        let grants = PathGrants::default();
+
+        assert!(chosen(&grants, &path, true).is_err());
+        assert!(chosen(&grants, &path, false).is_err());
+
+        // Picked as something else: still not an export the user chose.
+        grants.grant(&path, Purpose::Env);
+        assert!(chosen(&grants, &path, false).is_err());
+
+        grants.grant(&path, Purpose::Import);
+        chosen(&grants, &path, true).unwrap();
+        chosen(&grants, &path, true).unwrap();
+        chosen(&grants, &path, false).unwrap();
+        assert!(chosen(&grants, &path, false).is_err(), "spent by the write");
+    }
 
     // Cheap Argon2id params: this proves which cipher the export reads with,
     // not how expensive the KDF is.

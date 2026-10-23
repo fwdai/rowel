@@ -29,18 +29,28 @@ and external links are opened through the OS only for `http`/`https` URLs
 (`opener:allow-open-url` scope in `capabilities/default.json`; plain `http` is
 kept because routers and intranet logins have no other address, and the scope
 exists to shut out `file:`, `javascript:` and custom schemes, not to upgrade
-transport). Three commands read a path the webview names — `scan_image` (a photo
-of a card or identity document), `read_env_file` and `attachment_add` — and
-none trusts the path it is handed. A path is readable only if it was granted by one of two
-events the core itself observes: the OS file dialog run from Rust
-(`pick_file`), or an OS drag-and-drop onto the window (`PathGrants`, one-shot,
-consumed on use). A grant carries the purpose it was made for — the picker's
-kind (`image`, `env` or `attachment`), or for a drop the file's kind — and each
-reader spends only a grant of its own purpose: a path the user chose in an
-env-file dialog cannot be read by `scan_image`, so the dialog's framing is part
-of what was consented to. The one exception is a drop, which `attachment_add`
-may also spend: the file was handed to the app itself, and attaching it seals
-it away and returns nothing of it. The session must then still be the one that asked — the epoch
+transport). Six commands read a path the webview names — `scan_image` (a photo
+of a card or identity document), `read_env_file`, `attachment_add`,
+`import_entries` (a password manager's export), `import_swftx` (a legacy
+backup merged into the open vault) and `setup_restore_from_file` (a `.rowel`
+backup restored on a fresh install) — and none trusts the path it is handed;
+all six read only granted paths. A path is readable only if it was granted by
+one of three events the core itself observes: the OS file dialog run from Rust
+(`pick_file`; the webview holds no `dialog:allow-open` permission to open one of
+its own), an OS drag-and-drop onto the window, or the OS opening a `.rowel` or
+`.swftx` with the app (`opened.rs`) (`PathGrants`, one-shot, consumed on use).
+A grant carries the purpose it was made for — the picker's kind (`image`,
+`env`, `attachment`, `import` or a backup), for a drop the file's kind, and for
+a file the OS opened a backup — and each reader spends only a grant of its own
+purpose: a path the user chose in an env-file dialog cannot be read by
+`scan_image`, so the dialog's framing is part of what was consented to. The
+one exception is a drop, which `attachment_add`, `import_entries`,
+`import_swftx` and `setup_restore_from_file` may also spend: the file was
+handed to the app itself, the drop target says what it is, and each of those
+takes the file into the vault and returns no more of it than the kind's own
+reader would. An import's preview and a backup read again after a mistyped
+password check the grant without spending it; the write or the restore that
+succeeds spends it. The session must then still be the one that asked — the epoch
 is re-checked after the read, so a lock or a lockbox switch mid-read discards
 the bytes. Only then is the file classified: the extension against a fixed
 image list (`scan/mod.rs`), the `.env` name-or-parse check and the 1 MiB cap

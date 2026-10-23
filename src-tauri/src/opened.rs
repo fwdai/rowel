@@ -18,20 +18,31 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
 
+#[cfg(desktop)]
+use crate::grants::{PathGrants, Purpose};
 use crate::state::AppState;
 
 /// The extensions `bundle.fileAssociations` registers.
 #[cfg(desktop)]
-const EXTENSIONS: [&str; 2] = [crate::commands::vault::BACKUP_EXTENSION, "swftx"];
+const EXTENSIONS: [&str; 2] = [
+    crate::commands::vault::BACKUP_EXTENSION,
+    crate::commands::vault::LEGACY_BACKUP_EXTENSION,
+];
 
 /// Park and announce the first document in `paths` that is ours. Anything
 /// else is ignored: a flag on the command line, a directory, a file of some
 /// other kind the OS was told to open with us anyway.
+///
+/// The document is granted as a backup (see `grants`) before the webview hears
+/// of it: the user opened that file with the app, which is as much a choice as
+/// picking it from the dialog, and the restore or merge it leads to reads only
+/// granted paths.
 #[cfg(desktop)]
 pub fn accept(app: &AppHandle, paths: impl IntoIterator<Item = PathBuf>) {
     let Some(path) = paths.into_iter().find(|p| is_ours(p)) else {
         return;
     };
+    app.state::<PathGrants>().grant(&path, Purpose::Backup);
     let path = path.to_string_lossy().into_owned();
     *app.state::<AppState>().pending_open.lock().unwrap() = Some(path.clone());
     crate::events::file_opened(app, &path);
