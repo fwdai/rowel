@@ -278,7 +278,7 @@ fn a_password_change_on_one_device_reaches_the_other() {
     let gen1 = params(2, 1);
     a.rekey(derive(NEW, &gen1), &gen1);
     assert_eq!(a.gen(), 1);
-    assert_eq!(a.retired(), [gen0.clone()]);
+    assert_eq!(a.retired(), std::slice::from_ref(&gen0));
     let outcome = a.sync(&account).unwrap();
     assert!(outcome.pushed && outcome.rekeyed_remote);
     assert_eq!(header(&account, "v1"), gen1);
@@ -316,7 +316,7 @@ fn a_password_change_on_one_device_reaches_the_other() {
     assert_eq!(adopted, gen1);
     b.rekey(key, &adopted);
     assert_eq!(b.sidecar(), a.sidecar());
-    assert_eq!(b.retired(), [gen0.clone()]);
+    assert_eq!(b.retired(), std::slice::from_ref(&gen0));
     assert!(SqliteStore::open(
         &b.path().join(storage::DB_FILE),
         &*derive(NEW, &gen1).sqlcipher_key()
