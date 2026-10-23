@@ -132,8 +132,12 @@ pub fn clear_on_lock(app: &AppHandle) {
 
 // Copy text to the clipboard, optionally clearing it after `clear_after_ms`.
 //
-// Secrets are written with the platform "concealed" markers so clipboard
-// managers, history, and Universal/cloud clipboard skip them. The delayed
+// Secrets are written with the platform markers that keep them out of
+// clipboard managers and history (concealed/transient types on macOS, the
+// exclusion formats on Windows). On macOS the pasteboard is also prepared
+// current-host-only, which is what keeps a copy off Universal Clipboard — the
+// concealed marker alone does not: Handoff syncs it to the user's other
+// devices like any other copy. The delayed
 // clear is compare-before-clear: it only wipes the clipboard if it still holds
 // the exact value we wrote, so a value the user copied afterwards is never lost.
 #[tauri::command]
@@ -215,22 +219,30 @@ fn ios_expiry(clear_after: Option<Duration>) -> Duration {
 
 #[cfg(target_os = "macos")]
 fn write_concealed(_app: &AppHandle, value: &str, _clear_after: Option<Duration>) -> Result<()> {
-    use objc2_app_kit::NSPasteboard;
-    use objc2_foundation::{NSArray, NSString};
+    use objc2_app_kit::{NSPasteboard, NSPasteboardContentsOptions};
+    use objc2_foundation::NSString;
 
     // public.utf8-plain-text == NSPasteboardTypeString.
     let text_type = NSString::from_str("public.utf8-plain-text");
+    // The nspasteboard.org markers: concealed (a secret — don't show or keep
+    // it) and transient (gone shortly — don't record it). Clipboard managers
+    // and history read these; Universal Clipboard does not.
     let concealed_type = NSString::from_str("org.nspasteboard.ConcealedType");
+    let transient_type = NSString::from_str("org.nspasteboard.TransientType");
     let text = NSString::from_str(value);
 
-    unsafe {
-        let pb = NSPasteboard::generalPasteboard();
-        pb.clearContents();
-        let types = NSArray::from_slice(&[&*text_type, &*concealed_type]);
-        pb.declareTypes_owner(&types, None);
-        pb.setString_forType(&text, &text_type);
-        pb.setString_forType(&text, &concealed_type);
-    }
+    let pb = NSPasteboard::generalPasteboard();
+    // Clears the pasteboard like `clearContents`, and marks what is written
+    // next as this Mac's alone, so Universal Clipboard does not hand the
+    // secret to the user's other devices. Nothing may clear it again before
+    // the writes — `declareTypes:owner:` does, and could take the option with
+    // it — so the types are written straight onto the item this prepares.
+    pb.prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
+    pb.setString_forType(&text, &text_type);
+    pb.setString_forType(&text, &concealed_type);
+    // A marker only: its presence is what is read, so it carries no copy of
+    // the secret.
+    pb.setString_forType(&NSString::from_str(""), &transient_type);
     Ok(())
 }
 
