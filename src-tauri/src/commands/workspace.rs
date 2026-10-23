@@ -1103,7 +1103,12 @@ async fn delete_remote_pack(
     let Some(tokens) = sync::read_tokens_in(dir, &key.cryptor())? else {
         return Ok(());
     };
-    sync::delete_pack(&sync::pending_store(app, tokens), &vault_id).await
+    sync::delete_pack(
+        &sync::pending_store(app, tokens),
+        &vault_id,
+        &*key.delete_marker_key(),
+    )
+    .await
 }
 
 // Prove `password` opens the vault in `dir`, and hand back the key that did it.

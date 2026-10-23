@@ -32,6 +32,119 @@ pub fn host_matches(site: &str, entry: &str) -> bool {
     site == entry || (site.ends_with(&format!(".{entry}")) && !is_public_suffix(entry))
 }
 
+/// Whether a login saved for `saved` (its website field, as the user typed or
+/// an importer wrote it) may be served to the page at `page_url`: its host
+/// matches by [`host_matches`], and the page is no weaker than what was saved.
+///
+/// - Saved for `https://` and asked for by an `http://` page: refused, since
+///   anyone on the network can serve that page. A page on the machine itself
+///   (`localhost`, `127.0.0.1`, `::1`) is the one exception.
+/// - Saved with an explicit port (`https://bank.com:8443`, `bank.com:8443`,
+///   `https://bank.com:443`): the page has to be on that port, with or
+///   without a scheme typed, and even when it is the scheme's default.
+///   Another port on the same host is another server.
+/// - Saved with no port: any port on the host.
+/// - Saved with no scheme (`bank.com`): no scheme is checked.
+///
+/// A saved value whose scheme or port does not read as one is served to no
+/// page.
+pub fn site_matches(page_url: &str, saved: &str) -> bool {
+    let Ok(page) = url::Url::parse(page_url) else {
+        return false;
+    };
+    let Some(site) = page.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    let Some(saved) = SavedSite::parse(saved) else {
+        return false;
+    };
+    if !host_matches(&site, saved.host) {
+        return false;
+    }
+    if saved.scheme.as_deref() == Some("https") && page.scheme() == "http" && !is_loopback(&page) {
+        return false;
+    }
+    match saved.port {
+        Some(port) => page.port_or_known_default() == Some(port),
+        None => true,
+    }
+}
+
+/// What a website field said, read as the user wrote it. Not through
+/// `url::Url`: that parser drops a port equal to its scheme's default, so a
+/// written-out `:443` would read as no port at all.
+#[derive(Debug, PartialEq)]
+struct SavedSite<'a> {
+    /// Lowercase, when one was typed before `://`.
+    scheme: Option<String>,
+    /// The host as written — brackets kept on an IPv6 address — for
+    /// [`host_matches`] to normalise.
+    host: &'a str,
+    /// When one was written out, whatever its value.
+    port: Option<u16>,
+}
+
+impl<'a> SavedSite<'a> {
+    /// The scheme (if `://` comes before the authority ends), then the
+    /// authority up to the first `/`, `\`, `?` or `#`, less any `user@`.
+    /// `None` when the scheme or the port is not one: such a value matches
+    /// nothing.
+    fn parse(saved: &'a str) -> Option<Self> {
+        const AUTHORITY_ENDS: [char; 4] = ['/', '\\', '?', '#'];
+        let saved = saved.trim();
+        let (scheme, rest) = match saved.find("://") {
+            Some(at) if !saved[..at].contains(AUTHORITY_ENDS) => {
+                let scheme = &saved[..at];
+                if !is_scheme(scheme) {
+                    return None;
+                }
+                (Some(scheme.to_ascii_lowercase()), &saved[at + 3..])
+            }
+            _ => (None, saved),
+        };
+        let authority = rest.split(AUTHORITY_ENDS).next().unwrap_or_default();
+        let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
+        let (host, port) = match authority.strip_prefix('[') {
+            Some(bracketed) => {
+                let close = bracketed.find(']')? + 2;
+                let (host, tail) = authority.split_at(close);
+                match tail {
+                    "" => (host, None),
+                    tail => (host, Some(tail.strip_prefix(':')?)),
+                }
+            }
+            None => match authority.split_once(':') {
+                Some((host, port)) => (host, Some(port)),
+                None => (authority, None),
+            },
+        };
+        let port = match port {
+            // `host:` with nothing after it names no port, as a URL reads it.
+            None | Some("") => None,
+            Some(port) if port.bytes().all(|b| b.is_ascii_digit()) => Some(port.parse().ok()?),
+            Some(_) => return None,
+        };
+        Some(Self { scheme, host, port })
+    }
+}
+
+/// A URL scheme: a letter, then letters, digits, `+`, `-` or `.`.
+fn is_scheme(scheme: &str) -> bool {
+    let mut chars = scheme.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// Whether `url` names this machine: `localhost` or a loopback address.
+fn is_loopback(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 /// The host in a `url_host` column, or `None` when what was typed there does
 /// not read as one.
 fn entry_host(entry: &str) -> Option<String> {
@@ -100,5 +213,219 @@ mod tests {
         assert!(host_matches("example.com", "example.com#top"));
         assert!(!host_matches("example.com", "example.com:notaport"));
         assert!(host_matches("192.168.1.1", "192.168.1.1:8080"));
+    }
+
+    // The host rule is unchanged underneath: subdomains still get the
+    // parent's login, lookalikes and public suffixes still get nothing.
+    #[test]
+    fn a_site_match_is_a_host_match_first() {
+        assert!(site_matches("https://bank.com/login", "https://bank.com"));
+        assert!(site_matches(
+            "https://online.bank.com/",
+            "https://bank.com/"
+        ));
+        assert!(!site_matches(
+            "https://bank.com/",
+            "https://online.bank.com"
+        ));
+        assert!(!site_matches("https://notbank.com/", "https://bank.com"));
+        assert!(!site_matches("https://bank.co.uk/", "https://co.uk"));
+        assert!(!site_matches("not a url", "https://bank.com"));
+        assert!(!site_matches("https://bank.com/", ""));
+        // A scheme that does not parse as a URL is served nowhere.
+        assert!(!site_matches(
+            "https://bank.com/",
+            "https://bank.com:notaport"
+        ));
+    }
+
+    // Saved for HTTPS, never served to plain HTTP — the page anyone on the
+    // network can stand up — except on the machine itself.
+    #[test]
+    fn an_https_login_is_not_served_to_an_http_page() {
+        assert!(!site_matches("http://bank.com/login", "https://bank.com"));
+        assert!(!site_matches("http://online.bank.com/", "https://bank.com"));
+        assert!(!site_matches("HTTP://BANK.COM/", "HTTPS://bank.com"));
+        assert!(site_matches("https://bank.com/", "http://bank.com"));
+        assert!(site_matches("http://bank.com/", "http://bank.com"));
+
+        assert!(site_matches(
+            "http://localhost:3000/",
+            "https://localhost:3000"
+        ));
+        assert!(site_matches("http://127.0.0.1/", "https://127.0.0.1"));
+        assert!(site_matches("http://[::1]/", "https://[::1]"));
+    }
+
+    // An explicit port is part of what was saved: another port on the same
+    // host is another server. A default port written out is that port.
+    #[test]
+    fn an_explicit_port_has_to_match() {
+        assert!(site_matches(
+            "https://bank.com:8443/",
+            "https://bank.com:8443/login"
+        ));
+        assert!(!site_matches("https://bank.com/", "https://bank.com:8443"));
+        assert!(!site_matches(
+            "https://bank.com:9443/",
+            "https://bank.com:8443"
+        ));
+        assert!(site_matches(
+            "https://bank.com:443/",
+            "https://bank.com:443"
+        ));
+        assert!(site_matches("https://bank.com/", "https://bank.com:443"));
+        assert!(site_matches(
+            "http://bank.com:8080/",
+            "http://bank.com:8080"
+        ));
+        // No port saved: any port on the host, as before.
+        assert!(site_matches("https://bank.com:8443/", "https://bank.com"));
+    }
+
+    // A port written out is enforced even when it is the scheme's default,
+    // which the URL parser would otherwise drop.
+    #[test]
+    fn an_explicit_default_port_is_still_enforced() {
+        let served: Vec<_> = [
+            ("https://bank.com:8443/", "https://bank.com:443"),
+            ("http://localhost:3000/", "https://localhost:443"),
+            ("http://127.0.0.1:3000/", "https://127.0.0.1:443"),
+            ("http://bank.com:8080/", "http://bank.com:80"),
+        ]
+        .into_iter()
+        .filter(|(page, saved)| site_matches(page, saved))
+        .collect();
+        assert!(served.is_empty(), "served to another port: {served:?}");
+
+        // On the default port itself, written out or not, they still match.
+        assert!(site_matches("http://bank.com/", "http://bank.com:80"));
+        assert!(site_matches("https://localhost/", "https://localhost:443"));
+        assert!(site_matches("https://[::1]/", "https://[::1]:443"));
+        assert!(!site_matches("https://[::1]:8443/", "https://[::1]:443"));
+        assert!(!site_matches("http://[::1]:3000/", "https://[::1]:443"));
+    }
+
+    // Typed without a scheme, no scheme is checked; a port typed is still
+    // a port, as explicit as one after `https://`.
+    #[test]
+    fn a_login_saved_without_a_scheme_checks_no_scheme() {
+        assert!(site_matches("http://bank.com/", "bank.com"));
+        assert!(site_matches("https://bank.com:8443/", "bank.com"));
+        assert!(site_matches("http://bank.com:8443/", "bank.com:8443"));
+        assert!(!site_matches("http://bank.com:9000/", "bank.com:8443"));
+        assert!(!site_matches("https://bank.com:8443/", "bank.com:443"));
+        assert!(site_matches("https://bank.com/", "bank.com:443"));
+        assert!(!site_matches("http://localhost:3000/", "localhost:443"));
+        assert!(site_matches("http://localhost:3000/", "localhost:3000"));
+        assert!(site_matches("https://www.bank.com/", "bank.com/login"));
+        assert!(!site_matches("https://notbank.com/", "bank.com"));
+    }
+
+    #[test]
+    fn a_saved_site_is_read_as_written() {
+        let site = |scheme: Option<&str>, host, port| SavedSite {
+            scheme: scheme.map(str::to_string),
+            host,
+            port,
+        };
+        let parse = SavedSite::parse;
+        assert_eq!(
+            parse(" HTTPS://bank.com:443/login "),
+            Some(site(Some("https"), "bank.com", Some(443)))
+        );
+        assert_eq!(
+            parse("https://bank.com"),
+            Some(site(Some("https"), "bank.com", None))
+        );
+        assert_eq!(
+            parse("bank.com:8443?next=/x"),
+            Some(site(None, "bank.com", Some(8443)))
+        );
+        assert_eq!(
+            parse("https://user:p@ss@bank.com:80#top"),
+            Some(site(Some("https"), "bank.com", Some(80)))
+        );
+        assert_eq!(
+            parse("https://[::1]:443/"),
+            Some(site(Some("https"), "[::1]", Some(443)))
+        );
+        assert_eq!(
+            parse("[2001:db8::1]"),
+            Some(site(None, "[2001:db8::1]", None))
+        );
+        // An empty port is no port, as the URL parser reads it.
+        assert_eq!(
+            parse("https://bank.com:/"),
+            Some(site(Some("https"), "bank.com", None))
+        );
+        // A `\` ends the authority, as it does for the URL parser.
+        assert_eq!(
+            parse("https://bank.com\\@evil.com"),
+            Some(site(Some("https"), "bank.com", None))
+        );
+        // A `://` after the authority ended is not a scheme.
+        assert_eq!(
+            parse("bank.com/?to=https://evil.com"),
+            Some(site(None, "bank.com", None))
+        );
+
+        // Not a port, or not a scheme: nothing.
+        assert_eq!(parse("https://bank.com:notaport"), None);
+        assert_eq!(parse("https://bank.com:65536"), None);
+        assert_eq!(parse("https://bank.com:+443"), None);
+        assert_eq!(parse("https://[::1]x"), None);
+        assert_eq!(parse("https://[::1"), None);
+        assert_eq!(parse("ht tp://bank.com"), None);
+    }
+
+    // Internationalised names compare in their ASCII form, whichever way each
+    // side spelled them.
+    #[test]
+    fn idn_hosts_match_in_either_spelling() {
+        assert!(site_matches(
+            "https://xn--bcher-kva.example/",
+            "https://bücher.example"
+        ));
+        assert!(site_matches(
+            "https://bücher.example/",
+            "https://xn--bcher-kva.example"
+        ));
+        assert!(site_matches(
+            "https://shop.bücher.example/",
+            "bücher.example"
+        ));
+        assert!(!site_matches(
+            "http://bücher.example/",
+            "https://bücher.example"
+        ));
+        assert!(!site_matches(
+            "https://bucher.example/",
+            "https://bücher.example"
+        ));
+    }
+
+    #[test]
+    fn ipv6_hosts_match_with_their_ports() {
+        assert!(site_matches(
+            "https://[2001:db8::1]/",
+            "https://[2001:db8::1]"
+        ));
+        assert!(site_matches(
+            "https://[2001:db8::1]:8443/",
+            "https://[2001:db8::1]:8443/x"
+        ));
+        assert!(!site_matches(
+            "https://[2001:db8::1]/",
+            "https://[2001:db8::1]:8443"
+        ));
+        assert!(!site_matches(
+            "http://[2001:db8::1]/",
+            "https://[2001:db8::1]"
+        ));
+        assert!(!site_matches(
+            "https://[2001:db8::2]/",
+            "https://[2001:db8::1]"
+        ));
     }
 }

@@ -254,6 +254,7 @@ const DEFAULTS: Record<string, Handler> = {
   // promise. A spec about an account holding other vaults rejects it with
   // `vaultNotInAccount` instead.
   sync_adopt_pending: () => undefined,
+  sync_reupload: () => undefined,
 
   // Sharing. The link is the shape the backend hands back — file id plus key —
   // and `share_open` resolves a plain login, so a suite only overrides the one

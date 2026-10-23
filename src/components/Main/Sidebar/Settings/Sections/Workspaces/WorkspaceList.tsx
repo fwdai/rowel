@@ -9,7 +9,7 @@ import {
 } from '@/store'
 import { messageOf } from '@/api/errors'
 import type { Workspace } from '@/api/types'
-import { syncDeletedRemotely, syncErrorText } from '@/api/sync'
+import { syncDeletedRemotely, syncErrorText, syncReupload } from '@/api/sync'
 import Button from '@/components/elements/Button'
 import Note from '@/components/elements/Note'
 import { useSubpage } from '../../sectionNav'
@@ -34,10 +34,13 @@ export default function WorkspaceList() {
   // the app comes back on a survivor's lock screen.
   const last = list.length < 2
 
-  // The account's copy of *this* vault is gone — deleted from another device —
-  // so its runs stop here until this workspace goes too. The delete offered for
-  // it is the local one: there is nothing left in the account to remove.
+  // The account says *this* vault was deleted — from another device, or by
+  // someone with access to the account — so its runs stop here. The copy here
+  // is intact either way: the user can put it back in the account, or delete
+  // it here too. The delete offered is the local one: the account is not asked
+  // to remove anything more.
   const strandedHere = syncDeletedRemotely(sync)
+  const reupload = () => syncReupload().catch((err: unknown) => setError(messageOf(err)))
 
   // Where its copy lives, if it has one to delete along with it.
   const provider = (workspace: Workspace) => workspaceProvider(workspace, { active, sync })
@@ -70,15 +73,25 @@ export default function WorkspaceList() {
           className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 inset-shadow-hairline"
         >
           <Note tone="bad">{syncErrorText(sync)}</Note>
-          <Button
-            variant="pale-danger"
-            size="md"
-            testid="workspace-delete-stranded"
-            disabled={last}
-            onClick={() => askDelete(active)}
-          >
-            {t('Delete it here too')}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="pale"
+              size="md"
+              testid="workspace-reupload-stranded"
+              onClick={reupload}
+            >
+              {t('Re-upload it')}
+            </Button>
+            <Button
+              variant="pale-danger"
+              size="md"
+              testid="workspace-delete-stranded"
+              disabled={last}
+              onClick={() => askDelete(active)}
+            >
+              {t('Delete it here too')}
+            </Button>
+          </div>
         </div>
       )}
       {last && (

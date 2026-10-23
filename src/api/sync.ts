@@ -47,8 +47,10 @@ export const syncErrorText = (sync: SyncStatus): string | null =>
     : describeError({ kind: sync.errorKind ?? 'other', message: sync.error })
 
 /**
- * This vault's pack was deleted from the account on another device, so its runs
- * stop here until it is removed from this one too (`workspaceDelete`).
+ * The account holds a deletion marker for this vault — another device deleted
+ * it everywhere, or someone with access to the account planted one — so its
+ * runs stop here until the user either removes it from this device too
+ * (`workspaceDelete`) or keeps it and puts it back (`syncReupload`).
  */
 export const syncDeletedRemotely = (sync: SyncStatus): boolean =>
   sync.errorKind === 'vaultDeletedRemotely'
@@ -78,6 +80,14 @@ export const syncConnect = (provider: Provider): Promise<void> =>
 export const syncDisconnect = (): Promise<void> => call('sync_disconnect')
 
 export const syncNow = (): Promise<void> => call('sync_now')
+
+/**
+ * Keep a vault the account says was deleted: the backend takes the deletion
+ * marker out of the account and starts a run, which syncs with the pack if it
+ * is still there and uploads this copy if it is not. Reports through
+ * `sync:status` like any run.
+ */
+export const syncReupload = (): Promise<void> => call('sync_reupload')
 
 /**
  * Ask the backend to make the account a probe left pending this vault's. It

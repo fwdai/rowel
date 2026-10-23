@@ -157,7 +157,11 @@ pub async fn sync_adopt_pending(app: AppHandle, state: State<'_, AppState>) -> R
                 tokens.provider.account_name()
             )));
         }
-        let cryptor = state.session.lock().unwrap().cryptor()?;
+        let (cryptor, marker_key) = {
+            let session = state.session.lock().unwrap();
+            let key = session.key()?;
+            (key.cryptor(), key.delete_marker_key())
+        };
         // Still the exact consent result we probed? A cancel or another connect
         // advances the attempt before it touches this lock. Holding the pending
         // guard through the local write keeps a newer report from being
@@ -199,11 +203,11 @@ pub async fn sync_adopt_pending(app: AppHandle, state: State<'_, AppState>) -> R
         // claim are still pinned. Only then retire the pending credentials.
         connected(&app);
         *pending = None;
-        claim.map(|claim| (claim, cryptor))
+        claim.map(|claim| (claim, cryptor, marker_key))
     };
 
-    if let Some((claim, cryptor)) = run {
-        spawn_run(&app, claim, cryptor);
+    if let Some((claim, cryptor, marker_key)) = run {
+        spawn_run(&app, claim, cryptor, marker_key);
     }
     Ok(())
 }
@@ -281,6 +285,48 @@ pub fn sync_disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<()>
 #[tauri::command]
 pub fn sync_now(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
     request_run_if_ready(&app, &state);
+    Ok(())
+}
+
+/// Keep syncing a vault the account says was deleted on another device: take
+/// the deletion marker out of the account and start a run, which syncs with the
+/// pack if it is still there and uploads this copy if it is not.
+///
+/// The user's answer to `VaultDeletedRemotely`, offered beside "delete it here
+/// too". The marker may be a real delete or a planted one; either way the copy
+/// here is intact, and putting it back is never the destructive choice. Under
+/// the run's own claim, taken under the workspace lock as [`launch`] takes it,
+/// so no run reads the account while the marker is going and a switch cannot
+/// move the token file from under it.
+#[tauri::command]
+pub async fn sync_reupload(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
+    let (claim, cryptor, vault_id) = {
+        let _paths = state.workspace_lock.lock().unwrap();
+        let claim = claim_or_busy(&state)?;
+        let session = state.session.lock().unwrap();
+        if !session.sync_configured {
+            return Err(Error::SyncNotConfigured);
+        }
+        let cryptor = session.cryptor()?;
+        let vault_id = crate::store::identity::vault_id(session.store()?)
+            .map_err(crate::session::store_err)?;
+        (claim, cryptor, vault_id)
+    };
+    if let Some(vault_id) = vault_id {
+        let auth = sync::Auth::Sealed {
+            app: app.clone(),
+            cryptor,
+        };
+        super::blocking(move || {
+            tauri::async_runtime::block_on(sync::clear_delete_marker(
+                &sync::store_for(auth),
+                &vault_id,
+            ))
+        })
+        .await?;
+    }
+    drop(claim);
+    start_run(&app);
     Ok(())
 }
 
@@ -651,19 +697,19 @@ fn launch(app: &AppHandle) {
     // under a scheduled run must not leave sync wedged for the process. The
     // request stays lowered: with no key there is nothing to publish with, and
     // the next unlock of this vault runs a sync of its own.
-    let Some(cryptor) = session_cryptor(&state) else {
+    let Some((cryptor, marker_key)) = session_keys(&state) else {
         return;
     };
     drop(paths);
 
-    spawn_run(app, claim, cryptor);
+    spawn_run(app, claim, cryptor, marker_key);
 }
 
-fn spawn_run(app: &AppHandle, claim: RunClaim, cryptor: Cryptor) {
+fn spawn_run(app: &AppHandle, claim: RunClaim, cryptor: Cryptor, marker_key: sync::MarkerKey) {
     let app = app.clone();
     super::detached(move || {
         started(&app);
-        report(&app, sync::run(&app, cryptor));
+        report(&app, sync::run(&app, cryptor, marker_key));
         // Release first, then look: a request that found the claim held raised
         // the flag before it looked, so whichever order the two land in, one of
         // them sees the other (see `AppState::sync_rerun`). `launch` rather
@@ -694,8 +740,12 @@ fn take_rerun(state: &AppState) -> bool {
     state.sync_rerun.swap(false, Ordering::SeqCst)
 }
 
-fn session_cryptor(state: &State<'_, AppState>) -> Option<Cryptor> {
-    state.session.lock().unwrap().cryptor().ok()
+// What a run needs from the key: the cryptor its token file is sealed under,
+// and the subkey a deletion marker has to open under.
+fn session_keys(state: &State<'_, AppState>) -> Option<(Cryptor, sync::MarkerKey)> {
+    let session = state.session.lock().unwrap();
+    let key = session.key().ok()?;
+    Some((key.cryptor(), key.delete_marker_key()))
 }
 
 // Announce the result, and — when the entry list may have changed — hand the

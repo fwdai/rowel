@@ -53,8 +53,11 @@ pub trait Host {
     /// the one open — is `AssociationFailed`, so the extension is never told
     /// it is in when the next request will find it is not.
     fn associate(&self, key: &str) -> Result<String, Code>;
-    /// Every login for `host` (a bare hostname, lowercase), secrets unsealed.
-    fn logins_for(&self, host: &str) -> Vec<Login>;
+    /// Every login for the page at `page_url`, whose host is `host` (a bare
+    /// hostname, lowercase), secrets unsealed. A login saved for `https://`
+    /// is not one an `http://` page gets, nor one saved with a port another
+    /// port gets ([`site_matches`]).
+    fn logins_for(&self, page_url: &str, host: &str) -> Vec<Login>;
     /// The current code for the login `id`, if it has a seed.
     fn totp(&self, id: &str) -> Option<String>;
     fn generate_password(&self) -> Option<String>;
@@ -181,7 +184,7 @@ impl<H: Host> Connection<H> {
                     return Err(Code::NoUrlProvided);
                 }
                 let host = site_host(url).ok_or(Code::NoUrlProvided)?;
-                let logins = self.host.logins_for(&host);
+                let logins = self.host.logins_for(url, &host);
                 if logins.is_empty() {
                     return Err(Code::NoLoginsFound);
                 }
@@ -314,4 +317,4 @@ fn params(value: Value) -> Map<String, Value> {
 
 // Which logins belong to a site is the core's rule, so the iOS AutoFill
 // extension serves a site exactly what this host does.
-pub use rowel_core::host::{host_matches, is_public_suffix, site_host};
+pub use rowel_core::host::{host_matches, is_public_suffix, site_host, site_matches};

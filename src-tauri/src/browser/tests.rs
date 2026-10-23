@@ -178,7 +178,7 @@ impl Host for Mock {
         });
         Ok(name)
     }
-    fn logins_for(&self, host: &str) -> Vec<Login> {
+    fn logins_for(&self, _page_url: &str, host: &str) -> Vec<Login> {
         if host == "github.com" {
             self.logins.clone()
         } else {
@@ -771,6 +771,78 @@ fn seed(store: &SqliteStore, cipher: &PayloadCipher, entry: &Entry) {
 
 const THEN: &str = "2026-01-01T00:00:00.000Z";
 const NOW: &str = "2026-09-26T12:00:00.000Z";
+
+// --- which logins a page gets, against a store ---------------------------------
+
+fn bank_login(id: &str, website: &str) -> Entry {
+    Entry {
+        id: id.into(),
+        kind: "login".into(),
+        title: "Bank".into(),
+        website: Some(website.into()),
+        username: Some("alice".into()),
+        password: Some("s3cret".into()),
+        ..Entry::default()
+    }
+}
+
+fn served(store: &SqliteStore, cipher: &PayloadCipher, page_url: &str) -> Vec<String> {
+    let host = super::actions::site_host(page_url).unwrap();
+    let mut ids: Vec<String> = super::logins_in(store, cipher, page_url, &host)
+        .into_iter()
+        .map(|login| login.id)
+        .collect();
+    ids.sort();
+    ids
+}
+
+// A login saved for HTTPS is not served to the plain-HTTP page of the same
+// host — the page a network attacker can stand up — nor to another port.
+#[test]
+fn an_https_login_is_not_served_to_an_http_page_or_another_port() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &bank_login("tls", "https://bank.com/login"),
+    );
+    seed(
+        &store,
+        &cipher,
+        &bank_login("port", "https://bank.com:8443"),
+    );
+    seed(&store, &cipher, &bank_login("typed", "bank.com"));
+
+    assert_eq!(
+        served(&store, &cipher, "https://bank.com/"),
+        ["tls", "typed"]
+    );
+    assert_eq!(served(&store, &cipher, "http://bank.com/"), ["typed"]);
+    assert_eq!(
+        served(&store, &cipher, "https://bank.com:8443/"),
+        ["port", "tls", "typed"]
+    );
+}
+
+// The `url_host` column is plaintext metadata that anyone holding the
+// SQLCipher key can rewrite. A row re-pointed at another site passes the
+// column's pre-filter there, and is still refused: the sealed website is
+// what decides.
+#[test]
+fn a_tampered_url_host_column_does_not_serve_a_login_elsewhere() {
+    let (_dir, store, cipher) = vault();
+    let entry = bank_login("bank", "https://bank.com");
+    let payload = cipher.seal(&entry).unwrap();
+    let mut record = migrate::build_record(&entry, payload).unwrap();
+    record.url_host = "evil.com".into();
+    store.upsert(&record).unwrap();
+    assert_eq!(store.list().unwrap()[0].url_host, "evil.com");
+
+    assert!(served(&store, &cipher, "https://evil.com/").is_empty());
+    // Nor does the real site get it while the column points away: the
+    // column only narrows.
+    assert!(served(&store, &cipher, "https://bank.com/").is_empty());
+}
 
 #[test]
 fn a_save_without_an_id_creates_a_login_for_the_site() {

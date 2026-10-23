@@ -517,7 +517,22 @@ Bringing existing data forward is an **explicit** action, and there are two path
   disabled (`sync::ENABLED = false`). When enabled it uploads only the already-
   encrypted vault blob to the user's own Google Drive; the master passphrase and
   derived keys never leave the device. A compromised Drive account or a tapped
-  sync channel yields ciphertext, not secrets.
+  sync channel yields ciphertext, not secrets. The one thing in the account
+  other than a pack is the "deleted everywhere" marker (`<vault-id>.deleted`)
+  that stops every device syncing a lockbox, and it is authenticated rather
+  than trusted for existing: its body is sealed with AES-256-GCM under a
+  subkey of the lockbox's own key (`VaultKey::delete_marker_key`), with the
+  vault id as associated data (`sync::marker`). A marker that does not open —
+  empty, as older builds wrote it, planted by someone with write access to the
+  folder, or copied from another lockbox — is logged and treated as absent.
+  And no device deletes a pack because it found a marker, a valid one
+  included: only the device that ran "delete everywhere" removes the pack
+  (beyond a first upload taking back the pack it has just written, when a
+  valid marker landed while it was writing — that one file, by the id its
+  upload returned, never another device's pack of the same name), so
+  a forged or replayed marker can at most stop sync, and the UI then offers to
+  re-upload the copy on the device (which clears the marker) as well as to
+  delete it there.
 - **A stalled or hostile network peer.** Every HTTPS client in the app shares a
   connect deadline and a read-stall deadline (`sync::http_client_builder`), so
   a connection that stops answering fails the run instead of holding the
@@ -612,8 +627,15 @@ exposed process than the webview, and it is not ours.
 - **What the extension can reach** is what the user could copy out of the app
   for the site in front of them: the logins whose website is the page's host or
   a parent of it (`accounts.example.com` gets `example.com`'s, not the other
-  way round, and `notexample.com` gets neither), the current TOTP code of one
-  of those, a password generated to the Settings defaults, and the lock. It
+  way round, and `notexample.com` gets neither). The page's scheme and port
+  count too (`host::site_matches`): a login saved for `https://` is not served
+  to an `http://` page (bar `localhost`, `127.0.0.1` and `::1`), one saved with
+  an explicit port only to that port, and one typed with no scheme at all by
+  host alone. That is decided on the website inside the entry's sealed
+  payload, after it is opened; the plaintext `url_host` column only picks the
+  candidates, so a row re-pointed at another site by someone holding the
+  SQLCipher key is not served there. Also within reach: the current TOTP code
+  of one of those, a password generated to the Settings defaults, and the lock. It
   can also save a login: a new one for the page, or a new username and
   password over a login it was handed. Every one of these but a generated
   password needs an association, the lock included, so a stranger on the
@@ -807,7 +829,11 @@ runs and publishes its identities; until then the sheet's list offers it.
   window the tombstone wins and the rollback is absorbed. Rowel treats the
   Drive account as the user's own and does not defend against its owner; the
   practical guard is the same as for the account itself: strong authentication
-  on the Google account, and re-deleting anything a rollback brings back.
+  on the Google account, and re-deleting anything a rollback brings back. The
+  deletion marker has the same limit: it carries no counter, so a copy of a
+  genuine sealed marker put back after the user re-uploaded the lockbox is
+  honoured again. That stops sync and nothing more — the pack is never deleted
+  on a marker's word — and re-uploading clears it again.
 - **Physical memory attacks.** Cold-boot or DMA attacks against an unlocked
   session are out of scope.
 
