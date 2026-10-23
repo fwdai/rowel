@@ -3,6 +3,7 @@ import AuthShell from '@/components/elements/AuthShell'
 import Eyebrow from '@/components/elements/Eyebrow'
 import type { BiometryType } from '@/api/types'
 import Brand from './Brand'
+import RetryUnlock from './RetryUnlock'
 import { useUnlock } from './useUnlock'
 import WorkspacePicker from './WorkspacePicker'
 
@@ -19,7 +20,7 @@ interface Props {
 // keyboard here, so typing is the lead affordance. The phone leads the other
 // way round (see LockScreen); both run the same `useUnlock`.
 export function Auth({ biometric, biometry = 'touch' }: Props) {
-  const { mascot, eyebrow, field, submit, biometric: unlock, change } = useUnlock()
+  const { mascot, eyebrow, field, submit, retry, biometric: unlock, change } = useUnlock()
 
   return (
     <AuthShell footer>
@@ -45,6 +46,7 @@ export function Auth({ biometric, biometry = 'touch' }: Props) {
           onEnter={submit}
           onBiometric={unlock}
         />
+        <RetryUnlock onRetry={retry} disabled={field.disabled} />
       </div>
     </AuthShell>
   )

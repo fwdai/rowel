@@ -7,6 +7,7 @@ import type { BiometryType } from '@/api/types'
 import { useVisualViewport, viewportStyle } from '@/hooks/useVisualViewport'
 import BiometricTile from './BiometricTile'
 import Brand from './Brand'
+import RetryUnlock from './RetryUnlock'
 import { useUnlock } from './useUnlock'
 import WorkspacePicker from './WorkspacePicker'
 
@@ -45,7 +46,7 @@ interface Props {
  */
 export default function LockScreen({ biometric, biometry = 'touch' }: Props) {
   const { t } = useTranslation()
-  const { mascot, eyebrow, field, submit, biometric: unlock, change } = useUnlock()
+  const { mascot, eyebrow, field, submit, retry, biometric: unlock, change } = useUnlock()
   const viewport = useVisualViewport()
   // Derived, not seeded: `biometric` only becomes true once the launch probe
   // answers, which is after this mounts — a card seeded from the first render
@@ -103,6 +104,7 @@ export default function LockScreen({ biometric, biometry = 'touch' }: Props) {
                 }}
                 onBiometric={unlock}
               />
+              <RetryUnlock onRetry={retry} disabled={field.disabled} />
             </div>
           ) : (
             <div className="mt-5">

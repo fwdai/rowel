@@ -47,10 +47,14 @@ type Phase = 'idle' | 'verifying' | 'success'
 // A lockbox that opened with a password of its own, which is not the vault
 // password: it stays sealed (`vaultPasswordRequired`), and the next passphrase
 // the card takes is the vault password, which moves it over and then opens it.
-interface Moving {
-  workspaceId: string
-  lockboxPassword: string
-}
+//
+// Two steps, and the first cannot be taken back: once the move has gone
+// through, the lockbox password opens nothing, so an unlock that fails after it
+// (a sync holding the vault, say) is retried on its own — `moved`, with the
+// vault password kept for the retry — and never sent back to the move.
+type Moving =
+  | { workspaceId: string; moved: false; lockboxPassword: string }
+  | { workspaceId: string; moved: true; vaultPassword: string }
 
 export interface Unlock {
   mascot: { state: MascotState; gaze: number }
@@ -78,6 +82,12 @@ export interface Unlock {
     placeholder?: string
   }
   submit: (value: string) => void
+  /**
+   * Open the lockbox again with the vault password it was just moved onto,
+   * after the unlock that followed the move failed. Only then; the move itself
+   * is never retried.
+   */
+  retry?: () => void
   biometric: () => void
   change: (event: ChangeEvent<HTMLInputElement>) => void
 }
@@ -170,12 +180,17 @@ export function useUnlock(): Unlock {
     setError(null)
     setPhase('verifying')
     // Asking for the vault password: move the lockbox onto it, then open it
-    // with it — the one password every lockbox opens with from here on.
-    const attempt = moving
-      ? workspaceAdoptVaultPassword(moving.workspaceId, moving.lockboxPassword, value).then(() =>
-          unlock(value)
-        )
-      : unlock(value)
+    // with it — the one password every lockbox opens with from here on. Once
+    // moved, only the unlock is left to do.
+    const attempt =
+      moving && !moving.moved
+        ? workspaceAdoptVaultPassword(moving.workspaceId, moving.lockboxPassword, value).then(
+            () => {
+              setMoving({ workspaceId: moving.workspaceId, moved: true, vaultPassword: value })
+              return unlock(value)
+            }
+          )
+        : unlock(value)
     attempt
       .then(result => {
         setMoving(null)
@@ -187,7 +202,7 @@ export function useUnlock(): Unlock {
         if (workspaceId) {
           // The card is keyed on the question, so it comes back empty.
           setCount(0)
-          setMoving({ workspaceId, lockboxPassword: value })
+          setMoving({ workspaceId, moved: false, lockboxPassword: value })
         } else if (isTooManyAttempts(err)) {
           setRetryAfter(err.retryAfterSecs)
           setError(lockedMessage(t, err.retryAfterSecs))
@@ -241,7 +256,7 @@ export function useUnlock(): Unlock {
           ? t('Unsealing')
           : phase === 'verifying'
             ? t('Verifying')
-            : moving
+            : moving && !moving.moved
               ? t(
                   'Rowel opens every lockbox with your vault password. Enter it to move this lockbox over.'
                 )
@@ -262,6 +277,7 @@ export function useUnlock(): Unlock {
       placeholder: moving ? t('Vault password') : undefined
     },
     submit: handleEnter,
+    retry: moving?.moved && phase === 'idle' ? () => handleEnter(moving.vaultPassword) : undefined,
     biometric: handleTouchId,
     change: handleChange
   }

@@ -283,6 +283,52 @@ describe('Auth', () => {
       expect(screen.getByPlaceholderText('Vault password')).toBeInTheDocument()
       expect(calls('unlock')).toHaveLength(1)
     })
+
+    // The move re-keys the lockbox for good; an unlock that fails after it
+    // must not send the spent lockbox password back to the move.
+    describe('when the unlock after the move fails', () => {
+      const moveThenFailOnce = async () => {
+        seedApp({ workspaces: [PRIMARY, WORK], activeWorkspace: 'w2' })
+        offPassword()
+        mockCommandOnce('unlock', () =>
+          Promise.reject({ kind: 'syncBusy', message: 'a sync is already running' })
+        )
+        render(<Auth biometric={false} />)
+
+        await userEvent.type(screen.getByPlaceholderText('Master Password'), 'its-own{Enter}')
+        await userEvent.type(await screen.findByPlaceholderText('Vault password'), 'the-vault{Enter}')
+
+        expect(
+          await screen.findByText('Wait for the sync in progress to finish')
+        ).toBeInTheDocument()
+      }
+
+      it('retries only the unlock, with the vault password it kept', async () => {
+        await moveThenFailOnce()
+
+        await userEvent.click(screen.getByTestId('unlock-retry-button'))
+
+        await waitFor(() => expect(useApp.getState().flow).toBe('main'))
+        expect(calls('workspace_adopt_vault_password')).toHaveLength(1)
+        expect(calls('unlock')).toEqual([
+          { password: 'its-own' },
+          { password: 'the-vault' },
+          { password: 'the-vault' }
+        ])
+      })
+
+      it('takes the vault password typed again as an unlock, not another move', async () => {
+        await moveThenFailOnce()
+
+        const field = screen.getByPlaceholderText('Vault password')
+        await userEvent.clear(field)
+        await userEvent.type(field, 'the-vault{Enter}')
+
+        await waitFor(() => expect(useApp.getState().flow).toBe('main'))
+        expect(calls('workspace_adopt_vault_password')).toHaveLength(1)
+        expect(calls('unlock')).toHaveLength(3)
+      })
+    })
   })
 
   // A passphrase typed for one vault must not be the one submitted to the next.

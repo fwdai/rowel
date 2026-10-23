@@ -148,9 +148,11 @@ export const restoreWorkspaceFromPending = async (
 // The end of a restore whose pack opened with a password other than the vault
 // password. The backend kept the lockbox, closed, and named it in the
 // `vaultPasswordRequired` it rejected with; moving it onto the vault password
-// seals it under the app key, so the switch that follows opens it without
-// asking — the same landing a restore that matched from the start has.
-// Settings is held for the move, as for the restore it finishes.
+// seals it under the app key, so the `switchWorkspace` the caller runs next
+// opens it without asking — the same landing a restore that matched from the
+// start has. Two steps the caller sees apart: the move cannot be taken back,
+// so a switch that fails after it is retried on its own. Settings is held for
+// the move, as for the restore it finishes.
 export const moveRestoredLockbox = async (
   workspaceId: string,
   lockboxPassword: string,
@@ -162,7 +164,6 @@ export const moveRestoredLockbox = async (
   } finally {
     lockSettings(false)
   }
-  await switchWorkspace(workspaceId)
 }
 
 // The same landing, for a vault the open workspace's account holds and this

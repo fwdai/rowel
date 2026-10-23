@@ -1481,6 +1481,36 @@ describe('Settings › workspaces › vaults in the account', () => {
       expect(calls('workspace_select')).toHaveLength(0)
       expect(useUi.getState().settingsLocked).toBe(false)
     })
+
+    // The move re-keys the lockbox for good; a switch that fails after it must
+    // not send the spent lockbox password back to the move.
+    it('retries only the switch when it fails after the move', async () => {
+      mockCommandOnce('workspace_select', () =>
+        Promise.reject({ kind: 'syncBusy', message: 'a sync is already running' })
+      )
+      mockCommandOnce('workspace_select', () => ({ entries: [], syncConfigured: true }))
+      const field = await restoreOffPassword()
+
+      await userEvent.type(field, 'the-vault-pass')
+      await act(async () => {
+        await userEvent.click(screen.getByTestId('workspace-remote-submit'))
+      })
+
+      expect(
+        await screen.findByText('Wait for the sync in progress to finish')
+      ).toBeInTheDocument()
+      // The lockbox password is spent: it no longer opens anything.
+      expect(screen.getByTestId('workspace-remote-password')).toHaveValue('')
+      expect(screen.getByTestId('workspace-remote-submit')).toHaveTextContent('Try again')
+
+      await act(async () => {
+        await userEvent.click(screen.getByTestId('workspace-remote-submit'))
+      })
+
+      await waitFor(() => expect(useApp.getState().flow).toBe('main'))
+      expect(calls('workspace_adopt_vault_password')).toHaveLength(1)
+      expect(calls('workspace_select')).toEqual([{ id: 'w9' }, { id: 'w9' }])
+    })
   })
 })
 

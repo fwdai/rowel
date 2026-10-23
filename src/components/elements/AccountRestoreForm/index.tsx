@@ -1,8 +1,8 @@
 import { useId, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RemotePack } from '@/api/setup'
-import { vaultPasswordRequiredFor } from '@/api/errors'
-import { moveRestoredLockbox } from '@/store'
+import { describeError, vaultPasswordRequiredFor } from '@/api/errors'
+import { moveRestoredLockbox, switchWorkspace } from '@/store'
 import AccountVaults from '../AccountVaults'
 import Button from '../Button'
 import Field from '../Field'
@@ -37,12 +37,13 @@ interface Props {
 /**
  * The lockbox a restore installed closed, because the password that opened it
  * is not the vault password, and that password — the one the move proves it
- * with.
+ * with. Once `moved`, that password opens nothing any more and is dropped: the
+ * move cannot be taken back, so a switch that fails after it is retried on its
+ * own and never sent back to the move.
  */
-interface Moving {
-  workspaceId: string
-  lockboxPassword: string
-}
+type Moving =
+  | { workspaceId: string; moved: false; lockboxPassword: string }
+  | { workspaceId: string; moved: true }
 
 /**
  * Name, password, Restore: the last step of every "make a workspace out of a
@@ -56,7 +57,8 @@ interface Moving {
  * A vault sealed under a password other than the vault password is restored
  * closed (`vaultPasswordRequired`). The form then asks for the vault password
  * as well, and Restore moves the lockbox onto it and opens it: every lockbox
- * opens with the one password.
+ * opens with the one password. A switch that fails once the move has gone
+ * through (a sync holding the vault, say) is offered again on its own.
  *
  * Plain labelled fields, like every other form in Settings: the lock screen's
  * card is for the lock screen.
@@ -79,8 +81,21 @@ export default function AccountRestoreForm({
   const [moving, setMoving] = useState<Moving | null>(null)
   const [vaultPassword, setVaultPassword] = useState('')
   const [vaultError, setVaultError] = useState<string | null>(null)
+  const [openError, setOpenError] = useState<string | null>(null)
   const [movingBusy, setMovingBusy] = useState(false)
   const working = busy || movingBusy
+
+  // Another pick is another restore: whatever the last one left half-moved
+  // stays installed (and, once moved, opens from the list like any other), but
+  // this form starts over. Reset in render, so the frame it changes in is clean.
+  const [picked, setPicked] = useState(selectedId)
+  if (picked !== selectedId) {
+    setPicked(selectedId)
+    setMoving(null)
+    setVaultPassword('')
+    setVaultError(null)
+    setOpenError(null)
+  }
 
   const restore = () => {
     if (busy || !selectedId) return
@@ -89,7 +104,7 @@ export default function AccountRestoreForm({
     onRestore(name.trim(), typed, selectedId).catch((err: unknown) => {
       const workspaceId = vaultPasswordRequiredFor(err)
       if (workspaceId) {
-        setMoving({ workspaceId, lockboxPassword: typed })
+        setMoving({ workspaceId, moved: false, lockboxPassword: typed })
         return
       }
       setError(
@@ -102,15 +117,39 @@ export default function AccountRestoreForm({
     })
   }
 
+  // The switch every restore ends in, on its own: the step retried after a
+  // move that went through.
+  const open = (workspaceId: string) => {
+    setOpenError(null)
+    setMovingBusy(true)
+    switchWorkspace(workspaceId)
+      .catch((err: unknown) => setOpenError(describeError(err) || t('Something went wrong')))
+      .finally(() => setMovingBusy(false))
+  }
+
   const move = () => {
-    if (!moving || working || !vaultPassword) return
+    if (!moving || working) return
+    if (moving.moved) {
+      open(moving.workspaceId)
+      return
+    }
+    if (!vaultPassword) return
+    const { workspaceId } = moving
     setVaultError(null)
     setMovingBusy(true)
-    moveRestoredLockbox(moving.workspaceId, moving.lockboxPassword, vaultPassword)
-      .catch((err: unknown) => {
+    moveRestoredLockbox(workspaceId, moving.lockboxPassword, vaultPassword).then(
+      () => {
+        // Moved for good: neither password is asked for again.
+        setMoving({ workspaceId, moved: true })
+        setPassword('')
+        setVaultPassword('')
+        open(workspaceId)
+      },
+      (err: unknown) => {
         setVaultError(unsealError(t, err, t('Incorrect Master Password')))
-      })
-      .finally(() => setMovingBusy(false))
+        setMovingBusy(false)
+      }
+    )
   }
 
   const submit = moving ? move : restore
@@ -154,7 +193,7 @@ export default function AccountRestoreForm({
         }}
         onKeyDown={onEnter}
       />
-      {moving && (
+      {moving && !moving.moved && (
         <>
           <Note testid={`${testid}-vault-password-why`}>
             {t(
@@ -176,9 +215,14 @@ export default function AccountRestoreForm({
           />
         </>
       )}
+      {openError && (
+        <Note tone="bad" testid={`${testid}-open-error`}>
+          {openError}
+        </Note>
+      )}
       <div className="flex items-center gap-3">
         <Button testid={`${testid}-submit`} loading={working} onClick={submit}>
-          {working ? t('Restoring…') : t('Restore')}
+          {working ? t('Restoring…') : moving?.moved ? t('Try again') : t('Restore')}
         </Button>
         {!working && !moving && onSwitchAccount && (
           <Button variant="pale" testid={`${testid}-switch-account`} onClick={onSwitchAccount}>
