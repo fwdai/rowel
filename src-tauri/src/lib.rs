@@ -266,6 +266,7 @@ pub fn run() {
             commands::sync::sync_disconnect,
             commands::sync::sync_now,
             commands::sync::sync_adopt_pending,
+            commands::sync::sync_reupload,
             commands::share::share_create,
             commands::share::share_open,
             commands::share::share_revoke,

@@ -27,6 +27,8 @@ pub mod engine;
 // Every name the account sees: folders, file names, extensions. Crate-visible
 // so sharing and the backup export spell them the same way.
 pub mod layout;
+// The deletion marker's sealed body.
+pub(crate) mod marker;
 pub mod pack;
 mod provider;
 // One directory per provider. Crate-visible: `share` reaches Drive's share
@@ -49,6 +51,7 @@ use crate::error::{Error, Result};
 use crate::state::AppState;
 pub(crate) use account::{sealed_provider, Auth};
 use engine::{LocalVault, SessionVault, SyncOutcome};
+pub(crate) use marker::MarkerKey;
 pub(crate) use provider::Provider;
 pub(crate) use store::{store_for, AnyStore, PackRemote, VaultStore};
 
@@ -255,8 +258,10 @@ pub fn reseal_tokens(app: &AppHandle, old: &Cryptor, new: &Cryptor) -> Result<()
 }
 
 /// One full sync against the workspace's account. Blocking: call it on a
-/// dedicated thread.
-pub fn run(app: &AppHandle, cryptor: Cryptor) -> Result<SyncOutcome> {
+/// dedicated thread. `marker_key` is the open vault's
+/// [`VaultKey::delete_marker_key`](crate::crypto::VaultKey::delete_marker_key),
+/// which a deletion marker has to open under for the run to honour it.
+pub fn run(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<SyncOutcome> {
     if !is_configured(app, &cryptor) {
         return Err(Error::SyncNotConfigured);
     }
@@ -271,7 +276,7 @@ pub fn run(app: &AppHandle, cryptor: Cryptor) -> Result<SyncOutcome> {
     // pulled. A failure here is a sync failure like any other: addressing the
     // wrong pack — or a second one — is the one mistake the merge cannot undo.
     let resolved = block_on(resolve_vault_id(&store, &local))?;
-    let remote = PackRemote::new(store, resolved.id.clone());
+    let remote = PackRemote::new(store, resolved.id.clone(), marker_key);
 
     // The id is written from inside the run, at the one moment that satisfies
     // both of the things this ordering has to guarantee (see [`engine::sync`],
@@ -497,49 +502,73 @@ async fn resolve_vault_id(store: &impl VaultStore, local: &impl LocalVault) -> R
 /// marker": that is exactly the first-sync reading that puts the pack back. A
 /// marker beside a still-live pack is the half-state to prefer: the marker is
 /// the account's last word on the vault, and [`PackRemote`] reads it that way
-/// wherever it finds it — a fetch that sees both finishes this delete itself
-/// and stops, and the create path (`store::may_create_pack`) stops a run that
-/// pulled before the delete from re-creating the pack after it.
+/// wherever it finds it — a fetch that sees both stops, and the create path
+/// (`store::may_create_pack`) stops a run that pulled before the delete from
+/// re-creating the pack after it.
 ///
-/// The create path is two calls as well (check the marker, create the pack),
-/// and a first push whose check ran before the marker landed and whose create
-/// runs after this function's `stat` of the pack would leave the account
-/// holding both. So the create path checks the marker again *after* writing
-/// and removes its own pack when one is there (`PackRemote::create_pack`); a
-/// marker that lands after that re-check lands before the `stat` below, which
-/// then finds the pack and removes it. And should either side's removal fail,
-/// the pair does not outlive the next run on any device: every fetch asks for
-/// the marker and takes the pack out when it finds the two together.
+/// The marker's body is sealed under `marker_key` (this vault's
+/// [`VaultKey::delete_marker_key`](crate::crypto::VaultKey::delete_marker_key)),
+/// bound to the vault id ([`marker`]); one that does not open is no marker to
+/// any device. So a marker already there is kept only when it opens — another
+/// device having done this — and anything else under its name (the empty
+/// marker of an older build, a planted file) is overwritten with a real one.
+///
+/// This is the only place a pack is removed because the vault was deleted: a
+/// fetch that finds a marker beside a pack stops and leaves the pack where it
+/// is. The create path is two calls as well (check the marker, create the
+/// pack), and a first push whose check ran before the marker landed and whose
+/// create runs after the removal below would leave the account holding both.
+/// So the create path checks the marker again *after* writing and removes its
+/// own pack when one is there (`PackRemote::create_pack`); a marker that lands
+/// after that re-check lands before the listing below, which then finds the
+/// pack and removes it. The pack goes by the listing, not a `stat`, so a Drive
+/// account holding two of one name loses both ([`store::remove_all`]).
 ///
 /// The folders are created when the account has none (the marker's create
 /// makes them). A vault whose id is settled has a pack up there or had one, and
 /// leaving an unmarked empty account behind — `Rowel/` deleted by hand, say — is
 /// leaving another device's ordinary push to recreate the folders and the pack.
-/// A pack that is not there needs no deleting, and a marker already there is
-/// another device having done this.
-pub(crate) async fn delete_pack(store: &impl VaultStore, vault_id: &str) -> Result<()> {
-    let marker = layout::deleted_marker_name(vault_id);
-    if store.stat(&marker).await?.is_none() {
-        store.create(&marker, &[]).await?;
+/// A pack that is not there needs no deleting.
+pub(crate) async fn delete_pack(
+    store: &impl VaultStore,
+    vault_id: &str,
+    marker_key: &[u8],
+) -> Result<()> {
+    let name = layout::deleted_marker_name(vault_id);
+    let sealed = marker::seal(marker_key, vault_id, now_ms())?;
+    match store.stat(&name).await? {
+        None => {
+            store.create(&name, &sealed).await?;
+        }
+        Some(entry) => {
+            if !marker::verified(store, &entry, marker_key, vault_id).await? {
+                store.update(&entry, &sealed).await?;
+            }
+        }
     }
 
-    let pack = layout::vault_file_name(vault_id);
-    if let Some(entry) = store.stat(&pack).await? {
-        store.delete(&entry.handle).await?;
-    }
-    Ok(())
+    store::remove_all(store, &layout::vault_file_name(vault_id)).await
+}
+
+/// Take every deletion marker for `vault_id` out of the account, whatever it
+/// holds — the user's answer to "deleted on another device" when the copy
+/// here is the one to keep. The next run then finds an account with this
+/// vault's pack and no marker, or with neither, and syncs or re-uploads it.
+pub(crate) async fn clear_delete_marker(store: &impl VaultStore, vault_id: &str) -> Result<()> {
+    store::remove_all(store, &layout::deleted_marker_name(vault_id)).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        account_has_vaults_error, delete_pack, layout, plan_vault_id, remote_only, setup::PackInfo,
-        store::fake::FakeStore, Provider, VaultIdPlan,
+        account_has_vaults_error, clear_delete_marker, delete_pack, layout, plan_vault_id,
+        remote_only, setup::PackInfo, store::fake::FakeStore, Provider, VaultIdPlan,
     };
     use std::collections::HashSet;
 
     const ID: &str = "a1b2c3";
     const OTHER: &str = "dddd";
+    const KEY: [u8; crate::crypto::KEY_LEN] = [5; crate::crypto::KEY_LEN];
 
     fn pack(vault_id: &str) -> PackInfo {
         PackInfo {
@@ -604,7 +633,7 @@ mod tests {
         let store = FakeStore::default();
         store.put(&layout::vault_file_name(ID), b"pack");
 
-        delete_pack(&store, ID).await.unwrap();
+        delete_pack(&store, ID, &KEY).await.unwrap();
 
         assert_eq!(
             *store.log.lock().unwrap(),
@@ -614,7 +643,9 @@ mod tests {
             ]
         );
         assert!(!store.has(&layout::vault_file_name(ID)));
-        assert!(store.has(&layout::deleted_marker_name(ID)));
+        // A marker the other devices will honour: sealed for this vault.
+        let marker = store.bytes(&layout::deleted_marker_name(ID)).unwrap();
+        assert!(super::marker::opens(&KEY, ID, &marker));
     }
 
     // Another device got there first, or the pack never existed: nothing is
@@ -622,11 +653,43 @@ mod tests {
     #[tokio::test]
     async fn a_delete_someone_else_already_made_changes_nothing() {
         let store = FakeStore::default();
-        store.put(&layout::deleted_marker_name(ID), &[]);
+        store.put(
+            &layout::deleted_marker_name(ID),
+            &super::marker::seal(&KEY, ID, 1).unwrap(),
+        );
 
-        delete_pack(&store, ID).await.unwrap();
+        delete_pack(&store, ID, &KEY).await.unwrap();
 
         assert!(store.log.lock().unwrap().is_empty());
+    }
+
+    // An empty (legacy or planted) marker is no marker: the delete writes a
+    // sealed one over it, so the other devices honour this delete.
+    #[tokio::test]
+    async fn a_delete_seals_over_an_unverified_marker() {
+        let store = FakeStore::default();
+        store.put(&layout::deleted_marker_name(ID), &[]);
+        store.put(&layout::vault_file_name(ID), b"pack");
+
+        delete_pack(&store, ID, &KEY).await.unwrap();
+
+        let marker = store.bytes(&layout::deleted_marker_name(ID)).unwrap();
+        assert!(super::marker::opens(&KEY, ID, &marker));
+        assert!(!store.has(&layout::vault_file_name(ID)));
+    }
+
+    // Keeping the copy here: every marker goes, the pack (if any) stays.
+    #[tokio::test]
+    async fn clearing_the_marker_leaves_the_pack() {
+        let store = FakeStore::default();
+        store.put(&layout::vault_file_name(ID), b"pack");
+        store.put(&layout::deleted_marker_name(ID), &[]);
+        store.put_sibling(&layout::deleted_marker_name(ID), b"two");
+
+        clear_delete_marker(&store, ID).await.unwrap();
+
+        assert!(!store.has(&layout::deleted_marker_name(ID)));
+        assert!(store.has(&layout::vault_file_name(ID)));
     }
 
     // The sentence the sync indicator shows names the provider's account in the

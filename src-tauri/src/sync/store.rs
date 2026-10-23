@@ -28,6 +28,7 @@ use tauri::async_runtime::block_on;
 
 use super::account::{Auth, Tokens};
 use super::engine::{Remote, RemoteFile};
+use super::marker::{self, MarkerKey};
 use super::providers::{dropbox, gdrive, icloud};
 use super::{layout, pack, Provider};
 use crate::error::{Error, Result};
@@ -190,11 +191,18 @@ pub struct PackRemote<S> {
     /// Settled by `resolve_vault_id` before the run starts, so every call
     /// below knows the file name it is after without asking again.
     vault_id: String,
+    /// What a deletion marker has to be sealed under for this run to honour
+    /// it ([`marker`]).
+    marker_key: MarkerKey,
 }
 
 impl<S: VaultStore> PackRemote<S> {
-    pub fn new(store: S, vault_id: String) -> Self {
-        Self { store, vault_id }
+    pub fn new(store: S, vault_id: String, marker_key: MarkerKey) -> Self {
+        Self {
+            store,
+            vault_id,
+            marker_key,
+        }
     }
 
     async fn locate(&self) -> Result<Option<RemoteEntry>> {
@@ -203,43 +211,17 @@ impl<S: VaultStore> PackRemote<S> {
             .await
     }
 
-    // Is there a marker where this vault's pack would be? The account's last
-    // word on this vault, so every fetch asks — one `stat` per run — and so
-    // does the create path, before and after its write.
+    // Is there a verified marker where this vault's pack would be? The
+    // account's last word on this vault, so every fetch asks — one `stat` per
+    // run, and a read when one is there — and so does the create path, before
+    // and after its write. One that does not open under this vault's key is
+    // no marker at all (see [`marker`]).
     async fn marker(&self) -> Result<bool> {
         let name = layout::deleted_marker_name(&self.vault_id);
-        Ok(self.store.stat(&name).await?.is_some())
-    }
-
-    /// Every pack under this vault's name, gone. By the listing rather than a
-    /// `stat`: Drive may hold two files of one name (two first pushes that
-    /// raced each other as well as the delete), and its `stat` reports only
-    /// the oldest — two cleanups going by `stat` would both delete that one
-    /// and leave the newer. A listing is complete (invariant 1), so this takes
-    /// them all. Already gone counts as deleted.
-    async fn remove_packs(&self) -> Result<()> {
-        let name = layout::vault_file_name(&self.vault_id);
-        for entry in self.store.list_vaults().await? {
-            if entry.name == name {
-                self.store.delete(&entry.handle).await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// A pack found beside the marker is a push that landed in a delete's
-    /// window and was never taken back out: the delete's own `stat` missed
-    /// it, or the creator's cleanup failed. Whichever run sees the two
-    /// together finishes the job, so the half-state cannot outlive the next
-    /// run on any device. Best effort: the verdict is the marker's either
-    /// way, and a pack this run could not remove is the next run's to try.
-    async fn finish_delete(&self) {
-        if let Err(e) = self.remove_packs().await {
-            log::warn!(
-                "the vault was deleted from the account, but the pack left beside its marker \
-                 could not be removed yet: {e}"
-            );
-        }
+        let Some(entry) = self.store.stat(&name).await? else {
+            return Ok(false);
+        };
+        marker::verified(&self.store, &entry, &*self.marker_key, &self.vault_id).await
     }
 
     /// The first push: create the pack, unless the vault was deleted
@@ -259,11 +241,14 @@ impl<S: VaultStore> PackRemote<S> {
     /// the pack after the create too, so the delete finds the pack and removes
     /// it. One side or the other always takes the pack back out.
     ///
+    /// This is the one place a run removes a pack on a marker's word, and
+    /// only because the pack is the one it has just written itself, under a
+    /// marker that opened under this vault's key.
+    ///
     /// A cleanup that fails is still an error — the run fails and is retried
     /// — but a different one, so the log says the pack may have been left
-    /// behind. It is not left for good: the next run, here or on any other
-    /// device, finds the pack beside the marker and removes it
-    /// ([`PackRemote::finish_delete`]).
+    /// behind. Every run after it on any device reads the marker and stops,
+    /// leaving that pack where it is: no fetch deletes a pack.
     async fn create_pack(&self, bytes: &[u8]) -> Result<Option<String>> {
         may_create_pack(self.marker().await?)?;
         let name = layout::vault_file_name(&self.vault_id);
@@ -271,7 +256,7 @@ impl<S: VaultStore> PackRemote<S> {
         if !self.marker().await? {
             return Ok(revision);
         }
-        self.remove_packs().await.map_err(|e| {
+        remove_all(&self.store, &name).await.map_err(|e| {
             Error::Other(format!(
                 "this vault was deleted from the account on another device while this one \
                  was pushing it, and removing the pack this push had just written failed: \
@@ -280,6 +265,21 @@ impl<S: VaultStore> PackRemote<S> {
         })?;
         Err(Error::VaultDeletedRemotely)
     }
+}
+
+/// Every object named `name` in `Vaults/`, gone. By the listing rather than a
+/// `stat`: Drive may hold two files of one name (two first pushes that raced
+/// each other as well as a delete), and its `stat` reports only the oldest — a
+/// removal going by `stat` would take that one and leave the newer. A listing
+/// is complete (invariant 1), so this takes them all. Already gone counts as
+/// deleted.
+pub(crate) async fn remove_all(store: &impl VaultStore, name: &str) -> Result<()> {
+    for entry in store.list_vaults().await? {
+        if entry.name == name {
+            store.delete(&entry.handle).await?;
+        }
+    }
+    Ok(())
 }
 
 /// What a run makes of finding no pack for its vault.
@@ -325,7 +325,13 @@ impl<S: VaultStore> Remote for PackRemote<S> {
     // pack it is still the account's verdict — the pack is a push that landed
     // in the delete's window and was never removed — and a run that read the
     // pack instead would carry the vault on, on every device, for as long as
-    // the two sat together. So the run finishes the delete and stops.
+    // the two sat together. So the run stops.
+    //
+    // It stops and nothing more: the pack is left where it is. Removing it is
+    // the deleting device's job ([`super::delete_pack`]), and a marker found
+    // here — even one that opens, which may be a replayed copy of an old one —
+    // is not reason enough to destroy what may be the last copy of the vault
+    // in the account.
     fn fetch(&self) -> Result<Option<RemoteFile>> {
         block_on(async {
             let located = self.locate().await?;
@@ -334,7 +340,6 @@ impl<S: VaultStore> Remote for PackRemote<S> {
                 return pack_missing(marker);
             };
             if marker {
-                self.finish_delete().await;
                 return Err(Error::VaultDeletedRemotely);
             }
             let bytes = self.store.read(&entry.handle, pack::MAX_PACK_BYTES).await?;
@@ -515,25 +520,25 @@ pub(crate) mod fake {
         pub(crate) log: Mutex<Vec<String>>,
         /// The revision every `update` was asked to write over, in order.
         pub(crate) update_revisions: Mutex<Vec<Option<String>>>,
-        /// Objects to land, empty, just before the next `create` goes through
-        /// — other devices' writes arriving between a caller's `stat` and its
-        /// create. Set by [`Self::interlope_at_create`]; a name the caller is
-        /// creating lands as a same-name sibling, as a racing first push on
-        /// Drive would.
-        create_interlopers: Mutex<Vec<String>>,
+        /// Objects to land just before the next `create` goes through — other
+        /// devices' writes arriving between a caller's `stat` and its create.
+        /// Set by [`Self::interlope_at_create`]; a name the caller is creating
+        /// lands as a same-name sibling, as a racing first push on Drive
+        /// would.
+        create_interlopers: Mutex<Vec<(String, Vec<u8>)>>,
         /// Make the next `delete` fail, once: the network going away between
         /// a cleanup's listing and its remove.
         fail_next_delete: Mutex<bool>,
     }
 
     impl FakeStore {
-        /// Land `name` on the next `create` — after the caller's checks,
-        /// before its write. Call again to land several.
-        pub(crate) fn interlope_at_create(&self, name: &str) {
+        /// Land `name`, holding `bytes`, on the next `create` — after the
+        /// caller's checks, before its write. Call again to land several.
+        pub(crate) fn interlope_at_create(&self, name: &str, bytes: &[u8]) {
             self.create_interlopers
                 .lock()
                 .unwrap()
-                .push(name.to_string());
+                .push((name.to_string(), bytes.to_vec()));
         }
 
         pub(crate) fn fail_next_delete(&self) {
@@ -673,11 +678,11 @@ pub(crate) mod fake {
             // the name being created is another device's first push, which
             // Drive keeps as a sibling.
             let interlopers = std::mem::take(&mut *self.create_interlopers.lock().unwrap());
-            for other in interlopers {
+            for (other, other_bytes) in interlopers {
                 if other == name {
-                    self.put_sibling(&other, &[]);
+                    self.put_sibling(&other, &other_bytes);
                 } else {
-                    self.put(&other, &[]);
+                    self.put(&other, &other_bytes);
                 }
             }
             self.put_sibling(name, bytes);
@@ -738,11 +743,14 @@ pub(crate) mod fake {
 mod tests {
     use super::fake::FakeStore;
     use super::*;
+    use crate::crypto::KEY_LEN;
+    use zeroize::Zeroizing;
 
     const ID: &str = "a1b2c3";
+    const KEY: [u8; KEY_LEN] = [5; KEY_LEN];
 
     fn remote() -> PackRemote<FakeStore> {
-        PackRemote::new(FakeStore::default(), ID.into())
+        PackRemote::new(FakeStore::default(), ID.into(), Zeroizing::new(KEY))
     }
 
     fn pack_name() -> String {
@@ -751,6 +759,11 @@ mod tests {
 
     fn marker_name() -> String {
         layout::deleted_marker_name(ID)
+    }
+
+    // A marker as a device holding this vault's key writes one.
+    fn sealed_marker() -> Vec<u8> {
+        marker::seal(&KEY, ID, 1).unwrap()
     }
 
     // No pack is the first push not having happened yet — unless the marker
@@ -790,7 +803,7 @@ mod tests {
     #[test]
     fn a_missing_pack_with_a_marker_is_a_vault_deleted_everywhere() {
         let remote = remote();
-        remote.store.put(&marker_name(), &[]);
+        remote.store.put(&marker_name(), &sealed_marker());
         assert!(matches!(remote.fetch(), Err(Error::VaultDeletedRemotely)));
     }
 
@@ -798,7 +811,7 @@ mod tests {
     #[test]
     fn a_push_does_not_create_a_pack_where_a_marker_is() {
         let remote = remote();
-        remote.store.put(&marker_name(), &[]);
+        remote.store.put(&marker_name(), &sealed_marker());
         assert!(matches!(
             remote.upload(b"pack", None),
             Err(Error::VaultDeletedRemotely)
@@ -814,7 +827,9 @@ mod tests {
     #[test]
     fn a_marker_landing_between_the_check_and_the_create_takes_the_new_pack_back_out() {
         let remote = remote();
-        remote.store.interlope_at_create(&marker_name());
+        remote
+            .store
+            .interlope_at_create(&marker_name(), &sealed_marker());
 
         assert!(matches!(
             remote.upload(b"pack", None),
@@ -844,33 +859,68 @@ mod tests {
         );
     }
 
-    // A pack beside the marker is a push that landed in a delete's window and
-    // was never taken back out. The marker is still the verdict: a fetch
-    // finishes the delete — removes the pack, keeps the marker — and stops,
-    // rather than carrying the deleted vault on.
+    // A pack beside a marker sealed under this vault's key: the marker is the
+    // verdict and the run stops, but the pack is left exactly where it is —
+    // removing it is the deleting device's job, never a fetch's.
     #[test]
-    fn a_fetch_that_finds_a_pack_beside_the_marker_finishes_the_delete() {
+    fn a_fetch_honours_a_sealed_marker_beside_a_pack_and_leaves_the_pack() {
         let remote = remote();
         remote.store.put(&pack_name(), b"left behind");
-        remote.store.put(&marker_name(), &[]);
+        remote.store.put(&marker_name(), &sealed_marker());
         assert!(matches!(remote.fetch(), Err(Error::VaultDeletedRemotely)));
-        assert!(!remote.store.has(&pack_name()));
+        assert_eq!(remote.store.bytes(&pack_name()).unwrap(), b"left behind");
         assert!(remote.store.has(&marker_name()));
-        assert_eq!(
-            *remote.store.log.lock().unwrap(),
-            [format!("delete {}", pack_name())]
-        );
+        assert!(remote.store.log.lock().unwrap().is_empty());
+    }
+
+    // The empty marker older builds wrote — or anyone with write access to the
+    // folder could plant — opens under no key. It is no marker at all: the
+    // pack beside it is read and left alone, and with no pack the account
+    // reads as one to push to.
+    #[test]
+    fn an_empty_legacy_marker_is_ignored_and_the_pack_left_alone() {
+        let remote = remote();
+        remote.store.put(&pack_name(), b"pack");
+        remote.store.put(&marker_name(), &[]);
+        assert_eq!(remote.fetch().unwrap().unwrap().bytes, b"pack");
+        assert!(remote.store.has(&pack_name()));
+        assert!(remote.store.log.lock().unwrap().is_empty());
+
+        let empty = self::remote();
+        empty.store.put(&marker_name(), &[]);
+        assert!(matches!(empty.fetch(), Ok(None)));
+        empty.upload(b"pack", None).unwrap();
+        assert_eq!(empty.store.bytes(&pack_name()).unwrap(), b"pack");
+    }
+
+    // A marker sealed for another vault (copied across under this one's name)
+    // or under another key, and one that is plain garbage, are ignored the
+    // same way.
+    #[test]
+    fn a_marker_sealed_for_another_vault_or_key_is_ignored() {
+        for bytes in [
+            marker::seal(&KEY, "dddd", 1).unwrap(),
+            marker::seal(&[6; KEY_LEN], ID, 1).unwrap(),
+            b"deleted".to_vec(),
+        ] {
+            let remote = remote();
+            remote.store.put(&pack_name(), b"pack");
+            remote.store.put(&marker_name(), &bytes);
+            assert_eq!(remote.fetch().unwrap().unwrap().bytes, b"pack");
+            assert!(remote.store.log.lock().unwrap().is_empty());
+        }
     }
 
     // The creator's cleanup can fail after its create went through, leaving
-    // the pair behind with an error that names it. That is not the end of
-    // it: the next run — this device's or any other's — reads the marker,
-    // removes the pack and stops, so a retry never reports the deleted vault
-    // as synced.
+    // the pair behind with an error that names it. Every run after it reads
+    // the marker and stops — so a retry never reports the deleted vault as
+    // synced — and leaves the pack where it is.
     #[test]
-    fn a_failed_cleanup_is_finished_by_the_next_run() {
+    fn a_failed_cleanup_leaves_the_pack_and_the_next_run_stops() {
         let remote = remote();
-        remote.store.interlope_at_create(&marker_name());
+        remote
+            .store
+            .interlope_at_create(&marker_name(), &sealed_marker());
         remote.store.fail_next_delete();
         match remote.upload(b"pack", None) {
             Err(Error::Other(why)) => assert!(why.contains("removing the pack"), "{why}"),
@@ -880,7 +930,7 @@ mod tests {
         assert!(remote.store.has(&marker_name()));
 
         assert!(matches!(remote.fetch(), Err(Error::VaultDeletedRemotely)));
-        assert!(!remote.store.has(&pack_name()));
+        assert!(remote.store.has(&pack_name()));
         assert!(remote.store.has(&marker_name()));
     }
 
@@ -892,8 +942,10 @@ mod tests {
     #[test]
     fn a_cleanup_removes_every_same_name_pack_not_just_the_oldest() {
         let remote = remote();
-        remote.store.interlope_at_create(&marker_name());
-        remote.store.interlope_at_create(&pack_name());
+        remote
+            .store
+            .interlope_at_create(&marker_name(), &sealed_marker());
+        remote.store.interlope_at_create(&pack_name(), &[]);
         assert!(matches!(
             remote.upload(b"pack", None),
             Err(Error::VaultDeletedRemotely)
@@ -908,26 +960,18 @@ mod tests {
                 format!("delete {}", pack_name()),
             ]
         );
-
-        // The same from the fetch side, for a pair the creators left behind.
-        let later = self::remote();
-        later.store.put(&pack_name(), b"one");
-        later.store.put_sibling(&pack_name(), b"two");
-        later.store.put(&marker_name(), &[]);
-        assert!(matches!(later.fetch(), Err(Error::VaultDeletedRemotely)));
-        assert_eq!(later.store.count(&pack_name()), 0);
     }
 
     // The marker guards fetch and create, not update: a run whose fetch found
     // the pack live is pushing over a pack a delete has not reached, and that
-    // delete's own `stat` removes it afterwards — or the update fails on a
+    // delete's own removal takes it afterwards — or the update fails on a
     // handle that is gone. Nothing is re-created either way.
     #[test]
     fn a_push_updates_a_pack_that_is_still_there_whatever_the_marker_says() {
         let remote = remote();
         remote.store.put(&pack_name(), b"old");
         let base = remote.head_revision().unwrap();
-        remote.store.put(&marker_name(), &[]);
+        remote.store.put(&marker_name(), &sealed_marker());
         remote.upload(b"new", base.as_deref()).unwrap();
         assert_eq!(remote.store.bytes(&pack_name()).unwrap(), b"new");
     }

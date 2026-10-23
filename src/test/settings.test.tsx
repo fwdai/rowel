@@ -1973,7 +1973,7 @@ describe('Settings › workspaces › delete', () => {
     )
 
     expect(screen.getByTestId('workspace-deleted-remotely')).toHaveTextContent(
-      'This lockbox was deleted from its account on another device.'
+      'This lockbox was marked as deleted from its account, but it may still be intact.'
     )
     await userEvent.click(screen.getByTestId('workspace-delete-stranded'))
 
@@ -1981,6 +1981,26 @@ describe('Settings › workspaces › delete', () => {
     expect(
       screen.queryByTestId('workspace-delete-scope-everywhere')
     ).not.toBeInTheDocument()
+  })
+
+  // The marker may be planted, and the copy here is intact either way: the row
+  // also offers to put it back, which the backend does by clearing the marker
+  // and running a sync.
+  it('offers to re-upload a vault the account says was deleted', async () => {
+    two()
+    await open()
+    await go('workspaces')
+    await act(async () =>
+      report({
+        configured: true,
+        error: 'this vault was deleted from Google Drive on another device',
+        errorKind: 'vaultDeletedRemotely'
+      })
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-reupload-stranded'))
+
+    expect(calls('sync_reupload')).toHaveLength(1)
   })
 })
 

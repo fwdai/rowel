@@ -505,7 +505,21 @@ Bringing existing data forward is an **explicit** action, and there are two path
   disabled (`sync::ENABLED = false`). When enabled it uploads only the already-
   encrypted vault blob to the user's own Google Drive; the master passphrase and
   derived keys never leave the device. A compromised Drive account or a tapped
-  sync channel yields ciphertext, not secrets.
+  sync channel yields ciphertext, not secrets. The one thing in the account
+  other than a pack is the "deleted everywhere" marker (`<vault-id>.deleted`)
+  that stops every device syncing a lockbox, and it is authenticated rather
+  than trusted for existing: its body is sealed with AES-256-GCM under a
+  subkey of the lockbox's own key (`VaultKey::delete_marker_key`), with the
+  vault id as associated data (`sync::marker`). A marker that does not open —
+  empty, as older builds wrote it, planted by someone with write access to the
+  folder, or copied from another lockbox — is logged and treated as absent.
+  And no device deletes a pack because it found a marker, a valid one
+  included: only the device that ran "delete everywhere" removes the pack
+  (beyond a first upload taking back the pack it has just written, when a
+  valid marker landed while it was writing), so
+  a forged or replayed marker can at most stop sync, and the UI then offers to
+  re-upload the copy on the device (which clears the marker) as well as to
+  delete it there.
 - **A stalled or hostile network peer.** Every HTTPS client in the app shares a
   connect deadline and a read-stall deadline (`sync::http_client_builder`), so
   a connection that stops answering fails the run instead of holding the
@@ -795,7 +809,11 @@ runs and publishes its identities; until then the sheet's list offers it.
   window the tombstone wins and the rollback is absorbed. Rowel treats the
   Drive account as the user's own and does not defend against its owner; the
   practical guard is the same as for the account itself: strong authentication
-  on the Google account, and re-deleting anything a rollback brings back.
+  on the Google account, and re-deleting anything a rollback brings back. The
+  deletion marker has the same limit: it carries no counter, so a copy of a
+  genuine sealed marker put back after the user re-uploaded the lockbox is
+  honoured again. That stops sync and nothing more — the pack is never deleted
+  on a marker's word — and re-uploading clears it again.
 - **Physical memory attacks.** Cold-boot or DMA attacks against an unlocked
   session are out of scope.
 

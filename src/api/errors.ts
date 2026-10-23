@@ -140,7 +140,9 @@ export const describeError = (error: unknown): string => {
     case 'vaultNotInAccount':
       return t('This account holds other lockboxes')
     case 'vaultDeletedRemotely':
-      return t('This lockbox was deleted from its account on another device.')
+      return t(
+        'This lockbox was marked as deleted from its account, but it may still be intact. You can re-upload the copy on this device.'
+      )
     case 'fileTooLarge':
       return t('This file is too large')
     case 'fileNotText':

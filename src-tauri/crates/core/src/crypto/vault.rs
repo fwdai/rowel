@@ -29,6 +29,9 @@ const INFO_ATTACHMENT: &[u8] = b"attachment-aead-key";
 // stable, install-specific secret derived from the master so the (disabled) sync
 // path keeps a self-consistent cipher without holding the password.
 const INFO_LEGACY_CRYPTOR: &[u8] = b"legacy-cryptor-secret";
+// Seals the "deleted everywhere" marker a sync account holds in place of a
+// vault's pack, so only a holder of this vault's key can write one.
+const INFO_DELETE_MARKER: &[u8] = b"sync-delete-marker-key";
 
 /// The active vault key. Held by the session; scrubbed on drop.
 pub enum VaultKey {
@@ -88,6 +91,15 @@ impl VaultKey {
             }
             Self::Legacy { secret } => Cryptor::new(secret_str(secret)),
         }
+    }
+
+    /// The AES-256-GCM key that seals and opens this vault's sync deletion
+    /// marker. A subkey like the others, so a marker that opens proves its
+    /// writer held this vault's key — which every device syncing the vault
+    /// does, since they all open the same pack — and reveals nothing else.
+    /// Derived from the legacy secret the same way for a legacy-keyed vault.
+    pub fn delete_marker_key(&self) -> Zeroizing<[u8; KEY_LEN]> {
+        Zeroizing::new(hkdf_subkey(self.biometric_material(), INFO_DELETE_MARKER))
     }
 
     /// The opaque bytes to persist in the OS secure store for biometric unlock,
@@ -228,6 +240,24 @@ mod tests {
             panic!("argon2 vault must use the AEAD payload cipher");
         };
         assert_ne!(*sql, *payload, "sqlcipher and payload subkeys must differ");
+    }
+
+    // The marker key is a subkey of its own: neither the database key nor the
+    // payload key, and the same on every device that holds the vault's key.
+    #[test]
+    fn the_delete_marker_key_is_its_own_and_deterministic() {
+        let k = argon2_key();
+        let marker = k.delete_marker_key();
+        let PayloadCipher::Aead(payload) = k.payload_cipher() else {
+            panic!("argon2 vault must use the AEAD payload cipher");
+        };
+        assert_ne!(*marker, *k.sqlcipher_key());
+        assert_ne!(*marker, *payload);
+        assert_eq!(*marker, *argon2_key().delete_marker_key());
+
+        let legacy = VaultKey::legacy_from_password("pw");
+        assert_ne!(*legacy.delete_marker_key(), *legacy.sqlcipher_key());
+        assert_ne!(*legacy.delete_marker_key(), *marker);
     }
 
     #[test]
