@@ -119,9 +119,7 @@ pub async fn read_env_file(
     // gone.
     let epoch = super::unlocked_epoch(&state)?;
     if !grants.take(Path::new(&path), Purpose::Env) {
-        return Err(Error::Unsupported(
-            "this file was not chosen in the app".into(),
-        ));
+        return Err(crate::grants::not_chosen());
     }
     let file = super::blocking(move || read_env_text(Path::new(&path))).await?;
     super::same_session(&state, epoch)?;

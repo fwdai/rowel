@@ -261,9 +261,7 @@ fn begin_add(
     let session = state.session.lock().unwrap();
     let (epoch, cipher, room) = begin_add_in(&session, entry_id)?;
     if !grants.take(path, Purpose::Attachment) {
-        return Err(Error::Unsupported(
-            "this file was not chosen in the app".into(),
-        ));
+        return Err(crate::grants::not_chosen());
     }
     Ok((epoch, cipher, room))
 }

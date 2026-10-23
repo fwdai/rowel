@@ -3,10 +3,9 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Start from '@/components/Start'
 import type { RemotePack } from '@/api/setup'
-import { open } from '@tauri-apps/plugin-dialog'
 import { fileOpened, setupAccountProbed, setupAccountFailed, useApp } from '@/store'
 import { evaluate, MIN_LENGTH, type Strength } from '@/services/strength'
-import { appStatusDefault, calls, mockCommandOnce } from './ipc'
+import { appStatusDefault, calls, mockCommand, mockCommandOnce } from './ipc'
 import { deferred, seedApp } from './utils'
 
 // The real `evaluate` awaits an 848 kB zxcvbn chunk. The specs below have to
@@ -691,7 +690,7 @@ describe('the restore screen under each provider', () => {
 
 describe('restoring from a backup file', () => {
   it('picks a file, then unseals it with the master password', async () => {
-    vi.mocked(open).mockResolvedValue('/tmp/Rowel backup 2026-09-15.rowel')
+    mockCommand('pick_file', () => '/tmp/Rowel backup 2026-09-15.rowel')
     render(<Start />)
 
     await userEvent.click(screen.getByTestId('start-restore-button'))
@@ -700,6 +699,8 @@ describe('restoring from a backup file', () => {
     expect(await screen.findByTestId('restore-found-file')).toHaveTextContent(
       'Rowel backup 2026-09-15.rowel'
     )
+    // Picked in Rust, which grants the path for the restore that reads it.
+    expect(calls('pick_file')).toContainEqual({ kind: 'backup', label: 'Rowel backup' })
 
     await userEvent.type(screen.getByTestId('restore-password-input'), STRONG)
     await userEvent.click(screen.getByTestId('restore-confirm-button'))
@@ -713,7 +714,7 @@ describe('restoring from a backup file', () => {
   // The pack is what says whether the password was wrong; anything else it
   // reports — a truncated file, a vault from a newer build — is shown as itself.
   it('shows a non-password failure as itself', async () => {
-    vi.mocked(open).mockResolvedValue('/tmp/vault.rowel')
+    mockCommand('pick_file', () => '/tmp/vault.rowel')
     mockCommandOnce('setup_restore_from_file', () =>
       Promise.reject({ kind: 'io', message: 'sync file is truncated' })
     )

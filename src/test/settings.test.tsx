@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event'
 import Settings from '@/components/Main/Sidebar/Settings'
 import i18n, { changeLocale } from '@/i18n'
 import { dates } from '@/utils/time'
-import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import type { SyncStatus } from '@/api/sync'
 import type { RemotePack } from '@/api/setup'
 import {
@@ -810,13 +809,15 @@ describe('Settings › vault audit', () => {
 
 describe('Settings › import', () => {
   it('imports a .swftx file with the source password', async () => {
-    vi.mocked(openDialog).mockResolvedValue('/tmp/other.swftx')
+    mockCommand('pick_file', () => '/tmp/other.swftx')
     mockCommand('import_swftx', () => 3)
     await open()
     await go('import')
 
     await userEvent.click(screen.getByTestId('import-tile-swftx'))
     expect(await screen.findByText('other.swftx')).toBeInTheDocument()
+    // Picked in Rust, which grants the path for the merge that reads it.
+    expect(calls('pick_file')).toContainEqual({ kind: 'importBackup', label: 'Rowel backup' })
 
     await userEvent.type(
       document.querySelector('input[name="import_password"]')!,
@@ -829,7 +830,7 @@ describe('Settings › import', () => {
   })
 
   it('shows an error when the backup password is wrong', async () => {
-    vi.mocked(openDialog).mockResolvedValue('/tmp/other.swftx')
+    mockCommand('pick_file', () => '/tmp/other.swftx')
     mockCommand('import_swftx', () => Promise.reject({ kind: 'invalidPassword', message: 'invalid master password' }))
     await open()
     await go('import')
@@ -874,7 +875,7 @@ describe('Settings › import', () => {
   // The backup card offers our own `.rowel` too, and takes it as the OS-opened
   // one above: named and explained, never sent to the legacy importer.
   it('explains a .rowel picked on the backup card instead of importing it', async () => {
-    vi.mocked(openDialog).mockResolvedValue('/tmp/Rowel backup 2026-09-15.rowel')
+    mockCommand('pick_file', () => '/tmp/Rowel backup 2026-09-15.rowel')
     await open()
     await go('import')
 
@@ -888,7 +889,7 @@ describe('Settings › import', () => {
   // Imported rows are published like any other edit, so another device has
   // them without waiting for the next change made here.
   it('syncs after an export is imported, and not after one that added nothing', async () => {
-    vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
+    mockCommand('pick_file', () => '/tmp/enpass.json')
     let imported = 2
     mockCommand('import_entries', args => {
       const dryRun = args.dryRun === true
@@ -945,7 +946,7 @@ describe('Settings › import', () => {
   // totals still say every row is coming in. Two notes on one row are one
   // row in the heading.
   it('shows a warning row apart from the skipped count', async () => {
-    vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
+    mockCommand('pick_file', () => '/tmp/enpass.json')
     mockCommand('import_entries', () => ({
       total: 1,
       imported: 0,
@@ -978,7 +979,7 @@ describe('Settings › import', () => {
   // A tile is a file picker: the dry run names the format rather than
   // sniffing it, and the tile stays lit as the source.
   it('imports an Enpass export from its tile', async () => {
-    vi.mocked(openDialog).mockResolvedValue('/tmp/enpass.json')
+    mockCommand('pick_file', () => '/tmp/enpass.json')
     await open()
     await go('import')
 
@@ -996,7 +997,7 @@ describe('Settings › import', () => {
   // takes that app's name while it is the source. Picking it again picks
   // another file: the menu items are buttons, not a selection.
   it('imports from an app in the other-apps menu, and again', async () => {
-    vi.mocked(openDialog).mockResolvedValue('/tmp/export.csv')
+    mockCommand('pick_file', () => '/tmp/export.csv')
     await open()
     await go('import')
 
@@ -1012,7 +1013,7 @@ describe('Settings › import', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(screen.getByTestId('import-tile-other')).toHaveTextContent('Chrome / Safari')
 
-    vi.mocked(openDialog).mockResolvedValue('/tmp/export-2.csv')
+    mockCommand('pick_file', () => '/tmp/export-2.csv')
     await userEvent.click(screen.getByTestId('import-tile-other'))
     await userEvent.click(screen.getByTestId('import-tile-chrome'))
     await waitFor(() =>
@@ -1027,7 +1028,7 @@ describe('Settings › import', () => {
   // The picker is on the drop target itself, on every platform; a file chosen
   // there has no tile behind it, so the backend sniffs its format.
   it('chooses an export file from the drop target', async () => {
-    vi.mocked(openDialog).mockResolvedValue('/tmp/export.csv')
+    mockCommand('pick_file', () => '/tmp/export.csv')
     await open()
     await go('import')
 
@@ -1085,15 +1086,37 @@ describe('Settings › export', () => {
     expect(screen.getByTestId('settings-export-run')).toBeDisabled()
     await userEvent.click(screen.getByTestId('settings-export-ack'))
     expect(screen.getByTestId('settings-export-ack')).toHaveAttribute('aria-checked', 'true')
+    // Acknowledged, but the plaintext vault also takes the master password.
+    expect(screen.getByTestId('settings-export-run')).toBeDisabled()
+    await userEvent.type(screen.getByTestId('settings-export-password'), 'master-pw')
     await userEvent.click(screen.getByTestId('settings-export-run'))
 
-    expect(calls('export_entries')).toContainEqual({ path: null, format: 'cxf' })
+    expect(calls('export_entries')).toContainEqual({
+      path: null,
+      format: 'cxf',
+      password: 'master-pw'
+    })
     expect(await screen.findByText(/rowel-export\.json/)).toBeInTheDocument()
+    expect(screen.getByTestId('settings-export-password')).toHaveValue('')
+  })
+
+  it('says so when the master password is wrong', async () => {
+    mockCommand('export_entries', () =>
+      Promise.reject({ kind: 'invalidPassword', message: 'invalid password' })
+    )
+    await exportPane()
+    await userEvent.click(screen.getByTestId('settings-export-ack'))
+    await userEvent.type(screen.getByTestId('settings-export-password'), 'wrong')
+    await userEvent.click(screen.getByTestId('settings-export-run'))
+
+    expect(await screen.findByText('Incorrect Master Password')).toBeInTheDocument()
+    expect(screen.queryByText(/Saved to/)).not.toBeInTheDocument()
   })
 
   it('stays disabled again once the acknowledgement is taken back', async () => {
     await exportPane()
     await userEvent.click(screen.getByTestId('settings-export-ack'))
+    await userEvent.type(screen.getByTestId('settings-export-password'), 'master-pw')
     expect(screen.getByTestId('settings-export-run')).toBeEnabled()
     await userEvent.click(screen.getByTestId('settings-export-ack'))
     expect(screen.getByTestId('settings-export-run')).toBeDisabled()

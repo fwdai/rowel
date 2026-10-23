@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { mockCommand } from './ipc'
 import DropZone from '@/components/Main/Sidebar/Settings/Sections/Import/DropZone'
 
 // The phone build: nothing drags a file onto it, so the import pane's lead is
@@ -17,7 +17,7 @@ vi.mock('@/lib/platform', () => ({
 describe('the import lead, on a phone', () => {
   it('is one card that picks a file, and never says to drop one', async () => {
     const onDrop = vi.fn()
-    vi.mocked(openDialog).mockResolvedValue('/tmp/export.csv')
+    mockCommand('pick_file', () => '/tmp/export.csv')
     render(<DropZone onDrop={onDrop} />)
 
     expect(screen.queryByText('Drop an export file')).not.toBeInTheDocument()

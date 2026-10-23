@@ -20,6 +20,7 @@
 //! `commands::workspace`). What that flow does *not* share is
 //! [`guard_no_vault`], which is exactly the condition it inverts.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use tauri::{AppHandle, Manager, State};
@@ -28,6 +29,7 @@ use zeroize::Zeroizing;
 use crate::crypto::VaultKey;
 use crate::error::{Error, Result};
 use crate::events;
+use crate::grants::{self, PathGrants, Purpose};
 use crate::models::UnlockResult;
 use crate::session::{create_vault, list_metas, store_err};
 use crate::state::{AppState, PendingAccount};
@@ -295,25 +297,40 @@ pub async fn setup_restore_from_account(
 /// pulled from the account — so this is [`setup_restore_from_account`] with the
 /// download swapped for a file read, and no account to keep afterwards. The
 /// read shares the blocking thread with the restore: a backup is the whole
-/// vault, and a large one on a slow disk must not stall the async runtime. No
-/// size cap, for the same reason the Drive download has none — the pack's own
-/// structural checks (`pack::unpack`) are what reject a file that is not one.
+/// vault, and a large one on a slow disk must not stall the async runtime. The
+/// read is capped where the Drive download is (`pack::MAX_PACK_BYTES`), and
+/// for the same reason: a file that is not a pack must not be buffered whole
+/// before the pack's own structural checks (`pack::unpack`) get to refuse it.
+/// Only a regular file is read (`storage::read_regular_file_capped`).
+///
+/// `path` has to be a backup the user chose — picked, dropped or opened with
+/// the app (see `grants`). The grant is held across a mistyped password, which
+/// reads the file again, and spent by the restore that succeeds.
 #[tauri::command]
 pub async fn setup_restore_from_file(
     path: String,
     password: Zeroizing<String>,
     app: AppHandle,
     state: State<'_, AppState>,
+    grants: State<'_, PathGrants>,
 ) -> Result<UnlockResult> {
     guard_no_vault(&app)?;
     let _step = begin_step(&state)?;
+    let chosen = PathBuf::from(&path);
+    if !grants.holds(&chosen, Purpose::Backup) {
+        return Err(grants::not_chosen());
+    }
 
     let handle = app.clone();
     let (key, store) = super::blocking(move || {
-        let bytes = std::fs::read(&path)?;
+        let bytes =
+            storage::read_regular_file_capped(Path::new(&path), sync::pack::MAX_PACK_BYTES as u64)?;
         restore::restore_from_pack(&handle, &bytes, &password)
     })
     .await?;
+    // The step guard keeps any other restore out while this one ran, so the
+    // grant checked above is still here to spend.
+    grants.take(&chosen, Purpose::Backup);
     adopt(&app, &state, key, store, None, None)
 }
 

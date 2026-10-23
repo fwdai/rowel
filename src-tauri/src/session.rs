@@ -650,11 +650,17 @@ mod lock_scope {
 
         let body = body_of(import, "pub async fn export_entries(");
         assert!(
-            at(&body, "session.lock()") < at(&body, "super::blocking("),
+            at(&body, "derive_key") < at(&body, "session.lock()"),
+            "the password's Argon2id derive belongs before the lock is taken"
+        );
+        // The unseal's own hop, as against the derive's before the lock.
+        let unseal = "let (bytes, ext) = super::blocking(";
+        assert!(
+            at(&body, "session.lock()") < at(&body, unseal),
             "the rows and the cipher come out under the lock; the unseal does not"
         );
         assert!(
-            at(&body, "super::blocking(") < at(&body, "to_imported"),
+            at(&body, unseal) < at(&body, "to_imported"),
             "unsealing every entry is a pass over the whole vault — off the worker"
         );
     }
