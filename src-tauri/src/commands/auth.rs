@@ -391,7 +391,7 @@ pub async fn change_master_password(
     let _step = super::setup::begin_step(&state)?;
     // Resolved before anything is taken out of the session, so a path that
     // cannot be resolved leaves the vault open and unchanged.
-    let paths = auth::RekeyPaths::resolve(&app, &state)?;
+    let (paths, workspace_id) = auth::RekeyPaths::resolve_with_id(&app, &state)?;
     let root = storage::root_dir(&app)?;
 
     // The passwords themselves are needed again once the open workspace is
@@ -422,8 +422,18 @@ pub async fn change_master_password(
     // after the change; the key itself is about to be moved into the saga.
     let old_cryptor = old_key.cryptor();
 
-    let rekeyed =
-        blocking(move || Ok(auth::rekey(store, old_key, new_key, &params, &paths))).await?;
+    let params_json = params.to_json()?;
+    let rekeyed = blocking(move || {
+        Ok(auth::rekey(
+            store,
+            old_key,
+            new_key,
+            &params_json,
+            &paths,
+            &workspace_id,
+        ))
+    })
+    .await?;
 
     let (new_key, store) = match rekeyed {
         Ok(changed) => changed,
@@ -575,7 +585,8 @@ async fn rekey_beside(
         // own (`appkey`); the change on disk is the user's either way.
         let held = state.keyring.lock().unwrap().get(&id);
         let (current, new) = (current.clone(), new.clone());
-        match blocking(move || rekey_one(&dir, held, &current, &new)).await {
+        let workspace_id = id.clone();
+        match blocking(move || rekey_one(&dir, &workspace_id, held, &current, &new)).await {
             Ok(material) => {
                 if id == PRIMARY_ID {
                     appkey::replace_app_key(app, &material);
@@ -618,6 +629,7 @@ async fn rekey_beside(
 // so it only ever runs on the blocking pool.
 fn rekey_one(
     dir: &Path,
+    workspace_id: &str,
     held: Option<Zeroizing<Vec<u8>>>,
     current: &str,
     new: &str,
@@ -650,7 +662,7 @@ fn rekey_one(
     let tokens = crate::sync::read_tokens_in(dir, &old_key.cryptor())?;
     let new_cryptor = new_key.cryptor();
 
-    auth::rekey_workspace(dir, old_key, new_key, &params)?;
+    auth::rekey_workspace(dir, workspace_id, old_key, new_key, &params.to_json()?)?;
 
     // The write is best effort, after the commit, for the same reason it is on
     // the open workspace: the change is on disk and reporting a failure here
@@ -738,7 +750,7 @@ mod tests {
         crate::sync::persist_tokens_in(dir.path(), &old.cryptor(), &tokens).unwrap();
 
         let held = Zeroizing::new(old.biometric_material().to_vec());
-        let material = rekey_one(dir.path(), Some(held), "old-pw", "new-pw").unwrap();
+        let material = rekey_one(dir.path(), "ws", Some(held), "old-pw", "new-pw").unwrap();
 
         let new = VaultKey::from_material(material, true);
         assert!(opens_under(dir.path(), &new));
@@ -760,7 +772,7 @@ mod tests {
             .unwrap();
 
         let held = Zeroizing::new(old.biometric_material().to_vec());
-        assert!(rekey_one(dir.path(), Some(held), "old-pw", "new-pw").is_err());
+        assert!(rekey_one(dir.path(), "ws", Some(held), "old-pw", "new-pw").is_err());
 
         assert!(opens_under(dir.path(), &old), "nothing was changed");
         assert!(!dir.path().join(storage::KDF_SIDECAR_FILE).exists());
