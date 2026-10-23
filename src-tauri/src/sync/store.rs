@@ -788,7 +788,7 @@ pub(crate) mod fake {
         async fn read(&self, handle: &str, max_bytes: usize) -> Result<Vec<u8>> {
             (**self).read(handle, max_bytes).await
         }
-        async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
+        async fn create(&self, name: &str, bytes: &[u8]) -> Result<Created> {
             (**self).create(name, bytes).await
         }
         async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>> {
