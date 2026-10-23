@@ -1,11 +1,14 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { exportEntries, type ExportFormat } from '@/api/imports'
 import { describeError } from '@/api/errors'
 import { useVault } from '@/store'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
+import Field from '@/components/elements/Field'
 import Note from '@/components/elements/Note'
+import { inputClass } from '@/components/elements/formStyles'
+import { verbatimInput } from '@/components/elements/inputProps'
 import { LABEL, TEXT_LINK } from '@/components/elements/tokens'
 import { useSectionNav } from '../../../sectionNav'
 import Formats from './Formats'
@@ -23,17 +26,24 @@ export default function ExportPane() {
   const go = useSectionNav()
   const [format, setFormat] = useState<ExportFormat>('bitwarden')
   const [acknowledged, setAcknowledged] = useState(false)
+  // The file is the whole vault in plaintext, so it takes the master password,
+  // like the encrypted backup does (see `exportEntries`).
+  const passwordId = useId()
+  const [password, setPassword] = useState('')
   const [running, setRunning] = useState(false)
   const [saved, setSaved] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const run = () => {
-    if (running || !acknowledged) return
+    if (running || !acknowledged || !password) return
     setRunning(true)
     setSaved(null)
     setError(null)
-    exportEntries(format)
-      .then(path => setSaved(path))
+    exportEntries(format, password)
+      .then(path => {
+        setPassword('')
+        setSaved(path)
+      })
       .catch((e: unknown) => setError(describeError(e)))
       .finally(() => setRunning(false))
   }
@@ -43,6 +53,25 @@ export default function ExportPane() {
       <div className={cx(LABEL, 'mb-2')}>{t('Format')}</div>
       <Formats value={format} onChange={setFormat} label={t('Format')} />
       <Warning acknowledged={acknowledged} onAcknowledge={setAcknowledged} />
+
+      <div className="mt-4 max-w-sm">
+        <Field id={passwordId} label={t('Master password')}>
+          <input
+            id={passwordId}
+            type="password"
+            name="export_entries_password"
+            data-testid="settings-export-password"
+            {...verbatimInput}
+            className={inputClass}
+            value={password}
+            disabled={running}
+            onChange={event => {
+              setError(null)
+              setPassword(event.target.value)
+            }}
+          />
+        </Field>
+      </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <p className="min-w-0 flex-1 text-sm text-text2">
@@ -57,7 +86,7 @@ export default function ExportPane() {
           </button>
         </p>
         <Button
-          disabled={!acknowledged}
+          disabled={!acknowledged || !password}
           loading={running}
           onClick={run}
           testid="settings-export-run"

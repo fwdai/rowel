@@ -251,6 +251,8 @@ carries them as part of the opaque payload and never sees them.
   export** (a `.rowel` backup, which is the encrypted vault snapshot itself, or
   Bitwarden JSON, which is plaintext by construction and carries the key as
   base64url) — the same deliberate exposure the password export already is.
+  Both exports ask for the master password again (`export_vault`,
+  `export_entries`): an unlocked session alone does not carry the vault away.
 - **User verification is the unlocked session plus the user's consent.** The
   vault being unlocked is the identity half of WebAuthn's "user verified" bit;
   the intent half is asked for on every registration and sign-in through the

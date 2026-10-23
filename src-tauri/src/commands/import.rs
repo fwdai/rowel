@@ -10,6 +10,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
+use zeroize::Zeroizing;
 
 use crate::crypto::PayloadCipher;
 use crate::error::{Error, Result};
@@ -18,7 +19,7 @@ use crate::grants::{self, PathGrants, Purpose};
 use crate::import::{self, EntryKind, Format, ImportedEntry, RowError};
 use crate::models::{Entry, EntryMetaDto};
 use crate::save;
-use crate::session::{list_metas, live_records, store_err};
+use crate::session::{derive_key, list_metas, live_records, store_err};
 use crate::state::AppState;
 use crate::storage;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
@@ -359,19 +360,33 @@ fn e2e_enabled() -> bool {
 // Export the open vault to a third-party format. `path` is honoured only in an
 // E2E build (see below); otherwise a save dialog is shown. `format` is
 // "bitwarden", "cxf" or "csv".
+//
+// The file is every secret in the vault in plaintext, so `password` has to be
+// the master password, exactly as for the encrypted `export_vault`: an
+// unlocked session is not proof that whoever is at the keyboard may carry the
+// whole vault away.
 #[tauri::command]
 pub async fn export_entries(
     path: Option<String>,
     format: String,
+    password: Zeroizing<String>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>> {
+    // Argon2id before the lock is taken, as in `export_vault`: the result is
+    // only trusted by the check under it.
+    let candidate = {
+        let app = app.clone();
+        super::blocking(move || derive_key(&app, &password)).await?
+    };
+
     // Under the guard: read the sealed rows and take a *copy* of the payload
     // cipher. Unsealing every one of them is a pass over the whole vault, and
     // the session lock may not be held across that — the cipher is an owned
     // value precisely so it can leave with the records.
     let (cipher, records) = {
         let session = state.session.lock().unwrap();
+        super::vault::prove_password(&session, &candidate)?;
         (session.payload_cipher()?, live_records(session.store()?)?)
     };
 

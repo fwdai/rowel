@@ -40,10 +40,16 @@ export const importEntries = (
   dryRun: boolean
 ): Promise<ImportReport> => call('import_entries', { path, format, dryRun })
 
+/**
+ * Write the whole vault, in plaintext, to a file the user picks in the save
+ * dialog. `password` must be the master password — the same proof the
+ * encrypted `exportVault` asks for; a wrong one rejects `invalidPassword`.
+ */
 export const exportEntries = (
   format: ExportFormat,
+  password: string,
   path?: string
-): Promise<string | null> => call('export_entries', { path: path ?? null, format })
+): Promise<string | null> => call('export_entries', { path: path ?? null, format, password })
 
 // A `.env` file read whole as text, for the env kind's drop zone and picker.
 // The backend refuses anything over 1 MiB or not UTF-8; the body is the secret,

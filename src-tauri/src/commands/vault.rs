@@ -1,15 +1,16 @@
 use crate::app::APP_NAME;
-use crate::crypto::PayloadCipher;
+use crate::crypto::{PayloadCipher, VaultKey};
 use crate::error::{Error, Result};
 use crate::events;
 use crate::grants::{self, PathGrants, Purpose};
 use crate::models::{Entry, EntryMetaDto, VaultData};
-use crate::session::{derive_key, list_deleted_metas, list_metas, meta_dto_of, store_err};
+use crate::session::{derive_key, list_deleted_metas, list_metas, meta_dto_of, store_err, Session};
 use crate::state::AppState;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
 use crate::{credential_identities, crypto, save, storage, sync};
 use serde::Serialize;
 use std::path::PathBuf;
+use subtle::ConstantTimeEq;
 use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
 
@@ -272,6 +273,20 @@ pub async fn import_swftx(
     })
 }
 
+/// `InvalidPassword` unless `candidate` — derived from a password the user just
+/// typed, with `derive_key` — is the key the unlocked vault is open under. For
+/// a command that carries the vault away (`export_vault`, and the plaintext
+/// `import::export_entries`): an unlocked session says the vault is open, not
+/// that the person at it knows the password. Compared in constant time.
+pub(crate) fn prove_password(session: &Session, candidate: &VaultKey) -> Result<()> {
+    let key = session.key()?.sqlcipher_key();
+    if bool::from(candidate.sqlcipher_key()[..].ct_eq(&key[..])) {
+        Ok(())
+    } else {
+        Err(Error::InvalidPassword)
+    }
+}
+
 // Export the vault to a user-chosen `.rowel` file: the same pack the sync engine
 // uploads (KDF descriptor + SQLCipher snapshot, see `sync::pack`), so a backup
 // restores through `setup_restore_from_file` exactly as a Drive pack does. The
@@ -303,10 +318,8 @@ pub async fn export_vault(
     let (key, source) = {
         let session = state.session.lock().unwrap();
         // Guard: the export key must match the unlocked vault.
+        prove_password(&session, &candidate)?;
         let key = session.key()?.sqlcipher_key();
-        if candidate.sqlcipher_key() != key {
-            return Err(Error::InvalidPassword);
-        }
         // A connection of its own, so the whole-database copy below does not
         // borrow the session's for its duration.
         let source = crate::session::open_snapshot_source(&app, &*key)?;

@@ -1086,15 +1086,37 @@ describe('Settings › export', () => {
     expect(screen.getByTestId('settings-export-run')).toBeDisabled()
     await userEvent.click(screen.getByTestId('settings-export-ack'))
     expect(screen.getByTestId('settings-export-ack')).toHaveAttribute('aria-checked', 'true')
+    // Acknowledged, but the plaintext vault also takes the master password.
+    expect(screen.getByTestId('settings-export-run')).toBeDisabled()
+    await userEvent.type(screen.getByTestId('settings-export-password'), 'master-pw')
     await userEvent.click(screen.getByTestId('settings-export-run'))
 
-    expect(calls('export_entries')).toContainEqual({ path: null, format: 'cxf' })
+    expect(calls('export_entries')).toContainEqual({
+      path: null,
+      format: 'cxf',
+      password: 'master-pw'
+    })
     expect(await screen.findByText(/rowel-export\.json/)).toBeInTheDocument()
+    expect(screen.getByTestId('settings-export-password')).toHaveValue('')
+  })
+
+  it('says so when the master password is wrong', async () => {
+    mockCommand('export_entries', () =>
+      Promise.reject({ kind: 'invalidPassword', message: 'invalid password' })
+    )
+    await exportPane()
+    await userEvent.click(screen.getByTestId('settings-export-ack'))
+    await userEvent.type(screen.getByTestId('settings-export-password'), 'wrong')
+    await userEvent.click(screen.getByTestId('settings-export-run'))
+
+    expect(await screen.findByText('Incorrect Master Password')).toBeInTheDocument()
+    expect(screen.queryByText(/Saved to/)).not.toBeInTheDocument()
   })
 
   it('stays disabled again once the acknowledgement is taken back', async () => {
     await exportPane()
     await userEvent.click(screen.getByTestId('settings-export-ack'))
+    await userEvent.type(screen.getByTestId('settings-export-password'), 'master-pw')
     expect(screen.getByTestId('settings-export-run')).toBeEnabled()
     await userEvent.click(screen.getByTestId('settings-export-ack'))
     expect(screen.getByTestId('settings-export-run')).toBeDisabled()
