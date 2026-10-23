@@ -142,17 +142,22 @@ pub async fn sync_adopt_password(
 /// follows; the other device's next run then asks it for this password.
 #[tauri::command]
 pub async fn sync_replace_remote(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
-    let failed_with = state.sync_run(|run| run.error.as_ref().map(|e| e.kind));
-    if !may_replace(failed_with) {
-        return Err(Error::Other(
-            "the account's copy can only be replaced when this device cannot open it".into(),
-        ));
-    }
     // Claim and keys under the workspace lock, as `launch` takes them, so a
-    // switch cannot move the token file from under the push.
+    // switch cannot move the token file from under the push. The eligibility
+    // check sits inside the same section, after the claim: read before it, a
+    // run landing in between could clear the failure it answers to, or a
+    // switch could make it describe a lockbox other than the one whose keys
+    // are captured below — and the push would then replace the wrong copy, or
+    // one this device could have pulled first.
     let (claim, cryptor, marker_key) = {
         let _paths = state.workspace_lock.lock().unwrap();
         let claim = super::sync::claim_or_busy(&state)?;
+        let failed_with = state.sync_run(|run| run.error.as_ref().map(|e| e.kind));
+        if !may_replace(failed_with) {
+            return Err(Error::Other(
+                "the account's copy can only be replaced when this device cannot open it".into(),
+            ));
+        }
         let session = state.session.lock().unwrap();
         if !session.sync_configured {
             return Err(Error::SyncNotConfigured);
