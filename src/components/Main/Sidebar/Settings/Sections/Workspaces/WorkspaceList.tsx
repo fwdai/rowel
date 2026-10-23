@@ -55,18 +55,33 @@ export default function WorkspaceList() {
   const reupload = () => syncReupload().catch((err: unknown) => setError(messageOf(err)))
 
   // Another device changed this vault's master password: the account's copy
-  // opens only under the new one, which the shared prompt asks for.
+  // opens only under the new one, which the shared prompt asks for. If the user
+  // changed nothing, that copy may not be theirs, so overwriting it is offered
+  // too — the way out the prompt's wrong-password copy points at.
   const passwordChanged = syncPasswordChangedRemotely(sync)
 
   // The account's copy is under a password this device already replaced and
   // can no longer open. Overwriting it with this copy is the one way out from
-  // here, and it loses whatever only that copy had — so it is confirmed first.
+  // here.
   const retired = syncUnderRetiredPassword(sync)
+
+  // Either way, overwriting loses whatever only the account's copy had, so it
+  // is confirmed first.
   const [confirmReplace, setConfirmReplace] = useState(false)
   const replace = () => {
     setConfirmReplace(false)
     syncReplaceRemote().catch((err: unknown) => setError(messageOf(err)))
   }
+  const replaceButton = (
+    <Button
+      variant="pale-danger"
+      size="md"
+      testid="workspace-replace-remote"
+      onClick={() => setConfirmReplace(true)}
+    >
+      {t("Replace the account's copy with this device's")}
+    </Button>
+  )
 
   // Where its copy lives, if it has one to delete along with it.
   const provider = (workspace: Workspace) => workspaceProvider(workspace, { active, sync })
@@ -119,18 +134,12 @@ export default function WorkspaceList() {
           >
             {t('Enter new password')}
           </Button>
+          {replaceButton}
         </SyncProblem>
       )}
       {retired && (
         <SyncProblem testid="workspace-retired-password" text={syncErrorText(sync)}>
-          <Button
-            variant="pale-danger"
-            size="md"
-            testid="workspace-replace-remote"
-            onClick={() => setConfirmReplace(true)}
-          >
-            {t("Replace the account's copy with this device's")}
-          </Button>
+          {replaceButton}
         </SyncProblem>
       )}
       {confirmReplace && (

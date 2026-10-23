@@ -2022,10 +2022,30 @@ describe('Settings › workspaces › master password changed elsewhere', () => 
     expect(screen.getByTestId('workspace-password-changed')).toHaveTextContent(
       'The master password of this lockbox was changed on another device.'
     )
-    expect(screen.queryByTestId('workspace-replace-remote')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('workspace-adopt-password'))
 
     expect(useUi.getState().passwordPrompt).toBe(true)
+  })
+
+  // The user may not have changed anything: then the account's copy may not be
+  // theirs, and the prompt's wrong-password copy sends them here to replace it.
+  it('also offers to replace the account copy, behind the same confirm', async () => {
+    await stopped(
+      'passwordChangedRemotely',
+      'the master password of this lockbox was changed on another device'
+    )
+
+    const row = screen.getByTestId('workspace-password-changed')
+    await userEvent.click(within(row).getByTestId('workspace-replace-remote'))
+
+    expect(screen.getByTestId('workspace-replace-remote-sheet')).toHaveTextContent(
+      'Edits made only on the other device will be lost.'
+    )
+    expect(calls('sync_replace_remote')).toHaveLength(0)
+
+    await userEvent.click(screen.getByTestId('workspace-replace-remote-confirm'))
+
+    expect(calls('sync_replace_remote')).toHaveLength(1)
   })
 
   // The account's copy is under a password this device already retired: the
