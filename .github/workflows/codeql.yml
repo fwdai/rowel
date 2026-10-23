@@ -50,14 +50,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     # `needs` never skips us: `always()` keeps this job alive on push/schedule,
-    # where `changes` itself is skipped. On PRs the Rust leg runs only when
-    # Rust inputs changed; a skipped leg satisfies branch protection.
-    if: >-
-      always() && (
-        matrix.language != 'rust' ||
-        github.event_name != 'pull_request' ||
-        needs.changes.outputs.rust == 'true'
-      )
+    # where `changes` itself is skipped. The matrix does not exist yet when a
+    # job-level condition is evaluated, so the per-language condition belongs
+    # on the steps below instead.
+    if: always()
     permissions:
       security-events: write
       actions: read
@@ -75,10 +71,18 @@ jobs:
             experimental: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: >-
+          matrix.language != 'rust' ||
+          github.event_name != 'pull_request' ||
+          needs.changes.outputs.rust == 'true'
         with:
           persist-credentials: false
 
       - name: Initialize CodeQL
+        if: >-
+          matrix.language != 'rust' ||
+          github.event_name != 'pull_request' ||
+          needs.changes.outputs.rust == 'true'
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
@@ -86,6 +90,10 @@ jobs:
           config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL Analysis
+        if: >-
+          matrix.language != 'rust' ||
+          github.event_name != 'pull_request' ||
+          needs.changes.outputs.rust == 'true'
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: '/language:${{ matrix.language }}'
