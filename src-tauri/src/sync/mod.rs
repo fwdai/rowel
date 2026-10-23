@@ -276,7 +276,9 @@ pub fn run(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<S
     // pulled. A failure here is a sync failure like any other: addressing the
     // wrong pack — or a second one — is the one mistake the merge cannot undo.
     let resolved = block_on(resolve_vault_id(&store, &local))?;
-    let remote = PackRemote::new(store, resolved.id.clone(), marker_key);
+    let mut marker_keys = vec![marker_key];
+    marker_keys.extend(local.retired_marker_keys());
+    let remote = PackRemote::new(store, resolved.id.clone(), marker_keys);
 
     // The id is written from inside the run, at the one moment that satisfies
     // both of the things this ordering has to guarantee (see [`engine::sync`],
@@ -543,7 +545,7 @@ pub(crate) async fn delete_pack(
             store.create(&name, &sealed).await?;
         }
         Some(entry) => {
-            if !marker::verified(store, &entry, marker_key, vault_id).await? {
+            if !marker::verified(store, &entry, &[marker_key], vault_id).await? {
                 store.update(&entry, &sealed).await?;
             }
         }

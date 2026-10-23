@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::session::{backfill_derived_columns, record_kdf_meta, store_err};
 use crate::state::AppState;
 use crate::storage;
-use crate::store::{Record, SqliteStore, StoreError, VaultStore};
+use crate::store::{Attachment, Record, SqliteStore, StoreError, VaultStore};
 
 // --- Failed-unlock backoff (T-AUTH-3) ---------------------------------------
 //
@@ -521,15 +521,12 @@ fn rekey_vault(
     workspace_id: &str,
 ) -> Result<()> {
     let params = KdfParams::from_json(params_json)?;
-    let old_cipher = old_key.payload_cipher();
-    let new_cipher = new_key.payload_cipher();
     // Re-seal every row's payload under the new payload key (timestamps + tombstones kept).
-    let resealed: Vec<Record> = store
-        .export_for_sync()
-        .map_err(store_err)?
-        .into_iter()
-        .map(|r| reseal_record(r, &old_cipher, &new_cipher))
-        .collect::<Result<_>>()?;
+    let resealed = reseal_records(
+        store.export_for_sync().map_err(store_err)?,
+        old_key,
+        new_key,
+    )?;
     store.import(&resealed).map_err(store_err)?;
     reseal_attachments(store, old_key, new_key)?;
     store.rekey(&*new_key.sqlcipher_key()).map_err(store_err)?;
@@ -575,19 +572,52 @@ fn reseal_attachments(store: &SqliteStore, old_key: &VaultKey, new_key: &VaultKe
     if atts.is_empty() {
         return Ok(());
     }
-    let refused = || Error::Unsupported("this vault's key scheme cannot hold attachments".into());
-    let old = old_key.attachment_cipher().ok_or_else(refused)?;
-    let new = new_key.attachment_cipher().ok_or_else(refused)?;
-    for a in &mut atts {
-        let file = old.unseal(&a.meta.id, &a.blob)?;
-        a.blob = new.seal(&a.meta.id, &file)?;
-    }
+    reseal_attachment_blobs(&mut atts, old_key, new_key)?;
     store.import_attachments(&atts).map_err(store_err)
 }
 
+/// Every record's payload carried from `old_key` onto `new_key`, metadata
+/// untouched. Shared with the sync engine, which carries a pack sealed under a
+/// retired key epoch onto the current one before merging it.
+pub(crate) fn reseal_records(
+    records: Vec<Record>,
+    old_key: &VaultKey,
+    new_key: &VaultKey,
+) -> Result<Vec<Record>> {
+    let (old, new) = (old_key.payload_cipher(), new_key.payload_cipher());
+    records
+        .into_iter()
+        .map(|r| reseal_record(r, &old, &new))
+        .collect()
+}
+
+/// Every attached file's blob carried from `old_key` onto `new_key`. A purged
+/// shell has no blob, and keeps none.
+pub(crate) fn reseal_attachment_blobs(
+    atts: &mut [Attachment],
+    old_key: &VaultKey,
+    new_key: &VaultKey,
+) -> Result<()> {
+    if atts.iter().all(|a| a.blob.is_empty()) {
+        return Ok(());
+    }
+    let refused = || Error::Unsupported("this vault's key scheme cannot hold attachments".into());
+    let old = old_key.attachment_cipher().ok_or_else(refused)?;
+    let new = new_key.attachment_cipher().ok_or_else(refused)?;
+    for a in atts.iter_mut().filter(|a| !a.blob.is_empty()) {
+        let file = old.unseal(&a.meta.id, &a.blob)?;
+        a.blob = new.seal(&a.meta.id, &file)?;
+    }
+    Ok(())
+}
+
 // Unseal a record's payload under the old cipher and re-seal it under the new one,
-// preserving all metadata (id/kind/title/tags/url_host/timestamps/tombstone).
+// preserving all metadata (id/kind/title/tags/url_host/timestamps/tombstone). A
+// purged row's payload is empty — there is nothing sealed to carry — and stays so.
 fn reseal_record(mut r: Record, old: &PayloadCipher, new: &PayloadCipher) -> Result<Record> {
+    if r.payload.is_empty() {
+        return Ok(r);
+    }
     let entry = old.unseal(&r.id, &r.payload)?;
     r.payload = new.seal(&entry)?;
     Ok(r)
@@ -1209,6 +1239,25 @@ mod recovery_tests {
         assert!(!p.retired_backup.exists());
         let list = crate::retired::load(p.db.parent().unwrap(), &old, "ws");
         assert_eq!(list[0].kdf, "older");
+    }
+
+    // A purged row keeps its id and stamps but no payload: nothing to re-seal,
+    // and no reason for the change to fail on it.
+    #[test]
+    fn a_purged_entry_does_not_stop_a_password_change() {
+        let (dir, p) = paths();
+        let old = argon(1);
+        fs::write(&p.sidecar, "old-params").unwrap();
+        {
+            let store = store_with_one_entry(&p.db, &old);
+            store.delete("1").unwrap();
+            store.purge("1").unwrap();
+        }
+
+        rekey_workspace(dir.path(), "ws", old, argon(2), &cheap_params_json()).unwrap();
+
+        let store = SqliteStore::open(&p.db, &*argon(2).sqlcipher_key()).unwrap();
+        assert!(store.export_for_sync().unwrap()[0].payload.is_empty());
     }
 
     // A vault that had no list before the change has none after a rollback.

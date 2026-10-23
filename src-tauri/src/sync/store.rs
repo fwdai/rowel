@@ -205,16 +205,17 @@ pub struct PackRemote<S> {
     /// below knows the file name it is after without asking again.
     vault_id: String,
     /// What a deletion marker has to be sealed under for this run to honour
-    /// it ([`marker`]).
-    marker_key: MarkerKey,
+    /// it ([`marker`]): the current key's subkey first, then those of the
+    /// retired key epochs.
+    marker_keys: Vec<MarkerKey>,
 }
 
 impl<S: VaultStore> PackRemote<S> {
-    pub fn new(store: S, vault_id: String, marker_key: MarkerKey) -> Self {
+    pub fn new(store: S, vault_id: String, marker_keys: Vec<MarkerKey>) -> Self {
         Self {
             store,
             vault_id,
-            marker_key,
+            marker_keys,
         }
     }
 
@@ -234,7 +235,8 @@ impl<S: VaultStore> PackRemote<S> {
         let Some(entry) = self.store.stat(&name).await? else {
             return Ok(false);
         };
-        marker::verified(&self.store, &entry, &*self.marker_key, &self.vault_id).await
+        let keys: Vec<&[u8]> = self.marker_keys.iter().map(|k| &k[..]).collect();
+        marker::verified(&self.store, &entry, &keys, &self.vault_id).await
     }
 
     /// The first push: create the pack, unless the vault was deleted
@@ -778,7 +780,7 @@ mod tests {
     const KEY: [u8; KEY_LEN] = [5; KEY_LEN];
 
     fn remote() -> PackRemote<FakeStore> {
-        PackRemote::new(FakeStore::default(), ID.into(), Zeroizing::new(KEY))
+        PackRemote::new(FakeStore::default(), ID.into(), vec![Zeroizing::new(KEY)])
     }
 
     fn pack_name() -> String {
@@ -833,6 +835,28 @@ mod tests {
         let remote = remote();
         remote.store.put(&marker_name(), &sealed_marker());
         assert!(matches!(remote.fetch(), Err(Error::VaultDeletedRemotely)));
+    }
+
+    // A delete written by a device still on the key epoch this one retired is
+    // sealed under that epoch's marker key, and is honoured all the same.
+    #[test]
+    fn a_marker_sealed_under_a_retired_epoch_is_honoured() {
+        const RETIRED: [u8; KEY_LEN] = [6; KEY_LEN];
+        let both = PackRemote::new(
+            FakeStore::default(),
+            ID.into(),
+            vec![Zeroizing::new(KEY), Zeroizing::new(RETIRED)],
+        );
+        both.store
+            .put(&marker_name(), &marker::seal(&RETIRED, ID, 1).unwrap());
+        assert!(matches!(both.fetch(), Err(Error::VaultDeletedRemotely)));
+
+        // Under a key neither epoch has, it is no marker at all.
+        let other = remote();
+        other
+            .store
+            .put(&marker_name(), &marker::seal(&RETIRED, ID, 1).unwrap());
+        assert!(matches!(other.fetch(), Ok(None)));
     }
 
     // A run that pulled before the delete must not put the pack back after it.

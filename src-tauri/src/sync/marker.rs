@@ -60,10 +60,15 @@ pub(crate) fn opens(key: &[u8], vault_id: &str, bytes: &[u8]) -> bool {
 /// or too big to be one — is logged and answers `false`, so the caller acts as
 /// though there were none. A read that fails for any other reason (the
 /// network) is an error rather than a verdict.
+///
+/// `keys` is the current marker key first, then those of the key epochs this
+/// device has retired (`crate::retired`): a delete written on another device
+/// just before or after a password change is sealed under the epoch that
+/// device held, and is honoured all the same.
 pub(crate) async fn verified(
     store: &impl VaultStore,
     entry: &RemoteEntry,
-    key: &[u8],
+    keys: &[&[u8]],
     vault_id: &str,
 ) -> Result<bool> {
     // The empty marker every build before this one wrote. Nothing to read.
@@ -82,7 +87,7 @@ pub(crate) async fn verified(
         }
         Err(e) => return Err(e),
     };
-    if opens(key, vault_id, &bytes) {
+    if keys.iter().any(|key| opens(key, vault_id, &bytes)) {
         return Ok(true);
     }
     log::warn!(
