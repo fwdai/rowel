@@ -5,7 +5,7 @@ import { importEntries, type ImportFormat, type ImportReport } from '@/api/impor
 import { syncNow } from '@/api/sync'
 import { pickImportFile, pickImportBackup } from '@/api/pickers'
 import { describeError, errorKind } from '@/api/errors'
-import { isBackupFile } from '@/lib/backup'
+import { isBackupFile, isRestorableFile } from '@/lib/backup'
 import { t } from '@/i18n'
 import { useProgress } from './useProgress'
 
@@ -78,9 +78,12 @@ export function useImport() {
     [start]
   )
 
-  // A dropped file has no tile behind it, so the backend sniffs the format.
+  // A dropped file has no tile behind it: one of our backups is taken as the
+  // backup card would take it, anything else has its format sniffed by the
+  // backend.
   const dropped = useCallback(
-    (path: string) => start({ kind: 'format', format: 'auto', path }),
+    (path: string) =>
+      start(isRestorableFile(path) ? pickedBackup(path) : { kind: 'format', format: 'auto', path }),
     [start]
   )
 
