@@ -124,8 +124,8 @@ products solve it, don't patch symptoms.
 > on unlock and after its own writes.
 >
 > **Follow-ups (not blockers):** wire `sync::restore` into onboarding ("Restore from Drive"
-> on a fresh install); cross-device master-password-change flow (currently fails safe with a
-> foreign-vault error); OAuth scope audit (`drive.file`); an explicitly global "Revoke Google
+> on a fresh install); cross-device master-password change — designed and built, see
+> `docs/password-change-sync-design.md`; OAuth scope audit (`drive.file`); an explicitly global "Revoke Google
 > access" action, the one place the grant is retired (a per-lockbox disconnect deliberately
 > never does); **release gate: a production Google OAuth client ID (owner task)**.
 

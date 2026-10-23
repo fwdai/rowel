@@ -217,7 +217,11 @@ beside it that stayed on another password, like `change_master_password`).
 
 ### 6. The escape hatch: `sync_replace_remote`
 
-Offered only in the `VaultUnderRetiredPassword` state. Confirms, then pushes
+Offered in the `VaultUnderRetiredPassword` state and in the
+`PasswordChangedRemotely` state (amended: a user who never changed the password
+anywhere is looking at a copy that is not theirs, and needs the same confirmed
+way out). The backend refuses it unless the open lockbox's last run failed with
+one of those two kinds. Confirms, then pushes
 this device's pack over the account's (upload with the current head revision
 as the base, so a concurrent push still loses cleanly), and launches a run.
 Edits that only existed in the account's copy are lost, and the UI says so.
