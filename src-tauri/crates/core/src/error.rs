@@ -153,6 +153,16 @@ pub enum Error {
     #[error("the account holds this lockbox under a password this device has already replaced")]
     VaultUnderRetiredPassword,
 
+    /// A lockbox other than the primary was opened (or restored) with a
+    /// password that opens it but is not the vault password — the one the
+    /// primary opens with. Every lockbox opens with the vault password, so this
+    /// one is not sealed under the app key; it stays closed until the user
+    /// enters the vault password to move it over (`workspace_adopt_vault_password`
+    /// in the app). `workspace_id` names the lockbox, which a restore has only
+    /// just created, so the frontend knows what to move.
+    #[error("this lockbox has a different password; enter the vault password to move it over")]
+    VaultPasswordRequired { workspace_id: String },
+
     #[error("the file is too large")]
     FileTooLarge,
 
@@ -223,6 +233,7 @@ impl Error {
             Error::VaultDeletedRemotely => "vaultDeletedRemotely",
             Error::PasswordChangedRemotely => "passwordChangedRemotely",
             Error::VaultUnderRetiredPassword => "vaultUnderRetiredPassword",
+            Error::VaultPasswordRequired { .. } => "vaultPasswordRequired",
             Error::FileTooLarge => "fileTooLarge",
             Error::FileNotText => "fileNotText",
             Error::VaultFull => "vaultFull",
@@ -244,11 +255,13 @@ impl Serialize for Error {
     {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
-        struct ErrorDto {
+        struct ErrorDto<'a> {
             kind: &'static str,
             message: String,
             #[serde(skip_serializing_if = "Option::is_none")]
             retry_after_secs: Option<u64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            workspace_id: Option<&'a str>,
         }
 
         ErrorDto {
@@ -256,6 +269,10 @@ impl Serialize for Error {
             message: self.to_string(),
             retry_after_secs: match self {
                 Error::TooManyAttempts { retry_after_secs } => Some(*retry_after_secs),
+                _ => None,
+            },
+            workspace_id: match self {
+                Error::VaultPasswordRequired { workspace_id } => Some(workspace_id),
                 _ => None,
             },
         }
@@ -289,6 +306,24 @@ mod tests {
             json["message"],
             "the account holds this lockbox under a password this device has already replaced"
         );
+    }
+
+    #[test]
+    fn a_lockbox_off_the_vault_password_names_itself() {
+        let json = serde_json::to_value(Error::VaultPasswordRequired {
+            workspace_id: "a1b2".into(),
+        })
+        .unwrap();
+        assert_eq!(json["kind"], "vaultPasswordRequired");
+        assert_eq!(
+            json["message"],
+            "this lockbox has a different password; enter the vault password to move it over"
+        );
+        assert_eq!(json["workspaceId"], "a1b2");
+        assert!(serde_json::to_value(Error::Locked)
+            .unwrap()
+            .get("workspaceId")
+            .is_none());
     }
 
     #[test]

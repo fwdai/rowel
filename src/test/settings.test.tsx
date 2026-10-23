@@ -1443,6 +1443,98 @@ describe('Settings › workspaces › vaults in the account', () => {
     expect(screen.getByTestId('workspace-remote-submit')).toHaveTextContent('Restore')
     expect(useUi.getState().settingsLocked).toBe(false)
   })
+
+  // A pack sealed under a password other than the vault password is installed
+  // closed. The form asks for the vault password, moves the lockbox onto it,
+  // and opens it with the switch every restore ends in.
+  describe('a vault on a password of its own', () => {
+    const offPassword = () =>
+      mockCommandOnce('workspace_restore_from_account', () =>
+        Promise.reject({
+          kind: 'vaultPasswordRequired',
+          message: 'this lockbox has a different password; enter the vault password to move it over',
+          workspaceId: 'w9'
+        })
+      )
+
+    const restoreOffPassword = async () => {
+      offPassword()
+      await open()
+      await act(async () => setRemoteVaults([VAULT]))
+      await go('workspaces')
+      await userEvent.type(screen.getByTestId('workspace-remote-password'), 'its-own-pass')
+      await userEvent.click(screen.getByTestId('workspace-remote-submit'))
+      return screen.findByTestId('workspace-remote-vault-password')
+    }
+
+    it('asks for the vault password, then moves the lockbox and opens it', async () => {
+      mockCommandOnce('workspace_select', () => ({ entries: [], syncConfigured: true }))
+      const field = await restoreOffPassword()
+
+      expect(screen.getByTestId('workspace-remote-vault-password-why')).toHaveTextContent(
+        'Rowel opens every lockbox with your vault password. Enter it to move this lockbox over.'
+      )
+      expect(screen.getByLabelText('Vault password')).toBe(field)
+      // The password that opened it is spent on the move, not retyped.
+      expect(screen.getByTestId('workspace-remote-password')).toBeDisabled()
+
+      await userEvent.type(field, 'the-vault-pass')
+      await act(async () => {
+        await userEvent.click(screen.getByTestId('workspace-remote-submit'))
+      })
+
+      expect(calls('workspace_adopt_vault_password')).toEqual([
+        { workspaceId: 'w9', lockboxPassword: 'its-own-pass', vaultPassword: 'the-vault-pass' }
+      ])
+      expect(calls('workspace_select')).toEqual([{ id: 'w9' }])
+      await waitFor(() => expect(useApp.getState().flow).toBe('main'))
+      expect(calls('workspace_restore_from_account')).toHaveLength(1)
+    })
+
+    it('keeps asking when the vault password is wrong', async () => {
+      mockCommandOnce('workspace_adopt_vault_password', () =>
+        Promise.reject({ kind: 'invalidPassword', message: 'invalid master password' })
+      )
+      const field = await restoreOffPassword()
+
+      await userEvent.type(field, 'not-it{Enter}')
+
+      expect(await screen.findByText('Incorrect Master Password')).toBeInTheDocument()
+      expect(screen.getByTestId('workspace-remote-vault-password')).toBeInTheDocument()
+      expect(calls('workspace_select')).toHaveLength(0)
+      expect(useUi.getState().settingsLocked).toBe(false)
+    })
+
+    // The move re-keys the lockbox for good; a switch that fails after it must
+    // not send the spent lockbox password back to the move.
+    it('retries only the switch when it fails after the move', async () => {
+      mockCommandOnce('workspace_select', () =>
+        Promise.reject({ kind: 'syncBusy', message: 'a sync is already running' })
+      )
+      mockCommandOnce('workspace_select', () => ({ entries: [], syncConfigured: true }))
+      const field = await restoreOffPassword()
+
+      await userEvent.type(field, 'the-vault-pass')
+      await act(async () => {
+        await userEvent.click(screen.getByTestId('workspace-remote-submit'))
+      })
+
+      expect(
+        await screen.findByText('Wait for the sync in progress to finish')
+      ).toBeInTheDocument()
+      // The lockbox password is spent: it no longer opens anything.
+      expect(screen.getByTestId('workspace-remote-password')).toHaveValue('')
+      expect(screen.getByTestId('workspace-remote-submit')).toHaveTextContent('Try again')
+
+      await act(async () => {
+        await userEvent.click(screen.getByTestId('workspace-remote-submit'))
+      })
+
+      await waitFor(() => expect(useApp.getState().flow).toBe('main'))
+      expect(calls('workspace_adopt_vault_password')).toHaveLength(1)
+      expect(calls('workspace_select')).toEqual([{ id: 'w9' }, { id: 'w9' }])
+    })
+  })
 })
 
 describe('Settings › workspaces › list', () => {
@@ -2162,6 +2254,34 @@ describe('Settings › workspaces › restore from an account', () => {
     expect(calls('workspace_restore_from_pending')).toEqual([
       { name: '', password: 'other-device-pass', fileId: VAULT.id }
     ])
+  })
+
+  // The same form, after a sign-in: a pack on a password of its own asks for
+  // the vault password, and the restore ends in the switch to the moved lockbox.
+  it('moves a vault on a password of its own onto the vault password', async () => {
+    mockCommandOnce('workspace_restore_from_pending', () =>
+      Promise.reject({
+        kind: 'vaultPasswordRequired',
+        message: 'this lockbox has a different password; enter the vault password to move it over',
+        workspaceId: 'w9'
+      })
+    )
+    mockCommandOnce('workspace_select', () => ({ entries: [], syncConfigured: true }))
+    await connect([VAULT])
+
+    await userEvent.type(screen.getByTestId('workspace-restore-password'), 'its-own-pass{Enter}')
+    const field = await screen.findByTestId('workspace-restore-vault-password')
+    // The form is back in the user's hands, waiting on the second password.
+    expect(useApp.getState().setupAccount.status).toBe('found')
+    await userEvent.type(field, 'the-vault-pass')
+    await act(async () => {
+      await userEvent.click(screen.getByTestId('workspace-restore-submit'))
+    })
+
+    expect(calls('workspace_adopt_vault_password')).toEqual([
+      { workspaceId: 'w9', lockboxPassword: 'its-own-pass', vaultPassword: 'the-vault-pass' }
+    ])
+    await waitFor(() => expect(useApp.getState().flow).toBe('main'))
   })
 
   // One vault in the account is not a choice: it is shown, not offered.

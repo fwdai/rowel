@@ -577,11 +577,21 @@ mod lock_scope {
         let engine = include_str!("sync/engine.rs");
         // The trailing brace tells the implementation apart from the trait
         // method it implements, which is a declaration and has no body.
+        // The first such body is `SessionVault`'s: `WorkspaceVault`'s, further
+        // down, has no session to borrow.
         let pack = body_of(
             engine,
             "fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>> {",
         );
-        at(&pack, "pack_store");
+        at(&pack, "self.keys.pack(");
+        // The whole-database copy is what `PackKeys::pack` is.
+        at(
+            &body_of(
+                engine,
+                "fn pack(&self, source: &SqliteStore) -> Result<Vec<u8>>",
+            ),
+            "pack_store",
+        );
         assert!(
             !pack.contains("with_store") && !pack.contains("with_session"),
             "the pack copies the whole database; it must not run inside the \

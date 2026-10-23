@@ -11,6 +11,13 @@
 //! workspaces here, beside the open one and without switching to it. A pack it
 //! does not open is left where it was, for the Workspaces section to offer.
 //!
+//! The password is always the vault password: every caller has either opened
+//! the primary with it or proved it against the app key
+//! (`commands::vault_password`). So what joins here is sealed under the app
+//! key as it arrives, and a pack under any other password is exactly the one
+//! left on offer — whose restore then asks for the vault password to move it
+//! over.
+//!
 //! The password outlives the command that had it by exactly the length of this
 //! task: it is moved into a blocking-pool thread as a `Zeroizing<String>`,
 //! spent on each candidate's Argon2id derive, and scrubbed when the thread

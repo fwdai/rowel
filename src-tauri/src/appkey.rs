@@ -309,6 +309,41 @@ fn adopt_in(state: &AppState, root: &Path, id: &str, material: &[u8]) {
     }
 }
 
+/// Workspace `id` has just been moved onto the vault password, which the caller
+/// proved as `app_key`: its key is sealed under that app key, and joins the
+/// ring if a session is live.
+///
+/// Unlike [`adopt`], the sidecar is written with no live session too: the move
+/// can be made from a lockbox's lock screen, where the ring is empty, and the
+/// app key it is sealed under was proved by the vault password a moment ago —
+/// the sidecar adds nothing an attacker without that key could open. Not over a
+/// *different* app key the ring holds, by the rule every writer here keeps.
+pub fn seal_under(app: &AppHandle, id: &str, app_key: &[u8], material: &[u8]) {
+    if let Ok(root) = storage::root_dir(app) {
+        seal_under_in(&app.state::<AppState>(), &root, id, app_key, material);
+    }
+}
+
+fn seal_under_in(state: &AppState, root: &Path, id: &str, app_key: &[u8], material: &[u8]) {
+    if id == PRIMARY_ID {
+        return;
+    }
+    let _sidecars = sidecars(state);
+    {
+        let session = state.session.lock().unwrap();
+        let mut ring = state.keyring.lock().unwrap();
+        if !ring.accepts_app_key(app_key) {
+            log::info!("the app key changed while lockbox {id} was being moved; it stands down");
+            return;
+        }
+        if session.is_live() {
+            ring.insert(PRIMARY_ID, app_key);
+            ring.insert(id, material);
+        }
+    }
+    seal(root, id, app_key, material);
+}
+
 /// Workspace `id` was deleted: its key leaves the ring. When another workspace
 /// was promoted into the primary's place, its key is the app key now: the
 /// sealed copy of it that came into the root with its other files goes (the
@@ -601,6 +636,39 @@ mod tests {
             state.keyring.lock().unwrap().is_empty(),
             "the lock had the last word"
         );
+    }
+
+    // A lockbox moved onto the vault password from its lock screen: no session,
+    // so nothing goes into the ring, but the sidecar is written under the app
+    // key the vault password proved.
+    #[test]
+    fn a_moved_lockbox_is_sealed_with_no_session_and_joins_a_live_ring() {
+        let root = tmp_root();
+        let state = live_state(&root);
+        state.session.lock().unwrap().clear();
+
+        seal_under_in(&state, &root, "x", OLD_KEY, X_KEY);
+        assert_eq!(sealed_under(&root, "x", OLD_KEY), X_KEY);
+        assert!(state.keyring.lock().unwrap().is_empty());
+
+        let root = tmp_root();
+        let live = live_state(&root);
+        seal_under_in(&live, &root, "y", OLD_KEY, Y_KEY);
+        assert_eq!(sealed_under(&root, "y", OLD_KEY), Y_KEY);
+        let ring = live.keyring.lock().unwrap();
+        assert_eq!(&**ring.get("y").unwrap(), Y_KEY);
+        assert_eq!(&**ring.app_key().unwrap(), OLD_KEY);
+    }
+
+    #[test]
+    fn a_move_proved_under_a_replaced_app_key_writes_nothing() {
+        let root = tmp_root();
+        let state = live_state(&root);
+        state.keyring.lock().unwrap().insert(PRIMARY_ID, NEW_KEY);
+
+        seal_under_in(&state, &root, "x", OLD_KEY, X_KEY);
+        assert!(!is_wrapped(&root, "x"));
+        assert!(!state.keyring.lock().unwrap().has("x"));
     }
 
     #[test]

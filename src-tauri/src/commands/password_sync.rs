@@ -285,7 +285,9 @@ pub(crate) fn key_for_pack(
 /// replacing it once reseals every other sidecar). A lockbox the ring does
 /// not hold is on a password of its own as far as this device knows; it is
 /// left to prompt when it is next opened. One whose pack the password does
-/// not open, or that failed, is left alone and its id returned.
+/// not open, or that failed, is left alone and its id returned. Each one moved
+/// is synced straight after, under the adopt's run claim
+/// (`sync::run_workspace`), best effort.
 async fn adopt_beside(
     app: &AppHandle,
     state: &AppState,
@@ -309,9 +311,17 @@ async fn adopt_beside(
             continue;
         };
         let dir = crate::workspace::dir_of(&root, &id);
-        let (app_handle, workspace_id, password) = (app.clone(), id.clone(), password.clone());
+        let (app_handle, adopting, workspace_id, password) =
+            (app.clone(), dir.clone(), id.clone(), password.clone());
         let adopted = blocking(move || {
-            adopt_one(&app_handle, &dir, &workspace_id, vault_id, held, &password)
+            adopt_one(
+                &app_handle,
+                &adopting,
+                &workspace_id,
+                vault_id,
+                held,
+                &password,
+            )
         })
         .await;
         match adopted {
@@ -319,10 +329,13 @@ async fn adopt_beside(
             Ok(Some(material)) => {
                 if id == PRIMARY_ID {
                     appkey::replace_app_key(app, &material);
-                    super::auth::restore_enrollment(app, material).await;
+                    super::auth::restore_enrollment(app, material.clone()).await;
                 } else {
                     appkey::adopt(app, &id, &material);
                 }
+                // Its edits made under the old password go up now, under the
+                // new one, rather than at its next open.
+                super::sync::sync_rekeyed(app, &dir, &id, &material).await;
             }
             Err(Error::InvalidPassword) => {
                 log::info!("lockbox {id} is on a password of its own in the account");

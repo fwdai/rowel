@@ -83,6 +83,8 @@ impl Device {
         let key = derive(password, params_json);
         let store =
             SqliteStore::open(&dir.path().join(storage::DB_FILE), &*key.sqlcipher_key()).unwrap();
+        // The id its pack is addressed by, as a first run settles it.
+        identity::adopt_vault_id(&store, vault).unwrap();
         Self {
             dir,
             id,
@@ -102,6 +104,8 @@ impl Device {
             &bytes,
             password,
         )?;
+        // As every restore stamps it, off the pack's file name.
+        identity::adopt_vault_id(&store, vault).unwrap();
         Ok(Self {
             dir,
             id,
@@ -399,6 +403,95 @@ fn a_pack_under_an_epoch_this_device_cannot_open_waits_for_the_replace() {
         stale.sync(&account),
         Err(Error::PasswordChangedRemotely)
     ));
+}
+
+// A lockbox that is not open, synced as a change or an adopt syncs it
+// (`sync::run_workspace`): a `WorkspaceVault` over its directory, and the run's
+// account half over the shared `FakeStore`.
+fn sync_closed(dir: &Path, id: &str, key: VaultKey, account: &FakeStore) -> Result<SyncOutcome> {
+    let marker_key = key.delete_marker_key();
+    let local = engine::WorkspaceVault::open(dir, id, key, Provider::GoogleDrive)?;
+    let (ran, _) = crate::sync::run_closed(account, &local, marker_key, NOW);
+    ran.map(|(outcome, _)| outcome)
+}
+
+// The password change touches every lockbox, so it syncs every lockbox: after
+// A's change both packs in the account are on the new password without A ever
+// opening its second lockbox, and B answers one prompt for both — its own edit
+// in the second one, made before it adopted, reaching A.
+#[test]
+fn a_password_change_reseals_every_lockbox_and_one_adopt_follows_it() {
+    let account = FakeStore::default();
+
+    // Two lockboxes on one password, each with its own salt, on both devices.
+    let (one0, two0) = (params(7, 0), params(8, 0));
+    let mut a1 = Device::create("a1", "v1", OLD, &one0);
+    a1.write("1", "in lockbox one");
+    a1.sync(&account).unwrap();
+    let mut a2 = Device::create("a2", "v2", OLD, &two0);
+    a2.write("x", "in lockbox two");
+    a2.sync(&account).unwrap();
+    let mut b1 = Device::restore("b1", "v1", &account, OLD).unwrap();
+    let mut b2 = Device::restore("b2", "v2", &account, OLD).unwrap();
+
+    // B edits its second lockbox, and has not synced it when A changes.
+    b2.write("y", "made on b in lockbox two");
+
+    // A's change: the open lockbox through the saga, the one beside it on its
+    // own files (as `rekey_one` does), closed from here on.
+    let (one1, two1) = (params(9, 1), params(10, 1));
+    a1.rekey(derive(NEW, &one1), &one1);
+    a2.store = None;
+    auth::rekey_workspace(a2.path(), a2.id, copy(&a2.key), derive(NEW, &two1), &two1).unwrap();
+    a2.key = derive(NEW, &two1);
+
+    // The runs after it: the open lockbox's own, and the one beside it, which
+    // is synced without being opened as the session's.
+    assert!(a1.sync(&account).unwrap().rekeyed_remote);
+    let outcome = sync_closed(a2.path(), a2.id, copy(&a2.key), &account).unwrap();
+    assert!(outcome.pushed && outcome.rekeyed_remote);
+    assert!(a2.store.is_none(), "lockbox two was never opened on A");
+    assert_eq!(header(&account, "v1"), one1);
+    assert_eq!(header(&account, "v2"), two1);
+
+    // B: one prompt, for the open lockbox, and the one beside it follows.
+    assert!(matches!(
+        b1.sync(&account),
+        Err(Error::PasswordChangedRemotely)
+    ));
+    let (h1, k1) = b1.key_for_account(&account, NEW).unwrap().unwrap();
+    b1.rekey(k1, &h1);
+    let (h2, k2) = b2.key_for_account(&account, NEW).unwrap().unwrap();
+    b2.store = None;
+    auth::rekey_workspace(b2.path(), b2.id, copy(&b2.key), copy(&k2), &h2).unwrap();
+    b2.key = k2;
+    assert_eq!(b1.sidecar(), one1);
+    assert_eq!(b2.sidecar(), two1);
+
+    // The adopt's runs: B's edit in lockbox two goes up with its beside run.
+    b1.sync(&account).unwrap();
+    assert!(
+        sync_closed(b2.path(), b2.id, copy(&b2.key), &account)
+            .unwrap()
+            .pushed
+    );
+
+    // ...and A's next run of lockbox two, still never opened as a session, has
+    // it. Opened afterwards to look, on the new password.
+    assert!(
+        sync_closed(a2.path(), a2.id, copy(&a2.key), &account)
+            .unwrap()
+            .merged
+            >= 1
+    );
+    a2.store = Some(
+        SqliteStore::open(&a2.path().join(storage::DB_FILE), &*a2.key.sqlcipher_key()).unwrap(),
+    );
+    assert_eq!(a2.title("y").as_deref(), Some("made on b in lockbox two"));
+    b2.store = Some(
+        SqliteStore::open(&b2.path().join(storage::DB_FILE), &*b2.key.sqlcipher_key()).unwrap(),
+    );
+    assert_eq!(a2.digest(), b2.digest());
 }
 
 // The lockboxes beside the one adopted: one on the same password follows (its

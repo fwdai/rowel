@@ -57,16 +57,15 @@ pub async fn unlock(
         return Err(refusal);
     }
 
-    // Two more copies of the password, for the things that may outlive the
-    // unlock, each only once it has succeeded. One tries it against the
-    // account's other vaults (`commands::autojoin`) — only for a vault that
-    // syncs, since a local vault has no account to look in. The other, for a
-    // workspace that is not the primary, tries it against the primary: the
-    // device has one master password, so this is usually it, and proving that
-    // is what opens the app at its own level (`adopt_primary_with`).
+    // Two more copies of the password, each used only once the unlock has
+    // succeeded. One tries it against the account's other vaults
+    // (`commands::autojoin`) — only for a vault that syncs, since a local vault
+    // has no account to look in. The other, for a workspace that is not the
+    // primary, proves it is the vault password: the one password the app keeps
+    // (`commands::vault_password`), and what opens the app at its own level.
     let join = storage::sync_configured(&app).then(|| password.clone());
     let active = crate::workspace::active_id(&app);
-    let master = (active != PRIMARY_ID).then(|| password.clone());
+    let vault = (active != PRIMARY_ID).then(|| password.clone());
 
     match unlock_off_thread(&app, password).await {
         Ok((key, store, entries)) => {
@@ -75,6 +74,20 @@ pub async fn unlock(
                     log::warn!("failed to reset lockout sidecar: {e}");
                 }
             }
+            // A lockbox beside the primary opens only with the vault password.
+            // One that opened with a password of its own stays closed — its
+            // store goes with this frame — until the user moves it over.
+            let app_key = match vault {
+                Some(password) => {
+                    let root = storage::root_dir(&app)?;
+                    let proved = super::vault_password::require_vault_password(
+                        &app, &root, &state, &active, password,
+                    )
+                    .await;
+                    Some(proved?)
+                }
+                None => None,
+            };
             let sync_configured = storage::sync_configured(&app);
             let material = Zeroizing::new(key.biometric_material().to_vec());
             state
@@ -93,16 +106,13 @@ pub async fn unlock(
             crate::credential_identities::publish(&app);
             seed_vault_name(&app, &state);
             // The app-level unlock: the primary's key opens every workspace
-            // sealed under it; another workspace's key joins the ring, and is
-            // sealed under the app key once that is known — now, if the ring
-            // already holds it, or once the same password has opened the
-            // primary too.
-            appkey::adopt(&app, &active, &material);
-            if let Some(password) = master {
-                if !state.keyring.lock().unwrap().has(PRIMARY_ID) {
-                    adopt_primary_with(&app, password);
-                }
+            // sealed under it; another workspace's key — proved above to be
+            // the vault password's — joins the ring and is sealed under the
+            // app key that proof produced.
+            if let Some(app_key) = &app_key {
+                appkey::open_all(&app, app_key);
             }
+            appkey::adopt(&app, &active, &material);
             if let Some(password) = join {
                 super::autojoin::with_password(&app, password);
             }
@@ -176,30 +186,6 @@ pub(crate) async fn open_off_thread(
         Ok((key, store, entries))
     })
     .await
-}
-
-// A workspace other than the primary was just opened with `password`. If the
-// same password opens the primary — one master password for the device is the
-// rule, and this is where a workspace restored under it before the rule existed
-// catches up — the primary's key is the app key, and the ring fills from it:
-// every workspace sealed under it, and the one just opened sealed under it
-// now. A password that does not open the primary is a workspace of its own,
-// and its sidecar waits for an unlock that has the app key.
-//
-// Detached: an Argon2id run and a SQLCipher open, on the primary's own files
-// rather than the active paths, and nothing the unlock has to wait for.
-fn adopt_primary_with(app: &AppHandle, password: Zeroizing<String>) {
-    let app = app.clone();
-    super::detached(move || {
-        let Ok(root) = storage::root_dir(&app) else {
-            return;
-        };
-        match super::workspace::verify_password_in(&root, &password) {
-            Ok(key) => appkey::open_all(&app, key.biometric_material()),
-            Err(Error::InvalidPassword) => {}
-            Err(e) => log::warn!("could not try the password against the primary: {e}"),
-        }
-    });
 }
 
 // Clear the in-memory key and close the store, and emit `vault:locked` with it
@@ -576,12 +562,21 @@ pub(super) async fn restore_enrollment(app: &AppHandle, material: Zeroizing<Vec<
 
 // Every workspace on this device but the open one, put on the new password.
 //
-// One master password per device is the rule the rest of the app already keeps
-// — a create proves the typed password against the app key, and an unlock
-// elsewhere tries it against the primary — so a change of that password has to
-// reach every workspace that shares it. A workspace that does *not* share it is
-// left exactly as it was: the password the user typed is not its password, and
-// this command is not a way to take one over.
+// One vault password is the rule the rest of the app keeps — a create proves
+// the typed password against the app key, and a lockbox opened or restored
+// with any other is held closed until it is moved onto it
+// (`commands::vault_password`) — so a change of that password has to reach
+// every workspace. One the password does not open should not exist any more;
+// it is logged as the error it is and left exactly as it was: the password the
+// user typed is not its password, and this command is not a way to take one
+// over.
+//
+// Each one re-keyed has its account copy re-sealed right after, under the run
+// claim the change holds (`sync::run_workspace`): the change is the one action
+// that touches every lockbox, so it is the one place to sync them all, and the
+// user's other devices then get one "password changed" prompt for all of them
+// rather than one per lockbox as each is next opened here. Best effort: a run
+// that fails is logged, and the lockbox's retired key covers its next run.
 //
 // One workspace at a time, each on the blocking pool: an Argon2id derive and a
 // whole-vault re-seal apiece, and nothing here goes faster in parallel on a
@@ -624,18 +619,21 @@ async fn rekey_beside(
         // own (`appkey`); the change on disk is the user's either way.
         let held = state.keyring.lock().unwrap().get(&id);
         let (current, new) = (current.clone(), new.clone());
-        let workspace_id = id.clone();
-        match blocking(move || rekey_one(&dir, &workspace_id, held, &current, &new)).await {
+        let (rekeyed, workspace_id) = (dir.clone(), id.clone());
+        match blocking(move || rekey_one(&rekeyed, &workspace_id, held, &current, &new)).await {
             Ok(material) => {
                 if id == PRIMARY_ID {
                     appkey::replace_app_key(app, &material);
-                    restore_enrollment(app, material).await;
+                    restore_enrollment(app, material.clone()).await;
                 } else {
                     appkey::adopt(app, &id, &material);
                 }
+                super::sync::sync_rekeyed(app, &dir, &id, &material).await;
             }
             Err(Error::InvalidPassword) => {
-                log::info!("workspace {id} has a password of its own and keeps it");
+                log::error!(
+                    "workspace {id} does not open with the vault password; it keeps its own"
+                );
                 unchanged.push(id);
             }
             Err(e) => {
@@ -665,8 +663,10 @@ async fn rekey_beside(
 // change the user makes.
 //
 // Blocking from end to end (a derive, a whole-vault re-seal, two file copies),
-// so it only ever runs on the blocking pool.
-fn rekey_one(
+// so it only ever runs on the blocking pool. Also how a lockbox is moved onto
+// the vault password (`commands::vault_password`), with `held` the key its own
+// password just proved.
+pub(super) fn rekey_one(
     dir: &Path,
     workspace_id: &str,
     held: Option<Zeroizing<Vec<u8>>>,

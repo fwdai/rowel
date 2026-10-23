@@ -283,6 +283,7 @@ pub fn run() {
             commands::workspace::workspace_rename,
             commands::workspace::workspace_set_color,
             commands::workspace::workspace_delete,
+            commands::vault_password::workspace_adopt_vault_password,
             // The browser extension host is desktop only, like its module.
             #[cfg(desktop)]
             commands::browser::browser_status,

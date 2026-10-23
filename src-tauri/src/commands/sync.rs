@@ -384,6 +384,43 @@ pub(super) fn wait_for_claim(state: &AppState) -> Option<RunClaim> {
     }
 }
 
+/// Re-seal the account copy of lockbox `id` — in `dir`, not the open one —
+/// under the key `material` it was just re-keyed to (`sync::run_workspace`).
+/// A lockbox that does not sync has nothing to do.
+///
+/// Best effort, after a re-key that is already on disk: a run that fails here
+/// (offline, the account unreachable) is logged and nothing else, since the
+/// re-key keeps the epoch it left in the lockbox's retired list and its next
+/// run merges and re-seals the account copy with it. The caller holds the run
+/// claim.
+pub(super) async fn sync_rekeyed(
+    app: &AppHandle,
+    dir: &std::path::Path,
+    id: &str,
+    material: &[u8],
+) {
+    if crate::storage::token_file_in(dir).is_none() {
+        return;
+    }
+    let key =
+        crate::crypto::VaultKey::from_material(zeroize::Zeroizing::new(material.to_vec()), true);
+    let (app, dir, id) = (app.clone(), dir.to_path_buf(), id.to_string());
+    let ran = super::blocking(move || {
+        let outcome = sync::run_workspace(&app, &dir, &id, key);
+        Ok((id, outcome))
+    })
+    .await;
+    match ran {
+        Ok((id, Ok(outcome))) => log::info!(
+            "lockbox {id} synced after its re-key (pushed: {}, re-sealed: {})",
+            outcome.pushed,
+            outcome.rekeyed_remote
+        ),
+        Ok((id, Err(e))) => log::warn!("lockbox {id} did not sync after its re-key: {e}"),
+        Err(e) => log::warn!("a lockbox did not sync after its re-key: {e}"),
+    }
+}
+
 /// Ask for a run after a local change, on a vault that can serve one.
 ///
 /// A locked or unconnected vault is a silent no-op rather than an error. This

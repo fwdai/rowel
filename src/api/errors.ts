@@ -38,6 +38,7 @@ export type BackendErrorKind =
   | 'vaultDeletedRemotely'
   | 'passwordChangedRemotely'
   | 'vaultUnderRetiredPassword'
+  | 'vaultPasswordRequired'
   | 'fileTooLarge'
   | 'fileNotText'
   | 'vaultFull'
@@ -51,6 +52,8 @@ export interface BackendError {
   message: string
   /** Only on `tooManyAttempts`: seconds until another attempt is accepted. */
   retryAfterSecs?: number
+  /** Only on `vaultPasswordRequired`: the lockbox to move onto the vault password. */
+  workspaceId?: string
 }
 
 export const isBackendError = (error: unknown): error is BackendError =>
@@ -153,6 +156,8 @@ export const describeError = (error: unknown): string => {
       return t(
         'The account holds this lockbox under a master password this device has already replaced, so syncing has stopped.'
       )
+    case 'vaultPasswordRequired':
+      return t('This lockbox has a different password. Enter the vault password to move it over.')
     case 'fileTooLarge':
       return t('This file is too large')
     case 'fileNotText':
@@ -163,6 +168,17 @@ export const describeError = (error: unknown): string => {
       return messageOf(error)
   }
 }
+
+/**
+ * The lockbox a rejection says opened with a password other than the vault
+ * password — and so is waiting to be moved onto it — or `null` for any other
+ * rejection.
+ */
+export const vaultPasswordRequiredFor = (error: unknown): string | null =>
+  errorKind(error) === 'vaultPasswordRequired' &&
+  typeof (error as BackendError).workspaceId === 'string'
+    ? ((error as BackendError).workspaceId as string)
+    : null
 
 export const isTooManyAttempts = (
   error: unknown

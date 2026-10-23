@@ -465,25 +465,49 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
    passphrase-derived key, so another device restores it with the passphrase
    exactly as before. A lockbox that has never been opened with its
    passphrase on a device has no sidecar there; its first switch lands on its
-   lock screen, and that unlock writes one. The same passphrase for every
-   lockbox is the rule (a create proves it against the app key), which is
-   what lets a non-primary unlock prove the passphrase against the primary in
-   the background and fill the ring from there. Every step that settles which
-   key the app key is and then reads or writes sidecars by it — a proof filling
-   the ring, a passphrase change replacing the key, a delete promoting a
-   lockbox — runs whole under one lock (`AppState::sidecars`), so a slower
-   proof of a retired key cannot reseal a sidecar under it, or remove a fresh
-   one as stale, behind a change that has already landed. A passphrase *change*
-   (`change_master_password`) keeps that rule true: after the open lockbox is
-   re-keyed, every other lockbox that shares the passphrase is re-keyed too —
-   each under a fresh salt of its own, through the same snapshot-guarded saga on
-   its own files, and with its Drive token re-sealed under its new key — so a
-   lockbox created before the change no longer restores on another device only
-   under the passphrase the user has just replaced. A lockbox on a passphrase
-   of its own is left untouched (its own passphrase is not the one that was
-   proved), and one whose re-key fails stays on the passphrase it had; both are
-   reported back so the UI can say the new passphrase does not open everything
-   on the device.
+   lock screen, and that unlock writes one.
+
+   **The rule: one vault passphrase opens every lockbox.** The vault passphrase
+   is the one the primary opens with, and no lockbox is sealed under the app
+   key on the strength of any other (`commands/vault_password.rs`). A create
+   proves the typed passphrase against the app key before it makes anything.
+   Every path that opens or installs another lockbox with a typed passphrase —
+   its lock screen, a restore from a signed-in account or from the account's
+   other vaults — first lets that lockbox prove the passphrase, then derives it
+   under the primary's descriptor and compares the result with the app key in
+   constant time (or, before the primary has been opened, asks the primary's
+   own database), under the primary's failed-attempt backoff: a restore can
+   bring in a pack sealed under any passphrase an attacker likes, so the
+   comparison must not be a free oracle on the vault passphrase. The vault
+   passphrase opens the lockbox and seals it under the app key. Any other
+   leaves it closed — a restore keeps it installed and recorded but unsealed —
+   and is answered with `VaultPasswordRequired`; the user is asked for the
+   vault passphrase, and `workspace_adopt_vault_password` proves both
+   passphrases (each under its own backoff), re-keys the lockbox under the
+   vault passphrase with a fresh salt and its next generation through the same
+   saga a change runs, re-seals its token file, and only then seals its key
+   under the app key. So a lockbox on a passphrase of its own cannot exist: it
+   is moved onto the vault passphrase the first time it is opened, behind a
+   vault-passphrase prompt. (Auto-join only ever tries a passphrase that has
+   just been proved to be the vault passphrase, so what it adds needs no
+   prompt.)
+
+   Every step that settles which key the app key is and then reads or writes
+   sidecars by it — a proof filling the ring, a passphrase change replacing
+   the key, a delete promoting a lockbox, a move onto the vault passphrase —
+   runs whole under one lock (`AppState::sidecars`), so a slower proof of a
+   retired key cannot reseal a sidecar under it, or remove a fresh one as
+   stale, behind a change that has already landed. A passphrase *change*
+   (`change_master_password`) keeps the rule true: after the open lockbox is
+   re-keyed, every other lockbox is re-keyed too — each under a fresh salt of
+   its own, through the same snapshot-guarded saga on its own files, and with
+   its Drive token re-sealed under its new key — so no lockbox stays
+   restorable on another device only under the passphrase the user has just
+   replaced. A lockbox the passphrase does not open should no longer exist, and
+   is logged as an error and left untouched (its own passphrase is not the one
+   that was proved); one whose re-key fails stays on the passphrase it had.
+   Both are reported back so the UI can say the new passphrase does not open
+   everything on the device.
 
 5. **A passphrase change reaches the other devices of a synced lockbox**
    (`docs/password-change-sync-design.md`). Every re-key moves the lockbox to a
@@ -504,7 +528,15 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
 
    The changing device syncs once before the change and starts a run after it;
    that run opens the account's pack with the retired key, merges it, and
-   pushes it under the new epoch even when nothing else differs. A pack under
+   pushes it under the new epoch even when nothing else differs. Every other
+   lockbox the change re-keyed is synced the same way straight after its
+   re-key, without being opened as the session (`sync::run_workspace`, under
+   the run claim the change holds), so the account holds every lockbox under
+   the new passphrase within the change and the other devices answer one
+   prompt for all of them. An adopt does the same for each lockbox it moves,
+   and a move onto the vault passphrase for the lockbox it moved. These runs
+   are best effort: one that fails leaves that lockbox's account copy to its
+   next run, which the retired key covers. A pack under
    a retired epoch — a slower device's push, or an old revision put back — is
    always *merged* and re-sealed, never installed, so it cannot move a device
    back onto the replaced passphrase. A pack whose header is neither current
@@ -824,8 +856,9 @@ The extension (`app.rowel.mobile.autofill`: Swift for the sheet, and the
 two things: the active lockbox's database in the shared container, and that
 keychain item. It opens nothing before the user passes Face ID or Touch ID —
 the item's access control demands it — and then opens the vault with the same
-app key the app's own biometric unlock uses, so a lockbox that opens only
-with its own password stays closed to it, and a device with biometric unlock
+app key the app's own biometric unlock uses, so a lockbox not yet sealed
+under that key (one never opened on this device, or still waiting to be moved
+onto the vault password) stays closed to it, and a device with biometric unlock
 turned off gives it nothing. It never creates a vault, and writes to one only
 to keep a passkey it registered; while a password change the app was
 interrupted in awaits its rollback — the recovery snapshot beside the database
