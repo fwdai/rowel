@@ -1,20 +1,9 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import globals from "globals";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import js from "@eslint/js";
-import { FlatCompat } from "@eslint/eslintrc";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const compat = new FlatCompat({
-    baseDirectory: __dirname,
-    recommendedConfig: js.configs.recommended,
-    allConfig: js.configs.all
-});
 
 export default defineConfig([globalIgnores(["**/*.min.js"]), {
-    extends: compat.extends("eslint:recommended"),
+    extends: [js.configs.recommended],
     languageOptions: {
         globals: {
             ...globals.browser,
@@ -195,6 +184,9 @@ export default defineConfig([globalIgnores(["**/*.min.js"]), {
             "varsIgnorePattern": "[A-Z_]+|tr|[$]",
         }],
         "no-use-before-define": "off",
+        // Joined eslint:recommended in ESLint 10; the hits are in files synced
+        // from KeePassXC-Browser, where a local fix would not survive a sync.
+        "no-useless-assignment": "off",
         "no-useless-escape": "off",
         "no-useless-return": "off",
         "no-var": "error",
