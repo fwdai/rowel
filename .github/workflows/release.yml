@@ -78,7 +78,9 @@ jobs:
             latestAssets: '*_x64-setup.exe=Rowel_x64-setup.exe'
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-latest'
@@ -96,13 +98,13 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
 
       # Frontend toolchain is bun (matches ci.yml and the bun-based
       # beforeBuildCommand in tauri.conf.json; the repo ships bun.lock).
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.3
 
@@ -126,7 +128,7 @@ jobs:
         run: command -v xcodegen || brew install xcodegen
 
       - name: Build, sign, notarize and upload to the draft release
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Updater artifact signing (minisign keypair; pubkey in tauri.conf.json).
@@ -287,7 +289,7 @@ jobs:
       # `gh attestation verify` (which looks an artifact up by digest) would
       # accept them either way.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             ${{ matrix.bundlePath }}/**/*.dmg
@@ -315,10 +317,12 @@ jobs:
       # --- CycloneDX SBOM (T-CI-4) ----------------------------------------
       # Generated once, on Linux, and attached to the release. The Rust SBOM is
       # authoritative (cargo-cyclonedx over the full Cargo.lock); the JS SBOM is
-      # best-effort and never fails the release.
+      # best-effort and never fails the release. Both tools are pinned to exact
+      # versions: they run after the installers are uploaded and attested, with
+      # this job's contents: write token in scope.
       - name: Install cargo-cyclonedx
         if: matrix.platform == 'ubuntu-latest'
-        run: cargo install cargo-cyclonedx --locked
+        run: cargo install cargo-cyclonedx --version 0.5.9 --locked
 
       - name: Generate CycloneDX SBOMs
         if: matrix.platform == 'ubuntu-latest'
@@ -326,7 +330,7 @@ jobs:
           mkdir -p sbom
           cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
           mv src-tauri/rowel.cdx.json sbom/rowel-rust.cdx.json
-          npx --yes @cyclonedx/cdxgen@11 -t npm -o sbom/rowel-js.cdx.json . \
+          npx --yes @cyclonedx/cdxgen@11.11.0 -t npm -o sbom/rowel-js.cdx.json . \
             || echo "JS SBOM generation skipped"
 
       - name: Attach SBOMs to the release
