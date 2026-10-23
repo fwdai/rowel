@@ -385,6 +385,11 @@ fn adopt_one(
     Ok(Some(material))
 }
 
+// The "two devices" acceptance test of the design, one layer below the
+// commands (they need an `AppHandle`).
+#[cfg(test)]
+mod two_devices;
+
 #[cfg(test)]
 mod tests {
     use super::*;

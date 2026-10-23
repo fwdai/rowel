@@ -773,6 +773,31 @@ pub(crate) mod fake {
             Ok(())
         }
     }
+
+    // One account seen by several devices at once: each run borrows it.
+    impl VaultStore for &FakeStore {
+        fn provider(&self) -> Provider {
+            (**self).provider()
+        }
+        async fn list_vaults(&self) -> Result<Vec<RemoteEntry>> {
+            (**self).list_vaults().await
+        }
+        async fn stat(&self, name: &str) -> Result<Option<RemoteEntry>> {
+            (**self).stat(name).await
+        }
+        async fn read(&self, handle: &str, max_bytes: usize) -> Result<Vec<u8>> {
+            (**self).read(handle, max_bytes).await
+        }
+        async fn create(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
+            (**self).create(name, bytes).await
+        }
+        async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>> {
+            (**self).update(entry, bytes).await
+        }
+        async fn delete(&self, handle: &str) -> Result<()> {
+            (**self).delete(handle).await
+        }
+    }
 }
 
 #[cfg(test)]
