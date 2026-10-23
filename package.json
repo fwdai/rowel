@@ -1,6 +1,6 @@
 {
   "name": "rowel",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Local-first secret manager for passwords, passkeys, cards, IDs, SSH keys, API keys and .env files",
   "type": "module",
   "repository": "https://github.com/fwdai/rowel.git",
