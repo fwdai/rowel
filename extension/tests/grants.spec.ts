@@ -1,14 +1,23 @@
 // Rowel: the grant map and the fill handoff in background/grants.js, as pure
-// functions over a fake storage area, and the fields get-totp carries. The
-// request side (sendGetLogins, reportExposure) needs the native host and is
-// not covered here.
+// functions over a fake storage area, the fields get-totp carries, and the
+// host's signals (fill-grant, grant-ended) against fake keepassClient, tabs
+// and cookies globals. The request side (sendGetLogins, reportExposure) needs
+// the native host and is not covered here.
 import { test, expect } from '@playwright/test';
 import { grants } from '../rowel/background/grants.js';
 
-// grants.isOn() reads the background's settings object, a global there.
+// grants.js reads the background's globals; the tests install fakes for them.
 declare global {
-    // eslint-disable-next-line no-var
-    var page: { settings?: { agentMode?: boolean } } | undefined;
+    /* eslint-disable no-var */
+    var page: { settings?: { agentMode?: boolean }; getBaseDomainFromUrl?; clearLogins? } | undefined;
+    var keepass: { isConnected: boolean; testAssociation } | undefined;
+    var keepassClient: { getNonce; sendMessage } | undefined;
+    var kpxcEvent: { onSaveSettings } | undefined;
+    var browser: { tabs; cookies; storage } | undefined;
+    var showNotification: ((text: string) => void) | undefined;
+    var tr: ((key: string) => string) | undefined;
+    var logError: ((text: string) => void) | undefined;
+    /* eslint-enable no-var */
 }
 
 // browser.storage.session with the shapes the WebExtension API returns
@@ -33,17 +42,105 @@ const fakeArea = () => {
 let area;
 let now;
 
+// What the fakes record and what they answer
+let signals: object[];
+let sent: { action: string; messageData: object }[];
+let tabList: { id: number; url: string; active: boolean }[];
+let tabMessages: { tabId: number; message: object }[];
+let clearedTabs: number[];
+let cookieJar: object[];
+let removedCookies: object[];
+let savedAgentMode: boolean[];
+let notifications: string[];
+
 test.beforeEach(() => {
     area = fakeArea();
     now = 1_700_000_000_000;
     grants.area = () => area;
     grants.now = () => now;
-    globalThis.page = { settings: { agentMode: true } };
+
+    signals = [];
+    sent = [];
+    tabList = [];
+    tabMessages = [];
+    clearedTabs = [];
+    cookieJar = [];
+    removedCookies = [];
+    savedAgentMode = [];
+    notifications = [];
+
+    globalThis.page = {
+        settings: { agentMode: true },
+        // The registrable domain, as upstream's public-suffix probe would find it
+        async getBaseDomainFromUrl(hostname) {
+            return hostname.split('.').slice(-2).join('.');
+        },
+        async clearLogins(tabId) {
+            clearedTabs.push(tabId);
+        }
+    };
+    globalThis.keepass = {
+        isConnected: true,
+        async testAssociation() {
+            return true;
+        }
+    };
+    globalThis.keepassClient = {
+        getNonce: () => 'nonce',
+        async sendMessage(action, _tab, messageData) {
+            sent.push({ action, messageData });
+            return { signals };
+        }
+    };
+    globalThis.kpxcEvent = {
+        // save_settings: the settings object is written whole and reloaded
+        async onSaveSettings(_tab, settings) {
+            savedAgentMode.push(settings.agentMode);
+            globalThis.page.settings = settings;
+        }
+    };
+    globalThis.browser = {
+        tabs: {
+            async query() {
+                return tabList;
+            },
+            async sendMessage(tabId, message) {
+                tabMessages.push({ tabId, message });
+            }
+        },
+        cookies: {
+            async getAll({ domain }) {
+                return cookieJar.filter(c => c.domain.replace(/^\./, '').endsWith(domain));
+            },
+            async remove(details) {
+                removedCookies.push(details);
+            }
+        },
+        storage: { session: area }
+    };
+    globalThis.showNotification = text => notifications.push(text);
+    globalThis.tr = key => key;
+    globalThis.logError = text => {
+        throw new Error(text);
+    };
 });
 
 test.afterEach(() => {
-    delete globalThis.page;
+    for (const name of [ 'page', 'keepass', 'keepassClient', 'kpxcEvent', 'browser', 'showNotification', 'tr', 'logError' ]) {
+        delete globalThis[name];
+    }
 });
+
+const fillGrant = (grantId, origin, expiresAtMs) => ({
+    signal: 'fill-grant',
+    grantId,
+    origin,
+    item: { id: 'i1', title: 'Example', username: 'me' },
+    autoSubmit: false,
+    expiresAtMs
+});
+
+const grantEnded = (grantId, origins) => ({ signal: 'grant-ended', grantId, origins });
 
 // get-totp in agent mode always says so, and carries the fill's grant when the
 // tab's origin holds one — never the bare request the host would serve to a
@@ -77,7 +174,7 @@ test('totpFields keys the grant by the requesting frame, not the tab', async () 
 });
 
 test('totpFields adds nothing with agent mode off', async () => {
-    globalThis.page = { settings: { agentMode: false } };
+    globalThis.page.settings = { agentMode: false };
     await grants.rememberGrant('https://example.com', 'g1');
     expect(await grants.totpFields({ url: 'https://example.com/2fa' })).toEqual({});
 });
@@ -111,6 +208,16 @@ test('a grant expires 15 minutes after it was received', async () => {
     now += 1;
     expect(await grants.grantFor('https://example.com')).toBeUndefined();
     expect(area.store.rowelGrants).toEqual({});
+});
+
+test('a grant given an expiry of its own keeps it', async () => {
+    await grants.rememberGrant('https://example.com', 'g1', now + 1000);
+
+    now += 999;
+    expect(await grants.grantFor('https://example.com')).toBe('g1');
+
+    now += 1;
+    expect(await grants.grantFor('https://example.com')).toBeUndefined();
 });
 
 test('nothing is remembered without an origin or a grant id', async () => {
@@ -167,4 +274,182 @@ test('setFilled ignores calls without a tab or a record', async () => {
     await grants.setFilled({ id: 7 }, []);
     expect(area.store.rowelFilled).toBeUndefined();
     expect(await grants.takeFilled(undefined)).toBeUndefined();
+});
+
+//--------------------------------------------------------------------------
+// Signals
+//--------------------------------------------------------------------------
+
+// The wake-up is answered with one sealed get-signals; the fill-grant it
+// carries is remembered for its origin with the host's expiry, marked
+// agent-driven, and exactly one tab at that origin is woken — the active one.
+test('a fill-grant remembers the grant with the host\'s expiry and wakes the tab at its origin', async () => {
+    tabList = [
+        { id: 1, url: 'https://other.example/', active: false },
+        { id: 2, url: 'https://github.com/login', active: false },
+        { id: 3, url: 'https://github.com/settings', active: true },
+        { id: 4, url: 'https://evil.github.com.example/', active: true }
+    ];
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
+
+    await grants.onSignal();
+
+    expect(sent).toEqual([ { action: 'get-signals', messageData: { action: 'get-signals' } } ]);
+    expect(area.store.rowelGrants).toEqual({ 'https://github.com': { grantId: 'g1', expiresAt: now + 5000 } });
+    expect(area.store.rowelAgentGrants).toEqual({ 'https://github.com': 'g1' });
+    expect(clearedTabs).toEqual([ 3 ]);
+    expect(tabMessages).toEqual([ { tabId: 3, message: { action: 'redetect_fields' } } ]);
+
+    now += 5000;
+    expect(await grants.grantFor('https://github.com')).toBeUndefined();
+});
+
+test('a fill-grant without a tab at its origin only remembers the grant', async () => {
+    tabList = [ { id: 1, url: 'https://other.example/', active: true } ];
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
+
+    await grants.onSignal();
+
+    expect(await grants.grantFor('https://github.com')).toBe('g1');
+    expect(clearedTabs).toEqual([]);
+    expect(tabMessages).toEqual([]);
+});
+
+test('with no active tab at the origin the first one is woken', async () => {
+    tabList = [
+        { id: 2, url: 'https://github.com/login', active: false },
+        { id: 3, url: 'https://github.com/settings', active: false }
+    ];
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
+
+    await grants.onSignal();
+    expect(tabMessages.map(m => m.tabId)).toEqual([ 2 ]);
+});
+
+// Agent mode the person turned on is never touched: a grant arriving and
+// ending while it is on leaves it on and leaves no trace of having tried.
+test('agent mode the person turned on stays on through a grant\'s life', async () => {
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
+    await grants.onSignal();
+    expect(savedAgentMode).toEqual([]);
+    expect(area.store.rowelAgentModeByGrant).toBeUndefined();
+
+    signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
+    await grants.onSignal();
+    expect(savedAgentMode).toEqual([]);
+    expect(globalThis.page.settings.agentMode).toBe(true);
+});
+
+// Off before: the first agent grant turns it on, the last grant-ended turns
+// it back off. A second grant in between does not turn it on twice, and the
+// first grant ending does not turn it off while the second is live.
+test('agent mode flips on with the first agent grant and off with the last grant-ended', async () => {
+    globalThis.page.settings = { agentMode: false };
+
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
+    await grants.onSignal();
+    expect(savedAgentMode).toEqual([ true ]);
+    expect(globalThis.page.settings.agentMode).toBe(true);
+    expect(area.store.rowelAgentModeByGrant).toBe(true);
+
+    signals = [ fillGrant('g2', 'https://gitlab.com', now + 5000) ];
+    await grants.onSignal();
+    expect(savedAgentMode).toEqual([ true ]);
+
+    signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
+    await grants.onSignal();
+    expect(savedAgentMode).toEqual([ true ]);
+    expect(area.store.rowelAgentGrants).toEqual({ 'https://gitlab.com': 'g2' });
+
+    signals = [ grantEnded('g2', [ 'https://gitlab.com' ]) ];
+    await grants.onSignal();
+    expect(savedAgentMode).toEqual([ true, false ]);
+    expect(globalThis.page.settings.agentMode).toBe(false);
+    expect(area.store.rowelAgentModeByGrant).toBeUndefined();
+    expect(area.store.rowelAgentGrants).toEqual({});
+});
+
+// Session end: exactly the cookies getAll({ domain }) returned for the
+// origin's registrable domain are removed, by the URL rebuilt from each
+// cookie's own domain and path, in each cookie's own store.
+test('a grant-ended deletes the domain\'s cookies, forgets the grant and notifies', async () => {
+    await grants.rememberGrant('https://github.com', 'g1');
+    await grants.rememberGrant('https://other.example', 'g-other');
+    cookieJar = [
+        { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: '0' },
+        { name: 'pref', domain: 'gist.github.com', path: '/gists', secure: false, storeId: '1' },
+        { name: 'unrelated', domain: 'other.example', path: '/', secure: true, storeId: '0' }
+    ];
+    signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
+
+    await grants.onSignal();
+
+    expect(removedCookies).toEqual([
+        { url: 'https://github.com/', name: 'session', storeId: '0' },
+        { url: 'http://gist.github.com/gists', name: 'pref', storeId: '1' }
+    ]);
+    expect(await grants.grantFor('https://github.com')).toBeUndefined();
+    expect(await grants.grantFor('https://other.example')).toBe('g-other');
+    expect(notifications).toEqual([ 'agentModeGrantEndedNotification' ]);
+});
+
+test('a grant-ended for an older grant leaves a newer grant at the same origin', async () => {
+    globalThis.page.settings = { agentMode: false };
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000), fillGrant('g2', 'https://github.com', now + 9000) ];
+    await grants.onSignal();
+
+    signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
+    await grants.onSignal();
+
+    expect(await grants.grantFor('https://github.com')).toBe('g2');
+    expect(area.store.rowelAgentGrants).toEqual({ 'https://github.com': 'g2' });
+    expect(globalThis.page.settings.agentMode).toBe(true);
+});
+
+test('onSignal does nothing with an empty signals list', async () => {
+    await grants.onSignal();
+    expect(sent).toHaveLength(1);
+    expect(area.store).toEqual({});
+    expect(tabMessages).toEqual([]);
+    expect(savedAgentMode).toEqual([]);
+    expect(notifications).toEqual([]);
+});
+
+test('onSignal asks nothing of a host it is not connected to', async () => {
+    globalThis.keepass.isConnected = false;
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
+
+    await grants.onSignal();
+    expect(sent).toEqual([]);
+    expect(area.store).toEqual({});
+});
+
+test('onSignal asks nothing when the association test fails', async () => {
+    globalThis.keepass.testAssociation = async () => false;
+    await grants.onSignal();
+    expect(sent).toEqual([]);
+});
+
+// A lock ends every grant on the host, agent grants included, so the agent
+// mode one of them turned on goes off with them.
+test('clearAll clears the agent grants and turns off the agent mode a grant turned on', async () => {
+    globalThis.page.settings = { agentMode: false };
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
+    await grants.onSignal();
+    expect(area.store.rowelAgentGrants).toEqual({ 'https://github.com': 'g1' });
+    expect(area.store.rowelAgentModeByGrant).toBe(true);
+
+    await grants.clearAll();
+    expect(area.store).toEqual({});
+    expect(savedAgentMode).toEqual([ true, false ]);
+});
+
+test('clearAll leaves agent mode the person turned on alone', async () => {
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
+    await grants.onSignal();
+
+    await grants.clearAll();
+    expect(area.store).toEqual({});
+    expect(savedAgentMode).toEqual([]);
+    expect(globalThis.page.settings.agentMode).toBe(true);
 });

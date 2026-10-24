@@ -293,13 +293,15 @@ final class HostConnection: @unchecked Sendable {
         }
     }
 
-    /// What `browser::server::signal` sends, in the clear: `database-locked`
-    /// and `database-unlocked`. No reply carries either action.
+    /// What `browser::server::signal` sends, in the clear: `database-locked`,
+    /// `database-unlocked`, and `rowel-signal`, the content-free wake-up the
+    /// extension answers with a sealed `get-signals`. No reply carries any of
+    /// these actions.
     static func isSignal(_ body: Data) -> Bool {
         guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
             let action = object["action"] as? String
         else { return false }
-        return action == "database-locked" || action == "database-unlocked"
+        return action == "database-locked" || action == "database-unlocked" || action == "rowel-signal"
     }
 
     private func drop(_ reading: Int, because reason: String) {

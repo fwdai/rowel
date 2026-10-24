@@ -11,11 +11,21 @@
  * the next page load of its tab (the after-submit exposure check and
  * clear-on-failure, content/agent-mode.js).
  *
+ * It also takes the host's signals (spec/04-protocol.md "Signals to the
+ * extension"): a grant an agent asked for is pushed as a clear `rowel-signal`
+ * with no content, answered here with a sealed `get-signals`. A fill-grant
+ * is remembered like one the person approved, turns agent mode on for its
+ * lifetime when it was off, and wakes the tab at its origin; a grant-ended
+ * signs the browser out of the sites it named and turns agent mode back off
+ * once no agent grant is left. Agent mode the person turned on is never
+ * touched.
+ *
  * State lives in browser.storage.session, like upstream's submitted
  * credentials in credentials.js: in memory, gone when the browser quits.
- * The only hooks in upstream files are three one-liners in keepass.js
- * (retrieveCredentials, getTotp, updateDatabase); the message handlers for
- * the content script are registered at the bottom of this file.
+ * The only hooks in upstream files are one-liners in keepass.js
+ * (retrieveCredentials, getTotp, updateDatabase, reconnect) and the signal
+ * route in client.js (onNativeMessage); the message handlers for the content
+ * script are registered at the bottom of this file.
  */
 const grants = {};
 grants.GRANT_TTL_MS = 15 * 60 * 1000; // A fill grant lives 15 minutes on the host
@@ -24,7 +34,10 @@ grants.PENDING_RETRY_CAP_MS = 10 * 1000;
 
 const GRANTS_KEY = 'rowelGrants';
 const FILLED_KEY = 'rowelFilled';
+const AGENT_GRANTS_KEY = 'rowelAgentGrants';
+const AGENT_MODE_BY_GRANT_KEY = 'rowelAgentModeByGrant';
 const REPORT_EXPOSURE_ACTION = 'report-exposure';
+const GET_SIGNALS_ACTION = 'get-signals';
 
 // Which refusals get a notification. The others show as the popup's error text only.
 const GRANT_NOTIFICATIONS = {
@@ -63,13 +76,15 @@ const writeMap = function(key, map) {
 // Grant map: origin → { grantId, expiresAt }
 //--------------------------------------------------------------------------
 
-grants.rememberGrant = async function(origin, grantId) {
+// A grant from get-logins is given the host's window from now; a signalled one
+// comes with the host's own expiry (expiresAt, absolute ms).
+grants.rememberGrant = async function(origin, grantId, expiresAt = grants.now() + grants.GRANT_TTL_MS) {
     if (!origin || !grantId) {
         return;
     }
 
     const map = await readMap(GRANTS_KEY);
-    map[origin] = { grantId: grantId, expiresAt: grants.now() + grants.GRANT_TTL_MS };
+    map[origin] = { grantId: grantId, expiresAt: expiresAt };
     await writeMap(GRANTS_KEY, map);
 };
 
@@ -102,9 +117,32 @@ grants.forgetGrant = async function(origin) {
     }
 };
 
-// On database-locked (and any other host reset): nothing is served from a locked vault.
+// On database-locked (and any other host reset): nothing is served from a locked
+// vault, and the agent grants died with it, so agent mode turned on by one of
+// them goes off here too; the grant-ended that may follow finds nothing to do.
 grants.clearAll = async function() {
-    await grants.area().remove([ GRANTS_KEY, FILLED_KEY ]);
+    const byGrant = await grants.agentModeByGrant();
+    await grants.area().remove([ GRANTS_KEY, FILLED_KEY, AGENT_GRANTS_KEY, AGENT_MODE_BY_GRANT_KEY ]);
+    if (byGrant) {
+        await grants.setAgentMode(false);
+    }
+};
+
+//--------------------------------------------------------------------------
+// Agent mode by grant
+//--------------------------------------------------------------------------
+
+grants.agentModeByGrant = async function() {
+    const item = await grants.area().get(AGENT_MODE_BY_GRANT_KEY);
+    return item?.[AGENT_MODE_BY_GRANT_KEY] === true;
+};
+
+// The popup's path (popups/agent-mode.js → save_settings): the settings object
+// is written whole and page.settings reloaded from it, so there is one way to
+// change the flag and the popup, the options page and the content scripts all
+// read the same value.
+grants.setAgentMode = function(on) {
+    return kpxcEvent.onSaveSettings(null, { ...page.settings, agentMode: on });
 };
 
 //--------------------------------------------------------------------------
@@ -228,6 +266,125 @@ grants.reportExposure = async function(tab, args = []) {
     } catch (err) {
         logError(`reportExposure failed: ${err}`);
         return false;
+    }
+};
+
+//--------------------------------------------------------------------------
+// Signals from the host
+//--------------------------------------------------------------------------
+
+// The clear `rowel-signal` arrived (client.js), or the port just came back
+// (keepass.reconnect): fetch what the host queued for this client and act on
+// each. Nothing to fetch from a host we are not connected to; the signal
+// waits in its queue for the reconnect.
+grants.onSignal = async function() {
+    if (!keepass.isConnected) {
+        return;
+    }
+
+    try {
+        const taResponse = await keepass.testAssociation(null, [ false ]);
+        if (!taResponse) {
+            return;
+        }
+
+        const nonce = keepassClient.getNonce();
+        const response = await keepassClient.sendMessage(GET_SIGNALS_ACTION, null, { action: GET_SIGNALS_ACTION }, nonce);
+        for (const signal of response?.signals ?? []) {
+            if (signal.signal === 'fill-grant') {
+                await grants.onFillGrant(signal);
+            } else if (signal.signal === 'grant-ended') {
+                await grants.onGrantEnded(signal);
+            }
+        }
+    } catch (err) {
+        logError(`onSignal failed: ${err}`);
+    }
+};
+
+// fill-grant { grantId, origin, item, autoSubmit, expiresAtMs }: an agent's
+// grant, approved in Rowel. Remembered like one the person approved from the
+// page, so get-logins and get-totp at that origin carry it; marked agent-driven
+// so grant-ended knows whether agent mode is still needed; and the tab at the
+// origin is woken. Without a tab the grant waits: the content script asks on
+// the next load at that origin, as agent mode already does.
+grants.onFillGrant = async function({ grantId, origin, expiresAtMs }) {
+    if (!origin || !grantId) {
+        return;
+    }
+
+    await grants.rememberGrant(origin, grantId, expiresAtMs);
+    const agentGrants = await readMap(AGENT_GRANTS_KEY);
+    agentGrants[origin] = grantId;
+    await writeMap(AGENT_GRANTS_KEY, agentGrants);
+
+    if (!grants.isOn()) {
+        await grants.area().set({ [AGENT_MODE_BY_GRANT_KEY]: true });
+        await grants.setAgentMode(true);
+    }
+
+    await grants.wakeTab(origin);
+};
+
+// One tab at the origin, the active one first (page.retrieveCredentials serves
+// only the active tab). The content script is told to redetect its fields:
+// that reloads its settings, so a tab loaded before agent mode went on now
+// fills as agent mode rather than through the person's icons, and ends in a
+// retrieval of its own, which the cleared cache lets through to the host.
+grants.wakeTab = async function(origin) {
+    const matching = (await browser.tabs.query({})).filter(tab => grants.originOf(tab.url) === origin);
+    const tab = matching.find(t => t.active) ?? matching[0];
+    if (!tab) {
+        return;
+    }
+
+    await page.clearLogins(tab.id);
+    await browser.tabs.sendMessage(tab.id, { action: 'redetect_fields' }).catch(() => {});
+};
+
+// grant-ended { grantId, origins }: session end. The login the grant enabled is
+// signed out of by deleting the sites' cookies, the grant is forgotten, and
+// agent mode goes back off if this grant (or an earlier one) turned it on and
+// no agent grant is left. A newer grant at the same origin is kept.
+grants.onGrantEnded = async function({ grantId, origins = [] }) {
+    const agentGrants = await readMap(AGENT_GRANTS_KEY);
+    for (const origin of origins) {
+        await grants.clearCookies(origin);
+        if (await grants.grantFor(origin) === grantId) {
+            await grants.forgetGrant(origin);
+        }
+        if (agentGrants[origin] === grantId) {
+            delete agentGrants[origin];
+        }
+    }
+    await writeMap(AGENT_GRANTS_KEY, agentGrants);
+
+    if (origins.length > 0) {
+        showNotification(tr('agentModeGrantEndedNotification'));
+    }
+
+    if (Object.keys(agentGrants).length === 0 && await grants.agentModeByGrant()) {
+        await grants.area().remove(AGENT_MODE_BY_GRANT_KEY);
+        await grants.setAgentMode(false);
+    }
+};
+
+// Every cookie of the origin's registrable domain (spec/05 "Session end"), in
+// every cookie store. The domain comes from page.getBaseDomainFromUrl, which
+// probes the public suffix list the way upstream does for iframes. Safari
+// gives an extension no cookies API: session end is best-effort there.
+grants.clearCookies = async function(origin) {
+    if (!grants.originOf(origin) || !browser.cookies) {
+        return;
+    }
+
+    const domain = await page.getBaseDomainFromUrl(new URL(origin).hostname, origin);
+    for (const cookie of await browser.cookies.getAll({ domain: domain })) {
+        await browser.cookies.remove({
+            url: (cookie.secure ? 'https://' : 'http://') + cookie.domain.replace(/^\./, '') + cookie.path,
+            name: cookie.name,
+            storeId: cookie.storeId
+        });
     }
 };
 

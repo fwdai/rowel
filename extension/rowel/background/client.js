@@ -444,6 +444,11 @@ keepassClient.onNativeMessage = function(response) {
         return;
     }
 
+    if (response.action === kpActions.ROWEL_SIGNAL) { // Rowel: a clear wake-up; the content follows in a sealed get-signals (background/grants.js)
+        grants.onSignal();
+        return;
+    }
+
     // Generic response handling
     keepassClient.handleNativeMessage(response);
 };

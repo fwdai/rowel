@@ -84,6 +84,10 @@ const ROWEL_MESSAGES = {
     'Rowel ended the grant: the page showed the password',
     'Rowel: notification when a filled secret showed in the page and the grant was ended.'
   ],
+  agentModeGrantEndedNotification: [
+    'The agent is done: Rowel signed you out of the site in this browser',
+    "Rowel: notification when an agent's grant ended and the site's cookies were deleted."
+  ],
   errorMessageGrantDenied: ['Grant denied', 'Rowel: error code 40.'],
   errorMessageGrantPending: ['Grant pending approval', 'Rowel: error code 41.'],
   errorMessageGrantExpired: ['Grant expired', 'Rowel: error code 42.'],
