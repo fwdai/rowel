@@ -28,53 +28,105 @@
 const kpxcAgentMode = {};
 kpxcAgentMode.RESCAN_DELAY_MS = 1000;
 
-// What one fill leaves for the exposure check: the secrets it typed, the one
-// field the code went into (the one field holding the code that is no
-// exposure), and the re-scan timer. One object per fill, replaced whole by
-// `forget`, so nothing of a fill outlives it: the next fill's scan skips no
-// field this one filled. What has been filled on this page is the page's,
-// not a fill's, and lives apart (`filledOnPage`).
-const freshFill = () => ({ password: '', totp: '', totpField: null, rescan: null });
-let current = freshFill();
+// A fill, from start to end: the combinations it types into, the secrets it
+// typed, the one field the code went into (the one field holding the code
+// that is no exposure), and its re-scan timer. A fill is start → scan →
+// re-scan → end, and the next one starts only once it has ended: `begin`
+// first finalises the fill in flight — its timer cancelled, its final scan
+// run now with its own secrets and its own ignore field — then drops it and
+// makes the new state. So no two fills ever share a state object or a
+// timer, and no fill's check is skipped by its successor.
+// `kpxcAgentMode.fill()` begins one fill for the entry it types, code and
+// password alike, whichever combinations they land in; a secret upstream
+// types on its own (a shortcut) that lands outside the fill in flight begins
+// a fill of its own. What has been filled on this page is the page's, not a
+// fill's, and lives apart (`filledOnPage`).
+const freshFill = (combinations) => ({
+    combinations: new Set(combinations),
+    password: '',
+    totp: '',
+    totpField: null,
+    rescan: null
+});
+let current = null;
 const filledOnPage = new WeakSet(); // Combinations (login and TOTP) already filled on this page
 
 kpxcAgentMode.isOn = function() {
     return kpxc.settings?.agentMode === true;
 };
 
+// The fill is over: its timer with it, and it is the fill in flight no more.
+const end = function(fill) {
+    clearTimeout(fill.rescan);
+    if (current === fill) {
+        current = null;
+    }
+};
+
+// The fill in flight's last word before it is dropped: its scan, now, with
+// its own secrets and its own ignore field.
+const finalise = async function(fill) {
+    clearTimeout(fill.rescan);
+    if (fill.password || fill.totp) {
+        await scanOnce(fill);
+    }
+    end(fill);
+};
+
+const begin = async function(combinations) {
+    if (current) {
+        await finalise(current);
+    }
+    current = freshFill(combinations);
+    return current;
+};
+
+// The fill a secret typed into `combination` belongs to: the one in flight
+// when the combination is one of its (or unknown), else a new one of its
+// own, which ends the one in flight first.
+const fillFor = async function(combination) {
+    if (current && (!combination || current.combinations.has(combination))) {
+        return current;
+    }
+
+    return begin(combination ? [ combination ] : []);
+};
+
+const combinationOf = (field) => kpxc.combinations.find(c => c.username === field
+    || c.password === field
+    || c.totp === field
+    || c.passwordInputs?.includes(field)
+    || c.totpInputs?.includes(field)
+    || c.fields?.includes(field));
+
 // Only the fields the extension itself filled with a secret are left out of
 // the scan: the password fields (which the selector skips anyway) and the one
 // TOTP field the code went into. Every other login field is scanned — a page
 // that copies the password into the username field is an exposure.
-const filledFields = function() {
-    return current.totpField ? [ current.totpField ] : [];
-};
-
-const forget = function() {
-    clearTimeout(current.rescan);
-    current = freshFill();
+const filledFields = function(fill) {
+    return fill.totpField ? [ fill.totpField ] : [];
 };
 
 // The handoff for the next page load of this tab (background/grants.js, 60 s). No query string.
-const handOff = function() {
+const handOff = function(fill) {
     return sendMessage('agent_mode_set_filled', [ {
-        password: current.password,
-        totp: current.totp,
+        password: fill.password,
+        totp: fill.totp,
         url: trimURL(document.location.href)
     } ]);
 };
 
-const exposed = async function(fields) {
+const exposed = async function(fill, fields) {
     kpxcAgentMode.clear(fields);
-    forget();
+    end(fill);
     await sendMessage('agent_mode_take_filled'); // Drop the handoff as well
     await sendMessage('report_exposure', [ document.location.origin ]);
 };
 
-const scanOnce = async function() {
-    const hit = kpxcAgentMode.scan({ password: current.password, totp: current.totp }, filledFields());
+const scanOnce = async function(fill) {
+    const hit = kpxcAgentMode.scan({ password: fill.password, totp: fill.totp }, filledFields(fill));
     if (hit.inText || hit.fields.length > 0) {
-        await exposed(hit.fields);
+        await exposed(fill, hit.fields);
         return true;
     }
 
@@ -105,12 +157,22 @@ kpxcAgentMode.fill = async function() {
     // The code first, so an auto-submit after the password has it in place.
     // With autoFillSingleTotp on, fillInCredentials fills it itself.
     const totpByUpstream = login && kpxc.settings.autoFillSingleTotp;
-    if (totpField && !totpByUpstream && kpxc.entryHasTotp(entry) && !filledOnPage.has(totp)) {
+    const fillsTotp = totpField && !totpByUpstream && kpxc.entryHasTotp(entry) && !filledOnPage.has(totp);
+    const fillsLogin = login && !filledOnPage.has(login);
+    if (!fillsTotp && !fillsLogin) {
+        return;
+    }
+
+    // One fill for the entry: its code and its password, whichever
+    // combinations they land in.
+    await begin([ login, totp ].filter(Boolean));
+
+    if (fillsTotp) {
         filledOnPage.add(totp);
         await kpxcFill.fillTOTPFromUuid(totpField, entry.uuid);
     }
 
-    if (login && !filledOnPage.has(login)) {
+    if (fillsLogin) {
         filledOnPage.add(login);
         await kpxcFill.fillInCredentials(login, entry.login, entry.uuid);
     }
@@ -122,9 +184,10 @@ kpxcAgentMode.afterFill = async function(combination, entry) {
         return;
     }
 
-    current.password = entry.password;
-    await handOff();
-    await kpxcAgentMode.check();
+    const fill = await fillFor(combination);
+    fill.password = entry.password;
+    await handOff(fill);
+    await kpxcAgentMode.check(fill);
 };
 
 // From kpxcFill.setTOTPValue: the code, whether from get-totp or a KPH: {TOTP}
@@ -136,10 +199,11 @@ kpxcAgentMode.noteTotp = async function(totp, field) {
         return;
     }
 
-    current.totpField = field ?? null;
-    current.totp = String(totp);
-    await handOff();
-    await kpxcAgentMode.check();
+    const fill = await fillFor(field ? combinationOf(field) : undefined);
+    fill.totpField = field ?? null;
+    fill.totp = String(totp);
+    await handOff(fill);
+    await kpxcAgentMode.check(fill);
 };
 
 /**
@@ -165,22 +229,29 @@ kpxcAgentMode.onPageLoad = async function() {
         kpxcAgentMode.clear(kpxcAgentMode.fieldsWithValue(record.password));
     }
 
-    current.password = record.password ?? '';
-    current.totp = record.totp ?? '';
-    await kpxcAgentMode.check();
+    // The previous page's fill, carried over: a fill of its own here.
+    const fill = await begin([]);
+    fill.password = record.password ?? '';
+    fill.totp = record.totp ?? '';
+    await kpxcAgentMode.check(fill);
 };
 
-// Scans now and once more after RESCAN_DELAY_MS (a page that echoes what was
-// typed usually does so asynchronously), then drops the fill's state whole.
-kpxcAgentMode.check = async function() {
-    clearTimeout(current.rescan);
-    if (await scanOnce()) {
+// Scans `fill` now and once more after RESCAN_DELAY_MS (a page that echoes
+// what was typed usually does so asynchronously), then ends it. With no
+// fill named, the one in flight; with none in flight, nothing to scan for.
+kpxcAgentMode.check = async function(fill = current) {
+    if (!fill) {
         return;
     }
 
-    current.rescan = setTimeout(async () => {
-        await scanOnce();
-        forget();
+    clearTimeout(fill.rescan);
+    if (await scanOnce(fill)) {
+        return;
+    }
+
+    fill.rescan = setTimeout(async () => {
+        await scanOnce(fill);
+        end(fill);
     }, kpxcAgentMode.RESCAN_DELAY_MS);
 };
 

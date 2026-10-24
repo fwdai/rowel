@@ -65,17 +65,14 @@ pub fn statuses(registry: &Registry, root: &Path) -> Vec<WorkspaceStatus> {
         .collect()
 }
 
-/// Whether agents may use items in workspace `id`, as the registry has it.
-/// Takes `workspace_lock`, so never call it holding the session lock. For the
-/// extension host, which is desktop only, like `agents`.
+/// Whether agents may use items in workspace `id`, as the registry at `root`
+/// has it, for a caller that holds `workspace_lock` — the session's first
+/// look at the switches (`agents::initialise`), which has to be whole with
+/// respect to [`set_agents`]. For the extension host, which is desktop only,
+/// like `agents`.
 #[cfg(desktop)]
-pub fn agents_enabled(app: &AppHandle, id: &str) -> bool {
-    let Ok(root) = storage::root_dir(app) else {
-        return false;
-    };
-    let state = app.state::<AppState>();
-    let _paths = state.workspace_lock.lock().unwrap();
-    Registry::load(&root)
+pub(crate) fn agents_enabled_locked(root: &Path, id: &str) -> bool {
+    Registry::load(root)
         .workspaces
         .iter()
         .any(|w| w.id == id && w.agents)
@@ -84,19 +81,42 @@ pub fn agents_enabled(app: &AppHandle, id: &str) -> bool {
 /// Turn agent access for workspace `id` on or off, through the registry's
 /// own write path. `NotFound` for an id the registry does not name. This is
 /// the one place the flag is written, so it is the one place a change of it
-/// is acted on: with the registry's lock let go, the access epoch is moved
-/// (`agents::access_changed`) — for any lockbox, on or off, since one epoch
-/// covers them all — and, when it is the open lockbox's access going off,
-/// every grant up is ended.
+/// is acted on, and it holds `workspace_lock` for the whole of it — the
+/// registry's lock, and the outer one: inside it, `agents::change_access`
+/// takes the session and agents locks, writes the registry, and gives the
+/// switch the session holds the same value in the same section, so a
+/// request reading the registry for its first look at the switches (under
+/// this lock too) and a release (under the agents lock) each see this whole
+/// or not at all. Any change moves the access epoch, for any lockbox, on or
+/// off; the open lockbox's access going off also ends every grant up.
 pub fn set_agents(app: &AppHandle, id: &str, enabled: bool) -> Result<()> {
-    let changed = update_of(app, id, agents_switched(enabled))?;
+    let root = storage::root_dir(app)?;
+    let state = app.state::<AppState>();
+    let _paths = state.workspace_lock.lock().unwrap();
+    // Strict, as every registry write is: a file that is there and unreadable
+    // is refused, not saved over.
+    let mut registry = Registry::read(&root)?.unwrap_or_default();
+    let Some(workspace) = registry.workspaces.iter_mut().find(|w| w.id == id) else {
+        return Err(Error::NotFound);
+    };
+    if !agents_switched(enabled)(workspace) {
+        return Ok(());
+    }
     #[cfg(desktop)]
-    if changed {
-        crate::agents::access_changed(app, "lockbox");
+    {
+        let of_open = *state.active_workspace.lock().unwrap() == id;
+        crate::agents::change_access(app, "lockbox", |access| {
+            registry.save(&root)?;
+            if of_open {
+                if let Some(access) = access {
+                    access.lockbox_on = enabled;
+                }
+            }
+            Ok(((), true))
+        })
     }
     #[cfg(not(desktop))]
-    let _ = changed;
-    Ok(())
+    registry.save(&root)
 }
 
 fn agents_switched(enabled: bool) -> impl FnOnce(&mut Workspace) -> bool {

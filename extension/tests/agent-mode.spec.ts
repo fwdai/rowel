@@ -51,6 +51,10 @@ test.describe('Agent mode content script tests', () => {
         await verifyResults('agent-fill-state-results');
     });
 
+    test('A fill ends when the next begins: finalised with its own scan, never sharing state', async () => {
+        await verifyResults('agent-lifecycle-results');
+    });
+
     test('Agent mode off: upstream behaviour is unchanged', async () => {
         await verifyResults('agent-off-results');
     });

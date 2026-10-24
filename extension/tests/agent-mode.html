@@ -47,7 +47,7 @@
             <!-- Test content -->
             <!-- =================================== -->
 
-            <!-- A login form with a one-time code field -->
+            <!-- A login form with a one-time code field, and a line the page can echo into -->
             <div id="agent-login" style="display: none;">
               <form action="#" id="agent-login-form">
                 <input placeholder="username" type="text" name="username" id="agent-username">
@@ -55,6 +55,7 @@
                 <input placeholder="code" type="text" name="otp" id="agent-otp" maxlength="6" autocomplete="one-time-code">
                 <input type="submit" value="Sign in">
               </form>
+              <div id="agent-login-echo"></div>
             </div>
 
             <!-- The variant that echoes the submitted password back into the page -->
@@ -115,6 +116,11 @@
               <div class="card my-4 shadow">
                 <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> One fill's state does not reach the next (agent-mode.js)</div>
                 <div class="card-body" id="agent-fill-state-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> A fill ends when the next begins (agent-mode.js)</div>
+                <div class="card-body" id="agent-lifecycle-results"></div>
               </div>
 
               <div class="card my-4 shadow">

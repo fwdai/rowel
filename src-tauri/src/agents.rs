@@ -18,19 +18,26 @@
 //! before it is written.
 //!
 //! Two switches gate all of it: the app's Agents switch (`settings`) and the
-//! open lockbox's agent access (the registry). Neither is read where a
-//! credential is released. Instead a request takes an [`Access`] snapshot —
-//! the epoch first, then the switches — and every release checks it again
-//! under the locks ([`Access::verify`]); a change of either switch moves the
-//! epoch under those same locks ([`access_changed`]), so a release and a
-//! switch-off cannot interleave: the release sees the old epoch and is
-//! refused, or it came first and the change revokes what it released.
+//! open lockbox's agent access (the registry). The files hold them between
+//! launches; while a session is open, what counts is the copy on
+//! `AgentState` ([`AccessState`]), read from the files once, by the first
+//! request of the session ([`initialise`]), and from then on changed only
+//! under the agents lock, in the one section that also acts on the change
+//! and writes the file ([`change_access`]). A release looks nowhere else
+//! ([`AgentState::access_on`]), so a release and a change of a switch cannot
+//! interleave: whichever takes the lock second sees the other whole. The
+//! epoch moves with every change, so a request that decided under one and
+//! settles under another is refused whatever the switches say by then. A
+//! lock or a lockbox switch resets all of it ([`clear`]).
 //!
-//! Lock order, everywhere: the session lock first, then `AppState::agents`;
-//! the consent slot (`browser::CONSENT`) before `AppState::agents`, never
-//! after it — a grant ask checks the epoch under the slot as it goes up, and
-//! a switch change refuses the ask through the slot only once it has let the
-//! agents lock go.
+//! Lock order, everywhere: `workspace_lock` → session → `AppState::agents`
+//! → settings — the registry's lock is the outer one for the lockbox's
+//! switch, written and first read under it; settings are read and written
+//! innermost. The consent slot (`browser::CONSENT`) is taken under the
+//! session lock at most (a seal refuses the ask up) and before the agents
+//! lock (a grant ask checks the epoch under the slot as it goes up), never
+//! after it: a change of the switches refuses the ask only once it has let
+//! the agents lock go.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -55,17 +62,30 @@ pub const RETAIN_ENDED_MS: i64 = 60 * 60 * 1000;
 const RULES_META: &str = "agent_rules";
 
 /// What the app holds about agents between a lock and the next: the grants it
-/// issued, how often each client has been asking, and which change of the
-/// switches is the latest.
+/// issued, how often each client has been asking, and the switches as they
+/// stand for this session.
 #[derive(Default)]
 pub struct AgentState {
     pub grants: Vec<Grant>,
     pub rates: HashMap<String, RateState>,
-    /// Moved by every change of either switch (`access_changed`), under the
-    /// locks a release is made under. An [`Access`] read under one epoch
-    /// releases nothing under another. Never reset: a lock clears the grants,
-    /// not the history of the switches.
+    /// The switches, once the session's first request has read them from
+    /// the files; authoritative from then on, changed only by
+    /// [`change_access`], under the lock. `None` until then, and again
+    /// after a seal — nothing is released on `None`.
+    pub access: Option<AccessState>,
+    /// Moved by every change of either switch, and by every seal, under the
+    /// locks a release is made under: a request that decided under one epoch
+    /// settles under no other.
     pub access_epoch: u64,
+}
+
+/// The two switches as the session holds them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AccessState {
+    /// The app's Agents switch.
+    pub enabled: bool,
+    /// The open lockbox's agent access.
+    pub lockbox_on: bool,
 }
 
 impl AgentState {
@@ -73,9 +93,51 @@ impl AgentState {
         self.rates.entry(client_key.to_string()).or_default()
     }
 
-    /// A switch changed: every [`Access`] read before this is stale.
+    /// Whether a credential may be released right now: both switches on, as
+    /// the session holds them. Otherwise the reason the `denied` row names:
+    /// `switch` for the app's (or for switches not read yet, which no
+    /// request has had the chance to), `lockbox` for the open lockbox's.
+    pub fn access_on(&self) -> std::result::Result<(), &'static str> {
+        match self.access {
+            None => Err("switch"),
+            Some(AccessState { enabled: false, .. }) => Err("switch"),
+            Some(AccessState {
+                lockbox_on: false, ..
+            }) => Err("lockbox"),
+            Some(_) => Ok(()),
+        }
+    }
+
+    /// [`AgentState::access_on`], and nothing changed since `epoch`: what a
+    /// request decided under one epoch is settled under no other, whatever
+    /// the switches say by then — a switch off and on again is a change.
+    pub fn access_since(&self, epoch: u64) -> std::result::Result<(), &'static str> {
+        self.access_on()?;
+        if self.access_epoch != epoch {
+            return Err("switch");
+        }
+        Ok(())
+    }
+
+    /// The switches for this session, if no request has read them yet:
+    /// `initial` is what the files say now. What the session already holds
+    /// is authoritative and left as it is.
+    pub fn initialise(&mut self, initial: AccessState) -> AccessState {
+        *self.access.get_or_insert(initial)
+    }
+
+    /// A switch changed: what decided before this settles no more.
     pub fn bump_access(&mut self) {
         self.access_epoch = self.access_epoch.wrapping_add(1);
+    }
+
+    /// The session ended: nothing it held survives it — the grants, the
+    /// rates, the switches as it read them — and what decided under it
+    /// settles no more, so the epoch moves too.
+    pub fn reset(&mut self) {
+        self.bump_access();
+        self.access = None;
+        self.clear();
     }
 
     pub fn find_mut(&mut self, id: &str) -> Option<&mut Grant> {
@@ -132,130 +194,112 @@ pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-// --- the switches, as a release checks them -----------------------------------------
+// --- the switches, as the session holds them ----------------------------------------
 
-/// The two switches as a request read them, and the epoch it read them
-/// under. Taken before the locks a release is made under, checked again
-/// inside them: see [`Access::verify`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Access {
-    pub epoch: u64,
-    /// The app's Agents switch.
-    pub enabled: bool,
-    /// The open lockbox's agent access.
-    pub lockbox_on: bool,
-}
-
-/// The switches as they stand, under the epoch they stand under. The epoch
-/// is read first, under the agents lock: a change that lands after it and
-/// before the switches are read has moved it, and `verify` sees that; one
-/// that landed before is in the switches themselves. The lockbox's switch
-/// takes `workspace_lock`, which is why none of this runs under the session
-/// lock.
-pub fn access(app: &AppHandle) -> Access {
+/// The session's first look at the switches, from the files, before a
+/// request is decided: the open lockbox's access from the registry, under
+/// `workspace_lock` — the lockbox writer's outer lock, so the read and what
+/// the session then keeps cannot straddle a write — and the app's switch
+/// from the settings, under the agents lock, where the settings writer
+/// changes it. A session that already holds them is left with what it
+/// holds: that is the authoritative copy, and the files are not read again
+/// until the next session.
+pub fn initialise(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let epoch = state.agents.lock().unwrap().access_epoch;
-    let enabled = settings::current(app).browser.agents.enabled;
-    let lockbox_on = workspace::agents_enabled(app, &workspace::active_id(app));
-    Access {
-        epoch,
-        enabled,
-        lockbox_on,
+    if state.agents.lock().unwrap().access.is_some() {
+        return;
+    }
+    let root = storage::root_dir(app).ok();
+    let _paths = state.workspace_lock.lock().unwrap();
+    let active = state.active_workspace.lock().unwrap().clone();
+    let lockbox_on = root
+        .as_deref()
+        .is_some_and(|root| workspace::agents_enabled_locked(root, &active));
+    let mut held = state.agents.lock().unwrap();
+    if held.access.is_none() {
+        let enabled = settings::current(app).browser.agents.enabled;
+        held.initialise(AccessState {
+            enabled,
+            lockbox_on,
+        });
     }
 }
 
-impl Access {
-    /// Whether a credential may be released right now, under the agents lock
-    /// (`held` is what the lock guards): both switches were on when read, and
-    /// nothing has changed either since — the epoch is still the one they
-    /// were read under. Otherwise the reason the `denied` row names: the
-    /// switch that was read off, or `switch` for a change that landed after
-    /// the read, whichever switch it was.
-    pub fn verify(&self, held: &AgentState) -> std::result::Result<(), &'static str> {
-        if !self.enabled {
-            return Err("switch");
-        }
-        if !self.lockbox_on {
-            return Err("lockbox");
-        }
-        if held.access_epoch != self.epoch {
-            return Err("switch");
-        }
-        Ok(())
-    }
-
-    /// This snapshot's switches under `epoch` instead of its own: the
-    /// switches as they stand now, held to the epoch a request was decided
-    /// under, so a change in between still refuses and the row still names
-    /// the switch that is off.
-    pub fn since(self, epoch: u64) -> Self {
-        Self { epoch, ..self }
-    }
-
-    /// Whether the open lockbox is cut off: the app's switch or its own
-    /// access off. What a change of the switches revokes for, as against
-    /// what it merely moves the epoch for.
-    pub fn cut_off(&self) -> bool {
-        !self.enabled || !self.lockbox_on
-    }
-}
-
-/// The one path a change of either switch goes through, once it is written
-/// (`settings::set` for the app's, `workspace::set_agents` for a lockbox's).
-/// Any change — on or off, of any lockbox's access — comes here and moves
-/// the epoch under the session and agents locks, so a release decided under
-/// the old one is refused ([`Access::verify`]); one epoch for all of them
-/// keeps the check one comparison, and a request caught in between is
-/// refused once and asks again. Only a change that leaves the open lockbox
-/// cut off ([`Access::cut_off`]: the app's switch off, or its own access
-/// off) also ends every active grant, with a `revoked` row naming `reason`;
-/// a switch turned on, or another lockbox's access either way, leaves them
-/// be. Then, with the locks let go, the grant ask up on screen is refused
-/// through the consent slot and its dialog told to close, whatever the
-/// change: its settle would find the epoch moved, and a dialog the user can
-/// no longer complete should not stay up.
-pub fn access_changed(app: &AppHandle, reason: &'static str) {
+/// The one path a change of either switch goes through: `settings::set` for
+/// the app's, `workspace::set_agents` for a lockbox's (under its
+/// `workspace_lock`). Under the session and agents locks, `persist` writes
+/// the file and applies the change to the switches the session holds (left
+/// alone until a request has read them), and says whether the switch
+/// changed at all; if it did, in that same section, the epoch moves — any
+/// change, on or off, of any lockbox's access, so a request caught in
+/// between is refused once and asks again — and, when the open lockbox is
+/// cut off by it, every active grant ends with a `revoked` row naming
+/// `reason`. Then, with the locks let go, the grant ask up on screen is
+/// refused through the consent slot and its dialog told to close: its settle
+/// would find the epoch moved, and a dialog the user can no longer complete
+/// should not stay up. A `persist` that fails changes nothing: the file and
+/// the session's copy never disagree.
+pub fn change_access<T>(
+    app: &AppHandle,
+    reason: &'static str,
+    persist: impl FnOnce(&mut Option<AccessState>) -> Result<(T, bool)>,
+) -> Result<T> {
     let state = app.state::<AppState>();
     let now = now_ms();
     let writer_id = storage::install_id(app);
-    // Read before the locks: the lockbox's switch takes `workspace_lock`.
-    let off = access(app).cut_off();
-    {
+    let (value, changed) = {
         let session = state.session.lock().unwrap();
-        let mut agents = state.agents.lock().unwrap();
-        switch_changed(
+        let mut held = state.agents.lock().unwrap();
+        change_under_locks(
             session.store().ok(),
-            &mut agents,
+            &mut held,
             &writer_id,
-            off,
             reason,
             now,
-        );
+            persist,
+        )?
+    };
+    if changed {
+        if let Some(ask_id) = browser::refuse_grant_ask() {
+            events::agent_grant_closed(app, &ask_id);
+        }
+        events::agents_changed(app);
+        rearm(app);
     }
-    // The slot, never under the agents lock: the ask going up takes them the
-    // other way round. The refusal wakes the request thread, which settles
-    // under the session lock and finds the epoch moved.
-    if let Some(ask_id) = browser::refuse_grant_ask() {
-        events::agent_grant_closed(app, &ask_id);
-    }
-    events::agents_changed(app);
-    rearm(app);
+    Ok(value)
 }
 
-/// What a change of the switches does under the locks (`store` is the open
-/// lockbox's, if one is open; `held` what the agents lock guards): the epoch
-/// moves, and — only when the change leaves the open lockbox cut off (`off`)
-/// — every active grant ends with a `revoked` row naming `reason`.
+/// [`change_access`]'s one section, over what the locks guard: `persist`,
+/// then — for a change — [`switch_changed`].
+pub(crate) fn change_under_locks<T>(
+    store: Option<&SqliteStore>,
+    held: &mut AgentState,
+    writer_id: &str,
+    reason: &str,
+    now: i64,
+    persist: impl FnOnce(&mut Option<AccessState>) -> Result<(T, bool)>,
+) -> Result<(T, bool)> {
+    let (value, changed) = persist(&mut held.access)?;
+    if changed {
+        switch_changed(store, held, writer_id, reason, now);
+    }
+    Ok((value, changed))
+}
+
+/// What a change of the switches does to what the session holds, once the
+/// change is in `held.access` (`store` is the open lockbox's, if one is
+/// open): the epoch moves, and — only when the open lockbox is cut off now
+/// ([`AgentState::access_on`]) — every active grant ends with a `revoked`
+/// row naming `reason`.
 pub(crate) fn switch_changed(
     store: Option<&SqliteStore>,
     held: &mut AgentState,
     writer_id: &str,
-    off: bool,
     reason: &str,
     now: i64,
 ) {
     held.bump_access();
-    if !off {
+    if held.access_on().is_ok() {
         return;
     }
     let detail = format!(r#"{{"reason":"{reason}"}}"#);
@@ -320,12 +364,21 @@ fn on_expiry(app: &AppHandle) {
     rearm(app);
 }
 
-/// Every lock ends here: nothing is served from a locked vault, and a client
-/// that was being slowed down starts afresh with the next session.
+/// Every seal ends here — a lock, the auto-lock, a lockbox switch
+/// (`session::sealed`, with the session lock let go): nothing is served from
+/// a locked vault, the switches are read afresh by the next session's first
+/// request, a client that was being slowed down starts afresh, and what
+/// decided under the session settles no more ([`AgentState::reset`]). The
+/// grant ask up on screen is refused through the slot, after the agents lock
+/// is let go, and its dialog told to close: a sealed vault leaves no dialog
+/// up and no request waiting.
 pub fn clear(app: &AppHandle) {
     let state = app.state::<AppState>();
-    state.agents.lock().unwrap().clear();
+    state.agents.lock().unwrap().reset();
     state.agent_expiry.disarm();
+    if let Some(ask_id) = browser::refuse_grant_ask() {
+        events::agent_grant_closed(app, &ask_id);
+    }
     events::agents_changed(app);
 }
 
@@ -682,72 +735,68 @@ mod tests {
         assert!(state.find_mut("b").is_some());
     }
 
+    // A seal forgets everything the session held — the grants, the rates,
+    // the switches as it read them — and moves the epoch, so what decided
+    // under the session settles no more.
     #[test]
-    fn a_clear_forgets_grants_and_rate_history_alike() {
+    fn a_reset_forgets_what_the_session_held_and_moves_the_epoch() {
         let mut state = AgentState::default();
-        state.grants.push(active("a", 0, 1_000));
-        state.rate("ext").record_denial(0);
-        state.bump_access();
-        state.clear();
-        assert!(state.grants.is_empty() && state.rates.is_empty());
-        assert_eq!(state.next_wake_ms(), None);
-        assert_eq!(
-            state.access_epoch, 1,
-            "the switches' history is not the session's"
-        );
-    }
-
-    // An access snapshot releases only under the epoch it was read under and
-    // with both switches on; the reason names the switch read off, or, for a
-    // change that landed after the read, `switch`.
-    #[test]
-    fn an_access_snapshot_verifies_against_the_epoch_it_was_read_under() {
-        let mut held = AgentState::default();
-        let on = Access {
-            epoch: held.access_epoch,
+        state.initialise(AccessState {
             enabled: true,
             lockbox_on: true,
-        };
-        assert_eq!(on.verify(&held), Ok(()));
+        });
+        state.grants.push(active("a", 0, 1_000));
+        state.rate("ext").record_denial(0);
+        let before = state.access_epoch;
+        state.reset();
+        assert!(state.grants.is_empty() && state.rates.is_empty());
+        assert_eq!(state.access, None);
+        assert_eq!(state.next_wake_ms(), None);
+        assert_eq!(state.access_epoch, before + 1);
+        assert_eq!(state.access_since(before), Err("switch"));
+    }
+
+    // The switches as the session holds them say whether a release may go,
+    // and why not: unread, or the app's switch off, is `switch`; the open
+    // lockbox's access off is `lockbox`. And a request decided under one
+    // epoch settles under no other.
+    #[test]
+    fn the_switches_the_session_holds_say_whether_a_release_may_go() {
+        let mut held = AgentState::default();
+        assert_eq!(held.access_on(), Err("switch"), "not read yet");
+        held.initialise(AccessState {
+            enabled: true,
+            lockbox_on: true,
+        });
+        assert_eq!(held.access_on(), Ok(()));
+        let epoch = held.access_epoch;
+        assert_eq!(held.access_since(epoch), Ok(()));
+
+        held.access.as_mut().unwrap().lockbox_on = false;
+        assert_eq!(held.access_on(), Err("lockbox"));
+        held.access.as_mut().unwrap().enabled = false;
         assert_eq!(
-            Access {
-                enabled: false,
-                ..on
-            }
-            .verify(&held),
-            Err("switch")
-        );
-        assert_eq!(
-            Access {
-                lockbox_on: false,
-                ..on
-            }
-            .verify(&held),
-            Err("lockbox")
+            held.access_on(),
+            Err("switch"),
+            "the app's switch is the outer one"
         );
 
-        // The switches changed after the snapshot: whichever it was.
-        held.bump_access();
-        assert_eq!(on.verify(&held), Err("switch"));
-        // A fresh read sees the switch that is off, under the new epoch.
-        let fresh = Access {
-            epoch: held.access_epoch,
+        held.access = Some(AccessState {
             enabled: true,
-            lockbox_on: false,
-        };
-        assert_eq!(fresh.verify(&held), Err("lockbox"));
-        // The switches as they stand now, held to an older epoch: the
-        // change in between still refuses, and the row still names the
-        // switch that is off.
-        assert_eq!(fresh.since(on.epoch).verify(&held), Err("lockbox"));
+            lockbox_on: true,
+        });
+        held.bump_access();
+        assert_eq!(held.access_on(), Ok(()), "on, for a new request");
         assert_eq!(
-            Access {
-                lockbox_on: true,
-                ..fresh
-            }
-            .since(on.epoch)
-            .verify(&held),
-            Err("switch")
+            held.access_since(epoch),
+            Err("switch"),
+            "not for one decided before the change"
+        );
+        held.access.as_mut().unwrap().lockbox_on = false;
+        assert_eq!(
+            held.access_since(epoch),
+            Err("lockbox"),
+            "the switch that is off, when one is"
         );
     }
 

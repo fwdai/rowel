@@ -243,39 +243,85 @@ pub fn boot(app: &AppHandle) {
 /// once, and merging each from its own stale snapshot would let the last write
 /// drop the keys the others carried. A failed write leaves the state as it was.
 ///
-/// The auto-lock is re-armed here too, still under the lock, so the timer
-/// always runs the value the file ends up holding: two overlapping changes
-/// persist in one order and would otherwise be allowed to arm in the other.
-/// The tray menu is relabelled the same way and for the same reason: it is the
-/// one piece of UI i18next cannot reach, so Rust has to be told the language
-/// changed.
+/// The auto-lock's value is stored here too, still under the lock, so the
+/// timer always runs the value the file ends up holding: two overlapping
+/// changes persist in one order and would otherwise be allowed to arm in the
+/// other. The re-arm itself comes after the lock is let go — it reads the
+/// session, and nothing may take the session's lock under this one (see
+/// `agents::change_access`). The tray menu — the one piece of UI i18next
+/// cannot reach, so Rust has to be told the language changed — is relabelled
+/// after the lock as well, because a menu item's text is set on the main
+/// thread.
+///
+/// The Agents switch lives in the `browser` group, and `merge` overwrites
+/// top-level keys whole, so a patch naming `browser` is the only kind that
+/// can change it — whichever command sent it. Such a patch is written inside
+/// `agents::change_access`'s section, under the session and agents locks,
+/// where the switch the session holds follows the file in the same breath
+/// and the change is acted on; every other patch is written as it always
+/// was.
 pub fn set(app: &AppHandle, patch: &Value) -> Result<Settings> {
+    #[cfg(desktop)]
+    let written = if patch.get("browser").is_some() {
+        crate::agents::change_access(app, "switch", |access| {
+            let written = write(app, patch)?;
+            if let Some(access) = access {
+                access.enabled = written.settings.browser.agents.enabled;
+            }
+            let changed = written.agents_changed;
+            Ok((written, changed))
+        })?
+    } else {
+        write(app, patch)?
+    };
+    #[cfg(not(desktop))]
+    let written = write(app, patch)?;
+    if written.autolock_changed {
+        crate::autolock::touch(app);
+    }
+    // The tray is a menu, and setting a menu item's text reaches the main
+    // thread. That must never happen under the session lock (a `browser`
+    // patch is written under it, see above), so the relabel waits until every
+    // lock is let go. The value it is handed is the one this write persisted;
+    // two overlapping language changes may relabel in the other order, and
+    // the next change or the next launch (`tray::create` reads the same
+    // setting) puts the label right again.
+    #[cfg(desktop)]
+    if written.locale_changed {
+        crate::tray::relabel(app, written.settings.locale.as_deref());
+    }
+    Ok(written.settings)
+}
+
+/// What one write of the settings came to: the settings as they now stand,
+/// and which of the values that are acted on changed.
+struct Written {
+    settings: Settings,
+    autolock_changed: bool,
+    locale_changed: bool,
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    agents_changed: bool,
+}
+
+/// `set`'s transaction under the settings lock: merge, write, remember.
+fn write(app: &AppHandle, patch: &Value) -> Result<Written> {
     let state = app.state::<SettingsState>();
     let mut guard = state.0.lock().unwrap();
     let merged = merge(&guard, patch)?;
     storage::write_settings(app, &serde_json::to_string_pretty(&merged)?)?;
-    if merged.autolock_secs != guard.autolock_secs {
-        crate::autolock::set_timeout(app, merged.autolock_secs);
+    let autolock_changed = merged.autolock_secs != guard.autolock_secs;
+    if autolock_changed {
+        crate::autolock::store_timeout(app, merged.autolock_secs);
     }
-    // Handed the new choice rather than left to read it back: this still holds
-    // the lock the settings live behind.
-    #[cfg(desktop)]
-    if merged.locale != guard.locale {
-        crate::tray::relabel(app, merged.locale.as_deref());
-    }
-    #[cfg(desktop)]
-    let agents_switched = merged.browser.agents.enabled != guard.browser.agents.enabled;
+    let locale_changed = merged.locale != guard.locale;
+    let agents_changed = merged.browser.agents.enabled != guard.browser.agents.enabled;
     *guard = merged.clone();
-    drop(guard);
-    // This is the one place the Agents switch is written — whichever command
-    // patched it — so it is the one place its change is acted on: with the
-    // lock let go, because acting on it takes the session's and reads these
-    // settings back (`agents::access`).
-    #[cfg(desktop)]
-    if agents_switched {
-        crate::agents::access_changed(app, "switch");
-    }
-    Ok(merged)
+    Ok(Written {
+        settings: merged,
+        autolock_changed,
+        locale_changed,
+        agents_changed,
+    })
 }
 
 fn merge(base: &Settings, patch: &Value) -> Result<Settings> {

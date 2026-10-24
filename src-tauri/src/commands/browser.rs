@@ -87,7 +87,7 @@ pub fn browser_set_keepassxc_compat(enabled: bool, app: AppHandle) -> Result<Bro
 /// Let agents use logins through the extension — every fill in agent mode a
 /// grant — or stop. What a change of the switch does to the grants up and
 /// the ask on screen is the settings write's own business
-/// (`settings::set` → `agents::access_changed`), the same whichever command
+/// (`settings::set` → `agents::change_access`), the same whichever command
 /// patched it.
 #[tauri::command]
 pub fn browser_set_agents_enabled(enabled: bool, app: AppHandle) -> Result<BrowserStatus> {

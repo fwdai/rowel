@@ -17,6 +17,7 @@ const AgentCards = {
     EXPOSURE: '#agent-exposure-results',
     FAILURE: '#agent-failure-results',
     FILL_STATE: '#agent-fill-state-results',
+    LIFECYCLE: '#agent-lifecycle-results',
     OFF: '#agent-off-results'
 };
 
@@ -116,6 +117,7 @@ function reset(agentMode) {
     document.getElementById('agent-echo-text').textContent = '';
     document.getElementById('agent-echo-input').value = '';
     document.getElementById('agent-echo-area').value = '';
+    document.getElementById('agent-login-echo').textContent = '';
 
     for (const wrapper of injectedWrappers()) {
         wrapper.remove();
@@ -358,6 +360,50 @@ async function testFillStateIsPerFill() {
     hide('agent-login');
 }
 
+// A fill ends when the next begins: the fill in flight is finalised — its scan
+// run now, with its own secrets and its own ignore field — before the next
+// fill's state exists. The overlap: a code fill, then a password-only fill
+// before the first re-scan fires, with the page echoing the first fill's code
+// in between and then copying the second fill's password into the first
+// fill's TOTP element.
+async function testFillLifecycle() {
+    const card = AgentCards.LIFECYCLE;
+    const delay = kpxcAgentMode.RESCAN_DELAY_MS;
+    kpxcAgentMode.RESCAN_DELAY_MS = 400; // Room to start the second fill before the first re-scan
+    reset(true);
+    show('agent-login');
+
+    await kpxc.initCredentialFields();
+    const login = kpxc.combinations.find(c => c.password);
+    const totp = kpxc.combinations.find(c => c.totp);
+    kpxcAssert(Boolean(login && totp), true, card, 'The form and the code field are two combinations');
+
+    // Fill 1: the code alone, as the shortcut fills it
+    kpxc.credentials = [ ENTRY ];
+    await kpxcFill.fillTOTPFromUuid(totp.totp, ENTRY.uuid);
+    kpxcAssert($('#agent-otp').value, CODE, card, 'The first fill puts the code into the TOTP field');
+    kpxcAssert(browserStub.sentFor('report_exposure').length, 0, card, 'Nothing is exposed at the first fill');
+
+    // The page echoes the code after the fill, before the first re-scan
+    $('#agent-login-echo').textContent = 'Your code ' + CODE + ' was sent';
+
+    // Fill 2, before that re-scan: the password alone, into the login combination
+    kpxc.credentials = [ SECOND_ENTRY ];
+    await kpxcFill.fillInCredentials(login, SECOND_ENTRY.login, SECOND_ENTRY.uuid);
+    kpxcAssert($('#agent-password').value, SECOND_ENTRY.password, card, 'The second fill puts its password in');
+    kpxcAssert(browserStub.sentFor('report_exposure').length, 1, card, 'Beginning the second fill finalised the first: its scan caught the echoed code');
+    kpxcAssert($('#agent-otp').value, CODE, card, 'The first fill\'s own TOTP field was not taken for an exposure');
+
+    // The page copies the second fill's password into the first fill's TOTP element
+    $('#agent-otp').value = SECOND_ENTRY.password;
+    await wait(kpxcAgentMode.RESCAN_DELAY_MS * 2);
+    kpxcAssert($('#agent-otp').value, '', card, 'That element holding the second fill\'s password is the second fill\'s exposure, and is cleared');
+    kpxcAssert(browserStub.sentFor('report_exposure').length, 2, card, 'The second fill reported an exposure of its own');
+
+    kpxcAgentMode.RESCAN_DELAY_MS = delay;
+    hide('agent-login');
+}
+
 // Agent mode off: upstream's icons, autocomplete, login popup and banner, no automatic fill.
 async function testAgentModeOff() {
     const card = AgentCards.OFF;
@@ -398,6 +444,7 @@ async function testAgentModeOff() {
         testExposureAfterFill,
         testClearOnFailure,
         testFillStateIsPerFill,
+        testFillLifecycle,
         testAgentModeOff
     ]) {
         try {

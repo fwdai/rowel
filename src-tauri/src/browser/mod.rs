@@ -43,7 +43,7 @@ pub use self::actions::Client;
 use self::actions::{Host, Login};
 use self::passkeys::{Assertion, Registration};
 use self::protocol::Code;
-use crate::agents::{Access, AgentState};
+use crate::agents::AgentState;
 use crate::crypto::PayloadCipher;
 use crate::error::Result;
 use crate::models::{EntryMetaDto, GeneratorOptions, Passkey};
@@ -377,8 +377,8 @@ pub fn respond_grant(id: &str, answer: Option<GrantAnswer>) -> bool {
 }
 
 /// Refuse the grant ask up, if there is one — the switches changed
-/// (`agents::access_changed`) — and name the id its dialog is up under, for
-/// the dialog to be told it is over.
+/// (`agents::change_access`), or the session ended (`agents::clear`) — and
+/// name the id its dialog is up under, for the dialog to be told it is over.
 pub fn refuse_grant_ask() -> Option<String> {
     CONSENT.refuse_grant()
 }
@@ -680,15 +680,13 @@ impl Host for AppHost {
         req: GrantRequest,
     ) -> std::result::Result<GrantReply, Code> {
         let app = &self.0;
-        // The switches, and the epoch they were read under, kept to the end:
-        // every release below checks them again under the locks.
-        let access = agents::access(app);
-        if !access.enabled {
-            return Err(Code::AgentsDisabled);
-        }
+        // The switches are the session's to say (`AgentState::access`): read
+        // from the files by the first request of the session, consulted
+        // under the locks by every release below.
+        agents::initialise(app);
         let lockbox = workspace::active_id(app);
         let writer = storage::install_id(app);
-        let asking = match self.decide_grant(&lockbox, &writer, &access, client_key, req)? {
+        let asking = match self.decide_grant(&lockbox, &writer, client_key, req)? {
             Prepared::Answered(reply) => return Ok(reply),
             Prepared::Ask(asking) => *asking,
         };
@@ -704,7 +702,11 @@ impl Host for AppHost {
             // Under the slot, before the dialog goes up: a switch that moved
             // since the decision means no dialog, and one that moves from
             // here on finds the ask in the slot and refuses it there.
-            access.verify(&state.agents.lock().unwrap())?;
+            state
+                .agents
+                .lock()
+                .unwrap()
+                .access_since(asking.access_epoch)?;
             events::agent_grant(
                 app,
                 events::AgentGrantAsk {
@@ -743,11 +745,7 @@ impl Host for AppHost {
             Ok(Some(Answer::Grant(answer))) => Verdict::Answered(answer),
             Ok(_) => Verdict::Unanswered,
         };
-        // The switches as they stand now, held to the epoch the request was
-        // decided under: a change while the dialog was up refuses the yes,
-        // and the row names the switch that is off.
-        let access = agents::access(app).since(access.epoch);
-        self.settle_grant(&lockbox, &writer, &access, client_key, asking, answer)
+        self.settle_grant(&writer, client_key, asking, answer)
     }
 
     // A predicate with a side effect, on purpose: a yes here is the login or
@@ -758,10 +756,6 @@ impl Host for AppHost {
     // issued.
     fn grant_covers(&self, grant_id: &str, item_id: &str, mode: Mode) -> bool {
         let app = &self.0;
-        let access = agents::access(app);
-        if !access.enabled {
-            return false;
-        }
         let writer = storage::install_id(app);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
@@ -774,7 +768,6 @@ impl Host for AppHost {
             Locked {
                 store,
                 held: &mut held,
-                access: &access,
                 writer: &writer,
                 now,
             },
@@ -841,7 +834,6 @@ impl AppHost {
         &self,
         lockbox: &str,
         writer: &str,
-        access: &Access,
         client_key: &str,
         req: GrantRequest,
     ) -> std::result::Result<Prepared, Code> {
@@ -856,7 +848,6 @@ impl AppHost {
             Locked {
                 store,
                 held: &mut held,
-                access,
                 writer,
                 now,
             },
@@ -910,15 +901,12 @@ impl AppHost {
     // — active for the one item picked, or denied.
     fn settle_grant(
         &self,
-        lockbox: &str,
         writer: &str,
-        access: &Access,
         client_key: &str,
         asking: Asking,
         verdict: Verdict,
     ) -> std::result::Result<GrantReply, Code> {
         let app = &self.0;
-        let _ = lockbox;
         let state = app.state::<AppState>();
         let now = agents::now_ms();
         let session = state.session.lock().unwrap();
@@ -931,7 +919,6 @@ impl AppHost {
             Locked {
                 store,
                 held: &mut held,
-                access,
                 writer,
                 now,
             },
@@ -967,15 +954,15 @@ impl AppHost {
 // --- grant requests, between the lock and the ask ---------------------------------
 
 /// What a grant is decided, settled or checked against, under the session
-/// and agents locks: the open store, the grants held, the access the request
-/// was read under, and whose log the rows go to. The caller holds both locks
-/// for the whole of it, which is what makes the access check and the
-/// release one critical section; nothing of the app is in it, so the tests
-/// run the same code over a store of their own.
+/// and agents locks: the open store, what the agents lock guards — the
+/// grants held and the switches as the session holds them — and whose log
+/// the rows go to. The caller holds both locks for the whole of it, which is
+/// what makes the check of the switches and the release one critical
+/// section; nothing of the app is in it, so the tests run the same code over
+/// a store of their own.
 struct Locked<'a> {
     store: &'a SqliteStore,
     held: &'a mut AgentState,
-    access: &'a Access,
     writer: &'a str,
     now: i64,
 }
@@ -983,7 +970,7 @@ struct Locked<'a> {
 /// Everything a grant request decides before anyone is asked: a grant this
 /// client already holds for the page (served), the rules, the rate, policy,
 /// and the grant itself when policy allows without asking (served). Both
-/// releases come after one check of `access` under the same locks.
+/// releases come after one look at the switches under the same locks.
 fn decide(
     ctx: Locked<'_>,
     epoch: Epoch,
@@ -994,7 +981,6 @@ fn decide(
     let Locked {
         store,
         held,
-        access,
         writer,
         now,
     } = ctx;
@@ -1019,18 +1005,23 @@ fn decide(
         );
         return Err(Code::GrantDenied);
     };
-    // The switches, under the locks and before either release below: as
-    // they were read, and with nothing changed since — a change that landed
-    // in between moved the epoch, and the row names the switch.
-    if let Err(reason) = access.verify(held) {
-        agents::record(
-            store,
-            writer,
-            refusal(Event::Denied, format!(r#"{{"reason":"{reason}"}}"#)),
-            now,
-        );
-        return Err(Code::GrantDenied);
+    // The switches as the session holds them, under the locks and before
+    // either release below. The app's off is the extension's `AgentsDisabled`
+    // and no row; the lockbox's off is a refusal on record.
+    match held.access_on() {
+        Ok(()) => {}
+        Err("lockbox") => {
+            agents::record(
+                store,
+                writer,
+                refusal(Event::Denied, r#"{"reason":"lockbox"}"#.into()),
+                now,
+            );
+            return Err(Code::GrantDenied);
+        }
+        Err(_) => return Err(Code::AgentsDisabled),
     }
+    let access_epoch = held.access_epoch;
 
     let candidates = candidates_in(store, &req.items);
     let probe = Probe::Origin(&origin);
@@ -1146,6 +1137,7 @@ fn decide(
             held.rate(client_key).record_ask(now);
             Ok(Prepared::Ask(Box::new(Asking {
                 epoch,
+                access_epoch,
                 grant,
                 candidates,
                 client_name,
@@ -1157,8 +1149,9 @@ fn decide(
 
 /// The user has answered (or not): the grant becomes active for the one
 /// item picked — a standing answer writes its rule first — or denied. The
-/// `access` check comes first, under the same locks as the release: a yes
-/// given while a switch moved is no yes, and the row names the switch.
+/// switches come first, under the same locks as the release, and the epoch
+/// the request was decided under: a yes given while a switch moved is no
+/// yes, and the row names the switch.
 fn settle(
     ctx: Locked<'_>,
     client_key: &str,
@@ -1168,11 +1161,11 @@ fn settle(
     let Locked {
         store,
         held,
-        access,
         writer,
         now,
     } = ctx;
     let Asking {
+        access_epoch,
         mut grant,
         candidates,
         origin,
@@ -1190,8 +1183,8 @@ fn settle(
         now,
     );
 
-    let settled = access
-        .verify(held)
+    let settled = held
+        .access_since(access_epoch)
         .and_then(|()| outcome(&verdict, &candidates));
     let (item, standing_days) = match settled {
         Ok((picked, standing_days)) => (picked.visible.clone(), standing_days),
@@ -1267,19 +1260,18 @@ fn settle(
 /// now — a predicate with a side effect, on purpose: a yes here is the login
 /// or its code about to be served, so it is a use of the grant, counted on
 /// it and written as a `used` row, and this is the one place the grant is
-/// in hand to say so. The `access` check comes first, under the same locks:
-/// a grant still active is not served once a switch moved. The targets are
-/// not checked again: the TOTP step comes with no URL, and the grant was
-/// narrowed to its page when it was issued.
+/// in hand to say so. The switches come first, under the same locks: a
+/// grant still on the list is not served once the session's switches say
+/// no. The targets are not checked again: the TOTP step comes with no URL,
+/// and the grant was narrowed to its page when it was issued.
 fn covered(ctx: Locked<'_>, grant_id: &str, item_id: &str, mode: Mode) -> bool {
     let Locked {
         store,
         held,
-        access,
         writer,
         now,
     } = ctx;
-    if access.verify(held).is_err() {
+    if held.access_on().is_err() {
         return false;
     }
     let Some(grant) = held.find_mut(grant_id) else {
@@ -1335,6 +1327,9 @@ enum Prepared {
 /// decided in, the grant as it stands, and what the dialog was shown.
 struct Asking {
     epoch: Epoch,
+    /// The switches' epoch it was decided under (`AgentState::access_epoch`):
+    /// a change since, whatever it left the switches at, settles it as a no.
+    access_epoch: u64,
     grant: Grant,
     candidates: Vec<Candidate>,
     client_name: String,

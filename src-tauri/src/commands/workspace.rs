@@ -837,7 +837,7 @@ pub fn workspace_set_color(
 /// under its lock like the colour (`Workspace::agents`), so there is no vault
 /// to write and a locked workspace is switched exactly as the open one is.
 /// What a change does to the grants up and the ask on screen is the write's
-/// own business (`workspace::set_agents` → `agents::access_changed`).
+/// own business (`workspace::set_agents` → `agents::change_access`).
 #[tauri::command]
 pub fn workspace_set_agents(id: String, enabled: bool, app: AppHandle) -> Result<()> {
     workspace::set_agents(&app, &id, enabled)
