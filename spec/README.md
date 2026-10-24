@@ -87,6 +87,18 @@ Read the overview first. Everything else hangs off it.
   and the full lock order (`06`), the per-install audit writer id (`06`,
   `09`), grants keyed by the requesting document's origin and a fill
   lifecycle that finalises its predecessor (`05`).
+- **2026-10-25, I2 as built.** Client kinds and the agent vocabulary, the
+  `rowel-signal` wake-up and the two signals, the client half of the channel
+  and the CLI (`02`, `04`): the `Client` record's timestamps follow the
+  codebase's `_ms` convention; `test-associate` also answers
+  `brokerCapabilities`; a fill grant an agent asked for is claimed by the
+  first extension served (`Grant.served_to`) rather than spent, and there is
+  no `set-agent-mode` signal — the extension derives agent mode from the
+  grants it holds (`04`, `05`); `list-visible` in Tier 1 reads the client's
+  own rules and grants, never the baseline (`04`); the CLI binary is
+  `rowel-cli`, a release-only sidecar reached as `rowel` through the symlink
+  Settings installs, its agent key a `0600` file until I3 (`06`); passkey
+  ceremonies carry `requestedBy` and write rows (`05`, `09`).
 
 ## Relationship to the other docs
 

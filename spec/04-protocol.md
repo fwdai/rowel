@@ -82,46 +82,91 @@ dropped because the transport frames for us.
 ```
 
 `kind` defaults to `extension` when absent, so the unmodified KeePassXC-Browser
-extension keeps working. The reply gains `brokerCapabilities` and, for agents,
-`clientId`.
+extension keeps working; a `hello` that does not parse is `AssociationFailed`;
+`platform`, `version` and each capability are clamped to a short length. The
+reply to both actions gains `brokerCapabilities: ["grants","signals"]` and,
+for a kind other than `extension`, `clientId` (the identification key), so a
+reconnecting CLI, which only ever `test-associate`s, learns them too.
 
-**Agent actions (❌).** All inside the sealed channel, all requiring an
-association of kind `agent` (or `sidecar` where noted). Names follow the
-existing kebab style.
+**Vocabularies (✅ I2).** The kind that gates an action is the stored
+record's, checked right after the association check
+(`ClientKind::permits`, `Connection::admit`), with `NotPermittedForKind` for
+a known client at the wrong door:
+
+| action | extension | agent | sidecar |
+| --- | --- | --- | --- |
+| `get-databasehash`, `generate-password`, `lock-database` | ✓ | ✓ | ✓ |
+| `get-logins`, `get-totp`, `set-login`, `passkeys-register`, `passkeys-get`, `get-signals`, `report-exposure` | ✓ | ✗ | ✗ |
+| `request-grant`, `wait-grant`, `end-grant`, `grant-status`, `list-visible` | ✗ | ✓ | ✓ |
+| `resolve` (I3) | ✗ | ✗ | ✓ |
+
+A test walks every secret-carrying action as an agent and asserts the clear
+refusal carries no `entries`, `password`, `totp` or `response`.
+
+**Agent actions (✅ I2 but `resolve`).** All inside the sealed channel, all
+after association. Names follow the existing kebab style; the selector,
+target and mode shapes are the serde forms of `rowel_broker::grant`.
 
 | action | request | reply | notes |
 | --- | --- | --- | --- |
-| `request-grant` | `{ runId, reason?, items: selector, targets: [...], modes: [...], acting_for?: delegation }` | `{ grantId, state: "active"\|"pending"\|"denied", expiresAtMs?, retryAfterMs?, items: [ { id, title, username? } ] }` | Tier 1 blocks for the dialog (≤ 60 s) and answers the final state; `pending` + `retryAfterMs` only when another ask holds the consent slot. Tier 2 answers `pending` for routed approvals. `items` are the admitted candidates' non-secret fields. |
-| `wait-grant` | `{ grantId, timeoutMs ≤ 120000 }` | same as above | Long poll on the server; in Tier 1 it returns at once with the current state. |
-| `end-grant` | `{ grantId }` | `{ ok }` | Triggers session end (`05`). |
-| `list-visible` | `{ lockbox? }` | `{ items: [ { ref: "rowel://…", title, kind, fields: [...] } ] }` | Only items a rule marks `visible` for this agent. Never secrets. |
-| `grant-status` | `{ grantId }` | `{ state, uses, expiresAt }` | |
-| `resolve` | `{ grantId, ref: "rowel://…", context: { target } }` | `{ value }` | **sidecar kind only.** Checks the grant covers `ref`, the mode is `header` or `env`, `context.target` matches, and the sidecar binding (`03`). Increments `uses`. Refused with `NotPermittedForKind` for any other kind. |
+| `request-grant` | `{ runId ≤ 64, reason? ≤ 300, items: "lockbox" \| {ids:[…]} \| {tag} \| {kind}, targets: [ {origin} \| {http:{host,path,methods}} \| {command} ], modes: ["fill",…] }` | `GrantReply`: `{ grantId, state, expiresAtMs, retryAfterMs, uses, items: [ { id, title, username } ] }` | Tier 1 blocks for the dialog (≤ 60 s) and answers the final state inside the sealed reply; `pending` + `retryAfterMs` is a *state* there (only the extension's `agentMode` fill path turns it into the `GrantPending` refusal). A `runId` over 64 chars, a missing or malformed selector, an empty `targets` or `modes` is `GrantDenied`; `reason` is clamped. `acting_for` comes with Tier 2. |
+| `wait-grant` | `{ grantId, timeoutMs ≤ 120000 }` | `GrantReply` | Long poll on the server; in Tier 1 it is `grant-status`. |
+| `grant-status` | `{ grantId }` | `GrantReply` with `uses` | The grant's own client only; another's id is `GrantDenied`. |
+| `end-grant` | `{ grantId }` | `{ ok: true }` | Own grant only. Triggers session end (`05`). |
+| `list-visible` | `{ lockbox? }` | `{ items: [ { ref: "rowel://<lockbox id>/<item id>", title, kind, fields: [...] } ] }` | In Tier 1: the items this client's *own* live rules admit (`AgentSelector::Ids` naming its key) and the items of its active grants — never the baseline rule, which would make the whole lockbox's titles visible to any agent let in. Never secrets. |
+| `resolve` | `{ grantId, ref: "rowel://…", context: { target } }` | `{ value }` | **sidecar kind only (I3).** Checks the grant covers `ref`, the mode is `header` or `env`, `context.target` matches, and the sidecar binding (`03`). Increments `uses`. |
 
-New `Code` variants (`protocol.rs`): `GrantDenied = 40`, `GrantPending = 41`,
+`Code` variants (`protocol.rs`): `GrantDenied = 40`, `GrantPending = 41`,
 `GrantExpired = 42`, `NotPermittedForKind = 43`, `PolicyRequiresApproval = 44`,
 `RateLimited = 45`, `AgentsDisabled = 46` (the app's Agents switch is off).
-Numbers above KeePassXC's range so an upstream merge never collides.
+Numbers above KeePassXC's range so an upstream merge never collides;
+`Code::from_number` maps a raw `errorCode` back for clients.
 
-**Host trait additions (❌).**
+**Host trait (✅ I2 as built).**
 
 ```rust
 pub trait Host {
-    // ... existing methods unchanged ...
+    fn enabled(&self) -> bool;
+    fn database_hash(&self) -> Option<String>;
+    fn clients(&self) -> Vec<Client>;
+    fn associate(&self, key: &str, who: &Hello) -> Result<Client, Code>;
+    fn client_seen(&self, _key: &str) {}
+    fn logins_for(&self, page_url: &str, host: &str) -> Vec<Login>;
+    fn totp(&self, id: &str) -> Option<String>;
+    fn generate_password(&self) -> Option<String>;
+    fn save_login(&self, id: Option<&str>, url: &str, host: &str, username: &str, password: &str) -> Result<(), Code>;
+    fn passkey_register(&self, client: &Client, registration: Registration) -> Result<Value, Code>;
+    fn passkey_get(&self, client: &Client, assertion: Assertion) -> Result<Value, Code>;
+    fn lock(&self);
+    fn unlock_requested(&self);
     fn request_grant(&self, client: &Client, req: GrantRequest) -> Result<GrantReply, Code>;
-    fn wait_grant(&self, client: &Client, id: &str, timeout: Duration) -> Result<GrantReply, Code>;
+    fn wait_grant(&self, client: &Client, id: &str, timeout_ms: u64) -> Result<GrantReply, Code>;
+    fn grant_status(&self, client: &Client, id: &str) -> Result<GrantReply, Code>;
     fn end_grant(&self, client: &Client, id: &str) -> Result<(), Code>;
-    fn visible_items(&self, client: &Client, lockbox: Option<&str>) -> Vec<VisibleItem>;
-    fn resolve(&self, client: &Client, id: &str, reference: &Reference, ctx: &ResolveContext)
-        -> Result<Zeroizing<String>, Code>;
-    /// The sealed signals queued for this client since it last asked (see below).
+    fn visible_items(&self, client: &Client, lockbox: Option<&str>) -> Vec<VisibleRef>;
     fn take_signals(&self, client: &Client) -> Vec<Signal>;
+    /// A yes is a use; for a grant issued to another client it is also the
+    /// `served_to` claim (`05`).
+    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool;
+    fn report_exposure(&self, client: &Client, grant_id: &str);
+    // I3: fn resolve(&self, client: &Client, id: &str, reference: &Reference, ctx: &ResolveContext) -> Result<Zeroizing<String>, Code>;
 }
 ```
 
 `AppHost` implements them against the open lockbox; `OrgHost` (Tier 2) against
-an org lockbox. The `Mock` in `browser/tests.rs` grows the same methods so the
-protocol tests cover grants without an app.
+an org lockbox. The `Mock` in the broker crate's `testing` module has the same
+methods, so the protocol tests cover grants without an app, and
+`Mock::grant_covers` is the reference for the `served_to` claim.
+
+**The client half (✅ I2, `rowel_broker::client`).** The extension's side of
+the sealed channel as production code: `Channel` (our X25519 key pair, the
+exchange, `seal`/`open` with the extension's checks: nonce + 1, `success`,
+`action`), `Refused` (a clear refusal: `Code` or raw number, text,
+`retryAfterMs`), `Transport` (one frame out, one in — a socket, a pipe, or an
+in-process `Connection` under `test-support`) and `Peer` (`connect` runs the
+exchange, `call(action, message)` seals, sends, opens). The test `Extension`
+is rebuilt on it, so there is one implementation; the CLI is its first
+production user.
 
 **Signals to the extension (🟡).** The host already pushes `database-locked`
 and `database-unlocked` to every connected client **in the clear and
@@ -135,11 +180,17 @@ Instead:
 1. the host pushes a third clear signal, `{"action":"rowel-signal"}`, with no
    other fields, through the same queue;
 2. the extension answers it with a sealed `get-signals` request, and the host
-   replies with the queued `Signal`s for that client:
-   `fill-grant { grantId, origin, item: { id, title, username }, autoSubmit,
-   expiresAt }`, `grant-ended { grantId, origins }`, `set-agent-mode { on }`.
+   replies `{ signals: [...] }` with the queued `Signal`s for that client,
+   each tagged by `signal`: `fill-grant { grantId, origin, item: { id, title,
+   username }, autoSubmit, expiresAtMs }` and `grant-ended { grantId,
+   origins }` (`rowel_broker::signal::Signal`; `ROWEL_SIGNAL` is the clear
+   wake-up's bytes). There is no `set-agent-mode` signal: the extension
+   derives agent mode from the fill grants it holds (`05`), which keeps the
+   host out of a per-profile setting it cannot see.
 
-No polling. An open native-messaging port keeps the MV3 service worker alive
+`get-signals` is in the extension's vocabulary only, and a queue is drained
+without an access check: a `grant-ended` has to reach the extension even
+after the Agents switch went off. No polling. An open native-messaging port keeps the MV3 service worker alive
 (Chrome 105 and later), so the wake-up reaches a live worker. If the port is
 down, the extension reconnects as it does today (key exchange, then
 `test-associate`) and sends one `get-signals` right after, so a signal queued
@@ -186,13 +237,22 @@ carries content.
   mode `fill` and passed to the browser session. The code is one-time, bound
   to the grant, and expires with it.
 
-**Thin clients (❌, `rowel` CLI binary, `11`).**
+**Thin clients (🟡, the `rowel-cli` binary, `11`).** The crate is
+`src-tauri/crates/cli` (`rowel-cli`); its binary ships beside the app as
+`rowel-cli` and is reached as `rowel` through the symlink Settings installs
+(`06`). `status` and `mcp` landed in I2; the rest is I3.
 
-- `rowel mcp` — a stdio MCP server exposing tools that map 1:1 onto the agent
-  actions: `rowel_request_login(site, reason)`, `rowel_request_secret(ref,
-  mode, reason)`, `rowel_wait(grant_id)`, `rowel_list_visible()`,
-  `rowel_end(grant_id)`. Tool results never include values. Client kind
-  `agent`, with its own key.
+- `rowel mcp` (✅ I2) — a stdio MCP server (newline-delimited JSON-RPC 2.0)
+  exposing tools that map 1:1 onto the agent actions:
+  `rowel_request_login(site, reason?)`, `rowel_request_secret(ref, mode,
+  target, reason?)` (served from I3; denied by policy until then),
+  `rowel_wait(grant_id)`, `rowel_list_visible()`, `rowel_end(grant_id)`. A
+  tool result is the opened reply's named fields only (`grantId`, `state`,
+  `expiresAtMs`, `retryAfterMs`, `uses`, `items` / `ok`), never a value, by
+  construction: the client is of kind `agent`, with its own key, associated
+  lazily at the first tool call so `initialize` and `tools/list` work with
+  the app closed. `runId` is minted once per process. `rowel status` says
+  whether the app is reachable, the vault open and the key associated.
 - `rowel hook` — Claude Code / Codex / Cursor hooks: *pre-tool* rewrites a shell
   command containing `rowel://` placeholders to run under `rowel run`
   (requesting a grant in `env` mode, so the agent's own shell never sees the

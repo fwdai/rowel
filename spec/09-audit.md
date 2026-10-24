@@ -105,6 +105,14 @@ an ask, `{"reuse":true}` for a grant served again before policy ran, and
 `ended` `{"reason":"expired"}`; `exposed` `{"reason":"exposure"}`. The
 `target` column is the page reduced to scheme, host and path.
 
+**Details as built (I2).** `actor_kind` follows the client's kind
+(`extension`, `agent`, `sidecar`), and `run_id` is the agent's `runId`.
+`associated` is written when any client is let in, `revoked_client` when one
+is forgotten in Settings; `revoked` gains `{"reason":"agent"}` for an
+`end-grant`; a passkey ceremony writes `used` with `mode: passkey` and the
+page's origin as target (a refused one `denied {"reason":"user"}`); an
+agent's fill for a site without a login is `denied {"reason":"no_candidates"}`.
+
 **Surfaces.**
 
 - Tier 1: `src/components/Main/Sidebar/Settings/Sections/Audit/` (Vault Health)

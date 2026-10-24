@@ -59,35 +59,46 @@ the extension's association is checked today.
 
 ### Technical details
 
-**Client record (🟡).** `rowel_broker::Client` extends today's
-`browser::actions::Client { name, key }`:
+**Client record (✅ I2).** `rowel_broker::actions::Client` extends the old
+`{ name, key }`:
 
 ```rust
+#[serde(rename_all = "camelCase")]
 pub struct Client {
     pub name: String,
     /// Identification public key (base64), as today. The whole credential in
     /// Tier 1; in Tier 2 the session key the workload proof was bound to.
     pub key: String,
-    pub kind: ClientKind,          // Extension | Agent | Sidecar
-    pub platform: Option<String>,  // "claude-code", "codex", "browser-use", "cli"
-    pub created_at: i64,
-    pub last_seen_at: Option<i64>,
+    #[serde(default)]
+    pub kind: ClientKind,              // Extension (default) | Agent | Sidecar
+    pub platform: Option<String>,      // "claude-code", "codex", "cursor", "browser-use", "cli"
+    #[serde(default)]
+    pub created_at_ms: i64,            // 0 for a row from before kinds
+    pub last_seen_at_ms: Option<i64>,  // set once per connection, at test-associate
     /// Tier 2 only: the agent definition this client resolved to.
     pub agent_id: Option<String>,
 }
 ```
 
 Stored where `browser::clients` rows are today (sealed inside the lockbox,
-`clients_in` / `write_clients` in `src-tauri/src/browser/mod.rs`), with `kind`
-defaulting to `Extension` on read so existing rows keep working.
+`clients_in` / `write_clients` in `src-tauri/src/browser/mod.rs`); serde
+defaults make an old `{"name","key"}` row read back as an extension created
+at time zero, which is what it was. The `_ms` suffix follows the codebase's
+convention for millisecond timestamps (`Grant.expires_at_ms`).
 
-**Association for agents (🟡).** The existing `associate` action gains optional
-fields inside the sealed message: `kind`, `platform`, `proof`. The `Host` trait
-method becomes `associate(&self, key: &str, who: &Hello) -> Result<Client, Code>`
-where `Hello` carries those fields. `AppHost` shows the dialog with the kind
-and platform; the dialog's answer is a name or a refusal, through the same
-consent slot (`Pending`, `events::browser_associate` → a new
-`events::agent_associate` variant carrying the kind). One ask at a time stays.
+**Association for agents (✅ I2).** The sealed `associate` and `test-associate`
+messages accept an optional `hello { kind, platform, version, capabilities }`
+(`proof` comes with Tier 2). The `Host` method is
+`associate(&self, key: &str, who: &Hello) -> Result<Client, Code>`; the
+connection keeps the *stored* record it matched and looks it up again on every
+request, so the kind that gates an action is the lockbox's, never the
+connection's claim. `AppHost` refuses an agent with `AgentsDisabled` before
+any dialog while the app's Agents switch is off; otherwise the same
+`browser:associate` event carries `kind` and `platform` and the one
+`AssociateDialog` reads them (an agent is named after its platform by default
+and told what it will and will not be able to do). The stored row gets
+`created_at_ms` and an `associated` audit row; a forget writes
+`revoked_client`. One ask at a time stays.
 
 **Run identity.** Every request after association carries `run_id` (agent
 minted, opaque, ≤ 64 chars) and may carry `reason` (≤ 300 chars). The broker

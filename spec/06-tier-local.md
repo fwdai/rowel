@@ -139,6 +139,20 @@ minted once into an owner-only file and held in `AppState` behind a
 `OnceLock`, so concurrent first uses agree and a write failure still leaves
 one id for the process.
 
+**As built in I2.** An agent's `request-grant` runs the same three phases as
+the extension's `agentMode` fill, with the client record (kind, name) in
+hand: the candidates for a fill are the logins whose `url_host` matches the
+target origin, the dialog event carries `clientKind`, the agent's `reason`
+(shown as text, never interpreted) and `endsSession` (the sign-out notice),
+and activation queues the `fill-grant` signal. Signals live in
+`AgentState.signals`, a per-client-key queue cleared with every seal;
+`take_signals` drains it under the session and agents locks with no access
+check; every push is followed, outside the locks, by `server::notify_signals`
+(the clear `rowel-signal`). `grant_status`, `wait_grant` and `end_grant`
+answer only for the grant's own client. `visible_items` reads the client's
+own live rules and active grants, never the baseline. `client_seen` writes
+`last_seen_at_ms` once per connection, at `test-associate`.
+
 **Server loop (✅, unchanged).** `server.rs::accept` spawns a thread per
 connection and `serve` stays one-request-one-reply; a blocking ask inside
 `request_grant` parks only that connection's thread, exactly as `associate`
@@ -170,17 +184,27 @@ work for any kind). Events `agents:changed` refresh them, as
 into "turn on Agents in Rowel › Settings". The per-lockbox `agents` flag lives
 in the workspace registry (`01`).
 
-**CLI binary (❌).** `src-tauri/crates/cli` (`rowel` binary), built in CI for
-desktop targets and shipped beside the app (in the `.app` bundle's `MacOS/`,
-the Windows installer, the Linux packages), with an *Install command line tool*
-button in Settings that symlinks it into the PATH. Client subcommands: `mcp`,
-`hook`, `run`, `proxy`, `redact`, `status`. Two client identities (`04`): the
-agent key used by `mcp`, the sidecar key used by `run` and `proxy`; both in the
-OS secure store where available (a non-gated item beside the biometric one in
-`secure_store.rs`), else `0600` files. The same binary later gains `serve`
-(the headless broker, and in `--server` mode the Rowel Server), `approve` and
-`admin` (`07`, `PLAN.md` I5 and I7). The desktop app is not split into a UI
-plus this daemon: it embeds the same crates and is the broker itself (Q26).
+**CLI binary (🟡, I2).** `src-tauri/crates/cli` (`rowel-cli`), a workspace
+member built with the rest. Its binary is named `rowel-cli`, not `rowel`: the
+app's own executable is `rowel` (`Contents/MacOS/rowel`, `/usr/bin/rowel`),
+so a sidecar of the same name would collide in Cargo's target directory, in
+the `.app` on a case-insensitive disk and in the Linux packages. It ships
+beside the app as a Tauri sidecar (`bundle.externalBin`), release-only: the
+release workflow builds it for the target (both Apple architectures,
+`lipo`'d) into `src-tauri/binaries/rowel-cli-<triple>` and merges
+`src-tauri/tauri.release.conf.json` with `--config`, so a dev build never
+needs it. Settings › General › *Command line tool* (`cli_status`,
+`cli_install`) finds the sidecar beside the running executable and, on macOS
+and Linux, symlinks it as `rowel` into `/usr/local/bin` when writable, else
+`~/.local/bin`; on Windows it shows the path to add to PATH. Client
+subcommands: `status` and `mcp` (I2), `hook`, `run`, `proxy`, `redact` (I3).
+Two client identities (`04`): the agent key used by `mcp`, the sidecar key
+used by `run` and `proxy`; in I2 the agent key is a `0600` JSON file in the
+user's config directory (`rowel/agent.json`), the OS secure store comes with
+I3 (Q9). The same binary later gains `serve` (the headless broker, and in
+`--server` mode the Rowel Server), `approve` and `admin` (`07`, `PLAN.md` I5
+and I7). The desktop app is not split into a UI plus this daemon: it embeds
+the same crates and is the broker itself (Q26).
 
 **Extension (🟡).** `extension/rowel/background/grants.js` (new), changes in
 `client.js` (`onNativeMessage` routes `rowel-signal`), `page.js` (hide UI in

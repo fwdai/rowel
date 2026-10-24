@@ -143,7 +143,7 @@ site for N days. No new clients, no CLI yet. Spec `01` (agent-access flag),
 
 ---
 
-## I2 — Agent clients and the MCP server  `[ ]`
+## I2 — Agent clients and the MCP server  `[ ]`  *(in review: PR #655, branch `feat/agent-clients`, stacked on #653)*
 
 **Deliverable.** Claude Code, Codex or Cursor configured with `rowel mcp` can
 ask to log into a site; the person approves; the extension fills the open tab;
@@ -159,12 +159,13 @@ secret. Spec `02` (local association), `04`, `05` (signals, session end), `06`
       when the slot is busy), `wait-grant`, `end-grant`, `grant-status`,
       `list-visible`; new `Code`s; implemented in `Mock` and `AppHost` (`04`).
 - [ ] Signals: clear `rowel-signal` push through `server::signal`, sealed
-      `get-signals`, `fill-grant` queued for every extension client and spent
-      on first service; `get-signals` once after reconnect; Safari `isSignal`
-      learns the action (`04`).
+      `get-signals`, `fill-grant` queued for every extension client and
+      claimed by the first one served (`Grant.served_to`); `get-signals` once
+      after reconnect; Safari `isSignal` learns the action (`04`).
 - [ ] Extension `grants.js`: handles the wake-up, finds the tab by origin,
-      fills through the existing path with `grantId`, `set-agent-mode` for the
-      grant's lifetime (`05 §2`).
+      fills through the existing path with `grantId`, agent mode on for the
+      grant's lifetime when it was off (derived in the extension; no
+      `set-agent-mode` signal) (`05 §2`).
 - [ ] `src-tauri/crates/cli` (`rowel`): `status`, `mcp` (stdio MCP, five tools,
       no values in results, agent key in a `0600` file for now) (`04`).
 - [ ] Session end: `grant-ended` on `end-grant` and on expiry; cookie deletion

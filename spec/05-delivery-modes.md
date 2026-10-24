@@ -90,13 +90,19 @@ line, and the redactor catches a value printed verbatim.
 
 **Fill (🟡, extension + host).**
 
-- Host side: `request-grant` with `modes: ["fill"]` and `targets:
-  [Origin(url)]`. On activation `AppHost` queues `Signal::FillGrant { grant_id,
-  origin, item: VisibleItem, auto_submit, expires_at }` for **every** extension
-  client associated to the same lockbox and pushes `rowel-signal` (`04`). Only
-  an extension with a tab at that origin acts; the first `get-logins { url,
-  grantId }` that the host serves marks the fill grant *spent*, so a second
-  extension asking afterwards is refused. No per-profile addressing is needed.
+- Host side (✅ I2): `request-grant` with `modes: ["fill"]` and `targets:
+  [Origin(url)]`. The candidates are the lockbox's logins whose `url_host`
+  column matches the origin's host, narrowed by the request's selector; no
+  payload is opened to decide a grant, and a site with no login is `denied`
+  (`no_candidates`). On activation `AppHost` queues `Signal::FillGrant {
+  grant_id, origin, item: VisibleItem, auto_submit: false, expires_at_ms }`
+  for **every** extension client associated to the same lockbox and pushes
+  `rowel-signal` (`04`). Only an extension with a tab at that origin acts.
+  The grant is not single-use (a fill is followed by the TOTP step and
+  retries, `03`); instead the first extension the host serves under it
+  *claims* it (`Grant.served_to`), and a different extension asking under
+  the same `grantId` afterwards is refused `GrantDenied`. No per-profile
+  addressing is needed.
 - Extension side (`extension/rowel/background/`): a new `grants.js` module
   handles `rowel-signal` → `get-signals`, keeps `activeGrants` in
   `browser.storage.session` (already used by `credentials.js`), and on
@@ -118,10 +124,25 @@ line, and the redactor catches a value printed verbatim.
   autocomplete and banners when `agentMode` is set; the popup shows a single
   "Agent mode on · cancel" screen. The settings page stays reachable through
   `chrome://extensions`.
-- **Agent mode flag**: per browser profile, in `browser.storage.local`, set
-  from the popup or by the host's `set-agent-mode` signal when an agent client
-  requests `fill` (so an explicit request flips it for the grant's lifetime
-  and flips it back at `grant-ended`).
+- **Agent mode flag**: per browser profile, in the extension's settings, set
+  from the popup — or, as built in I2, by the extension itself when a
+  `fill-grant` arrives while it is off (`rowelAgentModeByGrant` remembers
+  that a grant did it), and back off at the `grant-ended` of the last agent
+  grant, or on `database-locked`. Agent mode the person turned on is never
+  touched, and there is no `set-agent-mode` signal: the host cannot see a
+  profile's setting and should not guess at it.
+- **As built in I2** (`grants.js::onSignal`): `rowel-signal` → `test-associate`
+  → sealed `get-signals`, also once after every reconnect. A `fill-grant`
+  is remembered under its origin with the host's `expiresAtMs`, the origin
+  is marked agent-driven (`rowelAgentGrants`), and the active tab at that
+  origin (exact origin match, port included) is told `redetect_fields`,
+  upstream's own message that reloads the content script's settings and
+  ends in a retrieval — so a tab loaded before agent mode went on fills as
+  agent mode rather than through the person's icons; `page.clearLogins`
+  first, so the retrieval reaches the host. Without a tab the grant waits
+  for the next load at that origin. `item` and `autoSubmit` are not read:
+  the host serves the admitted item on `get-logins`, and submit stays
+  upstream's `autoSubmit` setting.
 - **As built in I1** (`extension/rowel/background/grants.js`,
   `content/agent-mode.js`, `popups/agent-mode.js`): the flag is the
   `agentMode` entry of the extension's settings object; the grant map is
@@ -153,12 +174,14 @@ line, and the redactor catches a value printed verbatim.
   secrets and its own ignored field, so two fills never share state or a
   timer and no fill's exposure check is skipped by its successor.
 
-**Passkey (✅ mechanism, 🟡 attribution).** `browser::passkeys::{register,
-assert}` and the `UserConsent` dialog (`ask_passkey`, `events::browser_passkey`)
-are unchanged. Add to the event an optional `requested_by: { kind, name }`
-derived from the connection's `Client`, shown as one line in the dialog, and
-write an audit row (`09`). The floor in `03` keeps every passkey ceremony
-behind the tap, agent or not.
+**Passkey (✅ I2).** `browser::passkeys::{register, assert}` and the
+`UserConsent` dialog (`ask_passkey`, `events::browser_passkey`) are unchanged
+in mechanism. The `Host` methods take the connection's `Client`; the event
+carries `requestedBy: { kind, name }`, shown as one line in the dialog; and
+every completed ceremony writes a `used` row with `mode: passkey`, the origin
+as target and the client as actor, a refused one a `denied` row (`09`). No
+grant object is involved in Tier 1: the ceremony's own tap is the approval.
+The floor in `03` keeps every passkey ceremony behind the tap, agent or not.
 
 **Header / proxy (❌, `rowel proxy`).**
 
@@ -236,3 +259,15 @@ Scope: only origins the grant named. If the user also uses that site in the
 same profile, the dialog warned at grant time ("this will sign you out of
 github.com in this browser when the agent is done"); profile isolation is the
 better answer (Q12).
+
+*As built in I2.* The host queues `grant-ended { grantId, origins }` for every
+extension of the lockbox from one helper, on every way a grant ends: expiry,
+`end-grant` from the agent or from Settings, a switch going off, an exposure.
+The extension deletes the cookies of each origin's registrable domain, found
+through upstream's own `page.getBaseDomainFromUrl` (which probes the public
+suffix list with a throwaway cookie, as it does for iframes), in every cookie
+store; drops the grant only if the stored id is the signal's, so a stale end
+never kills a newer grant at the same origin; shows a fixed-text notification;
+and turns agent mode back off only if a grant turned it on and none is left.
+`database-locked` does the same clearing, since every grant died with the
+lock. Safari: `browser.cookies` is absent, so the deletion is skipped.
