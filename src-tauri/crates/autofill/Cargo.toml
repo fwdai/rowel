@@ -4,6 +4,8 @@ name = "rowel-autofill"
 version = "0.1.0"
 description = "The vault as the iOS AutoFill extension reads it, over UniFFI"
 authors = ["Alex Chaplinsky"]
+# Permissive like every crate under `crates/`; see `crates/core/Cargo.toml`.
+license = "MIT OR Apache-2.0"
 edition = "2021"
 rust-version = "1.92"
 publish = false

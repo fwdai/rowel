@@ -5,6 +5,10 @@ name = "rowel-core"
 version = "0.1.0"
 description = "Rowel's vault core, free of Tauri and the webview"
 authors = ["Alex Chaplinsky"]
+# The crates under `crates/` are permissively licensed so that any program,
+# open or not, can link them; the app around them stays GPL-3.0 (see the
+# License section of the README).
+license = "MIT OR Apache-2.0"
 edition = "2021"
 # Same floor as the app: the RustCrypto 0.11 crates (1.85) and passkey-rs 0.5
 # (1.85.1) are below it, and one toolchain builds the whole workspace.

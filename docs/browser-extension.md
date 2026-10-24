@@ -4,7 +4,8 @@ Rowel's browser extension lives in [`extension/`](../extension). It is a fork
 of [KeePassXC-Browser](https://github.com/keepassxreboot/keepassxc-browser)
 (GPL-3.0, like Rowel), vendored as a **git subtree** so upstream releases can be
 pulled in. The desktop app already speaks KeePassXC-Browser's native messaging
-protocol (`src-tauri/src/browser/`), so the fork keeps the protocol, crypto,
+protocol (`src-tauri/crates/broker`, hosted by `src-tauri/src/browser/`), so
+the fork keeps the protocol, crypto,
 form detection and content scripts exactly as upstream has them. It changes:
 
 - branding: name, icons, user-facing copy ("Rowel", "vault");
@@ -227,8 +228,8 @@ After merging:
    and `KeePassXC` in HTML and non-locale JS. New user-facing strings upstream
    added outside `_locales` won't be caught by `extension:strings`.
 4. Read upstream's `CHANGELOG` for protocol changes (`keepassxc-protocol.md`).
-   New actions need host support in `src-tauri/src/browser/` before the
-   extension relies on them.
+   New actions need host support in `src-tauri/crates/broker/src/actions.rs`
+   before the extension relies on them.
 
 ## Not rebranded
 

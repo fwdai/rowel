@@ -1200,9 +1200,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.3"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03bb0e1cc970d482d121d9a1744999169b69a07470b3d644a7894e53fcaf4574"
+checksum = "38d28fb6aa7dd680b3ffd1a3e64e115c177bdba63c0ae7f9cd48129ff05c4fa0"
 dependencies = [
  "cmov",
 ]
@@ -4626,8 +4626,6 @@ dependencies = [
  "base64 0.23.1",
  "block2",
  "chrono",
- "coset",
- "crypto_box",
  "dirs",
  "futures-util",
  "hex",
@@ -4644,13 +4642,11 @@ dependencies = [
  "objc2-local-authentication",
  "objc2-ui-kit",
  "objc2-vision",
- "p256",
- "passkey-authenticator",
- "passkey-types",
  "percent-encoding",
  "rand",
  "reqwest",
  "ring",
+ "rowel-broker",
  "rowel-core",
  "rustls",
  "security-framework",
@@ -4700,6 +4696,30 @@ dependencies = [
  "tokio",
  "uniffi",
  "zeroize",
+]
+
+[[package]]
+name = "rowel-broker"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "coset",
+ "crypto_box",
+ "dirs",
+ "hex",
+ "interprocess",
+ "log",
+ "p256",
+ "passkey-authenticator",
+ "passkey-types",
+ "rand",
+ "rowel-core",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tokio",
+ "url",
 ]
 
 [[package]]

@@ -61,6 +61,16 @@ ignore = [
   { id = "RUSTSEC-2026-0367", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); plugin still on zip 4 — 2026-10-22" },
   { id = "RUSTSEC-2026-0368", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); plugin still on zip 4 — 2026-10-22" },
   { id = "RUSTSEC-2026-0369", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); plugin still on zip 4 — 2026-10-22" },
+  # --- crypto-bigint 0.5 timing variability (RUSTSEC-2026-0387) ---
+  # Reachable: P-256 ECDSA in passkey assertions (passkey-authenticator ->
+  # p256) and the P-256/384/521 paths of ssh-key, both through
+  # elliptic-curve 0.13. The fix exists only in crypto-bigint 0.7.6, i.e. the
+  # RustCrypto generation (elliptic-curve 0.14, passkey-rs 0.6) this workspace
+  # cannot adopt until ssh-key 0.7 ships — the same freeze dependabot carries.
+  # The leak needs an attacker measuring timing on the user's own machine,
+  # which the threat model places with a compromised OS (out of scope). Lift
+  # with the generation bump; revisit if a 0.5.x backport appears.
+  { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5 timing variability; fix is 0.7.6 in the RustCrypto generation frozen until ssh-key 0.7; exploit needs a co-resident timing observer — 2026-10-24" },
 ]
 
 [licenses]

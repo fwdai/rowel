@@ -59,6 +59,27 @@ dependencies, and tools contained in the `fwdai/rowel` repository.
   * Once your commits are ready to go (with passing tests and linting) begin the process of opening a pull request by pushing your working branch to your fork on GitHub.
   * From within GitHub, opening a new pull request will present you with a template that should be filled out
 
+## Licensing and sign-off
+
+Two licenses live in this repository, by directory (see the License section of
+the README):
+
+* `src-tauri/crates/*` (the Rust library crates) are **MIT OR Apache-2.0**.
+* Everything else (the desktop and iOS apps, the frontend, the browser
+  extension, docs) is **GPL-3.0**.
+
+A contribution is licensed under the license of the directory it lands in, with
+no additional terms (inbound = outbound). To make that explicit and to certify
+that you have the right to submit the change, every commit must carry a
+[Developer Certificate of Origin](https://developercertificate.org/) sign-off:
+
+```
+git commit -s
+```
+
+which adds a `Signed-off-by: Your Name <you@example.com>` line. Pull requests
+whose commits lack it will be asked to add it before review.
+
 ## Security
 
 * **Never log secret-bearing values.** `log::*!` / `console.*` calls must not interpolate an `Entry`, its secret fields (password, notes, card, OTP), the master password, or any derived key. Log opaque errors and identifiers only.

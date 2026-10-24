@@ -710,7 +710,8 @@ fresh random 256-bit AES-GCM key and uploaded to the sender's own Drive as an
 ## The browser extension
 
 Desktop only, and off until the user turns it on in Settings. Rowel speaks the
-KeePassXC-Browser protocol (`src-tauri/src/browser/`), so the stock
+KeePassXC-Browser protocol (`src-tauri/crates/broker`, hosted by the app's
+`src-tauri/src/browser/`), so the stock
 KeePassXC-Browser extension fills from it; there is no extension code of ours.
 This is a trust boundary of its own: the browser is a far larger and more
 exposed process than the webview, and it is not ours.
