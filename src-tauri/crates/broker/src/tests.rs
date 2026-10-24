@@ -4,13 +4,17 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use crypto_box::{aead::Aead, Nonce};
 use serde_json::{json, Map, Value};
 
-use crate::actions::{Client, Connection};
+use crate::actions::{Client, Connection, Login};
 use crate::frame;
+use crate::grant::{GrantRequest, ItemSelector, Mode, Target};
 use crate::lockbox::save_login_in;
 use crate::protocol::{increment, Code, NONCE_LEN, VERSION};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::socket::{root_dir, socket_name, IDENTIFIER};
-use crate::testing::{error_code, nonce, raw, ready, seed, stored, vault, Extension, Mock};
+use crate::testing::{
+    error_code, login, nonce, raw, ready, seed, stored, vault, Extension, GrantAnswer, Mock,
+    GRANT_ID,
+};
 use rowel_core::models::{Entry, PasswordHistoryItem};
 use rowel_core::store::VaultStore;
 
@@ -335,6 +339,346 @@ fn get_totp_answers_with_the_current_code() {
     assert_eq!(error_code(&unknown), Code::NoValidUuidProvided as u8);
     let blank = extension.send(&mut connection, "get-totp", json!({}));
     assert_eq!(error_code(&blank), Code::NoValidUuidProvided as u8);
+}
+
+// --- fills in agent mode: every fill is a grant ----------------------------------
+
+const GH_LOGIN: &str = "https://github.com/login";
+
+fn two_logins() -> Vec<Login> {
+    vec![
+        login("gh", "GitHub", "octocat", "hunter2", Some("123456")),
+        login("gh2", "GitHub (work)", "octocorp", "s3cret", None),
+    ]
+}
+
+/// Associated, with two logins for GitHub and the host scripted to `answer`.
+fn agent_connection(answer: GrantAnswer) -> (Extension, Connection<Mock>) {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        logins: two_logins(),
+        grant_answer: answer,
+        ..Mock::unlocked().known("Chrome", "id-key")
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+    (extension, connection)
+}
+
+fn sorted_keys(response: &Value) -> Vec<&str> {
+    let mut keys: Vec<&str> = response
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+// The reply to a `get-logins` without the new fields has exactly the fields
+// it had, and nobody is asked anything — whatever the host would answer.
+#[test]
+fn get_logins_without_the_agent_fields_is_what_it_always_was() {
+    let (extension, mut connection) = agent_connection(GrantAnswer::Active("gh2".into()));
+    let response = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "submitUrl": "https://github.com/session" }),
+    );
+    assert_eq!(response["count"], 2);
+    assert_eq!(response["hash"], "abc123");
+    assert_eq!(
+        response["entries"],
+        json!([
+            { "login": "octocat", "password": "hunter2", "name": "GitHub", "uuid": "gh", "totp": "123456" },
+            { "login": "octocorp", "password": "s3cret", "name": "GitHub (work)", "uuid": "gh2" },
+        ])
+    );
+    assert_eq!(
+        sorted_keys(&response),
+        ["action", "count", "entries", "hash", "nonce", "success", "version"]
+    );
+    assert!(connection.host().grant_requests.borrow().is_empty());
+}
+
+#[test]
+fn in_agent_mode_a_fill_is_a_grant_and_only_the_admitted_login_is_served() {
+    let (extension, mut connection) = agent_connection(GrantAnswer::Active("gh2".into()));
+    let response = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "agentMode": "true" }),
+    );
+    assert_eq!(response["count"], 1);
+    assert_eq!(response["grantId"], GRANT_ID);
+    assert_eq!(response["hash"], "abc123");
+    assert_eq!(
+        response["entries"],
+        json!([{ "login": "octocorp", "password": "s3cret", "name": "GitHub (work)", "uuid": "gh2" }])
+    );
+    assert_eq!(
+        sorted_keys(&response),
+        ["action", "count", "entries", "grantId", "hash", "nonce", "success", "version"]
+    );
+
+    // What the host was asked: by the connection's key, for the page's
+    // logins as candidates, at the page, to fill.
+    let asked = connection.host().grant_requests.borrow();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].0, "id-key");
+    assert_eq!(
+        asked[0].1,
+        GrantRequest {
+            client_key: "id-key".into(),
+            agent_id: None,
+            acting_for: None,
+            items: ItemSelector::Ids(vec!["gh".into(), "gh2".into()]),
+            targets: vec![Target::Origin(GH_LOGIN.into())],
+            modes: vec![Mode::Fill],
+            run_id: None,
+            reason: None,
+        }
+    );
+}
+
+#[test]
+fn agent_mode_is_read_as_the_string_true_or_a_json_true() {
+    let (extension, mut connection) = agent_connection(GrantAnswer::Active("gh".into()));
+    let boolean = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "agentMode": true }),
+    );
+    assert_eq!(boolean["grantId"], GRANT_ID);
+    assert_eq!(boolean["count"], 1);
+
+    let off = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "agentMode": "false" }),
+    );
+    assert_eq!(off["count"], 2);
+    assert!(off.get("grantId").is_none());
+    assert_eq!(connection.host().grant_requests.borrow().len(), 1);
+}
+
+#[test]
+fn a_denied_grant_refuses_the_fill_and_the_refusal_carries_nothing() {
+    let (extension, mut connection) = agent_connection(GrantAnswer::Denied);
+    let response = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "agentMode": "true" }),
+    );
+    assert_eq!(error_code(&response), Code::GrantDenied as u8);
+    assert_eq!(response["error"], "Grant denied");
+    assert_eq!(sorted_keys(&response), ["action", "error", "errorCode"]);
+    let wire = serde_json::to_string(&response).unwrap();
+    for secret in [
+        "hunter2", "s3cret", "123456", "octocat", "entries", "password",
+    ] {
+        assert!(!wire.contains(secret), "{secret} in {wire}");
+    }
+    assert_eq!(connection.host().grant_requests.borrow().len(), 1);
+}
+
+#[test]
+fn a_pending_grant_says_so_and_when_to_ask_again() {
+    let (extension, mut connection) = agent_connection(GrantAnswer::Pending(Some(1_500)));
+    let response = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "agentMode": "true" }),
+    );
+    assert_eq!(error_code(&response), Code::GrantPending as u8);
+    assert_eq!(response["retryAfterMs"], 1_500);
+    assert_eq!(
+        sorted_keys(&response),
+        ["action", "error", "errorCode", "retryAfterMs"]
+    );
+
+    // No time given: no field, and the refusal is the one it always was.
+    let (extension, mut connection) = agent_connection(GrantAnswer::Pending(None));
+    let response = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "agentMode": "true" }),
+    );
+    assert_eq!(error_code(&response), Code::GrantPending as u8);
+    assert_eq!(sorted_keys(&response), ["action", "error", "errorCode"]);
+}
+
+#[test]
+fn with_agents_off_an_agent_mode_fill_is_refused_and_a_plain_one_is_not() {
+    let (extension, mut connection) = agent_connection(GrantAnswer::Disabled);
+    let response = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "agentMode": "true" }),
+    );
+    assert_eq!(error_code(&response), Code::AgentsDisabled as u8);
+    assert_eq!(
+        response["error"],
+        "Agents are turned off in Rowel's settings"
+    );
+    let plain = extension.send(&mut connection, "get-logins", json!({ "url": GH_LOGIN }));
+    assert_eq!(plain["count"], 2);
+}
+
+// Before the grant comes the page's logins: a site with none is the refusal
+// it always was, and nobody is asked for nothing.
+#[test]
+fn in_agent_mode_a_site_without_logins_asks_nobody() {
+    let (extension, mut connection) = agent_connection(GrantAnswer::Active("gh".into()));
+    let response = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": "https://example.com", "agentMode": "true" }),
+    );
+    assert_eq!(error_code(&response), Code::NoLoginsFound as u8);
+    assert!(connection.host().grant_requests.borrow().is_empty());
+}
+
+#[test]
+fn a_grant_the_extension_holds_serves_only_what_it_covers() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        logins: two_logins(),
+        ..Mock::unlocked()
+            .known("Chrome", "id-key")
+            .granting("g1", "gh", Mode::Fill)
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+
+    let covered = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(covered["count"], 1);
+    assert_eq!(covered["entries"][0]["uuid"], "gh");
+    assert!(covered.get("grantId").is_none());
+
+    let unknown = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g9" }),
+    );
+    assert_eq!(error_code(&unknown), Code::GrantDenied as u8);
+    assert!(
+        connection.host().grant_requests.borrow().is_empty(),
+        "a held grant asks nobody"
+    );
+
+    // Both fields: the grant in hand wins, and nobody is asked again.
+    let both = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1", "agentMode": "true" }),
+    );
+    assert_eq!(both["count"], 1);
+    assert!(connection.host().grant_requests.borrow().is_empty());
+}
+
+#[test]
+fn get_totp_under_a_grant_needs_the_grant_to_cover_the_login_for_a_fill() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(
+        Mock::unlocked()
+            .known("Chrome", "id-key")
+            .granting("g1", "gh", Mode::Fill)
+            .granting("g2", "gh", Mode::Passkey),
+    );
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+
+    let covered = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "grantId": "g1" }),
+    );
+    assert_eq!(covered["totp"], "654321");
+    let unknown = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "grantId": "g9" }),
+    );
+    assert_eq!(error_code(&unknown), Code::GrantDenied as u8);
+    let other_mode = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "grantId": "g2" }),
+    );
+    assert_eq!(error_code(&other_mode), Code::GrantDenied as u8);
+    let plain = extension.send(&mut connection, "get-totp", json!({ "uuid": "gh" }));
+    assert_eq!(plain["totp"], "654321");
+}
+
+#[test]
+fn report_exposure_reaches_the_host() {
+    let (extension, mut connection) = associated();
+    let response = extension.send(
+        &mut connection,
+        "report-exposure",
+        json!({ "grantId": "g1" }),
+    );
+    assert_eq!(response["success"], "true");
+    assert_eq!(
+        sorted_keys(&response),
+        ["action", "nonce", "success", "version"]
+    );
+    assert_eq!(connection.host().exposures.borrow().as_slice(), ["g1"]);
+
+    let blank = extension.send(&mut connection, "report-exposure", json!({}));
+    assert_eq!(error_code(&blank), Code::NoValidUuidProvided as u8);
+    assert_eq!(connection.host().exposures.borrow().len(), 1);
+}
+
+#[test]
+fn the_grant_paths_are_refused_before_association() {
+    let (extension, mut connection) = ready();
+    let agent = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "agentMode": "true" }),
+    );
+    assert_eq!(error_code(&agent), Code::AssociationFailed as u8);
+    let held = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&held), Code::AssociationFailed as u8);
+    let totp = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&totp), Code::AssociationFailed as u8);
+    let exposure = extension.send(
+        &mut connection,
+        "report-exposure",
+        json!({ "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&exposure), Code::AssociationFailed as u8);
+
+    let host = connection.host();
+    assert!(host.grant_requests.borrow().is_empty());
+    assert!(host.exposures.borrow().is_empty());
 }
 
 #[test]

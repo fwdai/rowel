@@ -62,6 +62,15 @@ pub enum Code {
     PasskeyUnknownError = 31,
     PasskeyInvalidChallenge = 32,
     PasskeyInvalidUserId = 33,
+    // The grants'. Rowel's own, numbered above KeePassXC's range so an
+    // upstream merge that adds codes never collides with them.
+    GrantDenied = 40,
+    GrantPending = 41,
+    GrantExpired = 42,
+    NotPermittedForKind = 43,
+    PolicyRequiresApproval = 44,
+    RateLimited = 45,
+    AgentsDisabled = 46,
 }
 
 impl Code {
@@ -89,6 +98,13 @@ impl Code {
             Code::NoLoginsFound => "No logins found",
             Code::NoGroupsFound => "No groups found",
             Code::NoValidUuidProvided => "No valid UUID provided",
+            Code::GrantDenied => "Grant denied",
+            Code::GrantPending => "Grant pending approval",
+            Code::GrantExpired => "Grant expired",
+            Code::NotPermittedForKind => "Not permitted for this client kind",
+            Code::PolicyRequiresApproval => "Policy requires approval",
+            Code::RateLimited => "Too many requests",
+            Code::AgentsDisabled => "Agents are turned off in Rowel's settings",
         }
     }
 }

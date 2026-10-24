@@ -3,14 +3,19 @@
 //! channel of the KeePassXC-Browser protocol (`protocol`), the native
 //! messaging framing (`frame`), what the extension may ask for and the
 //! [`actions::Host`] a vault answers it through (`actions`), the passkey
-//! ceremonies (`passkeys`), where the socket is (`socket`), and the
-//! lockbox-side functions every host shares (`lockbox`). Nothing here knows
-//! Tauri, a window or a session; the app's `browser` module is one host of it.
+//! ceremonies (`passkeys`), where the socket is (`socket`), the lockbox-side
+//! functions every host shares (`lockbox`), and what agents get: grants
+//! (`grant`), the policy that issues them (`policy`) and the chained log of
+//! what was done with them (`audit`). Nothing here knows Tauri, a window or
+//! a session; the app's `browser` module is one host of it.
 
 pub mod actions;
+pub mod audit;
 pub mod frame;
+pub mod grant;
 pub mod lockbox;
 pub mod passkeys;
+pub mod policy;
 pub mod protocol;
 // Desktop only, as the app's `browser` module is: it is where `interprocess`
 // and `dirs` are linked, and neither has a place on a phone.

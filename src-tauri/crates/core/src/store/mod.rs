@@ -141,6 +141,36 @@ pub struct Attachment {
     pub blob: Vec<u8>,
 }
 
+/// One row of the `audit` table: what an agent, a person or a policy did
+/// with the lockbox's secrets, chained per writer. `prev_hash` is the same
+/// writer's previous row's `hash` (zeros for its first), and `hash` is over
+/// the row without itself, so a removed or altered row is detectable. Rows
+/// are insert-only; the store offers no update or delete for them. Plain data
+/// here: what the columns hold, nothing else (`rowel_broker::audit` writes
+/// and verifies them).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditRecord {
+    pub id: String,
+    pub writer_id: String,
+    pub seq: i64,
+    pub ts_ms: i64,
+    pub prev_hash: [u8; 32],
+    pub hash: [u8; 32],
+    pub actor_kind: String,
+    pub actor_id: Option<String>,
+    pub actor_name: Option<String>,
+    pub run_id: Option<String>,
+    pub acting_for: Option<String>,
+    pub grant_id: Option<String>,
+    pub item_id: Option<String>,
+    pub target: Option<String>,
+    pub mode: Option<String>,
+    pub approval: Option<String>,
+    pub approver: Option<String>,
+    pub event: String,
+    pub detail: Option<String>,
+}
+
 /// The swappable storage contract. Any backend behind this interface is a drop-in.
 pub trait VaultStore: Send {
     /// Read a `meta` value (schema_version, kdf, salt, …). Values are caller-owned.

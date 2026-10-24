@@ -52,6 +52,7 @@ use crate::settings;
 use crate::state::AppState;
 use crate::store::{SqliteStore, VaultStore};
 use crate::{commands, events, session, window};
+use rowel_broker::grant::{GrantReply, GrantRequest, Mode};
 use rowel_broker::lockbox::{save_failed, save_login_in};
 
 /// How long an `associate` or a passkey ceremony waits for the user's answer
@@ -521,6 +522,27 @@ impl Host for AppHost {
 
     fn unlock_requested(&self) {
         window::raise(&self.0);
+    }
+
+    // Agents are not wired into the app yet: every grant is refused as
+    // "turned off", no grant covers anything, and an exposure report has
+    // nothing to end.
+    fn request_grant(
+        &self,
+        _client_key: &str,
+        _req: GrantRequest,
+    ) -> std::result::Result<GrantReply, Code> {
+        Err(Code::AgentsDisabled)
+    }
+
+    fn grant_covers(&self, _grant_id: &str, _item_id: &str, _mode: Mode) -> bool {
+        false
+    }
+
+    fn report_exposure(&self, grant_id: &str) {
+        log::debug!(
+            "browser host: exposure reported for grant {grant_id}; agents are not wired yet"
+        );
     }
 }
 
