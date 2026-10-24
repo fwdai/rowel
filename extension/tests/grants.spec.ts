@@ -1,8 +1,15 @@
 // Rowel: the grant map and the fill handoff in background/grants.js, as pure
-// functions over a fake storage area. The request side (sendGetLogins,
-// totpFields, reportExposure) needs the native host and is not covered here.
+// functions over a fake storage area, and the fields get-totp carries. The
+// request side (sendGetLogins, reportExposure) needs the native host and is
+// not covered here.
 import { test, expect } from '@playwright/test';
 import { grants } from '../rowel/background/grants.js';
+
+// grants.isOn() reads the background's settings object, a global there.
+declare global {
+    // eslint-disable-next-line no-var
+    var page: { settings?: { agentMode?: boolean } } | undefined;
+}
 
 // browser.storage.session with the shapes the WebExtension API returns
 const fakeArea = () => {
@@ -31,6 +38,32 @@ test.beforeEach(() => {
     now = 1_700_000_000_000;
     grants.area = () => area;
     grants.now = () => now;
+    globalThis.page = { settings: { agentMode: true } };
+});
+
+test.afterEach(() => {
+    delete globalThis.page;
+});
+
+// get-totp in agent mode always says so, and carries the fill's grant when the
+// tab's origin holds one — never the bare request the host would serve to a
+// person's click.
+test('totpFields says agentMode always and adds the grant the origin holds', async () => {
+    expect(await grants.totpFields({ url: 'https://example.com/2fa' })).toEqual({ agentMode: 'true' });
+
+    await grants.rememberGrant('https://example.com', 'g1');
+    expect(await grants.totpFields({ url: 'https://example.com/2fa' })).toEqual({ agentMode: 'true', grantId: 'g1' });
+    expect(await grants.totpFields({ url: 'https://other.example/2fa' })).toEqual({ agentMode: 'true' });
+    expect(await grants.totpFields(undefined)).toEqual({ agentMode: 'true' });
+
+    now += grants.GRANT_TTL_MS;
+    expect(await grants.totpFields({ url: 'https://example.com/2fa' })).toEqual({ agentMode: 'true' });
+});
+
+test('totpFields adds nothing with agent mode off', async () => {
+    globalThis.page = { settings: { agentMode: false } };
+    await grants.rememberGrant('https://example.com', 'g1');
+    expect(await grants.totpFields({ url: 'https://example.com/2fa' })).toEqual({});
 });
 
 test('a grant is remembered per origin and forgotten on request', async () => {

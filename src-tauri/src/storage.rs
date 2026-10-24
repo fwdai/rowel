@@ -23,6 +23,10 @@ pub const LOCKOUT_SIDECAR_FILE: &str = "vault.lock.json";
 // User preferences (theme, locale, auto-lock, …). Plaintext and readable while
 // locked by design: the shell has to know what to draw before the vault opens.
 pub const SETTINGS_FILE: &str = "settings.json";
+// This install's own id (see `install_id`): the audit log's writer id, which
+// a workspace id cannot be — every install's primary lockbox is `default`.
+#[cfg(desktop)]
+pub const INSTALL_ID_FILE: &str = "install_id";
 // The sealed account a workspace syncs through, one file per provider and at
 // most one of them present (see `sync::Provider::token_file_name`). Google's
 // keeps the name it had before there was a choice, so an existing install is
@@ -541,6 +545,41 @@ pub fn write_settings(app: &AppHandle, json: &str) -> Result<()> {
     atomic_write_file(&settings_path(app)?, json)
 }
 
+/// This install's id: 16 random bytes, hex, minted the first time it is asked
+/// for and kept in `INSTALL_ID_FILE` on the root, owner-only like the files
+/// beside it. The audit log chains rows per writer (`rowel_broker::audit`),
+/// and two devices sharing a lockbox must not share a writer: the workspace
+/// id would collide — every install's primary lockbox is `default` — the
+/// moment a sync or a restore brings one device's rows to the other. An
+/// install whose root cannot be had still gets an id, a fresh one each time,
+/// so a row is never written without one.
+#[cfg(desktop)]
+pub fn install_id(app: &AppHandle) -> String {
+    match root_dir(app) {
+        Ok(root) => install_id_in(&root),
+        Err(e) => {
+            log::warn!("storage: no data dir for the install id: {e}");
+            crate::crypto::random_hex_id()
+        }
+    }
+}
+
+#[cfg(desktop)]
+pub fn install_id_in(root: &Path) -> String {
+    let path = root.join(INSTALL_ID_FILE);
+    if let Ok(id) = fs::read_to_string(&path) {
+        let id = id.trim();
+        if !id.is_empty() {
+            return id.to_string();
+        }
+    }
+    let id = crate::crypto::random_hex_id();
+    if let Err(e) = atomic_write_private(&path, id.as_bytes()) {
+        log::warn!("storage: could not keep the install id: {e}");
+    }
+    id
+}
+
 // The failed-unlock backoff state JSON, or `None` when absent (no failed
 // attempts recorded yet, or a fresh vault).
 //
@@ -948,6 +987,37 @@ mod tests {
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
         assert!(!to.join(WAL_FILE).exists());
         assert!(!to.join(GDRIVE_FILE).exists());
+    }
+
+    // The install id is minted once and read back after that, owner-only on
+    // disk like everything beside it; a file emptied by a torn write mints
+    // a fresh one rather than chaining audit rows under no writer.
+    #[cfg(desktop)]
+    #[test]
+    fn the_install_id_is_minted_once_and_kept_owner_only() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let id = super::install_id_in(&root);
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(super::install_id_in(&root), id, "read back, not re-minted");
+        assert_eq!(
+            fs::read_to_string(root.join(super::INSTALL_ID_FILE)).unwrap(),
+            id
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(root.join(super::INSTALL_ID_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        fs::write(root.join(super::INSTALL_ID_FILE), "").unwrap();
+        let fresh = super::install_id_in(&root);
+        assert_ne!(fresh, id);
+        assert_eq!(super::install_id_in(&root), fresh);
     }
 
     // A move stopped between a database and its WAL is finished by running the

@@ -590,6 +590,63 @@ fn a_grant_the_extension_holds_serves_only_what_it_covers() {
     assert!(connection.host().grant_requests.borrow().is_empty());
 }
 
+// In agent mode the TOTP step never falls back to the ungranted path: a
+// request saying `agentMode` without a grant is refused, one with a grant
+// that covers the login is served, and the two legacy shapes are untouched.
+#[test]
+fn get_totp_in_agent_mode_is_refused_without_a_grant_and_served_under_one() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock::unlocked().known("Chrome", "id-key").granting(
+        "g1",
+        "gh",
+        Mode::Fill,
+    ));
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+
+    let ungranted = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "agentMode": "true" }),
+    );
+    assert_eq!(error_code(&ungranted), Code::GrantDenied as u8);
+    assert!(ungranted.get("totp").is_none());
+
+    let covered = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "agentMode": "true", "grantId": "g1" }),
+    );
+    assert_eq!(covered["totp"], "654321");
+
+    let uncovered = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "agentMode": true, "grantId": "g9" }),
+    );
+    assert_eq!(error_code(&uncovered), Code::GrantDenied as u8);
+
+    // `agentMode` off, or absent: today's behaviour, grant or no grant.
+    let off = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "agentMode": "false" }),
+    );
+    assert_eq!(off["totp"], "654321");
+    let legacy = extension.send(&mut connection, "get-totp", json!({ "uuid": "gh" }));
+    assert_eq!(legacy["totp"], "654321");
+    let held = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "grantId": "g1" }),
+    );
+    assert_eq!(held["totp"], "654321");
+}
+
 #[test]
 fn get_totp_under_a_grant_needs_the_grant_to_cover_the_login_for_a_fill() {
     let mut extension = Extension::new();

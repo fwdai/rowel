@@ -35,6 +35,8 @@ pub const BROWSER_CLIENTS: &str = "browser:clients";
 #[cfg(desktop)]
 pub const AGENT_GRANT: &str = "agent:grant";
 #[cfg(desktop)]
+pub const AGENT_GRANT_CLOSED: &str = "agent:grant:closed";
+#[cfg(desktop)]
 pub const AGENTS_CHANGED: &str = "agents:changed";
 
 #[derive(Serialize, Clone)]
@@ -259,6 +261,21 @@ pub struct AgentGrantAsk<'a> {
 #[cfg(desktop)]
 pub fn agent_grant(app: &AppHandle, ask: AgentGrantAsk<'_>) {
     let _ = app.emit(AGENT_GRANT, ask);
+}
+
+/// The grant ask up under `id` was answered without its dialog — refused
+/// because the Agents switch, or the lockbox's agent access, went off while
+/// it was up (`agents::revoke_all`). The dialog closes; an answer it gave
+/// anyway would reach no ask, but it must not sit there offering a yes.
+#[cfg(desktop)]
+#[derive(Serialize, Clone)]
+struct AgentGrantClosed<'a> {
+    id: &'a str,
+}
+
+#[cfg(desktop)]
+pub fn agent_grant_closed(app: &AppHandle, id: &str) {
+    let _ = app.emit(AGENT_GRANT_CLOSED, AgentGrantClosed { id });
 }
 
 /// A rule or a grant came or went behind Settings' back — a dialog answered

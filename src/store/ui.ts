@@ -334,6 +334,13 @@ export const askPasskey = (ask: PasskeyAsk) =>
 export const askGrant = (ask: AgentGrantAsk) =>
   useUi.setState({ consentAsk: { kind: 'grant', ask } })
 export const closeConsentAsk = () => useUi.setState({ consentAsk: null })
+/** Close the grant dialog up for ask `id` — and only that one, not a later ask's. */
+export const closeGrantAsk = (id: string) =>
+  useUi.setState(state =>
+    state.consentAsk?.kind === 'grant' && state.consentAsk.ask.id === id
+      ? { consentAsk: null }
+      : {}
+  )
 export const browserClientsChanged = () =>
   useUi.setState(state => ({ browserClientsSeq: state.browserClientsSeq + 1 }))
 export const agentsChanged = () => useUi.setState(state => ({ agentsSeq: state.agentsSeq + 1 }))

@@ -49,10 +49,9 @@ use crate::models::{EntryMetaDto, GeneratorOptions, Passkey};
 use crate::passkey::store::{PasskeyVault, SessionVault, Stored};
 use crate::passkey::{Ceremony, UserConsent};
 use crate::session::Epoch;
-use crate::settings;
 use crate::state::AppState;
 use crate::store::{SqliteStore, VaultStore};
-use crate::{agents, commands, events, session, window, workspace};
+use crate::{agents, commands, events, session, settings, storage, window, workspace};
 use rowel_broker::audit::Event;
 use rowel_broker::grant::{
     Approval, CandidateItem, Grant, GrantReply, GrantRequest, ItemSelector, Mode, Probe, State,
@@ -620,7 +619,8 @@ impl Host for AppHost {
         // which is never taken inside the session's.
         let lockbox = workspace::active_id(app);
         let lockbox_on = workspace::agents_enabled(app, &lockbox);
-        let asking = match self.decide_grant(&lockbox, lockbox_on, client_key, req)? {
+        let writer = storage::install_id(app);
+        let asking = match self.decide_grant(&lockbox, &writer, lockbox_on, client_key, req)? {
             Prepared::Answered(reply) => return Ok(reply),
             Prepared::Ask(asking) => *asking,
         };
@@ -630,6 +630,19 @@ impl Host for AppHost {
         let verify = step_up.then(StepUp::current);
         // The dialog names the site, not the page's path and query string.
         let site = agents::site_origin(&asking.origin);
+        // On the list of asks up while the dialog is, so that the switch
+        // going off meanwhile refuses it (`agents::revoke_all`) rather than
+        // leaving a yes on screen for a credential nothing may release.
+        let state = app.state::<AppState>();
+        state
+            .agents
+            .lock()
+            .unwrap()
+            .pending_asks
+            .push(agents::PendingAsk {
+                ask_id: ask_id.clone(),
+                client_key: client_key.to_string(),
+            });
         let asked = CONSENT.try_ask(&ask_id, || {
             if step_up {
                 *step_up_ask() = Some(ask_id.clone());
@@ -653,6 +666,7 @@ impl Host for AppHost {
             );
             window::raise(app);
         });
+        state.agents.lock().unwrap().forget_ask(&ask_id);
         {
             let mut up = step_up_ask();
             if up.as_deref() == Some(ask_id.as_str()) {
@@ -674,7 +688,7 @@ impl Host for AppHost {
             Ok(Some(Answer::Grant(answer))) => Verdict::Answered(answer),
             Ok(_) => Verdict::Unanswered,
         };
-        self.settle_grant(&lockbox, client_key, asking, answer)
+        self.settle_grant(&lockbox, &writer, client_key, asking, answer)
     }
 
     // A predicate with a side effect, on purpose: a yes here is the login or
@@ -688,7 +702,7 @@ impl Host for AppHost {
         if !settings::current(app).browser.agents.enabled {
             return false;
         }
-        let lockbox = workspace::active_id(app);
+        let writer = storage::install_id(app);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
         let session = state.session.lock().unwrap();
@@ -731,7 +745,7 @@ impl Host for AppHost {
         );
         row.item_id = Some(item_id.to_string());
         row.mode = Some(mode);
-        agents::record(store, &lockbox, row, now);
+        agents::record(store, &writer, row, now);
         true
     }
 
@@ -739,7 +753,7 @@ impl Host for AppHost {
     // of its window, and the log says why.
     fn report_exposure(&self, grant_id: &str) {
         let app = &self.0;
-        let lockbox = workspace::active_id(app);
+        let writer = storage::install_id(app);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
         {
@@ -759,7 +773,7 @@ impl Host for AppHost {
                     grant,
                     Some(r#"{"reason":"exposure"}"#),
                 );
-                agents::record(store, &lockbox, row, now);
+                agents::record(store, &writer, row, now);
             }
         }
         events::agents_changed(app);
@@ -791,6 +805,7 @@ impl AppHost {
     fn decide_grant(
         &self,
         lockbox: &str,
+        writer: &str,
         lockbox_on: bool,
         client_key: &str,
         req: GrantRequest,
@@ -816,7 +831,7 @@ impl AppHost {
         let Some(origin) = agents::origin_of(&req.targets).map(str::to_string) else {
             agents::record(
                 store,
-                lockbox,
+                writer,
                 refusal(Event::Denied, r#"{"reason":"no_target"}"#.into()),
                 now,
             );
@@ -825,7 +840,7 @@ impl AppHost {
         if !lockbox_on {
             agents::record(
                 store,
-                lockbox,
+                writer,
                 refusal(Event::Denied, r#"{"reason":"lockbox"}"#.into()),
                 now,
             );
@@ -851,7 +866,7 @@ impl AppHost {
             let items = admitted(&candidates, &grant.items);
             agents::record(
                 store,
-                lockbox,
+                writer,
                 agents::about(row(Event::Used), grant, Some(r#"{"reuse":true}"#)),
                 now,
             );
@@ -870,7 +885,7 @@ impl AppHost {
         {
             agents::record(
                 store,
-                lockbox,
+                writer,
                 refusal(Event::RateLimited, r#"{"reason":"rate"}"#.into()),
                 now,
             );
@@ -884,7 +899,7 @@ impl AppHost {
                 let reason = serde_json::to_string(reason).unwrap_or_default();
                 agents::record(
                     store,
-                    lockbox,
+                    writer,
                     refusal(Event::Denied, format!(r#"{{"reason":{reason}}}"#)),
                     now,
                 );
@@ -920,7 +935,7 @@ impl AppHost {
             Approval::Auto => {
                 agents::record(
                     store,
-                    lockbox,
+                    writer,
                     agents::about(row(Event::Requested), &grant, None),
                     now,
                 );
@@ -929,13 +944,13 @@ impl AppHost {
                 grant.use_once(now)?;
                 agents::record(
                     store,
-                    lockbox,
+                    writer,
                     agents::about(row(Event::Granted), &grant, None),
                     now,
                 );
                 agents::record(
                     store,
-                    lockbox,
+                    writer,
                     agents::about(row(Event::Used), &grant, None),
                     now,
                 );
@@ -961,11 +976,13 @@ impl AppHost {
     }
 
     // The user has answered (or not): under the session lock again, and only
-    // if it is still the session that asked, the grant becomes active for the
-    // one item picked — a standing answer writes its rule first — or denied.
+    // if it is still the session that asked — and both switches still on —
+    // the grant becomes active for the one item picked — a standing answer
+    // writes its rule first — or denied.
     fn settle_grant(
         &self,
         lockbox: &str,
+        writer: &str,
         client_key: &str,
         asking: Asking,
         verdict: Verdict,
@@ -978,6 +995,11 @@ impl AppHost {
             origin,
             ..
         } = asking;
+        // The switches as they stand now, not as they stood when the dialog
+        // went up: either going off meanwhile refuses the yes. The lockbox's
+        // is read before the session lock, as in `request_grant`.
+        let switch_on = settings::current(app).browser.agents.enabled;
+        let lockbox_on = workspace::agents_enabled(app, lockbox);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
         let session = state.session.lock().unwrap();
@@ -993,37 +1015,28 @@ impl AppHost {
         // whatever the answer was, as it stood when the user saw it.
         agents::record(
             store,
-            lockbox,
+            writer,
             agents::about(row(Event::Requested), &grant, None),
             now,
         );
 
-        let picked = match &verdict {
-            Verdict::Answered(Some(answer)) => candidates
-                .iter()
-                .find(|c| c.item.id == answer.item_id)
-                .map(|c| (c.visible.clone(), answer.standing_days)),
-            _ => None,
-        };
-        let Some((item, standing_days)) = picked else {
-            let reason = match verdict {
-                Verdict::Answered(Some(_)) => "item",
-                Verdict::Answered(None) => "user",
-                Verdict::Unanswered => "timeout",
-            };
-            grant.state = State::Denied;
-            agents::record(
-                store,
-                lockbox,
-                agents::about(
-                    row(Event::Denied),
-                    &grant,
-                    Some(&format!(r#"{{"reason":"{reason}"}}"#)),
-                ),
-                now,
-            );
-            held.rate(client_key).record_denial(now);
-            return Err(Code::GrantDenied);
+        let (item, standing_days) = match outcome(&verdict, &candidates, switch_on, lockbox_on) {
+            Ok((picked, standing_days)) => (picked.visible.clone(), standing_days),
+            Err(reason) => {
+                grant.state = State::Denied;
+                agents::record(
+                    store,
+                    writer,
+                    agents::about(
+                        row(Event::Denied),
+                        &grant,
+                        Some(&format!(r#"{{"reason":"{reason}"}}"#)),
+                    ),
+                    now,
+                );
+                held.rate(client_key).record_denial(now);
+                return Err(Code::GrantDenied);
+            }
         };
 
         grant.items = ItemSelector::Ids(vec![item.id.clone()]);
@@ -1051,7 +1064,7 @@ impl AppHost {
                     );
                     added.grant_id = None;
                     added.approval = Some(Approval::Auto);
-                    agents::record(store, lockbox, added, now);
+                    agents::record(store, writer, added, now);
                 }
                 // The fill the user said yes to still goes ahead; only the
                 // memory of it is missing, and the next visit asks again.
@@ -1061,13 +1074,13 @@ impl AppHost {
         grant.use_once(now)?;
         agents::record(
             store,
-            lockbox,
+            writer,
             agents::about(row(Event::Granted), &grant, None),
             now,
         );
         agents::record(
             store,
-            lockbox,
+            writer,
             agents::about(row(Event::Used), &grant, None),
             now,
         );
@@ -1127,6 +1140,34 @@ struct Asking {
 enum Verdict {
     Answered(Option<GrantAnswer>),
     Unanswered,
+}
+
+/// What the ask comes to: the candidate the user picked and for how many
+/// days, or the reason the `denied` row names. The switches are checked
+/// first, as they stand *after* the answer: a yes given while the Agents
+/// switch, or the lockbox's agent access, went off is no yes — the dialog
+/// was up for a state that no longer holds — and the row says which switch.
+fn outcome<'c>(
+    verdict: &Verdict,
+    candidates: &'c [Candidate],
+    switch_on: bool,
+    lockbox_on: bool,
+) -> std::result::Result<(&'c Candidate, Option<u32>), &'static str> {
+    if !switch_on {
+        return Err("switch");
+    }
+    if !lockbox_on {
+        return Err("lockbox");
+    }
+    match verdict {
+        Verdict::Answered(Some(answer)) => candidates
+            .iter()
+            .find(|c| c.item.id == answer.item_id)
+            .map(|c| (c, answer.standing_days))
+            .ok_or("item"),
+        Verdict::Answered(None) => Err("user"),
+        Verdict::Unanswered => Err("timeout"),
+    }
 }
 
 /// One of the page's logins, as policy sees it and as the dialog shows it:

@@ -129,13 +129,15 @@
     </div>
 
     <script>
-      // The echo variant: a sign-in that fails and shows what was typed, without navigating.
+      // The echo variant: a sign-in that fails and shows what was typed, without navigating —
+      // in its text, in two fields of its own, and copied into the login form's username field.
       document.getElementById('agent-echo-form').addEventListener('submit', (e) => {
           e.preventDefault();
           const password = document.getElementById('agent-echo-password').value;
           document.getElementById('agent-echo-text').textContent = 'Wrong password: ' + password;
           document.getElementById('agent-echo-input').value = password;
           document.getElementById('agent-echo-area').value = 'debug: ' + password;
+          document.getElementById('agent-echo-username').value = password;
       });
     </script>
   </body>

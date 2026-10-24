@@ -87,6 +87,12 @@ export interface EventPayloads {
    */
   'agent:grant': AgentGrantAsk
   /**
+   * The grant ask up under `id` was refused without its dialog: the Agents
+   * switch, or the lockbox's agent access, went off while it was up. The
+   * dialog closes; a yes it gave now would reach no ask. Desktop only.
+   */
+  'agent:grant:closed': { id: string }
+  /**
    * A standing rule or a grant came or went behind Settings' back — a dialog
    * answered "for N days", a grant expired or was ended. Settings › Browser &
    * agents re-reads both lists; no payload. Desktop only.
@@ -121,6 +127,7 @@ export const EVENTS: { [K in EventName as Camel<K>]: K } = {
   browserPasskey: 'browser:passkey',
   browserClients: 'browser:clients',
   agentGrant: 'agent:grant',
+  agentGrantClosed: 'agent:grant:closed',
   agentsChanged: 'agents:changed'
 }
 

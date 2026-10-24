@@ -145,7 +145,9 @@ async function testAgentModeOn() {
     kpxcAssert(browserStub.sentFor('popup_login').length, 0, card, 'No login popup is offered');
     kpxcAssert(browserStub.sentFor('agent_mode_set_filled').length > 0, true, card, 'The fill is handed to the next page load');
     kpxcAssert(browserStub.sentFor('agent_mode_set_filled').at(-1).args[0].url, trimURL(document.location.href), card, 'The handoff carries the page URL without a query string');
+    await wait(kpxcAgentMode.RESCAN_DELAY_MS * 3);
     kpxcAssert(browserStub.sentFor('report_exposure').length, 0, card, 'A page that does not show the secret reports no exposure');
+    kpxcAssert($('#agent-otp').value, CODE, card, 'The TOTP field holding the code we filled is not a hit, and is left as filled');
 
     // Filling again (the observer found the same fields once more) is a no-op
     const fills = browserStub.sentFor('get_totp').length;
@@ -252,13 +254,16 @@ async function testExposureAfterFill() {
     kpxcAssert($('#agent-echo-password').value, ENTRY.password, card, 'The password is filled');
     kpxcAssert(browserStub.sentFor('report_exposure').length, 0, card, 'Nothing is reported before the page shows the secret');
 
-    // The agent submits; the page writes the password into its text and two fields
+    // The agent submits; the page writes the password into its text, two fields of its
+    // own, and the login form's username field
     $('#agent-echo-form').requestSubmit();
     kpxcAssert($('#agent-echo-input').value, ENTRY.password, card, 'The fixture echoed the password');
+    kpxcAssert($('#agent-echo-username').value, ENTRY.password, card, 'The fixture copied the password into the username field');
     await wait(kpxcAgentMode.RESCAN_DELAY_MS * 3);
 
     kpxcAssert($('#agent-echo-input').value, '', card, 'The input echoing the password is cleared by the re-scan');
     kpxcAssert($('#agent-echo-area').value, '', card, 'The textarea echoing the password is cleared');
+    kpxcAssert($('#agent-echo-username').value, '', card, 'The username field holding the password is an exposure too, and is cleared');
     kpxcAssert($('#agent-echo-password').value, ENTRY.password, card, 'The password field itself is left as filled');
     kpxcAssert(browserStub.sentFor('report_exposure').length, 1, card, 'report_exposure is sent once');
     kpxcAssert(browserStub.sentFor('report_exposure')[0]?.args?.[0], document.location.origin, card, 'report_exposure names the page origin, nothing else');

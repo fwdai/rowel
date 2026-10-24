@@ -12,8 +12,10 @@
 //!
 //! Every state change writes an audit row into the open lockbox's `audit`
 //! table through the broker's chained writer, under the session lock, with
-//! the workspace id as the writer id. Nothing secret goes in a row: the
-//! target is reduced to scheme, host and path before it is written.
+//! this install's id (`storage::install_id`) as the writer id — the chain is
+//! per writer, and the workspace id is `default` on every device. Nothing
+//! secret goes in a row: the target is reduced to scheme, host and path
+//! before it is written.
 //!
 //! Lock order, everywhere: the session lock first, then `AppState::agents`.
 
@@ -31,7 +33,7 @@ use crate::browser::{self, Client};
 use crate::error::Result;
 use crate::state::AppState;
 use crate::store::{SqliteStore, VaultStore};
-use crate::{events, session, workspace};
+use crate::{events, session, storage};
 
 /// How long an ended grant stays in the Settings list after its window.
 pub const RETAIN_ENDED_MS: i64 = 60 * 60 * 1000;
@@ -40,16 +42,32 @@ pub const RETAIN_ENDED_MS: i64 = 60 * 60 * 1000;
 const RULES_META: &str = "agent_rules";
 
 /// What the app holds about agents between a lock and the next: the grants it
-/// issued, and how often each client has been asking.
+/// issued, how often each client has been asking, and the asks up on screen.
 #[derive(Default)]
 pub struct AgentState {
     pub grants: Vec<Grant>,
     pub rates: HashMap<String, RateState>,
+    /// The grant asks waiting on the user right now, so that whatever ends
+    /// every grant can end them too (`revoke_all`). Each is registered by the
+    /// request thread as its dialog goes up and taken back as it comes down.
+    pub pending_asks: Vec<PendingAsk>,
+}
+
+/// A grant ask up on screen: the id its dialog answers under, and the client
+/// the grant would go to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingAsk {
+    pub ask_id: String,
+    pub client_key: String,
 }
 
 impl AgentState {
     pub fn rate(&mut self, client_key: &str) -> &mut RateState {
         self.rates.entry(client_key.to_string()).or_default()
+    }
+
+    pub fn forget_ask(&mut self, ask_id: &str) {
+        self.pending_asks.retain(|a| a.ask_id != ask_id);
     }
 
     pub fn find_mut(&mut self, id: &str) -> Option<&mut Grant> {
@@ -128,7 +146,7 @@ pub fn rearm(app: &AppHandle) {
 fn on_expiry(app: &AppHandle) {
     let state = app.state::<AppState>();
     let now = now_ms();
-    let writer_id = workspace::active_id(app);
+    let writer_id = storage::install_id(app);
     let changed = {
         let session = state.session.lock().unwrap();
         let mut agents = state.agents.lock().unwrap();
@@ -164,12 +182,16 @@ pub fn clear(app: &AppHandle) {
 
 /// End every active grant at once — the Agents switch went off, or the open
 /// lockbox's agent access did — with a `revoked` row each naming `reason`.
+/// An ask still up on screen is refused as well, and its dialog told to
+/// close: a yes given after the switch went off must not release anything,
+/// and the request waiting on it settles as denied (`settle_grant` reads the
+/// switches again and writes that row).
 pub fn revoke_all(app: &AppHandle, reason: &str) {
     let state = app.state::<AppState>();
     let now = now_ms();
-    let writer_id = workspace::active_id(app);
+    let writer_id = storage::install_id(app);
     let detail = format!(r#"{{"reason":"{reason}"}}"#);
-    {
+    let asks = {
         let session = state.session.lock().unwrap();
         let mut agents = state.agents.lock().unwrap();
         let store = session.store().ok();
@@ -189,16 +211,31 @@ pub fn revoke_all(app: &AppHandle, reason: &str) {
                 record(store, &writer_id, draft, now);
             }
         }
+        std::mem::take(&mut agents.pending_asks)
+    };
+    // With both locks let go: the answer wakes the request thread, which
+    // takes the session lock to settle.
+    refuse_asks(&asks);
+    for ask in &asks {
+        events::agent_grant_closed(app, &ask.ask_id);
     }
     events::agents_changed(app);
     rearm(app);
+}
+
+/// Answer every ask in `asks` with a refusal, as the user would with "no".
+/// Returns how many were still waiting for one.
+pub(crate) fn refuse_asks(asks: &[PendingAsk]) -> usize {
+    asks.iter()
+        .filter(|ask| browser::respond_grant(&ask.ask_id, None))
+        .count()
 }
 
 /// The user ended grant `id` from Settings.
 pub fn end_grant(app: &AppHandle, id: &str) -> Result<()> {
     let state = app.state::<AppState>();
     let now = now_ms();
-    let writer_id = workspace::active_id(app);
+    let writer_id = storage::install_id(app);
     {
         let session = state.session.lock().unwrap();
         let store = session.store()?;
@@ -259,7 +296,7 @@ pub fn live_rules(store: &SqliteStore, now_ms: i64) -> Vec<Rule> {
 pub fn revoke_rule(app: &AppHandle, id: &str) -> Result<()> {
     let state = app.state::<AppState>();
     let now = now_ms();
-    let writer_id = workspace::active_id(app);
+    let writer_id = storage::install_id(app);
     {
         let session = state.session.lock().unwrap();
         let store = session.store()?;

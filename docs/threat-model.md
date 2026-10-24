@@ -834,7 +834,10 @@ exposed process than the webview, and it is not ours.
   asking again, the TOTP step is served under it, and a page that echoes the
   secret ends it (`exposed`). Every decision and use is a chained row in the
   lockbox's `audit` table (`rowel_broker::audit`), never carrying a secret or
-  a query string. Grants live in memory only: a lock, an auto-lock or a
+  a query string; the chain is per writer, and the writer is this install's
+  own id (`storage::install_id`, minted once per data directory), so two
+  devices' rows merge side by side after a sync or a restore rather than
+  colliding. Grants live in memory only: a lock, an auto-lock or a
   lockbox switch drops every one, so nothing is served from a locked vault.
   The residual is the one above, unchanged: a process running as the same
   user can lift the association key and present it as the extension, and the

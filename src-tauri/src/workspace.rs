@@ -66,7 +66,9 @@ pub fn statuses(registry: &Registry, root: &Path) -> Vec<WorkspaceStatus> {
 }
 
 /// Whether agents may use items in workspace `id`, as the registry has it.
-/// Takes `workspace_lock`, so never call it holding the session lock.
+/// Takes `workspace_lock`, so never call it holding the session lock. For the
+/// extension host, which is desktop only, like `agents`.
+#[cfg(desktop)]
 pub fn agents_enabled(app: &AppHandle, id: &str) -> bool {
     let Ok(root) = storage::root_dir(app) else {
         return false;

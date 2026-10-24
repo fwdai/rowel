@@ -7,12 +7,15 @@ use serde_json::{json, Map, Value};
 use super::manifest::{self, Family, KEEPASSXC, ROWEL};
 use super::protocol::str_of;
 use super::{
-    frame, group_container, group_socket_dir, proxy, server, socket_name, Busy, CandidateItem,
-    Pending, SafariSocketError, StepUp, IDENTIFIER, SUN_PATH_MAX,
+    frame, group_container, group_socket_dir, outcome, proxy, server, socket_name, Answer, Busy,
+    Candidate, CandidateItem, GrantAnswer, Pending, SafariSocketError, StepUp, Verdict, CONSENT,
+    IDENTIFIER, SUN_PATH_MAX,
 };
+use crate::agents::{self, AgentState, PendingAsk};
 use crate::crypto::PayloadCipher;
 use crate::models::Entry;
 use crate::store::{migrate, SqliteStore, VaultStore};
+use rowel_broker::grant::VisibleItem;
 use rowel_broker::testing::{nonce, seed, vault, Extension, Mock};
 use rowel_core::app::DESKTOP_APP_GROUP;
 
@@ -119,6 +122,92 @@ fn an_ask_that_was_answered_leaves_the_next_ask_its_slot() {
     let (third, _) = pending.begin("c").unwrap();
     pending.end(third);
     assert!(pending.begin("d").is_some());
+}
+
+// --- a grant ask, between the dialog going up and the answer settling ---------
+
+fn candidate(id: &str) -> Candidate {
+    Candidate {
+        item: CandidateItem {
+            id: id.into(),
+            kind: "login".into(),
+            tags: vec![],
+        },
+        visible: VisibleItem {
+            id: id.into(),
+            title: id.to_uppercase(),
+            username: None,
+        },
+    }
+}
+
+fn yes(item_id: &str) -> Verdict {
+    Verdict::Answered(Some(GrantAnswer {
+        item_id: item_id.into(),
+        standing_days: Some(7),
+    }))
+}
+
+// The switches are read again once the answer is in: a yes given while the
+// Agents switch, or the lockbox's agent access, went off releases nothing,
+// and the row names the switch rather than the user.
+#[test]
+fn a_yes_after_a_switch_went_off_is_refused_and_says_which_switch() {
+    let candidates = [candidate("gh"), candidate("gh2")];
+
+    let (picked, days) = outcome(&yes("gh2"), &candidates, true, true).expect("both on");
+    assert_eq!(picked.item.id, "gh2");
+    assert_eq!(days, Some(7));
+
+    let refused = |verdict: &Verdict, switch_on: bool, lockbox_on: bool| {
+        outcome(verdict, &candidates, switch_on, lockbox_on).err()
+    };
+    assert_eq!(refused(&yes("gh2"), false, true), Some("switch"));
+    assert_eq!(refused(&yes("gh2"), true, false), Some("lockbox"));
+    assert_eq!(
+        refused(&yes("gh2"), false, false),
+        Some("switch"),
+        "the app's switch is the outer one"
+    );
+
+    // And the answers that were refusals already stay what they were.
+    assert_eq!(refused(&yes("nope"), true, true), Some("item"));
+    assert_eq!(refused(&Verdict::Answered(None), true, true), Some("user"));
+    assert_eq!(refused(&Verdict::Unanswered, true, true), Some("timeout"));
+}
+
+// Ending every grant (the switch went off) also answers the ask up on
+// screen with a refusal, so the request waiting on it settles now rather
+// than a minute later, and only the asks registered are answered.
+#[test]
+fn revoking_everything_refuses_the_ask_that_is_up() {
+    let (serial, answer) = CONSENT.begin("ask-up").expect("the slot is free");
+    let mut state = AgentState::default();
+    state.pending_asks.push(PendingAsk {
+        ask_id: "ask-up".into(),
+        client_key: "ext".into(),
+    });
+    state.pending_asks.push(PendingAsk {
+        ask_id: "ask-gone".into(),
+        client_key: "ext".into(),
+    });
+
+    let asks = std::mem::take(&mut state.pending_asks);
+    assert_eq!(agents::refuse_asks(&asks), 1, "one ask was waiting");
+    assert!(matches!(answer.try_recv(), Ok(Answer::Grant(None))));
+    assert!(state.pending_asks.is_empty());
+
+    // The answer freed the slot; the request thread's own tidy-up is a no-op.
+    CONSENT.end(serial);
+    assert_eq!(agents::refuse_asks(&asks), 0, "nothing left to refuse");
+
+    // The request thread takes its registration back as the dialog comes down.
+    state.pending_asks.push(PendingAsk {
+        ask_id: "later".into(),
+        client_key: "ext".into(),
+    });
+    state.forget_ask("later");
+    assert!(state.pending_asks.is_empty());
 }
 
 // --- which logins a page gets, against a store ---------------------------------

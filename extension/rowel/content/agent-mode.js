@@ -32,6 +32,7 @@ const agentFill = {
     password: '',
     totp: '',
     done: new WeakSet(), // Combinations (login and TOTP) already filled on this page
+    totpField: null, // The one field we put the code into
     rescan: null
 };
 
@@ -39,11 +40,12 @@ kpxcAgentMode.isOn = function() {
     return kpxc.settings?.agentMode === true;
 };
 
-// The login fields upstream detected. Our own fills land in these, so the scan leaves them out.
-const loginFields = function() {
-    return kpxc.combinations
-        .flatMap(c => [ c.username, c.password, c.totp, ...(c.passwordInputs ?? []), ...(c.totpInputs ?? []), ...(c.fields ?? []) ])
-        .filter(Boolean);
+// Only the fields the extension itself filled with a secret are left out of
+// the scan: the password fields (which the selector skips anyway) and the one
+// TOTP field the code went into. Every other login field is scanned — a page
+// that copies the password into the username field is an exposure.
+const filledFields = function() {
+    return agentFill.totpField ? [ agentFill.totpField ] : [];
 };
 
 const forget = function() {
@@ -69,7 +71,7 @@ const exposed = async function(fields) {
 };
 
 const scanOnce = async function() {
-    const hit = kpxcAgentMode.scan({ password: agentFill.password, totp: agentFill.totp }, loginFields());
+    const hit = kpxcAgentMode.scan({ password: agentFill.password, totp: agentFill.totp }, filledFields());
     if (hit.inText || hit.fields.length > 0) {
         await exposed(hit.fields);
         return true;
@@ -124,12 +126,16 @@ kpxcAgentMode.afterFill = async function(combination, entry) {
     await kpxcAgentMode.check();
 };
 
-// From kpxcFill.setTOTPValue: the code, whether from get-totp or a KPH: {TOTP} field.
-kpxcAgentMode.noteTotp = async function(totp) {
+// From kpxcFill.setTOTPValue: the code, whether from get-totp or a KPH: {TOTP}
+// field, and the field it goes into — the one field holding the code that is
+// not an exposure. (A segmented code lands one digit per input, which the
+// whole code never matches.)
+kpxcAgentMode.noteTotp = async function(totp, field) {
     if (!kpxcAgentMode.isOn() || !totp) {
         return;
     }
 
+    agentFill.totpField = field ?? null;
     agentFill.totp = String(totp);
     await handOff();
     await kpxcAgentMode.check();

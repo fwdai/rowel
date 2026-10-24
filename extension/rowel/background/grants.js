@@ -174,16 +174,22 @@ grants.sendGetLogins = async function(tab, messageData, nonce) {
     }
 };
 
-// The grant field for get-totp: the fill's grant, so the host serves the code
-// only under it. Keyed by the tab's origin, so a code requested from a
-// cross-origin login frame goes without a grant (today's behaviour).
+// The agent-mode fields for get-totp: agentMode always, so the host knows the
+// code is for an agent and refuses it without a grant, plus the fill's grant
+// when the tab's origin holds one. Keyed by the tab's origin, so a code
+// requested from a cross-origin login frame goes without a grant, and the
+// host refuses it rather than serving it the way a person's click would be.
 grants.totpFields = async function(tab) {
     if (!grants.isOn()) {
         return {};
     }
 
+    const fields = { agentMode: 'true' };
     const grantId = await grants.grantFor(grants.originOf(tab?.url));
-    return grantId ? { grantId: grantId } : {};
+    if (grantId) {
+        fields.grantId = grantId;
+    }
+    return fields;
 };
 
 // Fixed texts, nothing from the page or the entry.

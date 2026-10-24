@@ -31,6 +31,19 @@ describe('the agent grant dialog', () => {
     return screen.findByTestId('agent-grant-dialog')
   }
 
+  // The ask was refused behind the dialog's back (the Agents switch went
+  // off): the dialog closes, and a later ask's id does not close it.
+  it('closes when Rust says its ask is over, and only for its own ask', async () => {
+    await ask()
+    act(() => emitEvent(EVENTS.agentGrantClosed, { id: 'another-ask' }))
+    expect(screen.getByTestId('agent-grant-dialog')).toBeInTheDocument()
+
+    act(() => emitEvent(EVENTS.agentGrantClosed, { id: 'ask-1' }))
+    expect(screen.queryByTestId('agent-grant-dialog')).not.toBeInTheDocument()
+    expect(useUi.getState().consentAsk).toBeNull()
+    expect(calls('agent_grant_respond')).toEqual([])
+  })
+
   it('names who asks and where, lists the candidates with the first picked, and allows once', async () => {
     await ask()
     expect(screen.getByTestId('agent-grant-title')).toHaveTextContent(

@@ -19,6 +19,7 @@ import {
   askBrowser,
   askPasskey,
   askGrant,
+  closeGrantAsk,
   browserClientsChanged,
   agentsChanged
 } from './ui'
@@ -90,6 +91,8 @@ export const subscribeToEvents = (): (() => void) => {
     on(EVENTS.browserClients, () => browserClientsChanged()),
     // An agent asking to use a login, through that extension; `Main` answers it.
     on(EVENTS.agentGrant, askGrant),
+    // That ask refused behind the dialog's back (a switch went off): close it.
+    on(EVENTS.agentGrantClosed, payload => closeGrantAsk(payload.id)),
     // A rule or a grant came or went: Settings › Browser & agents re-reads.
     on(EVENTS.agentsChanged, () => agentsChanged())
   ]

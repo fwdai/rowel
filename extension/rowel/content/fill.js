@@ -170,7 +170,7 @@ kpxcFill.setTOTPValue = async function(elem, val) {
         logDebug('Error: Credential list is empty.');
         return;
     }
-    await kpxcAgentMode.noteTotp(val); // Rowel: the code joins the exposure check
+    await kpxcAgentMode.noteTotp(val, elem); // Rowel: the code joins the exposure check, its field is left out of it
 
     for (const comb of kpxc.combinations) {
         if (comb.totpInputs?.length > 0) {

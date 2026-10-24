@@ -301,7 +301,15 @@ impl<H: Host> Connection<H> {
                 }
                 // Under a grant, the code goes only with a login the grant
                 // covers for a fill — checked before any code is generated.
+                // In agent mode there is no code without a grant: the
+                // extension says `agentMode` on every TOTP step, with the
+                // fill's `grantId` when it holds one, and a step that has
+                // none (or a grant that does not cover the login) is refused
+                // rather than served the way a person's click would be.
                 let grant_id = str_of(message, "grantId");
+                if flag_of(message, "agentMode") && grant_id.is_empty() {
+                    return Err(Code::GrantDenied.into());
+                }
                 if !grant_id.is_empty() && !self.host.grant_covers(grant_id, id, Mode::Fill) {
                     return Err(Code::GrantDenied.into());
                 }

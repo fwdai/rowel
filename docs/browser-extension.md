@@ -136,7 +136,10 @@ actions". While it is on:
   `database-locked`) and sends `grantId` instead of `agentMode` while the
   origin has a live one, so the TOTP step and the second page of a
   username-first sign-in reuse it without a second dialog. `get-totp` carries
-  the same `grantId`. One bounded retry: a `GrantExpired` answer to a
+  `agentMode: "true"` always and the same `grantId` when the origin has one;
+  the host refuses an agent-mode code without a covering grant rather than
+  serving it the way a person's click would be. One bounded retry: a
+  `GrantExpired` answer to a
   remembered grant forgets it and asks afresh; a `GrantPending` with
   `retryAfterMs` is waited for once. The refusals (codes 40–46 in `kpErrors`,
   `client.js`) become the extension's notification: `GrantDenied` "Rowel did
