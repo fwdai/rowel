@@ -81,14 +81,19 @@ impl AutoLock {
 }
 
 pub fn set_timeout(app: &AppHandle, secs: u64) {
-    let autolock = app.state::<AutoLock>();
-    autolock
-        .timeout_secs
-        .store(secs.clamp(1, MAX_TIMEOUT_SECS), Ordering::SeqCst);
+    store_timeout(app, secs);
     // Anything already pending was armed against the old value. Re-armed
     // rather than dropped: a session that is live stays on the clock, now the
     // new one.
     touch(app);
+}
+
+/// The value alone, for a caller that re-arms afterwards (`settings::set`):
+/// `touch` reads the session, and this takes no lock at all.
+pub fn store_timeout(app: &AppHandle, secs: u64) {
+    app.state::<AutoLock>()
+        .timeout_secs
+        .store(secs.clamp(1, MAX_TIMEOUT_SECS), Ordering::SeqCst);
 }
 
 /// The user did something: start the idle clock over. A no-op with no session

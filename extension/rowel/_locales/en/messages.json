@@ -1493,5 +1493,73 @@
     "gettingStartedNewUser": {
         "message": "Are you a new user? Check links to our documentation.",
         "description": "Are you a new user? Check links to our documentation."
+    },
+    "agentModeTitle": {
+        "message": "Agent mode",
+        "description": "Rowel: label of the agent mode switch in the popup."
+    },
+    "agentModeDescription": {
+        "message": "For AI browsers. Rowel asks you before each fill and hides its buttons from the page.",
+        "description": "Rowel: helper text under the agent mode switch."
+    },
+    "agentModeOn": {
+        "message": "Agent mode is on",
+        "description": "Rowel: title of the popup screen shown while agent mode is on."
+    },
+    "agentModeOnDescription": {
+        "message": "Rowel asks you before each fill.",
+        "description": "Rowel: text of the popup screen shown while agent mode is on."
+    },
+    "agentModeTurnOff": {
+        "message": "Turn off",
+        "description": "Rowel: button that turns agent mode off."
+    },
+    "agentModeGrantDeniedNotification": {
+        "message": "Rowel did not allow this fill",
+        "description": "Rowel: notification when a fill was denied in agent mode."
+    },
+    "agentModeGrantPendingNotification": {
+        "message": "Rowel is busy with another request. Try again in a moment.",
+        "description": "Rowel: notification when another request holds Rowel's consent dialog."
+    },
+    "agentModeAgentsDisabledNotification": {
+        "message": "Turn on Agents in Rowel › Settings › Browser & agents",
+        "description": "Rowel: notification when agents are turned off in the app."
+    },
+    "agentModeRateLimitedNotification": {
+        "message": "Too many requests; wait a minute.",
+        "description": "Rowel: notification when the app rate-limits fill requests."
+    },
+    "agentModeExposedNotification": {
+        "message": "Rowel ended the grant: the page showed the password",
+        "description": "Rowel: notification when a filled secret showed in the page and the grant was ended."
+    },
+    "errorMessageGrantDenied": {
+        "message": "Grant denied",
+        "description": "Rowel: error code 40."
+    },
+    "errorMessageGrantPending": {
+        "message": "Grant pending approval",
+        "description": "Rowel: error code 41."
+    },
+    "errorMessageGrantExpired": {
+        "message": "Grant expired",
+        "description": "Rowel: error code 42."
+    },
+    "errorMessageNotPermittedForKind": {
+        "message": "Not permitted for this kind of client",
+        "description": "Rowel: error code 43."
+    },
+    "errorMessagePolicyRequiresApproval": {
+        "message": "This fill needs your approval in Rowel",
+        "description": "Rowel: error code 44."
+    },
+    "errorMessageRateLimited": {
+        "message": "Too many requests",
+        "description": "Rowel: error code 45."
+    },
+    "errorMessageAgentsDisabled": {
+        "message": "Agents are turned off in Rowel's settings",
+        "description": "Rowel: error code 46."
     }
 }

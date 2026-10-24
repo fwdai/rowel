@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { EntryType } from '@/api/types'
 import type { SshKeyPair } from '@/api/tools'
-import type { AssociateAsk, BrowserConsent, PasskeyAsk } from '@/api/browser'
+import type { AgentGrantAsk, AssociateAsk, BrowserConsent, PasskeyAsk } from '@/api/browser'
 import { loadArchive, setNoEntry, useVault, selectCurrent } from './vault'
 
 /**
@@ -106,11 +106,11 @@ export interface UiState {
   notice: string | null
   /**
    * The one security decision the browser extension has put to the user —
-   * an extension asking to connect, or a page's passkey ceremony — while its
-   * dialog is up. One field for both kinds: Rust holds one ask at a time in
-   * one slot and gives up on it by itself after a minute, and a newer ask of
-   * either kind replaces whatever dialog was left up, so two decisions are
-   * never on screen together.
+   * an extension asking to connect, a page's passkey ceremony, or an agent's
+   * grant — while its dialog is up. One field for every kind: Rust holds one
+   * ask at a time in one slot and gives up on it by itself after a minute,
+   * and a newer ask of any kind replaces whatever dialog was left up, so two
+   * decisions are never on screen together.
    */
   consentAsk: BrowserConsent | null
   /**
@@ -120,6 +120,12 @@ export interface UiState {
    * moves; nothing renders the number itself.
    */
   browserClientsSeq: number
+  /**
+   * The same for the agents' rules and grants: a grant dialog answered "for N
+   * days", a grant expired or ended. Settings › Browser & agents re-reads
+   * both lists when this moves.
+   */
+  agentsSeq: number
   /**
    * The prompt for the master password another device changed this vault to
    * is up (`PasswordChanged`). Raised from wherever the failure is shown —
@@ -163,6 +169,7 @@ export const initialUi: UiState = {
   notice: null,
   consentAsk: null,
   browserClientsSeq: 0,
+  agentsSeq: 0,
   passwordPrompt: false
 }
 
@@ -324,9 +331,19 @@ export const askBrowser = (ask: AssociateAsk) =>
   useUi.setState({ consentAsk: { kind: 'associate', ask } })
 export const askPasskey = (ask: PasskeyAsk) =>
   useUi.setState({ consentAsk: { kind: 'passkey', ask } })
+export const askGrant = (ask: AgentGrantAsk) =>
+  useUi.setState({ consentAsk: { kind: 'grant', ask } })
 export const closeConsentAsk = () => useUi.setState({ consentAsk: null })
+/** Close the grant dialog up for ask `id` — and only that one, not a later ask's. */
+export const closeGrantAsk = (id: string) =>
+  useUi.setState(state =>
+    state.consentAsk?.kind === 'grant' && state.consentAsk.ask.id === id
+      ? { consentAsk: null }
+      : {}
+  )
 export const browserClientsChanged = () =>
   useUi.setState(state => ({ browserClientsSeq: state.browserClientsSeq + 1 }))
+export const agentsChanged = () => useUi.setState(state => ({ agentsSeq: state.agentsSeq + 1 }))
 
 // --- scanning ---------------------------------------------------------------------
 

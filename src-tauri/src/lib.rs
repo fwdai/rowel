@@ -6,6 +6,10 @@ pub use rowel_core::{crypto, store};
 #[cfg_attr(not(desktop), allow(unused_imports))]
 use rowel_core::passkey;
 
+// Agent grants through the browser extension host: in memory, cleared with
+// every lock. Desktop only, like the host that issues them.
+#[cfg(desktop)]
+mod agents;
 mod appkey;
 // The master-password domain: the failed-unlock backoff and the rekey saga.
 mod auth;
@@ -282,6 +286,7 @@ pub fn run() {
             commands::workspace::workspace_restore_from_account,
             commands::workspace::workspace_rename,
             commands::workspace::workspace_set_color,
+            commands::workspace::workspace_set_agents,
             commands::workspace::workspace_delete,
             commands::vault_password::workspace_adopt_vault_password,
             // The browser extension host is desktop only, like its module.
@@ -297,6 +302,22 @@ pub fn run() {
             commands::browser::browser_passkey_respond,
             #[cfg(desktop)]
             commands::browser::browser_forget_client,
+            // Agents through the extension host: the switch, the grant
+            // dialog's answer, and the rules and grants Settings lists.
+            #[cfg(desktop)]
+            commands::browser::browser_set_agents_enabled,
+            #[cfg(desktop)]
+            commands::browser::browser_set_agents_standing_days,
+            #[cfg(desktop)]
+            commands::browser::agent_grant_respond,
+            #[cfg(desktop)]
+            commands::browser::agent_rules,
+            #[cfg(desktop)]
+            commands::browser::agent_grants,
+            #[cfg(desktop)]
+            commands::browser::agent_revoke_rule,
+            #[cfg(desktop)]
+            commands::browser::agent_end_grant,
             // E2E-only vault reset. `generate_handler!` honours per-command
             // attributes, so in a release build the match arm — and with it the
             // only reference to the (also cfg'd-out) module — simply is not

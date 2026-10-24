@@ -14,6 +14,7 @@
     <script src="../bootstrap/bootstrap.min.js"></script>
     <script src="popup_functions.js"></script>
     <script defer src="popup.js"></script>
+    <script defer src="agent-mode.js"></script>
     <script defer src="../common/translate.js"></script>
   </head>
   <body>
@@ -145,6 +146,24 @@
             <i class="fa fa-plus" aria-hidden="true"></i>
             <span data-i18n="popupAllowIframeButton"></span>
           </button>
+        </div>
+      </div>
+
+      <!-- Rowel: agent mode (agent-mode.js). The switch, and the one screen shown while it is on. -->
+      <div id="rowel-agent-mode">
+        <hr>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="agent-mode-switch">
+          <label class="form-check-label" for="agent-mode-switch" data-i18n="agentModeTitle"></label>
+          <div class="form-text help-text" data-i18n="agentModeDescription"></div>
+        </div>
+      </div>
+
+      <div id="rowel-agent-mode-on">
+        <p class="rowel-agent-mode-title" data-i18n="agentModeOn"></p>
+        <p data-i18n="agentModeOnDescription"></p>
+        <div class="right-align">
+          <button id="agent-mode-off-button" class="btn btn-sm btn-primary" data-i18n="agentModeTurnOff"></button>
         </div>
       </div>
     </div>

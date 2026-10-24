@@ -11,6 +11,7 @@ use crypto_box::{aead::Aead, Nonce, PublicKey, SalsaBox, SecretKey};
 use serde_json::{json, Map, Value};
 
 use crate::actions::{Client, Connection, Host, Login};
+use crate::grant::{GrantReply, GrantRequest, Mode, State, VisibleItem};
 use crate::passkeys::{self, Assertion, Registration};
 use crate::protocol::{increment, Code, NONCE_LEN, VERSION};
 use rowel_core::crypto::{PayloadCipher, VaultKey};
@@ -44,9 +45,33 @@ pub struct Mock {
     pub passkey_choice: usize,
     /// Every passkey ask the user was shown.
     pub passkey_asks: Arc<Mutex<Vec<String>>>,
+    /// What the host answers a grant request with.
+    pub grant_answer: GrantAnswer,
+    /// Every grant request, with the client key it came in under.
+    pub grant_requests: RefCell<Vec<(String, GrantRequest)>>,
+    /// The grants in force — id, item, mode — which is what `grant_covers`
+    /// answers from. An `Active` answer adds its grant here.
+    pub grants: RefCell<Vec<(String, String, Mode)>>,
+    /// Every exposure reported, by grant id.
+    pub exposures: RefCell<Vec<String>>,
 }
 
 pub type Save = (Option<String>, String, String, String, String);
+
+/// How the scripted host answers `request_grant`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GrantAnswer {
+    /// Approved for the one item named; the grant then covers it for a fill.
+    Active(String),
+    Denied,
+    /// Another ask holds the dialog; retry after this long, when told.
+    Pending(Option<u64>),
+    /// Agents are off, as the app answers today.
+    Disabled,
+}
+
+/// The id of the grant an `Active` answer issues.
+pub const GRANT_ID: &str = "grant-1";
 
 /// The user's answer to a passkey ask, noting what they were asked.
 struct Answer {
@@ -80,7 +105,19 @@ impl Mock {
             passkey_consent: true,
             passkey_choice: 0,
             passkey_asks: Arc::default(),
+            grant_answer: GrantAnswer::Disabled,
+            grant_requests: RefCell::new(Vec::new()),
+            grants: RefCell::new(Vec::new()),
+            exposures: RefCell::new(Vec::new()),
         }
+    }
+
+    /// With a grant already in force for `item_id` in `mode`.
+    pub fn granting(self, grant_id: &str, item_id: &str, mode: Mode) -> Self {
+        self.grants
+            .borrow_mut()
+            .push((grant_id.into(), item_id.into(), mode));
+        self
     }
 
     fn answer(&self) -> Answer {
@@ -100,7 +137,7 @@ impl Mock {
     }
 }
 
-fn login(id: &str, title: &str, username: &str, password: &str, totp: Option<&str>) -> Login {
+pub fn login(id: &str, title: &str, username: &str, password: &str, totp: Option<&str>) -> Login {
     Login {
         id: id.into(),
         title: title.into(),
@@ -179,6 +216,48 @@ impl Host for Mock {
     }
     fn unlock_requested(&self) {
         self.raises.set(self.raises.get() + 1);
+    }
+    fn request_grant(&self, client_key: &str, req: GrantRequest) -> Result<GrantReply, Code> {
+        self.grant_requests
+            .borrow_mut()
+            .push((client_key.to_string(), req));
+        let reply = |state, retry_after_ms, items| GrantReply {
+            grant_id: GRANT_ID.into(),
+            state,
+            expires_at_ms: (state == State::Active).then_some(900_000),
+            retry_after_ms,
+            items,
+        };
+        match &self.grant_answer {
+            GrantAnswer::Disabled => Err(Code::AgentsDisabled),
+            GrantAnswer::Denied => Ok(reply(State::Denied, None, Vec::new())),
+            GrantAnswer::Pending(retry) => Ok(reply(State::Pending, *retry, Vec::new())),
+            GrantAnswer::Active(item) => {
+                self.grants
+                    .borrow_mut()
+                    .push((GRANT_ID.into(), item.clone(), Mode::Fill));
+                let items = self
+                    .logins
+                    .iter()
+                    .filter(|login| login.id == *item)
+                    .map(|login| VisibleItem {
+                        id: login.id.clone(),
+                        title: login.title.clone(),
+                        username: Some(login.username.clone()),
+                    })
+                    .collect();
+                Ok(reply(State::Active, None, items))
+            }
+        }
+    }
+    fn grant_covers(&self, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+        self.grants
+            .borrow()
+            .iter()
+            .any(|(g, i, m)| g == grant_id && i == item_id && *m == mode)
+    }
+    fn report_exposure(&self, grant_id: &str) {
+        self.exposures.borrow_mut().push(grant_id.to_string());
     }
 }
 

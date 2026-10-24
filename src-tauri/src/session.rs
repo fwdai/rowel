@@ -303,6 +303,10 @@ pub fn sealed(app: &AppHandle) {
     crate::autolock::disarm(app);
     #[cfg(desktop)]
     crate::browser::server::notify_locked();
+    // And every grant an agent held goes with the session: nothing is served
+    // from a locked vault, and the next lockbox open is not this one's.
+    #[cfg(desktop)]
+    crate::agents::clear(app);
 }
 
 // Defined in the core, where the passkey store needs it too; the commands

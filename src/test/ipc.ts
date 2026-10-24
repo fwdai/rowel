@@ -106,6 +106,7 @@ export const appStatusDefault = (): AppStatus => ({
 const BROWSER_OFF: BrowserStatus = {
   enabled: false,
   keepassxcCompat: true,
+  agents: { enabled: false, defaultStandingDays: 7 },
   browsers: [
     { id: 'chrome', label: 'Google Chrome', detected: true, installed: false, conflict: false }
   ],
@@ -152,6 +153,7 @@ const DEFAULTS: Record<string, Handler> = {
   // Registry only in Rust, and the fake keeps no registry: the list a spec
   // sees is the `app_status` it mocks, so a recolour there is the spec's to set.
   workspace_set_color: () => undefined,
+  workspace_set_agents: () => undefined,
 
   // First run. The probe's result never comes back through these promises —
   // it arrives as `setup:account:*`, which a spec drives through the store.
@@ -297,7 +299,22 @@ const DEFAULTS: Record<string, Handler> = {
   }),
   browser_respond: () => undefined,
   browser_passkey_respond: () => undefined,
-  browser_forget_client: () => BROWSER_OFF
+  browser_forget_client: () => BROWSER_OFF,
+  // Agents: the switch answers with the status as Rust would then have it;
+  // nothing is listed until a spec seeds a rule or a grant.
+  browser_set_agents_enabled: ({ enabled }) => ({
+    ...BROWSER_OFF,
+    agents: { ...BROWSER_OFF.agents, enabled: enabled as boolean }
+  }),
+  browser_set_agents_standing_days: ({ days }) => ({
+    ...BROWSER_OFF,
+    agents: { ...BROWSER_OFF.agents, defaultStandingDays: days as number }
+  }),
+  agent_grant_respond: () => undefined,
+  agent_rules: () => [],
+  agent_grants: () => [],
+  agent_revoke_rule: () => undefined,
+  agent_end_grant: () => undefined
 }
 
 const overrides = new Map<string, Handler>()

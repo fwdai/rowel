@@ -6,23 +6,204 @@ use serde_json::{json, Map, Value};
 
 use super::manifest::{self, Family, KEEPASSXC, ROWEL};
 use super::protocol::str_of;
+use super::protocol::Code;
 use super::{
-    frame, group_container, group_socket_dir, proxy, server, socket_name, Pending,
-    SafariSocketError, IDENTIFIER, SUN_PATH_MAX,
+    covered, decide, frame, group_container, group_socket_dir, outcome, proxy, server, settle,
+    socket_name, Answer, AskKind, Asking, Candidate, CandidateItem, GrantAnswer, Locked, NotAsked,
+    Pending, Prepared, SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
 };
+use crate::agents::{self, AccessState, AgentState};
 use crate::crypto::PayloadCipher;
 use crate::models::Entry;
+use crate::session::{Epoch, Session};
 use crate::store::{migrate, SqliteStore, VaultStore};
+use rowel_broker::grant::{
+    Approval, CreatedBy, Grant, GrantRequest, ItemSelector, Mode, State, Target, Terms, VisibleItem,
+};
+use rowel_broker::policy::defaults;
 use rowel_broker::testing::{nonce, seed, vault, Extension, Mock};
 use rowel_core::app::DESKTOP_APP_GROUP;
 
 // --- the consent slot ----------------------------------------------------------
 
+/// A `prepare` that lets the ask go up.
+fn up() -> Result<(), ()> {
+    Ok(())
+}
+
+// A grant request tells a slot another ask holds from an ask nobody
+// answered: the first is "ask again shortly", the second a refusal.
+#[test]
+fn a_taken_slot_reads_as_busy_rather_than_as_no_answer() {
+    let pending: Pending<bool> = Pending::new();
+    let (_first, _answer) = pending.begin("a", AskKind::Associate, up).unwrap();
+    assert!(matches!(
+        pending.try_ask_with("b", AskKind::Grant { step_up: false }, up),
+        Err(NotAsked::Busy)
+    ));
+}
+
+// A grant ask whose switches changed since it was decided never goes up:
+// its `prepare` refuses under the slot lock, nothing reaches the screen,
+// and the slot is free for the next ask.
+#[test]
+fn a_grant_ask_whose_access_moved_never_goes_up() {
+    let pending: Pending<bool> = Pending::new();
+    let mut held = AgentState::default();
+    held.initialise(AccessState {
+        enabled: true,
+        lockbox_on: true,
+    });
+    let decided_under = held.access_epoch;
+    held.bump_access();
+
+    let mut emitted = false;
+    let asked = pending.try_ask_with("g", AskKind::Grant { step_up: false }, || {
+        held.access_since(decided_under)?;
+        emitted = true;
+        Ok(())
+    });
+    assert!(matches!(asked, Err(NotAsked::Refused("switch"))));
+    assert!(!emitted, "no dialog");
+    assert!(!pending.needs_step_up("g"));
+    assert!(
+        pending.begin("h", AskKind::Associate, up).is_ok(),
+        "the slot is free"
+    );
+}
+
+// A change of the switches refuses the grant ask up through the slot: the
+// request waiting on it gets a "no", the dialog's id comes back for the
+// closed event, and an ask of another kind is left alone.
+#[test]
+fn refusing_the_grant_ask_answers_it_and_no_other_kind() {
+    let pending: Pending<Answer> = Pending::new();
+    assert_eq!(pending.refuse_grant(), None, "nothing up");
+
+    let (_, answer) = pending
+        .begin("g", AskKind::Grant { step_up: true }, up)
+        .unwrap();
+    assert_eq!(pending.refuse_grant(), Some("g".to_string()));
+    assert!(matches!(answer.try_recv(), Ok(Answer::Grant(None))));
+    let (_, next) = pending
+        .begin("next", AskKind::Associate, up)
+        .expect("the slot is free again");
+    assert_eq!(
+        pending.refuse_grant(),
+        None,
+        "an associate ask is not a grant ask"
+    );
+    assert!(
+        pending.answer("next", Answer::Name(None)),
+        "and is still up"
+    );
+    assert!(matches!(next.try_recv(), Ok(Answer::Name(None))));
+
+    let (_, passkey) = pending.begin("p", AskKind::Passkey, up).unwrap();
+    assert_eq!(pending.refuse_grant(), None);
+    assert!(pending.answer("p", Answer::Account(None)));
+    assert!(matches!(passkey.try_recv(), Ok(Answer::Account(None))));
+}
+
+// The slot is the one record of what is up, so it is what says whether the
+// ask up under an id takes a verified person before its yes counts.
+#[test]
+fn only_a_step_up_grant_ask_that_is_up_needs_a_step_up() {
+    let pending: Pending<Answer> = Pending::new();
+    assert!(!pending.needs_step_up("s"), "nothing up");
+
+    let (serial, _answer) = pending
+        .begin("s", AskKind::Grant { step_up: true }, up)
+        .unwrap();
+    assert!(pending.needs_step_up("s"));
+    assert!(!pending.needs_step_up("other"), "another id");
+    pending.end(serial);
+    assert!(!pending.needs_step_up("s"), "down");
+
+    let (serial, _answer) = pending
+        .begin("s", AskKind::Grant { step_up: false }, up)
+        .unwrap();
+    assert!(!pending.needs_step_up("s"), "an ordinary grant ask");
+    pending.end(serial);
+
+    let (_, _answer) = pending.begin("s", AskKind::Associate, up).unwrap();
+    assert!(!pending.needs_step_up("s"), "another kind");
+}
+
+// In this iteration no login fill reaches step-up — the floors raise cards,
+// identities, passkeys, env and money targets — so the gate is exercised
+// through the floors: a card among the page's items makes the baseline's
+// `ask` a `step_up`, which is what puts the biometric or password step in
+// front of the dialog's yes.
+#[test]
+fn a_card_fill_under_the_baseline_is_a_step_up_ask() {
+    use rowel_broker::grant::Probe;
+    use rowel_broker::policy::{evaluate, Decision, Floors};
+
+    let request = GrantRequest {
+        client_key: "ext".into(),
+        agent_id: None,
+        acting_for: None,
+        items: ItemSelector::Ids(vec!["visa".into()]),
+        targets: vec![Target::Origin("https://shop.example".into())],
+        modes: vec![Mode::Fill],
+        run_id: None,
+        reason: None,
+    };
+    let card = [CandidateItem {
+        id: "visa".into(),
+        kind: "card".into(),
+        tags: vec![],
+    }];
+    let decision = evaluate(
+        &defaults::personal(),
+        &request,
+        &card,
+        &[Probe::Origin("https://shop.example/checkout")],
+        &Floors::default(),
+    );
+    assert!(matches!(
+        decision,
+        Decision::Allow {
+            approval: Approval::StepUp,
+            ..
+        }
+    ));
+    // And a plain login stays an ordinary ask, with no step in front of it.
+    let login = [CandidateItem {
+        id: "visa".into(),
+        kind: "login".into(),
+        tags: vec![],
+    }];
+    let decision = evaluate(
+        &defaults::personal(),
+        &request,
+        &login,
+        &[Probe::Origin("https://shop.example/checkout")],
+        &Floors::default(),
+    );
+    assert!(matches!(
+        decision,
+        Decision::Allow {
+            approval: Approval::Ask,
+            ..
+        }
+    ));
+    // Whichever the device has, the ask says which step it is.
+    assert!(matches!(
+        StepUp::current().as_str(),
+        "biometric" | "password"
+    ));
+}
+
 #[test]
 fn an_ask_that_was_answered_leaves_the_next_ask_its_slot() {
     let pending: Pending<bool> = Pending::new();
-    let (first, answer) = pending.begin("a").unwrap();
-    assert!(pending.begin("b").is_none(), "one ask at a time");
+    let (first, answer) = pending.begin("a", AskKind::Associate, up).unwrap();
+    assert!(
+        pending.begin("b", AskKind::Associate, up).is_err(),
+        "one ask at a time"
+    );
     assert!(
         !pending.answer("b", true),
         "an answer for another tag does nothing"
@@ -32,7 +213,9 @@ fn an_ask_that_was_answered_leaves_the_next_ask_its_slot() {
 
     // The answer freed the slot, and the next ask took it before the first
     // ask's thread got round to tidying up. That tidy-up must be a no-op.
-    let (_, next) = pending.begin("b").expect("the answer freed the slot");
+    let (_, next) = pending
+        .begin("b", AskKind::Associate, up)
+        .expect("the answer freed the slot");
     pending.end(first);
     assert!(
         pending.answer("b", false),
@@ -41,9 +224,732 @@ fn an_ask_that_was_answered_leaves_the_next_ask_its_slot() {
     assert_eq!(next.recv().ok(), Some(false));
 
     // An ask nobody answered does clear its own slot.
-    let (third, _) = pending.begin("c").unwrap();
+    let (third, _) = pending.begin("c", AskKind::Passkey, up).unwrap();
     pending.end(third);
-    assert!(pending.begin("d").is_some());
+    assert!(pending.begin("d", AskKind::Associate, up).is_ok());
+}
+
+// --- releases, against a store and the grants held -----------------------------
+//
+// `decide`, `settle` and `covered` are the whole of what the host does
+// under the session and agents locks, over the open store and what the
+// agents lock guards — the grants held and the switches as the session
+// holds them; here they run over a store of their own, with the locks the
+// tests' own `&mut`. `switched` is a writer's change of a switch, as
+// `change_access` makes it under the same locks.
+
+const PAGE: &str = "https://github.com/login";
+
+fn github_login(id: &str) -> Entry {
+    Entry {
+        id: id.into(),
+        kind: "login".into(),
+        title: "GitHub".into(),
+        website: Some("https://github.com".into()),
+        username: Some("octocat".into()),
+        password: Some("hunter2".into()),
+        ..Entry::default()
+    }
+}
+
+fn fill_request(ids: &[&str]) -> GrantRequest {
+    GrantRequest {
+        client_key: "ext".into(),
+        agent_id: None,
+        acting_for: None,
+        items: ItemSelector::Ids(ids.iter().map(|id| id.to_string()).collect()),
+        targets: vec![Target::Origin(PAGE.into())],
+        modes: vec![Mode::Fill],
+        run_id: None,
+        reason: None,
+    }
+}
+
+/// An active fill grant for `item` at the page, as the dialog's yes leaves one.
+fn active_grant(item: &str, now: i64) -> Grant {
+    let terms = Terms {
+        approval: Approval::Ask,
+        ttl_ms: 900_000,
+        max_uses: None,
+        reason_required: false,
+        created_by: CreatedBy::User,
+    };
+    Grant {
+        state: State::Active,
+        approver: Some("user".into()),
+        ..Grant::from_request("default", fill_request(&[item]), terms, now)
+    }
+}
+
+/// Both switches on.
+fn on() -> AccessState {
+    AccessState {
+        enabled: true,
+        lockbox_on: true,
+    }
+}
+
+/// What the agents lock guards in a session whose first request has read
+/// the switches, both on.
+fn ready() -> AgentState {
+    let mut held = AgentState::default();
+    held.initialise(on());
+    held
+}
+
+fn locked<'a>(store: &'a SqliteStore, held: &'a mut AgentState, now: i64) -> Locked<'a> {
+    Locked {
+        store,
+        held,
+        writer: "dev",
+        now,
+    }
+}
+
+fn epoch() -> Epoch {
+    Session::default().epoch()
+}
+
+fn decided(store: &SqliteStore, held: &mut AgentState, now: i64) -> Result<Prepared, Code> {
+    decide(
+        locked(store, held, now),
+        epoch(),
+        "default",
+        "ext",
+        fill_request(&["gh"]),
+    )
+}
+
+/// The ask the baseline rule makes of the page's one login.
+fn asked(store: &SqliteStore, held: &mut AgentState, now: i64) -> Asking {
+    match decided(store, held, now) {
+        Ok(Prepared::Ask(asking)) => *asking,
+        _ => panic!("the baseline asks"),
+    }
+}
+
+/// A writer's change of a switch, as `change_access` makes it under the
+/// locks: the file written and the session's copy given the same value
+/// (`change`) in one section, then what follows from it.
+fn switched(
+    store: &SqliteStore,
+    held: &mut AgentState,
+    reason: &str,
+    change: impl FnOnce(&mut AccessState),
+    now: i64,
+) {
+    let (_, changed) =
+        agents::change_under_locks(Some(store), held, "dev", reason, now, |access| {
+            if let Some(access) = access {
+                change(access);
+            }
+            Ok(((), true))
+        })
+        .unwrap();
+    assert!(changed);
+}
+
+/// The log so far: each row's event and detail.
+fn rows(store: &SqliteStore) -> Vec<(String, Option<String>)> {
+    store
+        .audit_rows("dev")
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.event, row.detail))
+        .collect()
+}
+
+fn row(event: &str, detail: &str) -> (String, Option<String>) {
+    (event.into(), Some(detail.into()))
+}
+
+fn yes(item_id: &str) -> Verdict {
+    Verdict::Answered(Some(GrantAnswer {
+        item_id: item_id.into(),
+        standing_days: Some(7),
+    }))
+}
+
+// A grant this client holds for the page is served again, once — while the
+// switches the session holds say so, looked at under the same locks a
+// change of them is made under. The lockbox's access off is a refusal on
+// record; the app's switch off is the extension's `AgentsDisabled`, with no
+// row. Either ends the grant held, in the same section as the change, so
+// nothing is left to reuse anyway.
+#[test]
+fn a_reuse_is_served_until_a_switch_goes_off() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(active_grant("gh", now));
+
+    let served = decided(&store, &mut held, now);
+    assert!(matches!(
+        served,
+        Ok(Prepared::Answered(reply)) if reply.items.len() == 1 && reply.items[0].id == "gh"
+    ));
+    assert_eq!(held.grants[0].uses, 1);
+    assert_eq!(rows(&store), vec![row("used", r#"{"reuse":true}"#)]);
+
+    switched(
+        &store,
+        &mut held,
+        "lockbox",
+        |access| access.lockbox_on = false,
+        now,
+    );
+    assert_eq!(held.grants[0].state, State::Revoked);
+    assert!(matches!(
+        decided(&store, &mut held, now),
+        Err(Code::GrantDenied)
+    ));
+    assert_eq!(held.grants[0].uses, 1, "nothing released");
+    assert_eq!(
+        rows(&store)[1..],
+        [
+            row("revoked", r#"{"reason":"lockbox"}"#),
+            row("denied", r#"{"reason":"lockbox"}"#)
+        ]
+    );
+
+    let mut held = ready();
+    held.grants.push(active_grant("gh", now));
+    switched(
+        &store,
+        &mut held,
+        "switch",
+        |access| access.enabled = false,
+        now,
+    );
+    assert!(matches!(
+        decided(&store, &mut held, now),
+        Err(Code::AgentsDisabled)
+    ));
+    assert_eq!(held.grants[0].uses, 0, "nothing released");
+    assert_eq!(
+        rows(&store).len(),
+        4,
+        "the `revoked` row, and no `denied` one"
+    );
+}
+
+// A standing rule allows without asking: the grant is made and served in
+// one go — after the same look at the switches. A session whose switches
+// are not read yet, or read off, makes no grant at all.
+#[test]
+fn an_auto_release_requires_the_switches_the_session_holds() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    let now = 1_000;
+    agents::write_rules(
+        &store,
+        &[defaults::standing(
+            "ext",
+            "gh",
+            "https://github.com",
+            7,
+            now,
+        )],
+    )
+    .unwrap();
+
+    // Not read yet: as good as off.
+    let mut unread = AgentState::default();
+    assert!(matches!(
+        decided(&store, &mut unread, now),
+        Err(Code::AgentsDisabled)
+    ));
+    assert!(unread.grants.is_empty());
+    assert!(rows(&store).is_empty());
+
+    let mut held = AgentState::default();
+    held.initialise(AccessState {
+        enabled: true,
+        lockbox_on: false,
+    });
+    assert!(matches!(
+        decided(&store, &mut held, now),
+        Err(Code::GrantDenied)
+    ));
+    assert!(held.grants.is_empty(), "no grant was made");
+    assert_eq!(rows(&store), vec![row("denied", r#"{"reason":"lockbox"}"#)]);
+
+    let mut held = ready();
+    assert!(matches!(
+        decided(&store, &mut held, now),
+        Ok(Prepared::Answered(reply)) if reply.state == State::Active
+    ));
+    assert_eq!(held.grants.len(), 1);
+    assert_eq!(held.grants[0].approver.as_deref(), Some("policy"));
+    assert_eq!(held.grants[0].uses, 1);
+    let events: Vec<String> = rows(&store).into_iter().map(|(event, _)| event).collect();
+    assert_eq!(events, ["denied", "requested", "granted", "used"]);
+}
+
+// `grant_covers` — the login or its code about to be served under a grant
+// in hand — is a release like any other: the lockbox's access going off
+// ends the grant in the same section as the change, and the switches the
+// session holds are looked at first, whatever the list says.
+#[test]
+fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
+    let (_dir, store, _cipher) = vault();
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(active_grant("gh", now));
+    let id = held.grants[0].id.clone();
+
+    assert!(covered(
+        locked(&store, &mut held, now),
+        &id,
+        "gh",
+        Mode::Fill
+    ));
+    assert_eq!(held.grants[0].uses, 1);
+    assert_eq!(rows(&store), vec![row("used", r#"{"via":"grantId"}"#)]);
+
+    switched(
+        &store,
+        &mut held,
+        "lockbox",
+        |access| access.lockbox_on = false,
+        now,
+    );
+    assert_eq!(held.grants[0].state, State::Revoked);
+    assert!(!covered(
+        locked(&store, &mut held, now),
+        &id,
+        "gh",
+        Mode::Fill
+    ));
+    assert_eq!(held.grants[0].uses, 1, "not used");
+    assert_eq!(
+        rows(&store).len(),
+        2,
+        "the `revoked` row, and no `used` one"
+    );
+
+    // The switches alone refuse: a grant back on the list, with the access
+    // still off, covers nothing; with it back on, it does.
+    held.grants[0].state = State::Active;
+    assert!(!covered(
+        locked(&store, &mut held, now),
+        &id,
+        "gh",
+        Mode::Fill
+    ));
+    assert_eq!(held.grants[0].uses, 1);
+    switched(
+        &store,
+        &mut held,
+        "lockbox",
+        |access| access.lockbox_on = true,
+        now,
+    );
+    assert!(covered(
+        locked(&store, &mut held, now),
+        &id,
+        "gh",
+        Mode::Fill
+    ));
+    assert_eq!(held.grants[0].uses, 2);
+
+    // And a session whose switches are not read yet serves nothing.
+    held.access = None;
+    assert!(!covered(
+        locked(&store, &mut held, now),
+        &id,
+        "gh",
+        Mode::Fill
+    ));
+    assert_eq!(held.grants[0].uses, 2);
+}
+
+// The reviewer's sequence: a request is decided and its ask goes up; one
+// writer turns the Agents switch off — the grants it finds active end, on
+// record — and another turns it on again. The switches say on when the
+// answer comes, but the epoch moved: the request is refused, and nothing
+// is released.
+#[test]
+fn a_request_decided_before_two_changes_is_refused_and_the_grants_they_found_end() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(active_grant("gh2", now));
+    let decided_under = held.access_epoch;
+    let asking = asked(&store, &mut held, now);
+    assert_eq!(asking.access_epoch, decided_under);
+
+    switched(
+        &store,
+        &mut held,
+        "switch",
+        |access| access.enabled = false,
+        now,
+    );
+    assert_eq!(held.grants[0].state, State::Revoked);
+    assert_eq!(rows(&store), vec![row("revoked", r#"{"reason":"switch"}"#)]);
+    switched(
+        &store,
+        &mut held,
+        "switch",
+        |access| access.enabled = true,
+        now,
+    );
+    assert_eq!(held.access_on(), Ok(()), "on again, for a new request");
+    assert_eq!(held.access_epoch, decided_under + 2);
+
+    assert!(matches!(
+        settle(locked(&store, &mut held, now), "ext", asking, yes("gh")),
+        Err(Code::GrantDenied)
+    ));
+    assert_eq!(held.grants.len(), 1, "no grant was made");
+    assert_eq!(
+        rows(&store)[1..],
+        [
+            ("requested".to_string(), None),
+            row("denied", r#"{"reason":"switch"}"#)
+        ]
+    );
+}
+
+// Two writers of the Agents switch, racing: each writes the file and gives
+// the session's copy the same value inside the one section
+// (`change_under_locks`), so whoever looks under the lock — a release, the
+// other writer, a reader — sees the file and the session agree, in any
+// order; and a write that fails changes nothing, so they agree then too.
+#[test]
+fn two_writers_cannot_leave_the_file_and_the_session_disagreeing() {
+    let held = Mutex::new(ready());
+    let file = Mutex::new(true);
+    let now = 1_000;
+    std::thread::scope(|scope| {
+        for writer in 0..4u32 {
+            let (held, file) = (&held, &file);
+            scope.spawn(move || {
+                for turn in 0..50u32 {
+                    let value = (writer + turn) % 2 == 0;
+                    let mut held = held.lock().unwrap();
+                    agents::change_under_locks(None, &mut held, "dev", "switch", now, |access| {
+                        *file.lock().unwrap() = value;
+                        if let Some(access) = access {
+                            access.enabled = value;
+                        }
+                        Ok(((), true))
+                    })
+                    .unwrap();
+                    assert_eq!(*file.lock().unwrap(), held.access.unwrap().enabled);
+                }
+            });
+        }
+        let (held, file) = (&held, &file);
+        scope.spawn(move || {
+            for _ in 0..200 {
+                let held = held.lock().unwrap();
+                assert_eq!(*file.lock().unwrap(), held.access.unwrap().enabled);
+                drop(held);
+                std::thread::yield_now();
+            }
+        });
+    });
+    let mut held = held.into_inner().unwrap();
+    assert_eq!(*file.lock().unwrap(), held.access.unwrap().enabled);
+    assert_eq!(held.access_epoch, 200, "every change moved the epoch");
+
+    let before = held.access_epoch;
+    let failed = agents::change_under_locks(None, &mut held, "dev", "switch", now, |_| {
+        Err::<((), bool), _>(crate::error::Error::Other("disk full".into()))
+    });
+    assert!(failed.is_err());
+    assert_eq!(held.access_epoch, before, "nothing changed");
+    assert_eq!(*file.lock().unwrap(), held.access.unwrap().enabled);
+}
+
+// The session's first request reads the switches from the files and keeps
+// them: a change written before it is what it reads, and what it keeps is
+// what every later look sees — the files are not consulted again until the
+// next session.
+#[test]
+fn the_first_request_of_a_session_reads_the_switches_and_keeps_them() {
+    let mut held = AgentState::default();
+    assert_eq!(held.access_on(), Err("switch"), "not read yet");
+
+    // The Agents switch was turned off before the first request.
+    let off = AccessState {
+        enabled: false,
+        lockbox_on: true,
+    };
+    assert_eq!(held.initialise(off), off);
+    assert_eq!(held.access_on(), Err("switch"));
+    // A later "first" read does not replace what the session holds.
+    assert_eq!(held.initialise(on()), off);
+    assert_eq!(held.access_on(), Err("switch"));
+
+    // The next session reads afresh.
+    held.reset();
+    assert_eq!(held.initialise(on()), on());
+    assert_eq!(held.access_on(), Ok(()));
+}
+
+// The session ends under a request: what decided before the seal is refused
+// at settle (the epoch moved, the switches gone), the ask up in the slot is
+// refused and the slot freed, and the next session's first request reads
+// the switches afresh and asks — nothing is pending.
+#[test]
+fn a_seal_refuses_the_ask_up_and_what_decided_before_it() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(active_grant("gh2", now));
+    let asking = asked(&store, &mut held, now);
+    let slot: Pending<Answer> = Pending::new();
+    let (_, answer) = slot
+        .begin("ask", AskKind::Grant { step_up: false }, up)
+        .unwrap();
+
+    // The seal, as `agents::clear` makes it: the state reset under the
+    // agents lock, the slot after.
+    held.reset();
+    assert_eq!(slot.refuse_grant(), Some("ask".to_string()));
+    assert!(matches!(answer.try_recv(), Ok(Answer::Grant(None))));
+    assert!(held.grants.is_empty() && held.access.is_none());
+
+    // The answer, settled in the next session: refused.
+    held.initialise(on());
+    assert!(matches!(
+        settle(locked(&store, &mut held, now), "ext", asking, yes("gh")),
+        Err(Code::GrantDenied)
+    ));
+    assert_eq!(
+        rows(&store).last(),
+        Some(&row("denied", r#"{"reason":"switch"}"#))
+    );
+    assert!(held.grants.is_empty());
+
+    // The next request asks, and the slot is its to take.
+    assert!(matches!(
+        decided(&store, &mut held, now),
+        Ok(Prepared::Ask(_))
+    ));
+    assert!(
+        slot.begin("next", AskKind::Grant { step_up: false }, up)
+            .is_ok(),
+        "nothing pending"
+    );
+}
+
+// The dialog's yes is settled under the same look at the switches, and the
+// epoch the request was decided under: a change while the dialog was up
+// refuses it, and the row names the switch that is off — or `switch`, for
+// one that is on again.
+#[test]
+fn a_yes_after_a_switch_went_off_is_refused_and_says_which_switch() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    let now = 1_000;
+    let mut held = ready();
+
+    // The lockbox's access went off while the dialog was up.
+    let asking = asked(&store, &mut held, now);
+    switched(
+        &store,
+        &mut held,
+        "lockbox",
+        |access| access.lockbox_on = false,
+        now,
+    );
+    assert!(matches!(
+        settle(locked(&store, &mut held, now), "ext", asking, yes("gh")),
+        Err(Code::GrantDenied)
+    ));
+    assert!(held.grants.is_empty(), "nothing released");
+    assert_eq!(
+        rows(&store),
+        vec![
+            ("requested".to_string(), None),
+            row("denied", r#"{"reason":"lockbox"}"#)
+        ]
+    );
+    switched(
+        &store,
+        &mut held,
+        "lockbox",
+        |access| access.lockbox_on = true,
+        now,
+    );
+
+    // The Agents switch went off and on again: both on now, but the epoch
+    // moved.
+    let asking = asked(&store, &mut held, now);
+    switched(
+        &store,
+        &mut held,
+        "switch",
+        |access| access.enabled = false,
+        now,
+    );
+    switched(
+        &store,
+        &mut held,
+        "switch",
+        |access| access.enabled = true,
+        now,
+    );
+    assert!(matches!(
+        settle(locked(&store, &mut held, now), "ext", asking, yes("gh")),
+        Err(Code::GrantDenied)
+    ));
+    assert_eq!(
+        rows(&store).last(),
+        Some(&row("denied", r#"{"reason":"switch"}"#))
+    );
+
+    // Nothing changed: the yes stands, for the item picked, and "for 7
+    // days" writes its rule first.
+    let asking = asked(&store, &mut held, now);
+    let Ok(reply) = settle(locked(&store, &mut held, now), "ext", asking, yes("gh")) else {
+        panic!("the yes stands")
+    };
+    assert_eq!(reply.state, State::Active);
+    assert_eq!(held.grants.len(), 1);
+    assert_eq!(held.grants[0].approver.as_deref(), Some("user"));
+    let events: Vec<String> = rows(&store).into_iter().map(|(event, _)| event).collect();
+    assert_eq!(
+        &events[events.len() - 4..],
+        ["requested", "rule_added", "granted", "used"]
+    );
+}
+
+// A change that leaves the open lockbox's access on — the Agents switch
+// turned on, another lockbox's access either way — moves the epoch, so a
+// request caught in between is refused once, and nothing more: the grants
+// held stay active, and the log says nothing.
+#[test]
+fn a_change_that_leaves_the_open_lockbox_on_moves_the_epoch_and_keeps_its_grants() {
+    let (_dir, store, _cipher) = vault();
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(active_grant("gh", now));
+    let before = held.access_epoch;
+
+    // The Agents switch turned on, which it was; another lockbox's access
+    // on, then off — not the open one's, so nothing of the session's to
+    // change.
+    switched(
+        &store,
+        &mut held,
+        "switch",
+        |access| access.enabled = true,
+        now,
+    );
+    switched(&store, &mut held, "lockbox", |_| {}, now);
+    switched(&store, &mut held, "lockbox", |_| {}, now);
+    assert_eq!(held.access_epoch, before + 3);
+
+    assert_eq!(held.grants[0].state, State::Active);
+    assert!(rows(&store).is_empty(), "no `revoked` row");
+    assert_eq!(held.access_on(), Ok(()), "a new request goes on");
+    assert_eq!(
+        held.access_since(before),
+        Err("switch"),
+        "one decided before any of it settles no more"
+    );
+}
+
+// A change that cuts the open lockbox off — its own access going off, or
+// the Agents switch — ends every active grant, with the row naming which.
+#[test]
+fn a_change_that_cuts_the_open_lockbox_off_ends_its_grants_and_says_which_switch() {
+    let (_dir, store, _cipher) = vault();
+    let now = 1_000;
+
+    // The open lockbox's access off.
+    let mut held = ready();
+    held.grants.push(active_grant("gh", now));
+    switched(
+        &store,
+        &mut held,
+        "lockbox",
+        |access| access.lockbox_on = false,
+        now,
+    );
+    assert_eq!(held.access_epoch, 1);
+    assert_eq!(held.grants[0].state, State::Revoked);
+    assert_eq!(
+        rows(&store),
+        vec![row("revoked", r#"{"reason":"lockbox"}"#)]
+    );
+
+    // The Agents switch off: one row per grant that was active, none for
+    // one that had ended already.
+    let mut held = ready();
+    held.grants.push(active_grant("gh", now));
+    held.grants.push(active_grant("gh2", now));
+    held.grants.push(Grant {
+        state: State::Expired,
+        ..active_grant("old", now)
+    });
+    switched(
+        &store,
+        &mut held,
+        "switch",
+        |access| access.enabled = false,
+        now,
+    );
+    assert!(held.grants[..2].iter().all(|g| g.state == State::Revoked));
+    assert_eq!(
+        held.grants[2].state,
+        State::Expired,
+        "an ended grant is left as it ended"
+    );
+    assert_eq!(
+        rows(&store)[1..],
+        [
+            row("revoked", r#"{"reason":"switch"}"#),
+            row("revoked", r#"{"reason":"switch"}"#)
+        ]
+    );
+
+    // No lockbox open: the epoch still moves, and there is nowhere to write.
+    let mut held = ready();
+    held.grants.push(active_grant("gh", now));
+    held.access.as_mut().unwrap().enabled = false;
+    agents::switch_changed(None, &mut held, "dev", "switch", now);
+    assert_eq!(held.access_epoch, 1);
+    assert_eq!(held.grants[0].state, State::Revoked);
+}
+
+// What the answer itself comes to, once the switches have been checked.
+#[test]
+fn the_answer_names_the_item_picked_or_why_not() {
+    let candidate = |id: &str| Candidate {
+        item: CandidateItem {
+            id: id.into(),
+            kind: "login".into(),
+            tags: vec![],
+        },
+        visible: VisibleItem {
+            id: id.into(),
+            title: id.to_uppercase(),
+            username: None,
+        },
+    };
+    let candidates = [candidate("gh"), candidate("gh2")];
+
+    let (picked, days) = outcome(&yes("gh2"), &candidates).expect("picked");
+    assert_eq!(picked.item.id, "gh2");
+    assert_eq!(days, Some(7));
+    assert_eq!(outcome(&yes("nope"), &candidates).err(), Some("item"));
+    assert_eq!(
+        outcome(&Verdict::Answered(None), &candidates).err(),
+        Some("user")
+    );
+    assert_eq!(
+        outcome(&Verdict::Unanswered, &candidates).err(),
+        Some("timeout")
+    );
 }
 
 // --- which logins a page gets, against a store ---------------------------------

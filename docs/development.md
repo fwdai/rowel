@@ -1,6 +1,6 @@
 # Developing Rowel
 
-Rowel is a [Tauri 2](https://v2.tauri.app) app: a Rust core (`src-tauri/`, with shared logic in `src-tauri/crates/core`) and a React + TypeScript + Vite frontend (`src/`). All cryptography lives in Rust, and the webview never sees the master key. Beside the core, `src-tauri/crates/broker` (`rowel-broker`) holds the browser extension host without the app around it — the KeePassXC-Browser protocol, the `Host` trait and the lockbox-side functions — so the app, a headless broker and a server link the same code.
+Rowel is a [Tauri 2](https://v2.tauri.app) app: a Rust core (`src-tauri/`, with shared logic in `src-tauri/crates/core`) and a React + TypeScript + Vite frontend (`src/`). All cryptography lives in Rust, and the webview never sees the master key. Beside the core, `src-tauri/crates/broker` (`rowel-broker`) holds the browser extension host without the app around it — the KeePassXC-Browser protocol, the `Host` trait, the lockbox-side functions, and the grants, policy and audit chain that govern what agents may use — so the app, a headless broker and a server link the same code.
 
 ## Vocabulary
 

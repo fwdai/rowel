@@ -60,6 +60,34 @@ impl Default for GeneratorDefaults {
     }
 }
 
+/// The dialog's default for "allow for N days", and the most it accepts. The
+/// broker's `policy::defaults::DEFAULT_STANDING_DAYS` says the same number;
+/// spelled out here because the broker crate is desktop-only and these
+/// settings load on every platform.
+pub const DEFAULT_STANDING_DAYS: u32 = 7;
+pub const MAX_STANDING_DAYS: u32 = 90;
+
+/// Agents through the browser extension: whether a fill in agent mode may be
+/// a grant at all. Off by default, and so is agent access on every lockbox
+/// (`workspace::agents_enabled`): a user who never turns either on sees
+/// nothing change on the wire.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentsSettings {
+    pub enabled: bool,
+    /// What the grant dialog's "for N days" starts at.
+    pub default_standing_days: u32,
+}
+
+impl Default for AgentsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_standing_days: DEFAULT_STANDING_DAYS,
+        }
+    }
+}
+
 /// The browser extension host: whether it listens at all. Off until the user
 /// turns it on in Settings, which is also what writes the native messaging
 /// manifests a browser finds the app by. Which extensions may talk to it is
@@ -73,6 +101,7 @@ impl Default for GeneratorDefaults {
 pub struct BrowserSettings {
     pub enabled: bool,
     pub keepassxc_compat: bool,
+    pub agents: AgentsSettings,
 }
 
 impl Default for BrowserSettings {
@@ -80,6 +109,7 @@ impl Default for BrowserSettings {
         Self {
             enabled: false,
             keepassxc_compat: true,
+            agents: AgentsSettings::default(),
         }
     }
 }
@@ -147,6 +177,13 @@ impl Settings {
         // delay at all for it), so it is left alone; every other value is
         // capped, because it is armed as a real timer.
         self.clipboard_timeout_ms = self.clipboard_timeout_ms.min(MAX_CLIPBOARD_MS);
+        // A standing rule's length ends up as a rule's own expiry: a zero or
+        // a decade from a hand-edited file is not a choice the dialog offers.
+        self.browser.agents.default_standing_days = self
+            .browser
+            .agents
+            .default_standing_days
+            .clamp(1, MAX_STANDING_DAYS);
         self
     }
 }
@@ -206,28 +243,85 @@ pub fn boot(app: &AppHandle) {
 /// once, and merging each from its own stale snapshot would let the last write
 /// drop the keys the others carried. A failed write leaves the state as it was.
 ///
-/// The auto-lock is re-armed here too, still under the lock, so the timer
-/// always runs the value the file ends up holding: two overlapping changes
-/// persist in one order and would otherwise be allowed to arm in the other.
-/// The tray menu is relabelled the same way and for the same reason: it is the
-/// one piece of UI i18next cannot reach, so Rust has to be told the language
-/// changed.
+/// The auto-lock's value is stored here too, still under the lock, so the
+/// timer always runs the value the file ends up holding: two overlapping
+/// changes persist in one order and would otherwise be allowed to arm in the
+/// other. The re-arm itself comes after the lock is let go — it reads the
+/// session, and nothing may take the session's lock under this one (see
+/// `agents::change_access`). The tray menu — the one piece of UI i18next
+/// cannot reach, so Rust has to be told the language changed — is relabelled
+/// after the lock as well, because a menu item's text is set on the main
+/// thread.
+///
+/// The Agents switch lives in the `browser` group, and `merge` overwrites
+/// top-level keys whole, so a patch naming `browser` is the only kind that
+/// can change it — whichever command sent it. Such a patch is written inside
+/// `agents::change_access`'s section, under the session and agents locks,
+/// where the switch the session holds follows the file in the same breath
+/// and the change is acted on; every other patch is written as it always
+/// was.
 pub fn set(app: &AppHandle, patch: &Value) -> Result<Settings> {
+    #[cfg(desktop)]
+    let written = if patch.get("browser").is_some() {
+        crate::agents::change_access(app, "switch", |access| {
+            let written = write(app, patch)?;
+            if let Some(access) = access {
+                access.enabled = written.settings.browser.agents.enabled;
+            }
+            let changed = written.agents_changed;
+            Ok((written, changed))
+        })?
+    } else {
+        write(app, patch)?
+    };
+    #[cfg(not(desktop))]
+    let written = write(app, patch)?;
+    if written.autolock_changed {
+        crate::autolock::touch(app);
+    }
+    // The tray is a menu, and setting a menu item's text reaches the main
+    // thread. That must never happen under the session lock (a `browser`
+    // patch is written under it, see above), so the relabel waits until every
+    // lock is let go. The value it is handed is the one this write persisted;
+    // two overlapping language changes may relabel in the other order, and
+    // the next change or the next launch (`tray::create` reads the same
+    // setting) puts the label right again.
+    #[cfg(desktop)]
+    if written.locale_changed {
+        crate::tray::relabel(app, written.settings.locale.as_deref());
+    }
+    Ok(written.settings)
+}
+
+/// What one write of the settings came to: the settings as they now stand,
+/// and which of the values that are acted on changed.
+struct Written {
+    settings: Settings,
+    autolock_changed: bool,
+    locale_changed: bool,
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    agents_changed: bool,
+}
+
+/// `set`'s transaction under the settings lock: merge, write, remember.
+fn write(app: &AppHandle, patch: &Value) -> Result<Written> {
     let state = app.state::<SettingsState>();
     let mut guard = state.0.lock().unwrap();
     let merged = merge(&guard, patch)?;
     storage::write_settings(app, &serde_json::to_string_pretty(&merged)?)?;
-    if merged.autolock_secs != guard.autolock_secs {
-        crate::autolock::set_timeout(app, merged.autolock_secs);
+    let autolock_changed = merged.autolock_secs != guard.autolock_secs;
+    if autolock_changed {
+        crate::autolock::store_timeout(app, merged.autolock_secs);
     }
-    // Handed the new choice rather than left to read it back: this still holds
-    // the lock the settings live behind.
-    #[cfg(desktop)]
-    if merged.locale != guard.locale {
-        crate::tray::relabel(app, merged.locale.as_deref());
-    }
+    let locale_changed = merged.locale != guard.locale;
+    let agents_changed = merged.browser.agents.enabled != guard.browser.agents.enabled;
     *guard = merged.clone();
-    Ok(merged)
+    Ok(Written {
+        settings: merged,
+        autolock_changed,
+        locale_changed,
+        agents_changed,
+    })
 }
 
 fn merge(base: &Settings, patch: &Value) -> Result<Settings> {
@@ -272,6 +366,45 @@ mod tests {
 
         let json = serde_json::to_string(&Settings::default()).unwrap();
         assert!(json.contains("\"keepassxcCompat\":true"));
+    }
+
+    // A file from before agents existed reads them as off, with the dialog's
+    // default length — nothing an older install did changes on the wire.
+    #[test]
+    fn an_older_browser_group_reads_agents_as_off() {
+        let stored: Settings = serde_json::from_str(r#"{"browser":{"enabled":true}}"#).unwrap();
+        assert!(!stored.browser.agents.enabled);
+        assert_eq!(
+            stored.browser.agents.default_standing_days,
+            DEFAULT_STANDING_DAYS
+        );
+
+        let merged = merge(
+            &stored,
+            &serde_json::json!({ "browser": { "enabled": true, "agents": { "enabled": true } } }),
+        )
+        .unwrap();
+        assert!(merged.browser.agents.enabled);
+        assert!(merged.browser.enabled);
+        assert_eq!(merged.browser.agents.default_standing_days, 7);
+    }
+
+    // The dialog offers 1 to 90 days; a file saying otherwise is brought back
+    // into that range rather than writing a rule that never ends.
+    #[test]
+    fn the_standing_days_are_normalised_on_the_way_in() {
+        let zero: Settings =
+            serde_json::from_str(r#"{"browser":{"agents":{"defaultStandingDays":0}}}"#).unwrap();
+        assert_eq!(zero.normalize().browser.agents.default_standing_days, 1);
+        let years = merge(
+            &Settings::default(),
+            &serde_json::json!({ "browser": { "agents": { "defaultStandingDays": 4000 } } }),
+        )
+        .unwrap();
+        assert_eq!(
+            years.browser.agents.default_standing_days,
+            MAX_STANDING_DAYS
+        );
     }
 
     // A file from before the setting existed keeps Rowel in front after a copy,

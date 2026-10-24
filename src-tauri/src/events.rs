@@ -31,6 +31,13 @@ pub const BROWSER_ASSOCIATE: &str = "browser:associate";
 pub const BROWSER_PASSKEY: &str = "browser:passkey";
 #[cfg(desktop)]
 pub const BROWSER_CLIENTS: &str = "browser:clients";
+// Desktop only, like the agent grants the extension host issues (`crate::agents`).
+#[cfg(desktop)]
+pub const AGENT_GRANT: &str = "agent:grant";
+#[cfg(desktop)]
+pub const AGENT_GRANT_CLOSED: &str = "agent:grant:closed";
+#[cfg(desktop)]
+pub const AGENTS_CHANGED: &str = "agents:changed";
 
 #[derive(Serialize, Clone)]
 struct Entries {
@@ -227,4 +234,55 @@ pub fn browser_passkey(
 #[cfg(desktop)]
 pub fn browser_clients(app: &AppHandle) {
     let _ = app.emit(BROWSER_CLIENTS, ());
+}
+
+/// A client asking to use a login through the extension in agent mode: who
+/// asks (the name the user gave it, or its key's two ends), where, how, and
+/// which of the page's logins it may be given — the dialog picks one. `verify`
+/// says what a step-up ask takes before the answer counts: a biometric prompt,
+/// or the master password where the device has none. The answer comes back
+/// through `commands::browser::agent_grant_respond`, naming `id`, so a dialog
+/// left up past this ask cannot answer the next.
+#[cfg(desktop)]
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentGrantAsk<'a> {
+    pub id: &'a str,
+    pub client_name: &'a str,
+    pub origin: &'a str,
+    pub mode: &'static str,
+    pub step_up: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verify: Option<&'static str>,
+    pub candidates: Vec<rowel_broker::grant::VisibleItem>,
+    pub default_standing_days: u32,
+}
+
+#[cfg(desktop)]
+pub fn agent_grant(app: &AppHandle, ask: AgentGrantAsk<'_>) {
+    let _ = app.emit(AGENT_GRANT, ask);
+}
+
+/// The grant ask up under `id` was answered without its dialog — refused
+/// because the Agents switch, or a lockbox's agent access, changed while it
+/// was up (`agents::change_access`), or the vault was sealed under it
+/// (`agents::clear`). The dialog closes; an answer it gave anyway would
+/// reach no ask, but it must not sit there offering a yes.
+#[cfg(desktop)]
+#[derive(Serialize, Clone)]
+struct AgentGrantClosed<'a> {
+    id: &'a str,
+}
+
+#[cfg(desktop)]
+pub fn agent_grant_closed(app: &AppHandle, id: &str) {
+    let _ = app.emit(AGENT_GRANT_CLOSED, AgentGrantClosed { id });
+}
+
+/// A rule or a grant came or went behind Settings' back — a dialog answered
+/// "for N days", a grant expired, an exposure ended one. No payload: Settings
+/// › Browser & agents re-reads `agent_rules` and `agent_grants`.
+#[cfg(desktop)]
+pub fn agents_changed(app: &AppHandle) {
+    let _ = app.emit(AGENTS_CHANGED, ());
 }

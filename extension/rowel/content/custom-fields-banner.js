@@ -79,7 +79,7 @@ kpxcCustomLoginFieldsBanner.close = function() {
 };
 
 kpxcCustomLoginFieldsBanner.create = async function() {
-    if (await kpxc.siteIgnored() || kpxcCustomLoginFieldsBanner.created) {
+    if (await kpxc.siteIgnored() || kpxcCustomLoginFieldsBanner.created || kpxcAgentMode.isOn()) { // Rowel: not in agent mode
         return;
     }
 
