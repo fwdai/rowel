@@ -55,7 +55,7 @@ safari-native.js ─────────────┴──▶ SafariWebEx
   socket in static state, made lazily: Safari may create a handler per
   message, but the app keeps a key exchange per connection. Each message is
   written as one frame of the host's framing (a four-byte native-endian length,
-  then JSON, 1 MiB at most — `browser/frame.rs`) and answered with the next
+  then JSON, 1 MiB at most — `src-tauri/crates/broker/src/frame.rs`) and answered with the next
   frame that is not a signal. One exchange — a request, or a heartbeat
   poll — is served at a time. The handler answers:
   - `not-running` when nothing listens on the socket (the app is not running,

@@ -90,8 +90,8 @@ use sha2::{Digest, Sha256};
 use url::{Host, Url};
 
 use super::protocol::{str_of, Code};
-use crate::passkey::store::PasskeyVault;
-use crate::passkey::{Authenticator, UserConsent};
+use rowel_core::passkey::store::PasskeyVault;
+use rowel_core::passkey::{Authenticator, UserConsent};
 
 /// ES256, the one algorithm the vault's keys are.
 const ES256: i64 = -7;

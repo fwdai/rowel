@@ -16,13 +16,14 @@ publish = false
 # one is the app.
 default-run = "rowel"
 
-# The app, the Tauri-free vault core it is built on (`crates/core`), and the
+# The app, the Tauri-free vault core it is built on (`crates/core`), the
+# browser extension host without the app around it (`crates/broker`), and the
 # library the iOS AutoFill extension links in its place (`crates/autofill`).
 # All are default members, so a bare `cargo test` or `cargo clippy` from here
 # covers every one.
 [workspace]
-members = ["crates/core", "crates/autofill"]
-default-members = [".", "crates/core", "crates/autofill"]
+members = ["crates/core", "crates/broker", "crates/autofill"]
+default-members = [".", "crates/core", "crates/broker", "crates/autofill"]
 
 # Full DWARF debuginfo is most of a multi-GB target dir on macOS: the dev
 # profile keeps it in every crate's .o files under target/debug/deps. Line
@@ -87,16 +88,6 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 zeroize = { version = "1.8.2", features = ["serde"] }
 tempfile = "3"
 sys-locale = "0.3"
-# WebAuthn authenticator core (1Password's passkey-rs, MIT OR Apache-2.0). Kept
-# in lockstep across passkey-types/-authenticator/-client: the traits pass the
-# crates' own types, so a mixed set does not compile.
-passkey-types = "0.5"
-passkey-authenticator = "0.5"
-# P-256 keys (PKCS#8 <-> COSE) and the COSE key type passkey-types speaks.
-# Both pinned to what passkey-authenticator itself depends on, so exactly one
-# copy of each is linked.
-p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
-coset = "0.4"
 # OpenSSH key format (RustCrypto). ed25519 only for now: `rand_core` gives the
 # keygen, `std` the I/O impls the OpenSSH encoding needs.
 ssh-key = { version = "0.6.7", default-features = false, features = [
@@ -132,12 +123,10 @@ tauri-plugin-process = "2"
 # Only the legacy-Electron vault migration needs it, and that only ever ran on
 # desktop (see `storage::ensure_migrated`).
 dirs = "7"
-# The browser extension host (`browser`). `crypto_box` is NaCl's box — X25519
-# plus XSalsa20-Poly1305 — which is what the KeePassXC-Browser protocol seals
-# every message with (the extension uses tweetnacl); `interprocess` is the one
-# API over the Unix socket and the Windows named pipe the extension's proxy
-# process reaches the app through.
-crypto_box = "0.9"
+# The browser extension host (`browser`): the protocol's half is the broker
+# crate, and `interprocess` is the one API over the Unix socket and the
+# Windows named pipe the extension's proxy process reaches the app through.
+rowel-broker = { path = "crates/broker" }
 interprocess = "2"
 
 # Passkeys through the extension (`browser::passkeys`), where the host is the
@@ -271,3 +260,8 @@ tokio = { version = "1", features = ["rt", "macros"] }
 # Writes the `.1pux` archives the import tests read; the codec is the one the
 # core reads them with.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# Desktop-only, as `browser` is: the broker's scripted host and extension
+# (`testing::{Mock, Extension}`) for the socket server's own tests.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dev-dependencies]
+rowel-broker = { path = "crates/broker", features = ["test-support"] }

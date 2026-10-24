@@ -17,27 +17,26 @@
 //! identification key, kept inside that vault, is what it proves itself with
 //! — to that vault, and to no other workspace on the device.
 
-pub mod actions;
-pub mod frame;
 pub mod manifest;
-pub mod passkeys;
-pub mod protocol;
 pub mod proxy;
 pub mod server;
 #[cfg(test)]
 mod tests;
 
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use interprocess::local_socket::{prelude::*, Name};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
+
+// The protocol's half is the broker crate's, so the app, a headless broker and
+// a server link the same code; it is reached here under the paths it had.
+pub use rowel_broker::socket::{root_dir, socket_name, IDENTIFIER, SOCKET_FILE, SUN_PATH_MAX};
+pub use rowel_broker::{actions, frame, passkeys, protocol};
 
 pub use self::actions::Client;
 use self::actions::{Host, Login};
@@ -45,42 +44,19 @@ use self::passkeys::{Assertion, Registration};
 use self::protocol::Code;
 use crate::crypto::PayloadCipher;
 use crate::error::Result;
-use crate::models::{Entry, EntryMetaDto, GeneratorOptions, Passkey};
+use crate::models::{EntryMetaDto, GeneratorOptions, Passkey};
 use crate::passkey::store::{PasskeyVault, SessionVault, Stored};
 use crate::passkey::{Ceremony, UserConsent};
 use crate::session::Epoch;
 use crate::settings;
 use crate::state::AppState;
-use crate::store::{migrate, SqliteStore, VaultStore};
+use crate::store::{SqliteStore, VaultStore};
 use crate::{commands, events, session, window};
-
-/// The bundle identifier, which is the app-data directory's name on every
-/// desktop platform. The proxy has no `AppHandle` to ask, so it is spelled out
-/// here; a test holds it to `tauri.conf.json`.
-pub const IDENTIFIER: &str = "app.rowel.desktop";
-pub const SOCKET_FILE: &str = "browser.sock";
+use rowel_broker::lockbox::{save_failed, save_login_in};
 
 /// How long an `associate` or a passkey ceremony waits for the user's answer
 /// before it is refused.
 pub const CONSENT_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// The app's data directory, resolved the way `storage::root_dir` resolves it
-/// but without Tauri: the debug override, then the platform's app-data
-/// directory under the identifier, with a `dev` subdirectory in debug builds.
-/// Its socket is the one Chrome and Firefox reach, through the proxy.
-pub fn root_dir() -> Option<PathBuf> {
-    if cfg!(debug_assertions) {
-        if let Ok(dir) = std::env::var("ROWEL_DB_DIR") {
-            return Some(PathBuf::from(dir));
-        }
-    }
-    let dir = dirs::data_dir()?.join(IDENTIFIER);
-    Some(rowel_core::layout::dev_subdir(dir))
-}
-
-/// The most a Unix socket's path may be on macOS: `sun_path` is 104 bytes,
-/// the terminating NUL included.
-pub const SUN_PATH_MAX: usize = 104;
 
 /// Why the Safari extension's socket cannot be had. None of it touches the
 /// data-directory socket Chrome and Firefox use.
@@ -157,24 +133,6 @@ pub fn group_container(home: &Path) -> PathBuf {
     home.join("Library")
         .join("Group Containers")
         .join(rowel_core::app::DESKTOP_APP_GROUP)
-}
-
-/// The socket the app listens on in `root`: a file in it on Unix, and on
-/// Windows a named pipe whose name carries a digest of `root`, so a debug
-/// build and a release build — or a test — never share one.
-pub fn socket_name(root: &Path) -> io::Result<Name<'static>> {
-    #[cfg(unix)]
-    {
-        use interprocess::local_socket::GenericFilePath;
-        root.join(SOCKET_FILE).to_fs_name::<GenericFilePath>()
-    }
-    #[cfg(windows)]
-    {
-        use interprocess::local_socket::GenericNamespaced;
-        let digest = Sha256::digest(root.to_string_lossy().as_bytes());
-        format!("{IDENTIFIER}.browser.{}", hex::encode(&digest[..8]))
-            .to_ns_name::<GenericNamespaced>()
-    }
 }
 
 // --- consent -------------------------------------------------------------------
@@ -668,94 +626,4 @@ pub(crate) fn logins_in(
         });
     }
     logins
-}
-
-fn save_failed(e: crate::error::Error) -> Code {
-    log::warn!("browser host: could not save a login: {e}");
-    Code::ActionCancelledOrDenied
-}
-
-/// One row sealed and upserted, as `commands::vault::save_entry` writes one:
-/// over the login `id` — its username and password, the rest of the entry
-/// kept — or as a new login for `url` titled `host`. The stamps are the
-/// editor's: `updatedAt` on every save, and the rotation stamp and password
-/// history only when the password actually changed (the same
-/// `Entry::record_password_change` the editor's save goes through). `now` is
-/// passed in so a test can pin it.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn save_login_in(
-    store: &SqliteStore,
-    cipher: &PayloadCipher,
-    id: Option<&str>,
-    url: &str,
-    host: &str,
-    username: &str,
-    password: &str,
-    now: &str,
-) -> std::result::Result<(), Code> {
-    let mut stored = match id {
-        Some(id) => {
-            let record = store
-                .get(id)
-                .map_err(|e| save_failed(session::store_err(e)))?
-                .ok_or(Code::NoValidUuidProvided)?;
-            let entry = cipher
-                .unseal(&record.id, &record.payload)
-                .map_err(save_failed)?;
-            if entry.kind != "login" {
-                return Err(Code::NoValidUuidProvided);
-            }
-            Some(entry)
-        }
-        None => None,
-    };
-    // The stored row becomes the saved one by move, never by copy: what this
-    // save replaces — the password, and the bookkeeping that follows it — is
-    // taken out first for `record_password_change` to weigh, and the rest (the
-    // OTP seed, the passkeys and their keys) crosses once, so no second copy of
-    // any secret is left behind for a drop that would not scrub it.
-    let mut previous = stored.as_mut().map(|s| Entry {
-        password: s.password.take(),
-        password_history: s.password_history.take(),
-        password_updated_at: s.password_updated_at.take(),
-        ..Default::default()
-    });
-    let mut entry = match stored {
-        Some(mut entry) => {
-            // Written back to the field it was served from: `logins_for` fills
-            // the extension's username from `username`, or from `email` when
-            // that is blank, so a login kept by its email must not grow a
-            // second name beside it — unless what the page sent is not an
-            // email at all, which the email field would only reject; that
-            // goes to `username`, and the email stays what it was.
-            let blank = |field: &Option<String>| field.as_deref().unwrap_or_default().is_empty();
-            if blank(&entry.username) && !blank(&entry.email) && username.contains('@') {
-                entry.email = Some(username.to_string());
-            } else {
-                entry.username = Some(username.to_string());
-            }
-            entry.password = Some(password.to_string());
-            entry.updated_at = Some(now.to_string());
-            entry
-        }
-        None => Entry {
-            id: migrate::new_entry_id(),
-            kind: "login".into(),
-            title: host.to_string(),
-            website: Some(url.to_string()),
-            username: Some(username.to_string()),
-            password: Some(password.to_string()),
-            created_at: Some(now.to_string()),
-            updated_at: Some(now.to_string()),
-            ..Default::default()
-        },
-    };
-    // Takes the old password with it, into the history or scrubbed, so
-    // `previous` drops holding nothing.
-    entry.record_password_change(previous.as_mut(), now);
-    let payload = cipher.seal(&entry).map_err(save_failed)?;
-    let record = migrate::build_record(&entry, payload).map_err(save_failed)?;
-    store
-        .upsert(&record)
-        .map_err(|e| save_failed(session::store_err(e)))
 }

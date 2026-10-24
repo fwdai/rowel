@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use super::{error_code, Code, Connection, Extension, Mock};
-use crate::browser::passkeys::rp_id;
+use crate::passkeys::rp_id;
 
 const ORIGIN: &str = "https://login.example.com";
 const RP_ID: &str = "example.com";
@@ -255,8 +255,8 @@ fn a_passkey_registered_through_the_extension_signs_in_through_it() {
 
 /// A passkey for `RP_ID` as an import would leave it, for `user_name`, made
 /// on `created_at`.
-fn passkey(user_name: &str, created_at: &str) -> crate::models::Passkey {
-    crate::models::Passkey {
+fn passkey(user_name: &str, created_at: &str) -> rowel_core::models::Passkey {
+    rowel_core::models::Passkey {
         credential_id: base64url(format!("cred-{user_name}").as_bytes()),
         rp_id: RP_ID.into(),
         rp_name: None,
@@ -283,7 +283,7 @@ fn a_sign_in_with_several_accounts_is_the_one_the_user_picks() {
         ("alice", "2024-01-01T00:00:00Z"),
         ("bob", "2025-01-01T00:00:00Z"),
     ] {
-        crate::passkey::store::PasskeyVault::insert(vault, &passkey(name, made)).unwrap();
+        rowel_core::passkey::store::PasskeyVault::insert(vault, &passkey(name, made)).unwrap();
     }
 
     let signed = get(&extension, &mut connection, request(&challenge(), &[]));
@@ -333,9 +333,9 @@ fn a_ceremony_the_user_denies_is_cancelled() {
     assert!(connection.host().passkeys.all().is_empty(), "no key minted");
 
     // One the user has, and still says no to.
-    crate::passkey::store::PasskeyVault::insert(
+    rowel_core::passkey::store::PasskeyVault::insert(
         &connection.host().passkeys,
-        &crate::models::Passkey {
+        &rowel_core::models::Passkey {
             credential_id: base64url(b"cred-1"),
             rp_id: RP_ID.into(),
             rp_name: None,

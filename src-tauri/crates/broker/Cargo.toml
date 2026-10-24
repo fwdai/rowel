@@ -1,0 +1,69 @@
+[package]
+name = "rowel-broker"
+# Internal to the workspace and never released on its own, like the core.
+version = "0.1.0"
+description = "The browser extension host without the app around it: the sealed channel, the Host trait and the lockbox-side functions every host shares"
+authors = ["Alex Chaplinsky"]
+# Permissive like every crate under `crates/`; see `crates/core/Cargo.toml`.
+license = "MIT OR Apache-2.0"
+edition = "2021"
+# Same floor as the app and the core: one toolchain builds the whole workspace.
+rust-version = "1.92"
+publish = false
+
+[lib]
+name = "rowel_broker"
+
+[features]
+# The scripted host and extension the protocol tests run against (`testing`),
+# for the app's own tests of what it builds on them. `cfg(test)` alone only
+# reaches this crate's tests, as with the core's `test-support`.
+test-support = ["rowel-core/test-support", "dep:tempfile"]
+
+[dependencies]
+rowel-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+rand = "0.8"
+base64 = "0.23"
+log = "0.4.34"
+url = "2"
+# `crypto_box` is NaCl's box — X25519 plus XSalsa20-Poly1305 — which is what
+# the KeePassXC-Browser protocol seals every message with (the extension uses
+# tweetnacl).
+crypto_box = "0.9"
+# WebAuthn authenticator core (1Password's passkey-rs, MIT OR Apache-2.0). Kept
+# in lockstep across passkey-types/-authenticator/-client: the traits pass the
+# crates' own types, so a mixed set does not compile.
+passkey-types = "0.5"
+passkey-authenticator = "0.5"
+# The COSE key type passkey-types speaks, pinned to what passkey-authenticator
+# itself depends on, so exactly one copy is linked.
+coset = "0.4"
+# Passkeys through the extension (`passkeys`), where the host is the WebAuthn
+# client: tokio's current-thread runtime drives the authenticator's async
+# traits on the connection's own thread. Already in the locked graph.
+tokio = { version = "1", features = ["rt"] }
+# The vault the `test-support` fixtures open (`testing::vault`).
+tempfile = { version = "3", optional = true }
+
+# Where the socket is (`socket`): desktop only, as the app's `browser` module
+# is. `interprocess` is the one API over the Unix socket and the Windows named
+# pipe the extension's proxy process reaches the broker through; `dirs` finds
+# the data directory without Tauri.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+dirs = "7"
+interprocess = "2"
+
+# The Windows pipe's name carries a digest of the data directory (`socket_name`).
+[target.'cfg(windows)'.dependencies]
+hex = "0.4"
+
+[dev-dependencies]
+# The core's test seams (`MemoryVault`) for the `Mock` host.
+rowel-core = { path = "../core", features = ["test-support"] }
+tempfile = "3"
+# A relying party's half of a passkey test: read the attestation, verify the
+# signature under the key it attested (`tests/ceremonies.rs`).
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
