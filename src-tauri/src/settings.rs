@@ -298,6 +298,7 @@ pub fn set(app: &AppHandle, patch: &Value) -> Result<Settings> {
 struct Written {
     settings: Settings,
     autolock_changed: bool,
+    #[cfg_attr(not(desktop), allow(dead_code))]
     locale_changed: bool,
     #[cfg_attr(not(desktop), allow(dead_code))]
     agents_changed: bool,
