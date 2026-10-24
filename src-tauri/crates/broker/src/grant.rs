@@ -269,6 +269,16 @@ pub struct Grant {
     pub approver: Option<String>,
     pub created_by: CreatedBy,
     pub state: State,
+    /// The extension client a fill grant was first served to. An agent's fill
+    /// grant is signalled to every extension of the lockbox, since the host
+    /// cannot tell which browser profile has the page open; the first one the
+    /// host serves under it claims it here, and a different extension asking
+    /// under the same id afterwards is refused. The same extension may keep
+    /// using it inside its window — the TOTP step, a username-first sign-in,
+    /// a retried submit — which is why the grant stays multi-use rather than
+    /// being spent by the first fill. Absent on a grant stored before I2.
+    #[serde(default)]
+    pub served_to: Option<String>,
 }
 
 impl Grant {
@@ -302,6 +312,7 @@ impl Grant {
             approver: None,
             created_by: terms.created_by,
             state: State::Pending,
+            served_to: None,
         }
     }
 
@@ -367,7 +378,8 @@ pub struct VisibleItem {
 }
 
 /// The answer to a grant request: the grant's id and state, when it ends,
-/// when to ask again if the consent slot was busy, and the items it admits.
+/// when to ask again if the consent slot was busy, how often it has been used
+/// (`grant-status` fills it; a fresh grant has none) and the items it admits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GrantReply {
@@ -375,6 +387,8 @@ pub struct GrantReply {
     pub state: State,
     pub expires_at_ms: Option<i64>,
     pub retry_after_ms: Option<u64>,
+    #[serde(default)]
+    pub uses: u32,
     pub items: Vec<VisibleItem>,
 }
 
@@ -713,6 +727,7 @@ mod tests {
             state: State::Active,
             expires_at_ms: Some(5),
             retry_after_ms: None,
+            uses: 0,
             items: vec![VisibleItem {
                 id: "gh".into(),
                 title: "GitHub".into(),
@@ -723,12 +738,25 @@ mod tests {
             serde_json::to_value(&reply).unwrap(),
             serde_json::json!({
                 "grantId": "g1", "state": "active", "expiresAtMs": 5, "retryAfterMs": null,
-                "items": [{ "id": "gh", "title": "GitHub", "username": "octocat" }]
+                "uses": 0, "items": [{ "id": "gh", "title": "GitHub", "username": "octocat" }]
             })
         );
+        // A reply from before `uses` still reads.
+        let older = serde_json::json!({
+            "grantId": "g1", "state": "active", "expiresAtMs": 5, "retryAfterMs": null,
+            "items": []
+        });
+        assert_eq!(serde_json::from_value::<GrantReply>(older).unwrap().uses, 0);
 
         let grant = active(0, 1_000, Some(1));
         let json = serde_json::to_string(&grant).unwrap();
         assert_eq!(serde_json::from_str::<Grant>(&json).unwrap(), grant);
+        // A grant stored before `served_to` reads back unclaimed.
+        let mut stored: serde_json::Value = serde_json::from_str(&json).unwrap();
+        stored.as_object_mut().unwrap().remove("servedTo");
+        assert_eq!(
+            serde_json::from_value::<Grant>(stored).unwrap().served_to,
+            None
+        );
     }
 }

@@ -1,19 +1,21 @@
 //! A vault to talk to, and an extension to talk to it: the scripted [`Host`]
 //! the protocol tests run a [`Connection`] against, and the extension's side
-//! of the sealed channel, which opens and checks every reply the way the real
-//! one does. Lent to the app's own tests under `test-support`.
+//! of the sealed channel — the production [`Channel`], with the checks a test
+//! wants as assertions. Lent to the app's own tests under `test-support`.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::io;
 use std::sync::{Arc, Mutex};
 
-use base64::{engine::general_purpose::STANDARD, Engine};
-use crypto_box::{aead::Aead, Nonce, PublicKey, SalsaBox, SecretKey};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
-use crate::actions::{Client, Connection, Host, Login};
+use crate::actions::{Client, ClientKind, Connection, Hello, Host, Login, VisibleRef};
+use crate::client::{Channel, ChannelError, Transport};
 use crate::grant::{GrantReply, GrantRequest, Mode, State, VisibleItem};
 use crate::passkeys::{self, Assertion, Registration};
-use crate::protocol::{increment, Code, NONCE_LEN, VERSION};
+use crate::protocol::{Code, NONCE_LEN, VERSION};
+use crate::signal::Signal;
 use rowel_core::crypto::{PayloadCipher, VaultKey};
 use rowel_core::models::Entry;
 use rowel_core::passkey::store::MemoryVault;
@@ -29,8 +31,12 @@ pub struct Mock {
     pub clients: RefCell<Vec<Client>>,
     /// What the user answers an `associate` with.
     pub consent: Option<String>,
+    /// The app's Agents switch: off, and an agent is refused at the door.
+    pub agents_enabled: Cell<bool>,
     /// The yes cannot be kept: the write fails, or the vault changed hands.
     pub remember_fails: Cell<bool>,
+    /// Every key `client_seen` was told about, in order.
+    pub seen: RefCell<Vec<String>>,
     pub totp: Option<String>,
     pub locks: Cell<u32>,
     pub raises: Cell<u32>,
@@ -45,23 +51,45 @@ pub struct Mock {
     pub passkey_choice: usize,
     /// Every passkey ask the user was shown.
     pub passkey_asks: Arc<Mutex<Vec<String>>>,
+    /// Which client each passkey ceremony was asked for.
+    pub passkey_requests: RefCell<Vec<Client>>,
     /// What the host answers a grant request with.
     pub grant_answer: GrantAnswer,
     /// Every grant request, with the client key it came in under.
     pub grant_requests: RefCell<Vec<(String, GrantRequest)>>,
-    /// The grants in force — id, item, mode — which is what `grant_covers`
-    /// answers from. An `Active` answer adds its grant here.
-    pub grants: RefCell<Vec<(String, String, Mode)>>,
+    /// The grants the host knows, by id — which is what `grant_covers` and
+    /// `grant_status` answer from. An `Active` answer adds its grant here.
+    pub grants: RefCell<HashMap<String, MockGrant>>,
+    /// Every grant ended by its client, by id.
+    pub ended: RefCell<Vec<String>>,
+    /// What `visible_items` answers, whoever asks.
+    pub visible: Vec<VisibleRef>,
+    /// What `take_signals` hands each client, by client key.
+    pub signals: RefCell<HashMap<String, Vec<Signal>>>,
     /// Every exposure reported, by grant id.
     pub exposures: RefCell<Vec<String>>,
 }
 
 pub type Save = (Option<String>, String, String, String, String);
 
+/// A grant as the scripted host keeps it: who it was issued to, the one item
+/// and mode it covers, where it is in its life, and who has been served under
+/// it — enough for the protocol tests to see every shape the real host sends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MockGrant {
+    pub client_key: String,
+    pub item: String,
+    pub mode: Mode,
+    pub state: State,
+    pub uses: u32,
+    pub served_to: Option<String>,
+}
+
 /// How the scripted host answers `request_grant`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GrantAnswer {
-    /// Approved for the one item named; the grant then covers it for a fill.
+    /// Approved for the one item named; the grant then covers it in the
+    /// first mode asked for.
     Active(String),
     Denied,
     /// Another ask holds the dialog; retry after this long, when told.
@@ -72,6 +100,8 @@ pub enum GrantAnswer {
 
 /// The id of the grant an `Active` answer issues.
 pub const GRANT_ID: &str = "grant-1";
+/// When a grant the scripted host issues ends.
+pub const GRANT_EXPIRES_AT_MS: i64 = 900_000;
 
 /// The user's answer to a passkey ask, noting what they were asked.
 struct Answer {
@@ -95,7 +125,9 @@ impl Mock {
             logins: vec![login("gh", "GitHub", "octocat", "hunter2", Some("123456"))],
             clients: RefCell::new(Vec::new()),
             consent: Some("Chrome".into()),
+            agents_enabled: Cell::new(true),
             remember_fails: Cell::new(false),
+            seen: RefCell::new(Vec::new()),
             totp: Some("654321".into()),
             locks: Cell::new(0),
             raises: Cell::new(0),
@@ -105,18 +137,32 @@ impl Mock {
             passkey_consent: true,
             passkey_choice: 0,
             passkey_asks: Arc::default(),
+            passkey_requests: RefCell::new(Vec::new()),
             grant_answer: GrantAnswer::Disabled,
             grant_requests: RefCell::new(Vec::new()),
-            grants: RefCell::new(Vec::new()),
+            grants: RefCell::new(HashMap::new()),
+            ended: RefCell::new(Vec::new()),
+            visible: Vec::new(),
+            signals: RefCell::new(HashMap::new()),
             exposures: RefCell::new(Vec::new()),
         }
     }
 
-    /// With a grant already in force for `item_id` in `mode`.
+    /// With a grant already in force for `item_id` in `mode`. Issued to no
+    /// client this side knows — an agent's, as far as whoever asks under it
+    /// can tell — so the first client served under it claims it.
     pub fn granting(self, grant_id: &str, item_id: &str, mode: Mode) -> Self {
-        self.grants
-            .borrow_mut()
-            .push((grant_id.into(), item_id.into(), mode));
+        self.grants.borrow_mut().insert(
+            grant_id.into(),
+            MockGrant {
+                client_key: String::new(),
+                item: item_id.into(),
+                mode,
+                state: State::Active,
+                uses: 0,
+                served_to: None,
+            },
+        );
         self
     }
 
@@ -128,12 +174,67 @@ impl Mock {
         }
     }
 
+    /// With an extension already let in under `name`.
     pub fn known(self, name: &str, key: &str) -> Self {
-        self.clients.borrow_mut().push(Client {
-            name: name.into(),
-            key: key.into(),
-        });
+        self.clients
+            .borrow_mut()
+            .push(client(name, key, &Hello::default()));
         self
+    }
+
+    /// With an agent from `platform` already let in under `name`.
+    pub fn known_agent(self, name: &str, key: &str, platform: &str) -> Self {
+        let hello = Hello {
+            kind: ClientKind::Agent,
+            platform: Some(platform.into()),
+            ..Hello::default()
+        };
+        self.clients.borrow_mut().push(client(name, key, &hello));
+        self
+    }
+
+    /// The reply for the grant `id` as `client` may see it: its own grants
+    /// only, since a grant id is a capability and its state is not for
+    /// whoever has heard of it.
+    fn status_of(&self, client: &Client, id: &str) -> Result<GrantReply, Code> {
+        let grants = self.grants.borrow();
+        let grant = grants
+            .get(id)
+            .filter(|grant| grant.client_key == client.key)
+            .ok_or(Code::GrantDenied)?;
+        Ok(GrantReply {
+            grant_id: id.into(),
+            state: grant.state,
+            expires_at_ms: Some(GRANT_EXPIRES_AT_MS),
+            retry_after_ms: None,
+            uses: grant.uses,
+            items: self.visible_item(&grant.item).into_iter().collect(),
+        })
+    }
+
+    fn visible_item(&self, item_id: &str) -> Option<VisibleItem> {
+        self.logins
+            .iter()
+            .find(|login| login.id == item_id)
+            .map(|login| VisibleItem {
+                id: login.id.clone(),
+                title: login.title.clone(),
+                username: Some(login.username.clone()),
+            })
+    }
+}
+
+/// A stored client as the scripted host writes one: what the `hello` said,
+/// at time zero, since this host has no clock.
+fn client(name: &str, key: &str, hello: &Hello) -> Client {
+    Client {
+        name: name.into(),
+        key: key.into(),
+        kind: hello.kind,
+        platform: hello.platform.clone(),
+        created_at_ms: 0,
+        last_seen_at_ms: None,
+        agent_id: None,
     }
 }
 
@@ -157,16 +258,20 @@ impl Host for Mock {
     fn clients(&self) -> Vec<Client> {
         self.clients.borrow().clone()
     }
-    fn associate(&self, key: &str) -> Result<String, Code> {
+    fn associate(&self, key: &str, who: &Hello) -> Result<Client, Code> {
+        if who.kind != ClientKind::Extension && !self.agents_enabled.get() {
+            return Err(Code::AgentsDisabled);
+        }
         let name = self.consent.clone().ok_or(Code::ActionCancelledOrDenied)?;
         if self.remember_fails.get() {
             return Err(Code::AssociationFailed);
         }
-        self.clients.borrow_mut().push(Client {
-            name: name.clone(),
-            key: key.into(),
-        });
-        Ok(name)
+        let stored = client(&name, key, who);
+        self.clients.borrow_mut().push(stored.clone());
+        Ok(stored)
+    }
+    fn client_seen(&self, key: &str) {
+        self.seen.borrow_mut().push(key.to_string());
     }
     fn logins_for(&self, _page_url: &str, host: &str) -> Vec<Login> {
         if host == "github.com" {
@@ -205,10 +310,12 @@ impl Host for Mock {
         Ok(())
     }
     // The real ceremonies, over an in-memory vault and a scripted user.
-    fn passkey_register(&self, registration: Registration) -> Result<Value, Code> {
+    fn passkey_register(&self, client: &Client, registration: Registration) -> Result<Value, Code> {
+        self.passkey_requests.borrow_mut().push(client.clone());
         passkeys::register(&self.passkeys, self.answer(), registration)
     }
-    fn passkey_get(&self, assertion: Assertion) -> Result<Value, Code> {
+    fn passkey_get(&self, client: &Client, assertion: Assertion) -> Result<Value, Code> {
+        self.passkey_requests.borrow_mut().push(client.clone());
         passkeys::assert(&self.passkeys, self.answer(), assertion)
     }
     fn lock(&self) {
@@ -217,15 +324,17 @@ impl Host for Mock {
     fn unlock_requested(&self) {
         self.raises.set(self.raises.get() + 1);
     }
-    fn request_grant(&self, client_key: &str, req: GrantRequest) -> Result<GrantReply, Code> {
+    fn request_grant(&self, client: &Client, req: GrantRequest) -> Result<GrantReply, Code> {
+        let mode = req.modes.first().copied().unwrap_or(Mode::Fill);
         self.grant_requests
             .borrow_mut()
-            .push((client_key.to_string(), req));
+            .push((client.key.clone(), req));
         let reply = |state, retry_after_ms, items| GrantReply {
             grant_id: GRANT_ID.into(),
             state,
-            expires_at_ms: (state == State::Active).then_some(900_000),
+            expires_at_ms: (state == State::Active).then_some(GRANT_EXPIRES_AT_MS),
             retry_after_ms,
+            uses: 0,
             items,
         };
         match &self.grant_answer {
@@ -233,39 +342,83 @@ impl Host for Mock {
             GrantAnswer::Denied => Ok(reply(State::Denied, None, Vec::new())),
             GrantAnswer::Pending(retry) => Ok(reply(State::Pending, *retry, Vec::new())),
             GrantAnswer::Active(item) => {
-                self.grants
-                    .borrow_mut()
-                    .push((GRANT_ID.into(), item.clone(), Mode::Fill));
-                let items = self
-                    .logins
-                    .iter()
-                    .filter(|login| login.id == *item)
-                    .map(|login| VisibleItem {
-                        id: login.id.clone(),
-                        title: login.title.clone(),
-                        username: Some(login.username.clone()),
-                    })
-                    .collect();
+                self.grants.borrow_mut().insert(
+                    GRANT_ID.into(),
+                    MockGrant {
+                        client_key: client.key.clone(),
+                        item: item.clone(),
+                        mode,
+                        state: State::Active,
+                        uses: 0,
+                        served_to: None,
+                    },
+                );
+                let items = self.visible_item(item).into_iter().collect();
                 Ok(reply(State::Active, None, items))
             }
         }
     }
-    fn grant_covers(&self, grant_id: &str, item_id: &str, mode: Mode) -> bool {
-        self.grants
-            .borrow()
-            .iter()
-            .any(|(g, i, m)| g == grant_id && i == item_id && *m == mode)
+    fn wait_grant(&self, client: &Client, id: &str, _timeout_ms: u64) -> Result<GrantReply, Code> {
+        self.status_of(client, id)
     }
-    fn report_exposure(&self, grant_id: &str) {
+    fn grant_status(&self, client: &Client, id: &str) -> Result<GrantReply, Code> {
+        self.status_of(client, id)
+    }
+    fn end_grant(&self, client: &Client, id: &str) -> Result<(), Code> {
+        let mut grants = self.grants.borrow_mut();
+        let grant = grants
+            .get_mut(id)
+            .filter(|grant| grant.client_key == client.key)
+            .ok_or(Code::GrantDenied)?;
+        grant.state = State::Revoked;
+        self.ended.borrow_mut().push(id.to_string());
+        Ok(())
+    }
+    fn visible_items(&self, _client: &Client, _lockbox: Option<&str>) -> Vec<VisibleRef> {
+        self.visible.clone()
+    }
+    fn take_signals(&self, client: &Client) -> Vec<Signal> {
+        self.signals
+            .borrow_mut()
+            .remove(&client.key)
+            .unwrap_or_default()
+    }
+    // The claim as the real host makes it: the grant's own client is always
+    // served; anyone else is served only if nobody, or they themselves, were
+    // served before. A yes is a use.
+    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+        let mut grants = self.grants.borrow_mut();
+        let Some(grant) = grants.get_mut(grant_id) else {
+            return false;
+        };
+        if grant.state != State::Active || grant.item != item_id || grant.mode != mode {
+            return false;
+        }
+        if grant.client_key != client.key {
+            match &grant.served_to {
+                None => grant.served_to = Some(client.key.clone()),
+                Some(served) if *served == client.key => {}
+                Some(_) => return false,
+            }
+        }
+        grant.uses += 1;
+        true
+    }
+    fn report_exposure(&self, _client: &Client, grant_id: &str) {
         self.exposures.borrow_mut().push(grant_id.to_string());
     }
 }
 
 // --- the extension's side ----------------------------------------------------
 
+/// The one name the test extension gives itself in every envelope.
+const CLIENT_ID: &str = "test";
+
+/// The extension's side of the channel, with the checks the production
+/// [`Channel`] makes turned into assertions, so a reply that is not what the
+/// host should have sent fails the test where it happens.
 pub struct Extension {
-    secret: SecretKey,
-    pub host: Option<SalsaBox>,
+    channel: Channel,
 }
 
 impl Default for Extension {
@@ -281,32 +434,28 @@ pub fn nonce() -> [u8; NONCE_LEN] {
 impl Extension {
     pub fn new() -> Self {
         Self {
-            secret: SecretKey::generate(&mut rand::rngs::OsRng),
-            host: None,
+            channel: Channel::new(),
         }
     }
 
     pub fn public_key(&self) -> String {
-        STANDARD.encode(self.secret.public_key().as_bytes())
+        self.channel.public_key()
     }
 
+    /// The channel underneath, for a test that builds a request by hand.
+    pub fn channel(&self) -> &Channel {
+        &self.channel
+    }
+
+    /// `change-public-keys`, and the host's raw reply. A refusal comes back
+    /// as sent; anything else must be a well-formed exchange.
     pub fn exchange<H: Host>(&mut self, connection: &mut Connection<H>) -> Value {
-        let nonce = nonce();
-        let request = json!({
-            "action": "change-public-keys",
-            "publicKey": self.public_key(),
-            "nonce": STANDARD.encode(nonce),
-            "clientID": "test",
-        });
+        let (request, nonce) = self.channel.exchange_request(CLIENT_ID);
         let response = raw(connection, &request);
-        if let Some(key) = response["publicKey"].as_str() {
-            let bytes = STANDARD.decode(key).unwrap();
-            let public = PublicKey::from_slice(&bytes).unwrap();
-            self.host = Some(SalsaBox::new(&public, &self.secret));
-            let mut expected = nonce;
-            increment(&mut expected);
-            assert_eq!(response["nonce"], STANDARD.encode(expected));
-            assert_eq!(response["success"], "true");
+        match self.channel.accept_exchange(&nonce, &response) {
+            Ok(version) => assert_eq!(version, VERSION),
+            Err(ChannelError::Refused(_)) => {}
+            Err(error) => panic!("{error}: {response}"),
         }
         response
     }
@@ -322,55 +471,40 @@ impl Extension {
         self.send_with(connection, action, message, Map::new())
     }
 
+    /// As `send`, with `outer` on the envelope beside the sealed message —
+    /// `triggerUnlock`, which the host reads before it unseals anything.
     pub fn send_with<H: Host>(
         &self,
         connection: &mut Connection<H>,
         action: &str,
-        mut message: Value,
+        message: Value,
         outer: Map<String, Value>,
     ) -> Value {
-        let sealed = self.host.as_ref().expect("keys exchanged");
-        let nonce = nonce();
-        message["action"] = action.into();
-        let cipher = sealed
-            .encrypt(
-                Nonce::from_slice(&nonce),
-                serde_json::to_vec(&message).unwrap().as_slice(),
-            )
-            .unwrap();
-        let mut request = outer;
-        request.insert("action".into(), action.into());
-        request.insert("message".into(), STANDARD.encode(cipher).into());
-        request.insert("nonce".into(), STANDARD.encode(nonce).into());
-        request.insert("clientID".into(), "test".into());
-        let response = raw(connection, &Value::Object(request));
-        let Some(body) = response["message"].as_str() else {
-            return response;
-        };
-        let mut expected = nonce;
-        increment(&mut expected);
-        assert_eq!(
-            response["nonce"],
-            STANDARD.encode(expected),
-            "reply nonce is the request's plus one"
-        );
-        let reply_nonce: [u8; NONCE_LEN] = STANDARD
-            .decode(response["nonce"].as_str().unwrap())
-            .unwrap()
-            .try_into()
-            .unwrap();
-        let plain = sealed
-            .decrypt(
-                Nonce::from_slice(&reply_nonce),
-                STANDARD.decode(body).unwrap().as_slice(),
-            )
-            .unwrap();
-        let opened: Value = serde_json::from_slice(&plain).unwrap();
-        assert_eq!(opened["success"], "true");
-        assert_eq!(opened["nonce"], response["nonce"]);
-        assert_eq!(opened["version"], VERSION);
-        assert_eq!(opened["action"], action);
-        opened
+        let (mut request, nonce) = self
+            .channel
+            .seal(CLIENT_ID, action, message)
+            .expect("keys exchanged");
+        for (key, value) in outer {
+            request[key] = value;
+        }
+        let response = raw(connection, &request);
+        match self.channel.open(action, &nonce, &response) {
+            Ok(opened) => {
+                assert_eq!(opened["version"], VERSION);
+                Value::Object(opened)
+            }
+            Err(ChannelError::Refused(_)) => response,
+            Err(error) => panic!("{error}: {response}"),
+        }
+    }
+}
+
+/// A `Connection` is its own transport: the frame goes in, the reply comes
+/// out, no socket between. It is what lets the CLI's tests drive a
+/// `Peer<Connection<Mock>>` in-process.
+impl<H: Host> Transport for Connection<H> {
+    fn roundtrip(&mut self, request: &[u8]) -> io::Result<Vec<u8>> {
+        Ok(self.handle(request))
     }
 }
 
