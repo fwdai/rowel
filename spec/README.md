@@ -80,6 +80,11 @@ Read the overview first. Everything else hangs off it.
   and `rowel-autofill`; the broker crate follows when it lands), apps and
   extension stay GPL-3.0, server mode and cloud proprietary in a private
   repository, DCO sign-off for contributions. Repository map added to `00 §4`.
+- **2026-10-24, I1 review rounds.** Recorded what two review rounds on
+  PR #653 changed in the design: the release invariant with its access epoch
+  (`03`), the consent slot as the only registry of an ask and the lock order
+  (`06`), the per-install audit writer id (`06`, `09`), grants keyed by the
+  requesting document's origin and one state object per fill (`05`).
 
 ## Relationship to the other docs
 

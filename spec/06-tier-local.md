@@ -123,6 +123,18 @@ from the open lockbox's KDF sidecar and compared in constant time; a failed
 verification is the refusal. `session::sealed` clears grants and rates on
 every lock.
 
+Two more invariants hold the ask and the log together. **The consent slot is
+the only registry of a pending ask**: the slot records the ask's kind
+(associate, passkey, grant with or without step-up), the grant ask reserves
+the slot and emits its dialog in one step under the slot's lock after
+verifying the access epoch, and a switch-off refuses whatever grant ask is up
+through the slot and closes its dialog (`agent:grant:closed`); there is no
+second list to fall out of step. Lock order: session → agents; slot → agents;
+never agents → slot. **One install id per process**: the audit writer id is
+minted once into an owner-only file and held in `AppState` behind a
+`OnceLock`, so concurrent first uses agree and a write failure still leaves
+one id for the process.
+
 **Server loop (✅, unchanged).** `server.rs::accept` spawns a thread per
 connection and `serve` stays one-request-one-reply; a blocking ask inside
 `request_grant` parks only that connection's thread, exactly as `associate`

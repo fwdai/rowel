@@ -90,8 +90,10 @@ server copy per tenant policy and export before pruning.
 
 **Writers.** `rowel_broker::audit::Writer` with `fn record(&self, Row)`; the
 `Host` implementations call it at every state change in `03`'s lifecycle.
-`writer_id` is the workspace install id in Tier 1 (`workspace.rs`, the id
-`AppHost::database_hash` is derived from) and the server's node id in Tier 2.
+`writer_id` is the per-install id in Tier 1 (`storage::install_id`: minted
+once into an owner-only file, cached for the process; never the workspace id,
+which is "default" on every install and would collide after a sync or
+restore) and the server's node id in Tier 2.
 The `Mock` host collects rows so protocol tests can assert on them.
 
 **Details as built (I1).** `detail` is a small JSON object: `denied` carries

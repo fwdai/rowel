@@ -250,6 +250,23 @@ off, revokes every active grant (`revoked`, reason `switch` or `lockbox`);
 every lock clears grants and rate state outright, with no rows, because
 nothing is served from a locked vault.
 
+**The release invariant.** A credential is released (a fill served, a code
+served, a grant reused or auto-activated) only inside the critical section
+the switch-off path also uses, and only if nothing about access changed since
+the request looked. Concretely: `AgentState` carries an `access_epoch`; a
+request takes an `Access` snapshot that reads the epoch *first* and the two
+switches (Settings, lockbox flag) *after*; every release point verifies, under
+the session → agents locks, that the epoch is unchanged and both switches read
+on. Every change to either switch goes through one path,
+`agents::access_changed`: persist first, then under the same locks bump the
+epoch (on any change of either switch, for any lockbox: one epoch covers
+them all, and an in-flight request is merely refused once) and revoke active
+grants only when the open lockbox's access is now off, then refuse the grant
+ask the consent slot holds and close its dialog. Any interleaving of a switch-off with a request
+therefore denies: a request that read "on" before the persist sees the bumped
+epoch; one that looked after the persist reads "off". Sampling the switches
+once at the start and trusting the copy was the bug this replaces.
+
 **Step-up in Tier 1.** `biometrics::authenticate()` where `secure_store::SUPPORTED`
 (macOS, iOS, Windows); elsewhere (Linux) the dialog asks for the master
 password and verifies it against the open lockbox's KDF sidecar.

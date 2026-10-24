@@ -141,6 +141,15 @@ line, and the redactor catches a value printed verbatim.
   second later, and on the next load of the same tab; the TOTP needle must not
   be adjacent to another digit in the page text, so an order number does not
   end a grant.
+- **Grants are per document origin.** Every request is keyed by the origin of
+  the document that made it, not the tab's top page: `get-logins` by its
+  request URL, `get-totp` by the sender's frame URL (the background forwards
+  the sender to handlers), `report-exposure` by the origin the content script
+  names. A cross-origin login frame is therefore its own origin: it asks its
+  own grant, and the dialog names the frame's origin, which is where the
+  credential goes. The per-fill state in the content script is one object,
+  replaced wholesale when a fill is forgotten, and the scan's ignore set is
+  derived from that object alone.
 
 **Passkey (✅ mechanism, 🟡 attribution).** `browser::passkeys::{register,
 assert}` and the `UserConsent` dialog (`ask_passkey`, `events::browser_passkey`)
