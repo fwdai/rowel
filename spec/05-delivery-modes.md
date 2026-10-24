@@ -147,9 +147,11 @@ line, and the redactor catches a value printed verbatim.
   the sender to handlers), `report-exposure` by the origin the content script
   names. A cross-origin login frame is therefore its own origin: it asks its
   own grant, and the dialog names the frame's origin, which is where the
-  credential goes. The per-fill state in the content script is one object,
-  replaced wholesale when a fill is forgotten, and the scan's ignore set is
-  derived from that object alone.
+  credential goes. A fill in the content script has a lifecycle of its own,
+  start → scan → rescan → end, held in one object; starting the next fill
+  first finalises the previous one by running its last scan with its own
+  secrets and its own ignored field, so two fills never share state or a
+  timer and no fill's exposure check is skipped by its successor.
 
 **Passkey (✅ mechanism, 🟡 attribution).** `browser::passkeys::{register,
 assert}` and the `UserConsent` dialog (`ask_passkey`, `events::browser_passkey`)

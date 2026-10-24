@@ -129,8 +129,12 @@ the only registry of a pending ask**: the slot records the ask's kind
 the slot and emits its dialog in one step under the slot's lock after
 verifying the access epoch, and a switch-off refuses whatever grant ask is up
 through the slot and closes its dialog (`agent:grant:closed`); there is no
-second list to fall out of step. Lock order: session → agents; slot → agents;
-never agents → slot. **One install id per process**: the audit writer id is
+second list to fall out of step. Every lock, auto-lock and lockbox switch
+(`session::sealed` → `agents::clear`) refuses the ask the same way, bumps the
+access epoch and resets the in-memory access state, so nothing decided under
+the previous session can settle in the next, and no dialog or waiting request
+survives it. Lock order: workspace_lock → session → agents; slot → agents;
+never agents → slot; never session → workspace_lock. **One install id per process**: the audit writer id is
 minted once into an owner-only file and held in `AppState` behind a
 `OnceLock`, so concurrent first uses agree and a write failure still leaves
 one id for the process.

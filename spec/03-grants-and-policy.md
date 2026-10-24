@@ -267,6 +267,25 @@ therefore denies: a request that read "on" before the persist sees the bumped
 epoch; one that looked after the persist reads "off". Sampling the switches
 once at the start and trusting the copy was the bug this replaces.
 
+**Where the switch state lives (third review round).** Persisting a switch
+and acting on it as two steps still let two writers interleave (off, then on,
+each callback seeing the final "on", neither revoking) and left a request
+paused across a lock or lockbox switch holding a stale view. So the switch
+*state* now lives under the agents lock: `AgentState.access` holds the
+Agents switch and the open lockbox's flag, initialised lazily from the
+persisted values by the first request of a session and authoritative from
+then on. Every release point requires, under the session → agents locks, that
+access is on; the settle step after a dialog additionally requires the epoch
+it was decided under, so any change in between, whatever the final state,
+refuses. A change of either switch applies the in-memory change, bumps the
+epoch, revokes active grants when the open lockbox's access is now off, and
+persists, all in one exclusive section (the settings file inside the agents
+lock; the registry under `workspace_lock` taken *outside* session → agents,
+the codebase's standing order). Two writers cannot interleave, memory and
+disk cannot disagree, and no request observes a value before its
+consequences. Locking, auto-locking or switching lockboxes resets access to
+uninitialised, bumps the epoch, clears grants and refuses the ask that is up.
+
 **Step-up in Tier 1.** `biometrics::authenticate()` where `secure_store::SUPPORTED`
 (macOS, iOS, Windows); elsewhere (Linux) the dialog asks for the master
 password and verifies it against the open lockbox's KDF sidecar.
