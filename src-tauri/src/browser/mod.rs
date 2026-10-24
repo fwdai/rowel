@@ -29,6 +29,7 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
@@ -51,9 +52,14 @@ use crate::session::Epoch;
 use crate::settings;
 use crate::state::AppState;
 use crate::store::{SqliteStore, VaultStore};
-use crate::{commands, events, session, window};
-use rowel_broker::grant::{GrantReply, GrantRequest, Mode};
+use crate::{agents, commands, events, session, window, workspace};
+use rowel_broker::audit::Event;
+use rowel_broker::grant::{
+    Approval, CandidateItem, Grant, GrantReply, GrantRequest, ItemSelector, Mode, Probe, State,
+    VisibleItem,
+};
 use rowel_broker::lockbox::{save_failed, save_login_in};
+use rowel_broker::policy::{self, defaults, Decision, Floors, Limits};
 
 /// How long an `associate` or a passkey ceremony waits for the user's answer
 /// before it is refused.
@@ -179,11 +185,18 @@ impl<T> Pending<T> {
     /// answer, up to [`CONSENT_TIMEOUT`]. A second question while one is up is
     /// refused rather than queued: `None`, as no answer is.
     fn ask(&self, tag: &str, emit: impl FnOnce()) -> Option<T> {
-        let (serial, receiver) = self.begin(tag)?;
+        self.try_ask(tag, emit).ok().flatten()
+    }
+
+    /// [`Pending::ask`], telling a slot that was taken apart from an ask that
+    /// went unanswered: a grant request answers the first with "ask again
+    /// shortly" and the second with a refusal.
+    fn try_ask(&self, tag: &str, emit: impl FnOnce()) -> std::result::Result<Option<T>, Busy> {
+        let (serial, receiver) = self.begin(tag).ok_or(Busy)?;
         emit();
         let answer = receiver.recv_timeout(CONSENT_TIMEOUT).ok();
         self.end(serial);
-        answer
+        Ok(answer)
     }
 
     /// Take the slot for an ask under `tag`: its number, and the end its answer
@@ -226,6 +239,9 @@ impl<T> Pending<T> {
     }
 }
 
+/// Another ask holds the slot.
+struct Busy;
+
 /// What the user answered, in the terms of the ask it is for. An answer of
 /// the other kind — a passkey dialog somehow answering an `associate` — is no
 /// answer at all.
@@ -234,9 +250,70 @@ enum Answer {
     Name(Option<String>),
     /// The account picked for a passkey ceremony, or `None` for a refusal.
     Account(Option<usize>),
+    /// The item an agent may use, and for how long, or `None` for a refusal.
+    Grant(Option<GrantAnswer>),
 }
 
 static CONSENT: Pending<Answer> = Pending::new();
+
+/// What the user answered a grant ask with: which of the candidates the
+/// dialog listed — the agent may be given that one and no other — and, for
+/// "allow for N days", how many; `None` is this once.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GrantAnswer {
+    pub item_id: String,
+    pub standing_days: Option<u32>,
+}
+
+/// How a step-up ask proves the person before the answer counts: the OS
+/// biometric prompt where the device gates a secure store with one, the
+/// master password everywhere else (Linux, a Mac without Touch ID).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepUp {
+    Biometric,
+    Password,
+}
+
+impl StepUp {
+    pub fn current() -> Self {
+        if crate::secure_store::is_supported() && crate::biometrics::is_available() {
+            Self::Biometric
+        } else {
+            Self::Password
+        }
+    }
+
+    /// The word the ask carries to the dialog.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Biometric => "biometric",
+            Self::Password => "password",
+        }
+    }
+}
+
+// The grant ask up that takes a verified person before its yes counts, by its
+// id. Set as the ask is put up and cleared as it comes down, so the answering
+// command (`agent_grant_respond`) can tell it from an ordinary ask and run
+// the biometric prompt or check the password first: a dialog cannot say yes
+// to a step-up ask with a bare click.
+static STEP_UP_ASK: Mutex<Option<String>> = Mutex::new(None);
+
+fn step_up_ask() -> std::sync::MutexGuard<'static, Option<String>> {
+    STEP_UP_ASK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether the grant ask up under `id` is a step-up one.
+pub fn grant_ask_needs_step_up(id: &str) -> bool {
+    step_up_ask().as_deref() == Some(id)
+}
+
+/// The user's answer to the grant ask up under `id`, or `None` for a
+/// refusal. Returns whether that ask was waiting for it.
+pub fn respond_grant(id: &str, answer: Option<GrantAnswer>) -> bool {
+    CONSENT.answer(id, Answer::Grant(answer))
+}
 
 /// Ask the user whether the extension holding `key` may connect: the name
 /// they gave it, or `None`. Blocks the calling thread (see [`Pending::ask`]).
@@ -309,7 +386,7 @@ impl UserConsent for AskUser {
 
 const CLIENTS_META: &str = "browser_clients";
 
-fn clients_in(store: &SqliteStore) -> Vec<Client> {
+pub(crate) fn clients_in(store: &SqliteStore) -> Vec<Client> {
     store
         .meta_get(CLIENTS_META)
         .ok()
@@ -524,25 +601,169 @@ impl Host for AppHost {
         window::raise(&self.0);
     }
 
-    // Agents are not wired into the app yet: every grant is refused as
-    // "turned off", no grant covers anything, and an exposure report has
-    // nothing to end.
+    // A fill in agent mode, as `associate` is asked: policy and the store
+    // under the session lock, the lock let go for the minute the user may
+    // take, and the lockbox's epoch checked again before anything the answer
+    // decides is written — a lock or a lockbox switch in between makes the
+    // yes nobody's.
     fn request_grant(
         &self,
-        _client_key: &str,
-        _req: GrantRequest,
+        client_key: &str,
+        req: GrantRequest,
     ) -> std::result::Result<GrantReply, Code> {
-        Err(Code::AgentsDisabled)
+        let app = &self.0;
+        let agents_settings = settings::current(app).browser.agents;
+        if !agents_settings.enabled {
+            return Err(Code::AgentsDisabled);
+        }
+        // The lockbox's own switch is read first: it takes `workspace_lock`,
+        // which is never taken inside the session's.
+        let lockbox = workspace::active_id(app);
+        let lockbox_on = workspace::agents_enabled(app, &lockbox);
+        let asking = match self.decide_grant(&lockbox, lockbox_on, client_key, req)? {
+            Prepared::Answered(reply) => return Ok(reply),
+            Prepared::Ask(asking) => *asking,
+        };
+
+        let ask_id = crate::crypto::random_hex_id();
+        let step_up = asking.grant.approval == Approval::StepUp;
+        let verify = step_up.then(StepUp::current);
+        // The dialog names the site, not the page's path and query string.
+        let site = agents::site_origin(&asking.origin);
+        let asked = CONSENT.try_ask(&ask_id, || {
+            if step_up {
+                *step_up_ask() = Some(ask_id.clone());
+            }
+            events::agent_grant(
+                app,
+                events::AgentGrantAsk {
+                    id: &ask_id,
+                    client_name: &asking.client_name,
+                    origin: &site,
+                    mode: Mode::Fill.as_str(),
+                    step_up,
+                    verify: verify.map(StepUp::as_str),
+                    candidates: asking
+                        .candidates
+                        .iter()
+                        .map(|c| c.visible.clone())
+                        .collect(),
+                    default_standing_days: agents_settings.default_standing_days,
+                },
+            );
+            window::raise(app);
+        });
+        {
+            let mut up = step_up_ask();
+            if up.as_deref() == Some(ask_id.as_str()) {
+                *up = None;
+            }
+        }
+        let answer = match asked {
+            // Another decision is on screen. Not a refusal: the extension
+            // asks again once that dialog has closed.
+            Err(Busy) => {
+                return Ok(GrantReply {
+                    grant_id: asking.grant.id.clone(),
+                    state: State::Pending,
+                    expires_at_ms: None,
+                    retry_after_ms: Some(1500),
+                    items: Vec::new(),
+                })
+            }
+            Ok(Some(Answer::Grant(answer))) => Verdict::Answered(answer),
+            Ok(_) => Verdict::Unanswered,
+        };
+        self.settle_grant(&lockbox, client_key, asking, answer)
     }
 
-    fn grant_covers(&self, _grant_id: &str, _item_id: &str, _mode: Mode) -> bool {
-        false
-    }
-
-    fn report_exposure(&self, grant_id: &str) {
-        log::debug!(
-            "browser host: exposure reported for grant {grant_id}; agents are not wired yet"
+    // A predicate with a side effect, on purpose: a yes here is the login or
+    // its code about to be served, so it is a use of the grant — counted on
+    // it and written as a `used` row — and this is the one place the grant is
+    // in hand to say so. The targets are not checked again: the TOTP step
+    // comes with no URL, and the grant was narrowed to its page when it was
+    // issued.
+    fn grant_covers(&self, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+        let app = &self.0;
+        if !settings::current(app).browser.agents.enabled {
+            return false;
+        }
+        let lockbox = workspace::active_id(app);
+        let state = app.state::<AppState>();
+        let now = agents::now_ms();
+        let session = state.session.lock().unwrap();
+        let Ok(store) = session.store() else {
+            return false;
+        };
+        let mut held = state.agents.lock().unwrap();
+        let Some(grant) = held.find_mut(grant_id) else {
+            return false;
+        };
+        if !grant.is_active(now) || !grant.modes.contains(&mode) {
+            return false;
+        }
+        // The item as the grant's selector sees it. Every grant issued here
+        // names ids, which the id alone answers; a wider selector reads the
+        // row's kind and tags, nothing sealed.
+        let item = match &grant.items {
+            ItemSelector::Ids(_) => CandidateItem {
+                id: item_id.to_string(),
+                kind: String::new(),
+                tags: Vec::new(),
+            },
+            _ => match session::meta_dto_of(store, item_id) {
+                Ok(meta) => CandidateItem {
+                    id: meta.id,
+                    kind: meta.kind,
+                    tags: meta.tags,
+                },
+                Err(_) => return false,
+            },
+        };
+        if !grant.items.admits(&item) || grant.use_once(now).is_err() {
+            return false;
+        }
+        let clients = clients_in(store);
+        let mut row = agents::about(
+            agents::draft(Event::Used, &grant.client_key, &clients),
+            grant,
+            Some(r#"{"via":"grantId"}"#),
         );
+        row.item_id = Some(item_id.to_string());
+        row.mode = Some(mode);
+        agents::record(store, &lockbox, row, now);
+        true
+    }
+
+    // The page showed what was filled: the grant ends now, whatever was left
+    // of its window, and the log says why.
+    fn report_exposure(&self, grant_id: &str) {
+        let app = &self.0;
+        let lockbox = workspace::active_id(app);
+        let state = app.state::<AppState>();
+        let now = agents::now_ms();
+        {
+            let session = state.session.lock().unwrap();
+            let mut held = state.agents.lock().unwrap();
+            let Some(grant) = held.find_mut(grant_id) else {
+                log::debug!("browser host: exposure reported for an unknown grant {grant_id}");
+                return;
+            };
+            if matches!(grant.state, State::Active | State::Pending) {
+                grant.state = State::Revoked;
+            }
+            if let Ok(store) = session.store() {
+                let clients = clients_in(store);
+                let row = agents::about(
+                    agents::draft(Event::Exposed, &grant.client_key, &clients),
+                    grant,
+                    Some(r#"{"reason":"exposure"}"#),
+                );
+                agents::record(store, &lockbox, row, now);
+            }
+        }
+        events::agents_changed(app);
+        agents::rearm(app);
     }
 }
 
@@ -563,6 +784,303 @@ impl AppHost {
         }
     }
 
+    // Everything a grant request decides before anyone is asked, under the
+    // session lock: the lockbox's switch, the candidates, a grant already
+    // held, the rules, the rate, policy — and the grant itself when policy
+    // allows without asking.
+    fn decide_grant(
+        &self,
+        lockbox: &str,
+        lockbox_on: bool,
+        client_key: &str,
+        req: GrantRequest,
+    ) -> std::result::Result<Prepared, Code> {
+        let app = &self.0;
+        let state = app.state::<AppState>();
+        let now = agents::now_ms();
+        let session = state.session.lock().unwrap();
+        let store = session.store().map_err(|_| Code::DatabaseNotOpened)?;
+        let epoch = session.epoch();
+        let clients = clients_in(store);
+        let client_name = agents::client_label(&clients, client_key);
+        let row = |event: Event| agents::draft(event, client_key, &clients);
+        // A refusal before there is a grant to be about: the page and the
+        // mode are still worth the row.
+        let refusal = |event: Event, detail: String| {
+            let mut draft = row(event);
+            draft.target = agents::origin_of(&req.targets).map(agents::audit_target);
+            draft.mode = req.modes.first().copied();
+            draft.detail = Some(detail);
+            draft
+        };
+        let Some(origin) = agents::origin_of(&req.targets).map(str::to_string) else {
+            agents::record(
+                store,
+                lockbox,
+                refusal(Event::Denied, r#"{"reason":"no_target"}"#.into()),
+                now,
+            );
+            return Err(Code::GrantDenied);
+        };
+        if !lockbox_on {
+            agents::record(
+                store,
+                lockbox,
+                refusal(Event::Denied, r#"{"reason":"lockbox"}"#.into()),
+                now,
+            );
+            return Err(Code::GrantDenied);
+        }
+
+        let candidates = candidates_in(store, &req.items);
+        let probe = Probe::Origin(&origin);
+        let mut held = state.agents.lock().unwrap();
+
+        // A grant this client already holds for the page is served, not asked
+        // for again: a username-first sign-in asks for the page's logins
+        // twice, and the second time is the same yes.
+        let reusable = held.grants.iter_mut().find(|g| {
+            g.client_key == client_key
+                && g.is_active(now)
+                && req.modes.iter().all(|m| g.modes.contains(m))
+                && g.targets.iter().any(|t| t.matches(&probe))
+                && candidates.iter().any(|c| g.items.admits(&c.item))
+        });
+        if let Some(grant) = reusable {
+            grant.use_once(now)?;
+            let items = admitted(&candidates, &grant.items);
+            agents::record(
+                store,
+                lockbox,
+                agents::about(row(Event::Used), grant, Some(r#"{"reuse":true}"#)),
+                now,
+            );
+            return Ok(Prepared::Answered(reply_for(grant, items)));
+        }
+
+        // The baseline every lockbox with the switch on starts with, then its
+        // own rules — the ones the user wrote by answering "for N days".
+        let mut rules = defaults::personal();
+        rules.extend(agents::live_rules(store, now));
+
+        if held
+            .rate(client_key)
+            .check(&Limits::default(), now)
+            .is_err()
+        {
+            agents::record(
+                store,
+                lockbox,
+                refusal(Event::RateLimited, r#"{"reason":"rate"}"#.into()),
+                now,
+            );
+            return Err(Code::RateLimited);
+        }
+
+        let items: Vec<CandidateItem> = candidates.iter().map(|c| c.item.clone()).collect();
+        let decision = policy::evaluate(&rules, &req, &items, &[probe], &Floors::default());
+        let (terms, rule_id) = match &decision {
+            Decision::Denied(reason) => {
+                let reason = serde_json::to_string(reason).unwrap_or_default();
+                agents::record(
+                    store,
+                    lockbox,
+                    refusal(Event::Denied, format!(r#"{{"reason":{reason}}}"#)),
+                    now,
+                );
+                held.rate(client_key).record_denial(now);
+                return Err(Code::GrantDenied);
+            }
+            Decision::Allow { rule_id, .. } => {
+                (decision.terms().ok_or(Code::GrantDenied)?, rule_id.clone())
+            }
+        };
+        let mut grant = Grant::from_request(lockbox, req, terms, now);
+        // A grant is never wider than the rule that allowed it: what the
+        // winning rule admits among the page's logins is what may be served,
+        // and what the dialog offers.
+        if let Some(rule) = rule_id.and_then(|id| rules.into_iter().find(|r| r.id == id)) {
+            grant.items = ItemSelector::Ids(
+                candidates
+                    .iter()
+                    .filter(|c| rule.items.admits(&c.item))
+                    .map(|c| c.item.id.clone())
+                    .collect(),
+            );
+        }
+        let candidates: Vec<Candidate> = candidates
+            .into_iter()
+            .filter(|c| grant.items.admits(&c.item))
+            .collect();
+
+        match grant.approval {
+            // `requested` is written here only for a request that is decided
+            // here; an ask writes its own once the dialog has really gone up,
+            // so a slot that was busy leaves no row behind.
+            Approval::Auto => {
+                agents::record(
+                    store,
+                    lockbox,
+                    agents::about(row(Event::Requested), &grant, None),
+                    now,
+                );
+                grant.state = State::Active;
+                grant.approver = Some("policy".into());
+                grant.use_once(now)?;
+                agents::record(
+                    store,
+                    lockbox,
+                    agents::about(row(Event::Granted), &grant, None),
+                    now,
+                );
+                agents::record(
+                    store,
+                    lockbox,
+                    agents::about(row(Event::Used), &grant, None),
+                    now,
+                );
+                let reply = reply_for(&grant, candidates.into_iter().map(|c| c.visible).collect());
+                held.grants.push(grant);
+                drop(held);
+                drop(session);
+                agents::rearm(app);
+                events::agents_changed(app);
+                Ok(Prepared::Answered(reply))
+            }
+            Approval::Ask | Approval::StepUp => {
+                held.rate(client_key).record_ask(now);
+                Ok(Prepared::Ask(Box::new(Asking {
+                    epoch,
+                    grant,
+                    candidates,
+                    client_name,
+                    origin,
+                })))
+            }
+        }
+    }
+
+    // The user has answered (or not): under the session lock again, and only
+    // if it is still the session that asked, the grant becomes active for the
+    // one item picked — a standing answer writes its rule first — or denied.
+    fn settle_grant(
+        &self,
+        lockbox: &str,
+        client_key: &str,
+        asking: Asking,
+        verdict: Verdict,
+    ) -> std::result::Result<GrantReply, Code> {
+        let app = &self.0;
+        let Asking {
+            epoch,
+            mut grant,
+            candidates,
+            origin,
+            ..
+        } = asking;
+        let state = app.state::<AppState>();
+        let now = agents::now_ms();
+        let session = state.session.lock().unwrap();
+        let store = session.store_at(epoch).map_err(|_| {
+            log::warn!("browser host: the vault changed hands while the user decided on a grant");
+            Code::GrantDenied
+        })?;
+        let clients = clients_in(store);
+        let row = |event: Event| agents::draft(event, client_key, &clients);
+        let mut held = state.agents.lock().unwrap();
+
+        // The ask went up and came down: the request is on record first,
+        // whatever the answer was, as it stood when the user saw it.
+        agents::record(
+            store,
+            lockbox,
+            agents::about(row(Event::Requested), &grant, None),
+            now,
+        );
+
+        let picked = match &verdict {
+            Verdict::Answered(Some(answer)) => candidates
+                .iter()
+                .find(|c| c.item.id == answer.item_id)
+                .map(|c| (c.visible.clone(), answer.standing_days)),
+            _ => None,
+        };
+        let Some((item, standing_days)) = picked else {
+            let reason = match verdict {
+                Verdict::Answered(Some(_)) => "item",
+                Verdict::Answered(None) => "user",
+                Verdict::Unanswered => "timeout",
+            };
+            grant.state = State::Denied;
+            agents::record(
+                store,
+                lockbox,
+                agents::about(
+                    row(Event::Denied),
+                    &grant,
+                    Some(&format!(r#"{{"reason":"{reason}"}}"#)),
+                ),
+                now,
+            );
+            held.rate(client_key).record_denial(now);
+            return Err(Code::GrantDenied);
+        };
+
+        grant.items = ItemSelector::Ids(vec![item.id.clone()]);
+        grant.state = State::Active;
+        grant.approver = Some("user".into());
+        if let Some(days) = standing_days {
+            let days = days.clamp(1, settings::MAX_STANDING_DAYS);
+            // For the site, not the page: the rule outlives this visit.
+            let rule = defaults::standing(
+                client_key,
+                &item.id,
+                &agents::site_origin(&origin),
+                days,
+                now,
+            );
+            let mut rules = agents::live_rules(store, now);
+            let rule_id = rule.id.clone();
+            rules.push(rule);
+            match agents::write_rules(store, &rules) {
+                Ok(()) => {
+                    let mut added = agents::about(
+                        row(Event::RuleAdded),
+                        &grant,
+                        Some(&format!(r#"{{"ruleId":"{rule_id}","days":{days}}}"#)),
+                    );
+                    added.grant_id = None;
+                    added.approval = Some(Approval::Auto);
+                    agents::record(store, lockbox, added, now);
+                }
+                // The fill the user said yes to still goes ahead; only the
+                // memory of it is missing, and the next visit asks again.
+                Err(e) => log::warn!("browser host: could not keep the standing rule: {e}"),
+            }
+        }
+        grant.use_once(now)?;
+        agents::record(
+            store,
+            lockbox,
+            agents::about(row(Event::Granted), &grant, None),
+            now,
+        );
+        agents::record(
+            store,
+            lockbox,
+            agents::about(row(Event::Used), &grant, None),
+            now,
+        );
+        held.rate(client_key).record_grant(now);
+        let reply = reply_for(&grant, vec![item]);
+        held.grants.push(grant);
+        drop(held);
+        drop(session);
+        agents::rearm(app);
+        events::agents_changed(app);
+        Ok(reply)
+    }
+
     /// A write from the extension is in, in the session `epoch` names.
     fn written(&self, epoch: Epoch, entries: Option<Vec<EntryMetaDto>>) {
         let state = self.0.state::<AppState>();
@@ -578,6 +1096,93 @@ impl AppHost {
         // And the change on its way to the user's other devices, as a save
         // from the editor schedules it.
         commands::sync::request_run_if_ready(&self.0, &state);
+    }
+}
+
+// --- grant requests, between the lock and the ask ---------------------------------
+
+/// What a grant request came to before anyone was asked: answered already
+/// (served from a grant held, allowed outright by a rule), or waiting on the
+/// user.
+enum Prepared {
+    Answered(GrantReply),
+    // Boxed: an ask carries the whole grant and its candidates, a reply a
+    // fraction of that.
+    Ask(Box<Asking>),
+}
+
+/// A grant policy let through to the dialog, as it waits: the session it was
+/// decided in, the grant as it stands, and what the dialog was shown.
+struct Asking {
+    epoch: Epoch,
+    grant: Grant,
+    candidates: Vec<Candidate>,
+    client_name: String,
+    origin: String,
+}
+
+/// How the ask came down: with the user's answer — a pick, or a refusal — or
+/// without one, which is a minute gone by (or a dialog of another kind
+/// answering by mistake).
+enum Verdict {
+    Answered(Option<GrantAnswer>),
+    Unanswered,
+}
+
+/// One of the page's logins, as policy sees it and as the dialog shows it:
+/// nothing sealed in either.
+#[derive(Clone)]
+struct Candidate {
+    item: CandidateItem,
+    visible: VisibleItem,
+}
+
+/// The items `selector` names among the open vault's rows, from the list's
+/// metadata alone — kind, tags, title and username are plaintext columns;
+/// no payload is opened to decide a grant.
+fn candidates_in(store: &SqliteStore, selector: &ItemSelector) -> Vec<Candidate> {
+    let metas = match store.list() {
+        Ok(metas) => metas,
+        Err(e) => {
+            log::warn!("browser host: could not list the vault: {e}");
+            return Vec::new();
+        }
+    };
+    metas
+        .into_iter()
+        .filter_map(|meta| {
+            let item = CandidateItem {
+                id: meta.id.clone(),
+                kind: meta.kind.clone(),
+                tags: serde_json::from_str(&meta.tags).unwrap_or_default(),
+            };
+            selector.admits(&item).then(|| Candidate {
+                visible: VisibleItem {
+                    id: meta.id,
+                    title: meta.title,
+                    username: meta.username.filter(|u| !u.is_empty()),
+                },
+                item,
+            })
+        })
+        .collect()
+}
+
+fn admitted(candidates: &[Candidate], selector: &ItemSelector) -> Vec<VisibleItem> {
+    candidates
+        .iter()
+        .filter(|c| selector.admits(&c.item))
+        .map(|c| c.visible.clone())
+        .collect()
+}
+
+fn reply_for(grant: &Grant, items: Vec<VisibleItem>) -> GrantReply {
+    GrantReply {
+        grant_id: grant.id.clone(),
+        state: grant.state,
+        expires_at_ms: Some(grant.expires_at_ms),
+        retry_after_ms: None,
+        items,
     }
 }
 

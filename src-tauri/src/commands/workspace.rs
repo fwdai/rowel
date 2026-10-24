@@ -351,6 +351,7 @@ pub async fn workspace_create(
             vault_id: vault_id.clone(),
             item_count: None,
             color,
+            agents: false,
         });
         registry.active = id.clone();
         Ok(())
@@ -665,6 +666,7 @@ async fn restore_workspace(
                 vault_id: Some(vault_id),
                 item_count: None,
                 color: None,
+                agents: false,
             };
             return install_closed(state, &root, workspace, previous_active, previous, account);
         }
@@ -688,6 +690,7 @@ async fn restore_workspace(
             vault_id: Some(vault_id.clone()),
             item_count: None,
             color: None,
+            agents: false,
         });
         registry.active = id.clone();
         Ok(())
@@ -828,6 +831,22 @@ pub fn workspace_set_color(
     update_registry(&state, &root, |registry| {
         registry.recolor(&id, tile_color(color))
     })
+}
+
+/// Let agents use items in workspace `id`, or stop. A registry field, written
+/// under its lock like the colour (`Workspace::agents`), so there is no vault
+/// to write and a locked workspace is switched exactly as the open one is.
+/// Turning the open lockbox's access off ends the grants that are up — after
+/// the registry's lock is let go, since ending them takes the session's: a
+/// lockbox with access off never answers an agent.
+#[tauri::command]
+pub fn workspace_set_agents(id: String, enabled: bool, app: AppHandle) -> Result<()> {
+    workspace::set_agents(&app, &id, enabled)?;
+    #[cfg(desktop)]
+    if !enabled && workspace::active_id(&app) == id {
+        crate::agents::revoke_all(&app, "lockbox");
+    }
+    Ok(())
 }
 
 /// A palette key as the frontend sent it: trimmed, and `None` when blank.
@@ -1356,6 +1375,7 @@ mod tests {
                     vault_id: None,
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "b2c3".into(),
@@ -1363,6 +1383,7 @@ mod tests {
                     vault_id: Some("cafe".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
             ],
         }
@@ -1515,6 +1536,7 @@ mod tests {
             vault_id: Some("cafe".into()),
             item_count: None,
             color: None,
+            agents: false,
         };
 
         let refused = install_closed(

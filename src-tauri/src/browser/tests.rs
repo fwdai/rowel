@@ -7,8 +7,8 @@ use serde_json::{json, Map, Value};
 use super::manifest::{self, Family, KEEPASSXC, ROWEL};
 use super::protocol::str_of;
 use super::{
-    frame, group_container, group_socket_dir, proxy, server, socket_name, Pending,
-    SafariSocketError, IDENTIFIER, SUN_PATH_MAX,
+    frame, group_container, group_socket_dir, proxy, server, socket_name, Busy, CandidateItem,
+    Pending, SafariSocketError, StepUp, IDENTIFIER, SUN_PATH_MAX,
 };
 use crate::crypto::PayloadCipher;
 use crate::models::Entry;
@@ -17,6 +17,81 @@ use rowel_broker::testing::{nonce, seed, vault, Extension, Mock};
 use rowel_core::app::DESKTOP_APP_GROUP;
 
 // --- the consent slot ----------------------------------------------------------
+
+// A grant request tells a slot another ask holds from an ask nobody
+// answered: the first is "ask again shortly", the second a refusal.
+#[test]
+fn a_taken_slot_reads_as_busy_rather_than_as_no_answer() {
+    let pending: Pending<bool> = Pending::new();
+    let (_first, _answer) = pending.begin("a").unwrap();
+    assert!(matches!(pending.try_ask("b", || {}), Err(Busy)));
+}
+
+// In this iteration no login fill reaches step-up — the floors raise cards,
+// identities, passkeys, env and money targets — so the gate is exercised
+// through the floors: a card among the page's items makes the baseline's
+// `ask` a `step_up`, which is what puts the biometric or password step in
+// front of the dialog's yes.
+#[test]
+fn a_card_fill_under_the_baseline_is_a_step_up_ask() {
+    use rowel_broker::grant::{Approval, GrantRequest, ItemSelector, Mode, Probe, Target};
+    use rowel_broker::policy::{defaults, evaluate, Decision, Floors};
+
+    let request = GrantRequest {
+        client_key: "ext".into(),
+        agent_id: None,
+        acting_for: None,
+        items: ItemSelector::Ids(vec!["visa".into()]),
+        targets: vec![Target::Origin("https://shop.example".into())],
+        modes: vec![Mode::Fill],
+        run_id: None,
+        reason: None,
+    };
+    let card = [CandidateItem {
+        id: "visa".into(),
+        kind: "card".into(),
+        tags: vec![],
+    }];
+    let decision = evaluate(
+        &defaults::personal(),
+        &request,
+        &card,
+        &[Probe::Origin("https://shop.example/checkout")],
+        &Floors::default(),
+    );
+    assert!(matches!(
+        decision,
+        Decision::Allow {
+            approval: Approval::StepUp,
+            ..
+        }
+    ));
+    // And a plain login stays an ordinary ask, with no step in front of it.
+    let login = [CandidateItem {
+        id: "visa".into(),
+        kind: "login".into(),
+        tags: vec![],
+    }];
+    let decision = evaluate(
+        &defaults::personal(),
+        &request,
+        &login,
+        &[Probe::Origin("https://shop.example/checkout")],
+        &Floors::default(),
+    );
+    assert!(matches!(
+        decision,
+        Decision::Allow {
+            approval: Approval::Ask,
+            ..
+        }
+    ));
+    // Whichever the device has, the ask says which step it is.
+    assert!(matches!(
+        StepUp::current().as_str(),
+        "biometric" | "password"
+    ));
+}
 
 #[test]
 fn an_ask_that_was_answered_leaves_the_next_ask_its_slot() {

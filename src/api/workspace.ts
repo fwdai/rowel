@@ -55,6 +55,14 @@ export const workspaceSetColor = (id: string, color: string | null): Promise<voi
   call('workspace_set_color', { id, color })
 
 /**
+ * Let agents use items in a workspace, or stop. Kept on this device only, like
+ * the colour, so a locked workspace is switched just as the open one is.
+ * Turning the open one off ends every grant that is up.
+ */
+export const workspaceSetAgents = (id: string, enabled: boolean): Promise<void> =>
+  call('workspace_set_agents', { id, enabled })
+
+/**
  * Remove a workspace's vault from this device. `password` is that workspace's
  * own master password — a locked workspace's key is nowhere in memory, so the
  * backend derives from its descriptor and lets the database answer; a wrong one

@@ -43,6 +43,9 @@ pub struct WorkspaceStatus {
     /// known while the workspace is locked. `None` (`null`) exactly when
     /// `synced` is false.
     pub provider: Option<crate::sync::Provider>,
+    /// The registry's agent-access switch, lifted beside `synced` so the
+    /// frontend reads it off every row (see [`Workspace::agents`]).
+    pub agents: bool,
 }
 
 /// Every workspace in `registry` with its live sync state, for `app_status`.
@@ -55,10 +58,41 @@ pub fn statuses(registry: &Registry, root: &Path) -> Vec<WorkspaceStatus> {
             WorkspaceStatus {
                 synced: provider.is_some(),
                 provider,
+                agents: workspace.agents,
                 workspace: workspace.clone(),
             }
         })
         .collect()
+}
+
+/// Whether agents may use items in workspace `id`, as the registry has it.
+/// Takes `workspace_lock`, so never call it holding the session lock.
+pub fn agents_enabled(app: &AppHandle, id: &str) -> bool {
+    let Ok(root) = storage::root_dir(app) else {
+        return false;
+    };
+    let state = app.state::<AppState>();
+    let _paths = state.workspace_lock.lock().unwrap();
+    Registry::load(&root)
+        .workspaces
+        .iter()
+        .any(|w| w.id == id && w.agents)
+}
+
+/// Turn agent access for workspace `id` on or off, through the registry's
+/// own write path. `NotFound` for an id the registry does not name.
+pub fn set_agents(app: &AppHandle, id: &str, enabled: bool) -> Result<()> {
+    update_of(app, id, agents_switched(enabled))
+}
+
+fn agents_switched(enabled: bool) -> impl FnOnce(&mut Workspace) -> bool {
+    move |workspace| {
+        if workspace.agents == enabled {
+            return false;
+        }
+        workspace.agents = enabled;
+        true
+    }
 }
 
 /// Where a delete parks files until it is safe to remove them, under the root.
@@ -517,6 +551,7 @@ mod tests {
                     vault_id: None,
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -524,6 +559,7 @@ mod tests {
                     vault_id: None,
                     item_count: Some(3),
                     color: None,
+                    agents: false,
                 },
             ],
         };
@@ -581,6 +617,7 @@ mod tests {
                     vault_id: None,
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -588,6 +625,7 @@ mod tests {
                     vault_id: Some("cafe".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
             ],
         };
@@ -852,6 +890,7 @@ mod tests {
                     vault_id: Some("beef".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "w2".into(),
@@ -859,6 +898,7 @@ mod tests {
                     vault_id: Some("cafe".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
             ],
         };
@@ -901,6 +941,7 @@ mod tests {
                 vault_id: Some("cafe".into()),
                 item_count: None,
                 color: None,
+                agents: false,
             }],
         };
         let token = dir_of(&root, "w2").join(Provider::Dropbox.token_file_name());
@@ -918,5 +959,42 @@ mod tests {
         // Not configured is no provider, whatever the empty file is named.
         fs::write(&token, b"").unwrap();
         assert_eq!(statuses(&registry, &root)[0].provider, None);
+    }
+
+    // Off until turned on, per lockbox, written through the registry's own
+    // path and readable while locked — and the frontend sees it on every row.
+    #[test]
+    fn agent_access_is_off_by_default_and_kept_per_lockbox_in_the_registry() {
+        let root = tmp_root();
+        two_workspaces(&root);
+        let off = Registry::load(&root);
+        assert!(off.workspaces.iter().all(|w| !w.agents));
+        assert!(statuses(&off, &root).iter().all(|s| !s.agents));
+
+        update_active_locked(&root, "a1b2", agents_switched(true)).unwrap();
+        let on = Registry::load(&root);
+        assert!(!on.workspaces[0].agents && on.workspaces[1].agents);
+        let listed = statuses(&on, &root);
+        assert!(!listed[0].agents && listed[1].agents);
+        assert_eq!(serde_json::to_value(&listed[1]).unwrap()["agents"], true);
+
+        update_active_locked(&root, "a1b2", agents_switched(false)).unwrap();
+        assert!(Registry::load(&root).workspaces.iter().all(|w| !w.agents));
+    }
+
+    // A switch already in the asked-for position is no change to write, and a
+    // lockbox the registry does not name cannot be switched at all.
+    #[test]
+    fn agent_access_writes_only_a_change_and_only_for_a_known_lockbox() {
+        let root = tmp_root();
+        let mut registry = two_workspaces(&root);
+        assert!(!agents_switched(false)(&mut registry.workspaces[1]));
+        assert!(agents_switched(true)(&mut registry.workspaces[1]));
+        assert!(!agents_switched(true)(&mut registry.workspaces[1]));
+
+        assert!(matches!(
+            update_active_locked(&root, "missing", agents_switched(true)),
+            Err(Error::NotFound)
+        ));
     }
 }

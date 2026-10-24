@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { PasskeyAsk } from './browser'
+import type { AgentGrantAsk, PasskeyAsk } from './browser'
 import type { RemotePack } from './setup'
 import type { SyncStatus } from './sync'
 import type { EntryMeta } from './types'
@@ -80,6 +80,18 @@ export interface EventPayloads {
    * is the one answer its list is drawn from. Desktop only.
    */
   'browser:clients': void
+  /**
+   * A client asks, through the extension in agent mode, to use a login. Rust
+   * holds the request open until `agent_grant_respond`, or a minute. Desktop
+   * only.
+   */
+  'agent:grant': AgentGrantAsk
+  /**
+   * A standing rule or a grant came or went behind Settings' back — a dialog
+   * answered "for N days", a grant expired or was ended. Settings › Browser &
+   * agents re-reads both lists; no payload. Desktop only.
+   */
+  'agents:changed': void
 }
 
 export type EventName = keyof EventPayloads
@@ -107,7 +119,9 @@ export const EVENTS: { [K in EventName as Camel<K>]: K } = {
   fileOpened: 'file:opened',
   browserAssociate: 'browser:associate',
   browserPasskey: 'browser:passkey',
-  browserClients: 'browser:clients'
+  browserClients: 'browser:clients',
+  agentGrant: 'agent:grant',
+  agentsChanged: 'agents:changed'
 }
 
 // Typed wrapper over Tauri's `listen`.

@@ -266,6 +266,12 @@ export interface Workspace {
    * and the tile derives a hue from the id instead.
    */
   color?: string
+  /**
+   * Whether agents may use items in this lockbox. Off by default and kept on
+   * this device only; absent from a backend built before agents existed,
+   * which reads as off.
+   */
+  agents?: boolean
 }
 
 // Which biometry this device gates with, straight from the OS (Apple reads

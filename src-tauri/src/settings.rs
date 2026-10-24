@@ -60,6 +60,34 @@ impl Default for GeneratorDefaults {
     }
 }
 
+/// The dialog's default for "allow for N days", and the most it accepts. The
+/// broker's `policy::defaults::DEFAULT_STANDING_DAYS` says the same number;
+/// spelled out here because the broker crate is desktop-only and these
+/// settings load on every platform.
+pub const DEFAULT_STANDING_DAYS: u32 = 7;
+pub const MAX_STANDING_DAYS: u32 = 90;
+
+/// Agents through the browser extension: whether a fill in agent mode may be
+/// a grant at all. Off by default, and so is agent access on every lockbox
+/// (`workspace::agents_enabled`): a user who never turns either on sees
+/// nothing change on the wire.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentsSettings {
+    pub enabled: bool,
+    /// What the grant dialog's "for N days" starts at.
+    pub default_standing_days: u32,
+}
+
+impl Default for AgentsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_standing_days: DEFAULT_STANDING_DAYS,
+        }
+    }
+}
+
 /// The browser extension host: whether it listens at all. Off until the user
 /// turns it on in Settings, which is also what writes the native messaging
 /// manifests a browser finds the app by. Which extensions may talk to it is
@@ -73,6 +101,7 @@ impl Default for GeneratorDefaults {
 pub struct BrowserSettings {
     pub enabled: bool,
     pub keepassxc_compat: bool,
+    pub agents: AgentsSettings,
 }
 
 impl Default for BrowserSettings {
@@ -80,6 +109,7 @@ impl Default for BrowserSettings {
         Self {
             enabled: false,
             keepassxc_compat: true,
+            agents: AgentsSettings::default(),
         }
     }
 }
@@ -147,6 +177,13 @@ impl Settings {
         // delay at all for it), so it is left alone; every other value is
         // capped, because it is armed as a real timer.
         self.clipboard_timeout_ms = self.clipboard_timeout_ms.min(MAX_CLIPBOARD_MS);
+        // A standing rule's length ends up as a rule's own expiry: a zero or
+        // a decade from a hand-edited file is not a choice the dialog offers.
+        self.browser.agents.default_standing_days = self
+            .browser
+            .agents
+            .default_standing_days
+            .clamp(1, MAX_STANDING_DAYS);
         self
     }
 }
@@ -272,6 +309,45 @@ mod tests {
 
         let json = serde_json::to_string(&Settings::default()).unwrap();
         assert!(json.contains("\"keepassxcCompat\":true"));
+    }
+
+    // A file from before agents existed reads them as off, with the dialog's
+    // default length — nothing an older install did changes on the wire.
+    #[test]
+    fn an_older_browser_group_reads_agents_as_off() {
+        let stored: Settings = serde_json::from_str(r#"{"browser":{"enabled":true}}"#).unwrap();
+        assert!(!stored.browser.agents.enabled);
+        assert_eq!(
+            stored.browser.agents.default_standing_days,
+            DEFAULT_STANDING_DAYS
+        );
+
+        let merged = merge(
+            &stored,
+            &serde_json::json!({ "browser": { "enabled": true, "agents": { "enabled": true } } }),
+        )
+        .unwrap();
+        assert!(merged.browser.agents.enabled);
+        assert!(merged.browser.enabled);
+        assert_eq!(merged.browser.agents.default_standing_days, 7);
+    }
+
+    // The dialog offers 1 to 90 days; a file saying otherwise is brought back
+    // into that range rather than writing a rule that never ends.
+    #[test]
+    fn the_standing_days_are_normalised_on_the_way_in() {
+        let zero: Settings =
+            serde_json::from_str(r#"{"browser":{"agents":{"defaultStandingDays":0}}}"#).unwrap();
+        assert_eq!(zero.normalize().browser.agents.default_standing_days, 1);
+        let years = merge(
+            &Settings::default(),
+            &serde_json::json!({ "browser": { "agents": { "defaultStandingDays": 4000 } } }),
+        )
+        .unwrap();
+        assert_eq!(
+            years.browser.agents.default_standing_days,
+            MAX_STANDING_DAYS
+        );
     }
 
     // A file from before the setting existed keeps Rowel in front after a copy,

@@ -808,12 +808,39 @@ exposed process than the webview, and it is not ours.
 - **Residuals.** The extension keeps its copy of the identification key in the
   browser profile, in the clear: a process running as the same user can lift
   it from there and present it, which is the compromised-OS case below. There
-  are no per-site prompts, by design — a fill asks nothing, and URL matching
-  is the guard. And the host registers under KeePassXC's own native messaging
+  are no per-site prompts, by design, while a person is driving — a fill asks
+  nothing, and URL matching is the guard; while agent mode is on, or when a
+  client of kind `agent` requested it, a fill is a grant and asks or is
+  covered by a standing grant (see **Agents** below). And the host registers
+  under KeePassXC's own native messaging
   name, since that is the name the extension looks for: on a machine with
   KeePassXC installed as well, a manifest that is not Rowel's is never
   overwritten or removed; Settings reports that browser as a conflict, and it
   stays KeePassXC's until the extension is forked under a name of Rowel's own.
+- **Agents (agent mode).** Off twice over by default: the Agents switch in
+  Settings › Browser & agents (`settings.browser.agents.enabled`) and a
+  per-lockbox agent-access flag on the registry entry (`Workspace.agents` in
+  `workspaces.json`, device-local like the colour), and a fill in agent mode
+  is refused until both are on. With them on, every such
+  fill is a *grant* (`rowel_broker::grant`): the extension names the page's
+  logins, policy (`rowel_broker::policy`) decides deny-by-default against the
+  baseline rule — any client may *ask* to fill any login of the lockbox,
+  for a 15-minute window — and the lockbox's own standing rules, and the
+  app's dialog asks the person, who allows once, allows for N days (which
+  writes a standing rule for that client, that login and that site, listed
+  and revocable in Settings), or denies; cards and identities take a biometric
+  prompt or the master password on top. The grant carries one login to one
+  origin; a second request for the same page under it is served without
+  asking again, the TOTP step is served under it, and a page that echoes the
+  secret ends it (`exposed`). Every decision and use is a chained row in the
+  lockbox's `audit` table (`rowel_broker::audit`), never carrying a secret or
+  a query string. Grants live in memory only: a lock, an auto-lock or a
+  lockbox switch drops every one, so nothing is served from a locked vault.
+  The residual is the one above, unchanged: a process running as the same
+  user can lift the association key and present it as the extension, and the
+  dialog — not the key — is then what stands between it and a fill; a
+  standing rule it matches removes that dialog for its site, which is why
+  the rule names one client, one login and one origin, and ends.
 
 ## iOS AutoFill
 

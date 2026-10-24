@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   browserForgetClient,
+  browserSetAgentsEnabled,
+  browserSetAgentsStandingDays,
   browserSetEnabled,
   browserSetKeepassxcCompat,
   browserStatus,
@@ -17,8 +19,9 @@ import Toggle from '@/components/elements/Toggle'
 import { ExtensionGlyph, LinkGlyph } from '@/components/Main/icons'
 import Browsers from './Browsers'
 import Clients from './Clients'
+import Agents from './Agents'
 
-// Settings › Browser extension. The status is Rust's, read on the way in and
+// Settings › Browser & agents. The status is Rust's, read on the way in and
 // replaced by the answer to every change, so nothing here is kept in a store.
 export default function Browser() {
   const { t } = useTranslation()
@@ -56,7 +59,7 @@ export default function Browser() {
     else void load(browserStatus)
   }, [load, clientsSeq])
 
-  // One change at a time: the toggle and every Forget button wait for the
+  // One change at a time: the toggles and every Forget button wait for the
   // answer in flight, so two forgets cannot cross and leave the earlier one's
   // client on screen.
   const change = (request: () => Promise<BrowserStatus>) => {
@@ -73,6 +76,8 @@ export default function Browser() {
   }
   const toggle = (enabled: boolean) => change(() => browserSetEnabled(enabled))
   const toggleCompat = (enabled: boolean) => change(() => browserSetKeepassxcCompat(enabled))
+  const toggleAgents = (enabled: boolean) => change(() => browserSetAgentsEnabled(enabled))
+  const setDays = (days: number) => change(() => browserSetAgentsStandingDays(days))
   const forget = (key: string) => change(() => browserForgetClient(key))
 
   const enabled = !!status?.enabled
@@ -130,6 +135,7 @@ export default function Browser() {
       </SettingsGroup>
       {status && (
         <>
+          <Agents agents={status.agents} busy={busy} onToggle={toggleAgents} onDays={setDays} />
           <Browsers browsers={status.browsers} enabled={enabled} />
           <Clients clients={status.clients} busy={busy} onForget={forget} />
         </>

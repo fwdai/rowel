@@ -45,8 +45,8 @@ const ALL: {
   {
     key: 'browser',
     group: 'app',
-    label: 'Browser extension',
-    description: 'Fill logins in your browser from this vault.',
+    label: 'Browser & agents',
+    description: 'Fill logins in your browser from this vault, and let agents use them with your say-so.',
     Glyph: ExtensionGlyph,
     desktop: true
   },
