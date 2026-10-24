@@ -8,6 +8,7 @@ const ConnectionMethod = {
 const defaultSettings = {
     afterFillSorting: SORT_BY_MATCHING_CREDENTIALS_SETTING,
     afterFillSortingTotp: SORT_BY_RELEVANT_ENTRY,
+    agentMode: false, // Rowel: per browser profile; every fill is a grant, in-page UI hidden (spec/05 §2)
     autoCompleteUsernames: true,
     autoFillAndSend: false,
     autoFillSingleEntry: false,

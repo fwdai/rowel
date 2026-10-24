@@ -16,6 +16,7 @@ try {
         'credentials.js',
         'page.js',
         'event.js',
+        'grants.js',
         'init.js'
     );
 } catch (e) {

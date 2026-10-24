@@ -33,6 +33,9 @@ const kpxcTOTPIcons = {};
 kpxcTOTPIcons.icons = [];
 
 kpxcTOTPIcons.newIcon = function(field, databaseState = DatabaseState.DISCONNECTED, segmented = false) {
+    if (kpxcAgentMode.isOn()) { // Rowel: no in-page icons in agent mode
+        return;
+    }
     kpxcTOTPIcons.icons.push(new TOTPFieldIcon(field, databaseState, segmented));
 };
 

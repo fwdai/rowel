@@ -36,6 +36,9 @@ kpxcBanner.destroy = async function() {
 };
 
 kpxcBanner.create = async function(credentials = {}) {
+    if (kpxcAgentMode.isOn()) { // Rowel: no save/update banner in agent mode
+        return;
+    }
     const connectedDatabase = await sendMessage('get_connected_database');
     if (!kpxc.settings.showLoginNotifications
         || kpxcBanner.created
