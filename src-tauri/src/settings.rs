@@ -263,7 +263,18 @@ pub fn set(app: &AppHandle, patch: &Value) -> Result<Settings> {
     if merged.locale != guard.locale {
         crate::tray::relabel(app, merged.locale.as_deref());
     }
+    #[cfg(desktop)]
+    let agents_switched = merged.browser.agents.enabled != guard.browser.agents.enabled;
     *guard = merged.clone();
+    drop(guard);
+    // This is the one place the Agents switch is written — whichever command
+    // patched it — so it is the one place its change is acted on: with the
+    // lock let go, because acting on it takes the session's and reads these
+    // settings back (`agents::access`).
+    #[cfg(desktop)]
+    if agents_switched {
+        crate::agents::access_changed(app, "switch");
+    }
     Ok(merged)
 }
 

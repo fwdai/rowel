@@ -43,6 +43,7 @@ pub use self::actions::Client;
 use self::actions::{Host, Login};
 use self::passkeys::{Assertion, Registration};
 use self::protocol::Code;
+use crate::agents::{Access, AgentState};
 use crate::crypto::PayloadCipher;
 use crate::error::Result;
 use crate::models::{EntryMetaDto, GeneratorOptions, Passkey};
@@ -153,19 +154,42 @@ pub fn group_container(home: &Path) -> PathBuf {
 // dialog left up past the ask it was drawn for (Rust gives up after a
 // minute, the webview does the same on its own clock) cannot answer the next
 // ask with a yes the user gave while looking at another, not even the same
-// extension's retry.
+// extension's retry. The slot is the one record of what is up — an ask says
+// what it is for, so a change of the switches can refuse the grant ask up
+// through the slot and leave another kind alone (`refuse_grant_ask`).
+
+/// What an ask is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AskKind {
+    Associate,
+    Passkey,
+    /// A grant ask, and whether its yes takes a verified person first — the
+    /// biometric prompt or the master password (`agent_grant_respond`).
+    Grant {
+        step_up: bool,
+    },
+}
 
 /// An ask waiting on the user: its tag, its number — by which the asker tells
-/// its own slot from a later ask's — and the way back to it.
+/// its own slot from a later ask's — what it is for, and the way back to it.
 struct Ask<T> {
     serial: u64,
     tag: String,
+    kind: AskKind,
     sender: SyncSender<T>,
 }
 
 struct Pending<T> {
     slot: Mutex<Option<Ask<T>>>,
     serial: AtomicU64,
+}
+
+/// Why an ask did not go up: another holds the slot, or its own `prepare`
+/// refused it (a grant ask whose access moved since it was decided).
+#[derive(Debug)]
+enum NotAsked<E> {
+    Busy,
+    Refused(E),
 }
 
 impl<T> Pending<T> {
@@ -183,36 +207,69 @@ impl<T> Pending<T> {
     /// Put the question (`emit`) to the user under `tag` and block for the
     /// answer, up to [`CONSENT_TIMEOUT`]. A second question while one is up is
     /// refused rather than queued: `None`, as no answer is.
-    fn ask(&self, tag: &str, emit: impl FnOnce()) -> Option<T> {
-        self.try_ask(tag, emit).ok().flatten()
+    fn ask(&self, tag: &str, kind: AskKind, emit: impl FnOnce()) -> Option<T> {
+        self.try_ask_with(tag, kind, || {
+            emit();
+            Ok::<(), std::convert::Infallible>(())
+        })
+        .ok()
+        .flatten()
     }
 
-    /// [`Pending::ask`], telling a slot that was taken apart from an ask that
-    /// went unanswered: a grant request answers the first with "ask again
-    /// shortly" and the second with a refusal.
-    fn try_ask(&self, tag: &str, emit: impl FnOnce()) -> std::result::Result<Option<T>, Busy> {
-        let (serial, receiver) = self.begin(tag).ok_or(Busy)?;
-        emit();
+    /// [`Pending::ask`] with the question put up by `prepare`, under the slot
+    /// lock, and refusable there: an `Err` from it gives the slot back with
+    /// nothing on screen. What that buys a grant ask is atomicity with the
+    /// switches: `prepare` checks the access epoch, and a change of the
+    /// switches refuses the ask through this same lock (`refuse_grant`), so
+    /// the change lands either before the check — no dialog — or after the
+    /// ask is up — refused, and its dialog told to close after it was told
+    /// to open. A slot another ask holds is `Busy`, told apart from an ask
+    /// nobody answered: a grant request answers the first with "ask again
+    /// shortly" and the second with a refusal. The wait is outside the lock,
+    /// as ever.
+    fn try_ask_with<E>(
+        &self,
+        tag: &str,
+        kind: AskKind,
+        prepare: impl FnOnce() -> std::result::Result<(), E>,
+    ) -> std::result::Result<Option<T>, NotAsked<E>> {
+        let (serial, receiver) = self.begin(tag, kind, prepare)?;
         let answer = receiver.recv_timeout(CONSENT_TIMEOUT).ok();
         self.end(serial);
         Ok(answer)
     }
 
-    /// Take the slot for an ask under `tag`: its number, and the end its answer
-    /// arrives on. `None` while another ask is up.
-    fn begin(&self, tag: &str) -> Option<(u64, Receiver<T>)> {
+    /// Take the slot for an ask under `tag`, if `prepare` lets it go up: its
+    /// number, and the end its answer arrives on. `prepare` runs under the
+    /// slot lock (see [`Pending::try_ask_with`]).
+    fn begin<E>(
+        &self,
+        tag: &str,
+        kind: AskKind,
+        prepare: impl FnOnce() -> std::result::Result<(), E>,
+    ) -> std::result::Result<(u64, Receiver<T>), NotAsked<E>> {
         let mut slot = self.slot();
         if slot.is_some() {
-            return None;
+            return Err(NotAsked::Busy);
         }
+        prepare().map_err(NotAsked::Refused)?;
         let (sender, receiver) = sync_channel(1);
         let serial = self.serial.fetch_add(1, Ordering::Relaxed);
         *slot = Some(Ask {
             serial,
             tag: tag.to_string(),
+            kind,
             sender,
         });
-        Some((serial, receiver))
+        Ok((serial, receiver))
+    }
+
+    /// Whether the ask up under `tag` is a grant ask whose yes takes a
+    /// verified person first.
+    fn needs_step_up(&self, tag: &str) -> bool {
+        self.slot()
+            .as_ref()
+            .is_some_and(|ask| ask.tag == tag && ask.kind == AskKind::Grant { step_up: true })
     }
 
     /// Give the slot back after ask `serial` — if it is still that ask's. An
@@ -238,8 +295,20 @@ impl<T> Pending<T> {
     }
 }
 
-/// Another ask holds the slot.
-struct Busy;
+impl Pending<Answer> {
+    /// Refuse the grant ask up, if the ask up is one, as a "no" would: its
+    /// tag, for its dialog to be told. An `associate` or a passkey ask is
+    /// left alone — a change of the switches is nothing to them.
+    fn refuse_grant(&self) -> Option<String> {
+        let mut slot = self.slot();
+        if !matches!(slot.as_ref()?.kind, AskKind::Grant { .. }) {
+            return None;
+        }
+        let ask = slot.take().expect("checked above");
+        let _ = ask.sender.send(Answer::Grant(None));
+        Some(ask.tag)
+    }
+}
 
 /// What the user answered, in the terms of the ask it is for. An answer of
 /// the other kind — a passkey dialog somehow answering an `associate` — is no
@@ -292,26 +361,26 @@ impl StepUp {
     }
 }
 
-// The grant ask up that takes a verified person before its yes counts, by its
-// id. Set as the ask is put up and cleared as it comes down, so the answering
-// command (`agent_grant_respond`) can tell it from an ordinary ask and run
-// the biometric prompt or check the password first: a dialog cannot say yes
-// to a step-up ask with a bare click.
-static STEP_UP_ASK: Mutex<Option<String>> = Mutex::new(None);
-
-fn step_up_ask() -> std::sync::MutexGuard<'static, Option<String>> {
-    STEP_UP_ASK.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Whether the grant ask up under `id` is a step-up one.
+/// Whether the grant ask up under `id` takes a verified person before its
+/// yes counts, so the answering command (`agent_grant_respond`) runs the
+/// biometric prompt or checks the password first: a dialog cannot say yes
+/// to a step-up ask with a bare click. Read off the slot, the one record of
+/// what is up.
 pub fn grant_ask_needs_step_up(id: &str) -> bool {
-    step_up_ask().as_deref() == Some(id)
+    CONSENT.needs_step_up(id)
 }
 
 /// The user's answer to the grant ask up under `id`, or `None` for a
 /// refusal. Returns whether that ask was waiting for it.
 pub fn respond_grant(id: &str, answer: Option<GrantAnswer>) -> bool {
     CONSENT.answer(id, Answer::Grant(answer))
+}
+
+/// Refuse the grant ask up, if there is one — the switches changed
+/// (`agents::access_changed`) — and name the id its dialog is up under, for
+/// the dialog to be told it is over.
+pub fn refuse_grant_ask() -> Option<String> {
+    CONSENT.refuse_grant()
 }
 
 /// Ask the user whether the extension holding `key` may connect: the name
@@ -321,7 +390,7 @@ pub fn respond_grant(id: &str, answer: Option<GrantAnswer>) -> bool {
 /// dialog left up from the first ask must not be the yes to the second.
 pub fn ask(app: &AppHandle, key: &str) -> Option<String> {
     let id = crate::crypto::random_hex_id();
-    let answer = CONSENT.ask(&id, || {
+    let answer = CONSENT.ask(&id, AskKind::Associate, || {
         events::browser_associate(app, &id, key);
         window::raise(app);
     });
@@ -343,7 +412,7 @@ pub fn respond(id: &str, name: Option<String>) -> bool {
 /// The ask is tagged with an id of its own, which the dialog's answer names.
 pub fn ask_passkey(app: &AppHandle, origin: &str, ceremony: Ceremony<'_>) -> Option<usize> {
     let id = crate::crypto::random_hex_id();
-    let answer = CONSENT.ask(&id, || {
+    let answer = CONSENT.ask(&id, AskKind::Passkey, || {
         events::browser_passkey(app, &id, origin, ceremony);
         window::raise(app);
     });
@@ -611,16 +680,15 @@ impl Host for AppHost {
         req: GrantRequest,
     ) -> std::result::Result<GrantReply, Code> {
         let app = &self.0;
-        let agents_settings = settings::current(app).browser.agents;
-        if !agents_settings.enabled {
+        // The switches, and the epoch they were read under, kept to the end:
+        // every release below checks them again under the locks.
+        let access = agents::access(app);
+        if !access.enabled {
             return Err(Code::AgentsDisabled);
         }
-        // The lockbox's own switch is read first: it takes `workspace_lock`,
-        // which is never taken inside the session's.
         let lockbox = workspace::active_id(app);
-        let lockbox_on = workspace::agents_enabled(app, &lockbox);
         let writer = storage::install_id(app);
-        let asking = match self.decide_grant(&lockbox, &writer, lockbox_on, client_key, req)? {
+        let asking = match self.decide_grant(&lockbox, &writer, &access, client_key, req)? {
             Prepared::Answered(reply) => return Ok(reply),
             Prepared::Ask(asking) => *asking,
         };
@@ -630,23 +698,13 @@ impl Host for AppHost {
         let verify = step_up.then(StepUp::current);
         // The dialog names the site, not the page's path and query string.
         let site = agents::site_origin(&asking.origin);
-        // On the list of asks up while the dialog is, so that the switch
-        // going off meanwhile refuses it (`agents::revoke_all`) rather than
-        // leaving a yes on screen for a credential nothing may release.
+        let default_standing_days = settings::current(app).browser.agents.default_standing_days;
         let state = app.state::<AppState>();
-        state
-            .agents
-            .lock()
-            .unwrap()
-            .pending_asks
-            .push(agents::PendingAsk {
-                ask_id: ask_id.clone(),
-                client_key: client_key.to_string(),
-            });
-        let asked = CONSENT.try_ask(&ask_id, || {
-            if step_up {
-                *step_up_ask() = Some(ask_id.clone());
-            }
+        let asked = CONSENT.try_ask_with(&ask_id, AskKind::Grant { step_up }, || {
+            // Under the slot, before the dialog goes up: a switch that moved
+            // since the decision means no dialog, and one that moves from
+            // here on finds the ask in the slot and refuses it there.
+            access.verify(&state.agents.lock().unwrap())?;
             events::agent_grant(
                 app,
                 events::AgentGrantAsk {
@@ -661,22 +719,16 @@ impl Host for AppHost {
                         .iter()
                         .map(|c| c.visible.clone())
                         .collect(),
-                    default_standing_days: agents_settings.default_standing_days,
+                    default_standing_days,
                 },
             );
             window::raise(app);
+            Ok(())
         });
-        state.agents.lock().unwrap().forget_ask(&ask_id);
-        {
-            let mut up = step_up_ask();
-            if up.as_deref() == Some(ask_id.as_str()) {
-                *up = None;
-            }
-        }
         let answer = match asked {
             // Another decision is on screen. Not a refusal: the extension
             // asks again once that dialog has closed.
-            Err(Busy) => {
+            Err(NotAsked::Busy) => {
                 return Ok(GrantReply {
                     grant_id: asking.grant.id.clone(),
                     state: State::Pending,
@@ -685,10 +737,17 @@ impl Host for AppHost {
                     items: Vec::new(),
                 })
             }
+            Err(NotAsked::Refused(reason)) => {
+                return self.deny_unasked(&writer, client_key, &asking, reason)
+            }
             Ok(Some(Answer::Grant(answer))) => Verdict::Answered(answer),
             Ok(_) => Verdict::Unanswered,
         };
-        self.settle_grant(&lockbox, &writer, client_key, asking, answer)
+        // The switches as they stand now, held to the epoch the request was
+        // decided under: a change while the dialog was up refuses the yes,
+        // and the row names the switch that is off.
+        let access = agents::access(app).since(access.epoch);
+        self.settle_grant(&lockbox, &writer, &access, client_key, asking, answer)
     }
 
     // A predicate with a side effect, on purpose: a yes here is the login or
@@ -699,7 +758,8 @@ impl Host for AppHost {
     // issued.
     fn grant_covers(&self, grant_id: &str, item_id: &str, mode: Mode) -> bool {
         let app = &self.0;
-        if !settings::current(app).browser.agents.enabled {
+        let access = agents::access(app);
+        if !access.enabled {
             return false;
         }
         let writer = storage::install_id(app);
@@ -710,43 +770,18 @@ impl Host for AppHost {
             return false;
         };
         let mut held = state.agents.lock().unwrap();
-        let Some(grant) = held.find_mut(grant_id) else {
-            return false;
-        };
-        if !grant.is_active(now) || !grant.modes.contains(&mode) {
-            return false;
-        }
-        // The item as the grant's selector sees it. Every grant issued here
-        // names ids, which the id alone answers; a wider selector reads the
-        // row's kind and tags, nothing sealed.
-        let item = match &grant.items {
-            ItemSelector::Ids(_) => CandidateItem {
-                id: item_id.to_string(),
-                kind: String::new(),
-                tags: Vec::new(),
+        covered(
+            Locked {
+                store,
+                held: &mut held,
+                access: &access,
+                writer: &writer,
+                now,
             },
-            _ => match session::meta_dto_of(store, item_id) {
-                Ok(meta) => CandidateItem {
-                    id: meta.id,
-                    kind: meta.kind,
-                    tags: meta.tags,
-                },
-                Err(_) => return false,
-            },
-        };
-        if !grant.items.admits(&item) || grant.use_once(now).is_err() {
-            return false;
-        }
-        let clients = clients_in(store);
-        let mut row = agents::about(
-            agents::draft(Event::Used, &grant.client_key, &clients),
-            grant,
-            Some(r#"{"via":"grantId"}"#),
-        );
-        row.item_id = Some(item_id.to_string());
-        row.mode = Some(mode);
-        agents::record(store, &writer, row, now);
-        true
+            grant_id,
+            item_id,
+            mode,
+        )
     }
 
     // The page showed what was filled: the grant ends now, whatever was left
@@ -799,14 +834,14 @@ impl AppHost {
     }
 
     // Everything a grant request decides before anyone is asked, under the
-    // session lock: the lockbox's switch, the candidates, a grant already
-    // held, the rules, the rate, policy — and the grant itself when policy
-    // allows without asking.
+    // session and agents locks (`decide`): a grant already held, the rules,
+    // the rate, policy — and the grant itself when policy allows without
+    // asking. Whatever was served, the list and the timer follow.
     fn decide_grant(
         &self,
         lockbox: &str,
         writer: &str,
-        lockbox_on: bool,
+        access: &Access,
         client_key: &str,
         req: GrantRequest,
     ) -> std::result::Result<Prepared, Code> {
@@ -816,277 +851,94 @@ impl AppHost {
         let session = state.session.lock().unwrap();
         let store = session.store().map_err(|_| Code::DatabaseNotOpened)?;
         let epoch = session.epoch();
-        let clients = clients_in(store);
-        let client_name = agents::client_label(&clients, client_key);
-        let row = |event: Event| agents::draft(event, client_key, &clients);
-        // A refusal before there is a grant to be about: the page and the
-        // mode are still worth the row.
-        let refusal = |event: Event, detail: String| {
-            let mut draft = row(event);
-            draft.target = agents::origin_of(&req.targets).map(agents::audit_target);
-            draft.mode = req.modes.first().copied();
-            draft.detail = Some(detail);
-            draft
-        };
-        let Some(origin) = agents::origin_of(&req.targets).map(str::to_string) else {
-            agents::record(
-                store,
-                writer,
-                refusal(Event::Denied, r#"{"reason":"no_target"}"#.into()),
-                now,
-            );
-            return Err(Code::GrantDenied);
-        };
-        if !lockbox_on {
-            agents::record(
-                store,
-                writer,
-                refusal(Event::Denied, r#"{"reason":"lockbox"}"#.into()),
-                now,
-            );
-            return Err(Code::GrantDenied);
-        }
-
-        let candidates = candidates_in(store, &req.items);
-        let probe = Probe::Origin(&origin);
         let mut held = state.agents.lock().unwrap();
+        let prepared = decide(
+            Locked {
+                store,
+                held: &mut held,
+                access,
+                writer,
+                now,
+            },
+            epoch,
+            lockbox,
+            client_key,
+            req,
+        )?;
+        drop(held);
+        drop(session);
+        if matches!(prepared, Prepared::Answered(_)) {
+            agents::rearm(app);
+            events::agents_changed(app);
+        }
+        Ok(prepared)
+    }
 
-        // A grant this client already holds for the page is served, not asked
-        // for again: a username-first sign-in asks for the page's logins
-        // twice, and the second time is the same yes.
-        let reusable = held.grants.iter_mut().find(|g| {
-            g.client_key == client_key
-                && g.is_active(now)
-                && req.modes.iter().all(|m| g.modes.contains(m))
-                && g.targets.iter().any(|t| t.matches(&probe))
-                && candidates.iter().any(|c| g.items.admits(&c.item))
-        });
-        if let Some(grant) = reusable {
-            grant.use_once(now)?;
-            let items = admitted(&candidates, &grant.items);
+    // A grant decided but never asked about: the switches moved between the
+    // decision and the dialog. No `requested` row — nothing reached the
+    // screen — just the refusal, in the session that decided it.
+    fn deny_unasked(
+        &self,
+        writer: &str,
+        client_key: &str,
+        asking: &Asking,
+        reason: &str,
+    ) -> std::result::Result<GrantReply, Code> {
+        let state = self.0.state::<AppState>();
+        let now = agents::now_ms();
+        let session = state.session.lock().unwrap();
+        if let Ok(store) = session.store_at(asking.epoch) {
+            let clients = clients_in(store);
+            let mut grant = asking.grant.clone();
+            grant.state = State::Denied;
             agents::record(
                 store,
                 writer,
-                agents::about(row(Event::Used), grant, Some(r#"{"reuse":true}"#)),
+                agents::about(
+                    agents::draft(Event::Denied, client_key, &clients),
+                    &grant,
+                    Some(&format!(r#"{{"reason":"{reason}"}}"#)),
+                ),
                 now,
             );
-            return Ok(Prepared::Answered(reply_for(grant, items)));
         }
-
-        // The baseline every lockbox with the switch on starts with, then its
-        // own rules — the ones the user wrote by answering "for N days".
-        let mut rules = defaults::personal();
-        rules.extend(agents::live_rules(store, now));
-
-        if held
-            .rate(client_key)
-            .check(&Limits::default(), now)
-            .is_err()
-        {
-            agents::record(
-                store,
-                writer,
-                refusal(Event::RateLimited, r#"{"reason":"rate"}"#.into()),
-                now,
-            );
-            return Err(Code::RateLimited);
-        }
-
-        let items: Vec<CandidateItem> = candidates.iter().map(|c| c.item.clone()).collect();
-        let decision = policy::evaluate(&rules, &req, &items, &[probe], &Floors::default());
-        let (terms, rule_id) = match &decision {
-            Decision::Denied(reason) => {
-                let reason = serde_json::to_string(reason).unwrap_or_default();
-                agents::record(
-                    store,
-                    writer,
-                    refusal(Event::Denied, format!(r#"{{"reason":{reason}}}"#)),
-                    now,
-                );
-                held.rate(client_key).record_denial(now);
-                return Err(Code::GrantDenied);
-            }
-            Decision::Allow { rule_id, .. } => {
-                (decision.terms().ok_or(Code::GrantDenied)?, rule_id.clone())
-            }
-        };
-        let mut grant = Grant::from_request(lockbox, req, terms, now);
-        // A grant is never wider than the rule that allowed it: what the
-        // winning rule admits among the page's logins is what may be served,
-        // and what the dialog offers.
-        if let Some(rule) = rule_id.and_then(|id| rules.into_iter().find(|r| r.id == id)) {
-            grant.items = ItemSelector::Ids(
-                candidates
-                    .iter()
-                    .filter(|c| rule.items.admits(&c.item))
-                    .map(|c| c.item.id.clone())
-                    .collect(),
-            );
-        }
-        let candidates: Vec<Candidate> = candidates
-            .into_iter()
-            .filter(|c| grant.items.admits(&c.item))
-            .collect();
-
-        match grant.approval {
-            // `requested` is written here only for a request that is decided
-            // here; an ask writes its own once the dialog has really gone up,
-            // so a slot that was busy leaves no row behind.
-            Approval::Auto => {
-                agents::record(
-                    store,
-                    writer,
-                    agents::about(row(Event::Requested), &grant, None),
-                    now,
-                );
-                grant.state = State::Active;
-                grant.approver = Some("policy".into());
-                grant.use_once(now)?;
-                agents::record(
-                    store,
-                    writer,
-                    agents::about(row(Event::Granted), &grant, None),
-                    now,
-                );
-                agents::record(
-                    store,
-                    writer,
-                    agents::about(row(Event::Used), &grant, None),
-                    now,
-                );
-                let reply = reply_for(&grant, candidates.into_iter().map(|c| c.visible).collect());
-                held.grants.push(grant);
-                drop(held);
-                drop(session);
-                agents::rearm(app);
-                events::agents_changed(app);
-                Ok(Prepared::Answered(reply))
-            }
-            Approval::Ask | Approval::StepUp => {
-                held.rate(client_key).record_ask(now);
-                Ok(Prepared::Ask(Box::new(Asking {
-                    epoch,
-                    grant,
-                    candidates,
-                    client_name,
-                    origin,
-                })))
-            }
-        }
+        Err(Code::GrantDenied)
     }
 
     // The user has answered (or not): under the session lock again, and only
-    // if it is still the session that asked — and both switches still on —
-    // the grant becomes active for the one item picked — a standing answer
-    // writes its rule first — or denied.
+    // if it is still the session that asked, the grant is settled (`settle`)
+    // — active for the one item picked, or denied.
     fn settle_grant(
         &self,
         lockbox: &str,
         writer: &str,
+        access: &Access,
         client_key: &str,
         asking: Asking,
         verdict: Verdict,
     ) -> std::result::Result<GrantReply, Code> {
         let app = &self.0;
-        let Asking {
-            epoch,
-            mut grant,
-            candidates,
-            origin,
-            ..
-        } = asking;
-        // The switches as they stand now, not as they stood when the dialog
-        // went up: either going off meanwhile refuses the yes. The lockbox's
-        // is read before the session lock, as in `request_grant`.
-        let switch_on = settings::current(app).browser.agents.enabled;
-        let lockbox_on = workspace::agents_enabled(app, lockbox);
+        let _ = lockbox;
         let state = app.state::<AppState>();
         let now = agents::now_ms();
         let session = state.session.lock().unwrap();
-        let store = session.store_at(epoch).map_err(|_| {
+        let store = session.store_at(asking.epoch).map_err(|_| {
             log::warn!("browser host: the vault changed hands while the user decided on a grant");
             Code::GrantDenied
         })?;
-        let clients = clients_in(store);
-        let row = |event: Event| agents::draft(event, client_key, &clients);
         let mut held = state.agents.lock().unwrap();
-
-        // The ask went up and came down: the request is on record first,
-        // whatever the answer was, as it stood when the user saw it.
-        agents::record(
-            store,
-            writer,
-            agents::about(row(Event::Requested), &grant, None),
-            now,
-        );
-
-        let (item, standing_days) = match outcome(&verdict, &candidates, switch_on, lockbox_on) {
-            Ok((picked, standing_days)) => (picked.visible.clone(), standing_days),
-            Err(reason) => {
-                grant.state = State::Denied;
-                agents::record(
-                    store,
-                    writer,
-                    agents::about(
-                        row(Event::Denied),
-                        &grant,
-                        Some(&format!(r#"{{"reason":"{reason}"}}"#)),
-                    ),
-                    now,
-                );
-                held.rate(client_key).record_denial(now);
-                return Err(Code::GrantDenied);
-            }
-        };
-
-        grant.items = ItemSelector::Ids(vec![item.id.clone()]);
-        grant.state = State::Active;
-        grant.approver = Some("user".into());
-        if let Some(days) = standing_days {
-            let days = days.clamp(1, settings::MAX_STANDING_DAYS);
-            // For the site, not the page: the rule outlives this visit.
-            let rule = defaults::standing(
-                client_key,
-                &item.id,
-                &agents::site_origin(&origin),
-                days,
+        let reply = settle(
+            Locked {
+                store,
+                held: &mut held,
+                access,
+                writer,
                 now,
-            );
-            let mut rules = agents::live_rules(store, now);
-            let rule_id = rule.id.clone();
-            rules.push(rule);
-            match agents::write_rules(store, &rules) {
-                Ok(()) => {
-                    let mut added = agents::about(
-                        row(Event::RuleAdded),
-                        &grant,
-                        Some(&format!(r#"{{"ruleId":"{rule_id}","days":{days}}}"#)),
-                    );
-                    added.grant_id = None;
-                    added.approval = Some(Approval::Auto);
-                    agents::record(store, writer, added, now);
-                }
-                // The fill the user said yes to still goes ahead; only the
-                // memory of it is missing, and the next visit asks again.
-                Err(e) => log::warn!("browser host: could not keep the standing rule: {e}"),
-            }
-        }
-        grant.use_once(now)?;
-        agents::record(
-            store,
-            writer,
-            agents::about(row(Event::Granted), &grant, None),
-            now,
-        );
-        agents::record(
-            store,
-            writer,
-            agents::about(row(Event::Used), &grant, None),
-            now,
-        );
-        held.rate(client_key).record_grant(now);
-        let reply = reply_for(&grant, vec![item]);
-        held.grants.push(grant);
+            },
+            client_key,
+            asking,
+            verdict,
+        )?;
         drop(held);
         drop(session);
         agents::rearm(app);
@@ -1113,6 +965,361 @@ impl AppHost {
 }
 
 // --- grant requests, between the lock and the ask ---------------------------------
+
+/// What a grant is decided, settled or checked against, under the session
+/// and agents locks: the open store, the grants held, the access the request
+/// was read under, and whose log the rows go to. The caller holds both locks
+/// for the whole of it, which is what makes the access check and the
+/// release one critical section; nothing of the app is in it, so the tests
+/// run the same code over a store of their own.
+struct Locked<'a> {
+    store: &'a SqliteStore,
+    held: &'a mut AgentState,
+    access: &'a Access,
+    writer: &'a str,
+    now: i64,
+}
+
+/// Everything a grant request decides before anyone is asked: a grant this
+/// client already holds for the page (served), the rules, the rate, policy,
+/// and the grant itself when policy allows without asking (served). Both
+/// releases come after one check of `access` under the same locks.
+fn decide(
+    ctx: Locked<'_>,
+    epoch: Epoch,
+    lockbox: &str,
+    client_key: &str,
+    req: GrantRequest,
+) -> std::result::Result<Prepared, Code> {
+    let Locked {
+        store,
+        held,
+        access,
+        writer,
+        now,
+    } = ctx;
+    let clients = clients_in(store);
+    let client_name = agents::client_label(&clients, client_key);
+    let row = |event: Event| agents::draft(event, client_key, &clients);
+    // A refusal before there is a grant to be about: the page and the
+    // mode are still worth the row.
+    let refusal = |event: Event, detail: String| {
+        let mut draft = row(event);
+        draft.target = agents::origin_of(&req.targets).map(agents::audit_target);
+        draft.mode = req.modes.first().copied();
+        draft.detail = Some(detail);
+        draft
+    };
+    let Some(origin) = agents::origin_of(&req.targets).map(str::to_string) else {
+        agents::record(
+            store,
+            writer,
+            refusal(Event::Denied, r#"{"reason":"no_target"}"#.into()),
+            now,
+        );
+        return Err(Code::GrantDenied);
+    };
+    // The switches, under the locks and before either release below: as
+    // they were read, and with nothing changed since — a change that landed
+    // in between moved the epoch, and the row names the switch.
+    if let Err(reason) = access.verify(held) {
+        agents::record(
+            store,
+            writer,
+            refusal(Event::Denied, format!(r#"{{"reason":"{reason}"}}"#)),
+            now,
+        );
+        return Err(Code::GrantDenied);
+    }
+
+    let candidates = candidates_in(store, &req.items);
+    let probe = Probe::Origin(&origin);
+
+    // A grant this client already holds for the page is served, not asked
+    // for again: a username-first sign-in asks for the page's logins
+    // twice, and the second time is the same yes.
+    let reusable = held.grants.iter_mut().find(|g| {
+        g.client_key == client_key
+            && g.is_active(now)
+            && req.modes.iter().all(|m| g.modes.contains(m))
+            && g.targets.iter().any(|t| t.matches(&probe))
+            && candidates.iter().any(|c| g.items.admits(&c.item))
+    });
+    if let Some(grant) = reusable {
+        grant.use_once(now)?;
+        let items = admitted(&candidates, &grant.items);
+        agents::record(
+            store,
+            writer,
+            agents::about(row(Event::Used), grant, Some(r#"{"reuse":true}"#)),
+            now,
+        );
+        return Ok(Prepared::Answered(reply_for(grant, items)));
+    }
+
+    // The baseline every lockbox with the switch on starts with, then its
+    // own rules — the ones the user wrote by answering "for N days".
+    let mut rules = defaults::personal();
+    rules.extend(agents::live_rules(store, now));
+
+    if held
+        .rate(client_key)
+        .check(&Limits::default(), now)
+        .is_err()
+    {
+        agents::record(
+            store,
+            writer,
+            refusal(Event::RateLimited, r#"{"reason":"rate"}"#.into()),
+            now,
+        );
+        return Err(Code::RateLimited);
+    }
+
+    let items: Vec<CandidateItem> = candidates.iter().map(|c| c.item.clone()).collect();
+    let decision = policy::evaluate(&rules, &req, &items, &[probe], &Floors::default());
+    let (terms, rule_id) = match &decision {
+        Decision::Denied(reason) => {
+            let reason = serde_json::to_string(reason).unwrap_or_default();
+            agents::record(
+                store,
+                writer,
+                refusal(Event::Denied, format!(r#"{{"reason":{reason}}}"#)),
+                now,
+            );
+            held.rate(client_key).record_denial(now);
+            return Err(Code::GrantDenied);
+        }
+        Decision::Allow { rule_id, .. } => {
+            (decision.terms().ok_or(Code::GrantDenied)?, rule_id.clone())
+        }
+    };
+    let mut grant = Grant::from_request(lockbox, req, terms, now);
+    // A grant is never wider than the rule that allowed it: what the
+    // winning rule admits among the page's logins is what may be served,
+    // and what the dialog offers.
+    if let Some(rule) = rule_id.and_then(|id| rules.into_iter().find(|r| r.id == id)) {
+        grant.items = ItemSelector::Ids(
+            candidates
+                .iter()
+                .filter(|c| rule.items.admits(&c.item))
+                .map(|c| c.item.id.clone())
+                .collect(),
+        );
+    }
+    let candidates: Vec<Candidate> = candidates
+        .into_iter()
+        .filter(|c| grant.items.admits(&c.item))
+        .collect();
+
+    match grant.approval {
+        // `requested` is written here only for a request that is decided
+        // here; an ask writes its own once the dialog has really gone up,
+        // so a slot that was busy leaves no row behind.
+        Approval::Auto => {
+            agents::record(
+                store,
+                writer,
+                agents::about(row(Event::Requested), &grant, None),
+                now,
+            );
+            grant.state = State::Active;
+            grant.approver = Some("policy".into());
+            grant.use_once(now)?;
+            agents::record(
+                store,
+                writer,
+                agents::about(row(Event::Granted), &grant, None),
+                now,
+            );
+            agents::record(
+                store,
+                writer,
+                agents::about(row(Event::Used), &grant, None),
+                now,
+            );
+            let reply = reply_for(&grant, candidates.into_iter().map(|c| c.visible).collect());
+            held.grants.push(grant);
+            Ok(Prepared::Answered(reply))
+        }
+        Approval::Ask | Approval::StepUp => {
+            held.rate(client_key).record_ask(now);
+            Ok(Prepared::Ask(Box::new(Asking {
+                epoch,
+                grant,
+                candidates,
+                client_name,
+                origin,
+            })))
+        }
+    }
+}
+
+/// The user has answered (or not): the grant becomes active for the one
+/// item picked — a standing answer writes its rule first — or denied. The
+/// `access` check comes first, under the same locks as the release: a yes
+/// given while a switch moved is no yes, and the row names the switch.
+fn settle(
+    ctx: Locked<'_>,
+    client_key: &str,
+    asking: Asking,
+    verdict: Verdict,
+) -> std::result::Result<GrantReply, Code> {
+    let Locked {
+        store,
+        held,
+        access,
+        writer,
+        now,
+    } = ctx;
+    let Asking {
+        mut grant,
+        candidates,
+        origin,
+        ..
+    } = asking;
+    let clients = clients_in(store);
+    let row = |event: Event| agents::draft(event, client_key, &clients);
+
+    // The ask went up and came down: the request is on record first,
+    // whatever the answer was, as it stood when the user saw it.
+    agents::record(
+        store,
+        writer,
+        agents::about(row(Event::Requested), &grant, None),
+        now,
+    );
+
+    let settled = access
+        .verify(held)
+        .and_then(|()| outcome(&verdict, &candidates));
+    let (item, standing_days) = match settled {
+        Ok((picked, standing_days)) => (picked.visible.clone(), standing_days),
+        Err(reason) => {
+            grant.state = State::Denied;
+            agents::record(
+                store,
+                writer,
+                agents::about(
+                    row(Event::Denied),
+                    &grant,
+                    Some(&format!(r#"{{"reason":"{reason}"}}"#)),
+                ),
+                now,
+            );
+            held.rate(client_key).record_denial(now);
+            return Err(Code::GrantDenied);
+        }
+    };
+
+    grant.items = ItemSelector::Ids(vec![item.id.clone()]);
+    grant.state = State::Active;
+    grant.approver = Some("user".into());
+    if let Some(days) = standing_days {
+        let days = days.clamp(1, settings::MAX_STANDING_DAYS);
+        // For the site, not the page: the rule outlives this visit.
+        let rule = defaults::standing(
+            client_key,
+            &item.id,
+            &agents::site_origin(&origin),
+            days,
+            now,
+        );
+        let mut rules = agents::live_rules(store, now);
+        let rule_id = rule.id.clone();
+        rules.push(rule);
+        match agents::write_rules(store, &rules) {
+            Ok(()) => {
+                let mut added = agents::about(
+                    row(Event::RuleAdded),
+                    &grant,
+                    Some(&format!(r#"{{"ruleId":"{rule_id}","days":{days}}}"#)),
+                );
+                added.grant_id = None;
+                added.approval = Some(Approval::Auto);
+                agents::record(store, writer, added, now);
+            }
+            // The fill the user said yes to still goes ahead; only the
+            // memory of it is missing, and the next visit asks again.
+            Err(e) => log::warn!("browser host: could not keep the standing rule: {e}"),
+        }
+    }
+    grant.use_once(now)?;
+    agents::record(
+        store,
+        writer,
+        agents::about(row(Event::Granted), &grant, None),
+        now,
+    );
+    agents::record(
+        store,
+        writer,
+        agents::about(row(Event::Used), &grant, None),
+        now,
+    );
+    held.rate(client_key).record_grant(now);
+    let reply = reply_for(&grant, vec![item]);
+    held.grants.push(grant);
+    Ok(reply)
+}
+
+/// Whether grant `grant_id` is active and covers `item_id` in `mode` right
+/// now — a predicate with a side effect, on purpose: a yes here is the login
+/// or its code about to be served, so it is a use of the grant, counted on
+/// it and written as a `used` row, and this is the one place the grant is
+/// in hand to say so. The `access` check comes first, under the same locks:
+/// a grant still active is not served once a switch moved. The targets are
+/// not checked again: the TOTP step comes with no URL, and the grant was
+/// narrowed to its page when it was issued.
+fn covered(ctx: Locked<'_>, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+    let Locked {
+        store,
+        held,
+        access,
+        writer,
+        now,
+    } = ctx;
+    if access.verify(held).is_err() {
+        return false;
+    }
+    let Some(grant) = held.find_mut(grant_id) else {
+        return false;
+    };
+    if !grant.is_active(now) || !grant.modes.contains(&mode) {
+        return false;
+    }
+    // The item as the grant's selector sees it. Every grant issued here
+    // names ids, which the id alone answers; a wider selector reads the
+    // row's kind and tags, nothing sealed.
+    let item = match &grant.items {
+        ItemSelector::Ids(_) => CandidateItem {
+            id: item_id.to_string(),
+            kind: String::new(),
+            tags: Vec::new(),
+        },
+        _ => match session::meta_dto_of(store, item_id) {
+            Ok(meta) => CandidateItem {
+                id: meta.id,
+                kind: meta.kind,
+                tags: meta.tags,
+            },
+            Err(_) => return false,
+        },
+    };
+    if !grant.items.admits(&item) || grant.use_once(now).is_err() {
+        return false;
+    }
+    let clients = clients_in(store);
+    let mut row = agents::about(
+        agents::draft(Event::Used, &grant.client_key, &clients),
+        grant,
+        Some(r#"{"via":"grantId"}"#),
+    );
+    row.item_id = Some(item_id.to_string());
+    row.mode = Some(mode);
+    agents::record(store, writer, row, now);
+    true
+}
 
 /// What a grant request came to before anyone was asked: answered already
 /// (served from a grant held, allowed outright by a rule), or waiting on the
@@ -1142,23 +1349,12 @@ enum Verdict {
     Unanswered,
 }
 
-/// What the ask comes to: the candidate the user picked and for how many
-/// days, or the reason the `denied` row names. The switches are checked
-/// first, as they stand *after* the answer: a yes given while the Agents
-/// switch, or the lockbox's agent access, went off is no yes — the dialog
-/// was up for a state that no longer holds — and the row says which switch.
+/// What the answer comes to: the candidate the user picked and for how many
+/// days, or the reason the `denied` row names.
 fn outcome<'c>(
     verdict: &Verdict,
     candidates: &'c [Candidate],
-    switch_on: bool,
-    lockbox_on: bool,
 ) -> std::result::Result<(&'c Candidate, Option<u32>), &'static str> {
-    if !switch_on {
-        return Err("switch");
-    }
-    if !lockbox_on {
-        return Err("lockbox");
-    }
     match verdict {
         Verdict::Answered(Some(answer)) => candidates
             .iter()

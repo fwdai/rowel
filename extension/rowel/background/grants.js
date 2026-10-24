@@ -176,16 +176,18 @@ grants.sendGetLogins = async function(tab, messageData, nonce) {
 
 // The agent-mode fields for get-totp: agentMode always, so the host knows the
 // code is for an agent and refuses it without a grant, plus the fill's grant
-// when the tab's origin holds one. Keyed by the tab's origin, so a code
-// requested from a cross-origin login frame goes without a grant, and the
-// host refuses it rather than serving it the way a person's click would be.
-grants.totpFields = async function(tab) {
+// when the requesting document's origin holds one. Keyed by the frame's own
+// URL (sender.url, the content script's document), as get-logins keys the
+// grant by the URL the content script sent (kpxc.url, that same document):
+// a cross-origin login frame is its own origin, asks its own grant, and
+// finds it here. The tab's URL stands in only for a sender without one.
+grants.totpFields = async function(tab, sender) {
     if (!grants.isOn()) {
         return {};
     }
 
     const fields = { agentMode: 'true' };
-    const grantId = await grants.grantFor(grants.originOf(tab?.url));
+    const grantId = await grants.grantFor(grants.originOf(sender?.url ?? tab?.url));
     if (grantId) {
         fields.grantId = grantId;
     }

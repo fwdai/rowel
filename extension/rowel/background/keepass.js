@@ -565,7 +565,7 @@ keepass.createNewGroup = async function(tab, args = []) {
     }
 };
 
-keepass.getTotp = async function(tab, args = []) {
+keepass.getTotp = async function(tab, args = [], sender) { // Rowel: the sender names the frame asking
     const [ uuid, oldTotp ] = args;
     if (!keepass.featuresList.newTotp) {
         return oldTotp;
@@ -583,7 +583,7 @@ keepass.getTotp = async function(tab, args = []) {
         action: kpAction,
         uuid: uuid
     };
-    Object.assign(messageData, await grants.totpFields(tab)); // Rowel: agent mode adds the fill's grantId
+    Object.assign(messageData, await grants.totpFields(tab, sender)); // Rowel: agent mode adds agentMode and the frame's grantId
 
     try {
         const response = await keepassClient.sendMessage(kpAction, tab, messageData, nonce);

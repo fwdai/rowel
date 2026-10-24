@@ -282,6 +282,12 @@ pub struct AppState {
     /// callback (`agents::rearm`). One timer for every grant, like the auto-lock.
     #[cfg(desktop)]
     pub agent_expiry: std::sync::Arc<crate::timer::Timer>,
+    /// This install's id, the audit log's writer id (`storage::install_id`),
+    /// read or minted once per process and then fixed: two first calls cannot
+    /// mint two ids, and a root that will not take the file still leaves the
+    /// process with one id.
+    #[cfg(desktop)]
+    pub install_id: std::sync::OnceLock<String>,
 }
 
 impl AppState {
@@ -331,6 +337,8 @@ impl Default for AppState {
             agents: Mutex::default(),
             #[cfg(desktop)]
             agent_expiry: crate::timer::Timer::spawn(),
+            #[cfg(desktop)]
+            install_id: std::sync::OnceLock::new(),
         }
     }
 }

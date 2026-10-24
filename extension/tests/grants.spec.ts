@@ -60,6 +60,22 @@ test('totpFields says agentMode always and adds the grant the origin holds', asy
     expect(await grants.totpFields({ url: 'https://example.com/2fa' })).toEqual({ agentMode: 'true' });
 });
 
+// A cross-origin login frame is its own origin: its get-logins remembered a
+// grant under the frame's URL, and its TOTP step finds that grant by the
+// same key — the sender's URL — not the tab's. The tab's URL stands in only
+// for a sender without one.
+test('totpFields keys the grant by the requesting frame, not the tab', async () => {
+    await grants.rememberGrant('https://login.example', 'g-frame');
+    await grants.rememberGrant('https://top.example', 'g-top');
+    const tab = { url: 'https://top.example/account' };
+
+    expect(await grants.totpFields(tab, { url: 'https://login.example/frame?step=2' })).toEqual({ agentMode: 'true', grantId: 'g-frame' });
+    expect(await grants.totpFields(tab, { url: 'https://top.example/account' })).toEqual({ agentMode: 'true', grantId: 'g-top' });
+    expect(await grants.totpFields(tab, { url: 'https://other.example/' })).toEqual({ agentMode: 'true' });
+    expect(await grants.totpFields(tab, {})).toEqual({ agentMode: 'true', grantId: 'g-top' });
+    expect(await grants.totpFields(tab)).toEqual({ agentMode: 'true', grantId: 'g-top' });
+});
+
 test('totpFields adds nothing with agent mode off', async () => {
     globalThis.page = { settings: { agentMode: false } };
     await grants.rememberGrant('https://example.com', 'g1');

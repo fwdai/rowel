@@ -82,9 +82,21 @@ pub fn agents_enabled(app: &AppHandle, id: &str) -> bool {
 }
 
 /// Turn agent access for workspace `id` on or off, through the registry's
-/// own write path. `NotFound` for an id the registry does not name.
+/// own write path. `NotFound` for an id the registry does not name. This is
+/// the one place the flag is written, so it is the one place a change of it
+/// is acted on: with the registry's lock let go, the access epoch is moved
+/// (`agents::access_changed`) — for any lockbox, on or off, since one epoch
+/// covers them all — and, when it is the open lockbox's access going off,
+/// every grant up is ended.
 pub fn set_agents(app: &AppHandle, id: &str, enabled: bool) -> Result<()> {
-    update_of(app, id, agents_switched(enabled))
+    let changed = update_of(app, id, agents_switched(enabled))?;
+    #[cfg(desktop)]
+    if changed {
+        crate::agents::access_changed(app, "lockbox");
+    }
+    #[cfg(not(desktop))]
+    let _ = changed;
+    Ok(())
 }
 
 fn agents_switched(enabled: bool) -> impl FnOnce(&mut Workspace) -> bool {
@@ -344,11 +356,12 @@ pub fn record_vault_id_of(app: &AppHandle, id: &str, vault_id: &str) -> Result<(
         workspace.vault_id = Some(vault_id.to_string());
         true
     })
+    .map(drop)
 }
 
 /// [`record_vault_name`] for workspace `id` rather than the active one.
 pub fn record_vault_name_of(app: &AppHandle, id: &str, name: &str) -> Result<()> {
-    update_of(app, id, named(name))
+    update_of(app, id, named(name)).map(drop)
 }
 
 /// [`record_vault_name`] for a caller that already holds `workspace_lock`.
@@ -357,7 +370,7 @@ pub fn record_vault_name_of(app: &AppHandle, id: &str, name: &str) -> Result<()>
 /// this one without letting go in between, so it cannot take the lock again
 /// here (see `commands::workspace::name_the_open_vault`).
 pub(crate) fn record_vault_name_locked(root: &Path, active: &str, name: &str) -> Result<()> {
-    update_active_locked(root, active, named(name))
+    update_active_locked(root, active, named(name)).map(drop)
 }
 
 // The single edit both mirrors make, so the two callers cannot drift apart.
@@ -402,7 +415,7 @@ fn count_in(root: &Path, id: &str, count: u32) -> Result<()> {
     if Registry::read(root)?.is_none() {
         return Ok(());
     }
-    update_active_locked(root, id, counted(count))
+    update_active_locked(root, id, counted(count)).map(drop)
 }
 
 /// [`record_item_count`] for a caller that already holds `workspace_lock` and
@@ -445,11 +458,17 @@ fn update_active(app: &AppHandle, change: impl FnOnce(&mut Workspace) -> bool) -
     let state = app.state::<AppState>();
     let _paths = state.workspace_lock.lock().unwrap();
     let active = state.active_workspace.lock().unwrap().clone();
-    update_active_locked(&root, &active, change)
+    update_active_locked(&root, &active, change).map(drop)
 }
 
-// [`update_active`] for a named workspace, under the same lock.
-fn update_of(app: &AppHandle, id: &str, change: impl FnOnce(&mut Workspace) -> bool) -> Result<()> {
+// [`update_active`] for a named workspace, under the same lock. Says whether
+// anything was written, for a caller that acts on a change and not on a
+// write of the same value.
+fn update_of(
+    app: &AppHandle,
+    id: &str,
+    change: impl FnOnce(&mut Workspace) -> bool,
+) -> Result<bool> {
     let root = storage::root_dir(app)?;
     let state = app.state::<AppState>();
     let _paths = state.workspace_lock.lock().unwrap();
@@ -459,11 +478,12 @@ fn update_of(app: &AppHandle, id: &str, change: impl FnOnce(&mut Workspace) -> b
 /// [`update_active`]'s core, for a caller that already holds `workspace_lock`
 /// and already knows which workspace is active — one with more than the
 /// registry to write, which must not let go of the lock between the two.
+/// `Ok(false)` when `change` changed nothing and nothing was written.
 fn update_active_locked(
     root: &Path,
     active: &str,
     change: impl FnOnce(&mut Workspace) -> bool,
-) -> Result<()> {
+) -> Result<bool> {
     // Strict: a file that is there and unreadable is refused, not saved over
     // (see `Registry::read`). No file is the single-workspace default.
     let mut registry = Registry::read(root)?.unwrap_or_default();
@@ -471,9 +491,10 @@ fn update_active_locked(
         return Err(Error::NotFound);
     };
     if !change(workspace) {
-        return Ok(());
+        return Ok(false);
     }
-    registry.save(root)
+    registry.save(root)?;
+    Ok(true)
 }
 
 /// Which workspace the app's paths currently resolve to.

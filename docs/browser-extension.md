@@ -138,8 +138,12 @@ actions". While it is on:
   username-first sign-in reuse it without a second dialog. `get-totp` carries
   `agentMode: "true"` always and the same `grantId` when the origin has one;
   the host refuses an agent-mode code without a covering grant rather than
-  serving it the way a person's click would be. One bounded retry: a
-  `GrantExpired` answer to a
+  serving it the way a person's click would be. The origin is the requesting
+  document's, for both: `get-logins` keys the grant by the URL the content
+  script sent (its own document), and `get-totp` looks it up by the sender's
+  frame URL, so a cross-origin login frame is its own origin — it asks its
+  own grant, the dialog names the frame's origin, and its TOTP step finds
+  that grant. One bounded retry: a `GrantExpired` answer to a
   remembered grant forgets it and asks afresh; a `GrantPending` with
   `retryAfterMs` is waited for once. The refusals (codes 40–46 in `kpErrors`,
   `client.js`) become the extension's notification: `GrantDenied` "Rowel did

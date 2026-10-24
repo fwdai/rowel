@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EVENTS } from '@/api/events'
 import type { AgentGrant, AgentRule, BrowserStatus } from '@/api/browser'
@@ -108,28 +108,33 @@ describe('Settings › Browser & agents › Agents', () => {
     mockCommand('agent_grants', () => [grant(), grant({ id: 'g2', state: 'expired' })])
     await openSection()
 
+    // The two lists load on their own promises: each is waited for.
     const rules = await screen.findAllByTestId('settings-agents-rule')
     expect(rules).toHaveLength(2)
     expect(rules[0]).toHaveTextContent('GitHub')
     expect(rules[0]).toHaveTextContent('https://github.com/login · Work Chrome · until 01/15/2030')
     expect(rules[1]).toHaveTextContent('Work Chrome · until removed')
 
-    const grants = screen.getAllByTestId('settings-agents-grant')
+    const grants = await screen.findAllByTestId('settings-agents-grant')
     expect(grants).toHaveLength(2)
     expect(grants[0]).toHaveTextContent('Work Chrome · https://github.com/login · Expires in 12 minutes')
     expect(within(grants[0]).getByTestId('settings-agents-grant-end')).toBeInTheDocument()
     expect(grants[1]).toHaveTextContent('Ended')
     expect(within(grants[1]).queryByTestId('settings-agents-grant-end')).not.toBeInTheDocument()
 
+    // Removing re-reads the list once Rust has answered; the old rows are
+    // still up until then, so the wait is for the list to have changed.
     mockCommand('agent_rules', () => [rule({ id: 'r2', expiresAtMs: null })])
     await userEvent.click(within(rules[0]).getByTestId('settings-agents-rule-remove'))
     expect(calls('agent_revoke_rule')).toEqual([{ id: 'r1' }])
-    expect(await screen.findAllByTestId('settings-agents-rule')).toHaveLength(1)
+    await waitFor(() => expect(screen.getAllByTestId('settings-agents-rule')).toHaveLength(1))
 
     mockCommand('agent_grants', () => [grant({ state: 'revoked' })])
     await userEvent.click(within(grants[0]).getByTestId('settings-agents-grant-end'))
     expect(calls('agent_end_grant')).toEqual([{ id: 'g1' }])
-    expect((await screen.findAllByTestId('settings-agents-grant'))[0]).toHaveTextContent('Ended')
+    await waitFor(() =>
+      expect(screen.getAllByTestId('settings-agents-grant')[0]).toHaveTextContent('Ended')
+    )
   })
 
   it('re-reads both lists when Rust says they changed', async () => {

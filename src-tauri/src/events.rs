@@ -264,8 +264,8 @@ pub fn agent_grant(app: &AppHandle, ask: AgentGrantAsk<'_>) {
 }
 
 /// The grant ask up under `id` was answered without its dialog — refused
-/// because the Agents switch, or the lockbox's agent access, went off while
-/// it was up (`agents::revoke_all`). The dialog closes; an answer it gave
+/// because the Agents switch, or a lockbox's agent access, changed while it
+/// was up (`agents::access_changed`). The dialog closes; an answer it gave
 /// anyway would reach no ask, but it must not sit there offering a yes.
 #[cfg(desktop)]
 #[derive(Serialize, Clone)]

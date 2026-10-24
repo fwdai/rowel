@@ -836,17 +836,11 @@ pub fn workspace_set_color(
 /// Let agents use items in workspace `id`, or stop. A registry field, written
 /// under its lock like the colour (`Workspace::agents`), so there is no vault
 /// to write and a locked workspace is switched exactly as the open one is.
-/// Turning the open lockbox's access off ends the grants that are up — after
-/// the registry's lock is let go, since ending them takes the session's: a
-/// lockbox with access off never answers an agent.
+/// What a change does to the grants up and the ask on screen is the write's
+/// own business (`workspace::set_agents` → `agents::access_changed`).
 #[tauri::command]
 pub fn workspace_set_agents(id: String, enabled: bool, app: AppHandle) -> Result<()> {
-    workspace::set_agents(&app, &id, enabled)?;
-    #[cfg(desktop)]
-    if !enabled && workspace::active_id(&app) == id {
-        crate::agents::revoke_all(&app, "lockbox");
-    }
-    Ok(())
+    workspace::set_agents(&app, &id, enabled)
 }
 
 /// A palette key as the frontend sent it: trimmed, and `None` when blank.

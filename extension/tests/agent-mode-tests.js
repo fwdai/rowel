@@ -16,6 +16,7 @@ const AgentCards = {
     SCAN: '#agent-scan-results',
     EXPOSURE: '#agent-exposure-results',
     FAILURE: '#agent-failure-results',
+    FILL_STATE: '#agent-fill-state-results',
     OFF: '#agent-off-results'
 };
 
@@ -325,6 +326,38 @@ async function testClearOnFailure() {
     hide('agent-failed');
 }
 
+// The state of one fill is that fill's alone: the TOTP field a code went into is
+// left out of that fill's scan and no later one. A password-only fill whose page
+// copies the password into that same element is an exposure.
+async function testFillStateIsPerFill() {
+    const card = AgentCards.FILL_STATE;
+    reset(true);
+    show('agent-login');
+
+    await kpxc.initCredentialFields();
+    kpxc.credentials = [ ENTRY ];
+    await kpxc.prepareCredentials();
+    kpxcAssert($('#agent-otp').value, CODE, card, 'The first fill puts the code into the TOTP field');
+    await wait(kpxcAgentMode.RESCAN_DELAY_MS * 3);
+    kpxcAssert(browserStub.sentFor('report_exposure').length, 0, card, 'The code in the field it was filled into is no exposure');
+
+    // The next fill on the same page: a password-only entry, into fields detected afresh
+    reset(true);
+    show('agent-login');
+    await kpxc.initCredentialFields();
+    kpxc.credentials = [ SECOND_ENTRY ];
+    await kpxc.prepareCredentials();
+    kpxcAssert($('#agent-password').value, SECOND_ENTRY.password, card, 'The second fill is a password-only one');
+    kpxcAssert($('#agent-otp').value, '', card, 'The second fill puts no code anywhere');
+
+    // The page copies the password into the element the first fill's code went into
+    $('#agent-otp').value = SECOND_ENTRY.password;
+    await wait(kpxcAgentMode.RESCAN_DELAY_MS * 3);
+    kpxcAssert($('#agent-otp').value, '', card, 'The old TOTP element holding the new password is an exposure, and is cleared');
+    kpxcAssert(browserStub.sentFor('report_exposure').length, 1, card, 'The exposure is reported');
+    hide('agent-login');
+}
+
 // Agent mode off: upstream's icons, autocomplete, login popup and banner, no automatic fill.
 async function testAgentModeOff() {
     const card = AgentCards.OFF;
@@ -364,6 +397,7 @@ async function testAgentModeOff() {
         testScanAndClear,
         testExposureAfterFill,
         testClearOnFailure,
+        testFillStateIsPerFill,
         testAgentModeOff
     ]) {
         try {

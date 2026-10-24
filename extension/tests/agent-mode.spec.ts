@@ -47,6 +47,10 @@ test.describe('Agent mode content script tests', () => {
         await verifyResults('agent-failure-results');
     });
 
+    test('One fill\'s state does not reach the next: the old TOTP element is scanned again', async () => {
+        await verifyResults('agent-fill-state-results');
+    });
+
     test('Agent mode off: upstream behaviour is unchanged', async () => {
         await verifyResults('agent-off-results');
     });
