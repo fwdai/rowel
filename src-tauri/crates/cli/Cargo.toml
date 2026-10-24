@@ -1,0 +1,47 @@
+[package]
+name = "rowel-cli"
+# Internal to the workspace and never released on its own, like the broker;
+# it ships beside the app, under the app's version.
+version = "0.1.0"
+description = "The command line beside the app: an MCP server for coding agents, and a status check, over the broker's sealed channel"
+authors = ["Alex Chaplinsky"]
+# Permissive like every crate under `crates/`; see `crates/core/Cargo.toml`.
+license = "MIT OR Apache-2.0"
+edition = "2021"
+# Same floor as the app, the core and the broker: one toolchain builds the
+# whole workspace.
+rust-version = "1.92"
+publish = false
+
+# The app's own binary is `rowel`, and so is the symlink Settings installs;
+# the sidecar beside the app keeps a name of its own so the two never collide
+# in the bundle.
+[[bin]]
+name = "rowel-cli"
+path = "src/main.rs"
+
+[lib]
+name = "rowel_cli"
+
+[dependencies]
+# The client half of the sealed channel (`client`), the framing (`frame`) and
+# where the socket is (`socket`) — the CLI speaks to the app with the same code
+# the protocol tests drive the host with.
+rowel-broker = { path = "../broker" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The one API over the Unix socket and the Windows named pipe the app listens
+# on, as the extension's proxy uses it.
+interprocess = "2"
+# The config directory the agent key lives in, found without Tauri.
+dirs = "7"
+# The run id an `mcp` process mints once and sends with every grant request.
+rand = "0.8"
+
+[dev-dependencies]
+# The broker's scripted host (`testing::Mock`), and the `Transport` its
+# `Connection` is under `test-support`, so the MCP server is tested end to end
+# in-process.
+rowel-broker = { path = "../broker", features = ["test-support"] }
+# A directory for the key file to be created in.
+tempfile = "3"
