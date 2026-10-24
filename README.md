@@ -174,4 +174,17 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code
 
 ## License
 
-[GNU General Public License v3.0](LICENSE)
+The apps are free software under the [GNU General Public License v3.0](LICENSE):
+the desktop and iOS apps (`src/`, `src-tauri/src/`), the browser extension
+(`extension/`, a fork of the GPL KeePassXC-Browser) and everything else in this
+repository not listed below.
+
+The Rust library crates under `src-tauri/crates/` (`rowel-core`,
+`rowel-broker`, `rowel-autofill`) are licensed under
+either the [MIT License](src-tauri/crates/core/LICENSE-MIT) or the
+[Apache License, Version 2.0](src-tauri/crates/core/LICENSE-APACHE), at your
+option, so that any program can link them. Each crate carries both license
+files and names them in its `Cargo.toml`.
+
+Contributions are accepted under the license of the part they touch, with a
+Developer Certificate of Origin sign-off (see [CONTRIBUTING.md](CONTRIBUTING.md)).
