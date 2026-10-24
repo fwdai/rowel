@@ -28,13 +28,29 @@ export interface BrowserStatus {
     conflict: boolean
   }[]
   /**
-   * The extensions let into the open vault: the name they were given, and
-   * their public key. Each vault keeps its own list.
+   * The clients let into the open vault — browser extensions and agents — by
+   * the name they were given. Each vault keeps its own list.
    */
-  clients: { name: string; key: string }[]
+  clients: BrowserClient[]
 }
 
-export type BrowserClient = BrowserStatus['clients'][number]
+/** What a client is, which decides what it may ask for: an extension fills, an agent asks for grants. */
+export type ClientKind = 'extension' | 'agent' | 'sidecar'
+
+/**
+ * A client let into the open vault: the name the user gave it, its public
+ * key, what it is, and — for an agent — what it said it runs on
+ * (`claude-code`, `codex`, `cursor`, …). A row from before kinds reads as an
+ * extension let in at time zero.
+ */
+export interface BrowserClient {
+  name: string
+  key: string
+  kind: ClientKind
+  platform?: string
+  createdAtMs: number
+  lastSeenAtMs?: number
+}
 
 /**
  * Whether a fill in agent mode may be a grant at all — off by default, and so
@@ -72,10 +88,16 @@ export const browserSetAgentsStandingDays = (days: number): Promise<BrowserStatu
  */
 export const ASSOCIATE_TIMEOUT_MS = 60_000
 
-/** An extension asking to connect: this ask's own `id`, and its identification public key. */
+/**
+ * A client asking to connect: this ask's own `id`, its identification public
+ * key, what it says it is, and — for an agent — the platform it runs on, for
+ * the dialog to name it by.
+ */
 export interface AssociateAsk {
   id: string
   key: string
+  kind: ClientKind
+  platform?: string
 }
 
 /**
@@ -116,6 +138,8 @@ export interface PasskeyAsk {
   userName?: string
   userDisplayName?: string
   accounts?: PasskeyAccount[]
+  /** The extension the ceremony came in through, by the name the user gave it. */
+  requestedBy: { kind: ClientKind; name: string }
 }
 
 /** One of the page's logins an agent may be given: nothing secret. */
@@ -126,19 +150,26 @@ export interface GrantCandidate {
 }
 
 /**
- * A client asking, through the extension in agent mode, to use a login on a
- * page. `clientName` is what the user called it (or its key's two ends),
+ * A client asking to use a login on a page: the extension in agent mode, or
+ * an agent that wants the extension to log it in. `clientName` is what the
+ * user called it (or its key's two ends), `clientKind` what it is,
  * `candidates` the page's logins the policy admits — the dialog picks one.
- * `stepUp` asks are the ones a yes alone does not settle: `verify` says
- * whether Rust will run the biometric prompt or needs the master password
- * sent with the answer.
+ * An agent may say why (`reason`: its own words, shown as text and never
+ * acted on); `endsSession` is the sign-out notice: when a fill grant ends, the
+ * site's cookies go with it in the browser that filled, whichever client
+ * asked. `stepUp` asks are
+ * the ones a yes alone does not settle: `verify` says whether Rust will run
+ * the biometric prompt or needs the master password sent with the answer.
  */
 export interface AgentGrantAsk {
   /** Names this ask; the answer carries it, and Rust honours it for this ask alone. */
   id: string
   clientName: string
+  clientKind: ClientKind
   origin: string
-  mode: 'fill'
+  mode: 'fill' | 'passkey' | 'header' | 'token' | 'env'
+  reason?: string
+  endsSession: boolean
   stepUp: boolean
   verify?: 'biometric' | 'password'
   candidates: GrantCandidate[]
@@ -220,3 +251,25 @@ export const agentRules = (): Promise<AgentRule[]> => call('agent_rules')
 export const agentGrants = (): Promise<AgentGrant[]> => call('agent_grants')
 export const agentRevokeRule = (id: string): Promise<void> => call('agent_revoke_rule', { id })
 export const agentEndGrant = (id: string): Promise<void> => call('agent_end_grant', { id })
+
+/**
+ * The command line tool (`rowel-cli`) as Rust finds it: `bundled` is the
+ * binary beside the app when this build ships one (a release does; a dev
+ * build only after `cargo build -p rowel-cli`), `installed` the `rowel` link
+ * to it on the PATH when one is in place, `installDir` where a link goes or
+ * is. Desktop only.
+ */
+export interface CliStatus {
+  bundled: string | null
+  installed: string | null
+  installDir: string | null
+}
+
+export const cliStatus = (): Promise<CliStatus> => call('cli_status')
+
+/**
+ * Link the bundled tool into the PATH as `rowel`. Rust refuses with the
+ * reason when nothing is bundled, when the name is taken by something that is
+ * not a link of ours, or on Windows, where the folder goes on PATH by hand.
+ */
+export const cliInstall = (): Promise<CliStatus> => call('cli_install')

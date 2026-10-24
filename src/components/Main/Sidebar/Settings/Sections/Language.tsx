@@ -8,13 +8,16 @@ import SettingsRow from '@/components/elements/SettingsRow'
 import MenuSelect from '@/components/elements/MenuSelect'
 import AccentSwatches from '@/components/elements/AccentSwatches'
 import { CARD, CARD_OPEN, LABEL } from '@/components/elements/tokens'
+import { isMobile } from '@/lib/platform'
 import { CalendarGlyph, GlobeGlyph, PaletteGlyph } from '@/components/Main/icons'
 import ThemePicker from './General/ThemePicker'
+import CommandLineTool from './General/CommandLineTool'
 
 // Each language named in its own tongue, with its locale code beside it.
 const LOCALES = Object.entries(LANGUAGES).map(([value, label]) => ({ value, label, meta: value }))
 
-// The General section (key `language`): appearance, then language & region.
+// The General section (key `language`): appearance, language & region, and
+// on the desktop the command line tool shipped beside the app.
 export default function Language() {
   const { t, i18n } = useTranslation()
   const accent = usePrefs(state => state.accent)
@@ -89,6 +92,8 @@ export default function Language() {
           />
         </div>
       </section>
+
+      {!isMobile && <CommandLineTool />}
     </>
   )
 }

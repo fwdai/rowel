@@ -844,6 +844,24 @@ exposed process than the webview, and it is not ours.
   dialog — not the key — is then what stands between it and a fill; a
   standing rule it matches removes that dialog for its site, which is why
   the rule names one client, one login and one origin, and ends.
+- **Agent clients.** A coding agent reaches the same socket through the
+  `rowel-cli` sidecar (`rowel mcp`, a stdio MCP server) and associates like an
+  extension does, saying what it is (`hello { kind: "agent", platform }`); the
+  dialog names the kind and platform, and an agent is refused outright while
+  the Agents switch is off. The kind is stored with the association and gates
+  every later request: a client of kind `agent` may ask for a grant, wait on
+  it, end it and list what its own rules let it see, and is refused every
+  action whose reply carries a secret — `get-logins`, `get-totp`, passkeys —
+  so an MCP tool result never contains a value, by construction rather than
+  by filtering. An agent's grant to log into a site is approved in the same
+  dialog, with the agent's stated reason shown as text, and reaches the
+  browser extension as a content-free wake-up followed by a sealed fetch; the
+  first extension served under it claims it, and when it ends — by expiry,
+  by the agent, from Settings, or by a switch going off — the extension
+  deletes that site's cookies in the agent's browser profile, so the login
+  the grant enabled ends with the grant. The agent's own key is a `0600` file
+  in the user's config directory, which the same-user residual above covers:
+  a process that lifts it can ask, and the dialog still decides.
 
 ## iOS AutoFill
 

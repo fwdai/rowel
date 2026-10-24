@@ -13,8 +13,10 @@ import { emitEvent } from './events'
 const ASK: AgentGrantAsk = {
   id: 'ask-1',
   clientName: 'Claude in Chrome',
+  clientKind: 'extension',
   origin: 'https://github.com/login',
   mode: 'fill',
+  endsSession: false,
   stepUp: false,
   candidates: [
     { id: 'gh1', title: 'GitHub', username: 'octocat' },
@@ -44,11 +46,42 @@ describe('the agent grant dialog', () => {
     expect(calls('agent_grant_respond')).toEqual([])
   })
 
+  // An agent's ask, as against the extension's own: it asks to be logged in
+  // rather than to use a login, says why in its own words, and the dialog
+  // warns of the sign-out that follows when it is done.
+  it("names an agent's ask as a login, quotes its reason and warns of the sign-out", async () => {
+    await ask({
+      ...ASK,
+      id: 'ask-7',
+      clientName: 'Claude Code',
+      clientKind: 'agent',
+      origin: 'https://github.com',
+      reason: 'deploying the <docs> site',
+      endsSession: true
+    })
+    expect(screen.getByTestId('agent-grant-title')).toHaveTextContent(
+      'Claude Code wants to log into https://github.com'
+    )
+    expect(screen.getByTestId('agent-grant-reason')).toHaveTextContent(
+      'Its reason: “deploying the <docs> site”'
+    )
+    expect(screen.getByTestId('agent-grant-ends-session')).toHaveTextContent(
+      'When this grant ends, Rowel will sign you out of https://github.com in that browser.'
+    )
+
+    await userEvent.click(screen.getByTestId('agent-grant-once'))
+    expect(calls('agent_grant_respond')).toEqual([
+      { id: 'ask-7', answer: { itemId: 'gh1', standingDays: null } }
+    ])
+  })
+
   it('names who asks and where, lists the candidates with the first picked, and allows once', async () => {
     await ask()
     expect(screen.getByTestId('agent-grant-title')).toHaveTextContent(
       'Claude in Chrome wants to use a login on https://github.com/login'
     )
+    expect(screen.queryByTestId('agent-grant-reason')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('agent-grant-ends-session')).not.toBeInTheDocument()
     expect(screen.getByTestId('agent-grant-item-gh1')).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByTestId('agent-grant-item-gh1')).toHaveTextContent('GitHub')
     expect(screen.getByTestId('agent-grant-item-gh1')).toHaveTextContent('octocat')
@@ -159,7 +192,13 @@ describe('the agent grant dialog', () => {
     // up, rather than opening beside it.
     act(() => emitEvent(EVENTS.agentGrant, { ...ASK, id: 'ask-6' }))
     expect(screen.getByTestId('agent-grant-dialog')).toBeInTheDocument()
-    act(() => emitEvent(EVENTS.browserAssociate, { id: 'ask-9', key: 'a'.repeat(43) + '=' }))
+    act(() =>
+      emitEvent(EVENTS.browserAssociate, {
+        id: 'ask-9',
+        key: 'a'.repeat(43) + '=',
+        kind: 'extension'
+      })
+    )
     expect(screen.queryByTestId('agent-grant-dialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('browser-associate-modal')).toBeInTheDocument()
     expect(useUi.getState().consentAsk?.kind).toBe('associate')

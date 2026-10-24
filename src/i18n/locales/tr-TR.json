@@ -734,7 +734,7 @@
   "Detected": "Algılandı",
   "Could not be set up": "Kurulamadı",
   "Ready — KeePassXC-Browser here connects to KeePassXC": "Hazır — KeePassXC-Browser burada KeePassXC'ye bağlanır",
-  "Connected extensions": "Bağlı uzantılar",
+  "Connected extensions and agents": "Bağlı uzantılar ve aracılar",
   "No extension has connected to this vault yet": "Bu kasaya henüz bağlanan bir uzantı yok",
   "Forget": "Unut",
   "Browser": "Tarayıcı",

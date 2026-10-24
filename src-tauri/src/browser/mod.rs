@@ -40,7 +40,7 @@ pub use rowel_broker::socket::{root_dir, socket_name, IDENTIFIER, SOCKET_FILE, S
 pub use rowel_broker::{actions, frame, passkeys, protocol};
 
 pub use self::actions::Client;
-use self::actions::{Host, Login};
+use self::actions::{ClientKind, Hello, Host, Login, VisibleRef};
 use self::passkeys::{Assertion, Registration};
 use self::protocol::Code;
 use crate::agents::AgentState;
@@ -59,7 +59,8 @@ use rowel_broker::grant::{
     VisibleItem,
 };
 use rowel_broker::lockbox::{save_failed, save_login_in};
-use rowel_broker::policy::{self, defaults, Decision, Floors, Limits};
+use rowel_broker::policy::{self, defaults, AgentSelector, Decision, Floors, Limits};
+use rowel_broker::Signal;
 
 /// How long an `associate` or a passkey ceremony waits for the user's answer
 /// before it is refused.
@@ -383,15 +384,16 @@ pub fn refuse_grant_ask() -> Option<String> {
     CONSENT.refuse_grant()
 }
 
-/// Ask the user whether the extension holding `key` may connect: the name
-/// they gave it, or `None`. Blocks the calling thread (see [`Pending::ask`]).
-/// The ask is tagged with an id of its own rather than with the key: the
-/// same extension asks again after a timeout, under the same key, and a
-/// dialog left up from the first ask must not be the yes to the second.
-pub fn ask(app: &AppHandle, key: &str) -> Option<String> {
+/// Ask the user whether the client holding `key`, which says it is `who`, may
+/// connect: the name they gave it, or `None`. Blocks the calling thread (see
+/// [`Pending::ask`]). The ask is tagged with an id of its own rather than
+/// with the key: the same client asks again after a timeout, under the same
+/// key, and a dialog left up from the first ask must not be the yes to the
+/// second.
+pub fn ask(app: &AppHandle, key: &str, who: &Hello) -> Option<String> {
     let id = crate::crypto::random_hex_id();
     let answer = CONSENT.ask(&id, AskKind::Associate, || {
-        events::browser_associate(app, &id, key);
+        events::browser_associate(app, &id, key, who.kind, who.platform.as_deref());
         window::raise(app);
     });
     match answer {
@@ -406,14 +408,20 @@ pub fn respond(id: &str, name: Option<String>) -> bool {
     CONSENT.answer(id, Answer::Name(name))
 }
 
-/// Ask the user whether the page at `origin` may have `ceremony`: the account
-/// they picked for a sign-in (any `Some` for a registration), or `None` for a
-/// no — which no answer is. Blocks the calling thread (see [`Pending::ask`]).
-/// The ask is tagged with an id of its own, which the dialog's answer names.
-pub fn ask_passkey(app: &AppHandle, origin: &str, ceremony: Ceremony<'_>) -> Option<usize> {
+/// Ask the user whether the page at `origin`, through the client
+/// `requested_by`, may have `ceremony`: the account they picked for a sign-in
+/// (any `Some` for a registration), or `None` for a no — which no answer is.
+/// Blocks the calling thread (see [`Pending::ask`]). The ask is tagged with
+/// an id of its own, which the dialog's answer names.
+pub fn ask_passkey(
+    app: &AppHandle,
+    origin: &str,
+    ceremony: Ceremony<'_>,
+    requested_by: &Client,
+) -> Option<usize> {
     let id = crate::crypto::random_hex_id();
     let answer = CONSENT.ask(&id, AskKind::Passkey, || {
-        events::browser_passkey(app, &id, origin, ceremony);
+        events::browser_passkey(app, &id, origin, ceremony, requested_by);
         window::raise(app);
     });
     match answer {
@@ -429,15 +437,16 @@ pub fn respond_passkey(id: &str, account: Option<usize>) -> bool {
 }
 
 /// The prompt a ceremony from the extension asks through: the app's dialog,
-/// told which page is asking.
+/// told which page is asking and through which client.
 struct AskUser {
     app: AppHandle,
     origin: String,
+    client: Client,
 }
 
 impl UserConsent for AskUser {
     fn approve(&self, ceremony: Ceremony<'_>) -> Option<usize> {
-        ask_passkey(&self.app, &self.origin, ceremony)
+        ask_passkey(&self.app, &self.origin, ceremony, &self.client)
     }
 }
 
@@ -469,21 +478,46 @@ fn write_clients(store: &SqliteStore, clients: &[Client]) -> Result<()> {
         .map_err(session::store_err)
 }
 
-/// The extensions let into the open vault; none while it is locked.
+/// The clients let into the open vault; none while it is locked.
 pub fn clients(app: &AppHandle) -> Vec<Client> {
     let state = app.state::<AppState>();
     let session = state.session.lock().unwrap();
     session.store().map(clients_in).unwrap_or_default()
 }
 
-/// Take an extension's access to the open vault back.
+/// Take a client's access to the open vault back, on record: the row names
+/// the client as it was, since after the write nothing does.
 pub fn forget(app: &AppHandle, key: &str) -> Result<()> {
     let state = app.state::<AppState>();
+    let writer = storage::install_id(app);
+    let now = agents::now_ms();
     let session = state.session.lock().unwrap();
     let store = session.store()?;
+    let before = clients_in(store);
+    let clients: Vec<Client> = before.iter().filter(|c| c.key != key).cloned().collect();
+    write_clients(store, &clients)?;
+    if clients.len() != before.len() {
+        agents::record(
+            store,
+            &writer,
+            agents::draft(Event::RevokedClient, key, &before),
+            now,
+        );
+    }
+    Ok(())
+}
+
+/// A known client proved itself again: its `last_seen_at_ms`, one write per
+/// connection. A write that fails loses nothing but the timestamp.
+fn mark_seen(store: &SqliteStore, key: &str, now: i64) {
     let mut clients = clients_in(store);
-    clients.retain(|c| c.key != key);
-    write_clients(store, &clients)
+    let Some(client) = clients.iter_mut().find(|c| c.key == key) else {
+        return;
+    };
+    client.last_seen_at_ms = Some(now);
+    if let Err(e) = write_clients(store, &clients) {
+        log::warn!("browser host: could not note the client was seen: {e}");
+    }
 }
 
 // --- passkeys ------------------------------------------------------------------
@@ -552,29 +586,62 @@ impl Host for AppHost {
     // key is written only if that is still the vault open when they answer.
     // A workspace switch in between makes the approval nobody's: the vault
     // it was given for is closed, and the one now open was never asked for.
-    fn associate(&self, key: &str) -> std::result::Result<String, Code> {
-        let state = self.0.state::<AppState>();
+    // An agent is refused at the door while the Agents switch is off, with
+    // no dialog: the switch is where the user says whether agents exist for
+    // this app at all, and a dialog would be asking them again.
+    fn associate(&self, key: &str, who: &Hello) -> std::result::Result<Client, Code> {
+        let app = &self.0;
+        if who.kind != ClientKind::Extension && !settings::current(app).browser.agents.enabled {
+            return Err(Code::AgentsDisabled);
+        }
+        let state = app.state::<AppState>();
         let epoch = commands::unlocked_epoch(&state).map_err(|_| Code::DatabaseNotOpened)?;
-        let name = ask(&self.0, key).ok_or(Code::ActionCancelledOrDenied)?;
+        let name = ask(app, key, who).ok_or(Code::ActionCancelledOrDenied)?;
+        let writer = storage::install_id(app);
+        let now = agents::now_ms();
         let session = state.session.lock().unwrap();
         let store = session.store_at(epoch).map_err(|_| {
             log::warn!("browser host: the vault changed hands while the user was asked");
             Code::AssociationFailed
         })?;
         let mut clients = clients_in(store);
-        if !clients.iter().any(|c| c.key == key) {
-            clients.push(Client {
-                name: name.clone(),
-                key: key.to_string(),
-            });
-            write_clients(store, &clients).map_err(|e| {
-                log::warn!("browser host: could not remember the extension: {e}");
-                Code::AssociationFailed
-            })?;
-            // Settings › Browser extension, if it is open, lists it now.
-            events::browser_clients(&self.0);
+        // A key already in — the client lost its own record of the answer
+        // and asked again — is the record it has, not a second one.
+        if let Some(known) = clients.iter().find(|c| c.key == key) {
+            return Ok(known.clone());
         }
-        Ok(name)
+        let client = Client {
+            name,
+            key: key.to_string(),
+            kind: who.kind,
+            platform: who.platform.clone(),
+            created_at_ms: now,
+            last_seen_at_ms: Some(now),
+            agent_id: None,
+        };
+        clients.push(client.clone());
+        write_clients(store, &clients).map_err(|e| {
+            log::warn!("browser host: could not remember the client: {e}");
+            Code::AssociationFailed
+        })?;
+        agents::record(
+            store,
+            &writer,
+            agents::draft(Event::Associated, key, &clients),
+            now,
+        );
+        // Settings › Browser & agents, if it is open, lists it now.
+        events::browser_clients(app);
+        Ok(client)
+    }
+
+    fn client_seen(&self, key: &str) {
+        let state = self.0.state::<AppState>();
+        let now = agents::now_ms();
+        let session = state.session.lock().unwrap();
+        if let Ok(store) = session.store() {
+            mark_seen(store, key, now);
+        }
     }
 
     fn logins_for(&self, page_url: &str, host: &str) -> Vec<Login> {
@@ -640,11 +707,18 @@ impl Host for AppHost {
         Ok(())
     }
 
-    fn passkey_register(&self, registration: Registration) -> std::result::Result<Value, Code> {
+    fn passkey_register(
+        &self,
+        client: &Client,
+        registration: Registration,
+    ) -> std::result::Result<Value, Code> {
         let vault = self.open_vault()?;
         let epoch = vault.epoch;
-        let consent = self.ask_user(&registration.origin);
-        let credential = passkeys::register(vault, consent, registration)?;
+        let origin = registration.origin.clone();
+        let consent = self.ask_user(&origin, client);
+        let outcome = passkeys::register(vault, consent, registration);
+        self.passkey_row(epoch, client, &origin, &outcome);
+        let credential = outcome?;
         // The passkey is on a login — a new one, or the one for the site.
         let entries = {
             let state = self.0.state::<AppState>();
@@ -656,9 +730,18 @@ impl Host for AppHost {
         Ok(credential)
     }
 
-    fn passkey_get(&self, assertion: Assertion) -> std::result::Result<Value, Code> {
-        let consent = self.ask_user(&assertion.origin);
-        passkeys::assert(self.open_vault()?, consent, assertion)
+    fn passkey_get(
+        &self,
+        client: &Client,
+        assertion: Assertion,
+    ) -> std::result::Result<Value, Code> {
+        let vault = self.open_vault()?;
+        let epoch = vault.epoch;
+        let origin = assertion.origin.clone();
+        let consent = self.ask_user(&origin, client);
+        let outcome = passkeys::assert(vault, consent, assertion);
+        self.passkey_row(epoch, client, &origin, &outcome);
+        outcome
     }
 
     fn lock(&self) {
@@ -676,7 +759,7 @@ impl Host for AppHost {
     // yes nobody's.
     fn request_grant(
         &self,
-        client_key: &str,
+        client: &Client,
         req: GrantRequest,
     ) -> std::result::Result<GrantReply, Code> {
         let app = &self.0;
@@ -686,7 +769,7 @@ impl Host for AppHost {
         agents::initialise(app);
         let lockbox = workspace::active_id(app);
         let writer = storage::install_id(app);
-        let asking = match self.decide_grant(&lockbox, &writer, client_key, req)? {
+        let asking = match self.decide_grant(&lockbox, &writer, client, req)? {
             Prepared::Answered(reply) => return Ok(reply),
             Prepared::Ask(asking) => *asking,
         };
@@ -696,6 +779,7 @@ impl Host for AppHost {
         let verify = step_up.then(StepUp::current);
         // The dialog names the site, not the page's path and query string.
         let site = agents::site_origin(&asking.origin);
+        let mode = asking.grant.modes.first().copied().unwrap_or(Mode::Fill);
         let default_standing_days = settings::current(app).browser.agents.default_standing_days;
         let state = app.state::<AppState>();
         let asked = CONSENT.try_ask_with(&ask_id, AskKind::Grant { step_up }, || {
@@ -712,8 +796,14 @@ impl Host for AppHost {
                 events::AgentGrantAsk {
                     id: &ask_id,
                     client_name: &asking.client_name,
+                    client_kind: client.kind,
                     origin: &site,
-                    mode: Mode::Fill.as_str(),
+                    mode: mode.as_str(),
+                    reason: asking.grant.reason.as_deref(),
+                    // Session end is the grant's, whoever asked: a fill
+                    // through the extension in agent mode ends the login it
+                    // enabled too, so that dialog warns the same.
+                    ends_session: asking.grant.modes.contains(&Mode::Fill),
                     step_up,
                     verify: verify.map(StepUp::as_str),
                     candidates: asking
@@ -728,24 +818,101 @@ impl Host for AppHost {
             Ok(())
         });
         let answer = match asked {
-            // Another decision is on screen. Not a refusal: the extension
-            // asks again once that dialog has closed.
+            // Another decision is on screen. Not a refusal: the client asks
+            // again once that dialog has closed.
             Err(NotAsked::Busy) => {
                 return Ok(GrantReply {
                     grant_id: asking.grant.id.clone(),
                     state: State::Pending,
                     expires_at_ms: None,
                     retry_after_ms: Some(1500),
+                    uses: 0,
                     items: Vec::new(),
                 })
             }
             Err(NotAsked::Refused(reason)) => {
-                return self.deny_unasked(&writer, client_key, &asking, reason)
+                return self.deny_unasked(&writer, client, &asking, reason)
             }
             Ok(Some(Answer::Grant(answer))) => Verdict::Answered(answer),
             Ok(_) => Verdict::Unanswered,
         };
-        self.settle_grant(&writer, client_key, asking, answer)
+        self.settle_grant(&writer, client, asking, answer)
+    }
+
+    fn wait_grant(
+        &self,
+        client: &Client,
+        id: &str,
+        _timeout_ms: u64,
+    ) -> std::result::Result<GrantReply, Code> {
+        self.grant_status(client, id)
+    }
+
+    // The state as the log says it: what is due to expire does so first, with
+    // its row and its signal, so the reply never says `active` of a grant the
+    // next use would find expired.
+    fn grant_status(&self, client: &Client, id: &str) -> std::result::Result<GrantReply, Code> {
+        let app = &self.0;
+        let writer = storage::install_id(app);
+        let state = app.state::<AppState>();
+        let now = agents::now_ms();
+        let (reply, flipped) = {
+            let session = state.session.lock().unwrap();
+            let store = session.store().map_err(|_| Code::DatabaseNotOpened)?;
+            let mut held = state.agents.lock().unwrap();
+            let flipped = agents::expire_due(Some(store), &mut held, &writer, now);
+            let grant = held
+                .grants
+                .iter()
+                .find(|g| g.id == id && g.client_key == client.key)
+                .ok_or(Code::GrantDenied)?;
+            let items = candidates_in(store, &grant.items)
+                .into_iter()
+                .map(|c| c.visible)
+                .collect();
+            (reply_for(grant, items), flipped)
+        };
+        if flipped {
+            events::agents_changed(app);
+            agents::rearm(app);
+            server::notify_signals();
+        }
+        Ok(reply)
+    }
+
+    fn end_grant(&self, client: &Client, id: &str) -> std::result::Result<(), Code> {
+        match agents::end_grant_by(&self.0, id, Some(&client.key), r#"{"reason":"agent"}"#) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(Code::GrantDenied),
+            Err(_) => Err(Code::DatabaseNotOpened),
+        }
+    }
+
+    // Only the open lockbox has anything to show: one is open at a time in
+    // Tier 1, and the others are sealed. A request naming another lockbox
+    // is answered with nothing rather than with the open one's items under
+    // the wrong name.
+    fn visible_items(&self, client: &Client, lockbox: Option<&str>) -> Vec<VisibleRef> {
+        let app = &self.0;
+        let state = app.state::<AppState>();
+        let now = agents::now_ms();
+        let open = workspace::active_id(app);
+        if lockbox.is_some_and(|named| named != open) {
+            return Vec::new();
+        }
+        let lockbox = open;
+        let session = state.session.lock().unwrap();
+        let Ok(store) = session.store() else {
+            return Vec::new();
+        };
+        let held = state.agents.lock().unwrap();
+        visible_in(store, &held, client, &lockbox, now)
+    }
+
+    fn take_signals(&self, client: &Client) -> Vec<Signal> {
+        let state = self.0.state::<AppState>();
+        let mut held = state.agents.lock().unwrap();
+        held.signals.remove(&client.key).unwrap_or_default()
     }
 
     // A predicate with a side effect, on purpose: a yes here is the login or
@@ -754,7 +921,7 @@ impl Host for AppHost {
     // in hand to say so. The targets are not checked again: the TOTP step
     // comes with no URL, and the grant was narrowed to its page when it was
     // issued.
-    fn grant_covers(&self, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
         let app = &self.0;
         let writer = storage::install_id(app);
         let state = app.state::<AppState>();
@@ -771,6 +938,7 @@ impl Host for AppHost {
                 writer: &writer,
                 now,
             },
+            &client.key,
             grant_id,
             item_id,
             mode,
@@ -778,8 +946,10 @@ impl Host for AppHost {
     }
 
     // The page showed what was filled: the grant ends now, whatever was left
-    // of its window, and the log says why.
-    fn report_exposure(&self, grant_id: &str) {
+    // of its window, the log says why, and every extension signs out of the
+    // site. Whoever reports it: the exposure is a fact about the page, not a
+    // claim on the grant.
+    fn report_exposure(&self, _client: &Client, grant_id: &str) {
         let app = &self.0;
         let writer = storage::install_id(app);
         let state = app.state::<AppState>();
@@ -794,18 +964,20 @@ impl Host for AppHost {
             if matches!(grant.state, State::Active | State::Pending) {
                 grant.state = State::Revoked;
             }
-            if let Ok(store) = session.store() {
-                let clients = clients_in(store);
-                let row = agents::about(
-                    agents::draft(Event::Exposed, &grant.client_key, &clients),
-                    grant,
-                    Some(r#"{"reason":"exposure"}"#),
-                );
-                agents::record(store, &writer, row, now);
-            }
+            let grant = grant.clone();
+            agents::ended(
+                session.store().ok(),
+                &mut held,
+                &writer,
+                &grant,
+                Event::Exposed,
+                r#"{"reason":"exposure"}"#,
+                now,
+            );
         }
         events::agents_changed(app);
         agents::rearm(app);
+        server::notify_signals();
     }
 }
 
@@ -819,22 +991,62 @@ impl AppHost {
         })
     }
 
-    fn ask_user(&self, origin: &str) -> AskUser {
+    fn ask_user(&self, origin: &str, client: &Client) -> AskUser {
         AskUser {
             app: self.0.clone(),
             origin: origin.to_string(),
+            client: client.clone(),
         }
+    }
+
+    // What a passkey ceremony leaves on the log: a `used` row for one that
+    // went through — a sign-in or a registration is a use of the site's
+    // passkey, in the passkey mode, approved by the user at the dialog — and
+    // a `denied` row for one the user refused. No grant object is involved:
+    // the dialog is the grant. Written in the session the ceremony began in,
+    // and nowhere if that session is gone; any other failure of the ceremony
+    // is the page's business, not the log's.
+    fn passkey_row(
+        &self,
+        epoch: Epoch,
+        client: &Client,
+        origin: &str,
+        outcome: &std::result::Result<Value, Code>,
+    ) {
+        let event = match outcome {
+            Ok(_) => Event::Used,
+            Err(Code::PasskeyRequestCanceled) => Event::Denied,
+            Err(_) => return,
+        };
+        let writer = storage::install_id(&self.0);
+        let now = agents::now_ms();
+        let state = self.0.state::<AppState>();
+        let session = state.session.lock().unwrap();
+        let Ok(store) = session.store_at(epoch) else {
+            return;
+        };
+        let mut row = agents::draft(event, &client.key, &clients_in(store));
+        row.mode = Some(Mode::Passkey);
+        row.target = Some(agents::site_origin(origin));
+        row.approval = Some(Approval::Ask);
+        if event == Event::Used {
+            row.approver = Some("user".into());
+        } else {
+            row.detail = Some(r#"{"reason":"user"}"#.into());
+        }
+        agents::record(store, &writer, row, now);
     }
 
     // Everything a grant request decides before anyone is asked, under the
     // session and agents locks (`decide`): a grant already held, the rules,
     // the rate, policy — and the grant itself when policy allows without
-    // asking. Whatever was served, the list and the timer follow.
+    // asking. Whatever was served, the list and the timer follow, and the
+    // extensions are woken for a fill grant an agent now holds.
     fn decide_grant(
         &self,
         lockbox: &str,
         writer: &str,
-        client_key: &str,
+        client: &Client,
         req: GrantRequest,
     ) -> std::result::Result<Prepared, Code> {
         let app = &self.0;
@@ -853,7 +1065,7 @@ impl AppHost {
             },
             epoch,
             lockbox,
-            client_key,
+            client,
             req,
         )?;
         drop(held);
@@ -861,6 +1073,9 @@ impl AppHost {
         if matches!(prepared, Prepared::Answered(_)) {
             agents::rearm(app);
             events::agents_changed(app);
+            if client.kind != ClientKind::Extension {
+                server::notify_signals();
+            }
         }
         Ok(prepared)
     }
@@ -871,7 +1086,7 @@ impl AppHost {
     fn deny_unasked(
         &self,
         writer: &str,
-        client_key: &str,
+        client: &Client,
         asking: &Asking,
         reason: &str,
     ) -> std::result::Result<GrantReply, Code> {
@@ -886,7 +1101,7 @@ impl AppHost {
                 store,
                 writer,
                 agents::about(
-                    agents::draft(Event::Denied, client_key, &clients),
+                    agents::draft(Event::Denied, &client.key, &clients),
                     &grant,
                     Some(&format!(r#"{{"reason":"{reason}"}}"#)),
                 ),
@@ -902,7 +1117,7 @@ impl AppHost {
     fn settle_grant(
         &self,
         writer: &str,
-        client_key: &str,
+        client: &Client,
         asking: Asking,
         verdict: Verdict,
     ) -> std::result::Result<GrantReply, Code> {
@@ -922,7 +1137,7 @@ impl AppHost {
                 writer,
                 now,
             },
-            client_key,
+            client,
             asking,
             verdict,
         )?;
@@ -930,6 +1145,9 @@ impl AppHost {
         drop(session);
         agents::rearm(app);
         events::agents_changed(app);
+        if client.kind != ClientKind::Extension {
+            server::notify_signals();
+        }
         Ok(reply)
     }
 
@@ -975,7 +1193,7 @@ fn decide(
     ctx: Locked<'_>,
     epoch: Epoch,
     lockbox: &str,
-    client_key: &str,
+    client: &Client,
     req: GrantRequest,
 ) -> std::result::Result<Prepared, Code> {
     let Locked {
@@ -984,6 +1202,7 @@ fn decide(
         writer,
         now,
     } = ctx;
+    let client_key = client.key.as_str();
     let clients = clients_in(store);
     let client_name = agents::client_label(&clients, client_key);
     let row = |event: Event| agents::draft(event, client_key, &clients);
@@ -1023,12 +1242,22 @@ fn decide(
     }
     let access_epoch = held.access_epoch;
 
-    let candidates = candidates_in(store, &req.items);
+    // What the request could be about. The extension names the page's logins
+    // itself — it has them in hand, since it asked for them. An agent names a
+    // site and, at most, a selector: the candidates are the lockbox's logins
+    // for that site, as the plaintext `url_host` column has them, narrowed by
+    // the selector; no payload is opened to decide a grant.
+    let candidates = if client.kind == ClientKind::Extension {
+        candidates_in(store, &req.items)
+    } else {
+        site_candidates_in(store, &origin, &req.items)
+    };
     let probe = Probe::Origin(&origin);
 
     // A grant this client already holds for the page is served, not asked
     // for again: a username-first sign-in asks for the page's logins
-    // twice, and the second time is the same yes.
+    // twice, and the second time is the same yes. An agent's is signalled
+    // again: the page it is for may be in a tab opened since.
     let reusable = held.grants.iter_mut().find(|g| {
         g.client_key == client_key
             && g.is_active(now)
@@ -1045,7 +1274,9 @@ fn decide(
             agents::about(row(Event::Used), grant, Some(r#"{"reuse":true}"#)),
             now,
         );
-        return Ok(Prepared::Answered(reply_for(grant, items)));
+        let grant = grant.clone();
+        queue_fill(held, &clients, client, &grant, &origin, &items);
+        return Ok(Prepared::Answered(reply_for(&grant, items)));
     }
 
     // The baseline every lockbox with the switch on starts with, then its
@@ -1129,7 +1360,9 @@ fn decide(
                 agents::about(row(Event::Used), &grant, None),
                 now,
             );
-            let reply = reply_for(&grant, candidates.into_iter().map(|c| c.visible).collect());
+            let items: Vec<VisibleItem> = candidates.into_iter().map(|c| c.visible).collect();
+            queue_fill(held, &clients, client, &grant, &origin, &items);
+            let reply = reply_for(&grant, items);
             held.grants.push(grant);
             Ok(Prepared::Answered(reply))
         }
@@ -1154,7 +1387,7 @@ fn decide(
 /// yes, and the row names the switch.
 fn settle(
     ctx: Locked<'_>,
-    client_key: &str,
+    client: &Client,
     asking: Asking,
     verdict: Verdict,
 ) -> std::result::Result<GrantReply, Code> {
@@ -1171,6 +1404,7 @@ fn settle(
         origin,
         ..
     } = asking;
+    let client_key = client.key.as_str();
     let clients = clients_in(store);
     let row = |event: Event| agents::draft(event, client_key, &clients);
 
@@ -1251,20 +1485,62 @@ fn settle(
         now,
     );
     held.rate(client_key).record_grant(now);
-    let reply = reply_for(&grant, vec![item]);
+    let items = vec![item];
+    queue_fill(held, &clients, client, &grant, &origin, &items);
+    let reply = reply_for(&grant, items);
     held.grants.push(grant);
     Ok(reply)
 }
 
+/// Whether a grant of `client`'s is one the extensions are told about: an
+/// agent's fill grant. The extension's own grants need no telling — it holds
+/// the reply — and nothing but a fill is the extension's to perform.
+fn signals_fill(client: &Client, grant: &Grant) -> bool {
+    client.kind != ClientKind::Extension && grant.modes.contains(&Mode::Fill)
+}
+
+/// An agent's fill grant is active: every extension of the lockbox is told,
+/// since the host cannot tell which browser profile has the page open
+/// (`Grant::served_to` settles that at the first fill). The item is the one
+/// the grant admits — the dialog's pick, or the standing rule's one item.
+fn queue_fill(
+    held: &mut AgentState,
+    clients: &[Client],
+    client: &Client,
+    grant: &Grant,
+    origin: &str,
+    items: &[VisibleItem],
+) {
+    let Some(item) = items.first() else {
+        return;
+    };
+    if !signals_fill(client, grant) {
+        return;
+    }
+    held.signal_extensions(
+        clients,
+        &Signal::FillGrant {
+            grant_id: grant.id.clone(),
+            origin: agents::site_origin(origin),
+            item: item.clone(),
+            auto_submit: false,
+            expires_at_ms: grant.expires_at_ms,
+        },
+    );
+}
+
 /// Whether grant `grant_id` is active and covers `item_id` in `mode` right
-/// now — a predicate with a side effect, on purpose: a yes here is the login
-/// or its code about to be served, so it is a use of the grant, counted on
-/// it and written as a `used` row, and this is the one place the grant is
-/// in hand to say so. The switches come first, under the same locks: a
-/// grant still on the list is not served once the session's switches say
-/// no. The targets are not checked again: the TOTP step comes with no URL,
-/// and the grant was narrowed to its page when it was issued.
-fn covered(ctx: Locked<'_>, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+/// now, for the client holding `client_key` — a predicate with a side
+/// effect, on purpose: a yes here is the login or its code about to be
+/// served, so it is a use of the grant, counted on it and written as a
+/// `used` row, and this is the one place the grant is in hand to say so. The
+/// switches come first, under the same locks: a grant still on the list is
+/// not served once the session's switches say no. The targets are not
+/// checked again: the TOTP step comes with no URL, and the grant was
+/// narrowed to its page when it was issued. A grant another client requested
+/// — an agent's, signalled to every extension — is claimed by the first
+/// extension served under it (`Grant::served_to`) and refused to any other.
+fn covered(ctx: Locked<'_>, client_key: &str, grant_id: &str, item_id: &str, mode: Mode) -> bool {
     let Locked {
         store,
         held,
@@ -1279,6 +1555,13 @@ fn covered(ctx: Locked<'_>, grant_id: &str, item_id: &str, mode: Mode) -> bool {
     };
     if !grant.is_active(now) || !grant.modes.contains(&mode) {
         return false;
+    }
+    if grant.client_key != client_key {
+        match &grant.served_to {
+            None => grant.served_to = Some(client_key.to_string()),
+            Some(served) if served == client_key => {}
+            Some(_) => return false,
+        }
     }
     // The item as the grant's selector sees it. Every grant issued here
     // names ids, which the id alone answers; a wider selector reads the
@@ -1382,22 +1665,53 @@ fn candidates_in(store: &SqliteStore, selector: &ItemSelector) -> Vec<Candidate>
     };
     metas
         .into_iter()
-        .filter_map(|meta| {
-            let item = CandidateItem {
-                id: meta.id.clone(),
-                kind: meta.kind.clone(),
-                tags: serde_json::from_str(&meta.tags).unwrap_or_default(),
-            };
-            selector.admits(&item).then(|| Candidate {
-                visible: VisibleItem {
-                    id: meta.id,
-                    title: meta.title,
-                    username: meta.username.filter(|u| !u.is_empty()),
-                },
-                item,
-            })
-        })
+        .filter_map(|meta| candidate_of(meta, selector))
         .collect()
+}
+
+/// The lockbox's logins for the site at `origin`, as an agent's request names
+/// them: the rows whose plaintext `url_host` is the origin's host or a parent
+/// of it ([`actions::host_matches`], the same first pass a fill makes), then
+/// what `selector` keeps of those. The column only narrows: what is served
+/// under the grant is still decided by the sealed website at fill time
+/// (`logins_in`). An origin with no host names nothing.
+fn site_candidates_in(
+    store: &SqliteStore,
+    origin: &str,
+    selector: &ItemSelector,
+) -> Vec<Candidate> {
+    let Some(host) = actions::site_host(origin) else {
+        return Vec::new();
+    };
+    let metas = match store.list() {
+        Ok(metas) => metas,
+        Err(e) => {
+            log::warn!("browser host: could not list the vault: {e}");
+            return Vec::new();
+        }
+    };
+    metas
+        .into_iter()
+        .filter(|meta| meta.kind == "login" && actions::host_matches(&host, &meta.url_host))
+        .filter_map(|meta| candidate_of(meta, selector))
+        .collect()
+}
+
+/// `meta` as a candidate, if `selector` admits it.
+fn candidate_of(meta: rowel_core::store::EntryMeta, selector: &ItemSelector) -> Option<Candidate> {
+    let item = CandidateItem {
+        id: meta.id.clone(),
+        kind: meta.kind.clone(),
+        tags: serde_json::from_str(&meta.tags).unwrap_or_default(),
+    };
+    selector.admits(&item).then(|| Candidate {
+        visible: VisibleItem {
+            id: meta.id,
+            title: meta.title,
+            username: meta.username.filter(|u| !u.is_empty()),
+        },
+        item,
+    })
 }
 
 fn admitted(candidates: &[Candidate], selector: &ItemSelector) -> Vec<VisibleItem> {
@@ -1414,7 +1728,80 @@ fn reply_for(grant: &Grant, items: Vec<VisibleItem>) -> GrantReply {
         state: grant.state,
         expires_at_ms: Some(grant.expires_at_ms),
         retry_after_ms: None,
+        uses: grant.uses,
         items,
+    }
+}
+
+/// The items `client` may ask for by name, in `lockbox`: what its own live
+/// rules admit — the ones that name its key, never the baseline, which names
+/// every client and would make the whole lockbox visible to anyone let in —
+/// and what its own active grants admit. From the list's metadata alone, like
+/// every other decision about a grant: no payload is opened to say what
+/// exists.
+fn visible_in(
+    store: &SqliteStore,
+    held: &AgentState,
+    client: &Client,
+    lockbox: &str,
+    now: i64,
+) -> Vec<VisibleRef> {
+    let rules = agents::live_rules(store, now);
+    let selectors: Vec<&ItemSelector> = rules
+        .iter()
+        .filter(|rule| matches!(&rule.agents, AgentSelector::Ids(ids) if ids.contains(&client.key)))
+        .map(|rule| &rule.items)
+        .chain(
+            held.grants
+                .iter()
+                .filter(|g| g.client_key == client.key && g.is_active(now))
+                .map(|g| &g.items),
+        )
+        .collect();
+    if selectors.is_empty() {
+        return Vec::new();
+    }
+    let metas = match store.list() {
+        Ok(metas) => metas,
+        Err(e) => {
+            log::warn!("browser host: could not list the vault: {e}");
+            return Vec::new();
+        }
+    };
+    metas
+        .into_iter()
+        .filter(|meta| {
+            let item = CandidateItem {
+                id: meta.id.clone(),
+                kind: meta.kind.clone(),
+                tags: serde_json::from_str(&meta.tags).unwrap_or_default(),
+            };
+            selectors.iter().any(|selector| selector.admits(&item))
+        })
+        .map(|meta| VisibleRef {
+            reference: format!("rowel://{lockbox}/{}", meta.id),
+            title: meta.title,
+            fields: fields_for(&meta.kind)
+                .iter()
+                .map(|f| f.to_string())
+                .collect(),
+            kind: meta.kind,
+        })
+        .collect()
+}
+
+/// The fields of an item of `kind` a grant could cover, by the names the
+/// agent protocol gives them. The kinds are the store's `kind` column, which
+/// is the frontend's `EntryType`: `ssh`, not `sshkey`. A kind with nothing
+/// an agent could be served — a note, an identity — has none.
+fn fields_for(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "login" => &["password", "otp"],
+        "apikey" => &["apiKey"],
+        "ssh" => &["privateKey"],
+        "card" => &["number", "cvc"],
+        "env" => &["body"],
+        _ => &[],
     }
 }
 

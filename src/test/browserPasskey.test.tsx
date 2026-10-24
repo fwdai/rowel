@@ -10,13 +10,16 @@ import { subscribeToEvents } from '@/store/events'
 import { calls } from './ipc'
 import { emitEvent } from './events'
 
+const REQUESTED_BY = { kind: 'extension' as const, name: 'Work Chrome' }
+
 const REGISTER: PasskeyAsk = {
   id: 'ask-1',
   kind: 'register',
   rpId: 'example.com',
   origin: 'https://login.example.com',
   userName: 'alice',
-  userDisplayName: 'Alice Example'
+  userDisplayName: 'Alice Example',
+  requestedBy: REQUESTED_BY
 }
 
 const GET: PasskeyAsk = {
@@ -24,7 +27,8 @@ const GET: PasskeyAsk = {
   kind: 'get',
   rpId: 'github.com',
   origin: 'https://github.com',
-  accounts: [{ userName: 'octocat', userDisplayName: 'The Octocat' }]
+  accounts: [{ userName: 'octocat', userDisplayName: 'The Octocat' }],
+  requestedBy: REQUESTED_BY
 }
 
 const GET_SEVERAL: PasskeyAsk = {
@@ -50,6 +54,10 @@ describe('the passkey consent dialog', () => {
       'example.com wants to create a passkey for alice'
     )
     expect(modal).toHaveTextContent('https://login.example.com')
+    // And which extension carried it, by the name it was let in under.
+    expect(screen.getByTestId('browser-passkey-requested-by')).toHaveTextContent(
+      'Requested by Work Chrome'
+    )
 
     await userEvent.click(screen.getByTestId('browser-passkey-allow'))
 
@@ -135,7 +143,13 @@ describe('the passkey consent dialog', () => {
     await ask(GET)
     // An extension asking to connect takes the place of the passkey dialog
     // left up, rather than opening beside it.
-    act(() => emitEvent(EVENTS.browserAssociate, { id: 'ask-9', key: 'a'.repeat(43) + '=' }))
+    act(() =>
+      emitEvent(EVENTS.browserAssociate, {
+        id: 'ask-9',
+        key: 'a'.repeat(43) + '=',
+        kind: 'extension'
+      })
+    )
 
     expect(screen.queryByTestId('browser-passkey-modal')).not.toBeInTheDocument()
     expect(screen.getByTestId('browser-associate-modal')).toBeInTheDocument()

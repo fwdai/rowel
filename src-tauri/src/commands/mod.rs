@@ -9,6 +9,9 @@ pub mod autojoin;
 // Desktop only, like the host; the registration in lib.rs carries the same cfg.
 #[cfg(desktop)]
 pub mod browser;
+// The command line tool shipped beside the desktop app, and its PATH link.
+#[cfg(desktop)]
+pub mod cli;
 pub mod clipboard;
 // E2E-only reset seam. Compiled out of release builds entirely (see e2e.rs for
 // the full gating rationale); the registration in lib.rs carries the same cfg.

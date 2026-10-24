@@ -758,7 +758,7 @@
   "Detected": "Найден",
   "Could not be set up": "Не удалось настроить",
   "Ready — KeePassXC-Browser here connects to KeePassXC": "Готово — KeePassXC-Browser здесь подключается к KeePassXC",
-  "Connected extensions": "Подключённые расширения",
+  "Connected extensions and agents": "Подключённые расширения и агенты",
   "No extension has connected to this vault yet": "К этому хранилищу ещё не подключилось ни одно расширение",
   "Forget": "Забыть",
   "Browser": "Браузер",

@@ -734,7 +734,7 @@
   "Detected": "Hittad",
   "Could not be set up": "Kunde inte konfigureras",
   "Ready — KeePassXC-Browser here connects to KeePassXC": "Klar — KeePassXC-Browser ansluter här till KeePassXC",
-  "Connected extensions": "Anslutna tillägg",
+  "Connected extensions and agents": "Anslutna tillägg och agenter",
   "No extension has connected to this vault yet": "Inget tillägg har anslutit till det här valvet än",
   "Forget": "Glöm",
   "Browser": "Webbläsare",

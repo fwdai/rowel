@@ -24,6 +24,10 @@ mod biometrics;
 // proxy integration test can reach the socket name and framing.
 #[cfg(desktop)]
 pub mod browser;
+// The command line tool bundled beside the desktop app, and where its PATH
+// link goes. Desktop only, like the sidecar.
+#[cfg(desktop)]
+mod cli;
 mod commands;
 // What iOS suggests above the keyboard for the AutoFill extension. Empty on
 // every other platform.
@@ -318,6 +322,11 @@ pub fn run() {
             commands::browser::agent_revoke_rule,
             #[cfg(desktop)]
             commands::browser::agent_end_grant,
+            // The command line tool beside the app, for Settings › General.
+            #[cfg(desktop)]
+            commands::cli::cli_status,
+            #[cfg(desktop)]
+            commands::cli::cli_install,
             // E2E-only vault reset. `generate_handler!` honours per-command
             // attributes, so in a release build the match arm — and with it the
             // only reference to the (also cfg'd-out) module — simply is not

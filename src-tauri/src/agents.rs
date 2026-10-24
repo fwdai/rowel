@@ -45,9 +45,11 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
+use rowel_broker::actions::ClientKind;
 use rowel_broker::audit::{ActorKind, Draft, Event, Writer};
 use rowel_broker::grant::{Grant, ItemSelector, Mode, State, Target};
 use rowel_broker::policy::{RateState, Rule};
+use rowel_broker::Signal;
 
 use crate::browser::{self, Client};
 use crate::error::Result;
@@ -62,12 +64,18 @@ pub const RETAIN_ENDED_MS: i64 = 60 * 60 * 1000;
 const RULES_META: &str = "agent_rules";
 
 /// What the app holds about agents between a lock and the next: the grants it
-/// issued, how often each client has been asking, and the switches as they
-/// stand for this session.
+/// issued, how often each client has been asking, what it has to tell each
+/// extension, and the switches as they stand for this session.
 #[derive(Default)]
 pub struct AgentState {
     pub grants: Vec<Grant>,
     pub rates: HashMap<String, RateState>,
+    /// What each extension is to be told the next time it asks
+    /// (`get-signals`), by client key: an agent's fill grant it may have the
+    /// page for, a grant that ended and whose site it signs out of. Queued
+    /// under the agents lock, in the same section as the change it reports,
+    /// and handed over whole by `take_signals`.
+    pub signals: HashMap<String, Vec<Signal>>,
     /// The switches, once the session's first request has read them from
     /// the files; authoritative from then on, changed only by
     /// [`change_access`], under the lock. `None` until then, and again
@@ -180,6 +188,20 @@ impl AgentState {
     pub fn clear(&mut self) {
         self.grants.clear();
         self.rates.clear();
+        self.signals.clear();
+    }
+
+    /// Queue `signal` for every extension among `clients`: an extension is
+    /// the only kind that fills, so the only kind a fill grant or a sign-out
+    /// concerns, and the host cannot tell which browser profile has the page
+    /// open, so each of them hears it.
+    pub fn signal_extensions(&mut self, clients: &[Client], signal: &Signal) {
+        for client in clients.iter().filter(|c| c.kind == ClientKind::Extension) {
+            self.signals
+                .entry(client.key.clone())
+                .or_default()
+                .push(signal.clone());
+        }
     }
 }
 
@@ -265,6 +287,7 @@ pub fn change_access<T>(
         }
         events::agents_changed(app);
         rearm(app);
+        browser::server::notify_signals();
     }
     Ok(value)
 }
@@ -303,18 +326,60 @@ pub(crate) fn switch_changed(
         return;
     }
     let detail = format!(r#"{{"reason":"{reason}"}}"#);
-    let clients = store.map(browser::clients_in).unwrap_or_default();
-    for grant in held.grants.iter_mut().filter(|g| g.state == State::Active) {
-        grant.state = State::Revoked;
-        if let Some(store) = store {
-            let draft = about(
-                draft(Event::Revoked, &grant.client_key, &clients),
-                grant,
-                Some(&detail),
-            );
-            record(store, writer_id, draft, now);
-        }
+    let revoked: Vec<Grant> = held
+        .grants
+        .iter_mut()
+        .filter(|g| g.state == State::Active)
+        .map(|grant| {
+            grant.state = State::Revoked;
+            grant.clone()
+        })
+        .collect();
+    for grant in &revoked {
+        ended(store, held, writer_id, grant, Event::Revoked, &detail, now);
     }
+}
+
+/// A grant is over, whichever way (`event`: expired, revoked, exposed), and
+/// its state already says so: the row goes on the lockbox's log and every
+/// extension of the lockbox is told to forget it and sign out of its site
+/// (`Signal::GrantEnded`). The one place both happen, so no way of ending a
+/// grant can leave a browser signed in under it. With no lockbox open
+/// (`store` is `None`) there is no log to write to and no extension list to
+/// signal — and no session for a signal to outlive.
+pub(crate) fn ended(
+    store: Option<&SqliteStore>,
+    held: &mut AgentState,
+    writer_id: &str,
+    grant: &Grant,
+    event: Event,
+    detail: &str,
+    now: i64,
+) {
+    let Some(store) = store else {
+        return;
+    };
+    let clients = browser::clients_in(store);
+    record(
+        store,
+        writer_id,
+        about(
+            draft(event, &grant.client_key, &clients),
+            grant,
+            Some(detail),
+        ),
+        now,
+    );
+    held.signal_extensions(
+        &clients,
+        &Signal::GrantEnded {
+            grant_id: grant.id.clone(),
+            origins: origin_of(&grant.targets)
+                .map(site_origin)
+                .into_iter()
+                .collect(),
+        },
+    );
 }
 
 // --- expiry -----------------------------------------------------------------------
@@ -335,7 +400,8 @@ pub fn rearm(app: &AppHandle) {
 }
 
 // The timer came due: expire what is due, write an `ended` row for each
-// grant that flipped, let the lists know, and arm for the next one.
+// grant that flipped and tell the extensions, let the lists know, and arm
+// for the next one.
 fn on_expiry(app: &AppHandle) {
     let state = app.state::<AppState>();
     let now = now_ms();
@@ -343,25 +409,40 @@ fn on_expiry(app: &AppHandle) {
     let changed = {
         let session = state.session.lock().unwrap();
         let mut agents = state.agents.lock().unwrap();
-        let flipped = agents.expire_due(now);
+        let flipped = expire_due(session.store().ok(), &mut agents, &writer_id, now);
         let pruned = agents.prune(now);
-        if let Ok(store) = session.store() {
-            let clients = browser::clients_in(store);
-            for grant in &flipped {
-                let draft = about(
-                    draft(Event::Ended, &grant.client_key, &clients),
-                    grant,
-                    Some(r#"{"reason":"expired"}"#),
-                );
-                record(store, &writer_id, draft, now);
-            }
-        }
-        !flipped.is_empty() || pruned
+        flipped || pruned
     };
     if changed {
         events::agents_changed(app);
+        browser::server::notify_signals();
     }
     rearm(app);
+}
+
+/// Flip every grant whose window has closed, with the row and the signal
+/// each flip owes ([`ended`]): what the timer does when it fires, and what a
+/// read of a grant's state does first, so the state it reads is the one the
+/// log says. Whether anything flipped.
+pub(crate) fn expire_due(
+    store: Option<&SqliteStore>,
+    held: &mut AgentState,
+    writer_id: &str,
+    now: i64,
+) -> bool {
+    let flipped = held.expire_due(now);
+    for grant in &flipped {
+        ended(
+            store,
+            held,
+            writer_id,
+            grant,
+            Event::Ended,
+            r#"{"reason":"expired"}"#,
+            now,
+        );
+    }
+    !flipped.is_empty()
 }
 
 /// Every seal ends here — a lock, the auto-lock, a lockbox switch
@@ -384,6 +465,25 @@ pub fn clear(app: &AppHandle) {
 
 /// The user ended grant `id` from Settings.
 pub fn end_grant(app: &AppHandle, id: &str) -> Result<()> {
+    if end_grant_by(app, id, None, r#"{"reason":"user"}"#)? {
+        Ok(())
+    } else {
+        Err(crate::error::Error::NotFound)
+    }
+}
+
+/// End grant `id` before its window closes, with `detail` on its `revoked`
+/// row: from Settings, which may end any grant (`owner` is `None`), or by
+/// the client that holds it, which may end its own and hears of no other —
+/// a grant id is a capability, and whether one exists is not for whoever has
+/// heard of it. Whether the grant was found (and, for an owner, was theirs);
+/// a grant that had already ended is left as it ended, and is still found.
+pub(crate) fn end_grant_by(
+    app: &AppHandle,
+    id: &str,
+    owner: Option<&str>,
+    detail: &str,
+) -> Result<bool> {
     let state = app.state::<AppState>();
     let now = now_ms();
     let writer_id = storage::install_id(app);
@@ -391,21 +491,31 @@ pub fn end_grant(app: &AppHandle, id: &str) -> Result<()> {
         let session = state.session.lock().unwrap();
         let store = session.store()?;
         let mut agents = state.agents.lock().unwrap();
-        let grant = agents.find_mut(id).ok_or(crate::error::Error::NotFound)?;
-        if grant.state == State::Active {
-            grant.state = State::Revoked;
-            let clients = browser::clients_in(store);
-            let draft = about(
-                draft(Event::Revoked, &grant.client_key, &clients),
-                grant,
-                Some(r#"{"reason":"user"}"#),
-            );
-            record(store, &writer_id, draft, now);
+        let Some(grant) = agents
+            .find_mut(id)
+            .filter(|g| owner.is_none_or(|key| g.client_key == key))
+        else {
+            return Ok(false);
+        };
+        if !matches!(grant.state, State::Active | State::Pending) {
+            return Ok(true);
         }
+        grant.state = State::Revoked;
+        let grant = grant.clone();
+        ended(
+            Some(store),
+            &mut agents,
+            &writer_id,
+            &grant,
+            Event::Revoked,
+            detail,
+            now,
+        );
     }
     events::agents_changed(app);
     rearm(app);
-    Ok(())
+    browser::server::notify_signals();
+    Ok(true)
 }
 
 // --- rules --------------------------------------------------------------------------
@@ -603,18 +713,35 @@ pub fn origin_of(targets: &[Target]) -> Option<&str> {
 
 // --- audit ----------------------------------------------------------------------
 
-/// A row about what client `key` did, as the extension that it is.
+/// A row about what client `key` did, as the kind of client the lockbox's
+/// record says it is. A key the lockbox never named — a stale association —
+/// is written as an extension, the one kind there was before there were
+/// kinds, and the only kind that reaches the host without a record.
 pub fn draft(event: Event, key: &str, clients: &[Client]) -> Draft {
-    let mut draft = Draft::new(ActorKind::Extension, event);
+    let client = clients.iter().find(|c| c.key == key);
+    let kind = client.map_or(ClientKind::Extension, |c| c.kind);
+    let mut draft = Draft::new(actor_kind(kind), event);
     draft.actor_id = Some(key.to_string());
-    draft.actor_name = Some(client_label(clients, key));
+    draft.actor_name = Some(client.map_or_else(|| key_fingerprint(key), |c| c.name.clone()));
     draft
 }
 
+/// The log's word for a client of `kind`.
+pub fn actor_kind(kind: ClientKind) -> ActorKind {
+    match kind {
+        ClientKind::Extension => ActorKind::Extension,
+        ClientKind::Agent => ActorKind::Agent,
+        ClientKind::Sidecar => ActorKind::Sidecar,
+    }
+}
+
 /// `draft`, about `grant`: its id, the item when it names one, the target
-/// reduced to what the log may hold, the mode, the gate and who passed it.
+/// reduced to what the log may hold, the mode, the gate and who passed it,
+/// and the agent's own words for what it is doing (`run_id`, `acting_for`).
 pub fn about(mut draft: Draft, grant: &Grant, detail: Option<&str>) -> Draft {
     draft.grant_id = Some(grant.id.clone());
+    draft.run_id = grant.run_id.clone();
+    draft.acting_for = grant.acting_for.clone();
     draft.item_id = single_id(&grant.items);
     draft.target = origin_of(&grant.targets).map(audit_target);
     draft.mode = grant.modes.first().copied().or(Some(Mode::Fill));
@@ -800,15 +927,24 @@ mod tests {
         );
     }
 
+    fn client(name: &str, key: &str, kind: ClientKind) -> Client {
+        Client {
+            name: name.into(),
+            key: key.into(),
+            kind,
+            platform: None,
+            created_at_ms: 0,
+            last_seen_at_ms: None,
+            agent_id: None,
+        }
+    }
+
     // What a row says about a grant, and what it must never say: the page's
     // query string and fragment are gone, the rest of the URL is kept.
     #[test]
     fn a_row_about_a_grant_names_it_without_the_query_string() {
         let grant = active("g1", 0, 1_000);
-        let clients = vec![Client {
-            name: "Work Chrome".into(),
-            key: "ext".into(),
-        }];
+        let clients = vec![client("Work Chrome", "ext", ClientKind::Extension)];
         let row = about(draft(Event::Used, "ext", &clients), &grant, Some("{}"));
         assert_eq!(row.actor_kind, ActorKind::Extension);
         assert_eq!(row.actor_name.as_deref(), Some("Work Chrome"));
@@ -818,9 +954,102 @@ mod tests {
         assert_eq!(row.mode, Some(Mode::Fill));
         assert_eq!(row.approval, Some(Approval::Ask));
         assert_eq!(row.approver.as_deref(), Some("user"));
+        assert_eq!(row.run_id, None);
 
         assert_eq!(audit_target("https://a.b/c#frag"), "https://a.b/c");
         assert_eq!(audit_target("https://a.b"), "https://a.b");
+    }
+
+    // The actor is what the lockbox's record says the client is, and an
+    // agent's own words for its run go on the row with the grant.
+    #[test]
+    fn a_row_names_the_actor_by_the_clients_kind_and_carries_the_run() {
+        let clients = vec![
+            client("Work Chrome", "ext", ClientKind::Extension),
+            client("Claude Code", "agent", ClientKind::Agent),
+            client("CLI", "side", ClientKind::Sidecar),
+        ];
+        assert_eq!(
+            draft(Event::Requested, "agent", &clients).actor_kind,
+            ActorKind::Agent
+        );
+        assert_eq!(
+            draft(Event::Requested, "side", &clients).actor_kind,
+            ActorKind::Sidecar
+        );
+        assert_eq!(
+            draft(Event::Requested, "nobody", &clients).actor_kind,
+            ActorKind::Extension,
+            "a key the lockbox never named is an extension's"
+        );
+
+        let grant = Grant {
+            client_key: "agent".into(),
+            run_id: Some("run-7".into()),
+            acting_for: Some("alice".into()),
+            ..active("g2", 0, 1_000)
+        };
+        let row = about(draft(Event::Granted, "agent", &clients), &grant, None);
+        assert_eq!(row.actor_kind, ActorKind::Agent);
+        assert_eq!(row.actor_name.as_deref(), Some("Claude Code"));
+        assert_eq!(row.run_id.as_deref(), Some("run-7"));
+        assert_eq!(row.acting_for.as_deref(), Some("alice"));
+    }
+
+    // Every way a grant ends goes through `ended`: the row, and the sign-out
+    // signal to every extension — and to nothing else.
+    #[test]
+    fn an_ended_grant_is_signalled_to_every_extension_and_no_agent() {
+        let (_dir, store, _cipher) = rowel_broker::testing::vault();
+        store
+            .meta_set(
+                "browser_clients",
+                &serde_json::to_string(&[
+                    client("Work Chrome", "ext", ClientKind::Extension),
+                    client("Home Firefox", "ext2", ClientKind::Extension),
+                    client("Claude Code", "agent", ClientKind::Agent),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        let mut held = AgentState::default();
+        let grant = Grant {
+            client_key: "agent".into(),
+            state: State::Revoked,
+            ..active("g1", 0, 1_000)
+        };
+
+        ended(
+            Some(&store),
+            &mut held,
+            "dev",
+            &grant,
+            Event::Revoked,
+            r#"{"reason":"agent"}"#,
+            5,
+        );
+
+        let rows = store.audit_rows("dev").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].event, "revoked");
+        assert_eq!(rows[0].actor_kind, "agent");
+        assert_eq!(rows[0].detail.as_deref(), Some(r#"{"reason":"agent"}"#));
+        let expected = Signal::GrantEnded {
+            grant_id: "g1".into(),
+            origins: vec!["https://github.com".into()],
+        };
+        assert_eq!(held.signals.get("ext"), Some(&vec![expected.clone()]));
+        assert_eq!(held.signals.get("ext2"), Some(&vec![expected]));
+        assert!(!held.signals.contains_key("agent"));
+
+        // No lockbox open: nowhere to write, nobody to tell.
+        let mut none = AgentState::default();
+        ended(None, &mut none, "dev", &grant, Event::Ended, "{}", 5);
+        assert!(none.signals.is_empty());
+
+        // A seal forgets what was queued with the rest.
+        held.reset();
+        assert!(held.signals.is_empty());
     }
 
     // A rule is written for the site, with the port when one was named, and
