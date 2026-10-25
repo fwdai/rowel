@@ -21,6 +21,7 @@ use rowel_broker::reference::Reference;
 use zeroize::Zeroizing;
 
 use crate::agent::Broker;
+use crate::authority::authority;
 
 /// A value shorter than this is not matched at all: a needle of a few bytes
 /// would redact ordinary text — a short password that is also a word — and
@@ -168,14 +169,18 @@ pub struct HttpTarget {
 }
 
 impl HttpTarget {
-    /// `host/path` as the host reads it: the host up to the first slash, the
-    /// path from it (`/` when none), the method as written. A query string is
-    /// refused rather than sent: it lands in logs.
+    /// `host/path` as the host reads it: the host up to the first slash by
+    /// the one rule (`authority`, https unless `http://` was written), the
+    /// path from it (`/` when none), the method as written. A query string
+    /// is refused rather than sent: it lands in logs.
     pub fn target(&self) -> Result<ResolveTarget, String> {
-        let location = self
-            .location
-            .strip_prefix("https://")
-            .unwrap_or(&self.location);
+        let (scheme, location) = match self.location.split_once("://") {
+            Some((scheme, rest)) if scheme == "https" || scheme == "http" => (scheme, rest),
+            Some(_) => {
+                return Err("--http takes host/path, or an https:// or http:// URL".to_string())
+            }
+            None => ("https", self.location.as_str()),
+        };
         if location.contains(['?', '#']) {
             return Err("--http takes host/path, never a query string".to_string());
         }
@@ -187,7 +192,7 @@ impl HttpTarget {
             return Err("--http takes METHOD host/path".to_string());
         }
         Ok(ResolveTarget::Http {
-            host: host.to_string(),
+            host: authority(scheme, host),
             path,
             method: self.method.clone(),
         })
@@ -263,6 +268,13 @@ pub fn execute(
     0
 }
 
+/// `value` as an `application/x-www-form-urlencoded` field carries it: like
+/// percent-encoding, but a space is `+`. What the proxy writes into a form
+/// body, and so one of the forms the redactor must know.
+pub fn form_encoded(value: &str) -> String {
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
 /// The forms of `value` a program may print it in, the value itself first.
 fn encodings(value: &str) -> Vec<Zeroizing<Vec<u8>>> {
     let bytes = value.as_bytes();
@@ -275,6 +287,7 @@ fn encodings(value: &str) -> Vec<Zeroizing<Vec<u8>>> {
             .to_string()
             .into_bytes(),
     ));
+    forms.push(Zeroizing::new(form_encoded(value).into_bytes()));
     let json = Zeroizing::new(serde_json::to_string(value).unwrap_or_default());
     forms.push(Zeroizing::new(json.trim_matches('"').as_bytes().to_vec()));
     forms
@@ -329,13 +342,15 @@ mod tests {
             URL_SAFE.encode(value),
             URL_SAFE_NO_PAD.encode(value),
             utf8_percent_encode(value, RESERVED).to_string(),
+            form_encoded(value),
             serde_json::to_string(value)
                 .unwrap()
                 .trim_matches('"')
                 .to_string(),
         ];
         assert_eq!(forms[4], "p%40ss%2Fw%2Brd%20%22quoted%22%20%5C%20end");
-        assert_eq!(forms[5], "p@ss/w+rd \\\"quoted\\\" \\\\ end");
+        assert_eq!(forms[5], "p%40ss%2Fw%2Brd+%22quoted%22+%5C+end");
+        assert_eq!(forms[6], "p@ss/w+rd \\\"quoted\\\" \\\\ end");
         for form in &forms {
             assert_eq!(
                 through(&mut r, &[format!("[{form}]").as_bytes()]),
@@ -424,7 +439,24 @@ mod tests {
                 method: "POST".into()
             })
         );
+        assert_eq!(
+            target("GET", "http://localhost:3000/x"),
+            Ok(ResolveTarget::Http {
+                host: "localhost:3000".into(),
+                path: "/x".into(),
+                method: "GET".into()
+            })
+        );
+        assert_eq!(
+            target("GET", "API.stripe.com:443/v1"),
+            Ok(ResolveTarget::Http {
+                host: "api.stripe.com".into(),
+                path: "/v1".into(),
+                method: "GET".into()
+            })
+        );
         assert!(target("GET", "api.stripe.com/v1?key=1").is_err());
+        assert!(target("GET", "ftp://api.stripe.com/v1").is_err());
         assert!(target("GET", "/v1").is_err());
         assert!(target("", "api.stripe.com/v1").is_err());
     }
