@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EVENTS } from '@/api/events'
-import { ASSOCIATE_TIMEOUT_MS, type BrowserStatus } from '@/api/browser'
+import { ASSOCIATE_TIMEOUT_MS, type BrowserClient, type BrowserStatus } from '@/api/browser'
 import Settings from '@/components/Main/Sidebar/Settings'
 import BrowserConsent from '@/components/Main/BrowserConsent'
 import { openSettings, useUi } from '@/store'
@@ -11,6 +11,14 @@ import { calls, mockCommand } from './ipc'
 import { emitEvent } from './events'
 
 const KEY = 'AAAAbbbbCCCCddddEEEEffffGGGGhhhhIIIIjjjjKKK='
+
+/** An extension let in, as Rust lists one. */
+const ext = (name: string, key: string): BrowserClient => ({
+  name,
+  key,
+  kind: 'extension',
+  createdAtMs: 0
+})
 
 const status = (overrides: Partial<BrowserStatus> = {}): BrowserStatus => ({
   enabled: false,
@@ -91,11 +99,14 @@ describe('Settings › Browser extension', () => {
   })
 
   it('forgets a connected extension', async () => {
-    mockCommand('browser_status', () => status({ clients: [{ name: 'Work Chrome', key: KEY }] }))
+    mockCommand('browser_status', () => status({ clients: [ext('Work Chrome', KEY)] }))
     await openSection()
     const row = screen.getByTestId('settings-browser-client')
     expect(row).toHaveTextContent('Work Chrome')
     expect(row).toHaveTextContent('AAAAbbbb…KKK=')
+    expect(within(row).getByTestId('settings-browser-client-kind')).toHaveTextContent(
+      /^Browser extension$/
+    )
 
     await userEvent.click(within(row).getByTestId('settings-browser-forget'))
 
@@ -103,13 +114,48 @@ describe('Settings › Browser extension', () => {
     expect(screen.queryByTestId('settings-browser-client')).not.toBeInTheDocument()
   })
 
+  // Agents are listed with the extensions, each saying what it is and what
+  // it runs on, and Forget works the same for either.
+  it('lists an agent by its kind and platform, and forgets it the same way', async () => {
+    mockCommand('browser_status', () =>
+      status({
+        clients: [
+          ext('Work Chrome', KEY),
+          {
+            name: 'Claude Code',
+            key: 'ZZZZyyyyXXXXwwww0000=',
+            kind: 'agent',
+            platform: 'claude-code',
+            createdAtMs: Date.UTC(2030, 0, 8),
+            lastSeenAtMs: Date.UTC(2030, 0, 9)
+          },
+          { name: 'Helper', key: 'Q', kind: 'agent', platform: 'my-own-tool', createdAtMs: 1 }
+        ]
+      })
+    )
+    await openSection()
+    expect(screen.getByText('Connected extensions and agents')).toBeInTheDocument()
+    const [, agent, other] = screen.getAllByTestId('settings-browser-client')
+    expect(agent).toHaveTextContent('Claude Code')
+    expect(within(agent).getByTestId('settings-browser-client-kind')).toHaveTextContent(
+      'Agent · Claude Code'
+    )
+    // A platform nobody named is shown as the agent spelled it.
+    expect(within(other).getByTestId('settings-browser-client-kind')).toHaveTextContent(
+      'Agent · my-own-tool'
+    )
+
+    await userEvent.click(within(agent).getByTestId('settings-browser-forget'))
+    expect(calls('browser_forget_client')).toEqual([{ key: 'ZZZZyyyyXXXXwwww0000=' }])
+  })
+
   it('takes one change at a time', async () => {
     let settle: (status: BrowserStatus) => void = () => {}
     mockCommand('browser_status', () =>
       status({
         clients: [
-          { name: 'Work Chrome', key: KEY },
-          { name: 'Home Firefox', key: 'ZZZZyyyyXXXXwwww0000=' }
+          ext('Work Chrome', KEY),
+          ext('Home Firefox', 'ZZZZyyyyXXXXwwww0000=')
         ]
       })
     )
@@ -125,7 +171,7 @@ describe('Settings › Browser extension', () => {
     await userEvent.click(second)
     expect(calls('browser_forget_client')).toEqual([{ key: KEY }])
 
-    await act(async () => settle(status({ clients: [{ name: 'Home Firefox', key: 'Z' }] })))
+    await act(async () => settle(status({ clients: [ext('Home Firefox', 'Z')] })))
     expect(screen.getByTestId('settings-browser-forget')).toBeEnabled()
   })
 
@@ -135,7 +181,7 @@ describe('Settings › Browser extension', () => {
     await openSection()
     expect(screen.getByTestId('settings-browser-clients-empty')).toBeInTheDocument()
 
-    mockCommand('browser_status', () => status({ clients: [{ name: 'Work Chrome', key: KEY }] }))
+    mockCommand('browser_status', () => status({ clients: [ext('Work Chrome', KEY)] }))
     act(() => emitEvent(EVENTS.browserClients, undefined))
 
     expect(await screen.findByTestId('settings-browser-client')).toHaveTextContent('Work Chrome')
@@ -143,7 +189,7 @@ describe('Settings › Browser extension', () => {
 
   it('holds a refresh until the change in flight has landed', async () => {
     let settle: (status: BrowserStatus) => void = () => {}
-    mockCommand('browser_status', () => status({ clients: [{ name: 'Work Chrome', key: KEY }] }))
+    mockCommand('browser_status', () => status({ clients: [ext('Work Chrome', KEY)] }))
     mockCommand('browser_forget_client', () => new Promise(resolve => (settle = resolve)))
     subscribeToEvents()
     await openSection()
@@ -151,7 +197,7 @@ describe('Settings › Browser extension', () => {
 
     // Let in while the forget is out: not read yet, so the forget's own
     // answer is not thrown away as stale.
-    mockCommand('browser_status', () => status({ clients: [{ name: 'Home Firefox', key: 'Z' }] }))
+    mockCommand('browser_status', () => status({ clients: [ext('Home Firefox', 'Z')] }))
     act(() => emitEvent(EVENTS.browserClients, undefined))
     expect(calls('browser_status')).toHaveLength(1)
 
@@ -165,12 +211,16 @@ describe('the browser consent dialog', () => {
   const ask = async (key = KEY, id = 'ask-1') => {
     subscribeToEvents()
     render(<BrowserConsent />)
-    act(() => emitEvent(EVENTS.browserAssociate, { id, key }))
+    act(() => emitEvent(EVENTS.browserAssociate, { id, key, kind: 'extension' }))
     return screen.findByTestId('browser-associate-modal')
   }
 
   it('opens on the ask and sends the name it was given', async () => {
     await ask()
+    expect(screen.getByTestId('browser-associate-title')).toHaveTextContent(
+      'A browser extension wants to connect to Rowel'
+    )
+    expect(screen.queryByTestId('browser-associate-agent')).not.toBeInTheDocument()
     expect(screen.getByTestId('browser-associate-fingerprint')).toHaveTextContent('AAAAbbbb…KKK=')
     const name = screen.getByTestId('browser-associate-name')
     expect(name).toHaveValue('Browser')
@@ -192,9 +242,52 @@ describe('the browser consent dialog', () => {
     expect(screen.queryByTestId('browser-associate-modal')).not.toBeInTheDocument()
   })
 
+  // An agent is let in to something else than an extension, and the dialog
+  // says so: what it is, what it runs on (as its maker spells it), and that
+  // it asks to use logins rather than reads them. Its platform is the name
+  // it starts with.
+  it('names an agent by its platform and says what it will be able to do', async () => {
+    subscribeToEvents()
+    render(<BrowserConsent />)
+    act(() =>
+      emitEvent(EVENTS.browserAssociate, {
+        id: 'ask-7',
+        key: KEY,
+        kind: 'agent',
+        platform: 'claude-code'
+      })
+    )
+    await screen.findByTestId('browser-associate-modal')
+
+    expect(screen.getByTestId('browser-associate-title')).toHaveTextContent(
+      'An agent (Claude Code) wants to connect to Rowel'
+    )
+    expect(screen.getByTestId('browser-associate-agent')).toHaveTextContent(
+      'ask to use your logins'
+    )
+    expect(screen.getByTestId('browser-associate-agent')).toHaveTextContent('never to read them')
+    expect(screen.getByTestId('browser-associate-name')).toHaveValue('Claude Code')
+
+    await userEvent.click(screen.getByTestId('browser-associate-allow'))
+    expect(calls('browser_respond')).toEqual([{ id: 'ask-7', name: 'Claude Code' }])
+
+    // One that said nothing about its platform is an agent all the same.
+    act(() => emitEvent(EVENTS.browserAssociate, { id: 'ask-8', key: KEY, kind: 'agent' }))
+    expect(screen.getByTestId('browser-associate-title')).toHaveTextContent(
+      /^An agent wants to connect to Rowel$/
+    )
+    expect(screen.getByTestId('browser-associate-name')).toHaveValue('Agent')
+  })
+
   it('replaces an ask still on screen with a newer one, and answers for that one', async () => {
     await ask()
-    act(() => emitEvent(EVENTS.browserAssociate, { id: 'ask-2', key: 'ZZZZyyyyXXXXwwww0000=' }))
+    act(() =>
+      emitEvent(EVENTS.browserAssociate, {
+        id: 'ask-2',
+        key: 'ZZZZyyyyXXXXwwww0000=',
+        kind: 'extension'
+      })
+    )
 
     expect(screen.getByTestId('browser-associate-fingerprint')).toHaveTextContent('ZZZZyyyy…000=')
     await userEvent.click(screen.getByTestId('browser-associate-allow'))
@@ -202,7 +295,13 @@ describe('the browser consent dialog', () => {
 
     // The same extension asking again — a retry after a timeout — is a new
     // ask with an id of its own, and the answer names that one.
-    act(() => emitEvent(EVENTS.browserAssociate, { id: 'ask-3', key: 'ZZZZyyyyXXXXwwww0000=' }))
+    act(() =>
+      emitEvent(EVENTS.browserAssociate, {
+        id: 'ask-3',
+        key: 'ZZZZyyyyXXXXwwww0000=',
+        kind: 'extension'
+      })
+    )
     await userEvent.click(screen.getByTestId('browser-associate-allow'))
     expect(calls('browser_respond').slice(-1)).toEqual([{ id: 'ask-3', name: 'Browser' }])
   })

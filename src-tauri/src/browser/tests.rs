@@ -8,9 +8,10 @@ use super::manifest::{self, Family, KEEPASSXC, ROWEL};
 use super::protocol::str_of;
 use super::protocol::Code;
 use super::{
-    covered, decide, frame, group_container, group_socket_dir, outcome, proxy, server, settle,
-    socket_name, Answer, AskKind, Asking, Candidate, CandidateItem, GrantAnswer, Locked, NotAsked,
-    Pending, Prepared, SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
+    clients_in, covered, decide, fields_for, frame, group_container, group_socket_dir, outcome,
+    proxy, server, settle, socket_name, visible_in, Answer, AskKind, Asking, Candidate,
+    CandidateItem, Client, ClientKind, GrantAnswer, Locked, NotAsked, Pending, Prepared,
+    SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
 };
 use crate::agents::{self, AccessState, AgentState};
 use crate::crypto::PayloadCipher;
@@ -20,8 +21,9 @@ use crate::store::{migrate, SqliteStore, VaultStore};
 use rowel_broker::grant::{
     Approval, CreatedBy, Grant, GrantRequest, ItemSelector, Mode, State, Target, Terms, VisibleItem,
 };
-use rowel_broker::policy::defaults;
+use rowel_broker::policy::{defaults, Limits};
 use rowel_broker::testing::{nonce, seed, vault, Extension, Mock};
+use rowel_broker::Signal;
 use rowel_core::app::DESKTOP_APP_GROUP;
 
 // --- the consent slot ----------------------------------------------------------
@@ -310,12 +312,44 @@ fn epoch() -> Epoch {
     Session::default().epoch()
 }
 
+fn client(name: &str, key: &str, kind: ClientKind) -> Client {
+    Client {
+        name: name.into(),
+        key: key.into(),
+        kind,
+        platform: None,
+        created_at_ms: 0,
+        last_seen_at_ms: None,
+        agent_id: None,
+    }
+}
+
+/// The extension every request below comes in through.
+fn extension() -> Client {
+    client("Work Chrome", "ext", ClientKind::Extension)
+}
+
+/// An agent let into the lockbox.
+fn agent() -> Client {
+    Client {
+        platform: Some("claude-code".into()),
+        ..client("Claude Code", "agent", ClientKind::Agent)
+    }
+}
+
+/// Let `clients` into the store, as `associate` writes them.
+fn let_in(store: &SqliteStore, clients: &[Client]) {
+    store
+        .meta_set("browser_clients", &serde_json::to_string(clients).unwrap())
+        .unwrap();
+}
+
 fn decided(store: &SqliteStore, held: &mut AgentState, now: i64) -> Result<Prepared, Code> {
     decide(
         locked(store, held, now),
         epoch(),
         "default",
-        "ext",
+        &extension(),
         fill_request(&["gh"]),
     )
 }
@@ -501,6 +535,7 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
 
     assert!(covered(
         locked(&store, &mut held, now),
+        "ext",
         &id,
         "gh",
         Mode::Fill
@@ -518,6 +553,7 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
     assert_eq!(held.grants[0].state, State::Revoked);
     assert!(!covered(
         locked(&store, &mut held, now),
+        "ext",
         &id,
         "gh",
         Mode::Fill
@@ -534,6 +570,7 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
     held.grants[0].state = State::Active;
     assert!(!covered(
         locked(&store, &mut held, now),
+        "ext",
         &id,
         "gh",
         Mode::Fill
@@ -548,6 +585,7 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
     );
     assert!(covered(
         locked(&store, &mut held, now),
+        "ext",
         &id,
         "gh",
         Mode::Fill
@@ -558,6 +596,7 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
     held.access = None;
     assert!(!covered(
         locked(&store, &mut held, now),
+        "ext",
         &id,
         "gh",
         Mode::Fill
@@ -601,7 +640,12 @@ fn a_request_decided_before_two_changes_is_refused_and_the_grants_they_found_end
     assert_eq!(held.access_epoch, decided_under + 2);
 
     assert!(matches!(
-        settle(locked(&store, &mut held, now), "ext", asking, yes("gh")),
+        settle(
+            locked(&store, &mut held, now),
+            &extension(),
+            asking,
+            yes("gh")
+        ),
         Err(Code::GrantDenied)
     ));
     assert_eq!(held.grants.len(), 1, "no grant was made");
@@ -719,7 +763,12 @@ fn a_seal_refuses_the_ask_up_and_what_decided_before_it() {
     // The answer, settled in the next session: refused.
     held.initialise(on());
     assert!(matches!(
-        settle(locked(&store, &mut held, now), "ext", asking, yes("gh")),
+        settle(
+            locked(&store, &mut held, now),
+            &extension(),
+            asking,
+            yes("gh")
+        ),
         Err(Code::GrantDenied)
     ));
     assert_eq!(
@@ -761,7 +810,12 @@ fn a_yes_after_a_switch_went_off_is_refused_and_says_which_switch() {
         now,
     );
     assert!(matches!(
-        settle(locked(&store, &mut held, now), "ext", asking, yes("gh")),
+        settle(
+            locked(&store, &mut held, now),
+            &extension(),
+            asking,
+            yes("gh")
+        ),
         Err(Code::GrantDenied)
     ));
     assert!(held.grants.is_empty(), "nothing released");
@@ -798,7 +852,12 @@ fn a_yes_after_a_switch_went_off_is_refused_and_says_which_switch() {
         now,
     );
     assert!(matches!(
-        settle(locked(&store, &mut held, now), "ext", asking, yes("gh")),
+        settle(
+            locked(&store, &mut held, now),
+            &extension(),
+            asking,
+            yes("gh")
+        ),
         Err(Code::GrantDenied)
     ));
     assert_eq!(
@@ -809,7 +868,12 @@ fn a_yes_after_a_switch_went_off_is_refused_and_says_which_switch() {
     // Nothing changed: the yes stands, for the item picked, and "for 7
     // days" writes its rule first.
     let asking = asked(&store, &mut held, now);
-    let Ok(reply) = settle(locked(&store, &mut held, now), "ext", asking, yes("gh")) else {
+    let Ok(reply) = settle(
+        locked(&store, &mut held, now),
+        &extension(),
+        asking,
+        yes("gh"),
+    ) else {
         panic!("the yes stands")
     };
     assert_eq!(reply.state, State::Active);
@@ -950,6 +1014,403 @@ fn the_answer_names_the_item_picked_or_why_not() {
         outcome(&Verdict::Unanswered, &candidates).err(),
         Some("timeout")
     );
+}
+
+// --- agents as clients, against a store ----------------------------------------
+
+// A client row from before there were kinds is `{"name","key"}`, and reads
+// back as what it was: an extension, let in at time zero, from nowhere in
+// particular.
+#[test]
+fn a_clients_row_from_before_kinds_reads_as_an_extension() {
+    let (_dir, store, _cipher) = vault();
+    store
+        .meta_set("browser_clients", r#"[{"name":"Work Chrome","key":"ext"}]"#)
+        .unwrap();
+    let clients = clients_in(&store);
+    assert_eq!(clients.len(), 1);
+    assert_eq!(clients[0].name, "Work Chrome");
+    assert_eq!(clients[0].kind, ClientKind::Extension);
+    assert_eq!(clients[0].created_at_ms, 0);
+    assert_eq!(clients[0].platform, None);
+    assert_eq!(clients[0].last_seen_at_ms, None);
+}
+
+/// What an agent asks for: the site, not a page, and no ids of its own.
+fn agent_request(origin: &str) -> GrantRequest {
+    GrantRequest {
+        client_key: "agent".into(),
+        agent_id: None,
+        acting_for: None,
+        items: ItemSelector::Lockbox,
+        targets: vec![Target::Origin(origin.into())],
+        modes: vec![Mode::Fill],
+        run_id: Some("run-1".into()),
+        reason: Some("deploying the docs".into()),
+    }
+}
+
+fn fill_signal(signal: &Signal) -> Option<(&str, &str, &str, bool, i64)> {
+    match signal {
+        Signal::FillGrant {
+            grant_id,
+            origin,
+            item,
+            auto_submit,
+            expires_at_ms,
+        } => Some((grant_id, origin, &item.id, *auto_submit, *expires_at_ms)),
+        Signal::GrantEnded { .. } => None,
+    }
+}
+
+// Asking is counted only when a dialog goes up (`request_grant`, under the
+// slot). A request the slot could not take is told "ask again shortly" and
+// is decided again at every retry; none of those reaches a person, so the
+// decisions alone must not spend the client's asks — or a dialog another
+// client holds for fifteen seconds would rate-limit the one waiting on it.
+#[test]
+fn a_decision_that_waits_on_the_slot_is_not_an_ask_on_the_clients_record() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    let_in(&store, &[extension(), agent()]);
+    let mut held = ready();
+    let limits = Limits::default();
+    for attempt in 0..limits.asks_per_minute + 5 {
+        let now = 1_000 + i64::from(attempt) * 1_500;
+        assert!(
+            matches!(
+                decide(
+                    locked(&store, &mut held, now),
+                    epoch(),
+                    "default",
+                    &agent(),
+                    agent_request("https://github.com"),
+                ),
+                Ok(Prepared::Ask(_))
+            ),
+            "attempt {attempt} is decided, not rate-limited"
+        );
+    }
+    assert!(held.rate("agent").check(&limits, 30_000).is_ok());
+}
+
+// An agent names a site; the candidates are the lockbox's logins for it,
+// found by the plaintext host column, and the baseline asks about them. The
+// yes activates the grant and tells every extension — and only the
+// extensions — that there is a fill to make, with the page's origin and the
+// one item. The rows name the agent as an agent, with its run.
+#[test]
+fn an_agents_fill_grant_is_signalled_to_the_extensions_and_not_to_the_agent() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    seed(&store, &cipher, &bank_login("bank", "https://bank.com"));
+    let home = client("Home Firefox", "ext2", ClientKind::Extension);
+    let_in(&store, &[extension(), home.clone(), agent()]);
+    let now = 1_000;
+    let mut held = ready();
+
+    let asking = match decide(
+        locked(&store, &mut held, now),
+        epoch(),
+        "default",
+        &agent(),
+        agent_request("https://github.com"),
+    ) {
+        Ok(Prepared::Ask(asking)) => *asking,
+        other => panic!("the baseline asks: {:?}", other.is_ok()),
+    };
+    assert_eq!(asking.client_name, "Claude Code");
+    assert_eq!(
+        asking
+            .candidates
+            .iter()
+            .map(|c| c.item.id.as_str())
+            .collect::<Vec<_>>(),
+        ["gh"],
+        "the site's logins, not the bank's"
+    );
+    assert_eq!(asking.grant.reason.as_deref(), Some("deploying the docs"));
+    assert!(
+        held.signals.is_empty(),
+        "nothing is signalled before the yes"
+    );
+
+    let reply = settle(
+        locked(&store, &mut held, now),
+        &agent(),
+        asking,
+        Verdict::Answered(Some(GrantAnswer {
+            item_id: "gh".into(),
+            standing_days: None,
+        })),
+    )
+    .expect("the yes stands");
+    assert_eq!(reply.state, State::Active);
+    assert_eq!(reply.uses, 1);
+    let grant = held.grants[0].clone();
+    assert_eq!(grant.client_key, "agent");
+    assert_eq!(grant.served_to, None);
+
+    for key in ["ext", "ext2"] {
+        let queued = held
+            .signals
+            .get(key)
+            .unwrap_or_else(|| panic!("{key} is told"));
+        assert_eq!(queued.len(), 1);
+        assert_eq!(
+            fill_signal(&queued[0]),
+            Some((
+                grant.id.as_str(),
+                "https://github.com",
+                "gh",
+                false,
+                grant.expires_at_ms
+            ))
+        );
+    }
+    assert!(
+        !held.signals.contains_key("agent"),
+        "the agent is never told to fill"
+    );
+
+    let rows = store.audit_rows("dev").unwrap();
+    let events: Vec<&str> = rows.iter().map(|r| r.event.as_str()).collect();
+    assert_eq!(events, ["requested", "granted", "used"]);
+    assert!(rows.iter().all(|r| r.actor_kind == "agent"));
+    assert!(rows.iter().all(|r| r.run_id.as_deref() == Some("run-1")));
+    assert_eq!(rows[0].target.as_deref(), Some("https://github.com"));
+
+    // The extension's own grant, in agent mode, is nobody's to signal: it
+    // holds the reply.
+    let asking = asked(&store, &mut held, now);
+    settle(
+        locked(&store, &mut held, now),
+        &extension(),
+        asking,
+        yes("gh"),
+    )
+    .unwrap();
+    assert_eq!(held.signals["ext"].len(), 1, "no second signal");
+
+    // The lockbox's access goes off: the agent's grant ends, and every
+    // extension is told to sign out of the site.
+    switched(
+        &store,
+        &mut held,
+        "lockbox",
+        |access| access.lockbox_on = false,
+        now,
+    );
+    let ended = Signal::GrantEnded {
+        grant_id: grant.id.clone(),
+        origins: vec!["https://github.com".into()],
+    };
+    assert!(held.signals["ext"].contains(&ended));
+    assert!(held.signals["ext2"].contains(&ended));
+    assert!(!held.signals.contains_key("agent"));
+}
+
+// A site the lockbox has no login for is a refusal on record, before any
+// dialog; an agent's `header` request has no site and is refused the same.
+#[test]
+fn an_agents_request_for_a_site_with_no_login_is_denied_on_record() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    let_in(&store, &[extension(), agent()]);
+    let now = 1_000;
+    let mut held = ready();
+
+    assert!(matches!(
+        decide(
+            locked(&store, &mut held, now),
+            epoch(),
+            "default",
+            &agent(),
+            agent_request("https://gitlab.com"),
+        ),
+        Err(Code::GrantDenied)
+    ));
+    assert_eq!(
+        rows(&store),
+        vec![row("denied", r#"{"reason":"no_candidates"}"#)]
+    );
+    assert!(held.grants.is_empty() && held.signals.is_empty());
+    assert_eq!(store.audit_rows("dev").unwrap()[0].actor_kind, "agent");
+}
+
+// Expiry ends an agent's grant the way the switch does: the row says
+// expired, and the extensions are told to sign out.
+#[test]
+fn an_expired_grant_is_signalled_to_the_extensions() {
+    let (_dir, store, _cipher) = vault();
+    let_in(&store, &[extension(), agent()]);
+    let mut held = ready();
+    let grant = Grant {
+        client_key: "agent".into(),
+        ..active_grant("gh", 1_000)
+    };
+    held.grants.push(grant.clone());
+
+    assert!(!agents::expire_due(
+        Some(&store),
+        &mut held,
+        "dev",
+        grant.expires_at_ms - 1
+    ));
+    assert!(held.signals.is_empty());
+    assert!(agents::expire_due(
+        Some(&store),
+        &mut held,
+        "dev",
+        grant.expires_at_ms
+    ));
+    assert_eq!(held.grants[0].state, State::Expired);
+    assert_eq!(rows(&store), vec![row("ended", r#"{"reason":"expired"}"#)]);
+    assert_eq!(
+        held.signals.get("ext"),
+        Some(&vec![Signal::GrantEnded {
+            grant_id: grant.id,
+            origins: vec!["https://github.com".into()],
+        }])
+    );
+    assert!(!held.signals.contains_key("agent"));
+}
+
+// An agent's fill grant goes to every extension, and the first one served
+// under it claims it: the same extension may keep using it (the TOTP step,
+// a retry), another is refused. The grant's own client is never claimed
+// against.
+#[test]
+fn a_fill_grant_is_claimed_by_the_first_extension_served_under_it() {
+    let (_dir, store, _cipher) = vault();
+    let_in(&store, &[extension(), agent()]);
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(Grant {
+        client_key: "agent".into(),
+        ..active_grant("gh", now)
+    });
+    let id = held.grants[0].id.clone();
+    let covers = |held: &mut AgentState, key: &str| {
+        covered(locked(&store, held, now), key, &id, "gh", Mode::Fill)
+    };
+
+    assert!(
+        covers(&mut held, "ext"),
+        "the first extension served claims it"
+    );
+    assert_eq!(held.grants[0].served_to.as_deref(), Some("ext"));
+    assert!(covers(&mut held, "ext"), "and keeps it");
+    assert!(!covers(&mut held, "ext2"), "another is refused");
+    assert_eq!(held.grants[0].uses, 2, "a refusal is not a use");
+    assert_eq!(held.grants[0].served_to.as_deref(), Some("ext"));
+    assert_eq!(
+        rows(&store),
+        vec![
+            row("used", r#"{"via":"grantId"}"#),
+            row("used", r#"{"via":"grantId"}"#)
+        ]
+    );
+    assert!(
+        store
+            .audit_rows("dev")
+            .unwrap()
+            .iter()
+            .all(|r| r.actor_kind == "agent"),
+        "a use is the grant holder's"
+    );
+
+    // The extension's own grant is claimed by nobody: it is theirs already.
+    held.grants.push(active_grant("gh2", now));
+    let own = held.grants[1].id.clone();
+    assert!(covered(
+        locked(&store, &mut held, now),
+        "ext",
+        &own,
+        "gh2",
+        Mode::Fill
+    ));
+    assert_eq!(held.grants[1].served_to, None);
+}
+
+// What an agent may ask for by name is what its own rules and grants admit.
+// The baseline names every client, so it is left out: it would make the
+// whole lockbox visible to anyone let in.
+#[test]
+fn visible_items_are_the_clients_own_rules_and_grants_never_the_baseline() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    seed(&store, &cipher, &bank_login("bank", "https://bank.com"));
+    seed(&store, &cipher, &github_login("gh2"));
+    let now = 1_000;
+    let mut held = ready();
+
+    assert!(
+        visible_in(&store, &held, &agent(), "default", now)
+            .unwrap()
+            .is_empty(),
+        "the baseline alone shows nothing"
+    );
+
+    agents::write_rules(
+        &store,
+        &[
+            defaults::standing("agent", "gh", "https://github.com", 7, now),
+            defaults::standing("ext", "bank", "https://bank.com", 7, now),
+        ],
+    )
+    .unwrap();
+    held.grants.push(Grant {
+        client_key: "agent".into(),
+        ..active_grant("gh2", now)
+    });
+    held.grants.push(Grant {
+        client_key: "agent".into(),
+        state: State::Expired,
+        ..active_grant("bank", now)
+    });
+
+    let mut visible = visible_in(&store, &held, &agent(), "default", now).unwrap();
+    visible.sort_by(|a, b| a.reference.cmp(&b.reference));
+    assert_eq!(
+        visible
+            .iter()
+            .map(|v| v.reference.as_str())
+            .collect::<Vec<_>>(),
+        ["rowel://default/gh", "rowel://default/gh2"],
+        "its own rule and its own active grant; not the extension's rule, not an ended grant"
+    );
+    assert_eq!(visible[0].title, "GitHub");
+
+    // The switches gate the names as they gate the uses.
+    held.access.as_mut().unwrap().lockbox_on = false;
+    assert_eq!(
+        visible_in(&store, &held, &agent(), "default", now),
+        Err(Code::GrantDenied),
+        "the lockbox's switch is an explicit refusal"
+    );
+    held.access = Some(AccessState {
+        enabled: false,
+        lockbox_on: true,
+    });
+    assert_eq!(
+        visible_in(&store, &held, &agent(), "default", now),
+        Err(Code::AgentsDisabled),
+        "the app's Agents switch is an explicit refusal"
+    );
+    held.access = Some(on());
+    assert_eq!(visible[0].kind, "login");
+    assert_eq!(visible[0].fields, ["password", "otp"]);
+
+    let theirs = visible_in(&store, &held, &extension(), "default", now).unwrap();
+    assert_eq!(theirs.len(), 1);
+    assert_eq!(theirs[0].reference, "rowel://default/bank");
+
+    assert_eq!(fields_for("apikey"), ["apiKey"]);
+    assert_eq!(fields_for("ssh"), ["privateKey"]);
+    assert_eq!(fields_for("card"), ["number", "cvc"]);
+    assert_eq!(fields_for("env"), ["body"]);
+    assert!(fields_for("note").is_empty());
 }
 
 // --- which logins a page gets, against a store ---------------------------------

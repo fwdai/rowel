@@ -139,16 +139,53 @@ pub fn file_opened(app: &AppHandle, path: &str) {
 struct Associate<'a> {
     id: &'a str,
     key: &'a str,
+    kind: rowel_broker::actions::ClientKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    platform: Option<&'a str>,
 }
 
-/// A browser extension asks to be let in (`browser::consent`). `key` is its
-/// identification public key, for the dialog to show a fingerprint of; the
-/// answer comes back through `commands::browser::browser_respond`, naming
-/// `id` — this ask's alone, so a dialog left up past it cannot answer the
-/// next ask the same extension makes.
+/// A client asks to be let in (`browser::consent`): a browser extension, or
+/// an agent saying which `platform` it runs on (`claude-code`, `codex`, …) so
+/// the dialog can name it. `key` is its identification public key, for the
+/// dialog to show a fingerprint of; the answer comes back through
+/// `commands::browser::browser_respond`, naming `id` — this ask's alone, so a
+/// dialog left up past it cannot answer the next ask the same client makes.
 #[cfg(desktop)]
-pub fn browser_associate(app: &AppHandle, id: &str, key: &str) {
-    let _ = app.emit(BROWSER_ASSOCIATE, Associate { id, key });
+pub fn browser_associate(
+    app: &AppHandle,
+    id: &str,
+    key: &str,
+    kind: rowel_broker::actions::ClientKind,
+    platform: Option<&str>,
+) {
+    let _ = app.emit(
+        BROWSER_ASSOCIATE,
+        Associate {
+            id,
+            key,
+            kind,
+            platform,
+        },
+    );
+}
+
+/// Which client a ceremony or a grant came in through: enough for the
+/// dialog to say "Requested by Work Chrome", nothing it could be addressed by.
+#[cfg(desktop)]
+#[derive(Serialize, Clone)]
+struct RequestedBy<'a> {
+    kind: rowel_broker::actions::ClientKind,
+    name: &'a str,
+}
+
+#[cfg(desktop)]
+impl<'a> From<&'a rowel_broker::actions::Client> for RequestedBy<'a> {
+    fn from(client: &'a rowel_broker::actions::Client) -> Self {
+        Self {
+            kind: client.kind,
+            name: &client.name,
+        }
+    }
 }
 
 #[cfg(desktop)]
@@ -167,6 +204,7 @@ struct PasskeyAsk<'a> {
     /// its place here. Not sent for a registration.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     accounts: Vec<PasskeyAccount<'a>>,
+    requested_by: RequestedBy<'a>,
 }
 
 #[cfg(desktop)]
@@ -180,10 +218,10 @@ struct PasskeyAccount<'a> {
     created_at: Option<&'a str>,
 }
 
-/// The page at `origin` asks, through the extension, to create a passkey
-/// (`register`) or to sign in with one (`get`). The site it is for is
-/// `rpId`; the account, on a registration, is the one the site names, and on
-/// a sign-in the `accounts` are the ones the vault could sign in as. The
+/// The page at `origin` asks, through the extension `requested_by`, to create
+/// a passkey (`register`) or to sign in with one (`get`). The site it is for
+/// is `rpId`; the account, on a registration, is the one the site names, and
+/// on a sign-in the `accounts` are the ones the vault could sign in as. The
 /// answer comes back through `commands::browser::browser_passkey_respond`,
 /// naming `id`, so a dialog left up past this ask cannot answer the next.
 #[cfg(desktop)]
@@ -192,8 +230,10 @@ pub fn browser_passkey(
     id: &str,
     origin: &str,
     ceremony: crate::passkey::Ceremony<'_>,
+    requested_by: &rowel_broker::actions::Client,
 ) {
     use crate::passkey::Ceremony;
+    let requested_by = RequestedBy::from(requested_by);
     let ask = match ceremony {
         Ceremony::Register {
             rp_id,
@@ -207,6 +247,7 @@ pub fn browser_passkey(
             user_name,
             user_display_name,
             accounts: Vec::new(),
+            requested_by,
         },
         Ceremony::SignIn { rp_id, accounts } => PasskeyAsk {
             id,
@@ -223,6 +264,7 @@ pub fn browser_passkey(
                     created_at: account.created_at.as_deref(),
                 })
                 .collect(),
+            requested_by,
         },
     };
     let _ = app.emit(BROWSER_PASSKEY, ask);
@@ -236,21 +278,29 @@ pub fn browser_clients(app: &AppHandle) {
     let _ = app.emit(BROWSER_CLIENTS, ());
 }
 
-/// A client asking to use a login through the extension in agent mode: who
-/// asks (the name the user gave it, or its key's two ends), where, how, and
-/// which of the page's logins it may be given — the dialog picks one. `verify`
-/// says what a step-up ask takes before the answer counts: a biometric prompt,
-/// or the master password where the device has none. The answer comes back
-/// through `commands::browser::agent_grant_respond`, naming `id`, so a dialog
-/// left up past this ask cannot answer the next.
+/// A client asking to use a login on a page: who asks (the name the user gave
+/// it, or its key's two ends, and what kind of client it is), where, how, and
+/// which of the page's logins it may be given — the dialog picks one. An
+/// agent may say why (`reason`, its own words, bounded and never interpreted);
+/// `ends_session` is the sign-out notice: when a fill grant ends, the site's
+/// cookies go with it in the browser that filled, whichever client asked for
+/// it. `verify` says what a step-up
+/// ask takes before the answer counts: a biometric prompt, or the master
+/// password where the device has none. The answer comes back through
+/// `commands::browser::agent_grant_respond`, naming `id`, so a dialog left up
+/// past this ask cannot answer the next.
 #[cfg(desktop)]
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentGrantAsk<'a> {
     pub id: &'a str,
     pub client_name: &'a str,
+    pub client_kind: rowel_broker::actions::ClientKind,
     pub origin: &'a str,
     pub mode: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<&'a str>,
+    pub ends_session: bool,
     pub step_up: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify: Option<&'static str>,

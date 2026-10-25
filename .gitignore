@@ -19,6 +19,9 @@ extension/playwright-report/
 # Rust / Tauri
 src-tauri/target
 src-tauri/gen/schemas
+# The command line tool as the release build stages it for the bundler
+# (`rowel-cli-<target triple>`, see release.yml); a dev build never needs it.
+src-tauri/binaries/
 
 # Updater signing keys — never commit
 *.key

@@ -4723,6 +4723,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rowel-cli"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "interprocess",
+ "rand",
+ "rowel-broker",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "rowel-core"
 version = "0.1.0"
 dependencies = [

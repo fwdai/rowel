@@ -40,6 +40,7 @@ const kpActions = {
     LOCK_DATABASE: 'lock-database',
     DATABASE_LOCKED: 'database-locked',
     DATABASE_UNLOCKED: 'database-unlocked',
+    ROWEL_SIGNAL: 'rowel-signal', // Rowel: the host has signals queued for this client (background/grants.js)
     GET_DATABASE_GROUPS: 'get-database-groups',
     CREATE_NEW_GROUP: 'create-new-group',
     GET_TOTP: 'get-totp',
@@ -852,6 +853,7 @@ keepass.reconnect = async function(tab = null, connectionTimeout = 1500) {
     }
 
     await keepass.testAssociation();
+    await grants.onSignal(); // Rowel: a signal queued while the port was down (background/grants.js)
     await keepass.isConfigured();
     keepass.updateDatabaseHashToContent();
     return true;
@@ -987,7 +989,6 @@ keepass.updateDatabase = async function() {
     keepass.associated.value = false;
     keepass.associated.hash = null;
     page.clearAllLogins();
-    grants.clearAll(); // Rowel: a lock ends every grant; nothing is served from a locked vault
 
     await keepass.testAssociation(null, [ true ]);
 

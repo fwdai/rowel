@@ -749,7 +749,7 @@
   "Detected": "Détecté",
   "Could not be set up": "Configuration impossible",
   "Ready — KeePassXC-Browser here connects to KeePassXC": "Prêt — ici, KeePassXC-Browser se connecte à KeePassXC",
-  "Connected extensions": "Extensions connectées",
+  "Connected extensions and agents": "Extensions et agents connectés",
   "No extension has connected to this vault yet": "Aucune extension connectée à ce coffre pour l’instant",
   "Forget": "Oublier",
   "Browser": "Navigateur",

@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { AgentGrantAsk, PasskeyAsk } from './browser'
+import type { AgentGrantAsk, AssociateAsk, PasskeyAsk } from './browser'
 import type { RemotePack } from './setup'
 import type { SyncStatus } from './sync'
 import type { EntryMeta } from './types'
@@ -63,12 +63,13 @@ export interface EventPayloads {
    */
   'file:opened': { path: string }
   /**
-   * A browser extension asks to be let in. `key` is its identification public
-   * key, base64, for the consent dialog to show a fingerprint of; `id` names
-   * this ask, and the answer goes back through `browser_respond` under it, so
-   * a dialog left up past its ask cannot answer the next. Desktop only.
+   * A client — a browser extension, or an agent — asks to be let in. `key` is
+   * its identification public key, base64, for the consent dialog to show a
+   * fingerprint of; `id` names this ask, and the answer goes back through
+   * `browser_respond` under it, so a dialog left up past its ask cannot
+   * answer the next. Desktop only.
    */
-  'browser:associate': { id: string; key: string }
+  'browser:associate': AssociateAsk
   /**
    * A page asks, through the extension, for a passkey ceremony. Rust holds the
    * request open until `browser_passkey_respond`, or a minute. Desktop only.

@@ -1561,5 +1561,9 @@
     "errorMessageAgentsDisabled": {
         "message": "Agents are turned off in Rowel's settings",
         "description": "Rowel: error code 46."
+    },
+    "agentModeGrantEndedNotification": {
+        "message": "The agent is done: Rowel signed you out of the site in this browser",
+        "description": "Rowel: notification when an agent's grant ended and the site's cookies were deleted."
     }
 }

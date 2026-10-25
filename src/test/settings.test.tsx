@@ -2523,3 +2523,51 @@ describe('Settings sub-pages', () => {
     expect(useUi.getState().settings).toBe(true)
   })
 })
+
+// The command line tool row on General: three states, all Rust's to say.
+describe('Settings › General › command line tool', () => {
+  const BUNDLED = '/Applications/Rowel.app/Contents/MacOS/rowel-cli'
+  const LINK = '/usr/local/bin/rowel'
+
+  it('says the tool ships with the packaged app when none is bundled', async () => {
+    await open()
+    expect(await screen.findByTestId('settings-cli-missing')).toHaveTextContent(
+      'ships with the packaged app'
+    )
+    expect(screen.queryByTestId('settings-cli-install')).not.toBeInTheDocument()
+  })
+
+  it('offers Install for a bundled tool, and shows where it went', async () => {
+    mockCommand('cli_status', () => ({ bundled: BUNDLED, installed: null, installDir: '/usr/local/bin' }))
+    mockCommand('cli_install', () => ({ bundled: BUNDLED, installed: LINK, installDir: '/usr/local/bin' }))
+    await open()
+    expect(await screen.findByTestId('settings-cli-bundled')).toHaveTextContent('rowel command')
+
+    await userEvent.click(screen.getByTestId('settings-cli-install'))
+
+    expect(calls('cli_install')).toHaveLength(1)
+    expect(await screen.findByTestId('settings-cli-installed')).toHaveTextContent(
+      `Installed as ${LINK}`
+    )
+    expect(screen.queryByTestId('settings-cli-install')).not.toBeInTheDocument()
+  })
+
+  it('shows the path of a tool already on the PATH', async () => {
+    mockCommand('cli_status', () => ({ bundled: BUNDLED, installed: LINK, installDir: '/usr/local/bin' }))
+    await open()
+    expect(await screen.findByTestId('settings-cli-installed')).toHaveTextContent(LINK)
+    expect(screen.queryByTestId('settings-cli-install')).not.toBeInTheDocument()
+  })
+
+  it('reports an install Rust refused and keeps the button', async () => {
+    mockCommand('cli_status', () => ({ bundled: BUNDLED, installed: null, installDir: '/usr/local/bin' }))
+    mockCommand('cli_install', () =>
+      Promise.reject({ kind: 'other', message: '/usr/local/bin/rowel exists and is not a link' })
+    )
+    await open()
+    await userEvent.click(await screen.findByTestId('settings-cli-install'))
+
+    expect(await screen.findByTestId('settings-cli-error')).toHaveTextContent('is not a link')
+    expect(screen.getByTestId('settings-cli-install')).toBeEnabled()
+  })
+})

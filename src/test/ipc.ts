@@ -314,7 +314,12 @@ const DEFAULTS: Record<string, Handler> = {
   agent_rules: () => [],
   agent_grants: () => [],
   agent_revoke_rule: () => undefined,
-  agent_end_grant: () => undefined
+  agent_end_grant: () => undefined,
+
+  // The command line tool: a dev build, with nothing bundled beside it. A
+  // spec about the Install button mocks a bundled one.
+  cli_status: () => ({ bundled: null, installed: null, installDir: null }),
+  cli_install: reject({ kind: 'other', message: 'the command line tool is not bundled with this build' })
 }
 
 const overrides = new Map<string, Handler>()

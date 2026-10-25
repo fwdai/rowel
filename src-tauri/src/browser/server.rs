@@ -272,6 +272,16 @@ pub fn notify_unlocked() {
     signal(UNLOCKED);
 }
 
+/// The host has something queued for an extension (`AgentState::signals`):
+/// a fill grant an agent obtained, a grant that ended. What it is stays
+/// inside the sealed `get-signals` the extension answers this with; the
+/// wake-up itself says nothing, like the lock signals beside it. Called with
+/// every lock let go — a queue is unbounded and a send never waits, but the
+/// order of things is that a signal follows the change it reports.
+pub fn notify_signals() {
+    signal(rowel_broker::ROWEL_SIGNAL);
+}
+
 // Queue `message` for every connection, in the clear and unsolicited, as
 // KeePassXC sends its signals: no nonce to seal under, and nothing in them
 // the extension would not learn from its next ask. Never waits: a queue is

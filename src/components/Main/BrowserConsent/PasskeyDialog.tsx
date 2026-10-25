@@ -83,6 +83,11 @@ export default function PasskeyDialog({ ask }: { ask: PasskeyAsk }) {
         <p className="mt-1.5 text-base text-text2">
           {t('Asked by {{origin}} through the browser extension.', { origin: ask.origin })}
         </p>
+        {/* Which extension, by the name it was let in under: with two browsers
+            connected, the one asking is the one the user is looking at. */}
+        <p className="mt-1 text-sm text-text2" data-testid="browser-passkey-requested-by">
+          {t('Requested by {{name}}', { name: ask.requestedBy.name })}
+        </p>
 
         {choice && (
           <div className="mt-4">

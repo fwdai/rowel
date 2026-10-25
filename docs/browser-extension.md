@@ -151,6 +151,45 @@ actions". While it is on:
   `RateLimited` "Too many requests; wait a minute.", `AgentsDisabled` "Turn on
   Agents in Rowel › Settings › Browser & agents". The notifications carry no
   credential and no URL.
+- **Grants an agent asked for.** The host pushes a clear `rowel-signal` (no
+  content, beside `database-locked`; the Safari shim's `isSignal` knows it)
+  and the extension answers with a sealed `get-signals`
+  (`grants.onSignal()`, also run once after every reconnect so a signal
+  queued while the port was down is delivered). A `fill-grant { grantId,
+  origin, item, autoSubmit, expiresAtMs }` is remembered in the same map with
+  the host's expiry and the origin is marked agent-driven
+  (`browser.storage.session["rowelAgentGrants"]`). The host tells every
+  profile and the agent drives one, so only the profile with a tab at that
+  origin — now, or when one finishes loading there later
+  (`tabs.onUpdated`) — acts under it: records it as one agent mode is on
+  for here (`rowelAgentGrants`, which holds only those, never a grant
+  merely held for another profile, since it is this map emptying that
+  turns agent mode back off), turns agent mode on through the popup's own
+  path if it was off (`rowelAgentModeByGrant` remembers that a grant did
+  it) and tells the tab to redetect its fields, which reloads its settings
+  and retrieves with the grant; the others keep the grant in memory
+  (`rowelGrants`, marked `agent`) and change nothing. A login served under
+  the grant marks it `served` in that profile: signed out where it was
+  signed in, the sign-out at the end (and on a lock) is only that
+  profile's. A `grant-ended { grantId, origins }` is session end: every cookie of
+  each origin's registrable domain is deleted — in every cookie store the
+  browser lists (`cookies.getAllCookieStores()`, then `getAll({ domain,
+  storeId })` per store, since one call sees one store), partitioned
+  cookies asked for by name (`partitionKey: {}`) and, on Firefox, every
+  first-party domain (`firstPartyDomain: null`, which first-party isolation
+  requires), a variant a browser rejects being a case it does not have,
+  and each `cookies.remove` naming the cookie's own store, partition and
+  first-party domain; Safari has no cookies API, so it is best-effort
+  there — the grant is forgotten, "The agent is done: Rowel signed
+  you out of the site in this browser" is shown, and agent mode goes back off
+  once no agent grant is left, only if a grant turned it on. An origin a newer
+  grant holds is left whole, session included: it is that grant's to end. A
+  lock (`database-locked`) ends every grant with no `grant-ended` to follow,
+  so `grants.onLocked()` signs out of every origin a grant was held for, the
+  person's own agent-mode grants included. Signals, the lock and an
+  exposure run through one queue in `grants.js`, each to its end before the
+  next, so a lock's cleanup never overlaps the fill-grant an unlock brings
+  right after it. Agent mode the person turned on is never touched.
 - **No in-page UI.** `content/agent-mode.js` (`kpxcAgentMode.isOn()`) gates
   the login-form icons, the username/TOTP autocomplete, the save/update
   banner, the custom-fields banner and the login popup. The admitted entry is
@@ -268,8 +307,8 @@ surface, and each file has a set way to resolve it:
 | `rowel/icons/**` (PNG + SVG) | Take upstream's, then `bun run extension:icons`. The toolbar state badges come from upstream's SVGs, so new ones are picked up |
 | `rowel/manifest.json`, `dist/manifest_chromium.json`, `dist/manifest_firefox.json` | Take upstream's changes and keep ours for `name`, `version`/`version_name`, `author`, `homepage_url`, `key`, `default_title`, `css/rowel.css` and `css/rowel-tokens.css` in `web_accessible_resources`, `content/agent-mode.js` after `content/fill.js` in `content_scripts`, and on Firefox `browser_specific_settings` (add-on ID, `data_collection_permissions`), `background/grants.js` after `background/event.js` in `background.scripts`, plus the dropped `https://api.github.com/` permission |
 | `rowel/background/background_service.js` | Keep `'grants.js'` after `'event.js'` in `importScripts` |
-| `rowel/background/client.js` | Keep `nativeHostName = 'app.rowel.browser'`, and the Rowel codes 40–46 (`GRANT_DENIED` … `AGENTS_DISABLED`) in `kpErrors` with their `errorMessages` entries |
-| `rowel/background/keepass.js` | Keep the three Rowel lines: `grants.sendGetLogins(tab, messageData, nonce)` in place of `keepassClient.sendMessage(...)` in `retrieveCredentials`, `Object.assign(messageData, await grants.totpFields(tab))` in `getTotp`, and `grants.clearAll()` in `updateDatabase` |
+| `rowel/background/client.js` | Keep `nativeHostName = 'app.rowel.browser'`, the Rowel codes 40–46 (`GRANT_DENIED` … `AGENTS_DISABLED`) in `kpErrors` with their `errorMessages` entries, and in `onNativeMessage` the `if (response.action === kpActions.DATABASE_LOCKED) { grants.onLocked(); }` block before the lock/unlock one and the `if (response.action === kpActions.ROWEL_SIGNAL) { grants.onSignal(); return; }` block after it |
+| `rowel/background/keepass.js` | Keep the Rowel lines: `ROWEL_SIGNAL: 'rowel-signal'` in `kpActions`, `grants.sendGetLogins(tab, messageData, nonce)` in place of `keepassClient.sendMessage(...)` in `retrieveCredentials`, `Object.assign(messageData, await grants.totpFields(tab, sender))` in `getTotp`, and `await grants.onSignal()` after `testAssociation` in `reconnect` |
 | `rowel/background/page.js` | Keep `passkeys: true` and `agentMode: false` in `defaultSettings`. Upstream ships passkeys off; Rowel's host always serves them (it reports 2.7.7, the version upstream gates the feature on), so a new install has them on. A setting already stored keeps its value |
 | `rowel/common/global.js` | Keep `EXTENSION_NAME` and the notification title as `Rowel` |
 | `rowel/content/rowel.js` | Keep the four Rowel lines: `await kpxcAgentMode.onPageLoad()` after `kpxc.isFirefox = …` in `initContentScript`; the `if (kpxcAgentMode.isOn()) { return kpxcAgentMode.fill(); }` block after the empty-credentials check in `prepareCredentials`; `\|\| kpxcAgentMode.isOn()` in `initLoginPopup`'s first `if`; `(kpxc.settings.autoRetrieveCredentials \|\| kpxcAgentMode.isOn())` in `retrieveCredentials`'s condition, so agent mode retrieves on its own with the setting off |

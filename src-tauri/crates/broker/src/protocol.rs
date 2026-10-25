@@ -74,6 +74,46 @@ pub enum Code {
 }
 
 impl Code {
+    /// Every code, so a client reading `errorCode` off the wire can name the
+    /// refusal it was sent (`from_number`).
+    const ALL: [Code; 29] = [
+        Code::DatabaseNotOpened,
+        Code::ClientPublicKeyNotReceived,
+        Code::CannotDecryptMessage,
+        Code::ActionCancelledOrDenied,
+        Code::CannotEncryptMessage,
+        Code::AssociationFailed,
+        Code::IncorrectAction,
+        Code::EmptyMessageReceived,
+        Code::NoUrlProvided,
+        Code::NoLoginsFound,
+        Code::NoGroupsFound,
+        Code::NoValidUuidProvided,
+        Code::PasskeyCredentialExcluded,
+        Code::PasskeyRequestCanceled,
+        Code::PasskeyEmptyPublicKey,
+        Code::PasskeyInvalidUrl,
+        Code::PasskeyDomainNotValid,
+        Code::PasskeyRpIdMismatch,
+        Code::PasskeyNoSupportedAlgorithms,
+        Code::PasskeyUnknownError,
+        Code::PasskeyInvalidChallenge,
+        Code::PasskeyInvalidUserId,
+        Code::GrantDenied,
+        Code::GrantPending,
+        Code::GrantExpired,
+        Code::NotPermittedForKind,
+        Code::PolicyRequiresApproval,
+        Code::RateLimited,
+        Code::AgentsDisabled,
+    ];
+
+    /// The code numbered `n`, or `None` for a number this host never raises —
+    /// a KeePassXC code it does not use, or one from a newer host.
+    pub fn from_number(n: u8) -> Option<Code> {
+        Code::ALL.into_iter().find(|code| *code as u8 == n)
+    }
+
     pub fn message(self) -> &'static str {
         match self {
             Code::PasskeyCredentialExcluded => "Credential is excluded",

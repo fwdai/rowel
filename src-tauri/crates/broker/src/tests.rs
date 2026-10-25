@@ -1,19 +1,20 @@
 use std::io::Cursor;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use crypto_box::{aead::Aead, Nonce};
 use serde_json::{json, Map, Value};
 
-use crate::actions::{Client, Connection, Login};
+use crate::actions::{Client, ClientKind, Connection, Hello, Login, VisibleRef};
+use crate::client::{Peer, PeerError};
 use crate::frame;
-use crate::grant::{GrantRequest, ItemSelector, Mode, Target};
+use crate::grant::{GrantRequest, ItemSelector, Mode, Target, VisibleItem};
 use crate::lockbox::save_login_in;
 use crate::protocol::{increment, Code, NONCE_LEN, VERSION};
+use crate::signal::{Signal, ROWEL_SIGNAL};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::socket::{root_dir, socket_name, IDENTIFIER};
 use crate::testing::{
     error_code, login, nonce, raw, ready, seed, stored, vault, Extension, GrantAnswer, Mock,
-    GRANT_ID,
+    GRANT_EXPIRES_AT_MS, GRANT_ID,
 };
 use rowel_core::models::{Entry, PasswordHistoryItem};
 use rowel_core::store::VaultStore;
@@ -44,8 +45,29 @@ fn increment_carries_across_bytes() {
 
 #[test]
 fn the_exchange_answers_with_the_hosts_key_and_the_next_nonce() {
-    let (extension, _) = ready();
-    assert!(extension.host.is_some());
+    // `exchange` checks the nonce and `success` on the way in; what is left
+    // to see is the key, and that a sealed request opens afterwards.
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock::unlocked());
+    let response = extension.exchange(&mut connection);
+    assert_eq!(response["success"], "true");
+    assert_eq!(response["version"], VERSION);
+    assert!(response["publicKey"].is_string());
+    let sealed = extension.send(&mut connection, "get-databasehash", json!({}));
+    assert_eq!(sealed["hash"], "abc123");
+}
+
+#[test]
+fn a_code_is_found_by_its_number_and_an_unknown_number_is_none() {
+    assert_eq!(Code::from_number(8), Some(Code::AssociationFailed));
+    assert_eq!(Code::from_number(43), Some(Code::NotPermittedForKind));
+    assert_eq!(Code::from_number(46), Some(Code::AgentsDisabled));
+    assert_eq!(
+        Code::from_number(2),
+        None,
+        "a KeePassXC code this host never raises"
+    );
+    assert_eq!(Code::from_number(99), None);
 }
 
 #[test]
@@ -88,19 +110,12 @@ fn a_tampered_message_is_refused() {
 #[test]
 fn a_message_whose_action_differs_from_the_envelope_is_refused() {
     let (extension, mut connection) = ready();
-    let sealed = extension.host.as_ref().unwrap();
-    let nonce = nonce();
-    let inner = json!({ "action": "lock-database" });
-    let cipher = sealed
-        .encrypt(
-            Nonce::from_slice(&nonce),
-            serde_json::to_vec(&inner).unwrap().as_slice(),
-        )
+    let (mut request, _) = extension
+        .channel()
+        .seal("test", "lock-database", json!({}))
         .unwrap();
-    let response = raw(
-        &mut connection,
-        &json!({ "action": "get-databasehash", "message": STANDARD.encode(cipher), "nonce": STANDARD.encode(nonce) }),
-    );
+    request["action"] = "get-databasehash".into();
+    let response = raw(&mut connection, &request);
     assert_eq!(error_code(&response), Code::IncorrectAction as u8);
 }
 
@@ -146,6 +161,19 @@ fn connection_mock(connection: &Connection<Mock>) -> &Mock {
     connection.host()
 }
 
+/// A stored extension as the scripted host writes one.
+fn extension_client(name: &str, key: &str) -> Client {
+    Client {
+        name: name.into(),
+        key: key.into(),
+        kind: ClientKind::Extension,
+        platform: None,
+        created_at_ms: 0,
+        last_seen_at_ms: None,
+        agent_id: None,
+    }
+}
+
 // --- association -------------------------------------------------------------
 
 #[test]
@@ -177,12 +205,24 @@ fn associate_asks_the_user_and_remembers_the_answer() {
     );
     assert_eq!(response["id"], "Chrome");
     assert_eq!(response["hash"], "abc123");
+    // No `hello`: the reply KeePassXC-Browser knows, plus what this broker
+    // can do beyond it — and no `clientId`, which is the agent protocol's.
+    assert_eq!(response["brokerCapabilities"], json!(["grants", "signals"]));
+    assert_eq!(
+        sorted_keys(&response),
+        [
+            "action",
+            "brokerCapabilities",
+            "hash",
+            "id",
+            "nonce",
+            "success",
+            "version"
+        ]
+    );
     assert_eq!(
         connection.host().clients.borrow().as_slice(),
-        &[Client {
-            name: "Chrome".into(),
-            key: "id-key".into()
-        }]
+        &[extension_client("Chrome", "id-key")]
     );
 
     // And the connection is associated from here on: no keys needed.
@@ -278,6 +318,200 @@ fn a_request_carrying_a_remembered_key_counts_as_associated() {
         json!({ "url": "https://github.com", "keys": [{ "id": "Chrome", "key": "id-key" }] }),
     );
     assert_eq!(response["count"], 1);
+}
+
+// --- kinds: who a client is, and what the record says ----------------------------
+
+// The rows in a lockbox from before there were kinds are `{"name","key"}`;
+// they must read back as what they were, extensions, and the full record must
+// survive a trip through the store.
+#[test]
+fn a_client_row_from_before_kinds_reads_as_an_extension() {
+    let old: Client = serde_json::from_str(r#"{"name":"Chrome","key":"id-key"}"#).unwrap();
+    assert_eq!(old, extension_client("Chrome", "id-key"));
+    assert_eq!(old.kind, ClientKind::Extension);
+    assert_eq!(old.created_at_ms, 0);
+    assert_eq!(
+        serde_json::to_value(&old).unwrap(),
+        json!({ "name": "Chrome", "key": "id-key", "kind": "extension", "createdAtMs": 0 }),
+        "nothing it did not have is written back as a value"
+    );
+
+    let agent = Client {
+        name: "Claude".into(),
+        key: "agent-key".into(),
+        kind: ClientKind::Agent,
+        platform: Some("claude-code".into()),
+        created_at_ms: 1_700_000_000_000,
+        last_seen_at_ms: Some(1_700_000_001_000),
+        agent_id: Some("def-1".into()),
+    };
+    let wire = serde_json::to_value(&agent).unwrap();
+    assert_eq!(
+        wire,
+        json!({
+            "name": "Claude", "key": "agent-key", "kind": "agent", "platform": "claude-code",
+            "createdAtMs": 1_700_000_000_000i64, "lastSeenAtMs": 1_700_000_001_000i64, "agentId": "def-1"
+        })
+    );
+    assert_eq!(serde_json::from_value::<Client>(wire).unwrap(), agent);
+}
+
+#[test]
+fn a_hello_reads_with_every_field_optional() {
+    let bare: Hello = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(bare, Hello::default());
+    assert_eq!(bare.kind, ClientKind::Extension);
+    let agent: Hello =
+        serde_json::from_value(json!({ "kind": "agent", "platform": "claude-code" })).unwrap();
+    assert_eq!(
+        agent,
+        Hello {
+            kind: ClientKind::Agent,
+            platform: Some("claude-code".into()),
+            version: None,
+            capabilities: Vec::new(),
+        }
+    );
+    assert!(serde_json::from_value::<Hello>(json!({ "kind": "robot" })).is_err());
+}
+
+#[test]
+fn associate_with_a_hello_stores_the_kind_and_platform_and_names_the_client() {
+    let (extension, mut connection) = ready();
+    let response = extension.send(
+        &mut connection,
+        "associate",
+        json!({
+            "key": extension.public_key(),
+            "idKey": "agent-key",
+            "hello": { "kind": "agent", "platform": "claude-code", "version": "1.2.0", "capabilities": ["grants"] },
+        }),
+    );
+    assert_eq!(response["id"], "Chrome");
+    assert_eq!(response["hash"], "abc123");
+    assert_eq!(response["brokerCapabilities"], json!(["grants", "signals"]));
+    assert_eq!(response["clientId"], "agent-key");
+    assert_eq!(
+        sorted_keys(&response),
+        [
+            "action",
+            "brokerCapabilities",
+            "clientId",
+            "hash",
+            "id",
+            "nonce",
+            "success",
+            "version"
+        ]
+    );
+    let stored = connection.host().clients.borrow();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].kind, ClientKind::Agent);
+    assert_eq!(stored[0].platform.as_deref(), Some("claude-code"));
+    assert_eq!(stored[0].key, "agent-key");
+}
+
+#[test]
+fn a_hello_that_does_not_read_fails_the_association() {
+    let (extension, mut connection) = ready();
+    for hello in [json!("agent"), json!({ "kind": "robot" }), json!(42)] {
+        let response = extension.send(
+            &mut connection,
+            "associate",
+            json!({ "key": extension.public_key(), "idKey": "id-key", "hello": hello }),
+        );
+        assert_eq!(
+            error_code(&response),
+            Code::AssociationFailed as u8,
+            "{hello}"
+        );
+    }
+    assert!(connection.host().clients.borrow().is_empty());
+    let response = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": "https://github.com" }),
+    );
+    assert_eq!(error_code(&response), Code::AssociationFailed as u8);
+}
+
+// What an agent says about itself goes into a stored row and a dialog line,
+// so each field is cut to a length a line can hold — cut, not refused, since
+// none of it decides anything.
+#[test]
+fn what_a_hello_says_is_bounded() {
+    let (extension, mut connection) = ready();
+    extension.send(
+        &mut connection,
+        "associate",
+        json!({
+            "key": extension.public_key(),
+            "idKey": "agent-key",
+            "hello": { "kind": "agent", "platform": "p".repeat(100) },
+        }),
+    );
+    let stored = connection.host().clients.borrow();
+    assert_eq!(stored[0].platform.as_deref(), Some("p".repeat(64).as_str()));
+}
+
+#[test]
+fn an_agent_is_refused_at_the_door_while_agents_are_off() {
+    let (extension, mut connection) = ready();
+    connection.host().agents_enabled.set(false);
+    let response = extension.send(
+        &mut connection,
+        "associate",
+        json!({ "key": extension.public_key(), "idKey": "agent-key", "hello": { "kind": "agent" } }),
+    );
+    assert_eq!(error_code(&response), Code::AgentsDisabled as u8);
+    assert!(connection.host().clients.borrow().is_empty());
+
+    // An extension is let in regardless: the switch is about agents.
+    let response = extension.send(
+        &mut connection,
+        "associate",
+        json!({ "key": extension.public_key(), "idKey": "id-key" }),
+    );
+    assert_eq!(response["id"], "Chrome");
+}
+
+#[test]
+fn test_associate_tells_the_host_the_client_was_seen() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock::unlocked().known("Chrome", "id-key").known_agent(
+        "Claude",
+        "agent-key",
+        "claude-code",
+    ));
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "other" }),
+    );
+    assert!(
+        connection.host().seen.borrow().is_empty(),
+        "a key the vault does not hold was not seen"
+    );
+
+    let right = extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Claude", "key": "agent-key", "hello": { "kind": "agent", "platform": "claude-code" } }),
+    );
+    assert_eq!(right["id"], "Claude");
+    assert_eq!(right["clientId"], "agent-key");
+    assert_eq!(right["brokerCapabilities"], json!(["grants", "signals"]));
+    assert_eq!(connection.host().seen.borrow().as_slice(), ["agent-key"]);
+
+    let malformed = extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key", "hello": "browser" }),
+    );
+    assert_eq!(error_code(&malformed), Code::AssociationFailed as u8);
+    assert_eq!(connection.host().seen.borrow().len(), 1);
 }
 
 // --- what the extension gets -------------------------------------------------
@@ -738,6 +972,597 @@ fn the_grant_paths_are_refused_before_association() {
     assert!(host.exposures.borrow().is_empty());
 }
 
+// --- the vocabularies: what each kind may say ---------------------------------------
+
+const AGENT_KEY: &str = "agent-key";
+
+/// Associated as the agent "Claude" from claude-code, with two logins for
+/// GitHub and the host scripted to `answer`.
+fn agent_associated(answer: GrantAnswer) -> (Extension, Connection<Mock>) {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        logins: two_logins(),
+        grant_answer: answer,
+        ..Mock::unlocked()
+            .known("Chrome", "id-key")
+            .known_agent("Claude", AGENT_KEY, "claude-code")
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Claude", "key": AGENT_KEY }),
+    );
+    (extension, connection)
+}
+
+/// The simplest well-formed `request-grant`: one login, at GitHub, to fill.
+fn grant_request() -> Value {
+    json!({
+        "runId": "run-1",
+        "reason": "deploy the docs site",
+        "items": { "ids": ["gh2"] },
+        "targets": [{ "origin": "https://github.com" }],
+        "modes": ["fill"],
+    })
+}
+
+/// Every action whose reply carries a secret, with a request the host would
+/// otherwise answer.
+fn secret_carrying_actions() -> Vec<(&'static str, Value)> {
+    vec![
+        ("get-logins", json!({ "url": GH_LOGIN })),
+        ("get-totp", json!({ "uuid": "gh" })),
+        (
+            "set-login",
+            json!({ "url": GH_LOGIN, "login": "a", "password": "b" }),
+        ),
+        (
+            "passkeys-get",
+            json!({ "publicKey": {}, "origin": GH_LOGIN }),
+        ),
+        (
+            "passkeys-register",
+            json!({ "publicKey": {}, "origin": GH_LOGIN }),
+        ),
+        ("get-signals", json!({})),
+        ("report-exposure", json!({ "grantId": "g1" })),
+    ]
+}
+
+fn agent_actions() -> Vec<(&'static str, Value)> {
+    vec![
+        ("request-grant", grant_request()),
+        (
+            "wait-grant",
+            json!({ "grantId": GRANT_ID, "timeoutMs": 10 }),
+        ),
+        ("grant-status", json!({ "grantId": GRANT_ID })),
+        ("end-grant", json!({ "grantId": GRANT_ID })),
+        ("list-visible", json!({})),
+    ]
+}
+
+// An agent never receives a value, by construction: every action that
+// carries one is refused in the clear before the host is asked anything,
+// and the refusal says which door it was.
+#[test]
+fn an_agent_is_refused_every_action_that_carries_a_secret() {
+    let (extension, mut connection) = agent_associated(GrantAnswer::Active("gh2".into()));
+    for (action, message) in secret_carrying_actions() {
+        let response = extension.send(&mut connection, action, message);
+        assert_eq!(
+            error_code(&response),
+            Code::NotPermittedForKind as u8,
+            "{action}"
+        );
+        assert_eq!(
+            sorted_keys(&response),
+            ["action", "error", "errorCode"],
+            "{action}"
+        );
+        // The key set above is the field check; what is left is that no
+        // value leaked into the text.
+        let wire = serde_json::to_string(&response).unwrap();
+        for secret in ["hunter2", "s3cret", "123456", "654321", "octocat"] {
+            assert!(
+                !wire.contains(secret),
+                "{secret} in {action}'s refusal: {wire}"
+            );
+        }
+    }
+    {
+        let host = connection.host();
+        assert!(host.grant_requests.borrow().is_empty());
+        assert!(host.saves.borrow().is_empty());
+        assert!(host.passkey_requests.borrow().is_empty());
+        assert!(host.exposures.borrow().is_empty());
+    }
+
+    // What everyone may say, an agent may too.
+    let hash = extension.send(&mut connection, "get-databasehash", json!({}));
+    assert_eq!(hash["hash"], "abc123");
+    let password = extension.send(&mut connection, "generate-password", json!({}));
+    assert_eq!(password["password"], "generated");
+    let locked = extension.send(&mut connection, "lock-database", json!({}));
+    assert_eq!(locked["success"], "true");
+    assert_eq!(connection.host().locks.get(), 1);
+}
+
+#[test]
+fn an_extension_is_refused_every_agent_action() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        logins: two_logins(),
+        grant_answer: GrantAnswer::Active("gh2".into()),
+        ..Mock::unlocked().known("Chrome", "id-key")
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+    for (action, message) in agent_actions() {
+        let response = extension.send(&mut connection, action, message);
+        assert_eq!(
+            error_code(&response),
+            Code::NotPermittedForKind as u8,
+            "{action}"
+        );
+        assert_eq!(
+            sorted_keys(&response),
+            ["action", "error", "errorCode"],
+            "{action}"
+        );
+    }
+    let host = connection.host();
+    assert!(host.grant_requests.borrow().is_empty());
+    assert!(host.ended.borrow().is_empty());
+}
+
+// A stranger hears the refusal it always heard: the kind is checked second,
+// so an unassociated connection learns nothing about which actions exist for
+// whom.
+#[test]
+fn the_agent_actions_are_refused_before_association() {
+    let (extension, mut connection) = ready();
+    for (action, message) in agent_actions() {
+        let response = extension.send(&mut connection, action, message);
+        assert_eq!(
+            error_code(&response),
+            Code::AssociationFailed as u8,
+            "{action}"
+        );
+    }
+    let signals = extension.send(&mut connection, "get-signals", json!({}));
+    assert_eq!(error_code(&signals), Code::AssociationFailed as u8);
+}
+
+// --- what an agent gets: grants by name, never a value ----------------------------
+
+#[test]
+fn request_grant_answers_active_with_the_admitted_items_and_nothing_else() {
+    let (extension, mut connection) = agent_associated(GrantAnswer::Active("gh2".into()));
+    let response = extension.send(&mut connection, "request-grant", grant_request());
+    assert_eq!(response["grantId"], GRANT_ID);
+    assert_eq!(response["state"], "active");
+    assert_eq!(response["expiresAtMs"], GRANT_EXPIRES_AT_MS);
+    assert_eq!(response["uses"], 0);
+    assert_eq!(
+        response["items"],
+        json!([{ "id": "gh2", "title": "GitHub (work)", "username": "octocorp" }])
+    );
+    assert_eq!(
+        sorted_keys(&response),
+        [
+            "action",
+            "expiresAtMs",
+            "grantId",
+            "items",
+            "nonce",
+            "retryAfterMs",
+            "state",
+            "success",
+            "uses",
+            "version"
+        ]
+    );
+    assert_eq!(
+        sorted_keys(&response["items"][0]),
+        ["id", "title", "username"]
+    );
+    let wire = serde_json::to_string(&response).unwrap();
+    for secret in ["hunter2", "s3cret", "123456", "password", "totp"] {
+        assert!(!wire.contains(secret), "{secret} in {wire}");
+    }
+
+    // What the host was asked: by the connection's client, never by a key
+    // in the message, with the agent's own words along.
+    let asked = connection.host().grant_requests.borrow();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].0, AGENT_KEY);
+    assert_eq!(
+        asked[0].1,
+        GrantRequest {
+            client_key: AGENT_KEY.into(),
+            agent_id: None,
+            acting_for: None,
+            items: ItemSelector::Ids(vec!["gh2".into()]),
+            targets: vec![Target::Origin("https://github.com".into())],
+            modes: vec![Mode::Fill],
+            run_id: Some("run-1".into()),
+            reason: Some("deploy the docs site".into()),
+        }
+    );
+}
+
+// A denial and a pending answer are sealed replies with a state, not clear
+// refusals: the agent asked a question and gets its answer.
+#[test]
+fn request_grant_answers_denied_and_pending_with_when_to_ask_again() {
+    let (extension, mut connection) = agent_associated(GrantAnswer::Denied);
+    let denied = extension.send(&mut connection, "request-grant", grant_request());
+    assert_eq!(denied["state"], "denied");
+    assert_eq!(denied["grantId"], GRANT_ID);
+    assert_eq!(denied["items"], json!([]));
+    assert!(denied["expiresAtMs"].is_null());
+
+    let (extension, mut connection) = agent_associated(GrantAnswer::Pending(Some(1_500)));
+    let pending = extension.send(&mut connection, "request-grant", grant_request());
+    assert_eq!(pending["state"], "pending");
+    assert_eq!(pending["retryAfterMs"], 1_500);
+    assert_eq!(pending["items"], json!([]));
+
+    let (extension, mut connection) = agent_associated(GrantAnswer::Disabled);
+    let off = extension.send(&mut connection, "request-grant", grant_request());
+    assert_eq!(error_code(&off), Code::AgentsDisabled as u8);
+}
+
+#[test]
+fn request_grant_bounds_the_run_id_and_the_reason() {
+    let (extension, mut connection) = agent_associated(GrantAnswer::Active("gh2".into()));
+    let mut long_run = grant_request();
+    long_run["runId"] = "r".repeat(65).into();
+    let refused = extension.send(&mut connection, "request-grant", long_run);
+    assert_eq!(error_code(&refused), Code::GrantDenied as u8);
+    assert!(connection.host().grant_requests.borrow().is_empty());
+
+    let mut at_the_edge = grant_request();
+    at_the_edge["runId"] = "r".repeat(64).into();
+    at_the_edge["reason"] = "x".repeat(400).into();
+    let served = extension.send(&mut connection, "request-grant", at_the_edge);
+    assert_eq!(served["state"], "active");
+    let asked = connection.host().grant_requests.borrow();
+    assert_eq!(asked[0].1.run_id.as_deref(), Some("r".repeat(64).as_str()));
+    assert_eq!(
+        asked[0].1.reason.as_deref(),
+        Some("x".repeat(300).as_str()),
+        "cut, not refused"
+    );
+    drop(asked);
+
+    // Neither is required: a request without them is one with none.
+    let mut bare = grant_request();
+    bare.as_object_mut().unwrap().remove("runId");
+    bare.as_object_mut().unwrap().remove("reason");
+    extension.send(&mut connection, "request-grant", bare);
+    let asked = connection.host().grant_requests.borrow();
+    assert_eq!((&asked[1].1.run_id, &asked[1].1.reason), (&None, &None));
+}
+
+// A grant is never wider than its request, so a request the host would have
+// to guess at is refused rather than read generously.
+#[test]
+fn request_grant_refuses_a_request_it_cannot_read() {
+    let (extension, mut connection) = agent_associated(GrantAnswer::Active("gh2".into()));
+    let without = |field: &str| {
+        let mut request = grant_request();
+        request.as_object_mut().unwrap().remove(field);
+        request
+    };
+    let with = |field: &str, value: Value| {
+        let mut request = grant_request();
+        request[field] = value;
+        request
+    };
+    for (what, request) in [
+        ("no items", without("items")),
+        ("no targets", without("targets")),
+        ("no modes", without("modes")),
+        ("an unknown selector", with("items", json!("everything"))),
+        (
+            "an unknown target kind",
+            with("targets", json!([{ "planet": "mars" }])),
+        ),
+        ("an unknown mode", with("modes", json!(["teleport"]))),
+        ("no target at all", with("targets", json!([]))),
+        ("no mode at all", with("modes", json!([]))),
+    ] {
+        let response = extension.send(&mut connection, "request-grant", request);
+        assert_eq!(error_code(&response), Code::GrantDenied as u8, "{what}");
+    }
+    assert!(connection.host().grant_requests.borrow().is_empty());
+}
+
+// The grant's state is the agent's to read, uses included — and a use made by
+// the extension the grant was served to is one the agent sees.
+#[test]
+fn wait_grant_and_grant_status_answer_the_grants_state_with_its_uses() {
+    let (extension, mut connection) = agent_associated(GrantAnswer::Active("gh2".into()));
+    extension.send(&mut connection, "request-grant", grant_request());
+    let waited = extension.send(
+        &mut connection,
+        "wait-grant",
+        json!({ "grantId": GRANT_ID, "timeoutMs": 5_000 }),
+    );
+    assert_eq!(waited["state"], "active");
+    assert_eq!(waited["uses"], 0);
+    assert_eq!(
+        waited["items"],
+        json!([{ "id": "gh2", "title": "GitHub (work)", "username": "octocorp" }])
+    );
+
+    // The extension fills under the grant, which is a use.
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+    let filled = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": GRANT_ID }),
+    );
+    assert_eq!(filled["count"], 1);
+    assert_eq!(filled["entries"][0]["uuid"], "gh2");
+
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Claude", "key": AGENT_KEY }),
+    );
+    let status = extension.send(
+        &mut connection,
+        "grant-status",
+        json!({ "grantId": GRANT_ID }),
+    );
+    assert_eq!(status["state"], "active");
+    assert_eq!(status["uses"], 1);
+    assert_eq!(status["grantId"], GRANT_ID);
+
+    let unknown = extension.send(&mut connection, "grant-status", json!({ "grantId": "g9" }));
+    assert_eq!(error_code(&unknown), Code::GrantDenied as u8);
+    let blank = extension.send(&mut connection, "wait-grant", json!({}));
+    assert_eq!(error_code(&blank), Code::NoValidUuidProvided as u8);
+}
+
+#[test]
+fn end_grant_answers_ok_and_the_host_records_it() {
+    let (extension, mut connection) = agent_associated(GrantAnswer::Active("gh2".into()));
+    extension.send(&mut connection, "request-grant", grant_request());
+    let response = extension.send(&mut connection, "end-grant", json!({ "grantId": GRANT_ID }));
+    assert_eq!(response["ok"], true);
+    assert_eq!(
+        sorted_keys(&response),
+        ["action", "nonce", "ok", "success", "version"]
+    );
+    assert_eq!(connection.host().ended.borrow().as_slice(), [GRANT_ID]);
+    let status = extension.send(
+        &mut connection,
+        "grant-status",
+        json!({ "grantId": GRANT_ID }),
+    );
+    assert_eq!(status["state"], "revoked");
+
+    let unknown = extension.send(&mut connection, "end-grant", json!({ "grantId": "g9" }));
+    assert_eq!(error_code(&unknown), Code::GrantDenied as u8);
+    let blank = extension.send(&mut connection, "end-grant", json!({}));
+    assert_eq!(error_code(&blank), Code::NoValidUuidProvided as u8);
+    assert_eq!(connection.host().ended.borrow().len(), 1);
+}
+
+#[test]
+fn list_visible_answers_names_and_fields_never_values() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        visible: vec![VisibleRef {
+            reference: "rowel://lb/gh".into(),
+            title: "GitHub".into(),
+            kind: "login".into(),
+            fields: vec!["password".into(), "otp".into()],
+        }],
+        ..Mock::unlocked().known_agent("Claude", AGENT_KEY, "claude-code")
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Claude", "key": AGENT_KEY }),
+    );
+    let response = extension.send(&mut connection, "list-visible", json!({ "lockbox": "lb" }));
+    assert_eq!(
+        response["items"],
+        json!([{ "ref": "rowel://lb/gh", "title": "GitHub", "kind": "login", "fields": ["password", "otp"] }])
+    );
+    assert_eq!(
+        sorted_keys(&response),
+        ["action", "items", "nonce", "success", "version"]
+    );
+    assert_eq!(
+        sorted_keys(&response["items"][0]),
+        ["fields", "kind", "ref", "title"]
+    );
+    let wire = serde_json::to_string(&response).unwrap();
+    for secret in ["hunter2", "123456", "octocat"] {
+        assert!(!wire.contains(secret), "{secret} in {wire}");
+    }
+
+    connection.host().agents_enabled.set(false);
+    let off = extension.send(&mut connection, "list-visible", json!({ "lockbox": "lb" }));
+    assert_eq!(error_code(&off), Code::AgentsDisabled as u8);
+}
+
+// --- signals: what the host tells an extension that did not ask ------------------
+
+fn fill_grant_signal() -> Signal {
+    Signal::FillGrant {
+        grant_id: GRANT_ID.into(),
+        origin: "https://github.com".into(),
+        item: VisibleItem {
+            id: "gh".into(),
+            title: "GitHub".into(),
+            username: Some("octocat".into()),
+        },
+        auto_submit: true,
+        expires_at_ms: GRANT_EXPIRES_AT_MS,
+    }
+}
+
+#[test]
+fn a_signal_is_tagged_and_camel_cased_on_the_wire() {
+    assert_eq!(
+        serde_json::from_slice::<Value>(ROWEL_SIGNAL).unwrap(),
+        json!({ "action": "rowel-signal" })
+    );
+    let fill = serde_json::to_value(fill_grant_signal()).unwrap();
+    assert_eq!(
+        fill,
+        json!({
+            "signal": "fill-grant", "grantId": GRANT_ID, "origin": "https://github.com",
+            "item": { "id": "gh", "title": "GitHub", "username": "octocat" },
+            "autoSubmit": true, "expiresAtMs": GRANT_EXPIRES_AT_MS
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<Signal>(fill).unwrap(),
+        fill_grant_signal()
+    );
+    let ended = Signal::GrantEnded {
+        grant_id: GRANT_ID.into(),
+        origins: vec!["https://github.com".into()],
+    };
+    assert_eq!(
+        serde_json::to_value(&ended).unwrap(),
+        json!({ "signal": "grant-ended", "grantId": GRANT_ID, "origins": ["https://github.com"] })
+    );
+}
+
+#[test]
+fn get_signals_drains_the_queue_for_the_client_that_asks() {
+    let (extension, mut connection) = associated();
+    let ended = Signal::GrantEnded {
+        grant_id: GRANT_ID.into(),
+        origins: vec!["https://github.com".into()],
+    };
+    {
+        let mut queues = connection.host().signals.borrow_mut();
+        queues.insert("id-key".into(), vec![fill_grant_signal(), ended.clone()]);
+        queues.insert("other-key".into(), vec![ended.clone()]);
+    }
+    let first = extension.send(&mut connection, "get-signals", json!({}));
+    assert_eq!(
+        first["signals"],
+        serde_json::to_value([fill_grant_signal(), ended]).unwrap()
+    );
+    assert_eq!(
+        sorted_keys(&first),
+        ["action", "nonce", "signals", "success", "version"]
+    );
+    let second = extension.send(&mut connection, "get-signals", json!({}));
+    assert_eq!(second["signals"], json!([]));
+    assert_eq!(
+        connection.host().signals.borrow().len(),
+        1,
+        "another client's queue is not this one's to drain"
+    );
+}
+
+// --- who was served: an agent's fill grant is claimed by one extension -------------
+
+#[test]
+fn a_second_extension_asking_under_an_agents_fill_grant_is_refused() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(
+        Mock::unlocked()
+            .known("Chrome", "key-a")
+            .known("Firefox", "key-b")
+            .granting("g1", "gh", Mode::Fill),
+    );
+    extension.exchange(&mut connection);
+    let as_client = |extension: &Extension, connection: &mut Connection<Mock>, id, key| {
+        extension.send(
+            connection,
+            "test-associate",
+            json!({ "id": id, "key": key }),
+        );
+    };
+
+    // Chrome is served first and so claims the grant; it may keep using it.
+    as_client(&extension, &mut connection, "Chrome", "key-a");
+    let first = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(first["count"], 1);
+    let again = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(again["count"], 1);
+    let totp = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "grantId": "g1" }),
+    );
+    assert_eq!(totp["totp"], "654321");
+
+    // Firefox, under the same grant id, is not.
+    as_client(&extension, &mut connection, "Firefox", "key-b");
+    let other = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&other), Code::GrantDenied as u8);
+    let other_totp = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&other_totp), Code::GrantDenied as u8);
+
+    // And Chrome still is.
+    as_client(&extension, &mut connection, "Chrome", "key-a");
+    let still = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(still["count"], 1);
+    let grants = connection.host().grants.borrow();
+    assert_eq!(grants["g1"].served_to.as_deref(), Some("key-a"));
+    assert_eq!(grants["g1"].uses, 4, "every yes was a use; no refusal was");
+}
+
+// Which client a passkey ceremony is for reaches the host, so the dialog can
+// say who asks.
+#[test]
+fn a_passkey_ceremony_tells_the_host_which_client_asks() {
+    let (extension, mut connection) = associated();
+    let challenge = passkey_types::encoding::base64url(&rand::random::<[u8; 32]>());
+    extension.send(
+        &mut connection,
+        "passkeys-get",
+        json!({ "publicKey": { "challenge": challenge, "rpId": "github.com" }, "origin": GH_LOGIN }),
+    );
+    let asked = connection.host().passkey_requests.borrow();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0], extension_client("Chrome", "id-key"));
+}
+
 #[test]
 fn set_login_without_a_uuid_saves_a_new_login_for_the_site() {
     let (extension, mut connection) = associated();
@@ -1173,10 +1998,8 @@ fn an_association_does_not_follow_the_connection_into_another_vault() {
     // The list is the open vault's: a switch to a workspace the extension was
     // never let into reads as a vault with no clients at all.
     let (extension, mut connection) = associated();
-    *connection.host().clients.borrow_mut() = vec![Client {
-        name: "Chrome".into(),
-        key: "a key of the other vault's".into(),
-    }];
+    *connection.host().clients.borrow_mut() =
+        vec![extension_client("Chrome", "a key of the other vault's")];
     let response = extension.send(
         &mut connection,
         "get-logins",
@@ -1185,10 +2008,11 @@ fn an_association_does_not_follow_the_connection_into_another_vault() {
     assert_eq!(error_code(&response), Code::AssociationFailed as u8);
 
     // Let in there too, and the key it carries opens it again.
-    connection.host().clients.borrow_mut().push(Client {
-        name: "Chrome".into(),
-        key: "id-key".into(),
-    });
+    connection
+        .host()
+        .clients
+        .borrow_mut()
+        .push(extension_client("Chrome", "id-key"));
     let response = extension.send(
         &mut connection,
         "get-logins",
@@ -1205,6 +2029,104 @@ fn groups_and_unknown_actions_are_refused_in_the_protocols_words() {
     let entries = extension.send(&mut connection, "get-database-entries", json!({}));
     assert_eq!(error_code(&entries), Code::IncorrectAction as u8);
     assert_eq!(entries["error"], Code::IncorrectAction.message());
+}
+
+// --- the client half: a peer over a connection ----------------------------------
+
+// What the CLI does, in-process: the exchange, a sealed request, and the
+// refusals as typed errors — against the same `Connection` the extension
+// tests drive, which is its own transport.
+#[test]
+fn a_peer_exchanges_keys_and_calls_through_the_sealed_channel() {
+    let mut peer = Peer::connect(Connection::new(Mock::unlocked()), "cli").unwrap();
+    assert_eq!(peer.version(), VERSION);
+    let hash = peer.call("get-databasehash", json!({})).unwrap();
+    assert_eq!(hash["hash"], "abc123");
+    assert_eq!(hash["action"], "get-databasehash");
+    assert_eq!(hash["success"], "true");
+
+    // Associate as an agent through it, with the session key it repeats.
+    let key = peer.public_key();
+    let let_in = peer
+        .call(
+            "associate",
+            json!({ "key": key, "idKey": "agent-key", "hello": { "kind": "agent", "platform": "cli" } }),
+        )
+        .unwrap();
+    assert_eq!(let_in["clientId"], "agent-key");
+    let visible = peer.call("list-visible", json!({})).unwrap();
+    assert_eq!(visible["items"], json!([]));
+}
+
+#[test]
+fn a_refusal_reaches_the_peer_with_its_code_and_when_to_ask_again() {
+    let connection = Connection::new(Mock {
+        logins: two_logins(),
+        grant_answer: GrantAnswer::Pending(Some(1_500)),
+        ..Mock::unlocked().known("Chrome", "id-key")
+    });
+    let mut peer = Peer::connect(connection, "cli").unwrap();
+
+    let stranger = peer.call("lock-database", json!({})).unwrap_err();
+    let PeerError::Refused(refused) = stranger else {
+        panic!("{stranger:?}");
+    };
+    assert_eq!(refused.code, Some(Code::AssociationFailed));
+    assert_eq!(refused.raw, Code::AssociationFailed as u8);
+    assert_eq!(refused.message, Code::AssociationFailed.message());
+    assert_eq!(refused.retry_after_ms, None);
+
+    peer.call("test-associate", json!({ "id": "Chrome", "key": "id-key" }))
+        .unwrap();
+    let busy = peer
+        .call(
+            "get-logins",
+            json!({ "url": GH_LOGIN, "agentMode": "true" }),
+        )
+        .unwrap_err();
+    let PeerError::Refused(refused) = busy else {
+        panic!("{busy:?}");
+    };
+    assert_eq!(refused.code, Some(Code::GrantPending));
+    assert_eq!(refused.retry_after_ms, Some(1_500));
+}
+
+#[test]
+fn a_peer_cannot_connect_to_a_host_that_refuses_the_exchange() {
+    // A connection whose host refuses the key: `handle` answers the exchange
+    // before the host is asked anything, so the one way to see a refusal
+    // there is a request the host cannot read — which a `Transport` of our
+    // own can make it send.
+    struct Garbled;
+    impl crate::client::Transport for Garbled {
+        fn roundtrip(&mut self, _request: &[u8]) -> std::io::Result<Vec<u8>> {
+            Ok(br#"{"action":"change-public-keys","errorCode":"3","error":"Client public key not received"}"#.to_vec())
+        }
+    }
+    let Err(error) = Peer::connect(Garbled, "cli") else {
+        panic!("connected through a refusal");
+    };
+    let PeerError::Refused(refused) = error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(refused.code, Some(Code::ClientPublicKeyNotReceived));
+
+    struct Silent;
+    impl crate::client::Transport for Silent {
+        fn roundtrip(&mut self, _request: &[u8]) -> std::io::Result<Vec<u8>> {
+            Ok(b"not json".to_vec())
+        }
+    }
+    let Err(error) = Peer::connect(Silent, "cli") else {
+        panic!("connected through junk");
+    };
+    assert!(
+        matches!(
+            error,
+            PeerError::Channel(crate::client::ChannelError::BadReply)
+        ),
+        "{error:?}"
+    );
 }
 
 // --- framing and the wire ----------------------------------------------------

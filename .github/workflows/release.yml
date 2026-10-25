@@ -58,13 +58,16 @@ jobs:
         # `<glob of the built file>=<name to publish it under>` pairs. A glob
         # that matches nothing fails the job: a silently missing copy would
         # leave a dead link on README.md and rowel.app.
+        # Every row carries `--config src-tauri/tauri.release.conf.json`: the
+        # sidecar the "Build the command line tool" step stages is declared
+        # there and nowhere else, so only a release build bundles it.
         include:
           - platform: macos-latest
-            args: '--target universal-apple-darwin'
+            args: '--target universal-apple-darwin --config src-tauri/tauri.release.conf.json'
             bundlePath: src-tauri/target/universal-apple-darwin/release/bundle
             latestAssets: '*_universal.dmg=Rowel_universal.dmg'
           - platform: ubuntu-latest
-            args: ''
+            args: '--config src-tauri/tauri.release.conf.json'
             bundlePath: src-tauri/target/release/bundle
             latestAssets: '*_amd64.deb=Rowel_amd64.deb *_amd64.AppImage=Rowel_amd64.AppImage *.x86_64.rpm=Rowel_x86_64.rpm'
           # NSIS only. The MSI (WiX) bundler rejects a pre-release identifier
@@ -73,7 +76,7 @@ jobs:
           # is happy with the NSIS -setup.exe. Drop the flag to ship an .msi as
           # well once versions are plain x.y.z.
           - platform: windows-latest
-            args: '--bundles nsis'
+            args: '--bundles nsis --config src-tauri/tauri.release.conf.json'
             bundlePath: src-tauri/target/release/bundle
             latestAssets: '*_x64-setup.exe=Rowel_x64-setup.exe'
     runs-on: ${{ matrix.platform }}
@@ -126,6 +129,40 @@ jobs:
       - name: Install xcodegen for the Safari extension
         if: matrix.platform == 'macos-latest'
         run: command -v xcodegen || brew install xcodegen
+
+      # The command line tool (`rowel-cli`, src-tauri/crates/cli) ships beside
+      # the app as a Tauri sidecar: Settings › General links it into the PATH,
+      # and coding agents reach the vault through its MCP server. Tauri wants
+      # a sidecar staged as `<name>-<target triple>` next to the config and
+      # strips the triple when it copies it into the bundle. The bundler is
+      # told about it only here, through tauri.release.conf.json merged with
+      # `--config`, so a dev build (`bun run tauri:dev`) never has to build it
+      # first. macOS builds one universal binary from both Apple targets, as
+      # tauri-action does for the app itself.
+      - name: Build the command line tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/binaries
+          case "${{ matrix.platform }}" in
+            macos-latest)
+              cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+              cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
+              lipo -create \
+                src-tauri/target/aarch64-apple-darwin/release/rowel-cli \
+                src-tauri/target/x86_64-apple-darwin/release/rowel-cli \
+                -output src-tauri/binaries/rowel-cli-universal-apple-darwin
+              ;;
+            ubuntu-latest)
+              cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml
+              cp src-tauri/target/release/rowel-cli src-tauri/binaries/rowel-cli-x86_64-unknown-linux-gnu
+              ;;
+            windows-latest)
+              cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml
+              cp src-tauri/target/release/rowel-cli.exe src-tauri/binaries/rowel-cli-x86_64-pc-windows-msvc.exe
+              ;;
+          esac
+          ls -l src-tauri/binaries
 
       - name: Build, sign, notarize and upload to the draft release
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0

@@ -16,16 +16,18 @@ import { clampDays } from './days'
 const TITLE_ID = 'agent-grant-title'
 
 /**
- * An agent, through the extension in agent mode, wants to use a login on a
- * page. The dialog names who asks and where, offers the page's logins when
- * the policy admits more than one (the first picked), and takes one of three
- * answers: once, for N days — which writes a standing rule — or no. As with
- * the other two consent dialogs the answer goes straight back to Rust, which
- * is holding the extension's request open for it; Escape, the backdrop and
- * the window's close count as a refusal; nothing is awaited, and the dialog
- * leaves on Rust's own clock. A step-up ask adds the verification Rust runs
- * before the yes counts: the biometric prompt, or the master password typed
- * here and sent with the answer.
+ * A client wants to use a login on a page: the extension in agent mode, or
+ * an agent that wants the extension to log it in. The dialog names who asks
+ * and where — and, for an agent, its own reason as text and the sign-out
+ * that follows when it is done — offers the page's logins when the policy
+ * admits more than one (the first picked), and takes one of three answers:
+ * once, for N days — which writes a standing rule — or no. As with the other
+ * two consent dialogs the answer goes straight back to Rust, which is holding
+ * the client's request open for it; Escape, the backdrop and the window's
+ * close count as a refusal; nothing is awaited, and the dialog leaves on
+ * Rust's own clock. A step-up ask adds the verification Rust runs before the
+ * yes counts: the biometric prompt, or the master password typed here and
+ * sent with the answer.
  */
 export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
   const { t } = useTranslation()
@@ -50,6 +52,13 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
   const deny = () => answer(null)
   const picked = ask.candidates.find(candidate => candidate.id === itemId)
   const canAllow = !!picked && (!needsPassword || password.length > 0)
+  const agent = ask.clientKind !== 'extension'
+  const title = agent
+    ? t('{{client}} wants to log into {{origin}}', { client: ask.clientName, origin: ask.origin })
+    : t('{{client}} wants to use a login on {{origin}}', {
+        client: ask.clientName,
+        origin: ask.origin
+      })
 
   return (
     <Frame
@@ -65,14 +74,25 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
           data-testid="agent-grant-title"
           className="text-lg font-semibold tracking-display"
         >
-          {t('{{client}} wants to use a login on {{origin}}', {
-            client: ask.clientName,
-            origin: ask.origin
-          })}
+          {title}
         </h2>
         <p className="mt-1.5 text-base text-text2">
           {t('It would fill the login through the browser extension, as you would yourself.')}
         </p>
+        {/* The agent's own words, shown as text and nothing more: a reason is
+            for the user to weigh, never for the app to act on. */}
+        {ask.reason && (
+          <p className="mt-3 text-base text-text2" data-testid="agent-grant-reason">
+            {t('Its reason: “{{reason}}”', { reason: ask.reason })}
+          </p>
+        )}
+        {ask.endsSession && (
+          <p className="mt-3 text-sm text-text2" data-testid="agent-grant-ends-session">
+            {t('When this grant ends, {{appName}} will sign the browser that filled it out of {{origin}} and the rest of its site.', {
+              origin: ask.origin
+            })}
+          </p>
+        )}
 
         {ask.candidates.length > 1 ? (
           <ItemPicker candidates={ask.candidates} value={itemId} onChange={setItemId} />

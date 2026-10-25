@@ -15,7 +15,14 @@ const status = (overrides: Partial<BrowserStatus> = {}): BrowserStatus => ({
   keepassxcCompat: true,
   agents: { enabled: false, defaultStandingDays: 7 },
   browsers: [],
-  clients: [{ name: 'Work Chrome', key: 'AAAAbbbbCCCCddddEEEEffffGGGGhhhhIIIIjjjjKKK=' }],
+  clients: [
+    {
+      name: 'Work Chrome',
+      key: 'AAAAbbbbCCCCddddEEEEffffGGGGhhhhIIIIjjjjKKK=',
+      kind: 'extension',
+      createdAtMs: 0
+    }
+  ],
   ...overrides
 })
 
