@@ -1418,9 +1418,6 @@ fn decide(
     // own rules — the ones the user wrote by answering "for N days".
     let mut rules = defaults::personal();
     rules.extend(agents::live_rules(store, now));
-    if secret {
-        rules = rules_for_all(rules, &candidates);
-    }
 
     if held
         .rate(client_key)
@@ -1537,35 +1534,18 @@ fn activate(
 }
 
 /// Whether `selector` admits every one of `candidates`, there being at least
-/// one: what a secret request needs of a grant or a rule, since a command
-/// runs with every item it named or not at all.
+/// one: what a secret request needs of a held grant, as `policy::evaluate`
+/// needs it of a rule, since a command runs with every item it named or not
+/// at all.
 fn admits_all(selector: &ItemSelector, candidates: &[Candidate]) -> bool {
     !candidates.is_empty() && candidates.iter().all(|c| selector.admits(&c.item))
 }
 
-/// The rules that could answer a secret request: those whose `items` admit
-/// every candidate. The evaluator keeps the site semantics on purpose — a
-/// rule matches when it admits any candidate, and the grant is narrowed to
-/// what it admits — because a page's logins are offered for one to be
-/// picked, and a rule for one of them is the right answer. A secret request
-/// names items that are all needed at once, so a standing rule for one of
-/// two must not win on specificity and narrow the grant to it, leaving the
-/// command to fail on the other: dropped here, the baseline (which admits
-/// the lockbox) asks for both.
-fn rules_for_all(rules: Vec<policy::Rule>, candidates: &[Candidate]) -> Vec<policy::Rule> {
-    rules
-        .into_iter()
-        .filter(|rule| admits_all(&rule.items, candidates))
-        .collect()
-}
-
-/// Whether `modes` are a secret request's — `header`, `env` — rather than a
-/// site's. A request mixing the two is refused before this is asked
+/// Whether `modes` are a secret request's ([`Mode::is_secret`]) rather than
+/// a site's. A request mixing the two is refused before this is asked
 /// ([`well_targeted`]).
 fn is_secret(modes: &[Mode]) -> bool {
-    modes
-        .iter()
-        .any(|mode| matches!(mode, Mode::Header | Mode::Env))
+    modes.iter().any(|mode| mode.is_secret())
 }
 
 /// Whether every target of `req` is the kind of place every one of its modes
@@ -1716,7 +1696,7 @@ fn settle(
 /// visit. For a secret grant it is every item the request named and the
 /// request's own targets, every one of them, so a standing `env` rule names
 /// the full command line and lifts the floor for that line alone, and
-/// answers the whole request next time ([`rules_for_all`]). `standing_for`
+/// answers the whole request next time (`policy::evaluate`). `standing_for`
 /// takes one item and one target, so it is given the first of each and the
 /// whole lists put in their place; a settled grant has at least one of each
 /// ([`well_targeted`], `outcome`), and the fallbacks are only so that this
