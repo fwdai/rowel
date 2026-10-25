@@ -266,7 +266,11 @@ extension of the lockbox from one helper, on every way a grant ends: expiry,
 The extension deletes the cookies of each origin's registrable domain, found
 through upstream's own `page.getBaseDomainFromUrl` (which probes the public
 suffix list with a throwaway cookie, as it does for iframes), in every cookie
-store; leaves an origin a newer grant holds whole, session included, since
+store the browser lists and partitioned cookies included — one `getAll` sees
+one store and no partitioned cookie unless told, so each store is asked in
+turn with `partitionKey: {}` where the browser knows it, and each removal
+names the cookie's own store and partition; leaves an origin a newer grant
+holds whole, session included, since
 it is that grant's to end; shows a fixed-text notification; and turns agent
 mode back off only if a grant turned it on and none is left. A lock ends
 every grant on the host with no row and no `grant-ended` (nothing is served
