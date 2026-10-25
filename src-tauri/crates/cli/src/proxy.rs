@@ -15,9 +15,11 @@
 //! The proxy follows no redirect. The grant was checked for the host, path
 //! and method the agent asked for; a hop the upstream chose was not, and a
 //! secret header or body replayed to it could land anywhere. A 3xx is
-//! relayed as it is, `Location` included, and the agent's own client
-//! follows it through the proxy, where every hop is a request of its own
-//! with its own check. Where a value lands decides how it is written: as
+//! relayed with its `Location` addressed through the proxy
+//! (`/https/<host>/<path>`), so the agent's client, following it or not,
+//! comes back here for the next hop as a request of its own with its own
+//! grant check; a `Location` that is not an HTTP URL is dropped rather than
+//! handed over as a hop that would leave the proxy. Where a value lands decides how it is written: as
 //! is in a header, JSON-escaped in a JSON document, form-encoded in a form —
 //! so a value with a quote or an ampersand cannot restructure what carries it.
 
@@ -29,7 +31,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use bytes::Bytes;
-use http::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE, HOST};
+use http::header::{
+    HeaderMap, HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE, HOST, LOCATION,
+};
 use http::{Method, Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
@@ -45,7 +49,7 @@ use zeroize::Zeroizing;
 
 use crate::agent::Broker;
 use crate::authority::authority;
-use crate::redact::{form_encoded, Redactor};
+use crate::redact::{form_encoded, json_escaped, Redactor};
 
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:7400";
 /// The header that names the grant a request runs under.
@@ -399,7 +403,19 @@ async fn relay(
         if is_hop_by_hop(name) || *name == CONTENT_LENGTH {
             continue;
         }
-        if let Ok(value) = HeaderValue::from_bytes(&redacted(&mut redactor, value.as_bytes())) {
+        let proxied;
+        let value = if *name == LOCATION {
+            match proxied_location(&upstream.url, value.as_bytes()) {
+                Some(location) => {
+                    proxied = location;
+                    proxied.as_bytes()
+                }
+                None => continue,
+            }
+        } else {
+            value.as_bytes()
+        };
+        if let Ok(value) = HeaderValue::from_bytes(&redacted(&mut redactor, value)) {
             reply_headers.append(name.clone(), value);
         }
     }
@@ -407,6 +423,36 @@ async fn relay(
     Ok(reply
         .body(Full::new(Bytes::from(body)))
         .expect("a well-formed response"))
+}
+
+/// A `Location` the upstream answered, addressed through this proxy:
+/// resolved against `base` (the URL the request went to), an `http` or
+/// `https` target becomes `/<scheme>/<host>[:<port>]<path>[?<query>]`, a path
+/// on the proxy itself, so the client's next hop — followed by its own client
+/// or rebuilt by hand — comes back here as a request of its own, with its own
+/// grant check and the grant header still on the proxy's origin. Anything
+/// else — another scheme, a value that is not a URL — is `None`, and the
+/// header is dropped rather than handed over as a hop that would leave the
+/// proxy. Credentials and a fragment in the URL are not carried.
+fn proxied_location(base: &str, location: &[u8]) -> Option<String> {
+    let target = reqwest::Url::parse(base)
+        .ok()?
+        .join(std::str::from_utf8(location).ok()?)
+        .ok()?;
+    let scheme = target.scheme();
+    if !matches!(scheme, "http" | "https") {
+        return None;
+    }
+    let mut proxied = format!("/{scheme}/{}", target.host_str()?);
+    if let Some(port) = target.port() {
+        proxied.push_str(&format!(":{port}"));
+    }
+    proxied.push_str(target.path());
+    if let Some(query) = target.query() {
+        proxied.push('?');
+        proxied.push_str(query);
+    }
+    Some(proxied)
 }
 
 fn bad_gateway(error: reqwest::Error) -> Refusal {
@@ -660,10 +706,7 @@ fn replaced(text: &str, values: &[(String, Zeroizing<String>)], placement: Place
         out.push_str(&text[at..found.start]);
         match placement {
             Placement::Header => out.push_str(value),
-            Placement::Json => {
-                let quoted = serde_json::to_string(value.as_str()).unwrap_or_default();
-                out.push_str(quoted.trim_matches('"'));
-            }
+            Placement::Json => out.push_str(&json_escaped(value)),
             Placement::Form => out.push_str(&form_encoded(value)),
         }
         at = found.end;
@@ -790,20 +833,30 @@ mod tests {
 
     #[test]
     fn a_json_value_is_escaped_so_the_document_still_parses() {
-        let secret = "sk\"live\\\nend\ttab";
-        let values = vec![(
-            "rowel://lb/stripe/apiKey".to_string(),
-            Zeroizing::new(secret.to_string()),
-        )];
-        let document = replaced(
-            r#"{"key": "rowel://lb/stripe/apiKey", "n": 1}"#,
-            &values,
-            Placement::Json,
-        );
-        let parsed: serde_json::Value = serde_json::from_str(&document).unwrap();
-        assert_eq!(parsed["key"], secret);
-        assert_eq!(parsed["n"], 1);
-        assert_eq!(parsed.as_object().unwrap().len(), 2);
+        // Quotes inside, at the start, at the end, and nothing but quotes:
+        // only the one pair wrapping the JSON string is not the value's.
+        for secret in [
+            "sk\"live\\\nend\ttab",
+            "ends\"",
+            "\"starts",
+            "\"both\"",
+            "\"\"",
+            "\\\"",
+        ] {
+            let values = vec![(
+                "rowel://lb/stripe/apiKey".to_string(),
+                Zeroizing::new(secret.to_string()),
+            )];
+            let document = replaced(
+                r#"{"key": "rowel://lb/stripe/apiKey", "n": 1}"#,
+                &values,
+                Placement::Json,
+            );
+            let parsed: serde_json::Value = serde_json::from_str(&document).unwrap();
+            assert_eq!(parsed["key"], secret, "{secret}");
+            assert_eq!(parsed["n"], 1);
+            assert_eq!(parsed.as_object().unwrap().len(), 2);
+        }
     }
 
     #[test]
@@ -1252,15 +1305,42 @@ mod end_to_end {
         assert_eq!(body["error"], "upstream");
     }
 
+    #[test]
+    fn a_location_is_addressed_through_the_proxy_or_dropped() {
+        let base = "https://api.stripe.com/v1/charges?limit=3";
+        let proxied = |location: &str| proxied_location(base, location.as_bytes());
+        for (location, expected) in [
+            ("/v1/other?page=2", "/https/api.stripe.com/v1/other?page=2"),
+            ("next", "/https/api.stripe.com/v1/next"),
+            ("https://elsewhere.example/x", "/https/elsewhere.example/x"),
+            ("https://API.example.com:443/x", "/https/api.example.com/x"),
+            ("http://localhost:3000/cb#frag", "/http/localhost:3000/cb"),
+            ("https://user:pw@example.com/x", "/https/example.com/x"),
+            ("http://[::1]:8080/x", "/http/[::1]:8080/x"),
+            ("//cdn.example/asset", "/https/cdn.example/asset"),
+        ] {
+            assert_eq!(proxied(location).as_deref(), Some(expected), "{location}");
+        }
+        for elsewhere in ["ftp://files.example/x", "javascript:alert(1)", "data:,x"] {
+            assert_eq!(proxied(elsewhere), None, "{elsewhere}");
+        }
+        assert_eq!(proxied_location(base, b"/\xff"), None);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_redirect_is_relayed_as_it_is_and_never_followed() {
+    async fn a_redirect_is_relayed_through_the_proxy_and_never_followed() {
         let proxy = proxy(granting_stripe).await;
+        let upstream = proxy.upstream;
         for (path, status, location) in [
-            ("/redirect/same", StatusCode::FOUND, "/other"),
+            (
+                "/redirect/same",
+                StatusCode::FOUND,
+                format!("/http/{upstream}/other"),
+            ),
             (
                 "/redirect/cross",
                 StatusCode::FOUND,
-                "https://elsewhere.example/x",
+                "/https/elsewhere.example/x".to_string(),
             ),
         ] {
             let response = proxy
@@ -1272,7 +1352,7 @@ mod end_to_end {
                 .await
                 .unwrap();
             assert_eq!(response.status(), status, "{path}");
-            assert_eq!(response.headers().get("location").unwrap(), location);
+            assert_eq!(response.headers().get("location").unwrap(), &location);
             assert_eq!(response.text().await.unwrap(), "moved");
         }
         let response = proxy
@@ -1287,7 +1367,7 @@ mod end_to_end {
         assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
         assert_eq!(
             response.headers().get("location").unwrap(),
-            "http://127.0.0.1:1/x"
+            "/http/127.0.0.1:1/x"
         );
 
         let seen = proxy.seen.lock().unwrap();
@@ -1297,6 +1377,46 @@ mod end_to_end {
         assert_eq!(seen[2]["body"], format!("{{\"key\":\"{VALUE}\"}}"));
         drop(seen);
         assert_eq!(proxy.uses(), 3);
+    }
+
+    // A client that follows redirects follows them back through the proxy: a
+    // hop on the granted host is served under the grant like any request, and
+    // a hop to another host is refused there before any value is resolved —
+    // the client never reaches it directly, with the grant header or without.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_following_client_comes_back_through_the_proxy_for_every_hop() {
+        let proxy = proxy(granting_stripe).await;
+        let following = reqwest::Client::new();
+
+        let response = following
+            .get(proxy.url("/redirect/same"))
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, GRANT)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["path"], "/other");
+        assert_eq!(body["authorization"], format!("Bearer {REF}"), "redacted");
+        {
+            let seen = proxy.seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[1]["path"], "/other");
+            assert_eq!(seen[1]["authorization"], format!("Bearer {VALUE}"));
+        }
+        assert_eq!(proxy.uses(), 2);
+
+        let response = following
+            .get(proxy.url("/redirect/cross"))
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, GRANT)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(proxy.seen.lock().unwrap().len(), 3, "no hop left the proxy");
+        assert_eq!(proxy.uses(), 3, "the refused hop resolved nothing");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
