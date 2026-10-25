@@ -5,10 +5,11 @@
 //! [`actions::Host`] a vault answers it through (`actions`), the passkey
 //! ceremonies (`passkeys`), where the socket is (`socket`), the lockbox-side
 //! functions every host shares (`lockbox`), and what agents get: grants
-//! (`grant`), the policy that issues them (`policy`), the signals that wake an
-//! extension for an agent's grant (`signal`) and the chained log of what was
-//! done with them (`audit`). The client half of the channel (`client`) is here
-//! too, so the CLI speaks it with the same code the tests drive the host with.
+//! (`grant`), the policy that issues them (`policy`), the placeholder they name
+//! a secret by (`reference`), the signals that wake an extension for an
+//! agent's grant (`signal`) and the chained log of what was done with them
+//! (`audit`). The client half of the channel (`client`) is here too, so the
+//! CLI speaks it with the same code the tests drive the host with.
 //! Nothing here knows Tauri, a window or a session; the app's `browser` module
 //! is one host of it.
 
@@ -21,6 +22,7 @@ pub mod lockbox;
 pub mod passkeys;
 pub mod policy;
 pub mod protocol;
+pub mod reference;
 pub mod signal;
 pub use signal::{Signal, ROWEL_SIGNAL};
 // Desktop only, as the app's `browser` module is: it is where `interprocess`

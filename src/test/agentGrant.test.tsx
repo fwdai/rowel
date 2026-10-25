@@ -14,7 +14,7 @@ const ASK: AgentGrantAsk = {
   id: 'ask-1',
   clientName: 'Claude in Chrome',
   clientKind: 'extension',
-  origin: 'https://github.com/login',
+  targets: [{ kind: 'origin', origin: 'https://github.com/login' }],
   mode: 'fill',
   endsSession: false,
   stepUp: false,
@@ -23,6 +23,30 @@ const ASK: AgentGrantAsk = {
     { id: 'gh2', title: 'GitHub (work)', username: 'octo@work.example' }
   ],
   defaultStandingDays: 7
+}
+
+const DEPLOY = 'node deploy.js --prod'
+
+/** An agent's ask for its Stripe key in requests to the API. */
+const HEADER_ASK: AgentGrantAsk = {
+  ...ASK,
+  id: 'ask-h',
+  clientName: 'Claude Code',
+  clientKind: 'agent',
+  targets: [{ kind: 'http', host: 'api.stripe.com', path: '/v1/*', methods: ['GET', 'POST'] }],
+  mode: 'header',
+  candidates: [{ id: 'stripe', title: 'Stripe', username: null }]
+}
+
+/** A sidecar's ask for an env file's variable in one command. */
+const ENV_ASK: AgentGrantAsk = {
+  ...ASK,
+  id: 'ask-e',
+  clientName: 'rowel run',
+  clientKind: 'sidecar',
+  targets: [{ kind: 'command', line: DEPLOY }],
+  mode: 'env',
+  candidates: [{ id: 'ci', title: 'CI', username: null }]
 }
 
 describe('the agent grant dialog', () => {
@@ -55,7 +79,7 @@ describe('the agent grant dialog', () => {
       id: 'ask-7',
       clientName: 'Claude Code',
       clientKind: 'agent',
-      origin: 'https://github.com',
+      targets: [{ kind: 'origin', origin: 'https://github.com' }],
       reason: 'deploying the <docs> site',
       endsSession: true
     })
@@ -75,6 +99,88 @@ describe('the agent grant dialog', () => {
     ])
   })
 
+  // A header ask names the API as the agent wrote it, methods first, and
+  // says the proxy does the swapping; nothing is filled, so no sign-out.
+  it('names a header ask by the request it is for, and allows it once', async () => {
+    await ask(HEADER_ASK)
+    expect(screen.getByTestId('agent-grant-title')).toHaveTextContent(
+      'Claude Code wants to send a secret in requests to GET, POST api.stripe.com/v1/*'
+    )
+    expect(screen.getByText(/The proxy swaps the value into the request itself/)).toBeInTheDocument()
+    expect(screen.queryByTestId('agent-grant-command')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('agent-grant-ends-session')).not.toBeInTheDocument()
+    expect(screen.getByTestId('agent-grant-item-stripe')).toHaveTextContent('Stripe')
+    expect(screen.getByTestId('agent-grant-standing-note')).toHaveTextContent(
+      'this client sends this item in requests to that place without asking'
+    )
+
+    await userEvent.click(screen.getByTestId('agent-grant-once'))
+    expect(calls('agent_grant_respond')).toEqual([
+      { id: 'ask-h', answer: { itemId: 'stripe', standingDays: null } }
+    ])
+  })
+
+  // An env ask shows the one command line verbatim, in a block of its own,
+  // so the person reads what the value goes to; the three answers are the
+  // same as for any grant.
+  it('shows an env ask the command line it is for, and takes every answer', async () => {
+    await ask(ENV_ASK)
+    expect(screen.getByTestId('agent-grant-title')).toHaveTextContent(
+      'rowel run wants to give a secret to a command'
+    )
+    expect(screen.getByTestId('agent-grant-command')).toHaveTextContent(DEPLOY)
+    expect(screen.getByText(/environment of that one command only/)).toBeInTheDocument()
+    expect(screen.queryByTestId('agent-grant-ends-session')).not.toBeInTheDocument()
+    expect(screen.getByTestId('agent-grant-standing-note')).toHaveTextContent(
+      'this client gives this item to exactly that command line without asking'
+    )
+
+    await userEvent.click(screen.getByTestId('agent-grant-once'))
+
+    act(() => emitEvent(EVENTS.agentGrant, { ...ENV_ASK, id: 'ask-e2' }))
+    const days = await screen.findByTestId('agent-grant-days')
+    await userEvent.clear(days)
+    await userEvent.type(days, '400')
+    await userEvent.click(screen.getByTestId('agent-grant-standing'))
+
+    act(() => emitEvent(EVENTS.agentGrant, { ...ENV_ASK, id: 'ask-e3' }))
+    await userEvent.click(await screen.findByTestId('agent-grant-deny'))
+
+    expect(calls('agent_grant_respond')).toEqual([
+      { id: 'ask-e', answer: { itemId: 'ci', standingDays: null } },
+      { id: 'ask-e2', answer: { itemId: 'ci', standingDays: 90 } },
+      { id: 'ask-e3', answer: null }
+    ])
+  })
+
+  // A secret ask naming two items is covered whole: both are listed, nothing
+  // is picked, and the answer carries the first id for Rust to ignore.
+  it('lists every item of a two-item env ask without a picker, and answers with the first', async () => {
+    await ask({
+      ...ENV_ASK,
+      id: 'ask-e4',
+      candidates: [
+        { id: 'ci', title: 'CI', username: null },
+        { id: 'ci2', title: 'CI (staging)', username: 'deploy' }
+      ]
+    })
+    const first = screen.getByTestId('agent-grant-item-ci')
+    const second = screen.getByTestId('agent-grant-item-ci2')
+    expect(first).not.toHaveAttribute('role', 'radio')
+    expect(second).not.toHaveAttribute('role', 'radio')
+    expect(first).toHaveTextContent('CI')
+    expect(second).toHaveTextContent('CI (staging) · deploy')
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.getByTestId('agent-grant-standing-note')).toHaveTextContent(
+      'this client gives these items to exactly that command line'
+    )
+
+    await userEvent.click(screen.getByTestId('agent-grant-once'))
+    expect(calls('agent_grant_respond')).toEqual([
+      { id: 'ask-e4', answer: { itemId: 'ci', standingDays: null } }
+    ])
+  })
+
   it('names who asks and where, lists the candidates with the first picked, and allows once', async () => {
     await ask()
     expect(screen.getByTestId('agent-grant-title')).toHaveTextContent(
@@ -87,6 +193,9 @@ describe('the agent grant dialog', () => {
     expect(screen.getByTestId('agent-grant-item-gh1')).toHaveTextContent('octocat')
     expect(screen.getByTestId('agent-grant-item-gh2')).toHaveAttribute('aria-checked', 'false')
     expect(screen.queryByTestId('agent-grant-step-up')).not.toBeInTheDocument()
+    expect(screen.getByTestId('agent-grant-standing-note')).toHaveTextContent(
+      'this client fills this login on this site without asking'
+    )
 
     await userEvent.click(screen.getByTestId('agent-grant-once'))
 

@@ -11,23 +11,26 @@ import Frame from '@/components/elements/Frame'
 import ItemPicker from './ItemPicker'
 import Choices from './Choices'
 import StepUp from './StepUp'
+import Target from './Target'
+import { targetText } from './targetText'
 import { clampDays } from './days'
 
 const TITLE_ID = 'agent-grant-title'
 
 /**
- * A client wants to use a login on a page: the extension in agent mode, or
- * an agent that wants the extension to log it in. The dialog names who asks
- * and where — and, for an agent, its own reason as text and the sign-out
- * that follows when it is done — offers the page's logins when the policy
- * admits more than one (the first picked), and takes one of three answers:
- * once, for N days — which writes a standing rule — or no. As with the other
- * two consent dialogs the answer goes straight back to Rust, which is holding
- * the client's request open for it; Escape, the backdrop and the window's
- * close count as a refusal; nothing is awaited, and the dialog leaves on
- * Rust's own clock. A step-up ask adds the verification Rust runs before the
- * yes counts: the biometric prompt, or the master password typed here and
- * sent with the answer.
+ * A client wants to use an item somewhere: the extension in agent mode or an
+ * agent that wants the extension to log it in (a fill), or an agent that
+ * wants a secret sent in requests to an API (a header) or given to one
+ * command (env). The dialog names who asks and where — and, for an agent,
+ * its own reason as text and, for a fill, the sign-out that follows when it
+ * is done — offers the items when the policy admits more than one (the first
+ * picked), and takes one of three answers: once, for N days — which writes a
+ * standing rule — or no. As with the other two consent dialogs the answer
+ * goes straight back to Rust, which is holding the client's request open for
+ * it; Escape, the backdrop and the window's close count as a refusal; nothing
+ * is awaited, and the dialog leaves on Rust's own clock. A step-up ask adds
+ * the verification Rust runs before the yes counts: the biometric prompt, or
+ * the master password typed here and sent with the answer.
  */
 export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
   const { t } = useTranslation()
@@ -52,13 +55,25 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
   const deny = () => answer(null)
   const picked = ask.candidates.find(candidate => candidate.id === itemId)
   const canAllow = !!picked && (!needsPassword || password.length > 0)
-  const agent = ask.clientKind !== 'extension'
-  const title = agent
-    ? t('{{client}} wants to log into {{origin}}', { client: ask.clientName, origin: ask.origin })
-    : t('{{client}} wants to use a login on {{origin}}', {
-        client: ask.clientName,
-        origin: ask.origin
-      })
+  const secret = ask.mode === 'header' || ask.mode === 'env'
+  const target = targetText(ask.targets[0])
+  const title =
+    ask.mode === 'env'
+      ? t('{{client}} wants to give a secret to a command', { client: ask.clientName })
+      : ask.mode === 'header'
+        ? t('{{client}} wants to send a secret in requests to {{target}}', {
+            client: ask.clientName,
+            target
+          })
+        : ask.clientKind !== 'extension'
+          ? t('{{client}} wants to log into {{origin}}', {
+              client: ask.clientName,
+              origin: target
+            })
+          : t('{{client}} wants to use a login on {{origin}}', {
+              client: ask.clientName,
+              origin: target
+            })
 
   return (
     <Frame
@@ -76,9 +91,7 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
         >
           {title}
         </h2>
-        <p className="mt-1.5 text-base text-text2">
-          {t('It would fill the login through the browser extension, as you would yourself.')}
-        </p>
+        <Target ask={ask} />
         {/* The agent's own words, shown as text and nothing more: a reason is
             for the user to weigh, never for the app to act on. */}
         {ask.reason && (
@@ -89,20 +102,28 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
         {ask.endsSession && (
           <p className="mt-3 text-sm text-text2" data-testid="agent-grant-ends-session">
             {t('When this grant ends, {{appName}} will sign the browser that filled it out of {{origin}} and the rest of its site.', {
-              origin: ask.origin
+              origin: target
             })}
           </p>
         )}
 
-        {ask.candidates.length > 1 ? (
-          <ItemPicker candidates={ask.candidates} value={itemId} onChange={setItemId} />
-        ) : (
-          picked && (
-            <p className="mt-4 text-base text-text" data-testid={`agent-grant-item-${picked.id}`}>
-              {picked.title || t('Untitled')}
-              {picked.username && <span className="text-text2"> · {picked.username}</span>}
+        {/* A secret request is covered whole: every item it named goes to
+            the command or the request, so they are listed, not picked, and
+            Rust ignores which id the answer carries. A site request offers
+            the page's logins for one to be picked. */}
+        {secret || ask.candidates.length === 1 ? (
+          ask.candidates.map(candidate => (
+            <p
+              key={candidate.id}
+              className="mt-4 text-base text-text"
+              data-testid={`agent-grant-item-${candidate.id}`}
+            >
+              {candidate.title || t('Untitled')}
+              {candidate.username && <span className="text-text2"> · {candidate.username}</span>}
             </p>
-          )
+          ))
+        ) : (
+          <ItemPicker candidates={ask.candidates} value={itemId} onChange={setItemId} />
         )}
 
         {ask.stepUp && (
@@ -110,6 +131,8 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
         )}
 
         <Choices
+          mode={ask.mode}
+          several={ask.candidates.length > 1}
           days={days}
           onDays={setDays}
           disabled={!canAllow}

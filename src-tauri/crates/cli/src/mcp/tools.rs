@@ -1,21 +1,26 @@
-//! The four tools, one per agent action. Each result is the host's reply with
+//! The five tools, one per agent action. Each result is the host's reply with
 //! the envelope taken off and only the fields named here kept — a grant's id
 //! and state, when it ends, when to ask again, the items it admits by title —
 //! so a value could not reach the agent even if a host sent one.
 //!
-//! A secret as a request header or an environment variable comes with the
-//! sidecar iteration, not this one: the host denies a grant whose targets
-//! carry no origin, so a request for one would fail every time, and a listed
-//! tool that always fails teaches an agent to retry it. That tool is listed
-//! once the host can serve it.
+//! `rowel_request_secret` asks for a secret as a request header or an
+//! environment variable. The agent gets a grant id and a line saying how to
+//! use it; the value goes to the sidecar — `rowel run` for env, `rowel proxy`
+//! for a header — which holds a key of its own. This tool is listed now that
+//! the host serves such grants: a listed tool that always fails would teach
+//! an agent to retry it.
 
 use rowel_broker::grant::{ItemSelector, Mode, Target};
+use rowel_broker::reference::Reference;
 use serde_json::{json, Map, Value};
 
 use super::rpc::{self, INVALID_PARAMS};
-use crate::agent::{AgentError, Broker, GrantAsk};
+use crate::agent::{decided, AgentError, Broker, GrantAsk};
+use crate::authority::authority;
+use crate::command;
 
 pub const REQUEST_LOGIN: &str = "rowel_request_login";
+pub const REQUEST_SECRET: &str = "rowel_request_secret";
 pub const WAIT: &str = "rowel_wait";
 pub const LIST_VISIBLE: &str = "rowel_list_visible";
 pub const END: &str = "rowel_end";
@@ -48,11 +53,25 @@ pub fn list() -> Value {
             },
         },
         {
+            "name": REQUEST_SECRET,
+            "description": "Ask the user to let one command, or requests to one API, use a secret — an API key, a password, a private key, a card number — without you ever seeing it. Name the secret by its placeholder (rowel://<lockbox>/<item>/<field>; items and fields come from rowel_list_visible, or an item's title as a slug) and where it goes: mode \"env\" with target the exact command line (one plain command, no pipes, redirections or `$` expansions), and the result's \"use\" line tells you the rowel run command to execute, which puts the value into that one command's environment; mode \"header\" with target the API as [METHOD[,METHOD] ]https://host/path (a * in the path matches anything), and the \"use\" line tells you how to send the request through rowel proxy, which puts the value into the header. The call waits for the user's answer (up to a minute). The result is the grant's id and state, never the value; pending with retryAfterMs: call again after that delay.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ref": text("The secret's placeholder, e.g. rowel://work/stripe/apiKey"),
+                    "mode": { "type": "string", "enum": ["header", "env"], "description": "env: one command's environment; header: an HTTP request header through rowel proxy" },
+                    "target": text("For env, the full command line that will run, exactly as you will run it; for header, [METHOD[,METHOD] ]https://host/path, e.g. \"GET,POST https://api.stripe.com/v1/*\""),
+                    "reason": text("Why you need it, shown to the user (optional)"),
+                },
+                "required": ["ref", "mode", "target"],
+            },
+        },
+        {
             "name": WAIT,
             "description": "Check on a grant Rowel reported as pending without a retryAfterMs (an approval routed to another person). The result is the grant's id and state as it stands: the desktop app answers at once, and a server holds the call while the approval is routed. Call again while it is still pending. A grant pending with retryAfterMs was never issued: request it again instead.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "grant_id": text("The grant's id, from rowel_request_login") },
+                "properties": { "grant_id": text("The grant's id, from rowel_request_login or rowel_request_secret") },
                 "required": ["grant_id"],
             },
         },
@@ -66,7 +85,7 @@ pub fn list() -> Value {
             "description": "End a grant you no longer need. For a sign-in this also signs the browser out of the site.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "grant_id": text("The grant's id, from rowel_request_login") },
+                "properties": { "grant_id": text("The grant's id, from rowel_request_login or rowel_request_secret") },
                 "required": ["grant_id"],
             },
         },
@@ -90,6 +109,7 @@ pub fn call(params: &Value, broker: &mut dyn Broker) -> Result<Value, (i64, Stri
     };
     let outcome = match name {
         REQUEST_LOGIN => request_login(arguments, broker),
+        REQUEST_SECRET => request_secret(arguments, broker),
         WAIT => wait(arguments, broker),
         LIST_VISIBLE => list_visible(broker),
         END => end(arguments, broker),
@@ -111,34 +131,118 @@ fn request_login(args: &Map<String, Value>, broker: &mut dyn Broker) -> Result<V
         targets: vec![Target::Origin(origin)],
         modes: vec![Mode::Fill],
     };
-    decided(broker, &ask)
+    Ok(pick(decided(broker, &ask)?, GRANT_FIELDS))
 }
 
-/// How long a request keeps asking while the app's consent slot is busy
-/// before the agent is handed the `pending` as it stands.
-pub const PENDING_BUDGET_MS: u64 = 60_000;
-
-/// A grant request, asked again while the answer is `pending` with a
-/// `retryAfterMs`. In Tier 1 that reply means the app's one consent slot was
-/// taken by another dialog and the request was never put to the user — the
-/// grant it names was not issued, so nothing waits on it and `rowel_wait`
-/// cannot settle it; asking again once that dialog has closed is what
-/// settles it. The host is asked again as long as the waits fit the budget;
-/// a `pending` that will not, or one without a `retryAfterMs` (a routed
-/// approval, Tier 2), is the agent's to wait on.
-fn decided(broker: &mut dyn Broker, ask: &GrantAsk) -> Result<Value, ToolError> {
-    let mut spent_ms = 0;
-    loop {
-        let reply = pick(broker.request_grant(ask)?, GRANT_FIELDS);
-        let retry_after_ms = reply["retryAfterMs"].as_u64();
-        match (reply["state"].as_str(), retry_after_ms) {
-            (Some("pending"), Some(ms)) if spent_ms + ms <= PENDING_BUDGET_MS => {
-                std::thread::sleep(std::time::Duration::from_millis(ms));
-                spent_ms += ms;
-            }
-            _ => return Ok(reply),
+/// The request names the placeholder's item and the one target the agent
+/// will use it at; the reply is the grant plus the line that uses it. The
+/// agent is told the command or the header to write, with the placeholder
+/// where the value would go, because that is all it needs and all it gets.
+fn request_secret(args: &Map<String, Value>, broker: &mut dyn Broker) -> Result<Value, ToolError> {
+    let text = required(args, "ref")?;
+    let reference = Reference::parse(text)
+        .ok_or_else(|| ToolError::invalid("ref must be rowel://<lockbox>/<item>/<field>"))?;
+    let mode = match required(args, "mode")? {
+        "header" => Mode::Header,
+        "env" => Mode::Env,
+        _ => return Err(ToolError::invalid("mode must be header or env")),
+    };
+    let target = required(args, "target")?.trim();
+    let target = match mode {
+        Mode::Header => http_target(target).ok_or_else(|| {
+            ToolError::invalid(
+                "target must be [METHOD[,METHOD] ]https://host/path, without a query string",
+            )
+        })?,
+        _ => Target::Command(command_target(target).ok_or_else(|| {
+            ToolError::invalid(
+                "target must be one plain command, as `rowel run -- <command>` would get it: no pipe, redirection, `$`, glob or other shell syntax",
+            )
+        })?),
+    };
+    let ask = GrantAsk {
+        reason: optional(args, "reason")?,
+        items: ItemSelector::Ids(vec![reference.item.clone()]),
+        targets: vec![target],
+        modes: vec![mode],
+    };
+    let mut result = pick(decided(broker, &ask)?, GRANT_FIELDS);
+    if result["state"] == "active" {
+        if let Some(grant_id) = result["grantId"].as_str() {
+            result["use"] = use_hint(grant_id, &reference, mode, &ask.targets[0]).into();
         }
     }
+    Ok(result)
+}
+
+/// An env target written by the one rule `rowel run` names its line by
+/// ([`command::line`]): read back into words and quoted again, so `git commit
+/// -m "fix it"` is asked for as the `git commit -m 'fix it'` the run will
+/// resolve under, and a `*` the agent wrote is quoted, never a wildcard. A
+/// line a shell would do more with than split is `None`: pasted into the
+/// use hint's shell it would run something other than what was granted.
+fn command_target(text: &str) -> Option<String> {
+    if command::needs_shell(text) {
+        return None;
+    }
+    let words = command::words(text)?;
+    (!words.is_empty()).then(|| command::line(&words))
+}
+
+/// The one line that uses the grant. For env the variable's name is the
+/// agent's to choose, so the line names the slot; for header the proxy is
+/// named, which is the sidecar that swaps a header.
+fn use_hint(grant_id: &str, reference: &Reference, mode: Mode, target: &Target) -> String {
+    match (mode, target) {
+        (Mode::Env, Target::Command(line)) => format!(
+            "rowel run --grant {grant_id} --env NAME={reference} -- {line}  (NAME is the variable the command reads)"
+        ),
+        (_, Target::Http { host, .. }) => format!(
+            "Run `rowel proxy` (it listens on http://127.0.0.1:7400) and call http://127.0.0.1:7400/https/{host}/<path> with the header X-Rowel-Grant: {grant_id} and {reference} in place of the value in the authorization header (or in a JSON or form body); the proxy swaps the placeholder for the value on the way out and the value never reaches you."
+        ),
+        _ => format!(
+            "Run `rowel proxy` and send the request through it with the header X-Rowel-Grant: {grant_id} and {reference} in place of the value."
+        ),
+    }
+}
+
+/// `[METHOD[,METHOD] ]https://host/path-glob` as the host's typed target:
+/// the methods before the first space (upper-case letters and commas,
+/// nothing else, so a word is not mistaken for one), the host up to the
+/// first slash by the one rule (`authority`), the path from it, `/*` when
+/// none. A query string is refused: it would land in logs.
+pub fn http_target(text: &str) -> Option<Target> {
+    let (methods, url) = match text.split_once(char::is_whitespace) {
+        Some((methods, url)) if methods.chars().all(|c| c.is_ascii_uppercase() || c == ',') => (
+            methods
+                .split(',')
+                .filter(|m| !m.is_empty())
+                .map(String::from)
+                .collect(),
+            url.trim(),
+        ),
+        Some(_) => return None,
+        None => (Vec::new(), text),
+    };
+    let (scheme, rest) = url
+        .strip_prefix("https://")
+        .map(|rest| ("https", rest))
+        .or_else(|| url.strip_prefix("http://").map(|rest| ("http", rest)))?;
+    if rest.contains(['?', '#']) || rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let (host, path) = match rest.split_once('/') {
+        Some((host, path)) => (host, format!("/{path}")),
+        None => (rest, "/*".to_string()),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some(Target::Http {
+        host: authority(scheme, host),
+        path,
+        methods,
+    })
 }
 
 fn wait(args: &Map<String, Value>, broker: &mut dyn Broker) -> Result<Value, ToolError> {
@@ -247,18 +351,14 @@ impl ToolError {
 
 impl From<AgentError> for ToolError {
     fn from(error: AgentError) -> Self {
-        let message = error.to_string();
-        match error {
-            AgentError::Unreachable(_) => Self::new("unreachable", message),
-            AgentError::Keys(_) => Self::new("key_file", message),
-            AgentError::Channel(_) => Self::new("protocol", message),
-            AgentError::Refused(refused) => Self {
-                error: refused
-                    .code
-                    .map_or_else(|| refused.raw.to_string(), |code| format!("{code:?}")),
-                message,
-                retry_after_ms: refused.retry_after_ms,
-            },
+        let retry_after_ms = match &error {
+            AgentError::Refused(refused) => refused.retry_after_ms,
+            _ => None,
+        };
+        Self {
+            error: error.kind(),
+            message: error.to_string(),
+            retry_after_ms,
         }
     }
 }
@@ -266,86 +366,6 @@ impl From<AgentError> for ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A host whose answers to `request-grant` are scripted, in order; the
-    /// last one repeats.
-    struct Scripted {
-        answers: Vec<Map<String, Value>>,
-        asked: usize,
-    }
-
-    impl Broker for Scripted {
-        fn request_grant(&mut self, _ask: &GrantAsk) -> Result<Map<String, Value>, AgentError> {
-            let answer = self.answers[self.asked.min(self.answers.len() - 1)].clone();
-            self.asked += 1;
-            Ok(answer)
-        }
-        fn wait_grant(&mut self, _grant_id: &str) -> Result<Map<String, Value>, AgentError> {
-            Ok(Map::new())
-        }
-        fn end_grant(&mut self, _grant_id: &str) -> Result<Map<String, Value>, AgentError> {
-            Ok(Map::new())
-        }
-        fn list_visible(&mut self) -> Result<Map<String, Value>, AgentError> {
-            Ok(Map::new())
-        }
-    }
-
-    fn reply(value: Value) -> Map<String, Value> {
-        value.as_object().unwrap().clone()
-    }
-
-    fn login_ask() -> GrantAsk {
-        GrantAsk {
-            reason: None,
-            items: ItemSelector::Lockbox,
-            targets: vec![Target::Origin("https://github.com".into())],
-            modes: vec![Mode::Fill],
-        }
-    }
-
-    // A busy consent slot answers `pending` with a short `retryAfterMs` and
-    // issues nothing: the tool asks again after the wait, as many times as
-    // the budget allows, and hands the agent the decided state.
-    #[test]
-    fn a_pending_with_a_short_retry_is_asked_again_until_decided() {
-        let busy = reply(json!({ "grantId": "g", "state": "pending", "retryAfterMs": 1 }));
-        let active = reply(json!({ "grantId": "g", "state": "active", "items": [] }));
-        let mut broker = Scripted {
-            answers: vec![busy.clone(), busy, active],
-            asked: 0,
-        };
-        let result = decided(&mut broker, &login_ask()).unwrap();
-        assert_eq!(result["state"], "active");
-        assert_eq!(broker.asked, 3);
-    }
-
-    // A `pending` the agent must act on itself comes back as it is: one
-    // whose wait would not fit the budget, and one with no `retryAfterMs`
-    // at all, which is a routed approval to be waited on.
-    #[test]
-    fn a_pending_past_the_budget_or_without_a_retry_comes_back_as_it_is() {
-        let long = reply(
-            json!({ "grantId": "g", "state": "pending", "retryAfterMs": PENDING_BUDGET_MS + 1 }),
-        );
-        let mut broker = Scripted {
-            answers: vec![long],
-            asked: 0,
-        };
-        let result = decided(&mut broker, &login_ask()).unwrap();
-        assert_eq!(result["state"], "pending");
-        assert_eq!(result["retryAfterMs"], PENDING_BUDGET_MS + 1);
-        assert_eq!(broker.asked, 1);
-
-        let routed = reply(json!({ "grantId": "g", "state": "pending" }));
-        let mut broker = Scripted {
-            answers: vec![routed],
-            asked: 0,
-        };
-        let result = decided(&mut broker, &login_ask()).unwrap();
-        assert_eq!(result["state"], "pending");
-        assert_eq!(broker.asked, 1);
-    }
 
     #[test]
     fn a_site_becomes_its_origin() {
@@ -368,6 +388,41 @@ mod tests {
         assert_eq!(origin_of("ftp://example.com"), None);
         assert_eq!(origin_of("https://"), None);
         assert_eq!(origin_of(""), None);
+    }
+
+    #[test]
+    fn a_header_target_is_the_methods_the_host_and_the_path_glob() {
+        let http = |host: &str, path: &str, methods: &[&str]| Target::Http {
+            host: host.into(),
+            path: path.into(),
+            methods: methods.iter().map(|m| m.to_string()).collect(),
+        };
+        assert_eq!(
+            http_target("GET,POST https://API.stripe.com/v1/*"),
+            Some(http("api.stripe.com", "/v1/*", &["GET", "POST"]))
+        );
+        assert_eq!(
+            http_target("https://api.stripe.com"),
+            Some(http("api.stripe.com", "/*", &[]))
+        );
+        assert_eq!(
+            http_target("GET https://api.stripe.com/v1/balance"),
+            Some(http("api.stripe.com", "/v1/balance", &["GET"]))
+        );
+        assert_eq!(
+            http_target("GET https://API.stripe.com:443/v1/*"),
+            Some(http("api.stripe.com", "/v1/*", &["GET"]))
+        );
+        assert_eq!(
+            http_target("http://localhost:3000/api/*"),
+            Some(http("localhost:3000", "/api/*", &[]))
+        );
+        assert_eq!(http_target("https://api.stripe.com/v1?key=1"), None);
+        assert_eq!(http_target("api.stripe.com/v1"), None);
+        assert_eq!(http_target("GET api.stripe.com/v1"), None);
+        assert_eq!(http_target("get https://api.stripe.com/v1"), None);
+        assert_eq!(http_target("https://"), None);
+        assert_eq!(http_target("curl https://x.com"), None);
     }
 
     #[test]

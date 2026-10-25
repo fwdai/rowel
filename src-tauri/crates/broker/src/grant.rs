@@ -39,6 +39,14 @@ impl Mode {
             Mode::Env => "env",
         }
     }
+
+    /// Whether this is a secret mode — `header`, `env` — rather than a
+    /// site's. A secret request names items that are all needed at once and
+    /// is covered whole or not at all; a site request offers a page's logins
+    /// for one to be picked.
+    pub fn is_secret(self) -> bool {
+        matches!(self, Mode::Header | Mode::Env)
+    }
 }
 
 /// Who has to say yes. Ordered so that "stricter" is comparable: `Auto < Ask
@@ -113,14 +121,82 @@ impl Target {
                 },
             ) => {
                 host_pattern_matches(host, probe_host)
+                    && !has_dot_segment(probe_path)
                     && glob_matches(path, probe_path)
                     && (methods.is_empty()
                         || methods.iter().any(|m| m.eq_ignore_ascii_case(method)))
             }
-            (Target::Command(pattern), Probe::Command(line)) => glob_matches(pattern, line),
+            (Target::Command(pattern), Probe::Command(line)) => command_matches(pattern, line),
             _ => false,
         }
     }
+
+    /// The concrete places a *request's* target stands for when policy is
+    /// evaluated: an origin is itself; an HTTP target is one probe per method
+    /// it names, or one with method `*` when it names none, so a rule that
+    /// names methods does not cover a request for any method while a rule
+    /// naming none does; a command is its line.
+    pub fn probes(&self) -> Vec<Probe<'_>> {
+        match self {
+            Target::Origin(origin) => vec![Probe::Origin(origin)],
+            Target::Http {
+                host,
+                path,
+                methods,
+            } => {
+                if methods.is_empty() {
+                    return vec![Probe::Http {
+                        host,
+                        path,
+                        method: "*",
+                    }];
+                }
+                methods
+                    .iter()
+                    .map(|method| Probe::Http { host, path, method })
+                    .collect()
+            }
+            Target::Command(line) => vec![Probe::Command(line)],
+        }
+    }
+}
+
+/// Where a sidecar is about to use the value it resolves: the one request or
+/// the one command line, concrete, never a pattern. Its kind says the mode:
+/// an HTTP target is `header`, a command is `env`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResolveTarget {
+    Http {
+        host: String,
+        path: String,
+        method: String,
+    },
+    Command(String),
+}
+
+impl ResolveTarget {
+    pub fn probe(&self) -> Probe<'_> {
+        match self {
+            ResolveTarget::Http { host, path, method } => Probe::Http { host, path, method },
+            ResolveTarget::Command(line) => Probe::Command(line),
+        }
+    }
+
+    pub fn mode(&self) -> Mode {
+        match self {
+            ResolveTarget::Http { .. } => Mode::Header,
+            ResolveTarget::Command(_) => Mode::Env,
+        }
+    }
+}
+
+/// What a sidecar says beside the placeholder it resolves: where the value
+/// is going.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveContext {
+    pub target: ResolveTarget,
 }
 
 /// `*.example.com` is the subdomains of `example.com`, not the apex: a rule
@@ -143,14 +219,54 @@ fn host_pattern_matches(pattern: &str, host: &str) -> bool {
 /// Over bytes, which is sound for UTF-8 — a literal byte of the pattern only
 /// matches its equal, so a match never lands inside a multi-byte character.
 pub fn glob_matches(pattern: &str, text: &str) -> bool {
-    let (pattern, text) = (pattern.as_bytes(), text.as_bytes());
+    let pattern: Vec<Option<u8>> = pattern.bytes().map(|b| (b != b'*').then_some(b)).collect();
+    glob_over(&pattern, text.as_bytes())
+}
+
+/// [`glob_matches`] for a command line, read as a shell reads it: a `*`
+/// inside single or double quotes, or after a backslash, is the character
+/// itself, so the concrete line a grant was asked for — every `*` in it
+/// quoted, as `rowel run` writes lines — matches that line alone, and only a
+/// bare `*` a rule's author wrote (`node deploy.js*`) stands for any run.
+fn command_matches(pattern: &str, line: &str) -> bool {
+    let mut tokens = Vec::with_capacity(pattern.len());
+    let (mut single, mut double, mut escaped) = (false, false, false);
+    for b in pattern.bytes() {
+        let wildcard = b == b'*' && !(single || double || escaped);
+        tokens.push((!wildcard).then_some(b));
+        if escaped {
+            escaped = false;
+        } else if b == b'\\' && !single {
+            escaped = true;
+        } else if b == b'\'' && !double {
+            single = !single;
+        } else if b == b'"' && !single {
+            double = !double;
+        }
+    }
+    glob_over(&tokens, line.as_bytes())
+}
+
+/// Whether `path` has a `.` or `..` segment, written or percent-encoded: a
+/// path an HTTP client would collapse before sending, so the one a grant was
+/// checked against would not be the one the value went to. Such a probe
+/// matches no grant; the proxy sends and asks for the collapsed path.
+fn has_dot_segment(path: &str) -> bool {
+    path.split('/').any(|segment| {
+        let segment = segment.to_ascii_lowercase().replace("%2e", ".");
+        segment == "." || segment == ".."
+    })
+}
+
+/// The walk behind both globs, over a pattern whose `None`s are wildcards.
+fn glob_over(pattern: &[Option<u8>], text: &[u8]) -> bool {
     let (mut p, mut t) = (0, 0);
     let mut star: Option<(usize, usize)> = None;
     while t < text.len() {
-        if p < pattern.len() && pattern[p] == b'*' {
+        if p < pattern.len() && pattern[p].is_none() {
             star = Some((p, t));
             p += 1;
-        } else if p < pattern.len() && pattern[p] == text[t] {
+        } else if p < pattern.len() && pattern[p] == Some(text[t]) {
             p += 1;
             t += 1;
         } else if let Some((star_p, star_t)) = star {
@@ -161,7 +277,7 @@ pub fn glob_matches(pattern: &str, text: &str) -> bool {
             return false;
         }
     }
-    pattern[p..].iter().all(|&b| b == b'*')
+    pattern[p..].iter().all(Option::is_none)
 }
 
 /// Which items a grant or a rule names: these ids, everything in the lockbox,
@@ -508,6 +624,102 @@ mod tests {
         let middle = Target::Command("stripe * --live".into());
         assert!(middle.matches(&Probe::Command("stripe charges list --live")));
         assert!(!middle.matches(&Probe::Command("stripe charges list")));
+
+        // A quoted or escaped `*` is the character, as the shell reads it:
+        // the line a grant was asked for matches that line alone.
+        let select = Target::Command("psql -c 'SELECT * FROM users'".into());
+        assert!(select.matches(&Probe::Command("psql -c 'SELECT * FROM users'")));
+        assert!(!select.matches(&Probe::Command(
+            "psql -c 'SELECT 1; DROP TABLE x; SELECT x FROM users'"
+        )));
+        let quoted = Target::Command(r#"echo "a*b" c\* 'it'\''s*'"#.into());
+        assert!(quoted.matches(&Probe::Command(r#"echo "a*b" c\* 'it'\''s*'"#)));
+        assert!(!quoted.matches(&Probe::Command(r#"echo "axxb" c\* 'it'\''s*'"#)));
+        assert!(!quoted.matches(&Probe::Command(r#"echo "a*b" c\* 'it'\''sxx'"#)));
+    }
+
+    #[test]
+    fn a_path_with_a_dot_segment_matches_no_grant() {
+        let public = Target::Http {
+            host: "api.stripe.com".into(),
+            path: "/v1/public/*".into(),
+            methods: vec![],
+        };
+        let probe = |path| Probe::Http {
+            host: "api.stripe.com",
+            path,
+            method: "GET",
+        };
+        assert!(public.matches(&probe("/v1/public/prices")));
+        assert!(public.matches(&probe("/v1/public/v1.2/x..y")));
+        for dotted in [
+            "/v1/public/../charges",
+            "/v1/public/%2e%2e/charges",
+            "/v1/public/.%2E/charges",
+            "/v1/public/./prices",
+        ] {
+            assert!(!public.matches(&probe(dotted)), "{dotted}");
+        }
+    }
+
+    #[test]
+    fn a_requests_target_becomes_one_probe_per_method_or_one_for_any() {
+        let origin = Target::Origin("https://github.com".into());
+        assert_eq!(origin.probes(), vec![Probe::Origin("https://github.com")]);
+        let command = Target::Command("stripe balance retrieve --live".into());
+        assert_eq!(
+            command.probes(),
+            vec![Probe::Command("stripe balance retrieve --live")]
+        );
+
+        let request = |methods: &[&str]| Target::Http {
+            host: "api.stripe.com".into(),
+            path: "/v1/balance".into(),
+            methods: methods.iter().map(|m| m.to_string()).collect(),
+        };
+        let probe = |method| Probe::Http {
+            host: "api.stripe.com",
+            path: "/v1/balance",
+            method,
+        };
+        let two = request(&["GET", "POST"]);
+        assert_eq!(two.probes(), vec![probe("GET"), probe("POST")]);
+        let any = request(&[]);
+        assert_eq!(any.probes(), vec![probe("*")]);
+
+        // A rule naming methods does not cover a request for any method; a
+        // rule naming none covers both.
+        let rule = |methods: &[&str]| Target::Http {
+            host: "api.stripe.com".into(),
+            path: "/v1/*".into(),
+            methods: methods.iter().map(|m| m.to_string()).collect(),
+        };
+        let get_only = rule(&["GET"]);
+        let whatever = rule(&[]);
+        assert!(any.probes().iter().all(|p| !get_only.matches(p)));
+        assert!(any.probes().iter().all(|p| whatever.matches(p)));
+        assert!(two.probes().iter().all(|p| whatever.matches(p)));
+    }
+
+    #[test]
+    fn a_resolve_target_is_one_probe_and_says_its_mode() {
+        let http = ResolveTarget::Http {
+            host: "api.stripe.com".into(),
+            path: "/v1/balance".into(),
+            method: "GET".into(),
+        };
+        assert_eq!(
+            http.probe(),
+            Probe::Http {
+                host: "api.stripe.com",
+                path: "/v1/balance",
+                method: "GET",
+            }
+        );
+        assert_eq!(http.mode(), Mode::Header);
+        let command = ResolveTarget::Command("stripe balance retrieve".into());
+        assert_eq!(command.probe(), Probe::Command("stripe balance retrieve"));
+        assert_eq!(command.mode(), Mode::Env);
     }
 
     #[test]
@@ -712,6 +924,27 @@ mod tests {
                 { "http": { "host": "api.stripe.com", "path": "/v1/*", "methods": ["GET"] } },
                 { "command": "node deploy.js*" },
             ])
+        );
+        let contexts = [
+            ResolveContext {
+                target: ResolveTarget::Http {
+                    host: "api.stripe.com".into(),
+                    path: "/v1/balance".into(),
+                    method: "GET".into(),
+                },
+            },
+            ResolveContext {
+                target: ResolveTarget::Command("stripe balance retrieve".into()),
+            },
+        ];
+        let wire = serde_json::json!([
+            { "target": { "http": { "host": "api.stripe.com", "path": "/v1/balance", "method": "GET" } } },
+            { "target": { "command": "stripe balance retrieve" } },
+        ]);
+        assert_eq!(serde_json::to_value(&contexts).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<Vec<ResolveContext>>(wire).unwrap(),
+            contexts
         );
         assert_eq!(
             serde_json::to_value(ItemSelector::Lockbox).unwrap(),

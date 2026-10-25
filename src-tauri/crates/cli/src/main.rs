@@ -1,6 +1,8 @@
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn main() {
-    std::process::exit(rowel_cli::run(std::env::args().skip(1)));
+    let mut args = std::env::args();
+    let program = args.next().unwrap_or_else(|| "rowel".to_string());
+    std::process::exit(rowel_cli::run(&program, args));
 }
 
 // The library is empty on a phone (see `lib.rs`), but a binary target still

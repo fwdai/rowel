@@ -86,6 +86,12 @@ impl Rule {
 /// because the approver's tap is the user-presence gesture WebAuthn asks
 /// for; `env` is at least `ask` unless a rule named the full command line,
 /// because the child process can print what it was given.
+///
+/// A floor is lenient where a rule is strict: a request for *any* method at
+/// a path (the `*` probe of [`Target::probes`]) is under the money floor
+/// when a money target names that host and path, whatever methods the
+/// target names, since a grant for any method includes the ones that cost
+/// money — whereas a rule naming methods never covers such a request.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Floors {
@@ -119,12 +125,37 @@ impl Floors {
         if modes.contains(&Mode::Env) && !command_named {
             floor = floor.max(Approval::Ask);
         }
-        if probes.iter().any(|probe| {
-            matches!(probe, Probe::Http { .. }) && self.money.iter().any(|t| t.matches(probe))
-        }) {
+        if probes
+            .iter()
+            .any(|probe| self.money.iter().any(|t| money_matches(t, probe)))
+        {
             floor = Approval::StepUp;
         }
         approval.max(floor)
+    }
+}
+
+/// Whether the money target `target` is under `probe`, an `Http` probe. A
+/// probe for any method is under a target naming methods when it is under
+/// that target for any one of them, which is when host and path match; a
+/// probe for one method is matched as a rule would match it.
+fn money_matches(target: &Target, probe: &Probe) -> bool {
+    match (target, probe) {
+        (
+            Target::Http { methods, .. },
+            Probe::Http {
+                host,
+                path,
+                method: "*",
+            },
+        ) => {
+            target.matches(probe)
+                || methods
+                    .iter()
+                    .any(|method| target.matches(&Probe::Http { host, path, method }))
+        }
+        (Target::Http { .. }, Probe::Http { .. }) => target.matches(probe),
+        _ => false,
     }
 }
 
@@ -266,9 +297,13 @@ impl Decision {
 /// named and the `probes` its targets become.
 ///
 /// A rule matches when its agent selector admits the client, its item
-/// selector admits at least one candidate, every probe matches one of its
-/// targets (an empty target list matching any), and every requested mode is
-/// among its modes. The order of precedence, in full:
+/// selector admits at least one candidate — every candidate, for a secret
+/// request ([`Mode::is_secret`]) — every probe matches one of its targets
+/// (an empty target list matching any), and every requested mode is among
+/// its modes. A page's logins are offered for one to be picked, so a rule
+/// for one of them is the right answer to a site request; a command needs
+/// every secret it named at once, so a rule for one of two must not win on
+/// specificity and narrow the grant to it. The order of precedence, in full:
 ///
 /// 1. No candidates, or no matching rule: denied.
 /// 2. Among the matching rules, the most specific item selector wins:
@@ -333,8 +368,13 @@ fn rule_matches(
     candidates: &[CandidateItem],
     probes: &[Probe],
 ) -> bool {
+    let admits = |item: &CandidateItem| rule.items.admits(item);
     rule.agents.admits(&req.client_key, req.agent_id.as_deref())
-        && candidates.iter().any(|item| rule.items.admits(item))
+        && if req.modes.iter().any(|mode| mode.is_secret()) {
+            candidates.iter().all(admits)
+        } else {
+            candidates.iter().any(admits)
+        }
         && (rule.targets.is_empty()
             || (!probes.is_empty()
                 && probes
@@ -386,16 +426,20 @@ pub mod defaults {
 
     /// The Tier 1 baseline the app prepends to a lockbox's own rules when its
     /// agent-access switch is on: any client may *ask* to fill or sign in
-    /// with any item of the lockbox, anywhere, for the grant's window. Deny-by-default
-    /// stays the evaluator's rule; this is what makes the first ever fill
-    /// ask instead of fail.
+    /// with any item of the lockbox, anywhere, for the grant's window — and,
+    /// since I3, to use one in a header or a child's environment, where the
+    /// floors keep `env` at least an ask and this rule keeps `header` one.
+    /// Deny-by-default stays the evaluator's rule; this is what makes the
+    /// first ever fill, or the first `rowel run`, ask instead of fail.
+    /// `token` is not here: nothing serves it yet, and a baseline that let
+    /// an agent ask for it would teach the agent to keep asking.
     pub fn personal() -> Vec<Rule> {
         vec![Rule {
             id: PERSONAL_FILL_RULE.into(),
             agents: AgentSelector::Any,
             items: ItemSelector::Lockbox,
             targets: vec![],
-            modes: vec![Mode::Fill, Mode::Passkey],
+            modes: vec![Mode::Fill, Mode::Passkey, Mode::Header, Mode::Env],
             approval: Approval::Ask,
             ttl_ms: PERSONAL_TTL_MS,
             // Not single-use: the fill is followed by the TOTP step under the
@@ -411,15 +455,38 @@ pub mod defaults {
         }]
     }
 
-    /// The rule the dialog's "for N days" answer writes: this client may fill
-    /// this one item at this origin without asking, for `days` from `now_ms`.
+    /// The rule the dialog's "for N days" answer writes for a fill: this
+    /// client may fill this one item at this origin without asking, for
+    /// `days` from `now_ms`.
     pub fn standing(client_key: &str, item_id: &str, origin: &str, days: u32, now_ms: i64) -> Rule {
+        standing_for(
+            client_key,
+            item_id,
+            Target::Origin(origin.to_string()),
+            Mode::Fill,
+            days,
+            now_ms,
+        )
+    }
+
+    /// The dialog's "for N days" answer for any mode: one client, one item,
+    /// this one target, this one mode, without asking, for `days` from
+    /// `now_ms`. The target is the request's own, so a standing `env` rule
+    /// names the full command line and lifts the floor for that line alone.
+    pub fn standing_for(
+        client_key: &str,
+        item_id: &str,
+        target: Target,
+        mode: Mode,
+        days: u32,
+        now_ms: i64,
+    ) -> Rule {
         Rule {
             id: crate::grant::Grant::new_id(),
             agents: AgentSelector::Ids(vec![client_key.to_string()]),
             items: ItemSelector::Ids(vec![item_id.to_string()]),
-            targets: vec![Target::Origin(origin.to_string())],
-            modes: vec![Mode::Fill],
+            targets: vec![target],
+            modes: vec![mode],
             approval: Approval::Auto,
             ttl_ms: PERSONAL_TTL_MS,
             max_uses: None,
@@ -579,19 +646,26 @@ mod tests {
             &Floors::default(),
         );
         assert_eq!(approval_of(&elsewhere), Some(Approval::Ask));
-        // But only to fill or sign in.
-        let header = evaluate(
+        // A header or an env use may be asked for too; a token may not.
+        let mode_request = |mode| request(ItemSelector::Ids(vec!["gh".into()]), vec![], vec![mode]);
+        for mode in [Mode::Header, Mode::Env] {
+            let decision = evaluate(
+                &defaults::personal(),
+                &mode_request(mode),
+                &gh,
+                &[],
+                &Floors::default(),
+            );
+            assert_eq!(approval_of(&decision), Some(Approval::Ask), "{mode:?}");
+        }
+        let token = evaluate(
             &defaults::personal(),
-            &request(
-                ItemSelector::Ids(vec!["gh".into()]),
-                vec![],
-                vec![Mode::Header],
-            ),
+            &mode_request(Mode::Token),
             &gh,
             &[],
             &Floors::default(),
         );
-        assert_eq!(header, Decision::Denied(DenyReason::NoRule));
+        assert_eq!(token, Decision::Denied(DenyReason::NoRule));
     }
 
     #[test]
@@ -738,6 +812,48 @@ mod tests {
             &Floors::default(),
         );
         assert_eq!(rule_of(&decision), Some("ask"));
+    }
+
+    #[test]
+    fn a_secret_request_is_answered_only_by_a_rule_admitting_every_item() {
+        let both = [item("stripe", "api_key", &[]), item("gh", "api_key", &[])];
+        let lockbox = rule("lockbox", ItemSelector::Lockbox, Approval::Ask);
+        let one = rule(
+            "one",
+            ItemSelector::Ids(vec!["stripe".into()]),
+            Approval::Auto,
+        );
+        let line = "node deploy.js";
+        let env = request(
+            ItemSelector::Ids(vec!["stripe".into(), "gh".into()]),
+            vec![Target::Command(line.into())],
+            vec![Mode::Env],
+        );
+        let rules = [lockbox, one];
+        let probes = [Probe::Command(line)];
+        // The rule for one of the two is more specific, but a command needs
+        // both: the lockbox rule answers, and asks.
+        let decision = evaluate(&rules, &env, &both, &probes, &Floors::default());
+        assert_eq!(rule_of(&decision), Some("lockbox"));
+        assert_eq!(approval_of(&decision), Some(Approval::Ask));
+        assert_eq!(
+            evaluate(&rules[1..], &env, &both, &probes, &Floors::default()),
+            Decision::Denied(DenyReason::NoRule)
+        );
+        // With one item asked for, the rule for it wins as before.
+        let decision = evaluate(&rules, &env, &both[..1], &probes, &Floors::default());
+        assert_eq!(rule_of(&decision), Some("one"));
+        // A page's logins are offered for one to be picked: the rule for one
+        // of them answers a site request.
+        let gh_and_stripe = [item("gh", "login", &[]), item("stripe", "login", &[])];
+        let decision = evaluate(
+            &rules,
+            &fill_request(),
+            &gh_and_stripe,
+            &[GH_PAGE],
+            &Floors::default(),
+        );
+        assert_eq!(rule_of(&decision), Some("one"));
     }
 
     #[test]
@@ -931,6 +1047,68 @@ mod tests {
     }
 
     #[test]
+    fn a_request_for_any_method_at_a_money_path_is_stepped_up() {
+        let key = [item("stripe", "apikey", &[])];
+        let charges = Target::Http {
+            host: "api.stripe.com".into(),
+            path: "/v1/charges*".into(),
+            methods: vec!["POST".into()],
+        };
+        let floors = Floors {
+            money: vec![charges.clone()],
+        };
+        let rules = [rule("all", ItemSelector::Lockbox, Approval::Auto)];
+        let any_method = |path: &str| {
+            request(
+                ItemSelector::Ids(vec!["stripe".into()]),
+                vec![Target::Http {
+                    host: "api.stripe.com".into(),
+                    path: path.into(),
+                    methods: vec![],
+                }],
+                vec![Mode::Header],
+            )
+        };
+        let req = any_method("/v1/charges");
+        let probes = req.targets[0].probes();
+        assert!(
+            !charges.matches(&probes[0]),
+            "a rule naming methods does not cover a request for any method"
+        );
+        let decision = evaluate(&rules, &req, &key, &probes, &floors);
+        assert_eq!(
+            approval_of(&decision),
+            Some(Approval::StepUp),
+            "but the floor still applies: any method includes POST"
+        );
+
+        let req = any_method("/v1/balance");
+        let decision = evaluate(&rules, &req, &key, &req.targets[0].probes(), &floors);
+        assert_eq!(
+            approval_of(&decision),
+            Some(Approval::Auto),
+            "another path is not money"
+        );
+        let elsewhere = request(
+            ItemSelector::Ids(vec!["stripe".into()]),
+            vec![Target::Http {
+                host: "api.example.com".into(),
+                path: "/v1/charges".into(),
+                methods: vec![],
+            }],
+            vec![Mode::Header],
+        );
+        let decision = evaluate(
+            &rules,
+            &elsewhere,
+            &key,
+            &elsewhere.targets[0].probes(),
+            &floors,
+        );
+        assert_eq!(approval_of(&decision), Some(Approval::Auto));
+    }
+
+    #[test]
     fn empty_targets_on_a_rule_mean_any_target() {
         let gh = [item("gh", "login", &[])];
         let rules = [rule("any", ItemSelector::Lockbox, Approval::Auto)];
@@ -979,6 +1157,146 @@ mod tests {
             ..fill_request()
         };
         let decision = evaluate(&rules, &other_client, &gh, &[GH_PAGE], &Floors::default());
+        assert_eq!(approval_of(&decision), Some(Approval::Ask));
+    }
+
+    #[test]
+    fn a_standing_env_rule_names_the_line_and_lifts_the_floor_for_it_alone() {
+        let now = 1_700_000_000_000;
+        let key = [item("stripe", "apikey", &[])];
+        let standing = defaults::standing_for(
+            "ext-key",
+            "stripe",
+            Target::Command("stripe * --live".into()),
+            Mode::Env,
+            7,
+            now,
+        );
+        assert_eq!(standing.modes, vec![Mode::Env]);
+        assert_eq!(
+            standing.targets,
+            vec![Target::Command("stripe * --live".into())]
+        );
+        assert_eq!(standing.expires_at_ms, Some(now + 7 * 24 * 60 * 60 * 1000));
+        let env_request = |line: &str| {
+            request(
+                ItemSelector::Ids(vec!["stripe".into()]),
+                vec![Target::Command(line.to_string())],
+                vec![Mode::Env],
+            )
+        };
+        let live = "stripe balance retrieve --live";
+        let eval = "node -e \"console.log(process.env)\"";
+
+        let alone = [standing.clone()];
+        let decision = evaluate(
+            &alone,
+            &env_request(live),
+            &key,
+            &[Probe::Command(live)],
+            &Floors::default(),
+        );
+        assert_eq!(approval_of(&decision), Some(Approval::Auto));
+        assert_eq!(
+            evaluate(
+                &alone,
+                &env_request(eval),
+                &key,
+                &[Probe::Command(eval)],
+                &Floors::default()
+            ),
+            Decision::Denied(DenyReason::NoRule)
+        );
+
+        // Over the baseline, the named line is auto and any other line is
+        // the baseline's ask, with the floor intact.
+        let mut rules = defaults::personal();
+        rules.push(standing);
+        let decision = evaluate(
+            &rules,
+            &env_request(live),
+            &key,
+            &[Probe::Command(live)],
+            &Floors::default(),
+        );
+        assert_eq!(approval_of(&decision), Some(Approval::Auto));
+        let decision = evaluate(
+            &rules,
+            &env_request(eval),
+            &key,
+            &[Probe::Command(eval)],
+            &Floors::default(),
+        );
+        assert_eq!(
+            (approval_of(&decision), rule_of(&decision)),
+            (Some(Approval::Ask), Some(defaults::PERSONAL_FILL_RULE))
+        );
+    }
+
+    #[test]
+    fn a_standing_header_rule_is_auto_for_what_it_names_and_asks_elsewhere() {
+        let now = 1_700_000_000_000;
+        let key = [item("stripe", "apikey", &[])];
+        let mut rules = defaults::personal();
+        rules.push(defaults::standing_for(
+            "ext-key",
+            "stripe",
+            Target::Http {
+                host: "api.stripe.com".into(),
+                path: "/v1/*".into(),
+                methods: vec!["GET".into()],
+            },
+            Mode::Header,
+            7,
+            now,
+        ));
+        let header_request = |method: &str| {
+            request(
+                ItemSelector::Ids(vec!["stripe".into()]),
+                vec![Target::Http {
+                    host: "api.stripe.com".into(),
+                    path: "/v1/balance".into(),
+                    methods: vec![method.to_string()],
+                }],
+                vec![Mode::Header],
+            )
+        };
+        let probe = |method| Probe::Http {
+            host: "api.stripe.com",
+            path: "/v1/balance",
+            method,
+        };
+        let get = header_request("GET");
+        let decision = evaluate(
+            &rules,
+            &get,
+            &key,
+            &get.targets[0].probes(),
+            &Floors::default(),
+        );
+        assert_eq!(approval_of(&decision), Some(Approval::Auto));
+        assert_eq!(
+            decision.terms().map(|t| t.ttl_ms),
+            Some(defaults::PERSONAL_TTL_MS)
+        );
+
+        let post = header_request("POST");
+        let decision = evaluate(&rules, &post, &key, &[probe("POST")], &Floors::default());
+        assert_eq!(
+            (approval_of(&decision), rule_of(&decision)),
+            (Some(Approval::Ask), Some(defaults::PERSONAL_FILL_RULE))
+        );
+        let other_client = GrantRequest {
+            client_key: "another".into(),
+            ..get
+        };
+        let decision = evaluate(
+            &rules,
+            &other_client,
+            &key,
+            &[probe("GET")],
+            &Floors::default(),
+        );
         assert_eq!(approval_of(&decision), Some(Approval::Ask));
     }
 

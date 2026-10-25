@@ -14,7 +14,7 @@ use crate::signal::{Signal, ROWEL_SIGNAL};
 use crate::socket::{root_dir, socket_name, IDENTIFIER};
 use crate::testing::{
     error_code, login, nonce, raw, ready, seed, stored, vault, Extension, GrantAnswer, Mock,
-    GRANT_EXPIRES_AT_MS, GRANT_ID,
+    GRANT_EXPIRES_AT_MS, GRANT_ID, LOCKBOX,
 };
 use rowel_core::models::{Entry, PasswordHistoryItem};
 use rowel_core::store::VaultStore;
@@ -208,7 +208,10 @@ fn associate_asks_the_user_and_remembers_the_answer() {
     assert_eq!(response["hash"], "abc123");
     // No `hello`: the reply KeePassXC-Browser knows, plus what this broker
     // can do beyond it — and no `clientId`, which is the agent protocol's.
-    assert_eq!(response["brokerCapabilities"], json!(["grants", "signals"]));
+    assert_eq!(
+        response["brokerCapabilities"],
+        json!(["grants", "signals", "resolve"])
+    );
     assert_eq!(
         sorted_keys(&response),
         [
@@ -392,7 +395,10 @@ fn associate_with_a_hello_stores_the_kind_and_platform_and_names_the_client() {
     );
     assert_eq!(response["id"], "Chrome");
     assert_eq!(response["hash"], "abc123");
-    assert_eq!(response["brokerCapabilities"], json!(["grants", "signals"]));
+    assert_eq!(
+        response["brokerCapabilities"],
+        json!(["grants", "signals", "resolve"])
+    );
     assert_eq!(response["clientId"], "agent-key");
     assert_eq!(
         sorted_keys(&response),
@@ -504,7 +510,10 @@ fn test_associate_tells_the_host_the_client_was_seen() {
     );
     assert_eq!(right["id"], "Claude");
     assert_eq!(right["clientId"], "agent-key");
-    assert_eq!(right["brokerCapabilities"], json!(["grants", "signals"]));
+    assert_eq!(
+        right["brokerCapabilities"],
+        json!(["grants", "signals", "resolve"])
+    );
     assert_eq!(connection.host().seen.borrow().as_slice(), ["agent-key"]);
 
     let malformed = extension.send(
@@ -1131,6 +1140,10 @@ fn secret_carrying_actions() -> Vec<(&'static str, Value)> {
         ),
         ("get-signals", json!({})),
         ("report-exposure", json!({ "grantId": "g1" })),
+        (
+            "resolve",
+            json!({ "grantId": "g1", "ref": gh_ref("password"), "context": http_context("GET") }),
+        ),
     ]
 }
 
@@ -1153,8 +1166,28 @@ fn agent_actions() -> Vec<(&'static str, Value)> {
 #[test]
 fn an_agent_is_refused_every_action_that_carries_a_secret() {
     let (extension, mut connection) = agent_associated(GrantAnswer::Active("gh2".into()));
-    for (action, message) in secret_carrying_actions() {
-        let response = extension.send(&mut connection, action, message);
+    refused_at_the_door(&extension, &mut connection, secret_carrying_actions());
+
+    // What everyone may say, an agent may too.
+    let hash = extension.send(&mut connection, "get-databasehash", json!({}));
+    assert_eq!(hash["hash"], "abc123");
+    let password = extension.send(&mut connection, "generate-password", json!({}));
+    assert_eq!(password["password"], "generated");
+    let locked = extension.send(&mut connection, "lock-database", json!({}));
+    assert_eq!(locked["success"], "true");
+    assert_eq!(connection.host().locks.get(), 1);
+}
+
+/// Every one of `actions` is refused as the wrong kind, in the clear, before
+/// the host is asked anything, with no value and no field a value would
+/// travel in anywhere in the text.
+fn refused_at_the_door(
+    extension: &Extension,
+    connection: &mut Connection<Mock>,
+    actions: Vec<(&'static str, Value)>,
+) {
+    for (action, message) in actions {
+        let response = extension.send(connection, action, message);
         assert_eq!(
             error_code(&response),
             Code::NotPermittedForKind as u8,
@@ -1168,29 +1201,46 @@ fn an_agent_is_refused_every_action_that_carries_a_secret() {
         // The key set above is the field check; what is left is that no
         // value leaked into the text.
         let wire = serde_json::to_string(&response).unwrap();
-        for secret in ["hunter2", "s3cret", "123456", "654321", "octocat"] {
+        for secret in [
+            "hunter2",
+            "s3cret",
+            "123456",
+            "654321",
+            "octocat",
+            "sk_test_mock",
+            "value",
+        ] {
             assert!(
                 !wire.contains(secret),
                 "{secret} in {action}'s refusal: {wire}"
             );
         }
     }
-    {
-        let host = connection.host();
-        assert!(host.grant_requests.borrow().is_empty());
-        assert!(host.saves.borrow().is_empty());
-        assert!(host.passkey_requests.borrow().is_empty());
-        assert!(host.exposures.borrow().is_empty());
-    }
+    let host = connection.host();
+    assert!(host.grant_requests.borrow().is_empty());
+    assert!(host.saves.borrow().is_empty());
+    assert!(host.passkey_requests.borrow().is_empty());
+    assert!(host.exposures.borrow().is_empty());
+    assert!(host.grants.borrow().values().all(|grant| grant.uses == 0));
+}
 
-    // What everyone may say, an agent may too.
-    let hash = extension.send(&mut connection, "get-databasehash", json!({}));
-    assert_eq!(hash["hash"], "abc123");
-    let password = extension.send(&mut connection, "generate-password", json!({}));
-    assert_eq!(password["password"], "generated");
-    let locked = extension.send(&mut connection, "lock-database", json!({}));
-    assert_eq!(locked["success"], "true");
-    assert_eq!(connection.host().locks.get(), 1);
+// A sidecar is an extension no more than an agent is: the fill's secrets
+// and the extension's signals are refused to it the same way.
+#[test]
+fn a_sidecar_is_refused_every_action_of_the_extensions() {
+    let (extension, mut connection) = sidecar_associated(
+        Mock {
+            logins: two_logins(),
+            ..Mock::unlocked().granting("g1", "gh", Mode::Fill)
+        },
+        GrantAnswer::Active("gh2".into()),
+    );
+    let extensions_own: Vec<(&'static str, Value)> = secret_carrying_actions()
+        .into_iter()
+        .filter(|(action, _)| *action != "resolve")
+        .collect();
+    assert_eq!(extensions_own.len(), secret_carrying_actions().len() - 1);
+    refused_at_the_door(&extension, &mut connection, extensions_own);
 }
 
 #[test]
@@ -1389,6 +1439,56 @@ fn request_grant_refuses_a_request_it_cannot_read() {
     assert!(connection.host().grant_requests.borrow().is_empty());
 }
 
+// A request for a header or an env grant names a request pattern or a
+// command line, and the host is handed exactly that, typed.
+#[test]
+fn request_grant_carries_http_and_command_targets_to_the_host_as_written() {
+    let (extension, mut connection) = agent_associated(GrantAnswer::Active("gh2".into()));
+    let header = extension.send(
+        &mut connection,
+        "request-grant",
+        json!({
+            "runId": "run-1",
+            "items": { "ids": ["stripe"] },
+            "targets": [{ "http": { "host": "api.stripe.com", "path": "/v1/*", "methods": ["GET"] } }],
+            "modes": ["header"],
+        }),
+    );
+    assert_eq!(header["state"], "active");
+    let env = extension.send(
+        &mut connection,
+        "request-grant",
+        json!({
+            "runId": "run-1",
+            "items": { "ids": ["stripe"] },
+            "targets": [{ "command": "stripe * --live" }],
+            "modes": ["env"],
+        }),
+    );
+    assert_eq!(env["state"], "active");
+
+    let asked = connection.host().grant_requests.borrow();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(
+        (&asked[0].1.targets, &asked[0].1.modes),
+        (
+            &vec![Target::Http {
+                host: "api.stripe.com".into(),
+                path: "/v1/*".into(),
+                methods: vec!["GET".into()],
+            }],
+            &vec![Mode::Header]
+        )
+    );
+    assert_eq!(
+        (&asked[1].1.targets, &asked[1].1.modes),
+        (
+            &vec![Target::Command("stripe * --live".into())],
+            &vec![Mode::Env]
+        )
+    );
+}
+
 // The grant's state is the agent's to read, uses included — and a use made by
 // the extension the grant was served to is one the agent sees.
 #[test]
@@ -1505,6 +1605,278 @@ fn list_visible_answers_names_and_fields_never_values() {
     connection.host().agents_enabled.set(false);
     let off = extension.send(&mut connection, "list-visible", json!({ "lockbox": "lb" }));
     assert_eq!(error_code(&off), Code::AgentsDisabled as u8);
+}
+
+// --- resolve: the one value that leaves for something not an extension -----------
+
+const SIDECAR_KEY: &str = "sidecar-key";
+
+/// Associated as the sidecar "rowel", over `mock` with the host scripted to
+/// `answer`.
+fn sidecar_associated(mock: Mock, answer: GrantAnswer) -> (Extension, Connection<Mock>) {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        grant_answer: answer,
+        ..mock.known_sidecar("rowel", SIDECAR_KEY)
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "rowel", "key": SIDECAR_KEY }),
+    );
+    (extension, connection)
+}
+
+/// The placeholder for `field` of the GitHub login, in the open lockbox.
+fn gh_ref(field: &str) -> String {
+    format!("rowel://{LOCKBOX}/gh/{field}")
+}
+
+/// The placeholder for the Stripe key, in the open lockbox.
+fn stripe_ref() -> String {
+    format!("rowel://{LOCKBOX}/stripe/apiKey")
+}
+
+/// A `resolve` context for `method` of Stripe's balance endpoint.
+fn http_context(method: &str) -> Value {
+    json!({ "target": { "http": { "host": "api.stripe.com", "path": "/v1/balance", "method": method } } })
+}
+
+/// The Stripe target a header grant in these tests names.
+fn stripe_target() -> Target {
+    Target::Http {
+        host: "api.stripe.com".into(),
+        path: "/v1/*".into(),
+        methods: vec!["GET".into()],
+    }
+}
+
+fn uses_of(connection: &Connection<Mock>, grant_id: &str) -> u32 {
+    connection.host().grants.borrow()[grant_id].uses
+}
+
+#[test]
+fn a_sidecar_resolves_under_an_active_header_grant_and_the_use_is_counted() {
+    let (extension, mut connection) = sidecar_associated(
+        Mock::unlocked().granting_at("g1", "stripe", Mode::Header, stripe_target()),
+        GrantAnswer::Denied,
+    );
+    let response = extension.send(
+        &mut connection,
+        "resolve",
+        json!({ "grantId": "g1", "ref": stripe_ref(), "context": http_context("GET") }),
+    );
+    assert_eq!(response["value"], "sk_test_mock");
+    assert_eq!(
+        sorted_keys(&response),
+        ["action", "nonce", "success", "value", "version"]
+    );
+    assert_eq!(uses_of(&connection, "g1"), 1);
+
+    extension.send(
+        &mut connection,
+        "resolve",
+        json!({ "grantId": "g1", "ref": stripe_ref(), "context": http_context("get") }),
+    );
+    assert_eq!(
+        uses_of(&connection, "g1"),
+        2,
+        "methods compare like HTTP does"
+    );
+}
+
+#[test]
+fn a_sidecar_resolves_an_env_grant_at_the_command_line_it_names() {
+    let (extension, mut connection) = sidecar_associated(
+        Mock::unlocked().granting_at(
+            "g1",
+            "stripe",
+            Mode::Env,
+            Target::Command("stripe * --live".into()),
+        ),
+        GrantAnswer::Denied,
+    );
+    let response = extension.send(
+        &mut connection,
+        "resolve",
+        json!({
+            "grantId": "g1",
+            "ref": stripe_ref(),
+            "context": { "target": { "command": "stripe balance retrieve --live" } },
+        }),
+    );
+    assert_eq!(response["value"], "sk_test_mock");
+    assert_eq!(uses_of(&connection, "g1"), 1);
+
+    // A grant anywhere serves any line of its mode, and a login's secrets
+    // resolve by their own names.
+    let (extension, mut connection) = sidecar_associated(
+        Mock::unlocked().granting("g2", "gh", Mode::Env),
+        GrantAnswer::Denied,
+    );
+    for (field, value) in [("password", "hunter2"), ("otp", "123456")] {
+        let response = extension.send(
+            &mut connection,
+            "resolve",
+            json!({
+                "grantId": "g2",
+                "ref": gh_ref(field),
+                "context": { "target": { "command": "gh auth login" } },
+            }),
+        );
+        assert_eq!(response["value"], value, "{field}");
+    }
+    assert_eq!(uses_of(&connection, "g2"), 2);
+}
+
+// The verb is the sidecar's alone: an agent — the model-facing surface — and
+// an extension hear which door it was, and no value is in the text.
+#[test]
+fn an_agent_and_an_extension_are_refused_resolve_at_the_door() {
+    let mock = || Mock::unlocked().granting_at("g1", "stripe", Mode::Header, stripe_target());
+    let resolve = json!({ "grantId": "g1", "ref": stripe_ref(), "context": http_context("GET") });
+
+    let (extension, mut connection) = sidecar_associated(mock(), GrantAnswer::Denied);
+    let served = extension.send(&mut connection, "resolve", resolve.clone());
+    assert_eq!(served["value"], "sk_test_mock", "the shape a sidecar gets");
+
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(mock().known_agent("Claude", AGENT_KEY, "claude-code"));
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Claude", "key": AGENT_KEY }),
+    );
+    refused_at_the_door(
+        &extension,
+        &mut connection,
+        vec![("resolve", resolve.clone())],
+    );
+
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(mock().known("Chrome", "id-key"));
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+    refused_at_the_door(&extension, &mut connection, vec![("resolve", resolve)]);
+}
+
+// Every no is the same no, and none is a use: a grant id is a capability,
+// and a request under one is not told which part of it was wrong.
+#[test]
+fn resolve_is_denied_in_one_word_for_whatever_is_wrong_and_counts_no_use() {
+    let (extension, mut connection) = sidecar_associated(
+        Mock::unlocked()
+            .granting_at("g1", "stripe", Mode::Header, stripe_target())
+            .granting("g2", "gh", Mode::Fill),
+        GrantAnswer::Denied,
+    );
+    let request = |grant_id: &str, reference: &str, context: Value| json!({ "grantId": grant_id, "ref": reference, "context": context });
+    for (what, message) in [
+        (
+            "an unknown grant",
+            request("g9", &stripe_ref(), http_context("GET")),
+        ),
+        (
+            "a grant in the wrong mode",
+            request("g2", &gh_ref("password"), http_context("GET")),
+        ),
+        (
+            "a target the grant does not cover",
+            request("g1", &stripe_ref(), http_context("POST")),
+        ),
+        (
+            "a host the grant does not cover",
+            request(
+                "g1",
+                &stripe_ref(),
+                json!({ "target": { "http": { "host": "api.evil.io", "path": "/v1/balance", "method": "GET" } } }),
+            ),
+        ),
+        (
+            "a command line under a header grant",
+            request(
+                "g1",
+                &stripe_ref(),
+                json!({ "target": { "command": "stripe balance retrieve" } }),
+            ),
+        ),
+        (
+            "an item the grant does not admit",
+            request("g1", &gh_ref("password"), http_context("GET")),
+        ),
+        (
+            "a field the item lacks",
+            request(
+                "g1",
+                &format!("rowel://{LOCKBOX}/stripe/otp"),
+                http_context("GET"),
+            ),
+        ),
+        (
+            "the wrong lockbox",
+            request("g1", "rowel://other/stripe/apiKey", http_context("GET")),
+        ),
+        (
+            "a malformed ref",
+            request("g1", "stripe/apiKey", http_context("GET")),
+        ),
+        (
+            "no ref",
+            json!({ "grantId": "g1", "context": http_context("GET") }),
+        ),
+        (
+            "a malformed context",
+            request(
+                "g1",
+                &stripe_ref(),
+                json!({ "target": { "planet": "mars" } }),
+            ),
+        ),
+        (
+            "no context",
+            json!({ "grantId": "g1", "ref": stripe_ref() }),
+        ),
+    ] {
+        let response = extension.send(&mut connection, "resolve", message);
+        assert_eq!(error_code(&response), Code::GrantDenied as u8, "{what}");
+        assert_eq!(
+            sorted_keys(&response),
+            ["action", "error", "errorCode"],
+            "{what}"
+        );
+        let wire = serde_json::to_string(&response).unwrap();
+        for secret in ["sk_test_mock", "hunter2", "value"] {
+            assert!(!wire.contains(secret), "a value in {what}'s refusal");
+        }
+    }
+    assert_eq!(uses_of(&connection, "g1"), 0);
+    assert_eq!(uses_of(&connection, "g2"), 0);
+
+    // No grant id at all is the protocol's word for a missing identifier,
+    // as every grant action answers.
+    let blank = extension.send(
+        &mut connection,
+        "resolve",
+        json!({ "ref": stripe_ref(), "context": http_context("GET") }),
+    );
+    assert_eq!(error_code(&blank), Code::NoValidUuidProvided as u8);
+}
+
+#[test]
+fn resolve_is_refused_before_association() {
+    let (extension, mut connection) = ready();
+    let response = extension.send(
+        &mut connection,
+        "resolve",
+        json!({ "grantId": "g1", "ref": stripe_ref(), "context": http_context("GET") }),
+    );
+    assert_eq!(error_code(&response), Code::AssociationFailed as u8);
 }
 
 // --- signals: what the host tells an extension that did not ask ------------------

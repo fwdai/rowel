@@ -3,7 +3,7 @@ name = "rowel-cli"
 # Internal to the workspace and never released on its own, like the broker;
 # it ships beside the app, under the app's version.
 version = "0.1.0"
-description = "The command line beside the app: an MCP server for coding agents, and a status check, over the broker's sealed channel"
+description = "The command line beside the app: an MCP server for coding agents, the sidecar that puts a secret into one command's environment, and a status check, over the broker's sealed channel"
 authors = ["Alex Chaplinsky"]
 # Permissive like every crate under `crates/`; see `crates/core/Cargo.toml`.
 license = "MIT OR Apache-2.0"
@@ -35,15 +35,45 @@ serde_json = "1"
 # The one API over the Unix socket and the Windows named pipe the app listens
 # on, as the extension's proxy uses it.
 interprocess = "2"
-# The config directory the agent key lives in, found without Tauri.
+# The config directory the client keys live in, found without Tauri.
 dirs = "7"
-# The run id an `mcp` process mints once and sends with every grant request.
+# The run id a process mints once and sends with every grant request.
 rand = "0.8"
+# A resolved value is held wiped-on-drop from the reply to the child's
+# environment, and so are the redactor's needles and carry.
+zeroize = "1"
+# The encodings the redactor matches a value in besides itself (`redact`),
+# and the one a form body carries it in (`proxy`): already in the locked
+# graph under `url`.
+base64 = "0.23"
+percent-encoding = "2"
+form_urlencoded = "1"
+# `rowel proxy` (`proxy`): an HTTP/1.1 server on the loopback address, and
+# reqwest for the upstream with exactly the app's feature set — rustls with
+# the ring provider installed at startup, as `sync` does — so one TLS stack
+# is linked. All already in the locked graph under the app.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+http = "1"
+bytes = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "io-util"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "query", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
+
+# The two client keys in the OS secure store (`keys`), with the crates and
+# features the app's own `secure_store` uses, so one keychain binding and one
+# Credential Manager binding are linked. Elsewhere the keys stay 0600 files.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3.6", features = ["OSX_10_15"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dev-dependencies]
 # The broker's scripted host (`testing::Mock`), and the `Transport` its
-# `Connection` is under `test-support`, so the MCP server is tested end to end
-# in-process.
+# `Connection` is under `test-support`, so the MCP server, `run` and the
+# hooks are tested end to end in-process.
 rowel-broker = { path = "../broker", features = ["test-support"] }
 # A directory for the key file to be created in.
 tempfile = "3"
