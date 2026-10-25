@@ -232,9 +232,15 @@ pub fn execute(
         };
         let grant = args.grant.as_deref().unwrap_or_default();
         let ctx = ResolveContext { target };
-        for text in &args.refs {
+        for (n, text) in args.refs.iter().enumerate() {
+            // Named by position, never echoed: a value pasted where a
+            // placeholder belongs would land on stderr.
             let Some(reference) = Reference::parse(text) else {
-                let _ = writeln!(stderr, "rowel redact: '{text}' is not a placeholder");
+                let _ = writeln!(
+                    stderr,
+                    "rowel redact: --ref #{} is not a placeholder",
+                    n + 1
+                );
                 return 2;
             };
             match broker.resolve(grant, &reference, &ctx) {
