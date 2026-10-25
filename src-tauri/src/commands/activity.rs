@@ -232,9 +232,14 @@ pub(crate) fn is_stale(rule: &RuleRow, now_ms: i64) -> bool {
 }
 
 /// A client not seen for [`IDLE_CLIENT_MS`] or longer; one never seen since
-/// it was let in counts from then.
+/// it was let in counts from then. One with neither time — let in before
+/// clients carried one (`created_at_ms` 0) and not seen since — has no age to
+/// judge and is not listed, rather than shown as let in on 1 January 1970.
 pub(crate) fn is_idle(client: &Client, now_ms: i64) -> bool {
-    client.last_seen_at_ms.unwrap_or(client.created_at_ms) <= now_ms - IDLE_CLIENT_MS
+    let known = client
+        .last_seen_at_ms
+        .or((client.created_at_ms > 0).then_some(client.created_at_ms));
+    known.is_some_and(|at| at <= now_ms - IDLE_CLIENT_MS)
 }
 
 /// Every writer's chain in `rows` — which arrive as `audit_all` hands them
@@ -493,6 +498,10 @@ mod tests {
         assert!(
             !is_idle(&client(0, Some(NOW - IDLE_CLIENT_MS + 1)), NOW),
             "seen since it was let in"
+        );
+        assert!(
+            !is_idle(&client(0, None), NOW),
+            "let in before clients carried a time, and not seen since: no age"
         );
     }
 

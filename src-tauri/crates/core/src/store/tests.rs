@@ -1098,14 +1098,20 @@ fn audit_all_lists_every_chain_in_order() {
     );
 }
 
-// Retention takes a prefix of every writer's chain — through its newest row
-// old enough to go — and says of each how far it went.
+// Retention takes a prefix of every writer's chain — its leading run of rows
+// old enough to go, never past a younger one — and says of each how far it
+// went.
 #[test]
 fn audit_prune_reclaims_every_writers_aged_prefix() {
     let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
     // dev-a's second stamp is older than its first, as a clock that stepped
     // back would leave them; the prefix still goes whole. dev-c is all young.
+    // dev-d's newest row carries an old stamp — a reset clock, or a row forged
+    // into a synced pack — above young rows: it takes nothing with it.
     for row in [
+        audit_rec("dev-d", 1, 7_000),
+        audit_rec("dev-d", 2, 8_000),
+        audit_rec("dev-d", 3, 100),
         audit_rec("dev-a", 1, 1_000),
         audit_rec("dev-a", 2, 500),
         audit_rec("dev-a", 3, 5_000),
@@ -1145,6 +1151,7 @@ fn audit_prune_reclaims_every_writers_aged_prefix() {
     assert_eq!(seqs("dev-a"), [3, 4]);
     assert!(seqs("dev-b").is_empty());
     assert_eq!(seqs("dev-c"), [1]);
+    assert_eq!(seqs("dev-d"), [1, 2, 3]);
 
     assert!(
         store.audit_prune(5_000).unwrap().is_empty(),

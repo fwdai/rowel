@@ -1026,8 +1026,9 @@ every device rather than each keeping its own side, so the digests agree and
 verification names the fork at the same `seq` everywhere; the pack's
 digest includes them, so a device whose only change is new audit rows still
 pushes, and a restore from a pack carries the history with it. Retention is
-365 days: at sync time a device reclaims every writer's chain up to its newest
-row older than that, and in its own chain writes a `pruned_through` row naming
+365 days: at sync time a device reclaims every writer's leading run of rows
+older than that, never past a younger row (so one row with an old stamp cannot
+take the history below it), and in its own chain writes a `pruned_through` row naming
 the cutoff `seq`, so the chain stays verifiable from there on. Vault Health › *Agent activity* shows the last seven
 days of `used`, `denied` and `exposed` events, standing rules older than 30
 days and agents not seen in 90 days, and *Verify the log* walks every writer's

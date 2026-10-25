@@ -38,9 +38,11 @@ export default function Events({ events }: { events: AgentEvent[] }) {
         </Note>
       ) : (
         <>
-          {shown.map(event => (
+          {/* An altered copy is kept beside its original under the same id,
+              so the id alone does not name a row of this list. */}
+          {shown.map((event, index) => (
             <SettingsRow
-              key={event.id}
+              key={`${event.id}:${index}`}
               testid="settings-agent-event"
               label={event.itemTitle ?? event.target ?? t('Untitled')}
               description={[

@@ -860,16 +860,17 @@ impl SqliteStore {
         Ok(all_audit_rows(&conn)?)
     }
 
-    /// Reclaim every writer's rows stamped before `before_ts_ms`, in one
-    /// transaction, returning for each writer that lost rows the newest row it
-    /// lost (see [`AuditCut`]), in `writer_id` order — empty when nothing was
-    /// that old.
+    /// Reclaim every writer's aged rows, in one transaction, returning for
+    /// each writer that lost rows the newest row it lost (see [`AuditCut`]),
+    /// in `writer_id` order — empty when nothing was that old.
     ///
-    /// What goes of each chain is its *prefix* up to the newest row that is old
-    /// enough, not the old rows alone: a clock that stepped backwards can leave
-    /// a younger stamp below an older one, and deleting by stamp there would
-    /// cut a hole in the chain that reads as a missing row forever. A prefix
-    /// keeps the rest verifiable from where it now begins.
+    /// What goes of each chain is its leading run of rows stamped before
+    /// `before_ts_ms`, up to the first younger one: a prefix, so the rest
+    /// still verifies from where it begins, and never a row younger than the
+    /// cutoff. One row's stamp cannot take what lies below it — a clock that
+    /// stepped back, or a row with an old stamp arriving through sync, waits
+    /// until the rows before it have aged too, rather than carrying a month
+    /// of history away with it on every device.
     ///
     /// Every writer's chain, not only this device's. Vaults merge their logs as
     /// a union, so a device that reclaimed its own rows alone would be handed
@@ -882,14 +883,23 @@ impl SqliteStore {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         let cuts: Vec<AuditCut> = {
-            // Each chain's newest row old enough to go, read before it does —
-            // of a fork at that `seq`, the side `audit_last` would pick.
+            // Per writer, the newest row below its first young one (all of
+            // it when none is young), in one pass over the table — of a fork
+            // at that `seq`, the side `audit_last` would pick.
             let mut stmt = tx.prepare(
-                "SELECT writer_id, seq, hash FROM audit AS newest
-                 WHERE ts_ms < ?1
-                   AND seq = (SELECT MAX(seq) FROM audit
-                              WHERE writer_id = newest.writer_id AND ts_ms < ?1)
-                 ORDER BY writer_id, id, hash",
+                "WITH young AS (
+                   SELECT writer_id, MIN(seq) AS first FROM audit
+                   WHERE ts_ms >= ?1 GROUP BY writer_id
+                 ),
+                 cut AS (
+                   SELECT a.writer_id, MAX(a.seq) AS seq FROM audit AS a
+                   LEFT JOIN young AS y ON y.writer_id = a.writer_id
+                   WHERE y.first IS NULL OR a.seq < y.first
+                   GROUP BY a.writer_id
+                 )
+                 SELECT a.writer_id, a.seq, a.hash FROM audit AS a
+                 JOIN cut ON cut.writer_id = a.writer_id AND cut.seq = a.seq
+                 ORDER BY a.writer_id, a.id, a.hash",
             )?;
             let rows = stmt.query_map(params![before_ts_ms], |r| {
                 Ok(AuditCut {
