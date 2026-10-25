@@ -21,7 +21,7 @@ pub fn quote(word: &str) -> String {
     let plain = !word.is_empty()
         && !word
             .chars()
-            .any(|c| c.is_whitespace() || "'\"$`\\*?|&;<>()".contains(c));
+            .any(|c| c.is_whitespace() || "'\"$`\\*?|&;<>()#{}[]~".contains(c));
     if plain {
         return word.to_string();
     }
@@ -43,7 +43,7 @@ pub fn quote(word: &str) -> String {
 /// everything but `\` before `"`, `\`, `$` or a backtick, and a backslash
 /// outside quotes keeps the next character. `None` for a quote left open.
 /// Only splitting: no expansion of any kind happens here, and whether the
-/// line *asked* for one is the hook's own check ([`has_operator`]).
+/// line *asked* for one is the hook's own check ([`needs_shell`]).
 pub fn words(text: &str) -> Option<Vec<String>> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -98,30 +98,36 @@ pub fn words(text: &str) -> Option<Vec<String>> {
     Some(words)
 }
 
-/// Whether `text` has, outside single quotes, anything that makes a shell do
-/// more than run one command with its words: a pipe, `&`, `;`, a newline, a
-/// redirection, a backtick, `$(` or `${`, or parentheses. A line with one is
-/// not one command, and the hook leaves it alone rather than guess which
-/// part the placeholders were for.
-pub fn has_operator(text: &str) -> bool {
-    let mut chars = text.chars().peekable();
-    let mut in_single = false;
-    let mut escaped = false;
-    while let Some(c) = chars.next() {
-        if in_single {
-            in_single = c != '\'';
-            continue;
-        }
+/// Whether a shell would do more with `text` than split it into words
+/// ([`words`]): an operator (a pipe, `&`, `;`, a newline, a redirection,
+/// parentheses) or an expansion (`$`, a backtick, a glob `*` `?` `[`, a `~`,
+/// braces, a `#` comment) anywhere it is not quoted — and inside double
+/// quotes, `$` and a backtick still expand. The hook leaves such a line
+/// alone: rewriting it word by word would change what it runs, and left as
+/// it is, it runs with the literal placeholder and fails, never with a value.
+pub fn needs_shell(text: &str) -> bool {
+    let (mut single, mut double, mut escaped) = (false, false, false);
+    for c in text.chars() {
         if escaped {
             escaped = false;
-            continue;
-        }
-        match c {
-            '\\' => escaped = true,
-            '\'' => in_single = true,
-            '|' | '&' | ';' | '\n' | '<' | '>' | '`' | '(' | ')' => return true,
-            '$' if matches!(chars.peek(), Some('(') | Some('{')) => return true,
-            _ => {}
+        } else if single {
+            single = c != '\'';
+        } else if double {
+            match c {
+                '\\' => escaped = true,
+                '"' => double = false,
+                '$' | '`' => return true,
+                _ => {}
+            }
+        } else {
+            match c {
+                '\\' => escaped = true,
+                '\'' => single = true,
+                '"' => double = true,
+                '|' | '&' | ';' | '\n' | '<' | '>' | '(' | ')' | '$' | '`' | '*' | '?' | '['
+                | ']' | '{' | '}' | '~' | '#' => return true,
+                _ => {}
+            }
         }
     }
     false
@@ -151,7 +157,8 @@ mod tests {
         assert_eq!(quote("path/to/file.txt"), "path/to/file.txt");
         assert_eq!(quote("--flag=value"), "--flag=value");
         for special in [
-            "*", "?", "a|b", "a&b", "a;b", "<", ">", "(", ")", "`x`", "\\", "\"q\"",
+            "*", "?", "a|b", "a&b", "a;b", "<", ">", "(", ")", "`x`", "\\", "\"q\"", "#12",
+            "{a,b}", "[x]", "~/x",
         ] {
             assert!(quote(special).starts_with('\''), "{special}");
         }
@@ -186,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn an_operator_outside_single_quotes_is_seen() {
+    fn what_a_shell_would_do_more_than_split_is_seen() {
         for line in [
             "a | b",
             "a && b",
@@ -201,18 +208,27 @@ mod tests {
             "echo ${HOME}",
             "(a)",
             "\"$(id)\"",
+            "echo $HOME",
+            "echo \"$HOME\"",
+            "ls *.rs",
+            "cat ~/x",
+            "echo {a,b}",
+            "git commit -m fix #12",
+            "echo \"it's\"; touch x",
         ] {
-            assert!(has_operator(line), "{line:?}");
+            assert!(needs_shell(line), "{line:?}");
         }
         for line in [
             "a b",
             "sh -c 'echo $X | cat'",
-            "echo $HOME",
             "echo 'a;b'",
             "echo \\;",
             "--flag=value",
+            "git commit -m \"#12\"",
+            "echo \"it's; fine\"",
+            "echo '*' \\*",
         ] {
-            assert!(!has_operator(line), "{line:?}");
+            assert!(!needs_shell(line), "{line:?}");
         }
     }
 }

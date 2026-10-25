@@ -17,6 +17,7 @@ use serde_json::{json, Map, Value};
 use super::rpc::{self, INVALID_PARAMS};
 use crate::agent::{decided, AgentError, Broker, GrantAsk};
 use crate::authority::authority;
+use crate::command;
 
 pub const REQUEST_LOGIN: &str = "rowel_request_login";
 pub const REQUEST_SECRET: &str = "rowel_request_secret";
@@ -53,7 +54,7 @@ pub fn list() -> Value {
         },
         {
             "name": REQUEST_SECRET,
-            "description": "Ask the user to let one command, or requests to one API, use a secret — an API key, a password, a private key, a card number — without you ever seeing it. Name the secret by its placeholder (rowel://<lockbox>/<item>/<field>; items and fields come from rowel_list_visible, or an item's title as a slug) and where it goes: mode \"env\" with target the exact command line, and the result's \"use\" line tells you the rowel run command to execute, which puts the value into that one command's environment; mode \"header\" with target the API as [METHOD[,METHOD] ]https://host/path (a * in the path matches anything), and the \"use\" line tells you how to send the request through rowel proxy, which puts the value into the header. The call waits for the user's answer (up to a minute). The result is the grant's id and state, never the value; pending with retryAfterMs: call again after that delay.",
+            "description": "Ask the user to let one command, or requests to one API, use a secret — an API key, a password, a private key, a card number — without you ever seeing it. Name the secret by its placeholder (rowel://<lockbox>/<item>/<field>; items and fields come from rowel_list_visible, or an item's title as a slug) and where it goes: mode \"env\" with target the exact command line (one plain command, no pipes, redirections or `$` expansions), and the result's \"use\" line tells you the rowel run command to execute, which puts the value into that one command's environment; mode \"header\" with target the API as [METHOD[,METHOD] ]https://host/path (a * in the path matches anything), and the \"use\" line tells you how to send the request through rowel proxy, which puts the value into the header. The call waits for the user's answer (up to a minute). The result is the grant's id and state, never the value; pending with retryAfterMs: call again after that delay.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -153,7 +154,11 @@ fn request_secret(args: &Map<String, Value>, broker: &mut dyn Broker) -> Result<
                 "target must be [METHOD[,METHOD] ]https://host/path, without a query string",
             )
         })?,
-        _ => Target::Command(target.to_string()),
+        _ => Target::Command(command_target(target).ok_or_else(|| {
+            ToolError::invalid(
+                "target must be one plain command, as `rowel run -- <command>` would get it: no pipe, redirection, `$`, glob or other shell syntax",
+            )
+        })?),
     };
     let ask = GrantAsk {
         reason: optional(args, "reason")?,
@@ -168,6 +173,20 @@ fn request_secret(args: &Map<String, Value>, broker: &mut dyn Broker) -> Result<
         }
     }
     Ok(result)
+}
+
+/// An env target written by the one rule `rowel run` names its line by
+/// ([`command::line`]): read back into words and quoted again, so `git commit
+/// -m "fix it"` is asked for as the `git commit -m 'fix it'` the run will
+/// resolve under, and a `*` the agent wrote is quoted, never a wildcard. A
+/// line a shell would do more with than split is `None`: pasted into the
+/// use hint's shell it would run something other than what was granted.
+fn command_target(text: &str) -> Option<String> {
+    if command::needs_shell(text) {
+        return None;
+    }
+    let words = command::words(text)?;
+    (!words.is_empty()).then(|| command::line(&words))
 }
 
 /// The one line that uses the grant. For env the variable's name is the
