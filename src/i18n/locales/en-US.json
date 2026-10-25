@@ -815,6 +815,8 @@
   "The value goes into the environment of that one command only, and its output is checked for it.": "The value goes into the environment of that one command only, and its output is checked for it.",
   "Allowing for days writes a rule: this client sends this item in requests to that place without asking until then. Remove it any time in Settings › Browser & agents.": "Allowing for days writes a rule: this client sends this item in requests to that place without asking until then. Remove it any time in Settings › Browser & agents.",
   "Allowing for days writes a rule: this client gives this item to exactly that command line without asking until then. Remove it any time in Settings › Browser & agents.": "Allowing for days writes a rule: this client gives this item to exactly that command line without asking until then. Remove it any time in Settings › Browser & agents.",
+  "Allowing for days writes a rule: this client sends these items in requests to that place without asking until then. Remove it any time in Settings › Browser & agents.": "Allowing for days writes a rule: this client sends these items in requests to that place without asking until then. Remove it any time in Settings › Browser & agents.",
+  "Allowing for days writes a rule: this client gives these items to exactly that command line without asking until then. Remove it any time in Settings › Browser & agents.": "Allowing for days writes a rule: this client gives these items to exactly that command line without asking until then. Remove it any time in Settings › Browser & agents.",
   "as a request header": "as a request header",
   "in a command's environment": "in a command's environment",
   "Requested by {{name}}": "Requested by {{name}}",
