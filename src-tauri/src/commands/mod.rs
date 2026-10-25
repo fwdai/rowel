@@ -1,3 +1,7 @@
+// Vault Health's agent panel: what the log says agents did, and whether the
+// log holds. Desktop only, like the agents whose rows it reads.
+#[cfg(desktop)]
+pub mod activity;
 pub mod app;
 // Files attached to entries, sealed and kept beside them.
 pub mod attachments;

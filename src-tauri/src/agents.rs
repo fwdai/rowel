@@ -696,7 +696,7 @@ pub fn list_grants(app: &AppHandle) -> Vec<GrantRow> {
         .collect()
 }
 
-fn titles_in(store: &SqliteStore) -> HashMap<String, String> {
+pub(crate) fn titles_in(store: &SqliteStore) -> HashMap<String, String> {
     store
         .list()
         .map(|metas| {

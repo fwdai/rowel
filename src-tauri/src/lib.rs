@@ -322,6 +322,12 @@ pub fn run() {
             commands::browser::agent_revoke_rule,
             #[cfg(desktop)]
             commands::browser::agent_end_grant,
+            // Vault Health's agent half: the week's rows, what has gone
+            // stale, and the log verified on demand.
+            #[cfg(desktop)]
+            commands::activity::audit_agent_activity,
+            #[cfg(desktop)]
+            commands::activity::audit_verify,
             // The command line tool beside the app, for Settings › General.
             #[cfg(desktop)]
             commands::cli::cli_status,

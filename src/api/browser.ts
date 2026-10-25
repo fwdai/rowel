@@ -277,6 +277,65 @@ export const agentGrants = (): Promise<AgentGrant[]> => call('agent_grants')
 export const agentRevokeRule = (id: string): Promise<void> => call('agent_revoke_rule', { id })
 export const agentEndGrant = (id: string): Promise<void> => call('agent_end_grant', { id })
 
+/** The agent half of Vault Health: the last 7 days, and what has gone stale. */
+export interface AgentActivity {
+  /** Rows of the last 7 days whose event is used, denied or exposed, newest first, at most 200. */
+  events: AgentEvent[]
+  /** Standing rules written more than 30 days ago and still in force. */
+  staleRules: AgentRule[]
+  /** Clients last seen 90 days ago or more (a client never seen counts from when it was let in). */
+  idleClients: BrowserClient[]
+}
+
+export type AgentEventKind = 'used' | 'denied' | 'exposed'
+export type ActorKind = 'human' | 'extension' | 'agent' | 'sidecar' | 'policy' | 'server'
+
+/** One row of the audit log as Vault Health shows it: who did what with which item, where, and how it went. */
+export interface AgentEvent {
+  id: string
+  tsMs: number
+  writerId: string
+  /** Whether this device wrote the row. */
+  thisDevice: boolean
+  event: AgentEventKind
+  actorKind: ActorKind
+  actorName: string | null
+  runId: string | null
+  grantId: string | null
+  itemId: string | null
+  /** The item's title in the open lockbox; null when the item is gone. */
+  itemTitle: string | null
+  /** scheme+host+path of a page, host/path of a request, or a command line; never a query string. */
+  target: string | null
+  mode: GrantMode | null
+  approval: 'auto' | 'ask' | 'step_up' | null
+  /** detail.reason of a denied or exposed row (no_target, lockbox, no_rule, no_candidates, item, user, timeout, exposure); null otherwise. */
+  reason: string | null
+}
+
+/** Every writer's chain walked in seq order; the first row that does not hold, if any. */
+export interface AuditVerification {
+  /** Every writer's chain verified. */
+  ok: boolean
+  writers: WriterChain[]
+}
+
+export type ChainBreak = 'writer' | 'gap' | 'prevHash' | 'hash'
+
+export interface WriterChain {
+  writerId: string
+  thisDevice: boolean
+  rows: number
+  firstSeq: number
+  lastSeq: number
+  /** The first break walking the chain in seq order; null when the chain verifies. */
+  break: { seq: number; reason: ChainBreak } | null
+}
+
+/** Both reject while the vault is locked, as `agentRules` does. */
+export const auditAgentActivity = (): Promise<AgentActivity> => call('audit_agent_activity')
+export const auditVerify = (): Promise<AuditVerification> => call('audit_verify')
+
 /**
  * The command line tool (`rowel-cli`) as Rust finds it: `bundled` is the
  * binary beside the app when this build ships one (a release does; a dev
