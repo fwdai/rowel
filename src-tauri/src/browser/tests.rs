@@ -2153,6 +2153,316 @@ fn a_yes_for_days_on_an_env_ask_writes_a_rule_for_the_command_line() {
     assert!(rows.iter().all(|r| r.actor_kind == "sidecar"));
 }
 
+/// The ids of what the baseline would offer, in a fixed order.
+fn candidate_ids(asking: &Asking) -> Vec<&str> {
+    let mut ids: Vec<&str> = asking
+        .candidates
+        .iter()
+        .map(|c| c.item.id.as_str())
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+fn env_request(ids: &[&str]) -> GrantRequest {
+    secret_request(
+        "side",
+        ids,
+        vec![Target::Command(DEPLOY.into())],
+        vec![Mode::Env],
+    )
+}
+
+// A command runs with every item it named or not at all: a standing rule for
+// one of two does not win the request and narrow the grant to it — the
+// baseline asks for both — while a rule naming both lets it through.
+#[test]
+fn a_two_item_env_request_is_asked_for_both_unless_a_rule_names_both() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &env_file("ci", "A=1\n"));
+    seed(&store, &cipher, &env_file("ci2", "B=2\n"));
+    let_in(&store, &[sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    let one = defaults::standing_for(
+        "side",
+        "ci",
+        Target::Command("node deploy.js*".into()),
+        Mode::Env,
+        7,
+        now,
+    );
+    agents::write_rules(&store, std::slice::from_ref(&one)).unwrap();
+
+    let asking = match decide(
+        locked(&store, &mut held, now),
+        epoch(),
+        "default",
+        &sidecar(),
+        env_request(&["ci", "ci2"]),
+    ) {
+        Ok(Prepared::Ask(asking)) => *asking,
+        other => panic!("the baseline asks for both: {:?}", other.is_ok()),
+    };
+    assert_eq!(asking.grant.approval, Approval::Ask);
+    assert_eq!(candidate_ids(&asking), ["ci", "ci2"]);
+    assert_eq!(
+        asking.grant.items,
+        ItemSelector::Ids(vec!["ci".into(), "ci2".into()]),
+        "the grant admits both"
+    );
+
+    let both = rowel_broker::policy::Rule {
+        items: ItemSelector::Ids(vec!["ci".into(), "ci2".into()]),
+        ..one
+    };
+    agents::write_rules(&store, &[both]).unwrap();
+    let reply = match decide(
+        locked(&store, &mut held, now),
+        epoch(),
+        "default",
+        &sidecar(),
+        env_request(&["ci", "ci2"]),
+    ) {
+        Ok(Prepared::Answered(reply)) => reply,
+        other => panic!("a rule for both allows: {:?}", other.is_ok()),
+    };
+    assert_eq!(reply.state, State::Active);
+    let mut ids: Vec<&str> = reply.items.iter().map(|i| i.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["ci", "ci2"]);
+    assert_eq!(
+        held.grants[0].items,
+        ItemSelector::Ids(vec!["ci".into(), "ci2".into()])
+    );
+}
+
+// The dialog's yes to a two-item secret ask covers both, whichever id the
+// answer carried: once, the grant admits both and the reply lists both;
+// for N days, the rule names both with the command line. An id that is
+// none of the candidates — a stale dialog — is still a refusal.
+#[test]
+fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &env_file("ci", "A=1\n"));
+    seed(&store, &cipher, &env_file("ci2", "B=2\n"));
+    let_in(&store, &[sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    let ask = |held: &mut AgentState| match decide(
+        locked(&store, held, now),
+        epoch(),
+        "default",
+        &sidecar(),
+        env_request(&["ci", "ci2"]),
+    ) {
+        Ok(Prepared::Ask(asking)) => *asking,
+        other => panic!("the baseline asks: {:?}", other.is_ok()),
+    };
+    let both = ItemSelector::Ids(vec!["ci".into(), "ci2".into()]);
+
+    let asking = ask(&mut held);
+    assert!(matches!(
+        settle(
+            locked(&store, &mut held, now),
+            &sidecar(),
+            asking,
+            Verdict::Answered(Some(GrantAnswer {
+                item_id: "nope".into(),
+                standing_days: None,
+            })),
+        ),
+        Err(Code::GrantDenied)
+    ));
+    assert_eq!(
+        rows(&store).last(),
+        Some(&row("denied", r#"{"reason":"item"}"#))
+    );
+    assert!(held.grants.is_empty());
+
+    let asking = ask(&mut held);
+    let reply = settle(
+        locked(&store, &mut held, now),
+        &sidecar(),
+        asking,
+        Verdict::Answered(Some(GrantAnswer {
+            item_id: "ci2".into(),
+            standing_days: None,
+        })),
+    )
+    .expect("the yes stands");
+    let mut ids: Vec<&str> = reply.items.iter().map(|i| i.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["ci", "ci2"], "the reply lists both");
+    assert_eq!(held.grants[0].items, both);
+    assert_eq!(held.grants[0].uses, 0);
+    assert!(
+        agents::live_rules(&store, now).is_empty(),
+        "once writes no rule"
+    );
+
+    held.grants.clear();
+    let asking = ask(&mut held);
+    settle(
+        locked(&store, &mut held, now),
+        &sidecar(),
+        asking,
+        yes("ci"),
+    )
+    .expect("the yes stands");
+    assert_eq!(held.grants[0].items, both);
+    let rules = agents::live_rules(&store, now);
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].items, both);
+    assert_eq!(rules[0].targets, [Target::Command(DEPLOY.into())]);
+    assert_eq!(rules[0].modes, [Mode::Env]);
+    let rows = store.audit_rows("dev").unwrap();
+    let added = rows.iter().find(|r| r.event == "rule_added").unwrap();
+    assert_eq!(added.item_id, None, "several items name none on the row");
+    assert_eq!(added.target.as_deref(), Some(DEPLOY));
+
+    // And the rule answers the whole request next time, without asking.
+    held.grants.clear();
+    assert!(matches!(
+        decide(
+            locked(&store, &mut held, now),
+            epoch(),
+            "default",
+            &sidecar(),
+            env_request(&["ci", "ci2"]),
+        ),
+        Ok(Prepared::Answered(reply)) if reply.state == State::Active && reply.items.len() == 2
+    ));
+}
+
+// A grant held for one item answers no request that names two: the second
+// request asks, and the grant held is left as it was.
+#[test]
+fn a_held_grant_for_one_item_is_not_reused_for_a_request_naming_two() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &env_file("ci", "A=1\n"));
+    seed(&store, &cipher, &env_file("ci2", "B=2\n"));
+    let_in(&store, &[sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(Grant {
+        state: State::Active,
+        approver: Some("user".into()),
+        ..Grant::from_request(
+            "default",
+            env_request(&["ci"]),
+            Terms {
+                approval: Approval::Ask,
+                ttl_ms: 900_000,
+                max_uses: None,
+                reason_required: false,
+                created_by: CreatedBy::User,
+            },
+            now,
+        )
+    });
+
+    assert!(
+        matches!(
+            decide(
+                locked(&store, &mut held, now),
+                epoch(),
+                "default",
+                &sidecar(),
+                env_request(&["ci"]),
+            ),
+            Ok(Prepared::Answered(_))
+        ),
+        "the one item it admits is served from it"
+    );
+    let asking = match decide(
+        locked(&store, &mut held, now),
+        epoch(),
+        "default",
+        &sidecar(),
+        env_request(&["ci", "ci2"]),
+    ) {
+        Ok(Prepared::Ask(asking)) => *asking,
+        other => panic!("both are asked for: {:?}", other.is_ok()),
+    };
+    assert_eq!(candidate_ids(&asking), ["ci", "ci2"]);
+    assert_eq!(held.grants.len(), 1);
+    assert_eq!(held.grants[0].uses, 0);
+    assert!(rows(&store).is_empty());
+}
+
+// A secret request naming something that is not there — or that has no
+// field to serve — is refused whole, not answered with the rest.
+#[test]
+fn a_secret_request_naming_an_item_that_is_not_there_is_denied_no_candidates() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &env_file("ci", "A=1\n"));
+    seed(
+        &store,
+        &cipher,
+        &Entry {
+            id: "memo".into(),
+            kind: "note".into(),
+            title: "Memo".into(),
+            ..Entry::default()
+        },
+    );
+    let_in(&store, &[sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+
+    assert!(
+        matches!(
+            decide(
+                locked(&store, &mut held, now),
+                epoch(),
+                "default",
+                &sidecar(),
+                env_request(&["ci", "ci"]),
+            ),
+            Ok(Prepared::Ask(_))
+        ),
+        "a name that is there, twice, is still there"
+    );
+    assert!(rows(&store).is_empty());
+
+    // Each refusal counts as a denial on the client's record, which is what
+    // slows a client down after three in a row.
+    for ids in [&["ci", "nope"][..], &["ci", "memo"], &["ci", "ci-2"]] {
+        assert!(
+            matches!(
+                decide(
+                    locked(&store, &mut held, now),
+                    epoch(),
+                    "default",
+                    &sidecar(),
+                    env_request(ids),
+                ),
+                Err(Code::GrantDenied)
+            ),
+            "{ids:?}"
+        );
+    }
+    assert!(held.grants.is_empty());
+    assert_eq!(
+        rows(&store),
+        vec![row("denied", r#"{"reason":"no_candidates"}"#); 3]
+    );
+    assert!(
+        matches!(
+            decide(
+                locked(&store, &mut held, now),
+                epoch(),
+                "default",
+                &sidecar(),
+                env_request(&["ci"]),
+            ),
+            Err(Code::RateLimited)
+        ),
+        "three in a row, and the client is slowed down"
+    );
+}
+
 // What the dialog is told about where: a site for a page (never the page's
 // path), the request pattern and the command line as written, each tagged
 // by its kind so the frontend can tell them apart.

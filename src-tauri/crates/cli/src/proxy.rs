@@ -11,6 +11,15 @@
 //! loopback address only: it holds the sidecar key, and must not be
 //! reachable from the network. Placeholders are swapped in headers and in a
 //! JSON or form body, never in the URL, which lands in logs upstream.
+//!
+//! The proxy follows no redirect. The grant was checked for the host, path
+//! and method the agent asked for; a hop the upstream chose was not, and a
+//! secret header or body replayed to it could land anywhere. A 3xx is
+//! relayed as it is, `Location` included, and the agent's own client
+//! follows it through the proxy, where every hop is a request of its own
+//! with its own check. Where a value lands decides how it is written: as
+//! is in a header, JSON-escaped in a JSON document, form-encoded in a form —
+//! so a value with a quote or an ampersand cannot restructure what carries it.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -27,7 +36,7 @@ use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use percent_encoding::{percent_decode_str, utf8_percent_encode};
+use percent_encoding::percent_decode_str;
 use rowel_broker::grant::{ResolveContext, ResolveTarget};
 use rowel_broker::reference::{Reference, SCHEME};
 use serde_json::json;
@@ -35,7 +44,8 @@ use tokio::net::TcpListener;
 use zeroize::Zeroizing;
 
 use crate::agent::Broker;
-use crate::redact::{Redactor, RESERVED};
+use crate::authority::authority;
+use crate::redact::{form_encoded, Redactor};
 
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:7400";
 /// The header that names the grant a request runs under.
@@ -91,12 +101,13 @@ pub fn run(args: &ProxyArgs, broker: Box<dyn Broker + Send>) -> i32 {
         }
     };
     let outcome = runtime.block_on(async {
+        let state = State::new(broker, args.allow_http)?;
         let listener = TcpListener::bind(args.listen).await?;
         eprintln!(
             "rowel proxy: listening on http://{} (call /https/<host>/<path> with X-Rowel-Grant)",
             listener.local_addr()?
         );
-        serve(listener, Arc::new(State::new(broker, args.allow_http))).await
+        serve(listener, Arc::new(state)).await
     });
     match outcome {
         Ok(()) => 0,
@@ -119,15 +130,20 @@ pub struct State {
 impl State {
     /// The TLS provider is installed here, once, as the app's `sync` installs
     /// it: reqwest is built without one so the app and the CLI link the same
-    /// ring backend, and a client cannot be built before it is there.
-    pub fn new(broker: Box<dyn Broker + Send>, allow_http: bool) -> Self {
+    /// ring backend, and a client cannot be built before it is there. The
+    /// client follows no redirect (see the module doc).
+    pub fn new(broker: Box<dyn Broker + Send>, allow_http: bool) -> io::Result<Self> {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        Self {
+        let upstream = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| io::Error::other(e.without_url().to_string()))?;
+        Ok(Self {
             broker: Mutex::new(broker),
-            upstream: reqwest::Client::new(),
+            upstream,
             allow_http,
             buckets: Mutex::new(HashMap::new()),
-        }
+        })
     }
 }
 
@@ -198,8 +214,8 @@ impl Refusal {
 }
 
 /// The upstream a request addresses: scheme, host (with port as written),
-/// path and query as the URL to call, and the host and path the grant is
-/// checked against.
+/// path and query as the URL to call, and the host (by the one rule,
+/// `authority`) and path the grant is checked against.
 #[derive(Debug)]
 struct Upstream {
     url: String,
@@ -246,27 +262,9 @@ fn upstream_of(uri: &http::Uri, allow_http: bool) -> Result<Upstream, Refusal> {
     }
     Ok(Upstream {
         url,
-        host: host_without_port(authority).to_ascii_lowercase(),
+        host: self::authority(scheme, authority),
         path: tail,
     })
-}
-
-/// `host:port` without the port; an IPv6 literal keeps its brackets.
-fn host_without_port(authority: &str) -> &str {
-    if authority.starts_with('[') {
-        return authority
-            .split_once(']')
-            .map_or(authority, |(host, _)| &authority[..=host.len()]);
-    }
-    authority
-        .rsplit_once(':')
-        .map_or(authority, |(host, port)| {
-            if port.chars().all(|c| c.is_ascii_digit()) && !host.contains(':') {
-                host
-            } else {
-                authority
-            }
-        })
 }
 
 /// Whether `text` holds a placeholder, as written or percent-encoded.
@@ -315,8 +313,8 @@ async fn relay(
 
     // What the request names: every distinct placeholder, in headers and —
     // for a JSON or form body — in the body, each resolved once.
-    let scan_body = is_placeable(&parts.headers);
-    let body_text = scan_body.then(|| std::str::from_utf8(&body).ok()).flatten();
+    let body_placement = placement_of(&parts.headers);
+    let body_text = body_placement.and_then(|_| std::str::from_utf8(&body).ok());
     let mut wanted: Vec<Found> = Vec::new();
     for (name, value) in &parts.headers {
         if name.as_str() == GRANT_HEADER {
@@ -353,20 +351,25 @@ async fn relay(
             continue;
         }
         let value = match value.to_str() {
-            Ok(text) if text.contains(SCHEME) => HeaderValue::from_str(&replaced(text, &values))
-                .map_err(|_| {
-                    Refusal::new(
-                        StatusCode::BAD_REQUEST,
-                        "bad_header",
-                        format!("the value for {name} cannot be sent as a header"),
-                    )
-                })?,
+            Ok(text) if text.contains(SCHEME) => {
+                HeaderValue::from_str(&replaced(text, &values, Placement::Header)).map_err(
+                    |_| {
+                        Refusal::new(
+                            StatusCode::BAD_REQUEST,
+                            "bad_header",
+                            format!("the value for {name} cannot be sent as a header"),
+                        )
+                    },
+                )?
+            }
             _ => value.clone(),
         };
         headers.append(name.clone(), value);
     }
-    let body = match body_text {
-        Some(text) if !values.is_empty() => Bytes::from(replaced(text, &values)),
+    let body = match (body_text, body_placement) {
+        (Some(text), Some(placement)) if !values.is_empty() => {
+            Bytes::from(replaced(text, &values, placement))
+        }
         _ => body,
     };
 
@@ -511,22 +514,36 @@ async fn resolve_all(
     })?
 }
 
-/// Whether the body is one placeholders are swapped in: JSON or a form.
-fn is_placeable(headers: &HeaderMap) -> bool {
-    headers
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| {
-            value
-                .split(';')
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase()
-        })
-        .is_some_and(|kind| {
-            kind == "application/json" || kind == "application/x-www-form-urlencoded"
-        })
+/// Where a value lands, which decides how it is written: a header takes it
+/// as is; a JSON document always holds a placeholder inside a string, so
+/// the value goes in JSON-escaped and the string is the one the author
+/// wrote with the value in it; a form field takes it form-encoded, whether
+/// the placeholder was written plain or percent-encoded, so an `&` or `=`
+/// in a value cannot add a field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Placement {
+    Header,
+    Json,
+    Form,
+}
+
+/// The body's placement from its content type, decided once per request;
+/// `None` for a body placeholders are not swapped in.
+fn placement_of(headers: &HeaderMap) -> Option<Placement> {
+    let kind = headers
+        .get(CONTENT_TYPE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match kind.as_str() {
+        "application/json" => Some(Placement::Json),
+        "application/x-www-form-urlencoded" => Some(Placement::Form),
+        _ => None,
+    }
 }
 
 const HOP_BY_HOP: [&str; 8] = [
@@ -626,9 +643,11 @@ fn span_len(text: &str, encoded: bool) -> usize {
     i
 }
 
-/// `text` with every placeholder among `values` replaced by its value, as
-/// written or percent-encoded to match how it was found.
-fn replaced(text: &str, values: &[(String, Zeroizing<String>)]) -> String {
+/// `text` with every placeholder among `values` replaced by its value,
+/// written for `placement`. How the placeholder was found decides nothing:
+/// a form field is form-encoded whether its author wrote it plain or
+/// percent-encoded.
+fn replaced(text: &str, values: &[(String, Zeroizing<String>)], placement: Placement) -> String {
     let mut out = String::with_capacity(text.len());
     let mut at = 0;
     for found in placeholders_in(text) {
@@ -639,10 +658,13 @@ fn replaced(text: &str, values: &[(String, Zeroizing<String>)]) -> String {
             continue;
         };
         out.push_str(&text[at..found.start]);
-        if found.encoded {
-            out.push_str(&utf8_percent_encode(value, RESERVED).to_string());
-        } else {
-            out.push_str(value);
+        match placement {
+            Placement::Header => out.push_str(value),
+            Placement::Json => {
+                let quoted = serde_json::to_string(value.as_str()).unwrap_or_default();
+                out.push_str(quoted.trim_matches('"'));
+            }
+            Placement::Form => out.push_str(&form_encoded(value)),
         }
         at = found.end;
     }
@@ -688,7 +710,7 @@ mod tests {
         assert_eq!(up.url, "https://API.Example.com:8443/");
         assert_eq!(
             (up.host.as_str(), up.path.as_str()),
-            ("api.example.com", "/")
+            ("api.example.com:8443", "/")
         );
 
         let uri: http::Uri = "/http/127.0.0.1:3000/x".parse().unwrap();
@@ -696,7 +718,9 @@ mod tests {
             upstream_of(&uri, false).unwrap_err().status,
             StatusCode::BAD_REQUEST
         );
-        assert_eq!(upstream_of(&uri, true).unwrap().host, "127.0.0.1");
+        assert_eq!(upstream_of(&uri, true).unwrap().host, "127.0.0.1:3000");
+        let uri: http::Uri = "/https/API.stripe.com:443/v1".parse().unwrap();
+        assert_eq!(upstream_of(&uri, false).unwrap().host, "api.stripe.com");
         for bad in [
             "/v1/balance",
             "/https/",
@@ -714,14 +738,6 @@ mod tests {
                 "{bad}"
             );
         }
-    }
-
-    #[test]
-    fn a_host_loses_its_port_but_not_its_brackets() {
-        assert_eq!(host_without_port("api.stripe.com:443"), "api.stripe.com");
-        assert_eq!(host_without_port("api.stripe.com"), "api.stripe.com");
-        assert_eq!(host_without_port("[::1]:8080"), "[::1]");
-        assert_eq!(host_without_port("[::1]"), "[::1]");
     }
 
     #[test]
@@ -759,10 +775,61 @@ mod tests {
             ),
         ];
         assert_eq!(
-            replaced(text, &values),
-            "Bearer sk_live/1+2, key=p%20w&x=rowel://lb/bad plain"
+            replaced(text, &values, Placement::Header),
+            "Bearer sk_live/1+2, key=p w&x=rowel://lb/bad plain"
         );
-        assert_eq!(replaced("nothing here", &values), "nothing here");
+        assert_eq!(
+            replaced(text, &values, Placement::Form),
+            "Bearer sk_live%2F1%2B2, key=p+w&x=rowel://lb/bad plain"
+        );
+        assert_eq!(
+            replaced("nothing here", &values, Placement::Json),
+            "nothing here"
+        );
+    }
+
+    #[test]
+    fn a_json_value_is_escaped_so_the_document_still_parses() {
+        let secret = "sk\"live\\\nend\ttab";
+        let values = vec![(
+            "rowel://lb/stripe/apiKey".to_string(),
+            Zeroizing::new(secret.to_string()),
+        )];
+        let document = replaced(
+            r#"{"key": "rowel://lb/stripe/apiKey", "n": 1}"#,
+            &values,
+            Placement::Json,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&document).unwrap();
+        assert_eq!(parsed["key"], secret);
+        assert_eq!(parsed["n"], 1);
+        assert_eq!(parsed.as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_form_value_is_encoded_so_no_field_is_added() {
+        let secret = "a&b=c+d%e f";
+        let values = vec![(
+            "rowel://lb/stripe/apiKey".to_string(),
+            Zeroizing::new(secret.to_string()),
+        )];
+        for body in [
+            "key=rowel://lb/stripe/apiKey&n=1",
+            "key=rowel%3A%2F%2Flb%2Fstripe%2FapiKey&n=1",
+        ] {
+            let sent = replaced(body, &values, Placement::Form);
+            let pairs: Vec<(String, String)> = form_urlencoded::parse(sent.as_bytes())
+                .into_owned()
+                .collect();
+            assert_eq!(
+                pairs,
+                [
+                    ("key".to_string(), secret.to_string()),
+                    ("n".to_string(), "1".to_string())
+                ],
+                "{body}"
+            );
+        }
     }
 
     #[test]
@@ -792,16 +859,22 @@ mod tests {
     }
 
     #[test]
-    fn only_json_and_form_bodies_are_placeable_and_hop_by_hop_is_known() {
+    fn the_placement_follows_the_content_type_and_hop_by_hop_is_known() {
         let with = |kind: &str| {
             let mut headers = HeaderMap::new();
             headers.insert(CONTENT_TYPE, HeaderValue::from_str(kind).unwrap());
             headers
         };
-        assert!(is_placeable(&with("application/json; charset=utf-8")));
-        assert!(is_placeable(&with("Application/X-WWW-Form-Urlencoded")));
-        assert!(!is_placeable(&with("text/plain")));
-        assert!(!is_placeable(&HeaderMap::new()));
+        assert_eq!(
+            placement_of(&with("application/json; charset=utf-8")),
+            Some(Placement::Json)
+        );
+        assert_eq!(
+            placement_of(&with("Application/X-WWW-Form-Urlencoded")),
+            Some(Placement::Form)
+        );
+        assert_eq!(placement_of(&with("text/plain")), None);
+        assert_eq!(placement_of(&HeaderMap::new()), None);
         for name in [
             "connection",
             "Proxy-Authorization",
@@ -839,7 +912,9 @@ mod end_to_end {
 
     /// An upstream that answers every request with what it saw — method,
     /// path, query, the Authorization header, whether the grant header got
-    /// through, and the body — and records the same.
+    /// through, and the body — and records the same. Under `/redirect/` it
+    /// answers a redirect instead: to another path of its own, to another
+    /// host, or a 307 (which a following client would replay the body to).
     async fn echo_upstream() -> (SocketAddr, Seen) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -868,6 +943,21 @@ mod end_to_end {
                                     "body": String::from_utf8_lossy(&body),
                                 });
                                 recorded.lock().unwrap().push(seen.clone());
+                                let redirect = match parts.uri.path() {
+                                    "/redirect/same" => Some((StatusCode::FOUND, "/other")),
+                                    "/redirect/cross" => Some((StatusCode::FOUND, "https://elsewhere.example/x")),
+                                    "/redirect/307" => Some((StatusCode::TEMPORARY_REDIRECT, "http://127.0.0.1:1/x")),
+                                    _ => None,
+                                };
+                                if let Some((status, location)) = redirect {
+                                    return Ok::<_, Infallible>(
+                                        Response::builder()
+                                            .status(status)
+                                            .header("location", location)
+                                            .body(Full::new(Bytes::from("moved")))
+                                            .unwrap(),
+                                    );
+                                }
                                 Ok::<_, Infallible>(
                                     Response::builder()
                                         .header(CONTENT_TYPE, "application/json")
@@ -893,12 +983,15 @@ mod end_to_end {
         client: reqwest::Client,
     }
 
-    /// The proxy over a known sidecar with the grant `mock` holds, and an
-    /// echo upstream, both on ephemeral loopback ports.
-    async fn proxy(mock: Mock) -> Proxy {
+    /// The proxy over a known sidecar with the grant `mock` makes for the
+    /// upstream's host (the ephemeral `127.0.0.1:<port>`, which is why the
+    /// host is handed in), and an echo upstream, both on loopback. The test
+    /// client follows no redirect either, so a 3xx the proxy relays is seen
+    /// as such.
+    async fn proxy(mock: impl FnOnce(&str) -> Mock) -> Proxy {
         let (upstream, seen) = echo_upstream().await;
-        let harness = known_sidecar(mock);
-        let state = Arc::new(State::new(sidecar_of(&harness), true));
+        let harness = known_sidecar(mock(&upstream.to_string()));
+        let state = Arc::new(State::new(sidecar_of(&harness), true).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(serve(listener, state));
@@ -907,7 +1000,10 @@ mod end_to_end {
             base,
             upstream,
             seen,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
         }
     }
 
@@ -921,13 +1017,14 @@ mod end_to_end {
         ))
     }
 
-    fn granting_stripe() -> Mock {
+    /// A header grant for the Stripe key at every path of `host`.
+    fn granting_stripe(host: &str) -> Mock {
         Mock::unlocked().granting_at(
             GRANT,
             "stripe",
             Mode::Header,
             Target::Http {
-                host: "127.0.0.1".into(),
+                host: host.into(),
                 path: "/*".into(),
                 methods: vec![],
             },
@@ -951,7 +1048,7 @@ mod end_to_end {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_header_placeholder_reaches_the_upstream_as_the_value_and_comes_back_as_itself() {
-        let proxy = proxy(granting_stripe()).await;
+        let proxy = proxy(granting_stripe).await;
         let response = proxy
             .client
             .get(proxy.url("/v1/balance?limit=3"))
@@ -986,7 +1083,7 @@ mod end_to_end {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_json_or_form_body_placeholder_is_swapped_and_a_text_body_is_not() {
-        let proxy = proxy(granting_stripe()).await;
+        let proxy = proxy(granting_stripe).await;
         let through = proxy
             .client
             .post(proxy.url("/v1/charges"))
@@ -1039,7 +1136,7 @@ mod end_to_end {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_placeholder_in_the_url_is_refused_before_anything_is_resolved() {
-        let proxy = proxy(granting_stripe()).await;
+        let proxy = proxy(granting_stripe).await;
         for path in [
             format!("/v1/balance?key={REF}"),
             format!("/v1/{REF}"),
@@ -1061,7 +1158,7 @@ mod end_to_end {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn no_grant_header_or_an_unknown_grant_is_forbidden_without_a_value() {
-        let proxy = proxy(granting_stripe()).await;
+        let proxy = proxy(granting_stripe).await;
         let response = proxy
             .client
             .get(proxy.url("/v1/balance"))
@@ -1093,7 +1190,7 @@ mod end_to_end {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_sixty_first_request_in_a_minute_is_rate_limited() {
-        let proxy = proxy(granting_stripe()).await;
+        let proxy = proxy(granting_stripe).await;
         for n in 1..=RATE_PER_MINUTE {
             let response = proxy
                 .client
@@ -1128,9 +1225,9 @@ mod end_to_end {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn http_is_refused_without_the_flag_and_a_dead_upstream_is_a_bad_gateway() {
-        let proxy = proxy(granting_stripe()).await;
-        let strict_harness = known_sidecar(granting_stripe());
-        let state_without_http = Arc::new(State::new(sidecar_of(&strict_harness), false));
+        let proxy = proxy(granting_stripe).await;
+        let strict_harness = known_sidecar(granting_stripe(&proxy.upstream.to_string()));
+        let state_without_http = Arc::new(State::new(sidecar_of(&strict_harness), false).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let strict = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(serve(listener, state_without_http));
@@ -1153,5 +1250,72 @@ mod end_to_end {
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["error"], "upstream");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_redirect_is_relayed_as_it_is_and_never_followed() {
+        let proxy = proxy(granting_stripe).await;
+        for (path, status, location) in [
+            ("/redirect/same", StatusCode::FOUND, "/other"),
+            (
+                "/redirect/cross",
+                StatusCode::FOUND,
+                "https://elsewhere.example/x",
+            ),
+        ] {
+            let response = proxy
+                .client
+                .get(proxy.url(path))
+                .header("authorization", format!("Bearer {REF}"))
+                .header(GRANT_HEADER, GRANT)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+            assert_eq!(response.headers().get("location").unwrap(), location);
+            assert_eq!(response.text().await.unwrap(), "moved");
+        }
+        let response = proxy
+            .client
+            .post(proxy.url("/redirect/307"))
+            .header(CONTENT_TYPE, "application/json")
+            .header(GRANT_HEADER, GRANT)
+            .body(format!("{{\"key\":\"{REF}\"}}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            response.headers().get("location").unwrap(),
+            "http://127.0.0.1:1/x"
+        );
+
+        let seen = proxy.seen.lock().unwrap();
+        assert_eq!(seen.len(), 3, "one upstream request per request, no hop");
+        assert_eq!(seen[0]["authorization"], format!("Bearer {VALUE}"));
+        assert_eq!(seen[1]["authorization"], format!("Bearer {VALUE}"));
+        assert_eq!(seen[2]["body"], format!("{{\"key\":\"{VALUE}\"}}"));
+        drop(seen);
+        assert_eq!(proxy.uses(), 3);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_grant_names_the_host_with_its_port_by_the_one_rule() {
+        let without_port = proxy(|_| granting_stripe("127.0.0.1")).await;
+        let response = without_port
+            .client
+            .get(without_port.url("/v1/balance"))
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, GRANT)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "a grant for the host without its (non-default) port is for another host"
+        );
+        assert_eq!(without_port.uses(), 0);
+        assert!(without_port.seen.lock().unwrap().is_empty());
     }
 }

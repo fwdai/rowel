@@ -297,9 +297,13 @@ impl Decision {
 /// named and the `probes` its targets become.
 ///
 /// A rule matches when its agent selector admits the client, its item
-/// selector admits at least one candidate, every probe matches one of its
-/// targets (an empty target list matching any), and every requested mode is
-/// among its modes. The order of precedence, in full:
+/// selector admits at least one candidate — every candidate, for a secret
+/// request ([`Mode::is_secret`]) — every probe matches one of its targets
+/// (an empty target list matching any), and every requested mode is among
+/// its modes. A page's logins are offered for one to be picked, so a rule
+/// for one of them is the right answer to a site request; a command needs
+/// every secret it named at once, so a rule for one of two must not win on
+/// specificity and narrow the grant to it. The order of precedence, in full:
 ///
 /// 1. No candidates, or no matching rule: denied.
 /// 2. Among the matching rules, the most specific item selector wins:
@@ -364,8 +368,13 @@ fn rule_matches(
     candidates: &[CandidateItem],
     probes: &[Probe],
 ) -> bool {
+    let admits = |item: &CandidateItem| rule.items.admits(item);
     rule.agents.admits(&req.client_key, req.agent_id.as_deref())
-        && candidates.iter().any(|item| rule.items.admits(item))
+        && if req.modes.iter().any(|mode| mode.is_secret()) {
+            candidates.iter().all(admits)
+        } else {
+            candidates.iter().any(admits)
+        }
         && (rule.targets.is_empty()
             || (!probes.is_empty()
                 && probes
@@ -803,6 +812,48 @@ mod tests {
             &Floors::default(),
         );
         assert_eq!(rule_of(&decision), Some("ask"));
+    }
+
+    #[test]
+    fn a_secret_request_is_answered_only_by_a_rule_admitting_every_item() {
+        let both = [item("stripe", "api_key", &[]), item("gh", "api_key", &[])];
+        let lockbox = rule("lockbox", ItemSelector::Lockbox, Approval::Ask);
+        let one = rule(
+            "one",
+            ItemSelector::Ids(vec!["stripe".into()]),
+            Approval::Auto,
+        );
+        let line = "node deploy.js";
+        let env = request(
+            ItemSelector::Ids(vec!["stripe".into(), "gh".into()]),
+            vec![Target::Command(line.into())],
+            vec![Mode::Env],
+        );
+        let rules = [lockbox, one];
+        let probes = [Probe::Command(line)];
+        // The rule for one of the two is more specific, but a command needs
+        // both: the lockbox rule answers, and asks.
+        let decision = evaluate(&rules, &env, &both, &probes, &Floors::default());
+        assert_eq!(rule_of(&decision), Some("lockbox"));
+        assert_eq!(approval_of(&decision), Some(Approval::Ask));
+        assert_eq!(
+            evaluate(&rules[1..], &env, &both, &probes, &Floors::default()),
+            Decision::Denied(DenyReason::NoRule)
+        );
+        // With one item asked for, the rule for it wins as before.
+        let decision = evaluate(&rules, &env, &both[..1], &probes, &Floors::default());
+        assert_eq!(rule_of(&decision), Some("one"));
+        // A page's logins are offered for one to be picked: the rule for one
+        // of them answers a site request.
+        let gh_and_stripe = [item("gh", "login", &[]), item("stripe", "login", &[])];
+        let decision = evaluate(
+            &rules,
+            &fill_request(),
+            &gh_and_stripe,
+            &[GH_PAGE],
+            &Floors::default(),
+        );
+        assert_eq!(rule_of(&decision), Some("one"));
     }
 
     #[test]

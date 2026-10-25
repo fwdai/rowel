@@ -1320,7 +1320,19 @@ fn decide(
     // their title, among the kinds that have a field to serve. No payload is
     // opened to decide a grant.
     let candidates = if secret {
-        secret_candidates_in(store, &req.items)
+        match secret_candidates_in(store, &req.items) {
+            Some(candidates) => candidates,
+            None => {
+                agents::record(
+                    store,
+                    writer,
+                    refusal(Event::Denied, r#"{"reason":"no_candidates"}"#.into()),
+                    now,
+                );
+                held.rate(client_key).record_denial(now);
+                return Err(Code::GrantDenied);
+            }
+        }
     } else if client.kind == ClientKind::Extension {
         candidates_in(store, &req.items)
     } else {
@@ -1338,7 +1350,9 @@ fn decide(
     // every command gets the grant it already has. A fill reuse is a use —
     // the login is in the reply; an agent's is signalled again, since the
     // page it is for may be in a tab opened since. A secret reuse releases
-    // nothing and is written nowhere: its uses are `resolve`'s.
+    // nothing and is written nowhere: its uses are `resolve`'s — and it has
+    // to admit every item asked for ([`admits_all`]), where a page's grant
+    // need only admit one of the page's logins.
     let reusable = held.grants.iter_mut().find(|g| {
         g.client_key == client_key
             && g.is_active(now)
@@ -1346,7 +1360,11 @@ fn decide(
             && probes
                 .iter()
                 .all(|probe| g.targets.iter().any(|t| t.matches(probe)))
-            && candidates.iter().any(|c| g.items.admits(&c.item))
+            && if secret {
+                admits_all(&g.items, &candidates)
+            } else {
+                candidates.iter().any(|c| g.items.admits(&c.item))
+            }
     });
     if let Some(grant) = reusable {
         let items = admitted(&candidates, &grant.items);
@@ -1483,13 +1501,19 @@ fn activate(
     Ok(())
 }
 
-/// Whether `modes` are a secret request's — `header`, `env` — rather than a
-/// site's. A request mixing the two is refused before this is asked
+/// Whether `selector` admits every one of `candidates`, there being at least
+/// one: what a secret request needs of a held grant, as `policy::evaluate`
+/// needs it of a rule, since a command runs with every item it named or not
+/// at all.
+fn admits_all(selector: &ItemSelector, candidates: &[Candidate]) -> bool {
+    !candidates.is_empty() && candidates.iter().all(|c| selector.admits(&c.item))
+}
+
+/// Whether `modes` are a secret request's ([`Mode::is_secret`]) rather than
+/// a site's. A request mixing the two is refused before this is asked
 /// ([`well_targeted`]).
 fn is_secret(modes: &[Mode]) -> bool {
-    modes
-        .iter()
-        .any(|mode| matches!(mode, Mode::Header | Mode::Env))
+    modes.iter().any(|mode| mode.is_secret())
 }
 
 /// Whether every target of `req` is the kind of place every one of its modes
@@ -1574,8 +1598,16 @@ fn settle(
     let settled = held
         .access_since(access_epoch)
         .and_then(|()| outcome(&verdict, &candidates));
-    let (item, standing_days) = match settled {
-        Ok((picked, standing_days)) => (picked.visible.clone(), standing_days),
+    // A site request's yes is for the one login picked; a secret request's
+    // is for every item it named, since the command or the request needs
+    // them all at once — the pick is still required to be one of them, so
+    // a stale dialog cannot answer for a request it was not drawn for.
+    let (items, standing_days) = match settled {
+        Ok((_, standing_days)) if is_secret(&grant.modes) => (
+            candidates.iter().map(|c| c.visible.clone()).collect(),
+            standing_days,
+        ),
+        Ok((picked, standing_days)) => (vec![picked.visible.clone()], standing_days),
         Err(reason) => {
             grant.state = State::Denied;
             agents::record(
@@ -1593,12 +1625,12 @@ fn settle(
         }
     };
 
-    grant.items = ItemSelector::Ids(vec![item.id.clone()]);
+    grant.items = ItemSelector::Ids(items.iter().map(|i| i.id.clone()).collect());
     grant.state = State::Active;
     grant.approver = Some("user".into());
     if let Some(days) = standing_days {
         let days = days.clamp(1, settings::MAX_STANDING_DAYS);
-        let rule = standing_rule(client_key, &item.id, &grant, days, now);
+        let rule = standing_rule(client_key, &grant, days, now);
         let mut rules = agents::live_rules(store, now);
         let rule_id = rule.id.clone();
         rules.push(rule);
@@ -1620,31 +1652,37 @@ fn settle(
     }
     activate(store, writer, &row, &mut grant, now)?;
     held.rate(client_key).record_grant(now);
-    let items = vec![item];
     queue_fill(held, &clients, client, &grant, &items);
     let reply = reply_for(&grant, items);
     held.grants.push(grant);
     Ok(reply)
 }
 
-/// The rule a "for N days" writes: this client, the one item picked, where
-/// the grant is for, in its mode. For a fill that is the site — not the
-/// page, since the rule outlives this visit — and for a secret grant the
+/// The rule a "for N days" writes: this client, the items the settled
+/// `grant` admits, where it is for, in its mode. For a fill that is the one
+/// login picked at the site — not the page, since the rule outlives this
+/// visit. For a secret grant it is every item the request named and the
 /// request's own targets, every one of them, so a standing `env` rule names
-/// the full command line and lifts the floor for that line alone.
-/// `standing_for` takes one target, so it is given the first and the whole
-/// list put in its place; a grant has at least one ([`well_targeted`]), and
-/// the fallback is only so that this cannot panic.
-fn standing_rule(
-    client_key: &str,
-    item_id: &str,
-    grant: &Grant,
-    days: u32,
-    now: i64,
-) -> policy::Rule {
+/// the full command line and lifts the floor for that line alone, and
+/// answers the whole request next time (`policy::evaluate`). `standing_for`
+/// takes one item and one target, so it is given the first of each and the
+/// whole lists put in their place; a settled grant has at least one of each
+/// ([`well_targeted`], `outcome`), and the fallbacks are only so that this
+/// cannot panic.
+fn standing_rule(client_key: &str, grant: &Grant, days: u32, now: i64) -> policy::Rule {
+    let first_id = match &grant.items {
+        ItemSelector::Ids(ids) => ids.first().cloned().unwrap_or_default(),
+        _ => String::new(),
+    };
     if !is_secret(&grant.modes) {
         let origin = agents::origin_of(&grant.targets).unwrap_or_default();
-        return defaults::standing(client_key, item_id, &agents::site_origin(origin), days, now);
+        return defaults::standing(
+            client_key,
+            &first_id,
+            &agents::site_origin(origin),
+            days,
+            now,
+        );
     }
     let mode = grant.modes.first().copied().unwrap_or(Mode::Header);
     let first = grant
@@ -1652,7 +1690,8 @@ fn standing_rule(
         .first()
         .cloned()
         .unwrap_or(Target::Command(String::new()));
-    let mut rule = defaults::standing_for(client_key, item_id, first, mode, days, now);
+    let mut rule = defaults::standing_for(client_key, &first_id, first, mode, days, now);
+    rule.items = grant.items.clone();
     rule.targets = grant.targets.clone();
     rule
 }
@@ -2027,28 +2066,38 @@ fn site_candidates_in(
 /// is never a candidate, whatever the selector says. Ids may be written as
 /// the slug of the item's title, the way a placeholder writes them
 /// ([`item_by_name`]); the candidates carry the ids, so the grant does too.
-fn secret_candidates_in(store: &SqliteStore, selector: &ItemSelector) -> Vec<Candidate> {
+/// `None` when a name among `Ids` picks out nothing servable: the command
+/// needs every item it named, so a request for something that is not there
+/// is not answered with the rest.
+fn secret_candidates_in(store: &SqliteStore, selector: &ItemSelector) -> Option<Vec<Candidate>> {
     let metas = match store.list() {
         Ok(metas) => metas,
         Err(e) => {
             log::warn!("browser host: could not list the vault: {e}");
-            return Vec::new();
+            return None;
         }
     };
+    let servable = |meta: &EntryMeta| !reference::fields_for(&meta.kind).is_empty();
     let by_id = match selector {
         ItemSelector::Ids(names) => ItemSelector::Ids(
             names
                 .iter()
-                .filter_map(|name| item_by_name(&metas, name).map(|meta| meta.id.clone()))
-                .collect(),
+                .map(|name| {
+                    item_by_name(&metas, name)
+                        .filter(|meta| servable(meta))
+                        .map(|meta| meta.id.clone())
+                })
+                .collect::<Option<Vec<String>>>()?,
         ),
         other => other.clone(),
     };
-    metas
-        .into_iter()
-        .filter(|meta| !reference::fields_for(&meta.kind).is_empty())
-        .filter_map(|meta| candidate_of(meta, &by_id))
-        .collect()
+    Some(
+        metas
+            .into_iter()
+            .filter(servable)
+            .filter_map(|meta| candidate_of(meta, &by_id))
+            .collect(),
+    )
 }
 
 /// `meta` as a candidate, if `selector` admits it.

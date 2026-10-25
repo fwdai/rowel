@@ -39,6 +39,14 @@ impl Mode {
             Mode::Env => "env",
         }
     }
+
+    /// Whether this is a secret mode — `header`, `env` — rather than a
+    /// site's. A secret request names items that are all needed at once and
+    /// is covered whole or not at all; a site request offers a page's logins
+    /// for one to be picked.
+    pub fn is_secret(self) -> bool {
+        matches!(self, Mode::Header | Mode::Env)
+    }
 }
 
 /// Who has to say yes. Ordered so that "stricter" is comparable: `Auto < Ask

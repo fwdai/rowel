@@ -16,6 +16,7 @@ use serde_json::{json, Map, Value};
 
 use super::rpc::{self, INVALID_PARAMS};
 use crate::agent::{decided, AgentError, Broker, GrantAsk};
+use crate::authority::authority;
 
 pub const REQUEST_LOGIN: &str = "rowel_request_login";
 pub const REQUEST_SECRET: &str = "rowel_request_secret";
@@ -189,8 +190,8 @@ fn use_hint(grant_id: &str, reference: &Reference, mode: Mode, target: &Target) 
 /// `[METHOD[,METHOD] ]https://host/path-glob` as the host's typed target:
 /// the methods before the first space (upper-case letters and commas,
 /// nothing else, so a word is not mistaken for one), the host up to the
-/// first slash, the path from it, `/*` when none. A query string is refused:
-/// it would land in logs.
+/// first slash by the one rule (`authority`), the path from it, `/*` when
+/// none. A query string is refused: it would land in logs.
 pub fn http_target(text: &str) -> Option<Target> {
     let (methods, url) = match text.split_once(char::is_whitespace) {
         Some((methods, url)) if methods.chars().all(|c| c.is_ascii_uppercase() || c == ',') => (
@@ -204,9 +205,10 @@ pub fn http_target(text: &str) -> Option<Target> {
         Some(_) => return None,
         None => (Vec::new(), text),
     };
-    let rest = url
+    let (scheme, rest) = url
         .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))?;
+        .map(|rest| ("https", rest))
+        .or_else(|| url.strip_prefix("http://").map(|rest| ("http", rest)))?;
     if rest.contains(['?', '#']) || rest.contains(char::is_whitespace) {
         return None;
     }
@@ -218,7 +220,7 @@ pub fn http_target(text: &str) -> Option<Target> {
         return None;
     }
     Some(Target::Http {
-        host: host.to_ascii_lowercase(),
+        host: authority(scheme, host),
         path,
         methods,
     })
@@ -387,6 +389,14 @@ mod tests {
         assert_eq!(
             http_target("GET https://api.stripe.com/v1/balance"),
             Some(http("api.stripe.com", "/v1/balance", &["GET"]))
+        );
+        assert_eq!(
+            http_target("GET https://API.stripe.com:443/v1/*"),
+            Some(http("api.stripe.com", "/v1/*", &["GET"]))
+        );
+        assert_eq!(
+            http_target("http://localhost:3000/api/*"),
+            Some(http("localhost:3000", "/api/*", &[]))
         );
         assert_eq!(http_target("https://api.stripe.com/v1?key=1"), None);
         assert_eq!(http_target("api.stripe.com/v1"), None);
