@@ -186,7 +186,7 @@ secret. Spec `02` (local association), `04`, `05` (signals, session end), `06`
 
 ---
 
-## I3 — Secrets for commands and APIs: the sidecar  `[ ]`
+## I3 — Secrets for commands and APIs: the sidecar  `[ ]`  *(in review: PR #657, branch `feat/agent-sidecar`, on `main`)*
 
 **Deliverable.** A coding agent uses an API key or an `.env` value for one
 command or one API call without the value ever appearing in its transcript,
@@ -195,20 +195,36 @@ clients), `05 §4–5` (header, env, redaction).
 
 - [ ] `sidecar` client kind and the CLI's second key; `resolve` action refused
       for any other kind and bound to the grant id and the same lockbox (`03`, `04`).
+      *Outcome:* `Host::resolve` with a default refusal; `AppHost` resolves
+      under the session and agents locks (`03` "as built in I3"); the sidecar
+      key is `keys::Role::Sidecar`.
 - [ ] Placeholder resolution `rowel://<lockbox>/<item>/<field>`; `list-visible`
-      returns refs and fields (`04 §3`).
+      returns refs and fields (`04 §3`). *Outcome:* `rowel_broker::reference`;
+      names resolve by id or slug (lockbox: registry name; item: title).
 - [ ] `rowel run --grant … -- cmd`: env mode, full-command-line targets, requests
       a grant when none is given, output through the redactor (`05 §5`).
+      *Outcome:* as specified, plus `--env-file`, inherited `rowel://`
+      variables, and the one `command::line` quoting rule (`05`).
 - [ ] `rowel redact`: streaming exact-match matcher with encodings and carry-over
-      window, as a library and a filter (`05`).
+      window, as a library and a filter (`05`). *Outcome:* values under 6
+      bytes are never matched; the filter resolves its values under a grant.
 - [ ] `rowel hook`: pre-tool rewrite to the `rowel run` form, post-tool redact;
-      documented configs for Claude Code, Codex and Cursor (`04`).
+      documented configs for Claude Code, Codex and Cursor (`04`). *Outcome:*
+      the post hook is an exposure check (resolve the command's own
+      placeholders, scan the output, end the grant on a hit), not a rewrite of
+      the output, which the platforms' Bash hooks cannot do (`05`, Q16).
 - [ ] `rowel proxy`: path-prefix addressing, `X-Rowel-Grant`, header and body
       placement rules, response redaction, per-grant token bucket (`05 §4`).
+      *Outcome:* loopback only; body placement gated on content type (JSON,
+      form) since the grant has no placement field yet; `/http/` behind
+      `--allow-http`.
 - [ ] Policy floors for `env` and `header`; Settings lists header and env rules
-      with their targets (`03`).
+      with their targets (`03`). *Outcome:* the baseline admits `header` and
+      `env` at `ask`; `RuleRow`/`GrantRow` carry `mode` and `target`.
 - [ ] CLI keys in the OS secure store on macOS and Windows (non-gated item in
-      `secure_store.rs`), `0600` files elsewhere (Q9).
+      `secure_store.rs`), `0600` files elsewhere (Q9). *Outcome:* in the CLI
+      crate's own `keys` backend (the app's `secure_store.rs` links Tauri),
+      with a one-time move of an existing file.
 - [ ] Tests: broker tests for `resolve` and binding; integration tests for
       `run`, `proxy` and `redact`; a rule for `node deploy.js*` must not match
       `node -e …`.

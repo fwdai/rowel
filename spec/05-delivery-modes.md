@@ -226,6 +226,23 @@ The floor in `03` keeps every passkey ceremony behind the tap, agent or not.
   sandbox reaches it over the pod network; the agent's egress to the real
   upstream is blocked by the company's network policy, which is what makes the
   proxy the only path.
+- *As built in I3* (`crates/cli/src/proxy.rs`, hyper 1 server + reqwest
+  upstream, loopback only — a non-loopback `--listen` is a usage error, since
+  the proxy holds a sidecar key). `/https/<host>/<path>?<query>`; `/http/…`
+  only with `--allow-http` (a dev server). A placeholder in the path or the
+  query, plain or percent-encoded, is 400 before any grant is consulted;
+  no `X-Rowel-Grant` is 403; the token bucket (60, one a second) answers 429
+  with `Retry-After`; a body over 32 MiB is 413. Placeholders are found in
+  every header value and, for `application/json` and
+  `application/x-www-form-urlencoded` bodies, in the body (a form field's
+  percent-encoded form included, the value re-encoded to match); each
+  distinct one is resolved once per request — a use and a row each — with
+  `{ http: { host, path (no query), method } }`, and a refusal is 403 naming
+  the placeholder, never a value. Hop-by-hop headers, `Host`,
+  `Content-Length` and the grant header are dropped on the way out; the
+  response's status, headers and body come back with the request's released
+  values redacted, and the body's length recomputed. The log line is method,
+  host and path, status — never a query, a header or a body.
 
 **Token (❌, phase 4).** A new item kind `oauth` (or `apikey` with a `refresh`
 field; decide at implementation) holding client id, refresh token, scopes,
@@ -234,24 +251,54 @@ refresh (or exchange, RFC 8693, with `act: { sub: agent_id }` when the upstream
 supports it) and returns the short-lived access token to the sidecar, which
 places it as in header mode. The refresh token never leaves the broker.
 
-**Env (❌, `rowel run`).** `rowel run --grant <id> -- <cmd...>`: resolves every
-`rowel://` placeholder found in the child's intended environment (from
-`--env NAME=rowel://…` flags or a `.rowel-env` file the user points at) through
-`resolve`, spawns the child with those values set and the parent's environment
-otherwise, and streams stdout/stderr through the redactor. The grant's
-`Target::Command` is matched against the *full* command line. `rowel hook`'s
-pre-tool rewrite produces exactly this invocation; when no grant exists yet,
-`rowel run` requests one first (it holds the sidecar key, which may request
-as well as resolve).
+**Env (✅ I3, `rowel run`).** `rowel run [--grant <id>] [--env NAME=rowel://…]…
+[--env-file <path>] [--reason …] -- <cmd...>`: resolves every placeholder meant
+for the child — the `--env` flags, the file's `NAME=rowel://…` lines, and
+every inherited variable whose value starts with `rowel://`, flags over file
+over environment — through `resolve`, spawns the child with those values set
+and the parent's environment otherwise, stdin inherited, and streams its
+stdout and stderr through the redactor on two threads; the exit code is the
+child's. The grant's `Target::Command` is the *full* command line, written by
+one rule (`command::line`: the words joined by a space, a word single-quoted
+when it holds whitespace, a quote, `$`, a backtick, `\`, a glob or a shell
+operator character) that the grant request, every resolve, the hook's
+rewrite and `rowel_request_secret`'s `target` all use, so the four agree
+byte for byte. Without `--grant`, `rowel run` requests one itself under the
+sidecar key (items: the placeholders' item parts; target: the line; mode
+`env`) and ends it when the child ends; a `--grant` the caller brought is
+used and left alone. With no placeholder the command simply runs. Exit 2 for
+usage, 1 for denied, unreachable, not resolvable or a child a signal ended.
 
-**Redaction (❌, `rowel redact`, also a library in the sidecar and the hook).**
-Input: a byte stream and the set of values released under the grants this
-process resolved. Output: the stream with each exact occurrence replaced by its
-placeholder. Also matches the obvious encodings of each value (base64, URL
-percent-encoding, JSON-escaped). Streaming matcher with a carry-over window of
-the longest value's encoded length, so a value split across chunks is still
-caught. It is a safety net, not a guarantee: a value transformed otherwise
-passes (Q16). Values are held in a `Zeroizing` set for the process lifetime.
+**Redaction (✅ I3, `rowel redact`, and the `Redactor` library in `run`, the
+hook and the proxy).** Input: a byte stream and the values released under the
+grants this process resolved, each with its placeholder. Output: the stream
+with every occurrence of a value replaced by its placeholder — the exact
+bytes, standard and URL-safe base64 (padded or not), percent-encoded (RFC
+3986, upper-case hex) and JSON-escaped. Streaming matcher carrying over at
+most one byte less than the longest form between reads, so a value split
+across chunks is still caught. Values shorter than 6 bytes are not matched
+at all: a needle that short would redact ordinary text. It is a safety net,
+not a guarantee: a value transformed otherwise passes (Q16). Needles are held
+`Zeroizing`. The filter form, `rowel redact --grant <id> --ref <rowel://…>…
+(--command <line> | --http <METHOD> <host/path>)`, gets its values the only
+legitimate way, by resolving under the grant at the place it names.
+
+**The hook (✅ I3, `rowel hook pre|post [--platform …]`).** One event in as
+JSON on stdin, the platform's answer out; nothing when there is nothing to
+say. *pre* rewrites one plain shell command of the form `NAME=rowel://… cmd
+args…` (no operator, redirection, substitution or expansion) into `rowel run
+--env NAME=rowel://… -- cmd args…` through Claude Code's and Codex's
+`hookSpecificOutput.updatedInput` (Codex needs `permissionDecision: "allow"`
+beside it; on Claude Code no decision is sent, so the platform's own
+permission rules still apply) and Cursor's `updated_input` beside
+`permission: "allow"`; anything else is left alone. *post* is the CLI's
+exposure check, the counterpart of the extension's: for a `rowel run --grant
+<id> …` command it resolves the command's placeholders under that grant at
+that line, scans the tool's output for the values, and on a hit ends the
+grant (a refusal — an agent's grant — is ignored) and adds a line of context
+for the agent, never the value. A ledger of every value ever released, which
+would let the post hook catch a value that reached the output through another
+command, is not kept (Q16).
 
 **Session end (❌, extension).** On `grant-ended { origins }` or on the grant's
 `expires_at`, the extension deletes the site's cookies with the `cookies` API

@@ -126,20 +126,21 @@ lives in the server and its operation, as Bitwarden and Tailscale show.
                  └───────────────▲─────────────────────────▲──────────────────┘
                                  │                         │
    ┌─────────────────────────────┴───────────┐   ┌─────────┴──────────────────┐
-   │ rowel-broker (new crate, extracted) 🟡  │   │ sync engine (src-tauri/   │
+   │ rowel-broker (crates/broker)        ✅  │   │ sync engine (src-tauri/   │
    │ sealed channel + framing  ✅            │   │ src/sync) ✅               │
    │ Host trait + Connection   ✅            │   │ Remote / LocalVault traits │
    │ passkey ceremonies        ✅            │   │ pack format, LWW merge     │
-   │ grants + policy           ❌            │   └─────────┬──────────────────┘
-   │ client kinds (ext/agent/  ❌            │             │
-   │   sidecar) + audit        ❌            │             │
+   │ grants + policy           ✅            │   └─────────┬──────────────────┘
+   │ client kinds (ext/agent/  ✅            │             │
+   │   sidecar) + audit        ✅            │             │
+   │ placeholders + resolve    ✅ (I3)       │             │
    └───▲──────────────▲──────────────▲───────┘             │
        │              │              │                     │
  ┌─────┴─────┐  ┌─────┴──────┐  ┌────┴─────────────────────┴──────────────┐
- │ Rowel app │  │ rowel CLI  │  │ rowel serve (new)                        │
- │ AppHost ✅ │  │ (new bin)  │  │ OrgHost: Host over an org lockbox        │
- │ dialog ✅  │  │ mcp, hook, │  │ workload identity verifiers              │
- │ Settings ✅│  │ run, proxy │  │ policy store, approval router, audit     │
+ │ Rowel app │  │ rowel CLI ✅│  │ rowel serve (new)                        │
+ │ AppHost ✅ │  │ mcp, hook, │  │ OrgHost: Host over an org lockbox        │
+ │ dialog ✅  │  │ run, proxy,│  │ workload identity verifiers              │
+ │ Settings ✅│  │ redact (I3)│  │ policy store, approval router, audit     │
  └───┬───────┘  └────────────┘  │ pack endpoints = Remote for devices      │
      │                          └──────────────────────────────────────────┘
  ┌───┴─────────────────────────┐

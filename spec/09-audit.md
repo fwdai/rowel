@@ -113,6 +113,15 @@ is forgotten in Settings; `revoked` gains `{"reason":"agent"}` for an
 page's origin as target (a refused one `denied {"reason":"user"}`); an
 agent's fill for a site without a login is `denied {"reason":"no_candidates"}`.
 
+**Details as built (I3).** A secret grant (`header`, `env`) writes
+`requested` and `granted` at activation and no `used`; each `resolve` writes
+`used` with the *sidecar* as actor, the grant's `run_id`, `mode` from the
+target's kind, `item_id` the resolved id, `target` as `host/path` (query
+stripped) or the command line clamped to 300 characters, and detail
+`{"via":"resolve","field":"<field as the placeholder writes it>"}`. A
+request whose targets do not fit its modes is `denied {"reason":"no_target"}`.
+A `rule_added` for an env rule carries the command line as its target.
+
 **Surfaces.**
 
 - Tier 1: `src/components/Main/Sidebar/Settings/Sections/Audit/` (Vault Health)

@@ -50,8 +50,8 @@ Agents refer to secrets by name, never by value:
 ```
 rowel://<lockbox>/<item>/<field>
 
-  lockbox  the lockbox's slug or id
-  item     the item's slug (title, kebab-cased, unique within the lockbox) or id
+  lockbox  the lockbox's id, or its registry name as a slug
+  item     the item's id, or its title as a slug (unique within the lockbox)
   field    password | otp | apiKey | privateKey | body.<KEY> (one env variable)
            | number | cvc   (cards: step_up floor applies)
 ```
@@ -59,6 +59,15 @@ rowel://<lockbox>/<item>/<field>
 A placeholder is not a capability. Knowing the name of a secret buys nothing
 without a grant that covers it, and `list-visible` only ever returns names
 policy marks as visible to that agent.
+
+*As built in I3* (`rowel_broker::reference`): `Reference::parse` is strict —
+the exact scheme, exactly three non-empty segments, a field the protocol
+names (`body.` needs a key), no query or fragment anywhere; what is not a
+placeholder is none rather than nearly one. `lockbox` and `item` are opaque
+to the parser; the host resolves them (`03`). A slug is the title
+lowercased with every run of non-alphanumerics collapsed to one `-`
+(`reference::slug`: "Stripe (live)" → `stripe-live`); two items with the
+same slug are named by neither, and ids always work.
 
 ---
 
@@ -98,10 +107,13 @@ a known client at the wrong door:
 | `get-databasehash`, `generate-password`, `lock-database` | ✓ | ✓ | ✓ |
 | `get-logins`, `get-totp`, `set-login`, `passkeys-register`, `passkeys-get`, `get-signals`, `report-exposure` | ✓ | ✗ | ✗ |
 | `request-grant`, `wait-grant`, `end-grant`, `grant-status`, `list-visible` | ✗ | ✓ | ✓ |
-| `resolve` (I3) | ✗ | ✗ | ✓ |
+| `resolve` (✅ I3) | ✗ | ✗ | ✓ |
 
-A test walks every secret-carrying action as an agent and asserts the clear
-refusal carries no `entries`, `password`, `totp` or `response`.
+A test walks every secret-carrying action as an agent, and the extension's
+actions as a sidecar, and asserts the clear refusal carries no `entries`,
+`password`, `totp`, `response` or `value`. `brokerCapabilities` is
+`["grants", "signals", "resolve"]` since I3: an action added later adds a
+word, so a client can tell a host that serves it from one that will refuse.
 
 **Agent actions (✅ I2 but `resolve`).** All inside the sealed channel, all
 after association. Names follow the existing kebab style; the selector,
@@ -114,7 +126,12 @@ target and mode shapes are the serde forms of `rowel_broker::grant`.
 | `grant-status` | `{ grantId }` | `GrantReply` with `uses` | The grant's own client only; another's id is `GrantDenied`. |
 | `end-grant` | `{ grantId }` | `{ ok: true }` | Own grant only. Triggers session end (`05`). |
 | `list-visible` | `{ lockbox? }` | `{ items: [ { ref: "rowel://<lockbox id>/<item id>", title, kind, fields: [...] } ] }` | In Tier 1: the items this client's *own* live rules admit (`AgentSelector::Ids` naming its key) and the items of its active grants — never the baseline rule, which would make the whole lockbox's titles visible to any agent let in. Never secrets. |
-| `resolve` | `{ grantId, ref: "rowel://…", context: { target } }` | `{ value }` | **sidecar kind only (I3).** Checks the grant covers `ref`, the mode is `header` or `env`, `context.target` matches, and the sidecar binding (`03`). Increments `uses`. |
+| `resolve` | `{ grantId, ref: "rowel://…", context: { target: { http: { host, path, method } } \| { command: "<full line>" } } }` | `{ value }` | **sidecar kind only (✅ I3).** The target is concrete — one request, one command line — and its kind says the mode (`http` → `header`, `command` → `env`; `ResolveTarget::mode`). The host checks the grant covers the item at that place in that mode, the lockbox and the field, and the sidecar binding (`03`), and counts a use. A `ref` or `context` that does not read, and every check that fails, is `GrantDenied` in one word; a missing `grantId` is `NoValidUuidProvided` like the other grant actions; a non-sidecar is `NotPermittedForKind`. The value lives in the sealed reply exactly as long as a fill's password does. |
+
+`request-grant` since I3 takes `targets` of any kind — `{origin}` for
+`fill`/`passkey`, `{http: {host, path, methods}}` for `header`, `{command}`
+for `env` — and every target must fit every mode, else `GrantDenied`
+(`no_target` on the row); the host turns each into probes for policy (`03`).
 
 `Code` variants (`protocol.rs`): `GrantDenied = 40`, `GrantPending = 41`,
 `GrantExpired = 42`, `NotPermittedForKind = 43`, `PolicyRequiresApproval = 44`,
@@ -122,7 +139,7 @@ target and mode shapes are the serde forms of `rowel_broker::grant`.
 Numbers above KeePassXC's range so an upstream merge never collides;
 `Code::from_number` maps a raw `errorCode` back for clients.
 
-**Host trait (✅ I2 as built).**
+**Host trait (✅ I3 as built).**
 
 ```rust
 pub trait Host {
@@ -149,14 +166,19 @@ pub trait Host {
     /// `served_to` claim (`05`).
     fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool;
     fn report_exposure(&self, client: &Client, grant_id: &str);
-    // I3: fn resolve(&self, client: &Client, id: &str, reference: &Reference, ctx: &ResolveContext) -> Result<Zeroizing<String>, Code>;
+    /// I3. Defaults to `Err(GrantDenied)`, so a host that has not implemented
+    /// the sidecar's verb serves nothing by omission.
+    fn resolve(&self, client: &Client, grant_id: &str, reference: &Reference, ctx: &ResolveContext) -> Result<Zeroizing<String>, Code>;
 }
 ```
 
 `AppHost` implements them against the open lockbox; `OrgHost` (Tier 2) against
 an org lockbox. The `Mock` in the broker crate's `testing` module has the same
-methods, so the protocol tests cover grants without an app, and
-`Mock::grant_covers` is the reference for the `served_to` claim.
+methods, so the protocol tests cover grants without an app,
+`Mock::grant_covers` is the reference for the `served_to` claim, and
+`Mock::resolve` (secrets by item and field in the one lockbox `LOCKBOX`,
+grants carrying the targets they were requested with) is what the CLI's
+tests resolve against.
 
 **The client half (✅ I2, `rowel_broker::client`).** The extension's side of
 the sealed channel as production code: `Channel` (our X25519 key pair, the
@@ -260,13 +282,21 @@ carries content.
   `list-visible` answers empty while either switch is off, as every use is
   refused. `rowel status` says whether the app is reachable, the vault open
   and the key associated.
-- `rowel hook` — Claude Code / Codex / Cursor hooks: *pre-tool* rewrites a shell
-  command containing `rowel://` placeholders to run under `rowel run`
-  (requesting a grant in `env` mode, so the agent's own shell never sees the
-  value); *post-tool* pipes output through `rowel redact` (`05`).
-- `rowel run --grant <id> -- <cmd>` and `rowel proxy` are the sidecar, client
-  kind `sidecar`, with a second key. Both keys live in the OS secure store
-  where available, else `0600` files in the config directory (Q9).
+- `rowel_request_secret(ref, mode, target, reason?)` (✅ I3) — the agent's
+  half of `env` and `header` mode: `ref` a placeholder, `mode` `env` with
+  `target` the full command line as `rowel run` writes it (`05`), or `header`
+  with `target` `[METHOD[,METHOD] ]https://host/path-glob` (path defaults to
+  `/*`; a query string is refused). The request is `{ items: {ids: [the
+  ref's item]}, targets: [the one target], modes: [mode] }`; the result is
+  the grant fields plus `use`, the one line that uses it — the `rowel run
+  --grant …` invocation, or the `X-Rowel-Grant` header for the proxy.
+- `rowel hook pre|post` (✅ I3) — Claude Code / Codex / Cursor hooks: *pre*
+  rewrites a plain `NAME=rowel://… cmd args` into `rowel run --env … -- cmd
+  args` (so the agent's own shell never sees the value); *post* is the CLI's
+  exposure check (`05`).
+- `rowel run`, `rowel redact`, `rowel hook post` and `rowel proxy` are the
+  sidecar, client kind `sidecar`, with a second key (`keys::Role::Sidecar`,
+  `sidecar.json` beside `agent.json`, `0600`; the OS secure store per Q9).
 
 **Versioning.** The host reports `VERSION = "2.7.7"` for KeePassXC
 compatibility; agent capabilities are negotiated through `hello.capabilities`

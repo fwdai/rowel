@@ -99,6 +99,17 @@ Read the overview first. Everything else hangs off it.
   `rowel-cli`, a release-only sidecar reached as `rowel` through the symlink
   Settings installs, its agent key a `0600` file until I3 (`06`); passkey
   ceremonies carry `requestedBy` and write rows (`05`, `09`).
+- **2026-10-25, I3 as built.** The sidecar: `resolve` and the placeholder
+  (`rowel_broker::reference`) with strict parsing and name resolution by id
+  or slug (`03`, `04`); the baseline rule admits `header` and `env`, a
+  request's targets become per-method probes with the money floor lenient
+  for an any-method request, and a secret grant counts its uses at `resolve`
+  only (`03`, `09`); the dialog carries typed targets and "for N days" writes
+  a rule for the request's own targets and mode (`06`); the CLI's second key
+  and `rowel run`, `redact`, `hook` and `proxy` as built, with the one
+  command-line quoting rule, the redactor's limits and the hook shapes of
+  Claude Code, Codex and Cursor (`04`, `05`, Q16, Q17); CLI keys in the OS
+  secure store on macOS and Windows (Q9).
 
 ## Relationship to the other docs
 

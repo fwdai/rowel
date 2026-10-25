@@ -170,10 +170,10 @@ dependency order; PRs 5, 6 and 7 can run in parallel once 4 is in.
 
 ## 3. Phase 1 and 2 at a glance (sliced when phase 0 lands)
 
-Phase 1: `rowel run` and `redact` with the streaming matcher (one PR),
-`rowel proxy` with path-prefix addressing and per-grant rate limits (one PR),
-CLI keys in the OS secure store (one PR), `env`/`header` rules with full
-command-line targets (folded into the first).
+Phase 1 (landed as one stacked PR, `PLAN.md` I3): `rowel run` and `redact`
+with the streaming matcher, `rowel proxy` with path-prefix addressing and
+per-grant rate limits, CLI keys in the OS secure store, `env`/`header` rules
+with full command-line targets, `rowel hook` and `rowel_request_secret`.
 
 Phase 2: `KdfParams::External` and wrapped-master unlock in the app (one PR,
 app only, testable with a fake broker); device enrollment key and the

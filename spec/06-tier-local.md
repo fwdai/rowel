@@ -153,6 +153,23 @@ answer only for the grant's own client. `visible_items` reads the client's
 own live rules and active grants, never the baseline. `client_seen` writes
 `last_seen_at_ms` once per connection, at `test-associate`.
 
+**As built in I3.** `request_grant` takes a *secret* request (`header`,
+`env`) through the same three phases as a fill: the candidates are the
+lockbox's items of a kind with a field to serve, named by id or title slug;
+the probes are the request's targets concretised (`03`); activation writes
+no `used` row. The dialog event carries `targets: [{kind: "origin", origin}
+| {kind: "http", host, path, methods} | {kind: "command", line}]` in place
+of `origin`, and `endsSession` only for a fill; the `GrantDialog` titles a
+header ask by the request pattern and an env ask by the command line, shown
+verbatim in a block, and "for N days" writes `defaults::standing_for` with
+the request's targets and mode. `resolve` (`03`, `04`) is `AppHost`'s one
+reply that carries a value to a non-extension, made in the same critical
+section as `grant_covers`. Settings' `RuleRow` and `GrantRow` gain `mode`
+and `target` (an origin as written; `GET, POST api.stripe.com/v1/*`; the
+command line), which the lists show beside the mode in words; `origin` is
+kept for fill rows. A secret grant's end signals no extension: there is no
+site to sign out of.
+
 **Server loop (✅, unchanged).** `server.rs::accept` spawns a thread per
 connection and `serve` stays one-request-one-reply; a blocking ask inside
 `request_grant` parks only that connection's thread, exactly as `associate`
@@ -198,10 +215,21 @@ needs it. Settings › General › *Command line tool* (`cli_status`,
 and Linux, symlinks it as `rowel` into `/usr/local/bin` when writable, else
 `~/.local/bin`; on Windows it shows the path to add to PATH. Client
 subcommands: `status` and `mcp` (I2), `hook`, `run`, `proxy`, `redact` (I3).
-Two client identities (`04`): the agent key used by `mcp`, the sidecar key
-used by `run` and `proxy`; in I2 the agent key is a `0600` JSON file in the
-user's config directory (`rowel/agent.json`), the OS secure store comes with
-I3 (Q9). The same binary later gains `serve` (the headless broker, and in
+Two client identities (`04`): the agent key used by `mcp` (`keys::Role::Agent`,
+`rowel/agent.json`), the sidecar key used by `run`, `redact`, `hook post` and
+`proxy` (`Role::Sidecar`, `rowel/sidecar.json`), each a record of the public
+key and the name the app gave the client, each let in through the same dialog
+once; `status` reports both and where they live. Since I3 the record lives in
+the OS secure store where there is one (`keys::SecureStore`: a login-keychain
+generic password on macOS, a Credential Manager entry on Windows, service
+`app.rowel.cli`, account `agent` / `sidecar`, no biometric gate — what it adds
+over a file is the store's own access control, under which another program
+reading the item prompts the user) and in the `0600` file elsewhere; a file
+from an earlier release is moved into the store the first time it is read,
+and a store that refuses is stood in for by the file for that run, said once
+on stderr, so a broken keychain never strands an association (Q9). It is the
+CLI crate's own backend rather than the app's `secure_store.rs`, which links
+Tauri. The same binary later gains `serve` (the headless broker, and in
 `--server` mode the Rowel Server), `approve` and `admin` (`07`, `PLAN.md` I5
 and I7). The desktop app is not split into a UI plus this daemon: it embeds
 the same crates and is the broker itself (Q26).

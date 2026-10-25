@@ -42,10 +42,9 @@ The project context (Fletch's `context_get`) holds the recorded decisions;
 
 ## 3. Where we are
 
-- **I0, broker crate extraction**: PR #652 (`refactor/broker-crate`), in review.
-- **I1, agent mode for agentic browsers**: PR #653 (`feat/agent-mode`, stacked on #652), in review; a first review round's fixes (two P1s, two P2s, iOS CI) were applied on the same branch.
-- **I2, agent clients and the MCP server**: PR #655 (`feat/agent-clients`, stacked on #653), in review.
-- **I3 onward**: not started. `PLAN.md`'s headers say which iteration is in progress and where.
+- **I0, I1, I2**: merged into `main` (PRs #652, #653, #655).
+- **I3, secrets for commands and APIs (the sidecar)**: PR #657 (`feat/agent-sidecar`, on `main`), in review.
+- **I4 onward**: not started. `PLAN.md`'s headers say which iteration is in progress and where.
 
 Check `PLAN.md` first; its headers carry the current PR numbers and branches.
 Then run `pr_list`/`pr_checks` through the Fletch RPC mailbox for the live state.

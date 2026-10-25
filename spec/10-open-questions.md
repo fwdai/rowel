@@ -70,12 +70,14 @@ GCP, Azure. AWS roles do not issue OIDC tokens to arbitrary audiences; the
 usual trick is a presigned `sts:GetCallerIdentity` request the server replays.
 SPIFFE needs mTLS at the WebSocket. Order: OIDC → AWS STS → SPIFFE.
 
-**Q9. Same-user local processes can lift client keys.** *Accepted residual.*
-As for the extension today. Mitigations: the CLI stores its two keys (agent
-and sidecar) in the OS secure store (`secure_store.rs` has the abstraction;
-it is biometric-gated today, a non-gated item is a small addition); grants,
-floors, full-command-line targets and rate limits bound what a lifted key
-buys; audit shows it. Not solvable without OS-level process identity.
+**Q9. Same-user local processes can lift client keys.** *Accepted residual;
+mitigation built (I3).* As for the extension today. The CLI keeps its two
+keys (agent and sidecar) in the OS secure store on macOS and Windows — the
+CLI crate's own non-gated backend (`keys::SecureStore`), since the app's
+`secure_store.rs` links Tauri — and in `0600` files elsewhere, moving an
+older file into the store on first read (`06`); grants, floors,
+full-command-line targets and rate limits bound what a lifted key buys; audit
+shows it. Not solvable without OS-level process identity.
 
 **Q10. Agent access on device-held lockboxes while unlocked.** *Design is settled; wording is not.*
 In Tier 1 there is no escrow: a standing `auto` rule serves an agent without a
@@ -120,15 +122,24 @@ that allows a base URL. A real forward proxy needs a local CA installed in the
 agent's trust store, which is intrusive on a laptop and normal in a pod. Ship
 path-prefix; add CONNECT for Tier 2 sidecars if customers ask.
 
-**Q16. Redaction limits.** *Accepted limit, document it.*
-Exact match plus common encodings. A value split across stream chunks or
-transformed (hashed, partially shown) passes. Consider a streaming matcher
-with a window equal to the longest value plus encoding overhead.
+**Q16. Redaction limits.** *Accepted limit, documented (I3).*
+Exact match plus common encodings (base64 both alphabets, percent-encoding,
+JSON escaping), streaming with a carry-over of the longest form, values under
+6 bytes never matched; a value transformed otherwise passes. What stays open:
+the post-tool hook can only catch values whose placeholders the command
+itself named, because no process keeps a ledger of every value ever released
+— keeping one would mean holding secrets for the agent's whole session in a
+process the agent can signal. Revisit if real use shows values reaching the
+transcript through a second command.
 
-**Q17. MCP tool surface vs hooks.** *Experiment.*
-Some agents will only have MCP; some only hooks; some both. The MCP server
-alone cannot stop the agent from running `env`; the hook can rewrite commands.
-Ship both; measure which developers use.
+**Q17. MCP tool surface vs hooks.** *Both shipped (I3); measure.*
+`rowel mcp` offers `rowel_request_secret`; `rowel hook pre` rewrites a plain
+`NAME=rowel://… cmd` into `rowel run`, `rowel hook post` is the exposure
+check. Claude Code, Codex and Cursor can all rewrite a command from a hook as
+of October 2026 (`docs/cli.md` quotes each); on Claude Code the rewrite is
+sent without a permission decision, which the docs do not state is honoured —
+if it is dropped, the command runs with the literal placeholder and fails,
+never with a value. Measure which developers use.
 
 ## Server
 

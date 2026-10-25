@@ -122,6 +122,21 @@ sidecar associated to the same lockbox; in Tier 2 additionally a policy
 binding `sidecar_for: [agent_id]` (or the same workload identity namespace),
 so a sidecar cannot resolve grants of agents it does not serve.
 
+*As built in I3* (`AppHost::resolve`, one critical section under the session
+and agents locks like every other release): the switches first; then the
+grant by id — anyone's — active, issued in the open lockbox, which the
+placeholder must name too (by id, or by the slug of its registry name); the
+item by id or by the unique slug of its title (two items with one slug name
+neither); the field must be one the item's kind has
+(`reference::fields_for`); `Grant::covers` at the concrete target in the mode
+the target implies (`http` → `header`, `command` → `env`); only then is the
+payload unsealed and the field read, an absent or empty value being a
+refusal. Every no is `GrantDenied` in one word, whatever the reason. A yes is
+a use, counted and written as a `used` row naming the sidecar as actor, the
+grant's `run_id`, the field (`{"via":"resolve","field":"apiKey"}`) and the
+one place the value went (`host/path` without the query, or the command line
+clamped to 300 characters).
+
 **Lifecycle.**
 
 ```
@@ -184,18 +199,35 @@ URL for a fill, host + path + method for a header, the full command line for
   `Passkey` mode is at least `Ask`; `Env` mode is at least `Ask` unless a
   rule's `Target::Command` matches the full command line. A rule with an empty
   `targets` list matches any target.
+- **Probes from a request (I3).** A request's targets are patterns; the
+  evaluator wants concrete places. `Target::probes` turns an origin into
+  itself, an HTTP target into one probe per method it names — or one with
+  method `*` when it names none — and a command into its line. A rule that
+  names methods never covers a `*` probe (a request for any method is wider
+  than it), a rule naming none does; the money floor is lenient the other
+  way: a `*` probe at a money target's host and path is stepped up whatever
+  methods the target names, since a grant for any method includes the ones
+  that cost money. The host also refuses, before policy, a request whose
+  targets do not fit its modes — an origin for `fill`/`passkey`, an HTTP
+  pattern for `header`, a command line for `env`, never a mix and never
+  `token` — as `denied {"reason":"no_target"}`.
 - **Tier 1 baseline.** Deny-by-default stays the evaluator's rule; the
   desktop app supplies the baseline a person expects by prepending
   `policy::defaults::personal()` whenever the lockbox's agent-access switch
   is on: one rule, any agent, any item in the lockbox, any target, modes
-  `fill` and `passkey`, approval `ask`, and a grant that lives 15 minutes with
-  no use cap. A fill grant is deliberately not single-use: the fill is
-  followed by the TOTP step under the same grant, username-first sign-ins ask
-  for the page's logins twice, and a failed submit is retried; the window
-  bounds all of it. So the first ever fill asks instead of failing, and
-  everything the user answers "for N days" to becomes a more specific `auto`
-  rule on top of it (`policy::defaults::standing`, which carries the rule's
-  own `expires_at_ms`). While a fill grant is active, a second
+  `fill`, `passkey` and — since I3 — `header` and `env`, approval `ask`, and
+  a grant that lives 15 minutes with no use cap (`token` is left out until
+  something serves it: a baseline that let an agent ask for it would teach
+  the agent to keep asking). A fill grant is deliberately not single-use: the
+  fill is followed by the TOTP step under the same grant, username-first
+  sign-ins ask for the page's logins twice, and a failed submit is retried;
+  the window bounds all of it. So the first ever fill, and the first ever
+  `rowel run`, asks instead of failing, and everything the user answers "for
+  N days" to becomes a more specific `auto` rule on top of it
+  (`policy::defaults::standing_for`, one client, one item, the request's own
+  targets and mode, carrying the rule's own `expires_at_ms`; a standing
+  `env` rule therefore names the full command line and lifts the floor for
+  that line alone). While a fill grant is active, a second
   `get-logins` from the same client for the same origin is served under it
   rather than asked again: the extension sends the `grantId` it was given,
   and the host also looks for a live grant of that client covering the
@@ -244,8 +276,15 @@ matters mostly in Tier 2.
 **Rows and uses, as built.** `requested` is written for an ask that reached
 the screen (first row of the settle step) and for an `auto` decision; a
 `pending` reply writes nothing, so a retry after a busy slot does not double
-the log. A reply of `active` is a use: the host counts it (`use_once`) and
-writes `used` at once, because dispatch serves the admitted item immediately.
+the log. For a *site* grant (`fill`, `passkey`) a reply of `active` is a use:
+the host counts it (`use_once`) and writes `used` at once, because dispatch
+serves the admitted item immediately. A *secret* grant (`header`, `env`) is
+answered with nothing but its id, so activation writes `requested` and
+`granted` and counts nothing, a repeat request served from the held grant
+writes nothing, and every use is `resolve`'s: one per value served. The
+candidates of a secret request are the lockbox's items of a kind that has a
+field to serve (never a note or an identity), named by the selector by id or
+by the slug of their title, and the grant is narrowed to their ids.
 `grant_covers` (the `grantId` paths of `get-logins` and `get-totp`) is a
 predicate with a side effect, on purpose: a yes there is a use too, counted
 and written with detail `{"via":"grantId"}`; a reuse before policy writes
