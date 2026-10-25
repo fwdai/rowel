@@ -284,7 +284,14 @@ answered with nothing but its id, so activation writes `requested` and
 writes nothing, and every use is `resolve`'s: one per value served. The
 candidates of a secret request are the lockbox's items of a kind that has a
 field to serve (never a note or an identity), named by the selector by id or
-by the slug of their title, and the grant is narrowed to their ids.
+by the slug of their title, and the grant is narrowed to their ids. A secret
+request is covered whole or not at all: a site request offers the page's
+logins and the dialog picks one, but a command runs with every secret it
+named or not at all, so an `Ids` selector naming anything that is not there
+is `no_candidates`, a held grant is reused only if it admits every candidate,
+and a rule that admits only some of them is set aside before the evaluator
+runs — a standing rule for one of two items does not win the request, the
+baseline asks for both. (Review of PR #657.)
 `grant_covers` (the `grantId` paths of `get-logins` and `get-totp`) is a
 predicate with a side effect, on purpose: a yes there is a use too, counted
 and written with detail `{"via":"grantId"}`; a reuse before policy writes

@@ -243,6 +243,20 @@ The floor in `03` keeps every passkey ceremony behind the tap, agent or not.
   response's status, headers and body come back with the request's released
   values redacted, and the body's length recomputed. The log line is method,
   host and path, status — never a query, a header or a body.
+- *Review of PR #657, three rules.* **No redirect is ever followed**: a 3xx
+  is relayed to the agent as it is (`Location` redacted like any header), so
+  every hop comes back through the proxy as a request of its own with its
+  own grant check — a client that followed would carry the secret to a path
+  or a host the grant never named, and a 307 would replay a secret body
+  there. **A value is written for where it lands** (`Placement`): as is in a
+  header, JSON-string-escaped in a JSON body, form-encoded in a form body
+  whether the placeholder stood plain or percent-encoded, so a secret
+  holding `"`, `\`, `&` or `=` can neither break the document nor add a
+  field; the redactor knows the form-encoded shape too. **One authority
+  rule** for the host of every HTTP target and probe: lowercase, the port
+  kept when it is not the scheme's default and dropped when it is, brackets
+  kept on an IPv6 literal — used by `rowel_request_secret`, the proxy and
+  `rowel redact --http`, so a grant for `localhost:3000` matches.
 
 **Token (❌, phase 4).** A new item kind `oauth` (or `apikey` with a `refresh`
 field; decide at implementation) holding client id, refresh token, scopes,

@@ -161,8 +161,10 @@ no `used` row. The dialog event carries `targets: [{kind: "origin", origin}
 | {kind: "http", host, path, methods} | {kind: "command", line}]` in place
 of `origin`, and `endsSession` only for a fill; the `GrantDialog` titles a
 header ask by the request pattern and an env ask by the command line, shown
-verbatim in a block, and "for N days" writes `defaults::standing_for` with
-the request's targets and mode. `resolve` (`03`, `04`) is `AppHost`'s one
+verbatim in a block, lists every item the request named rather than offering
+a pick (a secret request is covered whole or not at all, `03`), and "for N
+days" writes `defaults::standing_for` with the request's targets and mode,
+naming every item. `resolve` (`03`, `04`) is `AppHost`'s one
 reply that carries a value to a non-extension, made in the same critical
 section as `grant_covers`. Settings' `RuleRow` and `GrantRow` gain `mode`
 and `target` (an origin as written; `GET, POST api.stripe.com/v1/*`; the
