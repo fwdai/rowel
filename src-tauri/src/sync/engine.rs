@@ -32,13 +32,52 @@ use crate::session::{store_err, Session};
 use crate::state::AppState;
 use crate::storage;
 use crate::store::{
-    identity, vault_digest, Attachment, Record, SqliteStore, StoreError, VaultStore,
+    identity, vault_digest, Attachment, AuditRecord, Record, SqliteStore, StoreError, VaultStore,
 };
+// The broker — and the audit writer with it — is linked on desktop only (see
+// `Cargo.toml`): the rows travel, merge and age out everywhere, since that is
+// the store's doing, but only a desktop build has a chain of its own to note
+// the cut in.
+#[cfg(desktop)]
+use rowel_broker::audit;
 
 /// How long a tombstone is kept before it is reclaimed. A device offline for
 /// longer than this can resurrect what it deleted; see
 /// [`SqliteStore::purge_tombstones_before`] for the trade.
 const TOMBSTONE_TTL_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+
+/// How long an audit row is kept before this device reclaims it from its own
+/// chain. A year: long enough for "what did my agents do?" to be answerable
+/// for any question asked in the ordinary course of things, short enough that
+/// a busy agent's log does not grow the vault without bound. The chain says
+/// where it was cut (`pruned_through`), so what is left still verifies.
+const AUDIT_RETENTION_MS: i64 = 365 * 24 * 60 * 60 * 1000;
+
+/// What a pack reclaims before the snapshot is taken: the cutoffs for the two
+/// kinds of row that age out, and the instant the reclaim runs at — which is
+/// what the row noting an audit prune is stamped with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reclaim {
+    /// Tombstones deleted before this are reclaimed.
+    pub tombstones_before: i64,
+    /// Audit rows stamped before this are reclaimed, whichever writer's.
+    pub audit_before: i64,
+    /// When the reclaim runs: the stamp of the `pruned_through` row it writes.
+    /// Read by the desktop prune alone; a mobile build writes no note.
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    pub at_ms: i64,
+}
+
+impl Reclaim {
+    /// The cutoffs for a run at `now_ms`.
+    pub fn at(now_ms: i64) -> Self {
+        Self {
+            tombstones_before: now_ms - TOMBSTONE_TTL_MS,
+            audit_before: now_ms - AUDIT_RETENTION_MS,
+            at_ms: now_ms,
+        }
+    }
+}
 
 /// How many times a run will re-pull after losing a race before giving up. A
 /// bound rather than a retry loop: if the remote revision keeps moving, another
@@ -104,13 +143,16 @@ pub trait LocalVault {
     /// Open a pulled `.rowel` pack and read it out. The local database is not
     /// touched: the snapshot goes into its own scratch DB.
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot>;
-    /// Last-writer-wins merge of the pulled entries and attachments; returns
-    /// the rows written.
+    /// Last-writer-wins merge of the pulled entries and attachments, and the
+    /// pulled audit rows taken as a union; returns the entry and attachment
+    /// rows written (the log rows change nothing the frontend shows).
     fn merge(&self, incoming: &Snapshot) -> Result<usize>;
-    /// Fingerprint of the entry and attachment tables, tombstones included.
+    /// Fingerprint of the entry, attachment and audit tables, tombstones
+    /// included.
     fn digest(&self) -> Result<[u8; 32]>;
-    /// Reclaim tombstones older than `cutoff_ms`, then pack the vault for upload.
-    fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>>;
+    /// Reclaim what `reclaim` says has aged out — tombstones, and this device's
+    /// own audit rows — then pack the vault for upload.
+    fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>>;
     /// Record a completed push: the revision it landed at, and when.
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()>;
 
@@ -142,11 +184,15 @@ pub trait LocalVault {
     fn adopt_name(&self, name: &str, at_ms: i64) -> Result<()>;
 }
 
-/// A pulled pack, opened: the entries and attachments in it and the name it
-/// was pushed under.
+/// A pulled pack, opened: the entries, attachments and audit rows in it and
+/// the name it was pushed under.
 pub struct Snapshot {
     pub records: Vec<Record>,
     pub attachments: Vec<Attachment>,
+    /// Every writer's chain the pushing device held, in `(writer_id, seq)`
+    /// order. Merged as a union, never last-writer-wins: a log row is a fact
+    /// about what happened, and no device's copy outranks another's.
+    pub audit: Vec<AuditRecord>,
     /// The name in the pack's `meta`, with the ms-epoch stamp it was set at.
     /// `(None, 0)` for a pack pushed before names travelled.
     pub name: Option<String>,
@@ -260,6 +306,7 @@ pub fn sync<R: Remote, L: LocalVault>(
             let theirs = vault_digest(
                 &snapshot.records,
                 snapshot.attachments.iter().map(|a| (&a.meta, a.blob.len())),
+                &snapshot.audit,
             );
             if local.digest()? == theirs
                 && !identity::name_wins(
@@ -285,8 +332,10 @@ pub fn sync<R: Remote, L: LocalVault>(
         // instant the push completed and earn a second, pointless push. It is
         // also safe by age alone: a tombstone this old was pushed many syncs
         // ago, so the "never purge before it has been pushed once" rule holds
-        // without any extra bookkeeping.
-        let bytes = local.pack(now_ms - TOMBSTONE_TTL_MS)?;
+        // without any extra bookkeeping. The audit prune rides the same step
+        // for the same reasons, and its `pruned_through` row goes up in this
+        // very pack.
+        let bytes = local.pack(Reclaim::at(now_ms))?;
         // Every pull refuses a pack past this, so one uploaded anyway could
         // never be read again by any device, this one included. The vault
         // budget (`commands::attachments`) keeps a vault well short of it;
@@ -317,7 +366,7 @@ pub fn sync<R: Remote, L: LocalVault>(
 /// confirmed.
 pub fn replace<R: Remote, L: LocalVault>(remote: &R, local: &L, now_ms: i64) -> Result<()> {
     let base_revision = remote.head_revision()?;
-    let bytes = local.pack(now_ms - TOMBSTONE_TTL_MS)?;
+    let bytes = local.pack(Reclaim::at(now_ms))?;
     if bytes.len() > pack::MAX_PACK_BYTES {
         return Err(Error::Other(too_large_to_sync_error()));
     }
@@ -340,13 +389,19 @@ pub struct SessionVault {
     app: AppHandle,
     key: Zeroizing<Vec<u8>>,
     keys: PackKeys,
+    /// The audit writer whose chain this device may prune (see [`reclaim`]).
+    writer_id: Option<String>,
 }
 
 impl SessionVault {
     /// Capture what a run needs from the live session. Fails if the vault is
     /// locked, or has no KDF descriptor to put in the pack header — without one
     /// a fresh install could never derive the key to open what we upload.
-    pub fn capture(app: &AppHandle, provider: Provider) -> Result<Self> {
+    ///
+    /// `writer_id` is this install's audit writer id (`storage::install_id`),
+    /// or `None` on a platform that writes no audit rows and so has none to
+    /// reclaim.
+    pub fn capture(app: &AppHandle, provider: Provider, writer_id: Option<String>) -> Result<Self> {
         let kdf_params_json = storage::read_kdf_sidecar(app)?.ok_or_else(no_descriptor)?;
         let state = app.state::<AppState>();
         let (key, material) = {
@@ -375,6 +430,7 @@ impl SessionVault {
                 scratch: storage::sync_scratch_dir(app)?,
                 provider,
             },
+            writer_id,
         })
     }
 
@@ -410,13 +466,15 @@ impl SessionVault {
         self.with_session(|_| Ok(()))
     }
 
-    // Reclaim expired tombstones (one statement, under the lock) and hand back a
-    // connection of the pack's own to read the snapshot through.
-    fn reclaim_and_open(&self, cutoff_ms: i64) -> Result<SqliteStore> {
+    // Reclaim what has aged out (a few statements, under the lock) and hand
+    // back a connection of the pack's own to read the snapshot through. The
+    // audit prune is in here with the tombstone purge, not beside the pack: the
+    // key check that follows the pack then covers it too, and a password
+    // change landing mid-run cannot leave a `pruned_through` row written under
+    // one key in a snapshot taken under another.
+    fn reclaim_and_open(&self, reclaim: Reclaim) -> Result<SqliteStore> {
         self.with_store(|store| {
-            store
-                .purge_tombstones_before(cutoff_ms)
-                .map_err(store_err)?;
+            self::reclaim(store, reclaim, self.writer_id.as_deref())?;
             crate::session::open_snapshot_source(&self.app, &self.key)
         })
     }
@@ -445,8 +503,8 @@ impl LocalVault for SessionVault {
     // as it stood), and once afterwards to confirm the key never moved. A
     // password change landing in between fails the second check, so a snapshot
     // taken under a key that is no longer the vault's is never uploaded.
-    fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>> {
-        let source = self.reclaim_and_open(cutoff_ms)?;
+    fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>> {
+        let source = self.reclaim_and_open(reclaim)?;
         let bytes = self.keys.pack(&source)?;
         drop(source);
         self.check_key()?;
@@ -488,13 +546,23 @@ impl LocalVault for SessionVault {
 pub struct WorkspaceVault {
     store: SqliteStore,
     keys: PackKeys,
+    /// The audit writer whose chain this device may prune (see [`reclaim`]).
+    writer_id: Option<String>,
 }
 
 impl WorkspaceVault {
     /// Open the lockbox in `dir` — `workspace_id` in the registry — with `key`.
     /// Fails as [`SessionVault::capture`] does on a lockbox with no descriptor,
-    /// and as an unlock does on a key that does not open it.
-    pub fn open(dir: &Path, workspace_id: &str, key: VaultKey, provider: Provider) -> Result<Self> {
+    /// and as an unlock does on a key that does not open it. `writer_id` is as
+    /// for [`SessionVault::capture`]: the install's, not the lockbox's — one
+    /// device writes every lockbox's log under the same id.
+    pub fn open(
+        dir: &Path,
+        workspace_id: &str,
+        key: VaultKey,
+        provider: Provider,
+        writer_id: Option<String>,
+    ) -> Result<Self> {
         let kdf_params_json = match fs::read_to_string(dir.join(storage::KDF_SIDECAR_FILE)) {
             Ok(json) => json,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(no_descriptor()),
@@ -518,6 +586,7 @@ impl WorkspaceVault {
                 scratch: storage::sync_scratch_dir_in(dir),
                 provider,
             },
+            writer_id,
         })
     }
 
@@ -542,10 +611,8 @@ impl LocalVault for WorkspaceVault {
 
     // The store is this run's alone, so the pack reads through it directly
     // rather than through a second connection.
-    fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>> {
-        self.store
-            .purge_tombstones_before(cutoff_ms)
-            .map_err(store_err)?;
+    fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>> {
+        self::reclaim(&self.store, reclaim, self.writer_id.as_deref())?;
         self.keys.pack(&self.store)
     }
 
@@ -623,6 +690,51 @@ impl PackKeys {
 
 fn digest_of(store: &SqliteStore) -> Result<[u8; 32]> {
     store.state_digest().map_err(store_err)
+}
+
+/// The step before every pack: reclaim the tombstones past their TTL, and the
+/// audit rows past retention of *every* chain the vault holds — noted, when
+/// this device has a writer id and its own rows were among them, by a
+/// `pruned_through` row in its own chain (`rowel_broker::audit::prune`).
+///
+/// Every chain, on every platform, because the log merges as a union: a device
+/// that reclaimed only its own rows would be handed them back by any peer
+/// still holding them, and a device that reclaimed nothing (iOS, which writes
+/// no rows) would hold the old rows forever and never match a desktop's
+/// digest, so the two would push at each other for good. With every device
+/// cutting every chain's aged prefix, the set converges once each peer has
+/// pushed; `verify` takes a chain that starts past `seq` 1 as pruned, so a
+/// chain cut here without its writer's note stays verifiable.
+pub(crate) fn reclaim(
+    store: &SqliteStore,
+    reclaim: Reclaim,
+    writer_id: Option<&str>,
+) -> Result<()> {
+    store
+        .purge_tombstones_before(reclaim.tombstones_before)
+        .map_err(store_err)?;
+    prune_audit(store, reclaim, writer_id)
+}
+
+#[cfg(desktop)]
+fn prune_audit(store: &SqliteStore, reclaim: Reclaim, writer_id: Option<&str>) -> Result<()> {
+    match writer_id {
+        Some(writer_id) => {
+            audit::prune(store, writer_id, reclaim.audit_before, reclaim.at_ms)?;
+        }
+        None => {
+            store.audit_prune(reclaim.audit_before).map_err(store_err)?;
+        }
+    }
+    Ok(())
+}
+
+// No broker, and no writer handed in (see `sync::audit_writer_id`): the aged
+// rows go, and no chain here is this device's to note the cut in.
+#[cfg(not(desktop))]
+fn prune_audit(store: &SqliteStore, reclaim: Reclaim, _writer_id: Option<&str>) -> Result<()> {
+    store.audit_prune(reclaim.audit_before).map_err(store_err)?;
+    Ok(())
 }
 
 fn vault_id_of(store: &SqliteStore) -> Result<Option<String>> {
@@ -706,7 +818,7 @@ pub(crate) fn epoch_error(header: &str, local_kdf_params_json: &str, provider: P
 }
 
 /// Open a pulled snapshot in a throwaway database and export what syncs: its
-/// records, and the name the pushing device held.
+/// records, attachments and audit rows, and the name the pushing device held.
 ///
 /// The snapshot must land on disk before SQLCipher can read it, so it goes to a
 /// uniquely named scratch file that a guard removes on every exit path. The
@@ -731,17 +843,18 @@ pub(crate) fn records_from_snapshot(
     Ok(Snapshot {
         records: store.export_for_sync().map_err(store_err)?,
         attachments: store.export_attachments_for_sync().map_err(store_err)?,
+        audit: store.audit_all().map_err(store_err)?,
         name,
         name_ms,
         opened_under_retired: false,
     })
 }
 
-// One transaction for both tables, so a file never lands without the entry
-// state it is checked against (see `SqliteStore::merge`).
+// One transaction for all three tables, so a file never lands without the
+// entry state it is checked against (see `SqliteStore::merge`).
 fn merge_snapshot(store: &SqliteStore, incoming: &Snapshot) -> Result<usize> {
     store
-        .merge(&incoming.records, &incoming.attachments)
+        .merge(&incoming.records, &incoming.attachments, &incoming.audit)
         .map_err(store_err)
 }
 
@@ -875,6 +988,9 @@ mod tests {
         key: VaultKey,
         kdf: String,
         retired: Vec<RetiredKey>,
+        // The audit writer this device prunes for, as the production vaults
+        // hold it: `None` is a device that writes no log.
+        writer: Option<String>,
     }
 
     impl Device {
@@ -892,6 +1008,7 @@ mod tests {
                 key,
                 kdf,
                 retired: Vec::new(),
+                writer: None,
             }
         }
 
@@ -949,14 +1066,12 @@ mod tests {
         fn digest(&self) -> Result<[u8; 32]> {
             self.store.state_digest().map_err(store_err)
         }
-        fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>> {
+        fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>> {
             *self.id_when_packed.lock().unwrap() = self.vault_id()?;
             if self.oversized.load(Ordering::SeqCst) {
                 return Ok(vec![0; pack::MAX_PACK_BYTES + 1]);
             }
-            self.store
-                .purge_tombstones_before(cutoff_ms)
-                .map_err(store_err)?;
+            super::reclaim(&self.store, reclaim, self.writer.as_deref())?;
             Ok(pack::pack_store(
                 &self.store,
                 &*self.key.sqlcipher_key(),
@@ -1598,6 +1713,93 @@ mod tests {
         records_from_snapshot(&unpacked.snapshot, &key_bytes(), &tmp_dir())
             .unwrap()
             .attachments
+    }
+
+    // --- the audit log -----------------------------------------------------
+    //
+    // Log rows ride the same pack and merge as a union; the two-device shape
+    // (both ways, verification on each side) is in
+    // `commands::password_sync::two_devices`. What is this engine's own is
+    // retention: a device reclaims every chain's aged rows as it packs, and
+    // notes the cut in its own chain alone. Desktop only, as the writer is:
+    // the broker that writes rows is not linked on iOS (see `Cargo.toml`), so
+    // there is nothing there to write a chain with.
+
+    #[cfg(desktop)]
+    fn remote_audit(remote: &FakeRemote) -> Vec<AuditRecord> {
+        let unpacked = pack::unpack(&remote.content().unwrap()).unwrap();
+        records_from_snapshot(&unpacked.snapshot, &key_bytes(), &tmp_dir())
+            .unwrap()
+            .audit
+    }
+
+    #[cfg(desktop)]
+    fn used() -> audit::Draft {
+        audit::Draft {
+            item_id: Some("1".into()),
+            target: Some("https://example.com/login".into()),
+            ..audit::Draft::new(audit::ActorKind::Agent, audit::Event::Used)
+        }
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn audit_rows_past_retention_leave_the_devices_own_chain_at_pack_time() {
+        let mut a = Device::seeded(&[record("1", 200, b"one")]);
+        a.writer = Some("device-a".into());
+        let writer = audit::Writer::new("device-a", &a.store);
+        writer.record(used(), NOW - 400 * DAY_MS).unwrap();
+        writer.record(used(), NOW - 370 * DAY_MS).unwrap();
+        let kept = writer.record(used(), NOW - DAY_MS).unwrap();
+        // Another device's chain, one row aged and one not: the aged one goes
+        // too, and that chain gets no note — only its own writer could add one.
+        let other = audit::Writer::new("device-b", &a.store);
+        other.record(used(), NOW - 400 * DAY_MS).unwrap();
+        let other_kept = other.record(used(), NOW - DAY_MS).unwrap();
+        let remote = FakeRemote::default();
+
+        assert!(sync(&remote, &a, NOW).unwrap().pushed);
+
+        let rows = a.store.audit_rows("device-a").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], kept);
+        let note = &rows[1];
+        assert_eq!((note.seq, note.ts_ms), (4, NOW));
+        assert_eq!(
+            (note.event.as_str(), note.actor_kind.as_str()),
+            ("pruned_through", "policy")
+        );
+        assert_eq!(
+            note.detail.as_deref(),
+            Some(format!("{{\"seq\":2,\"beforeMs\":{}}}", NOW - AUDIT_RETENTION_MS).as_str())
+        );
+        assert_eq!(audit::verify(&rows), Ok(()));
+        let others = a.store.audit_rows("device-b").unwrap();
+        assert_eq!(others, vec![other_kept]);
+        assert_eq!(audit::verify(&others), Ok(()));
+
+        // The pack carries the chains as pruned, and having pruned before it
+        // packed, the device has nothing more to say.
+        assert_eq!(remote_audit(&remote), a.store.audit_all().unwrap());
+        assert!(!sync(&remote, &a, NOW).unwrap().pushed);
+    }
+
+    // A device that writes no log (iOS) still reclaims the aged rows it holds
+    // — or its digest would never again match a device that did — and, having
+    // no chain of its own, writes no note.
+    #[cfg(desktop)]
+    #[test]
+    fn a_device_without_a_writer_reclaims_aged_rows_and_notes_nothing() {
+        let a = Device::seeded(&[record("1", 200, b"one")]);
+        let writer = audit::Writer::new("device-b", &a.store);
+        writer.record(used(), NOW - 400 * DAY_MS).unwrap();
+        let kept = writer.record(used(), NOW - DAY_MS).unwrap();
+        let remote = FakeRemote::default();
+
+        sync(&remote, &a, NOW).unwrap();
+
+        assert_eq!(a.store.audit_all().unwrap(), vec![kept.clone()]);
+        assert_eq!(remote_audit(&remote), vec![kept]);
     }
 
     #[test]

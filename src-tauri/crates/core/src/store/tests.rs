@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{
-    migrate, record_hash, Attachment, AttachmentMeta, AuditRecord, ImageCache, Record, SqliteStore,
-    StoreError, VaultStore, SYNC_META_PREFIX,
+    migrate, record_hash, Attachment, AttachmentMeta, AuditCut, AuditRecord, ImageCache, Record,
+    SqliteStore, StoreError, VaultStore, SYNC_META_PREFIX,
 };
 use crate::crypto::{self, KdfParams, VaultKey};
 use crate::models::Entry;
@@ -942,15 +942,41 @@ fn an_audit_row_round_trips_and_each_writer_has_its_own_newest() {
 
     // Recent: across writers, newest first, bounded, from the stamp given.
     assert_eq!(
-        store.audit_recent(0, 10).unwrap(),
+        store.audit_recent(0, &["used"], 10).unwrap(),
         vec![second.clone(), other.clone(), first.clone()]
     );
     assert_eq!(
-        store.audit_recent(0, 2).unwrap(),
+        store.audit_recent(0, &["used"], 2).unwrap(),
         vec![second.clone(), other]
     );
-    assert_eq!(store.audit_recent(300, 10).unwrap(), vec![second]);
-    assert!(store.audit_recent(301, 10).unwrap().is_empty());
+    assert_eq!(
+        store.audit_recent(300, &["used"], 10).unwrap(),
+        vec![second]
+    );
+    assert!(store.audit_recent(301, &["used"], 10).unwrap().is_empty());
+    assert!(store.audit_recent(0, &[], 10).unwrap().is_empty());
+}
+
+// The events asked for are chosen before the limit: a week whose newest rows
+// are all bookkeeping still shows the uses behind them.
+#[test]
+fn recent_audit_rows_are_chosen_by_event_before_the_limit() {
+    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    let used = audit_rec("dev-a", 1, 100);
+    store.audit_insert(&used).unwrap();
+    for seq in 2..=11 {
+        store
+            .audit_insert(&AuditRecord {
+                event: "granted".into(),
+                ..audit_rec("dev-a", seq, 100 + seq)
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        store.audit_recent(0, &["used", "denied"], 5).unwrap(),
+        vec![used]
+    );
+    assert_eq!(store.audit_recent(0, &["granted"], 5).unwrap().len(), 5);
 }
 
 #[test]
@@ -961,13 +987,212 @@ fn a_second_audit_row_with_a_writers_seq_is_refused() {
         id: "another-id".into(),
         ..audit_rec("dev-a", 1, 101)
     };
-    assert!(matches!(
-        store.audit_insert(&fork),
-        Err(StoreError::Sqlite(_))
-    ));
+    assert!(store.audit_insert(&fork).is_err());
     assert_eq!(store.audit_rows("dev-a").unwrap().len(), 1);
     // The same seq under another writer is another chain.
     store.audit_insert(&audit_rec("dev-b", 1, 100)).unwrap();
+}
+
+// The log merges as a union of rows, a row being its whole contents: the same
+// row seen twice lands once, and anything else — a second row at a writer's
+// `seq` (a forked chain), a copy of a known row altered behind its unchanged
+// id and hash — lands beside what is here and never replaces it, so every
+// device ends up holding the same rows to the byte. None of it counts as a
+// change to the entry list.
+#[test]
+fn merge_takes_audit_rows_as_a_union_and_never_overwrites_one() {
+    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    let first = audit_rec("dev-a", 1, 100);
+    store.audit_insert(&first).unwrap();
+
+    let behind_its_hash = AuditRecord {
+        target: Some("https://altered.example".into()),
+        ..first.clone()
+    };
+    let fork = AuditRecord {
+        id: "dev-a-1-fork".into(),
+        hash: [7u8; 32],
+        ..first.clone()
+    };
+    let other = audit_rec("dev-b", 1, 200);
+    let incoming = [
+        first.clone(),
+        behind_its_hash.clone(),
+        fork.clone(),
+        other.clone(),
+        other.clone(),
+    ];
+    assert_eq!(
+        store.merge(&[], &[], &incoming).unwrap(),
+        0,
+        "log rows are not what the merge counts"
+    );
+
+    let held = store.audit_all().unwrap();
+    assert_eq!(held.len(), 4, "each distinct row once");
+    for row in [&first, &behind_its_hash, &fork, &other] {
+        assert!(held.contains(row), "{row:?}");
+    }
+    // Merged again, in another order, nothing changes: the set is settled.
+    let digest = store.state_digest().unwrap();
+    let mut again = incoming.to_vec();
+    again.reverse();
+    store.merge(&[], &[], &again).unwrap();
+    assert_eq!(store.audit_all().unwrap().len(), 4);
+    assert_eq!(store.state_digest().unwrap(), digest);
+    // The writer carries on from one side of the fork, the same one anywhere.
+    assert_eq!(
+        store.audit_last("dev-a").unwrap().map(|(seq, _)| seq),
+        Some(1)
+    );
+}
+
+// Two vaults holding a row under the same id and chain hash but with different
+// contents — one copy altered behind its hash — are not in the same state: the
+// digest reads the row whole, so they push and merge until both hold both.
+#[test]
+fn the_digest_tells_a_row_altered_behind_its_hash_from_the_original() {
+    let clean = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    let tampered = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    let row = audit_rec("dev-a", 1, 100);
+    clean.audit_insert(&row).unwrap();
+    tampered
+        .audit_insert(&AuditRecord {
+            target: Some("https://altered.example".into()),
+            ..row.clone()
+        })
+        .unwrap();
+    assert_ne!(
+        clean.state_digest().unwrap(),
+        tampered.state_digest().unwrap()
+    );
+
+    clean
+        .merge(&[], &[], &tampered.audit_all().unwrap())
+        .unwrap();
+    tampered
+        .merge(&[], &[], &clean.audit_all().unwrap())
+        .unwrap();
+    assert_eq!(clean.audit_all().unwrap().len(), 2);
+    assert_eq!(
+        clean.state_digest().unwrap(),
+        tampered.state_digest().unwrap()
+    );
+}
+
+#[test]
+fn audit_all_lists_every_chain_in_order() {
+    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    assert!(store.audit_all().unwrap().is_empty());
+    let rows = [
+        audit_rec("dev-b", 1, 300),
+        audit_rec("dev-a", 2, 200),
+        audit_rec("dev-a", 1, 100),
+    ];
+    for row in &rows {
+        store.audit_insert(row).unwrap();
+    }
+    assert_eq!(
+        store.audit_all().unwrap(),
+        vec![rows[2].clone(), rows[1].clone(), rows[0].clone()]
+    );
+}
+
+// Retention takes a prefix of every writer's chain — its leading run of rows
+// old enough to go, never past a younger one — and says of each how far it
+// went.
+#[test]
+fn audit_prune_reclaims_every_writers_aged_prefix() {
+    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    // dev-a's second stamp is older than its first, as a clock that stepped
+    // back would leave them; the prefix still goes whole. dev-c is all young.
+    // dev-d's newest row carries an old stamp — a reset clock, or a row forged
+    // into a synced pack — above young rows: it takes nothing with it.
+    for row in [
+        audit_rec("dev-d", 1, 7_000),
+        audit_rec("dev-d", 2, 8_000),
+        audit_rec("dev-d", 3, 100),
+        audit_rec("dev-a", 1, 1_000),
+        audit_rec("dev-a", 2, 500),
+        audit_rec("dev-a", 3, 5_000),
+        audit_rec("dev-a", 4, 9_000),
+        audit_rec("dev-b", 1, 100),
+        audit_rec("dev-b", 2, 200),
+        audit_rec("dev-c", 1, 7_000),
+    ] {
+        store.audit_insert(&row).unwrap();
+    }
+
+    // Each cut names the newest row that went — its stamp is `[seq + 1; 32]`
+    // in `audit_rec` — for the writer's next row to chain from.
+    assert_eq!(
+        store.audit_prune(5_000).unwrap(),
+        [
+            AuditCut {
+                writer_id: "dev-a".into(),
+                seq: 2,
+                hash: [3; 32],
+            },
+            AuditCut {
+                writer_id: "dev-b".into(),
+                seq: 2,
+                hash: [3; 32],
+            },
+        ]
+    );
+    let seqs = |writer: &str| -> Vec<i64> {
+        store
+            .audit_rows(writer)
+            .unwrap()
+            .iter()
+            .map(|r| r.seq)
+            .collect()
+    };
+    assert_eq!(seqs("dev-a"), [3, 4]);
+    assert!(seqs("dev-b").is_empty());
+    assert_eq!(seqs("dev-c"), [1]);
+    assert_eq!(seqs("dev-d"), [1, 2, 3]);
+
+    assert!(
+        store.audit_prune(5_000).unwrap().is_empty(),
+        "nothing that old is left"
+    );
+    assert_eq!(seqs("dev-a"), [3, 4]);
+    assert_eq!(seqs("dev-c"), [1]);
+}
+
+// The digest is what decides a push, so the log has to move it — and a vault
+// with no log rows has to digest exactly as it did before the table existed.
+#[test]
+fn the_digest_sees_audit_rows_and_ignores_their_absence() {
+    let a = seeded(&[stamped("1", b"x", 1000)]);
+    let b = seeded(&[stamped("1", b"x", 1000)]);
+    assert_eq!(
+        a.state_digest().unwrap(),
+        super::vault_digest(
+            &a.export_for_sync().unwrap(),
+            std::iter::empty(),
+            std::iter::empty()
+        )
+    );
+    assert_eq!(
+        a.state_digest().unwrap(),
+        super::state_digest(&a.export_for_sync().unwrap())
+    );
+
+    b.audit_insert(&audit_rec("dev-b", 1, 100)).unwrap();
+    assert_ne!(a.state_digest().unwrap(), b.state_digest().unwrap());
+
+    a.merge(&[], &[], &b.audit_all().unwrap()).unwrap();
+    assert_eq!(a.state_digest().unwrap(), b.state_digest().unwrap());
+
+    // The same rows beside a file still agree, and a file alone still differs.
+    a.import_attachments(&[att_at("a1", b"file", 1000)])
+        .unwrap();
+    assert_ne!(a.state_digest().unwrap(), b.state_digest().unwrap());
+    b.import_attachments(&[att_at("a1", b"file", 1000)])
+        .unwrap();
+    assert_eq!(a.state_digest().unwrap(), b.state_digest().unwrap());
 }
 
 // The caches share their rules, not their rows: an emblem is never answered
