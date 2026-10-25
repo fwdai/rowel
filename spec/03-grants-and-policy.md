@@ -109,7 +109,9 @@ pub enum Target {
     Http { host: String, path: String, methods: Vec<String> },
     /// env: a glob over the *full* command line (`node deploy.js*`), never
     /// `argv[0]` alone — `node -e "print(env)"` must not match a rule for
-    /// `node deploy.js`.
+    /// `node deploy.js`. Read as a shell reads it: a `*` in quotes or after a
+    /// backslash is the character, so a concrete line (`rowel run` and
+    /// `rowel_request_secret` quote every `*`) matches itself alone.
     Command(String),
 }
 ```

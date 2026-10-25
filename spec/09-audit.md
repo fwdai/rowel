@@ -119,9 +119,13 @@ differ from the first draft, both forced by the union merge:
   never agree with the desktop's digest. `SqliteStore::audit_prune(before)`
   reclaims every chain's prefix in one transaction and reports each writer
   with the highest `seq` it lost; the set converges once each peer has pushed.
-- **A prefix, not the old rows alone.** The cut goes through the newest row
-  stamped before the cutoff, so a clock that stepped backwards cannot leave a
-  younger stamp below an older one and a hole that verifies as a gap forever.
+- **A prefix, not the old rows alone.** The cut is the chain's leading run of
+  rows stamped before the cutoff, up to the first younger one: never a hole
+  that verifies as a gap forever, and never a young row. (Review of PR #658:
+  cutting through the *newest* aged row let one row with an old stamp — a
+  reset clock, or a row forged into a synced pack — take the whole recent
+  chain below it on every device, still verifying as pruned. A row stamped
+  out of order now waits until the rows before it have aged too.)
 
 Only the chain's own writer notes the cut: `rowel_broker::audit::prune` (desktop,
 where the broker is linked) writes a `pruned_through` row with actor `policy`

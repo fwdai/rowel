@@ -243,11 +243,16 @@ The floor in `03` keeps every passkey ceremony behind the tap, agent or not.
   response's status, headers and body come back with the request's released
   values redacted, and the body's length recomputed. The log line is method,
   host and path, status — never a query, a header or a body.
+- *Review of PR #657, round 4.* The answer is asked for with
+  `Accept-Encoding: identity` and an encoded one is refused (`502`), since
+  the redactor reads the bytes as sent; the grant is checked against the
+  path as it will be sent (dot segments collapsed), and the broker matches no
+  grant for a probe path with a dot segment.
 - *Review of PR #657, three rules.* **No redirect is ever followed**: a 3xx
   is relayed to the agent with its `Location` resolved against the upstream
   URL and addressed through the proxy (`/<scheme>/<host>[:port]<path>?query`,
-  then redacted like any header; a `Location` that is not an `http(s)` URL is
-  dropped), so every hop comes back through the proxy as a request of its own
+  redacted first, as the upstream wrote it; a `Location` that is not an
+  `http(s)` URL is dropped), so every hop comes back through the proxy as a request of its own
   with its own grant check, whether the agent's client follows it or the
   agent rebuilds it — a client that followed upstream would carry the secret
   to a path or a host the grant never named, and a 307 would replay a secret
