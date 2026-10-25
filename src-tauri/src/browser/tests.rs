@@ -1857,7 +1857,7 @@ fn an_env_resolve_serves_one_variable_of_the_file_to_the_command() {
         &cipher,
         &env_file(
             "ci",
-            "# keys\nexport AWS_KEY='abc'\nAWS_KEY=second\nEMPTY=\nTOKEN=\"t k\"\n",
+            "# keys\nAWS_KEY=first\nexport AWS_KEY='abc'\nEMPTY=\nTOKEN=\"t k\"\n",
         ),
     );
     let_in(&store, &[sidecar()]);
@@ -1896,7 +1896,7 @@ fn an_env_resolve_serves_one_variable_of_the_file_to_the_command() {
         &run(DEPLOY),
     )
     .expect("served");
-    assert_eq!(&*value, "abc", "the first assignment, unquoted");
+    assert_eq!(&*value, "abc", "the last assignment, unquoted");
     let value = resolve(
         &store,
         &cipher,
@@ -1955,11 +1955,11 @@ fn an_env_resolve_serves_one_variable_of_the_file_to_the_command() {
 
 #[test]
 fn the_env_parser_reads_the_common_cases_and_no_further() {
-    let body = "\n# a comment\nexport A=1\nB = two words \nC=\"quoted\"\nD='single'\nE=\"mismatched'\nA=again\nF=x=y\n  export   G=spaced\nnot an assignment\n";
+    let body = "\n# a comment\nexport A=1\nB = two words \nC=\"quoted\"\nD='single'\nE=\"mismatched'\nA=again\nF=x=y\n  export   G=spaced\nnot an assignment\nH=\"v\" # note\nI=plain # note\nJ=a#b\n";
     assert_eq!(
         env_var(body, "A").as_deref(),
-        Some("1"),
-        "first wins, export stripped"
+        Some("again"),
+        "the last wins, as a shell's would"
     );
     assert_eq!(env_var(body, "B").as_deref(), Some("two words"));
     assert_eq!(env_var(body, "C").as_deref(), Some("quoted"));
@@ -1975,6 +1975,21 @@ fn the_env_parser_reads_the_common_cases_and_no_further() {
         "split at the first `=`"
     );
     assert_eq!(env_var(body, "G").as_deref(), Some("spaced"));
+    assert_eq!(
+        env_var(body, "H").as_deref(),
+        Some("v"),
+        "a comment after quotes"
+    );
+    assert_eq!(
+        env_var(body, "I").as_deref(),
+        Some("plain"),
+        "a ` #` comment"
+    );
+    assert_eq!(
+        env_var(body, "J").as_deref(),
+        Some("a#b"),
+        "a `#` inside a word"
+    );
     assert_eq!(env_var(body, "a"), None, "names are exact");
     assert_eq!(env_var(body, "comment"), None);
     assert_eq!(env_var(body, "not"), None);

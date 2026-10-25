@@ -1954,9 +1954,11 @@ fn resolved(
     let mut row = agents::about(
         agents::draft(Event::Used, &client.key, &clients),
         grant,
+        // The field as the placeholder wrote it, JSON-escaped: an env key
+        // may hold a quote or a backslash.
         Some(&format!(
-            r#"{{"via":"resolve","field":"{}"}}"#,
-            reference.field
+            r#"{{"via":"resolve","field":{}}}"#,
+            serde_json::Value::from(reference.field.to_string())
         )),
     );
     row.item_id = Some(item.id);
@@ -2004,32 +2006,40 @@ fn field_value(entry: &Entry, field: &Field) -> Option<Zeroizing<String>> {
 
 /// The value of `key` in an env file's `body`, read the way a shell would
 /// read the common cases and no further: blank lines and `#` comments are
-/// skipped, an `export ` prefix is allowed, a value in matching single or
-/// double quotes is unquoted, and the first assignment of the name wins. A
-/// tolerant parser rather than a shell: nothing is expanded, so a value is
-/// what was written and never what another variable held.
+/// skipped, an `export ` prefix is allowed, a value in single or double
+/// quotes is what is between them, an unquoted value ends at a ` #` comment,
+/// and the last assignment of the name wins, as it does for a shell, dotenv
+/// and `docker --env-file`. A tolerant parser rather than a shell: nothing is
+/// expanded, so a value is what was written and never what another variable
+/// held.
 fn env_var(body: &str, key: &str) -> Option<String> {
-    body.lines().find_map(|line| {
+    body.lines().rev().find_map(|line| {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             return None;
         }
         let line = line.strip_prefix("export ").map_or(line, str::trim_start);
         let (name, value) = line.split_once('=')?;
-        if name.trim() != key {
-            return None;
-        }
-        let value = value.trim();
-        let unquoted = ['"', '\'']
-            .into_iter()
-            .find_map(|quote| {
-                value
-                    .strip_prefix(quote)
-                    .and_then(|rest| rest.strip_suffix(quote))
-            })
-            .unwrap_or(value);
-        Some(unquoted.to_string())
+        (name.trim() == key).then(|| env_value(value.trim()))
     })
+}
+
+/// One env file value, unquoted: what is between a quote and the last of its
+/// kind (a comment may follow), or up to a whitespace-led `#`.
+fn env_value(value: &str) -> String {
+    for quote in ['"', '\''] {
+        if let Some(rest) = value.strip_prefix(quote) {
+            if let Some(end) = rest.rfind(quote) {
+                return rest[..end].to_string();
+            }
+        }
+    }
+    let end = [" #", "\t#"]
+        .iter()
+        .filter_map(|comment| value.find(comment))
+        .min()
+        .unwrap_or(value.len());
+    value[..end].trim_end().to_string()
 }
 
 /// What a grant request came to before anyone was asked: answered already

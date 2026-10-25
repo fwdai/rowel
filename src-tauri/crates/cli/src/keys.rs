@@ -159,24 +159,25 @@ impl Keys {
             )
             .map(Some),
             Ok(None) => {
+                if is_store_note(&self.file) {
+                    return Ok(None);
+                }
                 let Some(key) = load_file(&self.file)? else {
                     return Ok(None);
                 };
                 match store.write(self.role, &serde_json::to_vec_pretty(&key)?) {
-                    Ok(()) => {
-                        if let Err(error) = fs::remove_file(&self.file) {
-                            eprintln!(
-                                "rowel-cli: the {} key was moved into {} but {} could not be removed: {error}",
-                                self.role.label(),
-                                store.name(),
-                                self.file.display()
-                            );
-                        }
-                    }
+                    Ok(()) => self.leave_store_note(store),
                     Err(error) => self.fall_back(error),
                 }
                 Ok(Some(key))
             }
+            // The file says the record is in the store, which cannot be read
+            // now: there is one, so minting another would orphan it.
+            Err(error) if is_store_note(&self.file) => Err(io::Error::other(format!(
+                "the {} key is kept in {}, which could not be read ({error}); unlock it and try again",
+                self.role.label(),
+                store.name()
+            ))),
             Err(error) => {
                 self.fall_back(error);
                 load_file(&self.file)
@@ -204,11 +205,29 @@ impl Keys {
         let raw = serde_json::to_vec_pretty(key)?;
         if let Some(store) = self.store() {
             match store.write(self.role, &raw) {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    self.leave_store_note(store);
+                    return Ok(());
+                }
                 Err(error) => self.fall_back(error),
             }
         }
         save_file(&self.file, &raw)
+    }
+
+    /// Put a note where the file was saying the record is in `store`, so a
+    /// later run whose store refuses to read knows there is a record — and
+    /// errs instead of minting over it — and a stale key file is gone.
+    fn leave_store_note(&self, store: &(dyn SecureStore + Send)) {
+        let note = format!("{STORE_NOTE} {}\n", store.name());
+        if let Err(error) = save_file(&self.file, note.as_bytes()) {
+            eprintln!(
+                "rowel-cli: the {} key is in {} but {} could not be updated: {error}",
+                self.role.label(),
+                store.name(),
+                self.file.display()
+            );
+        }
     }
 
     /// The store, unless it has refused once this run.
@@ -243,6 +262,13 @@ fn parse(raw: &[u8], what: &str) -> io::Result<ClientKey> {
 }
 
 /// The key file at `path`, or `None` when there is none.
+/// The first words of the note [`Keys::leave_store_note`] writes.
+const STORE_NOTE: &str = "rowel-cli: this key is kept in";
+
+fn is_store_note(path: &Path) -> bool {
+    fs::read(path).is_ok_and(|raw| raw.starts_with(STORE_NOTE.as_bytes()))
+}
+
 fn load_file(path: &Path) -> io::Result<Option<ClientKey>> {
     let raw = match fs::read(path) {
         Ok(raw) => raw,
@@ -517,7 +543,7 @@ mod tests {
             Some(key("from-file")),
             "moved in"
         );
-        assert!(!keys.file.exists(), "and the file is gone");
+        assert!(is_store_note(&keys.file), "and the file says so");
 
         save_file(&keys.file, &serde_json::to_vec(&key("stale-file")).unwrap()).unwrap();
         assert_eq!(
@@ -525,15 +551,11 @@ mod tests {
             Some(key("from-file")),
             "the store wins over a file"
         );
-        assert!(keys.file.exists(), "which is left alone");
+        assert!(!is_store_note(&keys.file), "which is left alone by a read");
 
         keys.save(&key("renamed")).unwrap();
         assert_eq!(store.item(Role::Sidecar), Some(key("renamed")));
-        assert_eq!(
-            load_file(&keys.file).unwrap(),
-            Some(key("stale-file")),
-            "a save goes to the store"
-        );
+        assert!(is_store_note(&keys.file), "a save goes to the store");
     }
 
     #[test]
@@ -566,7 +588,7 @@ mod tests {
             Some(key("renamed")),
             "moved on the next run"
         );
-        assert!(!next_run.file.exists());
+        assert!(is_store_note(&next_run.file));
     }
 
     #[test]
@@ -575,7 +597,17 @@ mod tests {
         let store = Fake::default();
         let keys = with_store(dir.path(), &store);
         let minted = keys.load_or_mint("Rowel CLI").unwrap();
-        assert_eq!(store.item(Role::Sidecar), Some(minted));
-        assert!(!keys.file.exists());
+        assert_eq!(store.item(Role::Sidecar), Some(minted.clone()));
+        assert!(is_store_note(&keys.file));
+
+        // The store refuses on a later run: there is a key in it, so this is
+        // an error, never a second identity minted into the file.
+        *store.broken.lock().unwrap() = true;
+        let later = with_store(dir.path(), &store);
+        assert!(later.load().is_err());
+        assert!(later.load_or_mint("Rowel CLI").is_err());
+        assert!(is_store_note(&later.file));
+        *store.broken.lock().unwrap() = false;
+        assert_eq!(with_store(dir.path(), &store).load().unwrap(), Some(minted));
     }
 }

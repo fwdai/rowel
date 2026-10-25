@@ -32,7 +32,8 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use http::header::{
-    HeaderMap, HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE, HOST, LOCATION,
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
+    CONTENT_TYPE, HOST, LOCATION,
 };
 use http::{Method, Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full, Limited};
@@ -264,10 +265,16 @@ fn upstream_of(uri: &http::Uri, allow_http: bool) -> Result<Upstream, Refusal> {
         url.push('?');
         url.push_str(query);
     }
+    // The URL as it will be sent: parsing collapses dot segments (`..`,
+    // `%2e%2e`), and the grant is checked against that path, never the one
+    // written — or `/v1/public/%2e%2e/charges` would pass a grant for
+    // `/v1/public/*` and reach `/v1/charges`.
+    let url =
+        reqwest::Url::parse(&url).map_err(|_| bad("the path must be /https/<host>/<path>"))?;
     Ok(Upstream {
-        url,
         host: self::authority(scheme, authority),
-        path: tail,
+        path: url.path().to_string(),
+        url: url.into(),
     })
 }
 
@@ -345,12 +352,17 @@ async fn relay(
 
     // The outgoing request: the method, the headers but ours and the
     // hop-by-hop ones, the values in place; reqwest sets Host and the length.
+    // The answer is asked for unencoded: the redactor reads the bytes as they
+    // come, and a gzipped echo of the value would pass it and be inflated by
+    // the agent's own client.
     let mut headers = HeaderMap::new();
+    headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
     for (name, value) in &parts.headers {
         if name.as_str() == GRANT_HEADER
             || is_hop_by_hop(name)
             || *name == HOST
             || *name == CONTENT_LENGTH
+            || *name == ACCEPT_ENCODING
         {
             continue;
         }
@@ -387,6 +399,17 @@ async fn relay(
         .map_err(bad_gateway)?;
     let status = response.status();
     let upstream_headers = response.headers().clone();
+    if upstream_headers
+        .get_all(CONTENT_ENCODING)
+        .iter()
+        .any(|coding| !coding.as_bytes().eq_ignore_ascii_case(b"identity"))
+    {
+        return Err(Refusal::new(
+            StatusCode::BAD_GATEWAY,
+            "encoded_response",
+            "the upstream answered with an encoded body, which cannot be redacted",
+        ));
+    }
     let upstream_body = response.bytes().await.map_err(bad_gateway)?;
 
     // The answer, with every value this request released redacted from the
@@ -403,19 +426,17 @@ async fn relay(
         if is_hop_by_hop(name) || *name == CONTENT_LENGTH {
             continue;
         }
-        let proxied;
-        let value = if *name == LOCATION {
-            match proxied_location(&upstream.url, value.as_bytes()) {
-                Some(location) => {
-                    proxied = location;
-                    proxied.as_bytes()
-                }
+        // Redacted as the upstream wrote it, before a `Location` is
+        // re-addressed: rewriting re-encodes some characters, and a value in
+        // that form is one the redactor would not know.
+        let mut value = redacted(&mut redactor, value.as_bytes());
+        if *name == LOCATION {
+            match proxied_location(&upstream.url, &value) {
+                Some(location) => value = location.into_bytes(),
                 None => continue,
             }
-        } else {
-            value.as_bytes()
-        };
-        if let Ok(value) = HeaderValue::from_bytes(&redacted(&mut redactor, value)) {
+        }
+        if let Ok(value) = HeaderValue::from_bytes(&value) {
             reply_headers.append(name.clone(), value);
         }
     }
@@ -750,7 +771,7 @@ mod tests {
 
         let uri: http::Uri = "/https/API.Example.com:8443".parse().unwrap();
         let up = upstream_of(&uri, false).unwrap();
-        assert_eq!(up.url, "https://API.Example.com:8443/");
+        assert_eq!(up.url, "https://api.example.com:8443/");
         assert_eq!(
             (up.host.as_str(), up.path.as_str()),
             ("api.example.com:8443", "/")
@@ -764,6 +785,17 @@ mod tests {
         assert_eq!(upstream_of(&uri, true).unwrap().host, "127.0.0.1:3000");
         let uri: http::Uri = "/https/API.stripe.com:443/v1".parse().unwrap();
         assert_eq!(upstream_of(&uri, false).unwrap().host, "api.stripe.com");
+        // The path checked is the path sent: dot segments, written or
+        // percent-encoded, are collapsed before the grant sees it.
+        for dotted in [
+            "/https/api.stripe.com/v1/public/../charges",
+            "/https/api.stripe.com/v1/public/%2e%2e/charges",
+            "/https/api.stripe.com/v1/public/.%2E/./charges",
+        ] {
+            let up = upstream_of(&dotted.parse().unwrap(), false).unwrap();
+            assert_eq!(up.path, "/v1/charges", "{dotted}");
+            assert_eq!(up.url, "https://api.stripe.com/v1/charges", "{dotted}");
+        }
         for bad in [
             "/v1/balance",
             "/https/",
@@ -993,6 +1025,7 @@ mod end_to_end {
                                     "authorization": parts.headers.get("authorization").and_then(|v| v.to_str().ok()),
                                     "grantHeader": parts.headers.contains_key(GRANT_HEADER),
                                     "connection": parts.headers.get("connection").and_then(|v| v.to_str().ok()),
+                                    "acceptEncoding": parts.headers.get("accept-encoding").and_then(|v| v.to_str().ok()),
                                     "body": String::from_utf8_lossy(&body),
                                 });
                                 recorded.lock().unwrap().push(seen.clone());
@@ -1002,6 +1035,19 @@ mod end_to_end {
                                     "/redirect/307" => Some((StatusCode::TEMPORARY_REDIRECT, "http://127.0.0.1:1/x")),
                                     _ => None,
                                 };
+                                let auth = parts.headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+                                let redirect = match parts.uri.path() {
+                                    "/redirect/echo" => Some((StatusCode::FOUND, format!("/cb?k={auth}"))),
+                                    _ => redirect.map(|(status, location)| (status, location.to_string())),
+                                };
+                                if parts.uri.path() == "/gzip" {
+                                    return Ok::<_, Infallible>(
+                                        Response::builder()
+                                            .header("content-encoding", "gzip")
+                                            .body(Full::new(Bytes::from_static(b"\x1f\x8b")))
+                                            .unwrap(),
+                                    );
+                                }
                                 if let Some((status, location)) = redirect {
                                     return Ok::<_, Infallible>(
                                         Response::builder()
@@ -1377,6 +1423,51 @@ mod end_to_end {
         assert_eq!(seen[2]["body"], format!("{{\"key\":\"{VALUE}\"}}"));
         drop(seen);
         assert_eq!(proxy.uses(), 3);
+    }
+
+    // The upstream is asked for the answer unencoded, whatever the agent's
+    // client accepts, and an encoded answer is refused rather than relayed
+    // past the redactor. A `Location` echoing the value is redacted as the
+    // upstream wrote it, before it is re-addressed (which re-encodes it).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_answer_is_redacted_as_sent_or_not_relayed() {
+        let proxy = proxy(granting_stripe).await;
+        let response = proxy
+            .client
+            .get(proxy.url("/v1/balance"))
+            .header("accept-encoding", "gzip, br")
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, GRANT)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(proxy.last_seen()["acceptEncoding"], "identity");
+
+        let response = proxy
+            .client
+            .get(proxy.url("/gzip"))
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, GRANT)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+
+        let response = proxy
+            .client
+            .get(proxy.url("/redirect/echo"))
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, GRANT)
+            .send()
+            .await
+            .unwrap();
+        let location = response.headers()["location"].to_str().unwrap().to_string();
+        assert!(!location.contains(VALUE), "{location}");
+        assert!(
+            location.starts_with(&format!("/http/{}/cb?k=", proxy.upstream)),
+            "{location}"
+        );
     }
 
     // A client that follows redirects follows them back through the proxy: a
