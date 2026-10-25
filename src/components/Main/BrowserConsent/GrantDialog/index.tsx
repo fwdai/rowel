@@ -55,6 +55,7 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
   const deny = () => answer(null)
   const picked = ask.candidates.find(candidate => candidate.id === itemId)
   const canAllow = !!picked && (!needsPassword || password.length > 0)
+  const secret = ask.mode === 'header' || ask.mode === 'env'
   const target = targetText(ask.targets[0])
   const title =
     ask.mode === 'env'
@@ -106,15 +107,23 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
           </p>
         )}
 
-        {ask.candidates.length > 1 ? (
-          <ItemPicker candidates={ask.candidates} value={itemId} onChange={setItemId} />
-        ) : (
-          picked && (
-            <p className="mt-4 text-base text-text" data-testid={`agent-grant-item-${picked.id}`}>
-              {picked.title || t('Untitled')}
-              {picked.username && <span className="text-text2"> · {picked.username}</span>}
+        {/* A secret request is covered whole: every item it named goes to
+            the command or the request, so they are listed, not picked, and
+            Rust ignores which id the answer carries. A site request offers
+            the page's logins for one to be picked. */}
+        {secret || ask.candidates.length === 1 ? (
+          ask.candidates.map(candidate => (
+            <p
+              key={candidate.id}
+              className="mt-4 text-base text-text"
+              data-testid={`agent-grant-item-${candidate.id}`}
+            >
+              {candidate.title || t('Untitled')}
+              {candidate.username && <span className="text-text2"> · {candidate.username}</span>}
             </p>
-          )
+          ))
+        ) : (
+          <ItemPicker candidates={ask.candidates} value={itemId} onChange={setItemId} />
         )}
 
         {ask.stepUp && (
@@ -123,6 +132,7 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
 
         <Choices
           mode={ask.mode}
+          several={ask.candidates.length > 1}
           days={days}
           onDays={setDays}
           disabled={!canAllow}

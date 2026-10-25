@@ -17,6 +17,7 @@ import { clampDays } from './days'
  */
 export default function Choices({
   mode,
+  several,
   days,
   onDays,
   disabled,
@@ -25,6 +26,8 @@ export default function Choices({
   onDeny
 }: {
   mode: GrantMode
+  /** A secret ask naming more than one item: the rule would name them all. */
+  several: boolean
   days: number
   onDays: (days: number) => void
   /** A yes is not available yet — a step-up ask with no password typed. */
@@ -39,13 +42,21 @@ export default function Choices({
     days === 1 ? t('Allow for 1 day') : t('Allow for {{days}} days', { days })
   const note =
     mode === 'header'
-      ? t(
-          'Allowing for days writes a rule: this client sends this item in requests to that place without asking until then. Remove it any time in Settings › Browser & agents.'
-        )
-      : mode === 'env'
+      ? several
         ? t(
-            'Allowing for days writes a rule: this client gives this item to exactly that command line without asking until then. Remove it any time in Settings › Browser & agents.'
+            'Allowing for days writes a rule: this client sends these items in requests to that place without asking until then. Remove it any time in Settings › Browser & agents.'
           )
+        : t(
+            'Allowing for days writes a rule: this client sends this item in requests to that place without asking until then. Remove it any time in Settings › Browser & agents.'
+          )
+      : mode === 'env'
+        ? several
+          ? t(
+              'Allowing for days writes a rule: this client gives these items to exactly that command line without asking until then. Remove it any time in Settings › Browser & agents.'
+            )
+          : t(
+              'Allowing for days writes a rule: this client gives this item to exactly that command line without asking until then. Remove it any time in Settings › Browser & agents.'
+            )
         : t(
             'Allowing for days writes a rule: this client fills this login on this site without asking until then. Remove it any time in Settings › Browser & agents.'
           )

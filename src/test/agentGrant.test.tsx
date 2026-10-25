@@ -153,6 +153,34 @@ describe('the agent grant dialog', () => {
     ])
   })
 
+  // A secret ask naming two items is covered whole: both are listed, nothing
+  // is picked, and the answer carries the first id for Rust to ignore.
+  it('lists every item of a two-item env ask without a picker, and answers with the first', async () => {
+    await ask({
+      ...ENV_ASK,
+      id: 'ask-e4',
+      candidates: [
+        { id: 'ci', title: 'CI', username: null },
+        { id: 'ci2', title: 'CI (staging)', username: 'deploy' }
+      ]
+    })
+    const first = screen.getByTestId('agent-grant-item-ci')
+    const second = screen.getByTestId('agent-grant-item-ci2')
+    expect(first).not.toHaveAttribute('role', 'radio')
+    expect(second).not.toHaveAttribute('role', 'radio')
+    expect(first).toHaveTextContent('CI')
+    expect(second).toHaveTextContent('CI (staging) · deploy')
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.getByTestId('agent-grant-standing-note')).toHaveTextContent(
+      'this client gives these items to exactly that command line'
+    )
+
+    await userEvent.click(screen.getByTestId('agent-grant-once'))
+    expect(calls('agent_grant_respond')).toEqual([
+      { id: 'ask-e4', answer: { itemId: 'ci', standingDays: null } }
+    ])
+  })
+
   it('names who asks and where, lists the candidates with the first picked, and allows once', async () => {
     await ask()
     expect(screen.getByTestId('agent-grant-title')).toHaveTextContent(
