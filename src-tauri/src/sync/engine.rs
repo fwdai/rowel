@@ -1721,8 +1721,11 @@ mod tests {
     // (both ways, verification on each side) is in
     // `commands::password_sync::two_devices`. What is this engine's own is
     // retention: a device reclaims every chain's aged rows as it packs, and
-    // notes the cut in its own chain alone.
+    // notes the cut in its own chain alone. Desktop only, as the writer is:
+    // the broker that writes rows is not linked on iOS (see `Cargo.toml`), so
+    // there is nothing there to write a chain with.
 
+    #[cfg(desktop)]
     fn remote_audit(remote: &FakeRemote) -> Vec<AuditRecord> {
         let unpacked = pack::unpack(&remote.content().unwrap()).unwrap();
         records_from_snapshot(&unpacked.snapshot, &key_bytes(), &tmp_dir())
@@ -1730,6 +1733,7 @@ mod tests {
             .audit
     }
 
+    #[cfg(desktop)]
     fn used() -> audit::Draft {
         audit::Draft {
             item_id: Some("1".into()),
@@ -1738,6 +1742,7 @@ mod tests {
         }
     }
 
+    #[cfg(desktop)]
     #[test]
     fn audit_rows_past_retention_leave_the_devices_own_chain_at_pack_time() {
         let mut a = Device::seeded(&[record("1", 200, b"one")]);
@@ -1782,6 +1787,7 @@ mod tests {
     // A device that writes no log (iOS) still reclaims the aged rows it holds
     // — or its digest would never again match a device that did — and, having
     // no chain of its own, writes no note.
+    #[cfg(desktop)]
     #[test]
     fn a_device_without_a_writer_reclaims_aged_rows_and_notes_nothing() {
         let a = Device::seeded(&[record("1", 200, b"one")]);

@@ -25,11 +25,10 @@ use crate::models::Entry;
 use crate::retired;
 use crate::session::store_err;
 use crate::storage;
-use crate::store::{identity, migrate, AuditRecord, SqliteStore, VaultStore};
+use crate::store::{identity, migrate, SqliteStore, VaultStore};
 use crate::sync::engine::{self, LocalVault, Reclaim, Snapshot, SyncOutcome};
 use crate::sync::store::fake::FakeStore;
 use crate::sync::{layout, pack, restore, PackRemote, Provider};
-use rowel_broker::audit::{self, ActorKind, Break, Draft, Event, Reason, Writer};
 
 const NOW: i64 = 1_700_000_000_000;
 const OLD: &str = "old password";
@@ -171,32 +170,6 @@ impl Device {
 
     fn digest(&self) -> [u8; 32] {
         self.store().state_digest().unwrap()
-    }
-
-    /// One row in this device's own chain, as an agent's use of a login writes
-    /// it: the device's id is the writer id, as `storage::install_id` is in
-    /// the app.
-    fn record(&self, target: &str) -> AuditRecord {
-        self.record_at(target, NOW)
-    }
-
-    /// [`Device::record`] stamped at `ts_ms`.
-    fn record_at(&self, target: &str, ts_ms: i64) -> AuditRecord {
-        Writer::new(self.id, self.store())
-            .record(
-                Draft {
-                    item_id: Some("1".into()),
-                    target: Some(target.into()),
-                    ..Draft::new(ActorKind::Agent, Event::Used)
-                },
-                ts_ms,
-            )
-            .unwrap()
-    }
-
-    /// `writer`'s chain as this device holds it.
-    fn chain(&self, writer: &str) -> Vec<AuditRecord> {
-        self.store().audit_rows(writer).unwrap()
     }
 
     /// One run against the account, as `sync::run` makes it: the marker keys
@@ -583,157 +556,193 @@ fn lockboxes_beside_follow_only_on_the_same_password() {
 //
 // Each device writes its own chain under its own id. A run carries every chain
 // a device holds, the merge takes them as a union, and each chain verifies on
-// whichever device holds it.
+// whichever device holds it. Desktop only: the broker that writes the rows is
+// not linked on iOS (see `Cargo.toml`), and a device there holds other
+// devices' chains without a pen of its own.
+#[cfg(desktop)]
+mod audit_log {
+    use super::*;
+    use crate::store::AuditRecord;
+    use rowel_broker::audit::{self, ActorKind, Break, Draft, Event, Reason, Writer};
 
-// A and B, holding one lockbox, converged, with no log yet.
-fn two_synced_devices(account: &FakeStore) -> (Device, Device) {
-    let a = Device::create("a", "v1", OLD, &params(11, 0));
-    a.write("1", "first");
-    a.sync(account).unwrap();
-    let b = Device::restore("b", "v1", account, OLD).unwrap();
-    assert!(!b.sync(account).unwrap().pushed);
-    (a, b)
-}
+    impl Device {
+        /// One row in this device's own chain, as an agent's use of a login writes
+        /// it: the device's id is the writer id, as `storage::install_id` is in
+        /// the app.
+        fn record(&self, target: &str) -> AuditRecord {
+            self.record_at(target, NOW)
+        }
 
-#[test]
-fn audit_logs_merge_as_a_union_and_each_chain_verifies_on_both_devices() {
-    let account = FakeStore::default();
-    let (a, b) = two_synced_devices(&account);
+        /// [`Device::record`] stamped at `ts_ms`.
+        fn record_at(&self, target: &str, ts_ms: i64) -> AuditRecord {
+            Writer::new(self.id, self.store())
+                .record(
+                    Draft {
+                        item_id: Some("1".into()),
+                        target: Some(target.into()),
+                        ..Draft::new(ActorKind::Agent, Event::Used)
+                    },
+                    ts_ms,
+                )
+                .unwrap()
+        }
 
-    a.record("https://github.com/login");
-    a.record("https://github.com/settings");
-    b.record("https://gitlab.com/login");
-    b.record("https://gitlab.com/profile");
-    b.record("https://gitlab.com/keys");
-
-    assert!(a.sync(&account).unwrap().pushed);
-    let outcome = b.sync(&account).unwrap();
-    assert!(outcome.pushed, "B's own rows go up beside A's");
-    assert_eq!(
-        outcome.merged, 0,
-        "log rows are not a change to the entry list"
-    );
-    assert!(
-        !a.sync(&account).unwrap().pushed,
-        "A took B's rows and matched"
-    );
-
-    let union = a.store().audit_all().unwrap();
-    assert_eq!(union.len(), 5);
-    assert_eq!(union, b.store().audit_all().unwrap());
-    assert_eq!(a.digest(), b.digest());
-    for device in [&a, &b] {
-        for writer in ["a", "b"] {
-            assert_eq!(audit::verify(&device.chain(writer)), Ok(()));
+        /// `writer`'s chain as this device holds it.
+        fn chain(&self, writer: &str) -> Vec<AuditRecord> {
+            self.store().audit_rows(writer).unwrap()
         }
     }
-    assert_eq!(a.chain("b"), b.chain("b"));
-    assert_eq!(b.chain("a"), a.chain("a"));
-}
 
-// Nothing but the log changed, so a digest blind to it would call this "in
-// sync" and the other device would never learn what this one's agents did.
-#[test]
-fn new_audit_rows_alone_are_enough_to_push_and_reach_the_peer() {
-    let account = FakeStore::default();
-    let (a, b) = two_synced_devices(&account);
-    assert!(!a.sync(&account).unwrap().pushed);
+    // A and B, holding one lockbox, converged, with no log yet.
+    fn two_synced_devices(account: &FakeStore) -> (Device, Device) {
+        let a = Device::create("a", "v1", OLD, &params(11, 0));
+        a.write("1", "first");
+        a.sync(account).unwrap();
+        let b = Device::restore("b", "v1", account, OLD).unwrap();
+        assert!(!b.sync(account).unwrap().pushed);
+        (a, b)
+    }
 
-    let row = a.record("https://github.com/login");
-    assert!(a.sync(&account).unwrap().pushed);
+    #[test]
+    fn audit_logs_merge_as_a_union_and_each_chain_verifies_on_both_devices() {
+        let account = FakeStore::default();
+        let (a, b) = two_synced_devices(&account);
 
-    let outcome = b.sync(&account).unwrap();
-    assert!(!outcome.pushed, "B matched the remote, log included");
-    assert_eq!(outcome.merged, 0);
-    assert_eq!(b.chain("a"), vec![row]);
-    assert_eq!(a.digest(), b.digest());
-}
+        a.record("https://github.com/login");
+        a.record("https://github.com/settings");
+        b.record("https://gitlab.com/login");
+        b.record("https://gitlab.com/profile");
+        b.record("https://gitlab.com/keys");
 
-// The merge is a union by id and cannot tell a forged row from a real one; that
-// is the verification's job. Here the device holding A's chain appends a row
-// under A's id whose contents were changed after it was hashed — what an
-// altered row looks like once it has travelled — and A, pulling it back,
-// names it by its `seq`.
-#[test]
-fn an_altered_row_arriving_through_sync_breaks_verification_at_its_seq() {
-    let account = FakeStore::default();
-    let (a, b) = two_synced_devices(&account);
-    a.record("https://github.com/login");
-    let last = a.record("https://github.com/settings");
-    a.sync(&account).unwrap();
-    b.sync(&account).unwrap();
-    assert_eq!(b.chain("a"), a.chain("a"));
+        assert!(a.sync(&account).unwrap().pushed);
+        let outcome = b.sync(&account).unwrap();
+        assert!(outcome.pushed, "B's own rows go up beside A's");
+        assert_eq!(
+            outcome.merged, 0,
+            "log rows are not a change to the entry list"
+        );
+        assert!(
+            !a.sync(&account).unwrap().pushed,
+            "A took B's rows and matched"
+        );
 
-    let mut forged = AuditRecord {
-        id: crypto::random_hex_id(),
-        seq: last.seq + 1,
-        prev_hash: last.hash,
-        ..last.clone()
-    };
-    forged.hash = audit::hash_of(&forged).unwrap();
-    forged.target = Some("https://evil.example/login".into());
-    b.store().audit_insert(&forged).unwrap();
-    assert!(b.sync(&account).unwrap().pushed);
+        let union = a.store().audit_all().unwrap();
+        assert_eq!(union.len(), 5);
+        assert_eq!(union, b.store().audit_all().unwrap());
+        assert_eq!(a.digest(), b.digest());
+        for device in [&a, &b] {
+            for writer in ["a", "b"] {
+                assert_eq!(audit::verify(&device.chain(writer)), Ok(()));
+            }
+        }
+        assert_eq!(a.chain("b"), b.chain("b"));
+        assert_eq!(b.chain("a"), a.chain("a"));
+    }
 
-    a.sync(&account).unwrap();
-    let chain = a.chain("a");
-    assert_eq!(chain.len(), 3, "the union let the row in");
-    assert_eq!(
-        audit::verify(&chain),
-        Err(Break {
-            seq: 3,
-            reason: Reason::Hash
-        })
-    );
-    assert_eq!(
-        audit::verify(&chain[..2]),
-        Ok(()),
-        "the rows before it stand"
-    );
-    assert_eq!(audit::verify(&b.chain("a")), audit::verify(&chain));
-}
+    // Nothing but the log changed, so a digest blind to it would call this "in
+    // sync" and the other device would never learn what this one's agents did.
+    #[test]
+    fn new_audit_rows_alone_are_enough_to_push_and_reach_the_peer() {
+        let account = FakeStore::default();
+        let (a, b) = two_synced_devices(&account);
+        assert!(!a.sync(&account).unwrap().pushed);
 
-// Retention converges. B's push a year on reclaims A's aged rows from B's copy
-// (with no note: B cannot write A's chain); A, pulling that, is left holding
-// rows the account no longer has, pushes, reclaims them itself and notes the
-// cut in its own chain; B pulls the note. From there neither has anything to
-// say, and A's chain — starting at the note — verifies on both.
-#[test]
-fn aged_audit_rows_reclaimed_by_a_peers_push_converge_on_both_devices() {
-    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
-    const LATER: i64 = NOW + 400 * DAY_MS;
-    let account = FakeStore::default();
-    let (a, b) = two_synced_devices(&account);
-    a.record("https://github.com/login");
-    a.record("https://github.com/settings");
-    a.sync(&account).unwrap();
-    b.sync(&account).unwrap();
-    assert_eq!(b.chain("a").len(), 2);
+        let row = a.record("https://github.com/login");
+        assert!(a.sync(&account).unwrap().pushed);
 
-    // A year on, B has a row of its own to push; its pack reclaims A's.
-    b.record_at("https://gitlab.com/login", LATER);
-    assert!(b.sync_at(&account, LATER).unwrap().pushed);
-    assert!(b.chain("a").is_empty());
-    assert_eq!(b.chain("b").len(), 1, "B's own row is young, so no note");
+        let outcome = b.sync(&account).unwrap();
+        assert!(!outcome.pushed, "B matched the remote, log included");
+        assert_eq!(outcome.merged, 0);
+        assert_eq!(b.chain("a"), vec![row]);
+        assert_eq!(a.digest(), b.digest());
+    }
 
-    // A still holds its two rows, so it pushes — and reclaims them as it packs.
-    assert!(a.sync_at(&account, LATER).unwrap().pushed);
-    let note = a.chain("a");
-    assert_eq!(note.len(), 1);
-    assert_eq!((note[0].seq, note[0].event.as_str()), (3, "pruned_through"));
-    assert_eq!(a.chain("b"), b.chain("b"));
+    // The merge is a union by id and cannot tell a forged row from a real one; that
+    // is the verification's job. Here the device holding A's chain appends a row
+    // under A's id whose contents were changed after it was hashed — what an
+    // altered row looks like once it has travelled — and A, pulling it back,
+    // names it by its `seq`.
+    #[test]
+    fn an_altered_row_arriving_through_sync_breaks_verification_at_its_seq() {
+        let account = FakeStore::default();
+        let (a, b) = two_synced_devices(&account);
+        a.record("https://github.com/login");
+        let last = a.record("https://github.com/settings");
+        a.sync(&account).unwrap();
+        b.sync(&account).unwrap();
+        assert_eq!(b.chain("a"), a.chain("a"));
 
-    assert!(!b.sync_at(&account, LATER).unwrap().pushed);
-    assert!(!a.sync_at(&account, LATER).unwrap().pushed);
-    assert_eq!(a.digest(), b.digest());
-    assert_eq!(
-        a.store().audit_all().unwrap(),
-        b.store().audit_all().unwrap()
-    );
-    for device in [&a, &b] {
-        assert_eq!(device.chain("a"), note);
-        for writer in ["a", "b"] {
-            assert_eq!(audit::verify(&device.chain(writer)), Ok(()));
+        let mut forged = AuditRecord {
+            id: crypto::random_hex_id(),
+            seq: last.seq + 1,
+            prev_hash: last.hash,
+            ..last.clone()
+        };
+        forged.hash = audit::hash_of(&forged).unwrap();
+        forged.target = Some("https://evil.example/login".into());
+        b.store().audit_insert(&forged).unwrap();
+        assert!(b.sync(&account).unwrap().pushed);
+
+        a.sync(&account).unwrap();
+        let chain = a.chain("a");
+        assert_eq!(chain.len(), 3, "the union let the row in");
+        assert_eq!(
+            audit::verify(&chain),
+            Err(Break {
+                seq: 3,
+                reason: Reason::Hash
+            })
+        );
+        assert_eq!(
+            audit::verify(&chain[..2]),
+            Ok(()),
+            "the rows before it stand"
+        );
+        assert_eq!(audit::verify(&b.chain("a")), audit::verify(&chain));
+    }
+
+    // Retention converges. B's push a year on reclaims A's aged rows from B's copy
+    // (with no note: B cannot write A's chain); A, pulling that, is left holding
+    // rows the account no longer has, pushes, reclaims them itself and notes the
+    // cut in its own chain; B pulls the note. From there neither has anything to
+    // say, and A's chain — starting at the note — verifies on both.
+    #[test]
+    fn aged_audit_rows_reclaimed_by_a_peers_push_converge_on_both_devices() {
+        const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+        const LATER: i64 = NOW + 400 * DAY_MS;
+        let account = FakeStore::default();
+        let (a, b) = two_synced_devices(&account);
+        a.record("https://github.com/login");
+        a.record("https://github.com/settings");
+        a.sync(&account).unwrap();
+        b.sync(&account).unwrap();
+        assert_eq!(b.chain("a").len(), 2);
+
+        // A year on, B has a row of its own to push; its pack reclaims A's.
+        b.record_at("https://gitlab.com/login", LATER);
+        assert!(b.sync_at(&account, LATER).unwrap().pushed);
+        assert!(b.chain("a").is_empty());
+        assert_eq!(b.chain("b").len(), 1, "B's own row is young, so no note");
+
+        // A still holds its two rows, so it pushes — and reclaims them as it packs.
+        assert!(a.sync_at(&account, LATER).unwrap().pushed);
+        let note = a.chain("a");
+        assert_eq!(note.len(), 1);
+        assert_eq!((note[0].seq, note[0].event.as_str()), (3, "pruned_through"));
+        assert_eq!(a.chain("b"), b.chain("b"));
+
+        assert!(!b.sync_at(&account, LATER).unwrap().pushed);
+        assert!(!a.sync_at(&account, LATER).unwrap().pushed);
+        assert_eq!(a.digest(), b.digest());
+        assert_eq!(
+            a.store().audit_all().unwrap(),
+            b.store().audit_all().unwrap()
+        );
+        for device in [&a, &b] {
+            assert_eq!(device.chain("a"), note);
+            for writer in ["a", "b"] {
+                assert_eq!(audit::verify(&device.chain(writer)), Ok(()));
+            }
         }
     }
 }
