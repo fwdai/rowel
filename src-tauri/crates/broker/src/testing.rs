@@ -9,12 +9,14 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
+use zeroize::Zeroizing;
 
 use crate::actions::{Client, ClientKind, Connection, Hello, Host, Login, VisibleRef};
 use crate::client::{Channel, ChannelError, Transport};
-use crate::grant::{GrantReply, GrantRequest, Mode, State, VisibleItem};
+use crate::grant::{GrantReply, GrantRequest, Mode, ResolveContext, State, Target, VisibleItem};
 use crate::passkeys::{self, Assertion, Registration};
 use crate::protocol::{Code, NONCE_LEN, VERSION};
+use crate::reference::Reference;
 use crate::signal::Signal;
 use rowel_core::crypto::{PayloadCipher, VaultKey};
 use rowel_core::models::Entry;
@@ -28,6 +30,10 @@ pub struct Mock {
     pub enabled: Cell<bool>,
     pub locked: Cell<bool>,
     pub logins: Vec<Login>,
+    /// What `resolve` serves, by (item id, field name as the placeholder
+    /// writes it): the logins' secrets and an API key, in the one lockbox
+    /// this host has open, [`LOCKBOX`].
+    pub secrets: HashMap<(String, String), String>,
     pub clients: RefCell<Vec<Client>>,
     /// What the user answers an `associate` with.
     pub consent: Option<String>,
@@ -73,13 +79,15 @@ pub struct Mock {
 pub type Save = (Option<String>, String, String, String, String);
 
 /// A grant as the scripted host keeps it: who it was issued to, the one item
-/// and mode it covers, where it is in its life, and who has been served under
-/// it — enough for the protocol tests to see every shape the real host sends.
+/// and mode it covers, where (none meaning anywhere), where it is in its
+/// life, and who has been served under it — enough for the protocol tests to
+/// see every shape the real host sends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MockGrant {
     pub client_key: String,
     pub item: String,
     pub mode: Mode,
+    pub targets: Vec<Target>,
     pub state: State,
     pub uses: u32,
     pub served_to: Option<String>,
@@ -102,6 +110,9 @@ pub enum GrantAnswer {
 pub const GRANT_ID: &str = "grant-1";
 /// When a grant the scripted host issues ends.
 pub const GRANT_EXPIRES_AT_MS: i64 = 900_000;
+/// The id of the one lockbox the scripted host has open: what a placeholder
+/// must name for `resolve` to look further.
+pub const LOCKBOX: &str = "lb";
 
 /// The user's answer to a passkey ask, noting what they were asked.
 struct Answer {
@@ -123,6 +134,14 @@ impl Mock {
             enabled: Cell::new(true),
             locked: Cell::new(false),
             logins: vec![login("gh", "GitHub", "octocat", "hunter2", Some("123456"))],
+            secrets: [
+                ("gh", "password", "hunter2"),
+                ("gh", "otp", "123456"),
+                ("stripe", "apiKey", "sk_test_mock"),
+            ]
+            .into_iter()
+            .map(|(item, field, value)| ((item.into(), field.into()), value.into()))
+            .collect(),
             clients: RefCell::new(Vec::new()),
             consent: Some("Chrome".into()),
             agents_enabled: Cell::new(true),
@@ -148,16 +167,27 @@ impl Mock {
         }
     }
 
-    /// With a grant already in force for `item_id` in `mode`. Issued to no
-    /// client this side knows — an agent's, as far as whoever asks under it
-    /// can tell — so the first client served under it claims it.
+    /// With a grant already in force for `item_id` in `mode`, anywhere.
+    /// Issued to no client this side knows — an agent's, as far as whoever
+    /// asks under it can tell — so the first client served under it claims it.
     pub fn granting(self, grant_id: &str, item_id: &str, mode: Mode) -> Self {
+        self.grant(grant_id, item_id, mode, Vec::new())
+    }
+
+    /// As `granting`, at `target` only: what a sidecar's `resolve` is checked
+    /// against.
+    pub fn granting_at(self, grant_id: &str, item_id: &str, mode: Mode, target: Target) -> Self {
+        self.grant(grant_id, item_id, mode, vec![target])
+    }
+
+    fn grant(self, grant_id: &str, item_id: &str, mode: Mode, targets: Vec<Target>) -> Self {
         self.grants.borrow_mut().insert(
             grant_id.into(),
             MockGrant {
                 client_key: String::new(),
                 item: item_id.into(),
                 mode,
+                targets,
                 state: State::Active,
                 uses: 0,
                 served_to: None,
@@ -187,6 +217,18 @@ impl Mock {
         let hello = Hello {
             kind: ClientKind::Agent,
             platform: Some(platform.into()),
+            ..Hello::default()
+        };
+        self.clients.borrow_mut().push(client(name, key, &hello));
+        self
+    }
+
+    /// With a sidecar — `rowel run`, `rowel proxy` — already let in under
+    /// `name`.
+    pub fn known_sidecar(self, name: &str, key: &str) -> Self {
+        let hello = Hello {
+            kind: ClientKind::Sidecar,
+            platform: Some("cli".into()),
             ..Hello::default()
         };
         self.clients.borrow_mut().push(client(name, key, &hello));
@@ -326,6 +368,7 @@ impl Host for Mock {
     }
     fn request_grant(&self, client: &Client, req: GrantRequest) -> Result<GrantReply, Code> {
         let mode = req.modes.first().copied().unwrap_or(Mode::Fill);
+        let targets = req.targets.clone();
         self.grant_requests
             .borrow_mut()
             .push((client.key.clone(), req));
@@ -348,6 +391,7 @@ impl Host for Mock {
                         client_key: client.key.clone(),
                         item: item.clone(),
                         mode,
+                        targets,
                         state: State::Active,
                         uses: 0,
                         served_to: None,
@@ -413,6 +457,35 @@ impl Host for Mock {
     }
     fn report_exposure(&self, _client: &Client, grant_id: &str) {
         self.exposures.borrow_mut().push(grant_id.to_string());
+    }
+    // The check as the real host makes it, in one word for every no: the
+    // grant exists — anyone's, the id being the capability — and is active,
+    // in this lockbox, for this item, in the mode the target implies, at
+    // this target (or anywhere), and the item has the field. A yes is a use.
+    fn resolve(
+        &self,
+        _client: &Client,
+        grant_id: &str,
+        reference: &Reference,
+        ctx: &ResolveContext,
+    ) -> Result<Zeroizing<String>, Code> {
+        let mut grants = self.grants.borrow_mut();
+        let grant = grants.get_mut(grant_id).ok_or(Code::GrantDenied)?;
+        let probe = ctx.target.probe();
+        let covered = grant.state == State::Active
+            && reference.lockbox == LOCKBOX
+            && grant.item == reference.item
+            && grant.mode == ctx.target.mode()
+            && (grant.targets.is_empty() || grant.targets.iter().any(|t| t.matches(&probe)));
+        if !covered {
+            return Err(Code::GrantDenied);
+        }
+        let value = self
+            .secrets
+            .get(&(reference.item.clone(), reference.field.to_string()))
+            .ok_or(Code::GrantDenied)?;
+        grant.uses += 1;
+        Ok(Zeroizing::new(value.clone()))
     }
 }
 

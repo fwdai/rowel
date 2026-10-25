@@ -9,16 +9,19 @@
 //! Three kinds of client speak the one protocol ([`ClientKind`]). What each
 //! may say is a fixed vocabulary, checked right after the association: an
 //! extension fills and so receives secrets; an agent asks for grants and is
-//! told *granted*, *denied* or *pending*, never a password; a sidecar (I3)
-//! resolves placeholders under a grant. The kind is the stored record's, never
-//! what the connection claims.
+//! told *granted*, *denied* or *pending*, never a password; a sidecar asks
+//! for grants too and, alone, resolves a placeholder under one — the one
+//! reply besides a fill that carries a value. The kind is the stored
+//! record's, never what the connection claims.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use zeroize::Zeroizing;
 
-use super::grant::{GrantReply, GrantRequest, ItemSelector, Mode, State, Target};
+use super::grant::{GrantReply, GrantRequest, ItemSelector, Mode, ResolveContext, State, Target};
 use super::passkeys::{self, Assertion, Registration};
 use super::protocol::{self, str_of, Code, Session};
+use super::reference::Reference;
 use super::signal::Signal;
 
 /// A login the extension may fill: the one secret it needs and the identity
@@ -48,11 +51,12 @@ pub enum ClientKind {
 
 impl ClientKind {
     /// Whether a client of this kind may say `action` at all, past the
-    /// association. The vocabulary is the point of the kinds: a secret goes
-    /// only to an extension, a grant is asked for only by an agent or a
-    /// sidecar, and the few actions that carry nothing personal are
-    /// everyone's. An action not named here is not permitted to anyone, which
-    /// is the safe answer for one a later host adds.
+    /// association. The vocabulary is the point of the kinds: a fill's
+    /// secrets go only to an extension, a grant is asked for only by an
+    /// agent or a sidecar, a placeholder is resolved only by a sidecar, and
+    /// the few actions that carry nothing personal are everyone's. An action
+    /// not named here is not permitted to anyone, which is the safe answer
+    /// for one a later host adds.
     pub fn permits(self, action: &str) -> bool {
         match action {
             "get-databasehash" | "generate-password" | "lock-database" => true,
@@ -61,6 +65,7 @@ impl ClientKind {
             "request-grant" | "wait-grant" | "end-grant" | "grant-status" | "list-visible" => {
                 self != ClientKind::Extension
             }
+            "resolve" => self == ClientKind::Sidecar,
             _ => false,
         }
     }
@@ -111,8 +116,10 @@ pub struct Hello {
 
 /// What this broker can do beyond KeePassXC's protocol, told to every client
 /// at association. The version string stays `2.7.7` for the extension's sake,
-/// so this is the one place a client learns the agent actions exist.
-pub const BROKER_CAPABILITIES: [&str; 2] = ["grants", "signals"];
+/// so this is the one place a client learns the agent actions exist; an
+/// action added later adds a word here, so a client can tell a host that
+/// serves it from one that will refuse it.
+pub const BROKER_CAPABILITIES: [&str; 3] = ["grants", "signals", "resolve"];
 
 /// An item as an agent may see it: a name to ask for it by, enough to tell the
 /// user which account it is, and which fields a grant could cover. Never a
@@ -213,6 +220,27 @@ pub trait Host {
     /// The extension found a filled secret showing on the page: end the grant
     /// and log it.
     fn report_exposure(&self, client: &Client, grant_id: &str);
+    /// The value a placeholder names, for a sidecar acting under grant
+    /// `grant_id` at `ctx.target` — the only reply in the protocol that
+    /// carries a secret to anything but an extension. The host checks that
+    /// the grant is active, was issued in the lockbox `reference` names and
+    /// the open one, admits the item, covers the target in the mode the
+    /// target implies ([`ResolveTarget::mode`](super::grant::ResolveTarget::mode)),
+    /// and that the field exists on the item; a yes is a use, counted and
+    /// written as a `used` row. Everything that is not a yes is `GrantDenied`
+    /// (or `GrantExpired` from `Grant::use_once`), whatever the reason: a
+    /// grant id is a capability, and why it did not work is not for whoever
+    /// has heard of it. The default refuses, so a host that has not
+    /// implemented the sidecar's verb serves nothing by omission.
+    fn resolve(
+        &self,
+        _client: &Client,
+        _grant_id: &str,
+        _reference: &Reference,
+        _ctx: &ResolveContext,
+    ) -> Result<Zeroizing<String>, Code> {
+        Err(Code::GrantDenied)
+    }
 }
 
 /// A refusal as `dispatch` raises one: the code, and — for a grant that is
@@ -578,6 +606,25 @@ impl<H: Host> Connection<H> {
                 let lockbox = Some(str_of(message, "lockbox")).filter(|l| !l.is_empty());
                 let items = self.host.visible_items(&client, lockbox)?;
                 Ok(params(json!({ "items": items })))
+            }
+            // A sidecar names a placeholder and where the value is going, and
+            // the host answers under the grant. A `ref` or `context` that
+            // does not read is `GrantDenied`, the same word as a grant that
+            // does not cover it: the grant id is a capability, and a request
+            // under one is not told which part of it was wrong.
+            "resolve" => {
+                let client = self.admit(action, message)?;
+                let grant_id = grant_id_of(message)?;
+                let reference =
+                    Reference::parse(str_of(message, "ref")).ok_or(Code::GrantDenied)?;
+                let ctx: ResolveContext = field_of(message, "context").ok_or(Code::GrantDenied)?;
+                let value = self.host.resolve(&client, grant_id, &reference, &ctx)?;
+                // From here the value lives in a `serde_json::Value`: the
+                // sealed reply is built in memory and leaves through the
+                // connection's buffers, the same ones that carry a fill's
+                // password. The `Zeroizing` wrapper covers the host's copy;
+                // the reply's copy lives exactly as long as a fill's does.
+                Ok(params(json!({ "value": value.as_str() })))
             }
             // The extension asks for groups before saving a new login; a vault
             // has none, and this is the code it takes for "put it at the root".

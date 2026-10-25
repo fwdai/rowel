@@ -4720,19 +4720,33 @@ dependencies = [
  "tempfile",
  "tokio",
  "url",
+ "zeroize",
 ]
 
 [[package]]
 name = "rowel-cli"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
+ "bytes",
  "dirs",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "interprocess",
+ "keyring",
+ "percent-encoding",
  "rand",
+ "reqwest",
  "rowel-broker",
+ "rustls",
+ "security-framework",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]
