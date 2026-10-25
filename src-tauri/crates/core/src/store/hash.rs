@@ -13,7 +13,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::{AttachmentMeta, Record};
+use super::{AttachmentMeta, AuditRecord, Record};
 
 /// `u64` LE length, then the bytes. The prefix is what makes the concatenation
 /// of fields unambiguous.
@@ -139,21 +139,57 @@ pub fn attachment_hash(m: &AttachmentMeta, blob_len: usize) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// What an audit row *is* to sync: every column — the stored `prev_hash` and
+/// `hash` among them — in the fixed encoding, computed from the row's
+/// contents wherever it is needed and never stored or taken from a copy that
+/// arrived. The row's own chain `hash` cannot stand in for it: a row altered
+/// behind an unchanged `hash` (which is how tampering looks, and what
+/// verification exists to catch) would compare equal to the original, be
+/// dropped by a peer's merge as already held, and leave the digests agreeing
+/// while the two devices hold different rows.
+pub fn audit_fingerprint(rec: &AuditRecord) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"rowel-audit-row-v1");
+    field(&mut h, rec.id.as_bytes());
+    field(&mut h, rec.writer_id.as_bytes());
+    h.update(rec.seq.to_le_bytes());
+    h.update(rec.ts_ms.to_le_bytes());
+    h.update(rec.prev_hash);
+    h.update(rec.hash);
+    field(&mut h, rec.actor_kind.as_bytes());
+    for column in [
+        &rec.actor_id,
+        &rec.actor_name,
+        &rec.run_id,
+        &rec.acting_for,
+        &rec.grant_id,
+        &rec.item_id,
+        &rec.target,
+        &rec.mode,
+        &rec.approval,
+        &rec.approver,
+    ] {
+        opt_field(&mut h, column.as_deref());
+    }
+    field(&mut h, rec.event.as_bytes());
+    opt_field(&mut h, rec.detail.as_deref());
+    h.finalize().into()
+}
+
 /// The whole synced state: [`state_digest`] over the entries, extended by the
 /// attachment rows — each as its metadata and blob length — when there are
-/// any, and then by the audit rows — each as its id and its chain `hash` —
-/// when there are any. A vault without attachments or audit rows digests
-/// exactly as it did before either existed, so nothing about it looks changed.
+/// any, and then by the audit rows — each as its [`audit_fingerprint`] — when
+/// there are any. A vault without attachments or audit rows digests exactly
+/// as it did before either existed, so nothing about it looks changed.
 ///
 /// The audit rows have to be in here: a device whose only change since its
 /// last run is a few new rows in its log would otherwise never push, and its
-/// peers would never see what its agents did. The row's own `hash` already
-/// covers every other column (`rowel_broker::audit::hash_of`), so it stands
-/// for the row the way the blob length stands for an attachment.
+/// peers would never see what its agents did. Each row is read whole, so two
+/// vaults digest alike only when they hold the same rows to the byte.
 pub fn vault_digest<'a>(
     recs: &[Record],
     atts: impl IntoIterator<Item = (&'a AttachmentMeta, usize)>,
-    audit: impl IntoIterator<Item = (&'a str, &'a [u8; 32])>,
+    audit: impl IntoIterator<Item = &'a AuditRecord>,
 ) -> [u8; 32] {
     let entries = state_digest(recs);
     let mut order: Vec<(&AttachmentMeta, usize)> = atts.into_iter().collect();
@@ -170,18 +206,15 @@ pub fn vault_digest<'a>(
         h.finalize().into()
     };
 
-    let mut rows: Vec<(&str, &[u8; 32])> = audit.into_iter().collect();
+    let mut rows: Vec<[u8; 32]> = audit.into_iter().map(audit_fingerprint).collect();
     if rows.is_empty() {
         return with_files;
     }
-    // By id, then hash: a row's identity is the pair, and two copies of one
-    // id (an altered row beside the original) must order the same everywhere.
-    rows.sort_unstable_by(|a, b| (a.0.as_bytes(), a.1).cmp(&(b.0.as_bytes(), b.1)));
+    rows.sort_unstable();
     let mut h = Sha256::new();
     h.update(with_files);
-    for (id, hash) in rows {
-        field(&mut h, id.as_bytes());
-        h.update(hash);
+    for row in rows {
+        h.update(row);
     }
     h.finalize().into()
 }

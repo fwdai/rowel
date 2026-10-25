@@ -351,9 +351,9 @@ pub struct Break {
 pub enum Reason {
     /// A row of another writer is in this chain.
     Writer,
-    /// Two rows claim this `seq`: the chain forked, or a row was altered and
-    /// kept beside its original. Sync keeps both on every device, so every
-    /// device names the same `seq`.
+    /// Two rows, each sound on its own, claim this `seq`: the chain forked.
+    /// Sync keeps both sides on every device, so every device names the same
+    /// `seq`.
     Fork,
     /// A sequence number is missing.
     Gap,
@@ -371,6 +371,16 @@ pub enum Reason {
 pub fn verify(rows: &[AuditRecord]) -> Result<(), Break> {
     let mut previous: Option<&AuditRecord> = None;
     for row in rows {
+        // The row's own contents first: an altered copy kept beside its
+        // original (sync keeps both) is named as altered, not as a fork,
+        // whichever of the two the walk meets first.
+        let altered = Break {
+            seq: row.seq,
+            reason: Reason::Hash,
+        };
+        if hash_of(row).map_err(|_| altered)? != row.hash {
+            return Err(altered);
+        }
         match previous {
             Some(prev) => {
                 if row.writer_id != prev.writer_id {
@@ -405,13 +415,6 @@ pub fn verify(rows: &[AuditRecord]) -> Result<(), Break> {
                 });
             }
             None => {}
-        }
-        let altered = Break {
-            seq: row.seq,
-            reason: Reason::Hash,
-        };
-        if hash_of(row).map_err(|_| altered)? != row.hash {
-            return Err(altered);
         }
         previous = Some(row);
     }
@@ -671,6 +674,23 @@ mod tests {
             })
         );
         assert_eq!(verify(&rows[..2]), Ok(()));
+    }
+
+    #[test]
+    fn an_altered_copy_beside_its_original_is_named_altered_in_either_order() {
+        let (_, rows) = chain(2);
+        let altered = AuditRecord {
+            target: Some("https://evil.example".into()),
+            ..rows[1].clone()
+        };
+        let broken = Err(Break {
+            seq: 2,
+            reason: Reason::Hash,
+        });
+        let original_first = [rows[0].clone(), rows[1].clone(), altered.clone()];
+        let altered_first = [rows[0].clone(), altered, rows[1].clone()];
+        assert_eq!(verify(&original_first), broken);
+        assert_eq!(verify(&altered_first), broken);
     }
 
     #[test]

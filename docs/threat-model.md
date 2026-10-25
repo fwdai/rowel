@@ -1016,9 +1016,11 @@ into an owner-only file beside the vault; never the workspace id, which is
 "default" on every install and would collide after a sync or a restore), so
 two devices' rows sit side by side rather than breaking each other's chains.
 Rows travel in the sync pack and merge as a union of rows (a row being its
-`id` and `hash`), never last-writer-wins and never tombstoned, so devices
-converge on the union of their logs and no device removes another's rows
-through sync. A forked chain — two rows at one writer's `seq`, as when an app
+whole contents, never trusted to its stored `hash`), never last-writer-wins
+and never tombstoned, so devices converge on the union of their logs and no
+device removes another's rows through sync. A copy altered behind an
+unchanged `hash` is therefore kept beside the original on every device rather
+than taken for it, and verification names it as altered everywhere. A forked chain — two rows at one writer's `seq`, as when an app
 folder copied to a second machine carries its install id — is kept whole on
 every device rather than each keeping its own side, so the digests agree and
 verification names the fork at the same `seq` everywhere; the pack's

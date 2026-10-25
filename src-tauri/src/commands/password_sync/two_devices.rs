@@ -699,6 +699,46 @@ mod audit_log {
         assert_eq!(audit::verify(&b.chain("a")), fork);
     }
 
+    // A copy of A's row altered behind its unchanged id and hash — how tampering
+    // looks — reaches the account through B. The clean device does not take it
+    // for the row it holds: it keeps both, the digests agree only once both
+    // devices do, and verification on each — and on a fresh restore from the
+    // account — names the altered row.
+    #[test]
+    fn a_row_altered_behind_its_hash_is_kept_beside_the_original_and_named_everywhere() {
+        let account = FakeStore::default();
+        let (a, b) = two_synced_devices(&account);
+        let row = a.record("https://github.com/login");
+        assert!(a.sync(&account).unwrap().pushed);
+        b.store()
+            .audit_insert(&AuditRecord {
+                target: Some("https://evil.example/login".into()),
+                ..row.clone()
+            })
+            .unwrap();
+
+        assert!(b.sync(&account).unwrap().pushed, "B holds a row A does not");
+        let outcome = a.sync(&account).unwrap();
+        assert!(
+            !outcome.pushed,
+            "A took the copy beside its own and matched"
+        );
+        assert_eq!(outcome.merged, 0);
+        assert!(!b.sync(&account).unwrap().pushed);
+        assert_eq!(a.digest(), b.digest());
+
+        let restored = Device::restore("c", "v1", &account, OLD).unwrap();
+        let altered = Err(Break {
+            seq: row.seq,
+            reason: Reason::Hash,
+        });
+        for device in [&a, &b, &restored] {
+            assert_eq!(device.chain("a").len(), 2);
+            assert!(device.chain("a").contains(&row));
+            assert_eq!(audit::verify(&device.chain("a")), altered);
+        }
+    }
+
     // The merge is a union by id and cannot tell a forged row from a real one; that
     // is the verification's job. Here the device holding A's chain appends a row
     // under A's id whose contents were changed after it was hashed — what an

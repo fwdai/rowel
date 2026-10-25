@@ -1,6 +1,7 @@
 //! SQLite + SQLCipher backend for [`VaultStore`]. A single `Mutex<Connection>`
 //! guards a WAL-mode, whole-file-encrypted database. No pool, no async, no ORM.
 
+use std::collections::HashSet;
 use std::fs;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row, Statement};
 use rusqlite_migration::{Migrations, M};
 use zeroize::Zeroizing;
 
-use super::hash::{attachment_hash, derived_rank, record_hash, vault_digest};
+use super::hash::{attachment_hash, audit_fingerprint, derived_rank, record_hash, vault_digest};
 use super::{
     now_ms, Attachment, AttachmentMeta, AuditCut, AuditRecord, EntryMeta, Record, Result,
     StoreError, VaultStore,
@@ -189,6 +190,41 @@ fn migration_list() -> Vec<M<'static>> {
            event       TEXT NOT NULL,
            detail      TEXT,
            PRIMARY KEY (id, hash)
+         );
+         INSERT INTO audit_rows SELECT * FROM audit;
+         DROP TABLE audit;
+         ALTER TABLE audit_rows RENAME TO audit;
+         CREATE INDEX audit_ts ON audit(ts_ms);
+         CREATE INDEX audit_chain ON audit(writer_id, seq);",
+        ),
+        // A row is its whole contents (`hash::audit_fingerprint`), not its
+        // `(id, hash)`: a row altered behind an unchanged chain hash keyed
+        // the same as the original, so a peer's merge dropped it as already
+        // held and the digests agreed over different rows. Content identity
+        // cannot be a stored column (a row edited in place would keep a stale
+        // one), so the table carries no key of its own: the merge computes
+        // fingerprints and inserts what it does not hold.
+        M::up(
+            "CREATE TABLE audit_rows (
+           id          TEXT NOT NULL,
+           writer_id   TEXT NOT NULL,
+           seq         INTEGER NOT NULL,
+           ts_ms       INTEGER NOT NULL,
+           prev_hash   BLOB NOT NULL,
+           hash        BLOB NOT NULL,
+           actor_kind  TEXT NOT NULL,
+           actor_id    TEXT,
+           actor_name  TEXT,
+           run_id      TEXT,
+           acting_for  TEXT,
+           grant_id    TEXT,
+           item_id     TEXT,
+           target      TEXT,
+           mode        TEXT,
+           approval    TEXT,
+           approver    TEXT,
+           event       TEXT NOT NULL,
+           detail      TEXT
          );
          INSERT INTO audit_rows SELECT * FROM audit;
          DROP TABLE audit;
@@ -611,17 +647,12 @@ impl SqliteStore {
             let rows = stmt.query_map([], row_to_attachment_state)?;
             rows.collect::<rusqlite::Result<_>>()?
         };
-        // The id and the chain hash are all the digest reads of a log row, so
-        // that is all it asks the table for.
-        let audit: Vec<(String, [u8; 32])> = {
-            let mut stmt = conn.prepare("SELECT id, hash FROM audit")?;
-            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
+        // Every log row whole: the digest reads each one's contents.
+        let audit = all_audit_rows(&conn)?;
         Ok(vault_digest(
             &records,
             atts.iter().map(|(meta, len)| (meta, *len)),
-            audit.iter().map(|(id, hash)| (id.as_str(), hash)),
+            &audit,
         ))
     }
 
@@ -826,11 +857,7 @@ impl SqliteStore {
     /// pack is read out as, and what two synced vaults must agree on.
     pub fn audit_all(&self) -> Result<Vec<AuditRecord>> {
         let conn = self.lock()?;
-        let sql = format!("SELECT {AUDIT_COLS} FROM audit ORDER BY writer_id, seq, id, hash");
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map([], row_to_audit)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
+        Ok(all_audit_rows(&conn)?)
     }
 
     /// Reclaim every writer's rows stamped before `before_ts_ms`, in one
@@ -891,7 +918,7 @@ impl SqliteStore {
     /// existing vault. Keep in step with `migration_list`.
     #[cfg(test)]
     pub(crate) fn drop_favicons_for_test(&self) -> Result<()> {
-        let previous = schema_version() - 7;
+        let previous = schema_version() - 8;
         self.lock()?.execute_batch(&format!(
             "DROP TABLE audit;
              DROP TABLE emblems;
@@ -1405,24 +1432,36 @@ fn merge_attachment_rows(tx: &Connection, atts: &[Attachment]) -> rusqlite::Resu
 
 // Take `audit` into the log as a union: a row this vault already holds is left
 // exactly as it is. The log is insert-only — no row is ever updated or
-// tombstoned, here or anywhere — so a union is the whole of the merge, and
-// `OR IGNORE` on the row's `(id, hash)` is what makes it one: a known pair is
-// the same row seen twice. Anything else is kept beside what this device
-// holds, never instead of it — a second row at a writer's `seq` (a forked
-// chain) or under a known id (an altered copy) — so every device ends up with
-// the same rows, the digest (which reads exactly `(id, hash)`) agrees, and
-// verification names the fork or the alteration the same way everywhere.
+// tombstoned, here or anywhere — so a union is the whole of the merge. A row
+// is its whole contents ([`audit_fingerprint`], computed here from both sides'
+// columns, never trusted from either): the same contents seen twice land once,
+// and anything else is kept beside what this device holds, never instead of
+// it — a second row at a writer's `seq` (a forked chain), or a copy of a known
+// row altered behind its unchanged `hash`. So every device ends up holding the
+// same rows to the byte, the digest (which reads them whole) agrees only then,
+// and verification names the fork or the alteration the same way everywhere.
 // Returns nothing: these rows are not what `SqliteStore::merge` counts.
 fn merge_audit_rows(tx: &Connection, audit: &[AuditRecord]) -> rusqlite::Result<()> {
+    let mut held: HashSet<[u8; 32]> = all_audit_rows(tx)?.iter().map(audit_fingerprint).collect();
     let mut write = tx.prepare(&format!(
-        "INSERT OR IGNORE INTO audit ({AUDIT_COLS})
+        "INSERT INTO audit ({AUDIT_COLS})
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19)"
     ))?;
     for rec in audit {
-        write.execute(audit_params(rec))?;
+        if held.insert(audit_fingerprint(rec)) {
+            write.execute(audit_params(rec))?;
+        }
     }
     Ok(())
+}
+
+// Every row of every writer, chain by chain in `seq` order.
+fn all_audit_rows(conn: &Connection) -> rusqlite::Result<Vec<AuditRecord>> {
+    let sql = format!("SELECT {AUDIT_COLS} FROM audit ORDER BY writer_id, seq, id, hash");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], row_to_audit)?;
+    rows.collect()
 }
 
 fn verbatim_attachment_upsert() -> String {

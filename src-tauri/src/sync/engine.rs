@@ -306,7 +306,7 @@ pub fn sync<R: Remote, L: LocalVault>(
             let theirs = vault_digest(
                 &snapshot.records,
                 snapshot.attachments.iter().map(|a| (&a.meta, a.blob.len())),
-                snapshot.audit.iter().map(|r| (r.id.as_str(), &r.hash)),
+                &snapshot.audit,
             );
             if local.digest()? == theirs
                 && !identity::name_wins(

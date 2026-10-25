@@ -993,18 +993,19 @@ fn a_second_audit_row_with_a_writers_seq_is_refused() {
     store.audit_insert(&audit_rec("dev-b", 1, 100)).unwrap();
 }
 
-// The log merges as a union of rows, a row being its `(id, hash)`: a row seen
-// twice lands once, and anything else — a second row at a writer's `seq` (a
-// forked chain), another copy of a known id — lands beside what is here and
-// never replaces it, so both devices of a fork end up holding the same rows.
-// None of it counts as a change to the entry list.
+// The log merges as a union of rows, a row being its whole contents: the same
+// row seen twice lands once, and anything else — a second row at a writer's
+// `seq` (a forked chain), a copy of a known row altered behind its unchanged
+// id and hash — lands beside what is here and never replaces it, so every
+// device ends up holding the same rows to the byte. None of it counts as a
+// change to the entry list.
 #[test]
 fn merge_takes_audit_rows_as_a_union_and_never_overwrites_one() {
     let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
     let first = audit_rec("dev-a", 1, 100);
     store.audit_insert(&first).unwrap();
 
-    let seen_twice = AuditRecord {
+    let behind_its_hash = AuditRecord {
         target: Some("https://altered.example".into()),
         ..first.clone()
     };
@@ -1013,48 +1014,69 @@ fn merge_takes_audit_rows_as_a_union_and_never_overwrites_one() {
         hash: [7u8; 32],
         ..first.clone()
     };
-    let altered_copy = AuditRecord {
-        hash: [8u8; 32],
-        ..first.clone()
-    };
     let other = audit_rec("dev-b", 1, 200);
+    let incoming = [
+        first.clone(),
+        behind_its_hash.clone(),
+        fork.clone(),
+        other.clone(),
+        other.clone(),
+    ];
     assert_eq!(
-        store
-            .merge(
-                &[],
-                &[],
-                &[
-                    seen_twice,
-                    fork.clone(),
-                    altered_copy.clone(),
-                    other.clone()
-                ]
-            )
-            .unwrap(),
+        store.merge(&[], &[], &incoming).unwrap(),
         0,
         "log rows are not what the merge counts"
     );
 
-    assert_eq!(
-        store.audit_all().unwrap(),
-        vec![
-            first.clone(),
-            altered_copy.clone(),
-            fork.clone(),
-            other.clone()
-        ]
-    );
-    // Merged again, in any order, nothing changes: the set is settled.
+    let held = store.audit_all().unwrap();
+    assert_eq!(held.len(), 4, "each distinct row once");
+    for row in [&first, &behind_its_hash, &fork, &other] {
+        assert!(held.contains(row), "{row:?}");
+    }
+    // Merged again, in another order, nothing changes: the set is settled.
     let digest = store.state_digest().unwrap();
-    store
-        .merge(&[], &[], &[other, fork, altered_copy, first])
-        .unwrap();
+    let mut again = incoming.to_vec();
+    again.reverse();
+    store.merge(&[], &[], &again).unwrap();
     assert_eq!(store.audit_all().unwrap().len(), 4);
     assert_eq!(store.state_digest().unwrap(), digest);
     // The writer carries on from one side of the fork, the same one anywhere.
     assert_eq!(
         store.audit_last("dev-a").unwrap().map(|(seq, _)| seq),
         Some(1)
+    );
+}
+
+// Two vaults holding a row under the same id and chain hash but with different
+// contents — one copy altered behind its hash — are not in the same state: the
+// digest reads the row whole, so they push and merge until both hold both.
+#[test]
+fn the_digest_tells_a_row_altered_behind_its_hash_from_the_original() {
+    let clean = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    let tampered = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    let row = audit_rec("dev-a", 1, 100);
+    clean.audit_insert(&row).unwrap();
+    tampered
+        .audit_insert(&AuditRecord {
+            target: Some("https://altered.example".into()),
+            ..row.clone()
+        })
+        .unwrap();
+    assert_ne!(
+        clean.state_digest().unwrap(),
+        tampered.state_digest().unwrap()
+    );
+
+    clean
+        .merge(&[], &[], &tampered.audit_all().unwrap())
+        .unwrap();
+    tampered
+        .merge(&[], &[], &clean.audit_all().unwrap())
+        .unwrap();
+    assert_eq!(clean.audit_all().unwrap().len(), 2);
+    assert_eq!(
+        clean.state_digest().unwrap(),
+        tampered.state_digest().unwrap()
     );
 }
 
