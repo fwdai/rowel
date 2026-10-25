@@ -21,7 +21,7 @@ use crate::store::{migrate, SqliteStore, VaultStore};
 use rowel_broker::grant::{
     Approval, CreatedBy, Grant, GrantRequest, ItemSelector, Mode, State, Target, Terms, VisibleItem,
 };
-use rowel_broker::policy::defaults;
+use rowel_broker::policy::{defaults, Limits};
 use rowel_broker::testing::{nonce, seed, vault, Extension, Mock};
 use rowel_broker::Signal;
 use rowel_core::app::DESKTOP_APP_GROUP;
@@ -1061,6 +1061,37 @@ fn fill_signal(signal: &Signal) -> Option<(&str, &str, &str, bool, i64)> {
         } => Some((grant_id, origin, &item.id, *auto_submit, *expires_at_ms)),
         Signal::GrantEnded { .. } => None,
     }
+}
+
+// Asking is counted only when a dialog goes up (`request_grant`, under the
+// slot). A request the slot could not take is told "ask again shortly" and
+// is decided again at every retry; none of those reaches a person, so the
+// decisions alone must not spend the client's asks — or a dialog another
+// client holds for fifteen seconds would rate-limit the one waiting on it.
+#[test]
+fn a_decision_that_waits_on_the_slot_is_not_an_ask_on_the_clients_record() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    let_in(&store, &[extension(), agent()]);
+    let mut held = ready();
+    let limits = Limits::default();
+    for attempt in 0..limits.asks_per_minute + 5 {
+        let now = 1_000 + i64::from(attempt) * 1_500;
+        assert!(
+            matches!(
+                decide(
+                    locked(&store, &mut held, now),
+                    epoch(),
+                    "default",
+                    &agent(),
+                    agent_request("https://github.com"),
+                ),
+                Ok(Prepared::Ask(_))
+            ),
+            "attempt {attempt} is decided, not rate-limited"
+        );
+    }
+    assert!(held.rate("agent").check(&limits, 30_000).is_ok());
 }
 
 // An agent names a site; the candidates are the lockbox's logins for it,

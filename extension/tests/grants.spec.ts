@@ -230,7 +230,7 @@ test('clearAll drops every grant and every handoff', async () => {
     await grants.rememberGrant('https://example.com', 'g1');
     await grants.setFilled({ id: 7 }, [ { password: 'p', totp: '', url: 'https://example.com/login' } ]);
 
-    await grants.clearAll();
+    await grants.onLocked();
     expect(await grants.grantFor('https://example.com')).toBeUndefined();
     expect(await grants.takeFilled({ id: 7 })).toBeUndefined();
     expect(area.store).toEqual({});
@@ -454,16 +454,51 @@ test('clearAll signs the browser out of every origin a grant was held for', asyn
         { name: 'unrelated', domain: 'other.example', path: '/', secure: true, storeId: '0' }
     ];
 
-    await grants.clearAll();
+    await grants.onLocked();
 
     expect(removedCookies.map(c => c.name).sort()).toEqual([ 'session', 'sid' ]);
     expect(notifications).toEqual([ 'agentModeGrantEndedNotification' ]);
     expect(area.store).toEqual({});
 });
 
+// A lockbox switch sends database-locked and database-unlocked back to back,
+// and a fill-grant may follow at once: the lock's cleanup runs to its end
+// first, so the new grant and the agent mode it turns on survive it.
+test('a lock and a fill-grant arriving together are taken in order', async () => {
+    globalThis.page.settings = { agentMode: false };
+    await grants.rememberGrant('https://github.com', 'g-old');
+    cookieJar = [ { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: '0' } ];
+    signals = [ fillGrant('g-new', 'https://github.com', now + 5000) ];
+
+    const locked = grants.onLocked();
+    const signalled = grants.onSignal();
+    await Promise.all([ locked, signalled ]);
+
+    expect(removedCookies.map(c => c.name)).toEqual([ 'session' ]);
+    expect(await grants.grantFor('https://github.com')).toBe('g-new');
+    expect(area.store.rowelAgentGrants).toEqual({ 'https://github.com': 'g-new' });
+    expect(area.store.rowelAgentModeByGrant).toBe(true);
+    expect(globalThis.page.settings.agentMode).toBe(true);
+});
+
+// A failure in one entry is logged and does not hold the queue.
+test('a failing entry does not block the next', async () => {
+    globalThis.logError = text => notifications.push(`logged: ${text}`);
+    globalThis.keepass.testAssociation = async () => {
+        throw new Error('port gone');
+    };
+    await grants.onSignal();
+    expect(notifications).toEqual([ 'logged: grants: Error: port gone' ]);
+
+    globalThis.keepass.testAssociation = async () => true;
+    signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
+    await grants.onSignal();
+    expect(await grants.grantFor('https://github.com')).toBe('g1');
+});
+
 test('clearAll with nothing held signs out of nothing', async () => {
     cookieJar = [ { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: '0' } ];
-    await grants.clearAll();
+    await grants.onLocked();
     expect(removedCookies).toEqual([]);
     expect(notifications).toEqual([]);
 });
@@ -477,7 +512,7 @@ test('clearAll clears the agent grants and turns off the agent mode a grant turn
     expect(area.store.rowelAgentGrants).toEqual({ 'https://github.com': 'g1' });
     expect(area.store.rowelAgentModeByGrant).toBe(true);
 
-    await grants.clearAll();
+    await grants.onLocked();
     expect(area.store).toEqual({});
     expect(savedAgentMode).toEqual([ true, false ]);
 });
@@ -486,7 +521,7 @@ test('clearAll leaves agent mode the person turned on alone', async () => {
     signals = [ fillGrant('g1', 'https://github.com', now + 5000) ];
     await grants.onSignal();
 
-    await grants.clearAll();
+    await grants.onLocked();
     expect(area.store).toEqual({});
     expect(savedAgentMode).toEqual([]);
     expect(globalThis.page.settings.agentMode).toBe(true);

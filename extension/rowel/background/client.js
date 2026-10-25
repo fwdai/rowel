@@ -438,6 +438,10 @@ function onDisconnected() {
 }
 
 keepassClient.onNativeMessage = function(response) {
+    if (response.action === kpActions.DATABASE_LOCKED) { // Rowel: every grant died with the lock; queued, so the unlock's signals follow it (background/grants.js)
+        grants.onLocked();
+    }
+
     // Handle database lock/unlock status
     if (response.action === kpActions.DATABASE_LOCKED || response.action === kpActions.DATABASE_UNLOCKED) {
         keepass.updateDatabase();

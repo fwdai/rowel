@@ -218,8 +218,13 @@ pub fn now_ms() -> i64 {
 
 // --- the switches, as the session holds them ----------------------------------------
 
-/// The session's first look at the switches, from the files, before a
-/// request is decided: the open lockbox's access from the registry, under
+/// The session's first look at the switches, from the files, before
+/// anything is decided on them. Every `Host` method that reaches the agents'
+/// state begins with this call — a request, a check of a grant, a listing
+/// of what an agent may see, a signal drained — so no path reads the
+/// switches unset and refuses what the files allow; it costs one lock and
+/// returns at once once the session holds them. The open lockbox's access
+/// comes from the registry, under
 /// `workspace_lock` — the lockbox writer's outer lock, so the read and what
 /// the session then keeps cannot straddle a write — and the app's switch
 /// from the settings, under the agents lock, where the settings writer

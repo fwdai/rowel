@@ -989,7 +989,6 @@ keepass.updateDatabase = async function() {
     keepass.associated.value = false;
     keepass.associated.hash = null;
     page.clearAllLogins();
-    grants.clearAll(); // Rowel: a lock ends every grant; nothing is served from a locked vault
 
     await keepass.testAssociation(null, [ true ]);
 

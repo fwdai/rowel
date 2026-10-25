@@ -284,16 +284,31 @@ grants.reportExposure = async function(tab, args = []) {
 // Signals from the host
 //--------------------------------------------------------------------------
 
+// Every entry from outside — a signal, a lock, an exposure — runs to its end
+// before the next begins. They arrive from the native port and from content
+// scripts with nothing ordering them, and each is a read-modify-write of the
+// same session storage: a lock's cleanup overlapping a fill-grant from the
+// unlock right after it (a lockbox switch sends the two back to back) would
+// erase the new grant or turn off the agent mode it just turned on. One
+// queue, nothing in it awaits anything outside grants.js that could call back
+// in, and a failure is logged and lets the next entry run.
+let queue = Promise.resolve();
+const exclusive = function(work) {
+    const run = queue.then(work);
+    queue = run.catch(err => logError(`grants: ${err}`));
+    return queue;
+};
+
 // The clear `rowel-signal` arrived (client.js), or the port just came back
 // (keepass.reconnect): fetch what the host queued for this client and act on
 // each. Nothing to fetch from a host we are not connected to; the signal
 // waits in its queue for the reconnect.
-grants.onSignal = async function() {
-    if (!keepass.isConnected) {
-        return;
-    }
+grants.onSignal = function() {
+    return exclusive(async () => {
+        if (!keepass.isConnected) {
+            return;
+        }
 
-    try {
         const taResponse = await keepass.testAssociation(null, [ false ]);
         if (!taResponse) {
             return;
@@ -308,9 +323,14 @@ grants.onSignal = async function() {
                 await grants.onGrantEnded(signal);
             }
         }
-    } catch (err) {
-        logError(`onSignal failed: ${err}`);
-    }
+    });
+};
+
+// database-locked arrived (client.js): every grant died with the lock. Queued
+// like a signal, so the sign-out and the reset finish before anything the
+// unlock brings is acted on.
+grants.onLocked = function() {
+    return exclusive(() => grants.clearAll());
 };
 
 // fill-grant { grantId, origin, item, autoSubmit, expiresAtMs }: an agent's
@@ -413,15 +433,17 @@ grants.clearCookies = async function(origin) {
 
 // The content script found a filled secret showing in the page. Tell the
 // person, end the grant, and never reuse it, whatever the host answered.
-grants.onExposure = async function(tab, args = []) {
-    const [ origin ] = args;
-    showNotification(tr('agentModeExposedNotification'));
+grants.onExposure = function(tab, args = []) {
+    return exclusive(async () => {
+        const [ origin ] = args;
+        showNotification(tr('agentModeExposedNotification'));
 
-    const grantId = await grants.grantFor(origin);
-    if (grantId) {
-        await grants.reportExposure(tab, [ grantId ]);
-        await grants.forgetGrant(origin);
-    }
+        const grantId = await grants.grantFor(origin);
+        if (grantId) {
+            await grants.reportExposure(tab, [ grantId ]);
+            await grants.forgetGrant(origin);
+        }
+    });
 };
 
 // Drops handoffs older than FILLED_TTL_MS. Returns true if any was dropped.

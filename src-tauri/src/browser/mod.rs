@@ -785,12 +785,17 @@ impl Host for AppHost {
         let asked = CONSENT.try_ask_with(&ask_id, AskKind::Grant { step_up }, || {
             // Under the slot, before the dialog goes up: a switch that moved
             // since the decision means no dialog, and one that moves from
-            // here on finds the ask in the slot and refuses it there.
-            state
-                .agents
-                .lock()
-                .unwrap()
-                .access_since(asking.access_epoch)?;
+            // here on finds the ask in the slot and refuses it there. The
+            // ask goes on the client's record here and nowhere earlier,
+            // because the limit is on asks that reach a person: a slot
+            // another dialog holds never gets this far, so asking again
+            // once it closes — which is what "ask again shortly" invites —
+            // is not counted against the client.
+            {
+                let mut held = state.agents.lock().unwrap();
+                held.access_since(asking.access_epoch)?;
+                held.rate(&client.key).record_ask(agents::now_ms());
+            }
             events::agent_grant(
                 app,
                 events::AgentGrantAsk {
@@ -853,6 +858,7 @@ impl Host for AppHost {
     // next use would find expired.
     fn grant_status(&self, client: &Client, id: &str) -> std::result::Result<GrantReply, Code> {
         let app = &self.0;
+        agents::initialise(app);
         let writer = storage::install_id(app);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
@@ -881,6 +887,7 @@ impl Host for AppHost {
     }
 
     fn end_grant(&self, client: &Client, id: &str) -> std::result::Result<(), Code> {
+        agents::initialise(&self.0);
         match agents::end_grant_by(&self.0, id, Some(&client.key), r#"{"reason":"agent"}"#) {
             Ok(true) => Ok(()),
             Ok(false) => Err(Code::GrantDenied),
@@ -894,6 +901,7 @@ impl Host for AppHost {
     // the wrong name.
     fn visible_items(&self, client: &Client, lockbox: Option<&str>) -> Vec<VisibleRef> {
         let app = &self.0;
+        agents::initialise(app);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
         let open = workspace::active_id(app);
@@ -910,6 +918,7 @@ impl Host for AppHost {
     }
 
     fn take_signals(&self, client: &Client) -> Vec<Signal> {
+        agents::initialise(&self.0);
         let state = self.0.state::<AppState>();
         let mut held = state.agents.lock().unwrap();
         held.signals.remove(&client.key).unwrap_or_default()
@@ -923,6 +932,7 @@ impl Host for AppHost {
     // issued.
     fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
         let app = &self.0;
+        agents::initialise(app);
         let writer = storage::install_id(app);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
@@ -951,6 +961,7 @@ impl Host for AppHost {
     // claim on the grant.
     fn report_exposure(&self, _client: &Client, grant_id: &str) {
         let app = &self.0;
+        agents::initialise(app);
         let writer = storage::install_id(app);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
@@ -1366,17 +1377,16 @@ fn decide(
             held.grants.push(grant);
             Ok(Prepared::Answered(reply))
         }
-        Approval::Ask | Approval::StepUp => {
-            held.rate(client_key).record_ask(now);
-            Ok(Prepared::Ask(Box::new(Asking {
-                epoch,
-                access_epoch,
-                grant,
-                candidates,
-                client_name,
-                origin,
-            })))
-        }
+        // Not yet on record as an ask: that is written when the dialog goes
+        // up (`request_grant`), which a busy slot never lets it do.
+        Approval::Ask | Approval::StepUp => Ok(Prepared::Ask(Box::new(Asking {
+            epoch,
+            access_epoch,
+            grant,
+            candidates,
+            client_name,
+            origin,
+        }))),
     }
 }
 
