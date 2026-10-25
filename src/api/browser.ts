@@ -142,32 +142,48 @@ export interface PasskeyAsk {
   requestedBy: { kind: ClientKind; name: string }
 }
 
-/** One of the page's logins an agent may be given: nothing secret. */
+/** One of the items an agent may be given: nothing secret. */
 export interface GrantCandidate {
   id: string
   title: string
   username?: string | null
 }
 
+/** How a secret is put to use without being handed over. */
+export type GrantMode = 'fill' | 'passkey' | 'header' | 'token' | 'env'
+
 /**
- * A client asking to use a login on a page: the extension in agent mode, or
- * an agent that wants the extension to log it in. `clientName` is what the
- * user called it (or its key's two ends), `clientKind` what it is,
- * `candidates` the page's logins the policy admits — the dialog picks one.
- * An agent may say why (`reason`: its own words, shown as text and never
- * acted on); `endsSession` is the sign-out notice: when a fill grant ends, the
- * site's cookies go with it in the browser that filled, whichever client
- * asked. `stepUp` asks are
- * the ones a yes alone does not settle: `verify` says whether Rust will run
- * the biometric prompt or needs the master password sent with the answer.
+ * Where a grant would let the item be used, as the dialog names it: the site
+ * for a fill (its origin, never the page's path), the request pattern the
+ * agent wrote for a header (`methods` empty is any), the full command line
+ * for `env` — shown verbatim, since it is the one process the value goes to.
+ */
+export type AskTarget =
+  | { kind: 'origin'; origin: string }
+  | { kind: 'http'; host: string; path: string; methods: string[] }
+  | { kind: 'command'; line: string }
+
+/**
+ * A client asking to use an item somewhere: the extension in agent mode, an
+ * agent that wants the extension to log it in, or an agent or sidecar that
+ * wants a secret in a request header or a command's environment.
+ * `clientName` is what the user called it (or its key's two ends),
+ * `clientKind` what it is, `targets` where (the request's own), `mode` how,
+ * `candidates` the items the policy admits — the dialog picks one. An agent
+ * may say why (`reason`: its own words, shown as text and never acted on);
+ * `endsSession` is the sign-out notice: when a fill grant ends, the site's
+ * cookies go with it in the browser that filled, whichever client asked.
+ * `stepUp` asks are the ones a yes alone does not settle: `verify` says
+ * whether Rust will run the biometric prompt or needs the master password
+ * sent with the answer.
  */
 export interface AgentGrantAsk {
   /** Names this ask; the answer carries it, and Rust honours it for this ask alone. */
   id: string
   clientName: string
   clientKind: ClientKind
-  origin: string
-  mode: 'fill' | 'passkey' | 'header' | 'token' | 'env'
+  targets: AskTarget[]
+  mode: GrantMode
   reason?: string
   endsSession: boolean
   stepUp: boolean
@@ -221,7 +237,12 @@ export const agentGrantRespond = (
   password?: string
 ): Promise<void> => call('agent_grant_respond', { id, answer, password })
 
-/** A standing rule the user wrote from the grant dialog, as Settings lists it. */
+/**
+ * A standing rule the user wrote from the grant dialog, as Settings lists it.
+ * `target` is where it applies as text — an origin, `METHOD host/path`, a
+ * command line — and `mode` what for; `origin` stays beside them for the
+ * fill rows that predate secret grants.
+ */
 export interface AgentRule {
   id: string
   clientKey: string
@@ -229,6 +250,8 @@ export interface AgentRule {
   itemId: string | null
   itemTitle: string | null
   origin: string | null
+  target: string | null
+  mode: GrantMode
   /** Unix ms; null is until removed. */
   expiresAtMs: number | null
   createdAtMs: number
@@ -242,6 +265,8 @@ export interface AgentGrant {
   itemId: string | null
   itemTitle: string | null
   origin: string | null
+  target: string | null
+  mode: GrantMode
   state: 'pending' | 'active' | 'spent' | 'expired' | 'revoked' | 'denied'
   expiresAtMs: number
   uses: number

@@ -45,9 +45,9 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-use rowel_broker::actions::ClientKind;
+use rowel_broker::actions::{clamp, ClientKind};
 use rowel_broker::audit::{ActorKind, Draft, Event, Writer};
-use rowel_broker::grant::{Grant, ItemSelector, Mode, State, Target};
+use rowel_broker::grant::{Grant, ItemSelector, Mode, ResolveTarget, State, Target};
 use rowel_broker::policy::{RateState, Rule};
 use rowel_broker::Signal;
 
@@ -346,12 +346,15 @@ pub(crate) fn switch_changed(
 }
 
 /// A grant is over, whichever way (`event`: expired, revoked, exposed), and
-/// its state already says so: the row goes on the lockbox's log and every
-/// extension of the lockbox is told to forget it and sign out of its site
-/// (`Signal::GrantEnded`). The one place both happen, so no way of ending a
-/// grant can leave a browser signed in under it. With no lockbox open
-/// (`store` is `None`) there is no log to write to and no extension list to
-/// signal — and no session for a signal to outlive.
+/// its state already says so: the row goes on the lockbox's log and, for a
+/// grant with a site, every extension of the lockbox is told to forget it
+/// and sign out of that site (`Signal::GrantEnded`). The one place both
+/// happen, so no way of ending a grant can leave a browser signed in under
+/// it. A header or env grant signed nothing in, so its end wakes no
+/// extension: a signal with no origins would rouse every service worker for
+/// a sign-out of nowhere. With no lockbox open (`store` is `None`) there is
+/// no log to write to and no extension list to signal — and no session for
+/// a signal to outlive.
 pub(crate) fn ended(
     store: Option<&SqliteStore>,
     held: &mut AgentState,
@@ -375,16 +378,15 @@ pub(crate) fn ended(
         ),
         now,
     );
-    held.signal_extensions(
-        &clients,
-        &Signal::GrantEnded {
-            grant_id: grant.id.clone(),
-            origins: origin_of(&grant.targets)
-                .map(site_origin)
-                .into_iter()
-                .collect(),
-        },
-    );
+    if let Some(origin) = origin_of(&grant.targets) {
+        held.signal_extensions(
+            &clients,
+            &Signal::GrantEnded {
+                grant_id: grant.id.clone(),
+                origins: vec![site_origin(origin)],
+            },
+        );
+    }
 }
 
 // --- expiry -----------------------------------------------------------------------
@@ -576,7 +578,7 @@ pub fn revoke_rule(app: &AppHandle, id: &str) -> Result<()> {
         let client_key = rule_client(&rule).unwrap_or_default();
         let mut draft = draft(Event::RuleRemoved, &client_key, &clients);
         draft.item_id = single_id(&rule.items);
-        draft.target = origin_of(&rule.targets).map(audit_target);
+        draft.target = rule.targets.first().map(audit_target_of);
         draft.mode = rule.modes.first().copied();
         draft.approval = Some(rule.approval);
         draft.detail = Some(format!(r#"{{"ruleId":"{}"}}"#, rule.id));
@@ -588,7 +590,10 @@ pub fn revoke_rule(app: &AppHandle, id: &str) -> Result<()> {
 
 // --- what Settings lists --------------------------------------------------------
 
-/// A standing rule as Settings shows it: who may use what, where, until when.
+/// A standing rule as Settings shows it: who may use what, where, how, until
+/// when. `origin` is kept beside `target` for the fill rows that predate
+/// secret grants; `target` is what the list shows, whichever kind of place
+/// the rule names.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleRow {
@@ -598,12 +603,16 @@ pub struct RuleRow {
     pub item_id: Option<String>,
     pub item_title: Option<String>,
     pub origin: Option<String>,
+    pub target: Option<String>,
+    /// The rule's first mode: what the item is used for.
+    pub mode: Mode,
     /// `None` is until removed.
     pub expires_at_ms: Option<i64>,
     pub created_at_ms: i64,
 }
 
-/// A grant as Settings shows it.
+/// A grant as Settings shows it; `origin`, `target` and `mode` as on a
+/// [`RuleRow`].
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GrantRow {
@@ -613,6 +622,8 @@ pub struct GrantRow {
     pub item_id: Option<String>,
     pub item_title: Option<String>,
     pub origin: Option<String>,
+    pub target: Option<String>,
+    pub mode: Mode,
     pub state: State,
     pub expires_at_ms: i64,
     pub uses: u32,
@@ -638,6 +649,8 @@ pub fn list_rules(app: &AppHandle) -> Result<Vec<RuleRow>> {
                 item_title: item_id.as_ref().and_then(|id| titles.get(id).cloned()),
                 item_id,
                 origin: origin_of(&rule.targets).map(str::to_string),
+                target: rule.targets.first().map(target_text),
+                mode: first_mode(&rule.modes),
                 expires_at_ms: rule.expires_at_ms,
                 created_at_ms: rule.created_at_ms,
                 id: rule.id,
@@ -673,6 +686,8 @@ pub fn list_grants(app: &AppHandle) -> Vec<GrantRow> {
                 item_title: item_id.as_ref().and_then(|id| titles.get(id).cloned()),
                 item_id,
                 origin: origin_of(&grant.targets).map(str::to_string),
+                target: grant.targets.first().map(target_text),
+                mode: first_mode(&grant.modes),
                 state: grant.state,
                 expires_at_ms: grant.expires_at_ms,
                 uses: grant.uses,
@@ -708,13 +723,79 @@ pub fn single_id(selector: &ItemSelector) -> Option<String> {
     }
 }
 
-/// The origin among `targets`, when there is one.
+/// The origin among `targets`, when there is one: the site a fill grant is
+/// for, which is what the extensions are told to sign out of.
 pub fn origin_of(targets: &[Target]) -> Option<&str> {
     targets.iter().find_map(|t| match t {
         Target::Origin(origin) => Some(origin.as_str()),
         _ => None,
     })
 }
+
+/// A grant's or a rule's first mode, which is what a row says it is for. A
+/// grant has at least one; one stored without any reads as a fill, the mode
+/// there was before there were others.
+fn first_mode(modes: &[Mode]) -> Mode {
+    modes.first().copied().unwrap_or(Mode::Fill)
+}
+
+/// A target as Settings shows it: an origin as written; an HTTP pattern as
+/// `host/path`, led by the methods it names (`GET, POST api.stripe.com/v1/*`)
+/// when it names any; a command line as written.
+pub fn target_text(target: &Target) -> String {
+    match target {
+        Target::Origin(origin) => origin.clone(),
+        Target::Http {
+            host,
+            path,
+            methods,
+        } if methods.is_empty() => host_path(host, path),
+        Target::Http {
+            host,
+            path,
+            methods,
+        } => format!("{} {}", methods.join(", "), host_path(host, path)),
+        Target::Command(line) => line.clone(),
+    }
+}
+
+/// A target as the log may hold it: an origin cut to scheme, host and path
+/// ([`audit_target`]); an HTTP pattern as `host/path`, the methods being the
+/// row's own business; a command line cut to the length a reason is.
+pub fn audit_target_of(target: &Target) -> String {
+    match target {
+        Target::Origin(origin) => audit_target(origin),
+        Target::Http { host, path, .. } => host_path(host, path),
+        Target::Command(line) => clamped_line(line),
+    }
+}
+
+/// Where a sidecar used a value, as the log holds it: `host/path` of the
+/// one request, never its query — a sidecar's path could carry one — or the
+/// one command line, clamped.
+pub fn resolve_target_text(target: &ResolveTarget) -> String {
+    match target {
+        ResolveTarget::Http { host, path, .. } => host_path(host, &audit_target(path)),
+        ResolveTarget::Command(line) => clamped_line(line),
+    }
+}
+
+/// `api.stripe.com/v1/balance`: no scheme, since a header target is always
+/// reached over TLS, and one slash between host and path however the path
+/// was written.
+fn host_path(host: &str, path: &str) -> String {
+    format!("{host}/{}", path.trim_start_matches('/'))
+}
+
+/// A command line is the agent's own words, bounded as its reason is
+/// (`actions::MAX_REASON_CHARS`, 300) before it goes on a row.
+fn clamped_line(line: &str) -> String {
+    let mut line = line.to_string();
+    clamp(&mut line, MAX_LINE_CHARS);
+    line
+}
+
+const MAX_LINE_CHARS: usize = 300;
 
 // --- audit ----------------------------------------------------------------------
 
@@ -740,16 +821,17 @@ pub fn actor_kind(kind: ClientKind) -> ActorKind {
     }
 }
 
-/// `draft`, about `grant`: its id, the item when it names one, the target
-/// reduced to what the log may hold, the mode, the gate and who passed it,
-/// and the agent's own words for what it is doing (`run_id`, `acting_for`).
+/// `draft`, about `grant`: its id, the item when it names one, its first
+/// target reduced to what the log may hold ([`audit_target_of`]), the mode,
+/// the gate and who passed it, and the agent's own words for what it is
+/// doing (`run_id`, `acting_for`).
 pub fn about(mut draft: Draft, grant: &Grant, detail: Option<&str>) -> Draft {
     draft.grant_id = Some(grant.id.clone());
     draft.run_id = grant.run_id.clone();
     draft.acting_for = grant.acting_for.clone();
     draft.item_id = single_id(&grant.items);
-    draft.target = origin_of(&grant.targets).map(audit_target);
-    draft.mode = grant.modes.first().copied().or(Some(Mode::Fill));
+    draft.target = grant.targets.first().map(audit_target_of);
+    draft.mode = Some(first_mode(&grant.modes));
     draft.approval = Some(grant.approval);
     draft.approver = grant.approver.clone();
     draft.detail = detail.map(str::to_string);
@@ -1052,9 +1134,86 @@ mod tests {
         ended(None, &mut none, "dev", &grant, Event::Ended, "{}", 5);
         assert!(none.signals.is_empty());
 
+        // A header grant signed nothing in: its end is on the log and wakes
+        // no extension for a sign-out of nowhere.
+        let header = Grant {
+            targets: vec![Target::Http {
+                host: "api.stripe.com".into(),
+                path: "/v1/*".into(),
+                methods: vec![],
+            }],
+            modes: vec![Mode::Header],
+            ..grant.clone()
+        };
+        let mut quiet = AgentState::default();
+        ended(
+            Some(&store),
+            &mut quiet,
+            "dev",
+            &header,
+            Event::Ended,
+            r#"{"reason":"expired"}"#,
+            6,
+        );
+        assert_eq!(store.audit_rows("dev").unwrap().len(), 2);
+        assert_eq!(
+            store.audit_rows("dev").unwrap()[1].target.as_deref(),
+            Some("api.stripe.com/v1/*")
+        );
+        assert!(quiet.signals.is_empty(), "nobody is told");
+
         // A seal forgets what was queued with the rest.
         held.reset();
         assert!(held.signals.is_empty());
+    }
+
+    // A secret grant's target is rendered the same way on a row and in
+    // Settings — `host/path`, or the command line — with the methods only
+    // where a person reads them, and never a query or an unbounded line.
+    #[test]
+    fn a_secret_target_renders_as_host_and_path_or_the_command_line() {
+        let http = Target::Http {
+            host: "api.stripe.com".into(),
+            path: "/v1/*".into(),
+            methods: vec!["GET".into(), "POST".into()],
+        };
+        assert_eq!(target_text(&http), "GET, POST api.stripe.com/v1/*");
+        assert_eq!(audit_target_of(&http), "api.stripe.com/v1/*");
+        let any = Target::Http {
+            host: "*.example.com".into(),
+            path: "v2".into(),
+            methods: vec![],
+        };
+        assert_eq!(target_text(&any), "*.example.com/v2");
+
+        let line = format!("node deploy.js {}", "x".repeat(400));
+        let command = Target::Command(line.clone());
+        assert_eq!(target_text(&command), line, "Settings shows it whole");
+        assert_eq!(audit_target_of(&command).chars().count(), 300);
+
+        assert_eq!(
+            resolve_target_text(&ResolveTarget::Http {
+                host: "api.stripe.com".into(),
+                path: "/v1/balance?expand=1".into(),
+                method: "GET".into(),
+            }),
+            "api.stripe.com/v1/balance"
+        );
+        assert_eq!(
+            resolve_target_text(&ResolveTarget::Command(line))
+                .chars()
+                .count(),
+            300
+        );
+
+        let grant = Grant {
+            targets: vec![http],
+            modes: vec![Mode::Header],
+            ..active("g3", 0, 1_000)
+        };
+        let row = about(draft(Event::Granted, "ext", &[]), &grant, None);
+        assert_eq!(row.target.as_deref(), Some("api.stripe.com/v1/*"));
+        assert_eq!(row.mode, Some(Mode::Header));
     }
 
     // A rule is written for the site, with the port when one was named, and

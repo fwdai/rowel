@@ -8,10 +8,10 @@ use super::manifest::{self, Family, KEEPASSXC, ROWEL};
 use super::protocol::str_of;
 use super::protocol::Code;
 use super::{
-    clients_in, covered, decide, fields_for, frame, group_container, group_socket_dir, outcome,
-    proxy, server, settle, socket_name, visible_in, Answer, AskKind, Asking, Candidate,
-    CandidateItem, Client, ClientKind, GrantAnswer, Locked, NotAsked, Pending, Prepared,
-    SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
+    clients_in, covered, decide, env_var, frame, group_container, group_socket_dir, item_by_name,
+    outcome, proxy, resolved, server, settle, socket_name, visible_in, Answer, AskKind, Asking,
+    Candidate, CandidateItem, Client, ClientKind, GrantAnswer, Lockbox, Locked, NotAsked, Pending,
+    Prepared, SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
 };
 use crate::agents::{self, AccessState, AgentState};
 use crate::crypto::PayloadCipher;
@@ -19,12 +19,15 @@ use crate::models::Entry;
 use crate::session::{Epoch, Session};
 use crate::store::{migrate, SqliteStore, VaultStore};
 use rowel_broker::grant::{
-    Approval, CreatedBy, Grant, GrantRequest, ItemSelector, Mode, State, Target, Terms, VisibleItem,
+    Approval, CreatedBy, Grant, GrantRequest, ItemSelector, Mode, ResolveContext, ResolveTarget,
+    State, Target, Terms, VisibleItem,
 };
 use rowel_broker::policy::{defaults, Limits};
+use rowel_broker::reference::{fields_for, Reference};
 use rowel_broker::testing::{nonce, seed, vault, Extension, Mock};
 use rowel_broker::Signal;
 use rowel_core::app::DESKTOP_APP_GROUP;
+use zeroize::Zeroizing;
 
 // --- the consent slot ----------------------------------------------------------
 
@@ -1411,6 +1414,817 @@ fn visible_items_are_the_clients_own_rules_and_grants_never_the_baseline() {
     assert_eq!(fields_for("card"), ["number", "cvc"]);
     assert_eq!(fields_for("env"), ["body"]);
     assert!(fields_for("note").is_empty());
+}
+
+// --- secrets for commands and APIs: the sidecar ----------------------------------
+//
+// A header or env grant is answered with nothing but its id; the value
+// leaves only through `resolve`, which a sidecar calls under the grant an
+// agent handed it. `resolved` is the whole of that under the locks, over a
+// store of its own here.
+
+/// `rowel run` / `rowel proxy`, let into the lockbox.
+fn sidecar() -> Client {
+    Client {
+        platform: Some("cli".into()),
+        ..client("rowel run", "side", ClientKind::Sidecar)
+    }
+}
+
+fn api_key(id: &str, title: &str, key: Option<&str>) -> Entry {
+    Entry {
+        id: id.into(),
+        kind: "apikey".into(),
+        title: title.into(),
+        api_key: key.map(String::from),
+        ..Entry::default()
+    }
+}
+
+fn env_file(id: &str, body: &str) -> Entry {
+    Entry {
+        id: id.into(),
+        kind: "env".into(),
+        title: "CI".into(),
+        body: Some(body.into()),
+        ..Entry::default()
+    }
+}
+
+fn card(id: &str) -> Entry {
+    Entry {
+        id: id.into(),
+        kind: "card".into(),
+        title: "Visa".into(),
+        number: Some("4242424242424242".into()),
+        cvc: Some("123".into()),
+        ..Entry::default()
+    }
+}
+
+const DEPLOY: &str = "node deploy.js --prod";
+
+fn stripe(methods: &[&str]) -> Target {
+    Target::Http {
+        host: "api.stripe.com".into(),
+        path: "/v1/*".into(),
+        methods: methods.iter().map(|m| m.to_string()).collect(),
+    }
+}
+
+fn secret_request(
+    client_key: &str,
+    ids: &[&str],
+    targets: Vec<Target>,
+    modes: Vec<Mode>,
+) -> GrantRequest {
+    GrantRequest {
+        client_key: client_key.into(),
+        agent_id: None,
+        acting_for: None,
+        items: ItemSelector::Ids(ids.iter().map(|id| id.to_string()).collect()),
+        targets,
+        modes,
+        run_id: Some("run-2".into()),
+        reason: None,
+    }
+}
+
+/// An active header grant of the agent's for `items` at Stripe, `GET` only.
+fn header_grant(items: &[&str], now: i64) -> Grant {
+    let terms = Terms {
+        approval: Approval::Ask,
+        ttl_ms: 900_000,
+        max_uses: None,
+        reason_required: false,
+        created_by: CreatedBy::User,
+    };
+    Grant {
+        state: State::Active,
+        approver: Some("user".into()),
+        ..Grant::from_request(
+            "default",
+            secret_request("agent", items, vec![stripe(&["GET"])], vec![Mode::Header]),
+            terms,
+            now,
+        )
+    }
+}
+
+fn call(method: &str, host: &str) -> ResolveContext {
+    ResolveContext {
+        target: ResolveTarget::Http {
+            host: host.into(),
+            path: "/v1/balance".into(),
+            method: method.into(),
+        },
+    }
+}
+
+fn run(line: &str) -> ResolveContext {
+    ResolveContext {
+        target: ResolveTarget::Command(line.into()),
+    }
+}
+
+/// The open lockbox, `default`, named `Work (main)` in the registry.
+fn lockbox() -> Lockbox {
+    Lockbox {
+        id: "default".into(),
+        name: Some("Work (main)".into()),
+    }
+}
+
+fn resolve(
+    store: &SqliteStore,
+    cipher: &PayloadCipher,
+    held: &mut AgentState,
+    now: i64,
+    grant_id: &str,
+    reference: &str,
+    ctx: &ResolveContext,
+) -> Result<Zeroizing<String>, Code> {
+    resolved(
+        locked(store, held, now),
+        cipher,
+        &lockbox(),
+        &sidecar(),
+        grant_id,
+        &Reference::parse(reference).expect("a placeholder"),
+        ctx,
+    )
+}
+
+// The whole path: an agent holds a header grant for its Stripe key, the
+// proxy resolves the key for one request under it, and the row says who
+// resolved what, where, and through which field.
+#[test]
+fn a_sidecar_resolves_an_api_key_under_an_agents_header_grant() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &api_key("stripe", "Stripe", Some("sk_live_x")),
+    );
+    let_in(&store, &[agent(), sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(header_grant(&["stripe"], now));
+    let id = held.grants[0].id.clone();
+
+    let value = resolve(
+        &store,
+        &cipher,
+        &mut held,
+        now,
+        &id,
+        "rowel://default/stripe/apiKey",
+        &call("GET", "api.stripe.com"),
+    )
+    .expect("served");
+    assert_eq!(&*value, "sk_live_x");
+    assert_eq!(held.grants[0].uses, 1);
+
+    let rows = store.audit_rows("dev").unwrap();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.event, "used");
+    assert_eq!(row.actor_kind, "sidecar");
+    assert_eq!(row.actor_name.as_deref(), Some("rowel run"));
+    assert_eq!(row.grant_id.as_deref(), Some(id.as_str()));
+    assert_eq!(row.run_id.as_deref(), Some("run-2"));
+    assert_eq!(row.item_id.as_deref(), Some("stripe"));
+    assert_eq!(row.mode.as_deref(), Some("header"));
+    assert_eq!(row.target.as_deref(), Some("api.stripe.com/v1/balance"));
+    assert_eq!(
+        row.detail.as_deref(),
+        Some(r#"{"via":"resolve","field":"apiKey"}"#)
+    );
+}
+
+// A placeholder may name the item by the slug of its title and the lockbox
+// by the slug of its registry name; an id always works; two items with the
+// same slug name neither.
+#[test]
+fn a_placeholder_names_the_item_by_slug_and_the_lockbox_by_its_name() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &api_key("live", "Stripe (live)", Some("sk_live")),
+    );
+    seed(&store, &cipher, &api_key("dup1", "Dup", Some("one")));
+    seed(&store, &cipher, &api_key("dup2", "dup!", Some("two")));
+    let_in(&store, &[agent(), sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    held.grants
+        .push(header_grant(&["live", "dup1", "dup2"], now));
+    let id = held.grants[0].id.clone();
+    let get = call("GET", "api.stripe.com");
+
+    let metas = store.list().unwrap();
+    assert_eq!(
+        item_by_name(&metas, "live").map(|m| m.id.as_str()),
+        Some("live")
+    );
+    assert_eq!(
+        item_by_name(&metas, "stripe-live").map(|m| m.id.as_str()),
+        Some("live")
+    );
+    assert_eq!(item_by_name(&metas, "dup"), None, "ambiguous");
+    assert_eq!(item_by_name(&metas, "nope"), None);
+
+    let served = resolve(
+        &store,
+        &cipher,
+        &mut held,
+        now,
+        &id,
+        "rowel://work-main/stripe-live/apiKey",
+        &get,
+    );
+    assert_eq!(served.as_deref().map(String::as_str), Ok("sk_live"));
+    let served = resolve(
+        &store,
+        &cipher,
+        &mut held,
+        now,
+        &id,
+        "rowel://default/dup2/apiKey",
+        &get,
+    );
+    assert_eq!(served.as_deref().map(String::as_str), Ok("two"));
+    assert_eq!(
+        resolve(
+            &store,
+            &cipher,
+            &mut held,
+            now,
+            &id,
+            "rowel://default/dup/apiKey",
+            &get
+        )
+        .err(),
+        Some(Code::GrantDenied),
+        "two Dups name neither"
+    );
+    assert_eq!(held.grants[0].uses, 2);
+    assert_eq!(rows(&store).len(), 2);
+}
+
+// Every way a resolve can fail to fit is the one word, and releases
+// nothing: no use on the grant, no row on the log.
+#[test]
+fn a_resolve_that_does_not_fit_the_grant_is_denied_with_no_row_and_no_use() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &api_key("stripe", "Stripe", Some("sk_live")),
+    );
+    seed(
+        &store,
+        &cipher,
+        &api_key("other", "Other", Some("sk_other")),
+    );
+    seed(&store, &cipher, &api_key("blank", "Blank", Some("")));
+    seed(&store, &cipher, &github_login("gh"));
+    let_in(&store, &[agent(), sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(header_grant(&["stripe", "blank"], now));
+    held.grants.push(Grant {
+        client_key: "agent".into(),
+        ..active_grant("gh", now)
+    });
+    let header = held.grants[0].id.clone();
+    let fill = held.grants[1].id.clone();
+    let get = call("GET", "api.stripe.com");
+    let stripe_key = "rowel://default/stripe/apiKey";
+
+    let denied =
+        |held: &mut AgentState, grant: &str, reference: &str, ctx: &ResolveContext, why: &str| {
+            assert_eq!(
+                resolve(&store, &cipher, held, now, grant, reference, ctx).err(),
+                Some(Code::GrantDenied),
+                "{why}"
+            );
+        };
+
+    held.access.as_mut().unwrap().lockbox_on = false;
+    denied(
+        &mut held,
+        &header,
+        stripe_key,
+        &get,
+        "the lockbox's access is off",
+    );
+    held.access = Some(AccessState {
+        enabled: false,
+        lockbox_on: true,
+    });
+    denied(
+        &mut held,
+        &header,
+        stripe_key,
+        &get,
+        "the Agents switch is off",
+    );
+    held.access = Some(on());
+
+    denied(&mut held, "nope", stripe_key, &get, "no such grant");
+    denied(
+        &mut held,
+        &header,
+        "rowel://other/stripe/apiKey",
+        &get,
+        "another lockbox",
+    );
+    denied(
+        &mut held,
+        &fill,
+        "rowel://default/gh/password",
+        &get,
+        "a fill grant serves no header",
+    );
+    denied(
+        &mut held,
+        &header,
+        stripe_key,
+        &call("POST", "api.stripe.com"),
+        "POST under a GET-only grant",
+    );
+    denied(
+        &mut held,
+        &header,
+        stripe_key,
+        &call("GET", "api.github.com"),
+        "another host",
+    );
+    denied(
+        &mut held,
+        &header,
+        stripe_key,
+        &run(DEPLOY),
+        "a command under a header grant",
+    );
+    denied(
+        &mut held,
+        &header,
+        "rowel://default/other/apiKey",
+        &get,
+        "an item the grant does not admit",
+    );
+    denied(
+        &mut held,
+        &header,
+        "rowel://default/stripe/password",
+        &get,
+        "a field the kind has not",
+    );
+    denied(
+        &mut held,
+        &header,
+        "rowel://default/blank/apiKey",
+        &get,
+        "an empty value",
+    );
+    held.grants[0].expires_at_ms = now;
+    denied(&mut held, &header, stripe_key, &get, "an expired grant");
+    held.grants[0].expires_at_ms = now + 900_000;
+
+    assert!(held.grants.iter().all(|g| g.uses == 0), "nothing counted");
+    assert!(rows(&store).is_empty(), "nothing written");
+
+    let served = resolve(&store, &cipher, &mut held, now, &header, stripe_key, &get);
+    assert_eq!(
+        served.as_deref().map(String::as_str),
+        Ok("sk_live"),
+        "and the fit is served"
+    );
+}
+
+// An env grant serves one variable of the file to the one command line the
+// grant names, read the way a shell would read the common cases.
+#[test]
+fn an_env_resolve_serves_one_variable_of_the_file_to_the_command() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &env_file(
+            "ci",
+            "# keys\nexport AWS_KEY='abc'\nAWS_KEY=second\nEMPTY=\nTOKEN=\"t k\"\n",
+        ),
+    );
+    let_in(&store, &[sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(Grant {
+        state: State::Active,
+        approver: Some("user".into()),
+        ..Grant::from_request(
+            "default",
+            secret_request(
+                "side",
+                &["ci"],
+                vec![Target::Command("node deploy.js*".into())],
+                vec![Mode::Env],
+            ),
+            Terms {
+                approval: Approval::Ask,
+                ttl_ms: 900_000,
+                max_uses: None,
+                reason_required: false,
+                created_by: CreatedBy::User,
+            },
+            now,
+        )
+    });
+    let id = held.grants[0].id.clone();
+
+    let value = resolve(
+        &store,
+        &cipher,
+        &mut held,
+        now,
+        &id,
+        "rowel://default/ci/body.AWS_KEY",
+        &run(DEPLOY),
+    )
+    .expect("served");
+    assert_eq!(&*value, "abc", "the first assignment, unquoted");
+    let value = resolve(
+        &store,
+        &cipher,
+        &mut held,
+        now,
+        &id,
+        "rowel://default/ci/body.TOKEN",
+        &run(DEPLOY),
+    )
+    .expect("served");
+    assert_eq!(&*value, "t k");
+    for reference in [
+        "rowel://default/ci/body.EMPTY",
+        "rowel://default/ci/body.MISSING",
+    ] {
+        assert_eq!(
+            resolve(
+                &store,
+                &cipher,
+                &mut held,
+                now,
+                &id,
+                reference,
+                &run(DEPLOY)
+            )
+            .err(),
+            Some(Code::GrantDenied),
+            "{reference}"
+        );
+    }
+    assert_eq!(
+        resolve(
+            &store,
+            &cipher,
+            &mut held,
+            now,
+            &id,
+            "rowel://default/ci/body.AWS_KEY",
+            &run("node -e \"console.log(process.env)\"")
+        )
+        .err(),
+        Some(Code::GrantDenied),
+        "another line"
+    );
+    assert_eq!(held.grants[0].uses, 2);
+
+    let rows = store.audit_rows("dev").unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].mode.as_deref(), Some("env"));
+    assert_eq!(rows[0].target.as_deref(), Some(DEPLOY));
+    assert_eq!(
+        rows[0].detail.as_deref(),
+        Some(r#"{"via":"resolve","field":"body.AWS_KEY"}"#)
+    );
+}
+
+#[test]
+fn the_env_parser_reads_the_common_cases_and_no_further() {
+    let body = "\n# a comment\nexport A=1\nB = two words \nC=\"quoted\"\nD='single'\nE=\"mismatched'\nA=again\nF=x=y\n  export   G=spaced\nnot an assignment\n";
+    assert_eq!(
+        env_var(body, "A").as_deref(),
+        Some("1"),
+        "first wins, export stripped"
+    );
+    assert_eq!(env_var(body, "B").as_deref(), Some("two words"));
+    assert_eq!(env_var(body, "C").as_deref(), Some("quoted"));
+    assert_eq!(env_var(body, "D").as_deref(), Some("single"));
+    assert_eq!(
+        env_var(body, "E").as_deref(),
+        Some("\"mismatched'"),
+        "only matching quotes come off"
+    );
+    assert_eq!(
+        env_var(body, "F").as_deref(),
+        Some("x=y"),
+        "split at the first `=`"
+    );
+    assert_eq!(env_var(body, "G").as_deref(), Some("spaced"));
+    assert_eq!(env_var(body, "a"), None, "names are exact");
+    assert_eq!(env_var(body, "comment"), None);
+    assert_eq!(env_var(body, "not"), None);
+    assert_eq!(env_var("", "A"), None);
+}
+
+// A sidecar's `env` request names the command line; the floor keeps it an
+// ask under the baseline, and a rule naming the line lets it through
+// without one — with `requested` and `granted` on record and no use, since
+// the reply carries nothing. `node -e …` is not the line the rule names.
+#[test]
+fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_line() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &env_file("ci", "AWS_KEY=abc\n"));
+    let_in(&store, &[sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    let request = |line: &str| {
+        secret_request(
+            "side",
+            &["ci"],
+            vec![Target::Command(line.into())],
+            vec![Mode::Env],
+        )
+    };
+
+    let asking = match decide(
+        locked(&store, &mut held, now),
+        epoch(),
+        "default",
+        &sidecar(),
+        request(DEPLOY),
+    ) {
+        Ok(Prepared::Ask(asking)) => *asking,
+        other => panic!("the baseline asks: {:?}", other.is_ok()),
+    };
+    assert_eq!(asking.grant.approval, Approval::Ask);
+    assert_eq!(asking.grant.modes, [Mode::Env]);
+    assert_eq!(asking.grant.targets, [Target::Command(DEPLOY.into())]);
+    assert_eq!(
+        asking
+            .candidates
+            .iter()
+            .map(|c| c.item.id.as_str())
+            .collect::<Vec<_>>(),
+        ["ci"]
+    );
+    assert!(rows(&store).is_empty(), "an ask is on record once it is up");
+
+    agents::write_rules(
+        &store,
+        &[defaults::standing_for(
+            "side",
+            "ci",
+            Target::Command("node deploy.js*".into()),
+            Mode::Env,
+            7,
+            now,
+        )],
+    )
+    .unwrap();
+    let reply = match decide(
+        locked(&store, &mut held, now),
+        epoch(),
+        "default",
+        &sidecar(),
+        request(DEPLOY),
+    ) {
+        Ok(Prepared::Answered(reply)) => reply,
+        other => panic!("the rule allows: {:?}", other.is_ok()),
+    };
+    assert_eq!(reply.state, State::Active);
+    assert_eq!(reply.uses, 0, "nothing was released");
+    assert_eq!(reply.items.len(), 1);
+    assert_eq!(reply.items[0].id, "ci");
+    assert_eq!(held.grants.len(), 1);
+    assert_eq!(held.grants[0].approver.as_deref(), Some("policy"));
+    assert_eq!(held.grants[0].uses, 0);
+    assert!(
+        held.signals.is_empty(),
+        "no extension is told of an env grant"
+    );
+    let events: Vec<String> = rows(&store).into_iter().map(|(event, _)| event).collect();
+    assert_eq!(events, ["requested", "granted"]);
+
+    // The same request again is served from the grant held, with no use
+    // and no row.
+    assert!(matches!(
+        decide(
+            locked(&store, &mut held, now),
+            epoch(),
+            "default",
+            &sidecar(),
+            request(DEPLOY),
+        ),
+        Ok(Prepared::Answered(reply)) if reply.grant_id == held.grants[0].id
+    ));
+    assert_eq!(held.grants[0].uses, 0);
+    assert_eq!(rows(&store).len(), 2);
+
+    assert!(
+        matches!(
+            decide(
+                locked(&store, &mut held, now),
+                epoch(),
+                "default",
+                &sidecar(),
+                request("node -e \"console.log(process.env)\""),
+            ),
+            Ok(Prepared::Ask(_))
+        ),
+        "the rule names one line"
+    );
+}
+
+// An agent's header request is an ask under the baseline, with the probes
+// of the request checked one method at a time; a card's number at an API
+// is a step-up, as a card is anywhere.
+#[test]
+fn a_header_request_asks_under_the_baseline_and_a_card_number_is_a_step_up() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &api_key("stripe", "Stripe (live)", Some("sk_live")),
+    );
+    seed(&store, &cipher, &card("visa"));
+    let_in(&store, &[agent()]);
+    let now = 1_000;
+    let mut held = ready();
+
+    let asking = match decide(
+        locked(&store, &mut held, now),
+        epoch(),
+        "default",
+        &agent(),
+        secret_request(
+            "agent",
+            &["stripe-live", "stripe"],
+            vec![stripe(&["GET", "POST"])],
+            vec![Mode::Header],
+        ),
+    ) {
+        Ok(Prepared::Ask(asking)) => *asking,
+        other => panic!("the baseline asks: {:?}", other.is_ok()),
+    };
+    assert_eq!(asking.grant.approval, Approval::Ask);
+    assert_eq!(asking.client_name, "Claude Code");
+    assert_eq!(
+        asking.grant.items,
+        ItemSelector::Ids(vec!["stripe".into()]),
+        "named by id or slug, kept by id, once"
+    );
+    assert_eq!(asking.grant.targets, [stripe(&["GET", "POST"])]);
+
+    let asking = match decide(
+        locked(&store, &mut held, now),
+        epoch(),
+        "default",
+        &agent(),
+        secret_request("agent", &["visa"], vec![stripe(&[])], vec![Mode::Header]),
+    ) {
+        Ok(Prepared::Ask(asking)) => *asking,
+        other => panic!("a card asks: {:?}", other.is_ok()),
+    };
+    assert_eq!(asking.grant.approval, Approval::StepUp);
+}
+
+// A yes "for N days" on an env ask writes a rule for the command line in
+// env mode, and the `rule_added` row's target is the line. The grant goes
+// active with no use.
+#[test]
+fn a_yes_for_days_on_an_env_ask_writes_a_rule_for_the_command_line() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &env_file("ci", "AWS_KEY=abc\n"));
+    let_in(&store, &[sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    let asking = match decide(
+        locked(&store, &mut held, now),
+        epoch(),
+        "default",
+        &sidecar(),
+        secret_request(
+            "side",
+            &["ci"],
+            vec![Target::Command(DEPLOY.into())],
+            vec![Mode::Env],
+        ),
+    ) {
+        Ok(Prepared::Ask(asking)) => *asking,
+        other => panic!("the baseline asks: {:?}", other.is_ok()),
+    };
+
+    let reply = settle(
+        locked(&store, &mut held, now),
+        &sidecar(),
+        asking,
+        yes("ci"),
+    )
+    .expect("the yes stands");
+    assert_eq!(reply.state, State::Active);
+    assert_eq!(reply.uses, 0);
+    assert_eq!(held.grants[0].uses, 0);
+
+    let rules = agents::live_rules(&store, now);
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].targets, [Target::Command(DEPLOY.into())]);
+    assert_eq!(rules[0].modes, [Mode::Env]);
+    assert_eq!(rules[0].approval, Approval::Auto);
+    assert_eq!(rules[0].items, ItemSelector::Ids(vec!["ci".into()]));
+
+    let rows = store.audit_rows("dev").unwrap();
+    let events: Vec<&str> = rows.iter().map(|r| r.event.as_str()).collect();
+    assert_eq!(events, ["requested", "rule_added", "granted"]);
+    assert!(rows.iter().all(|r| r.target.as_deref() == Some(DEPLOY)));
+    assert!(rows.iter().all(|r| r.mode.as_deref() == Some("env")));
+    assert!(rows.iter().all(|r| r.actor_kind == "sidecar"));
+}
+
+// What the dialog is told about where: a site for a page (never the page's
+// path), the request pattern and the command line as written, each tagged
+// by its kind so the frontend can tell them apart.
+#[test]
+fn the_ask_names_its_targets_by_kind() {
+    let targets: Vec<crate::events::AskTarget> = [
+        Target::Origin("https://github.com/login?next=/x".into()),
+        stripe(&["GET"]),
+        Target::Command(DEPLOY.into()),
+    ]
+    .iter()
+    .map(super::ask_target)
+    .collect();
+    assert_eq!(
+        serde_json::to_value(&targets).unwrap(),
+        json!([
+            { "kind": "origin", "origin": "https://github.com" },
+            { "kind": "http", "host": "api.stripe.com", "path": "/v1/*", "methods": ["GET"] },
+            { "kind": "command", "line": DEPLOY },
+        ])
+    );
+}
+
+// A request whose targets are not the kind of place its modes are
+// performed at has no one shape to be, and is refused on record.
+#[test]
+fn a_request_whose_targets_do_not_fit_its_modes_is_denied_no_target() {
+    let (_dir, store, cipher) = vault();
+    seed(
+        &store,
+        &cipher,
+        &api_key("stripe", "Stripe", Some("sk_live")),
+    );
+    seed(&store, &cipher, &github_login("gh"));
+    let_in(&store, &[agent()]);
+    let now = 1_000;
+    let mut held = ready();
+    let origin = Target::Origin("https://github.com".into());
+    let misfits = [
+        secret_request(
+            "agent",
+            &["stripe"],
+            vec![origin.clone()],
+            vec![Mode::Header],
+        ),
+        secret_request("agent", &["gh"], vec![stripe(&[])], vec![Mode::Fill]),
+        secret_request("agent", &["stripe"], vec![stripe(&[])], vec![Mode::Token]),
+        secret_request(
+            "agent",
+            &["gh", "stripe"],
+            vec![origin, stripe(&[])],
+            vec![Mode::Fill, Mode::Header],
+        ),
+        secret_request("agent", &["stripe"], vec![], vec![Mode::Header]),
+    ];
+    for request in misfits {
+        assert!(matches!(
+            decide(
+                locked(&store, &mut held, now),
+                epoch(),
+                "default",
+                &agent(),
+                request,
+            ),
+            Err(Code::GrantDenied)
+        ));
+    }
+    assert!(held.grants.is_empty());
+    assert_eq!(
+        rows(&store),
+        vec![row("denied", r#"{"reason":"no_target"}"#); 5]
+    );
 }
 
 // --- which logins a page gets, against a store ---------------------------------

@@ -35,6 +35,8 @@ const rule = (overrides: Partial<AgentRule> = {}): AgentRule => ({
   itemId: 'gh1',
   itemTitle: 'GitHub',
   origin: 'https://github.com/login',
+  target: 'https://github.com/login',
+  mode: 'fill',
   expiresAtMs: Date.UTC(2030, 0, 15),
   createdAtMs: Date.UTC(2030, 0, 8),
   ...overrides
@@ -47,6 +49,8 @@ const grant = (overrides: Partial<AgentGrant> = {}): AgentGrant => ({
   itemId: 'gh1',
   itemTitle: 'GitHub',
   origin: 'https://github.com/login',
+  target: 'https://github.com/login',
+  mode: 'fill',
   state: 'active',
   expiresAtMs: Date.now() + 12 * 60_000,
   uses: 1,
@@ -111,7 +115,10 @@ describe('Settings › Browser & agents › Agents', () => {
 
   it('lists rules and active grants, and removes or ends them', async () => {
     mockCommand('browser_status', agentsOn)
-    mockCommand('agent_rules', () => [rule(), rule({ id: 'r2', expiresAtMs: null, origin: null })])
+    mockCommand('agent_rules', () => [
+      rule(),
+      rule({ id: 'r2', expiresAtMs: null, origin: null, target: null })
+    ])
     mockCommand('agent_grants', () => [grant(), grant({ id: 'g2', state: 'expired' })])
     await openSection()
 
@@ -141,6 +148,39 @@ describe('Settings › Browser & agents › Agents', () => {
     expect(calls('agent_end_grant')).toEqual([{ id: 'g1' }])
     await waitFor(() =>
       expect(screen.getAllByTestId('settings-agents-grant')[0]).toHaveTextContent('Ended')
+    )
+  })
+
+  // A secret rule or grant names the API pattern or the command line where a
+  // fill row names the site, and says in words how the item is used.
+  it('shows a header or env row by its target and mode', async () => {
+    mockCommand('browser_status', agentsOn)
+    mockCommand('agent_rules', () => [
+      rule({
+        id: 'r-http',
+        itemTitle: 'Stripe',
+        origin: null,
+        target: 'GET, POST api.stripe.com/v1/*',
+        mode: 'header'
+      })
+    ])
+    mockCommand('agent_grants', () => [
+      grant({
+        id: 'g-env',
+        clientName: 'rowel run',
+        itemTitle: 'CI',
+        origin: null,
+        target: 'node deploy.js --prod',
+        mode: 'env'
+      })
+    ])
+    await openSection()
+
+    expect(await screen.findByTestId('settings-agents-rule')).toHaveTextContent(
+      'GET, POST api.stripe.com/v1/* · as a request header · Work Chrome · until 01/15/2030'
+    )
+    expect(await screen.findByTestId('settings-agents-grant')).toHaveTextContent(
+      "rowel run · node deploy.js --prod · in a command's environment · Expires in 12 minutes"
     )
   })
 

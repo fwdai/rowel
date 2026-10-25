@@ -8,6 +8,7 @@ import Button from '@/components/elements/Button'
 import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
+import { modeWords } from './mode'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -62,7 +63,7 @@ export default function Grants() {
             key={grant.id}
             testid="settings-agents-grant"
             label={grant.itemTitle ?? t('Untitled')}
-            description={[grant.clientName, grant.origin, standing(grant)]
+            description={[grant.clientName, grant.target, modeWords(t, grant.mode), standing(grant)]
               .filter(Boolean)
               .join(' · ')}
             control={
