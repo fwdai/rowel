@@ -4621,7 +4621,7 @@ dependencies = [
 
 [[package]]
 name = "rowel"
-version = "1.0.4"
+version = "1.1.0"
 dependencies = [
  "base64 0.23.1",
  "block2",
