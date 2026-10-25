@@ -2,8 +2,10 @@
 //! Claude Code, Codex and Cursor launch a local tool server. It knows the
 //! handshake, `ping`, the tool list and `tools/call`; everything a tool does
 //! goes through [`Broker`], so `serve` runs the same against the app's socket
-//! and against the broker's scripted host in a test. Nothing is written to
-//! stdout but replies: a word of logging there would corrupt the stream.
+//! and against the broker's scripted host in a test. The server is an agent
+//! under the agent key, so by construction nothing it serves can resolve a
+//! value. Nothing is written to stdout but replies: a word of logging there
+//! would corrupt the stream.
 
 pub mod rpc;
 pub mod tools;
@@ -14,7 +16,8 @@ use serde_json::{json, Value};
 
 use self::rpc::{Request, METHOD_NOT_FOUND};
 use crate::agent::{self, Agent, Broker};
-use crate::{keys, transport};
+use crate::keys::{Keys, Role};
+use crate::transport;
 
 /// The protocol revisions this server speaks; a client's is echoed when it is
 /// one of them, else the newest is offered.
@@ -25,11 +28,11 @@ pub const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05
 pub fn run(platform: Option<String>, name: Option<String>) -> i32 {
     let platform = platform.unwrap_or_else(agent::detect_platform);
     let name = name.unwrap_or_else(|| agent::label(&platform).to_string());
-    let Some(key_path) = keys::path() else {
+    let Some(keys) = Keys::for_platform(Role::Agent) else {
         eprintln!("rowel-cli: no config directory for this user");
         return 1;
     };
-    let mut agent = Agent::new(Box::new(transport::connect), key_path, platform, name);
+    let mut agent = Agent::new(Box::new(transport::connect), keys, platform, name);
     let (stdin, stdout) = (io::stdin(), io::stdout());
     match serve(stdin.lock(), stdout.lock(), &mut agent) {
         Ok(()) => 0,
@@ -99,78 +102,24 @@ fn initialize(params: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::io::Cursor;
-    use std::path::PathBuf;
-    use std::rc::Rc;
 
-    use rowel_broker::actions::{ClientKind, Connection};
-    use rowel_broker::client::Transport;
+    use rowel_broker::actions::ClientKind;
     use rowel_broker::grant::{ItemSelector, Mode, Target};
     use rowel_broker::testing::{GrantAnswer, Mock, GRANT_ID};
 
     use super::*;
-    use crate::agent::AGENTS_DISABLED;
-    use crate::keys::AgentKey;
-
-    /// The broker's own connection, shared with the test so the scripted host
-    /// can be read after the server has spoken to it.
-    #[derive(Clone)]
-    struct Shared(Rc<RefCell<Connection<Mock>>>);
-
-    impl Transport for Shared {
-        fn roundtrip(&mut self, request: &[u8]) -> io::Result<Vec<u8>> {
-            self.0.borrow_mut().roundtrip(request)
-        }
-    }
-
-    const KEY: &str = "agent-id-key";
-    const NAME: &str = "Claude Code";
-
-    struct Harness {
-        _dir: tempfile::TempDir,
-        key_path: PathBuf,
-        link: Shared,
-        agent: Agent<Shared>,
-    }
-
-    /// A server over `mock`. `known` writes the key file the way a previous
-    /// run would have left it, with the name the host knows the key under.
-    fn harness(mock: Mock, known: bool) -> Harness {
-        let dir = tempfile::tempdir().unwrap();
-        let key_path = dir.path().join("agent.json");
-        if known {
-            keys::save(
-                &key_path,
-                &AgentKey {
-                    key: KEY.into(),
-                    name: NAME.into(),
-                },
-            )
-            .unwrap();
-        }
-        let link = Shared(Rc::new(RefCell::new(Connection::new(mock))));
-        let connector = link.clone();
-        let agent = Agent::new(
-            Box::new(move || Ok(connector.clone())),
-            key_path.clone(),
-            "claude-code".into(),
-            NAME.into(),
-        );
-        Harness {
-            _dir: dir,
-            key_path,
-            link,
-            agent,
-        }
-    }
+    use crate::agent::{AGENTS_DISABLED, PENDING_BUDGET_MS};
+    use crate::keys::Role;
+    use crate::testing::{harness, Harness, AGENT_KEY, AGENT_NAME};
 
     fn known_agent(answer: GrantAnswer) -> Harness {
         harness(
             Mock {
                 grant_answer: answer,
-                ..Mock::unlocked().known_agent(NAME, KEY, "claude-code")
+                ..Mock::unlocked().known_agent(AGENT_NAME, AGENT_KEY, "claude-code")
             },
+            Role::Agent,
             true,
         )
     }
@@ -210,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn the_handshake_echoes_a_known_version_and_lists_four_tools() {
+    fn the_handshake_echoes_a_known_version_and_lists_five_tools() {
         let mut harness = known_agent(GrantAnswer::Denied);
         let replies = served(
             &mut harness,
@@ -238,6 +187,7 @@ mod tests {
             names,
             [
                 tools::REQUEST_LOGIN,
+                tools::REQUEST_SECRET,
                 tools::WAIT,
                 tools::LIST_VISIBLE,
                 tools::END
@@ -276,10 +226,10 @@ mod tests {
             assert!(!text.contains(secret), "{secret} in {text}");
         }
 
-        let connection = harness.link.0.borrow();
+        let connection = harness.host();
         let requests = connection.host().grant_requests.borrow();
         let (client_key, request) = &requests[0];
-        assert_eq!(client_key, KEY);
+        assert_eq!(client_key, AGENT_KEY);
         assert_eq!(request.items, ItemSelector::Lockbox);
         assert_eq!(
             request.targets,
@@ -288,17 +238,126 @@ mod tests {
         assert_eq!(request.modes, vec![Mode::Fill]);
         assert_eq!(request.reason.as_deref(), Some("open a PR"));
         assert_eq!(request.run_id.as_deref(), Some(harness.agent.run_id()));
-        assert_eq!(connection.host().seen.borrow().as_slice(), [KEY]);
+        assert_eq!(connection.host().seen.borrow().as_slice(), [AGENT_KEY]);
+    }
+
+    #[test]
+    fn a_header_secret_is_requested_as_a_typed_http_target_and_the_answer_carries_no_value() {
+        let mut harness = known_agent(GrantAnswer::Active("stripe".into()));
+        let replies = served(
+            &mut harness,
+            &[call(
+                tools::REQUEST_SECRET,
+                json!({
+                    "ref": "rowel://lb/stripe/apiKey",
+                    "mode": "header",
+                    "target": "GET,POST https://api.stripe.com/v1/*",
+                    "reason": "check the balance",
+                }),
+            )],
+        );
+        let (result, is_error) = tool_result(&replies[0]);
+        assert!(!is_error, "{result}");
+        assert_eq!(result["grantId"], GRANT_ID);
+        assert_eq!(result["state"], "active");
+        assert!(result.get("value").is_none());
+        let hint = result["use"].as_str().unwrap();
+        assert!(hint.contains("X-Rowel-Grant: grant-1") && hint.contains("rowel proxy"));
+        assert!(hint.contains("http://127.0.0.1:7400/https/api.stripe.com/"));
+        assert!(hint.contains("rowel://lb/stripe/apiKey"));
+        let text = replies[0]["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(!text.contains("sk_test_mock"), "{text}");
+
+        let connection = harness.host();
+        let requests = connection.host().grant_requests.borrow();
+        let (_, request) = &requests[0];
+        assert_eq!(request.items, ItemSelector::Ids(vec!["stripe".into()]));
+        assert_eq!(
+            request.targets,
+            vec![Target::Http {
+                host: "api.stripe.com".into(),
+                path: "/v1/*".into(),
+                methods: vec!["GET".into(), "POST".into()],
+            }]
+        );
+        assert_eq!(request.modes, vec![Mode::Header]);
+        assert_eq!(request.reason.as_deref(), Some("check the balance"));
+    }
+
+    #[test]
+    fn an_env_secret_is_requested_at_the_command_line_and_the_hint_is_the_run_command() {
+        let mut harness = known_agent(GrantAnswer::Active("stripe".into()));
+        let replies = served(
+            &mut harness,
+            &[call(
+                tools::REQUEST_SECRET,
+                json!({
+                    "ref": "rowel://lb/stripe/apiKey",
+                    "mode": "env",
+                    "target": "stripe balance retrieve --live",
+                }),
+            )],
+        );
+        let (result, is_error) = tool_result(&replies[0]);
+        assert!(!is_error, "{result}");
+        assert_eq!(result["state"], "active");
+        assert!(result["use"].as_str().unwrap().starts_with(
+            "rowel run --grant grant-1 --env NAME=rowel://lb/stripe/apiKey -- stripe balance retrieve --live"
+        ));
+        let connection = harness.host();
+        let requests = connection.host().grant_requests.borrow();
+        let (_, request) = &requests[0];
+        assert_eq!(request.items, ItemSelector::Ids(vec!["stripe".into()]));
+        assert_eq!(
+            request.targets,
+            vec![Target::Command("stripe balance retrieve --live".into())]
+        );
+        assert_eq!(request.modes, vec![Mode::Env]);
+    }
+
+    #[test]
+    fn a_secret_request_with_a_bad_ref_mode_or_target_is_invalid_arguments() {
+        let mut harness = known_agent(GrantAnswer::Active("stripe".into()));
+        let good =
+            json!({ "ref": "rowel://lb/stripe/apiKey", "mode": "env", "target": "stripe balance" });
+        let mut calls = Vec::new();
+        for (key, value) in [
+            ("ref", json!("rowel://lb/stripe")),
+            ("ref", json!("stripe")),
+            ("mode", json!("fill")),
+            ("mode", json!("token")),
+            ("target", json!("")),
+        ] {
+            let mut args = good.clone();
+            args[key] = value;
+            calls.push(call(tools::REQUEST_SECRET, args));
+        }
+        calls.push(call(
+            tools::REQUEST_SECRET,
+            json!({ "ref": "rowel://lb/stripe/apiKey", "mode": "header", "target": "https://api.stripe.com/v1?key=1" }),
+        ));
+        calls.push(call(
+            tools::REQUEST_SECRET,
+            json!({ "ref": "rowel://lb/stripe/apiKey", "mode": "header", "target": "api.stripe.com" }),
+        ));
+        let replies = served(&mut harness, &calls);
+        assert_eq!(replies.len(), 7);
+        for reply in &replies {
+            let (result, is_error) = tool_result(reply);
+            assert!(is_error, "{result}");
+            assert_eq!(result["error"], "invalid_arguments");
+        }
+        assert!(harness.host().host().grant_requests.borrow().is_empty());
     }
 
     // A `pending` whose wait is past the budget is the agent's to act on: it
     // comes back as it is, and a wait on it is the refusal the host gives
     // for a grant it never issued — the tool text sends the agent back to
-    // requesting. (A wait that fits the budget is retried inside the tool;
-    // `tools::tests` covers that.)
+    // requesting. (A wait that fits the budget is retried by `decided`;
+    // `agent::tests` covers that.)
     #[test]
     fn a_pending_past_the_budget_comes_back_as_it_is_and_wait_cannot_settle_it() {
-        let mut harness = known_agent(GrantAnswer::Pending(Some(tools::PENDING_BUDGET_MS + 1)));
+        let mut harness = known_agent(GrantAnswer::Pending(Some(PENDING_BUDGET_MS + 1)));
         let replies = served(
             &mut harness,
             &[
@@ -309,7 +368,7 @@ mod tests {
         let (pending, is_error) = tool_result(&replies[0]);
         assert!(!is_error);
         assert_eq!(pending["state"], "pending");
-        assert_eq!(pending["retryAfterMs"], tools::PENDING_BUDGET_MS + 1);
+        assert_eq!(pending["retryAfterMs"], PENDING_BUDGET_MS + 1);
         let (waited, is_error) = tool_result(&replies[1]);
         assert!(is_error);
         assert_eq!(waited["error"], "GrantDenied");
@@ -322,6 +381,7 @@ mod tests {
                 consent: Some("Claude at work".into()),
                 ..Mock::unlocked()
             },
+            Role::Agent,
             false,
         );
         let replies = served(&mut harness, &[call(tools::LIST_VISIBLE, json!({}))]);
@@ -329,9 +389,9 @@ mod tests {
         assert!(!is_error, "{result}");
         assert_eq!(result, json!({ "items": [] }));
 
-        let stored = keys::load(&harness.key_path).unwrap().unwrap();
+        let stored = harness.keys().load().unwrap().unwrap();
         assert_eq!(stored.name, "Claude at work");
-        let connection = harness.link.0.borrow();
+        let connection = harness.host();
         let clients = connection.host().clients.borrow();
         assert_eq!(clients.len(), 1);
         assert_eq!(clients[0].key, stored.key);
@@ -341,8 +401,8 @@ mod tests {
 
     #[test]
     fn agents_off_is_a_tool_error_that_says_where_the_switch_is() {
-        let mut harness = harness(Mock::unlocked(), false);
-        harness.link.0.borrow().host().agents_enabled.set(false);
+        let mut harness = harness(Mock::unlocked(), Role::Agent, false);
+        harness.host().host().agents_enabled.set(false);
         let replies = served(
             &mut harness,
             &[
@@ -371,8 +431,7 @@ mod tests {
         let (result, is_error) = tool_result(&replies[1]);
         assert!(!is_error, "{result}");
         assert_eq!(result, json!({ "ok": true }));
-        let connection = harness.link.0.borrow();
-        assert_eq!(connection.host().ended.borrow().as_slice(), [GRANT_ID]);
+        assert_eq!(harness.host().host().ended.borrow().as_slice(), [GRANT_ID]);
     }
 
     #[test]
@@ -395,14 +454,7 @@ mod tests {
         let (no_grant, is_error) = tool_result(&replies[2]);
         assert!(is_error);
         assert_eq!(no_grant["error"], "invalid_arguments");
-        assert!(harness
-            .link
-            .0
-            .borrow()
-            .host()
-            .grant_requests
-            .borrow()
-            .is_empty());
+        assert!(harness.host().host().grant_requests.borrow().is_empty());
     }
 
     #[test]
