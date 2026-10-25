@@ -60,6 +60,14 @@ bytes = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "io-util"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "form", "query", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
+# `ROWEL_BROKER=ws://…` (`transport`): the blocking WebSocket client to a
+# `rowel serve` on another box, over the rustls stack above — the native
+# roots because `rustls-native-certs` is already in the locked graph under
+# the app's verifier, and `rustls-pki-types` reads the PEM a self-signed
+# broker's CA comes in.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
+rustls-native-certs = "0.8"
+rustls-pki-types = { version = "1", features = ["std"] }
 
 # The two client keys in the OS secure store (`keys`), with the crates and
 # features the app's own `secure_store` uses, so one keychain binding and one
