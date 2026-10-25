@@ -161,19 +161,25 @@ actions". While it is on:
   (`browser.storage.session["rowelAgentGrants"]`). The host tells every
   profile and the agent drives one, so only the profile with a tab at that
   origin — now, or when one finishes loading there later
-  (`tabs.onUpdated`) — turns agent mode on through the popup's own path if
-  it was off (`rowelAgentModeByGrant` remembers that a grant did it) and
-  tells the tab to redetect its fields, which reloads its settings and
-  retrieves with the grant; the others keep the grant in memory and change
-  nothing. A login served under the grant marks it `served` in that profile:
-  signed out where it was signed in, the sign-out at the end (and on a lock)
-  is only that profile's. A `grant-ended { grantId, origins }` is session end: every cookie of
+  (`tabs.onUpdated`) — acts under it: records it as one agent mode is on
+  for here (`rowelAgentGrants`, which holds only those, never a grant
+  merely held for another profile, since it is this map emptying that
+  turns agent mode back off), turns agent mode on through the popup's own
+  path if it was off (`rowelAgentModeByGrant` remembers that a grant did
+  it) and tells the tab to redetect its fields, which reloads its settings
+  and retrieves with the grant; the others keep the grant in memory
+  (`rowelGrants`, marked `agent`) and change nothing. A login served under
+  the grant marks it `served` in that profile: signed out where it was
+  signed in, the sign-out at the end (and on a lock) is only that
+  profile's. A `grant-ended { grantId, origins }` is session end: every cookie of
   each origin's registrable domain is deleted — in every cookie store the
   browser lists (`cookies.getAllCookieStores()`, then `getAll({ domain,
   storeId })` per store, since one call sees one store), partitioned
-  cookies asked for by name (`partitionKey: {}`, skipped on a browser that
-  does not know the field), and each `cookies.remove` naming the cookie's
-  own store and partition; Safari has no cookies API, so it is best-effort
+  cookies asked for by name (`partitionKey: {}`) and, on Firefox, every
+  first-party domain (`firstPartyDomain: null`, which first-party isolation
+  requires), a variant a browser rejects being a case it does not have,
+  and each `cookies.remove` naming the cookie's own store, partition and
+  first-party domain; Safari has no cookies API, so it is best-effort
   there — the grant is forgotten, "The agent is done: Rowel signed
   you out of the site in this browser" is shown, and agent mode goes back off
   once no agent grant is left, only if a grant turned it on. An origin a newer

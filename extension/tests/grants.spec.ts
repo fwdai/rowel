@@ -50,6 +50,7 @@ let tabMessages: { tabId: number; message: object }[];
 let clearedTabs: number[];
 let cookieJar: object[];
 let cookieStores: string[];
+let firstPartyIsolation: 'unknown' | 'off' | 'on';
 let removedCookies: object[];
 let savedAgentMode: boolean[];
 let notifications: string[];
@@ -67,6 +68,7 @@ test.beforeEach(() => {
     clearedTabs = [];
     cookieJar = [];
     cookieStores = [ '0', '1' ];
+    firstPartyIsolation = 'unknown';
     removedCookies = [];
     savedAgentMode = [];
     notifications = [];
@@ -118,7 +120,16 @@ test.beforeEach(() => {
             async getAllCookieStores() {
                 return cookieStores.map(id => ({ id }));
             },
-            async getAll({ domain, storeId, partitionKey }) {
+            // firstPartyDomain is Firefox's: unknown elsewhere (the call is
+            // rejected), ignored with first-party isolation off, and required
+            // with it on, where null names every first-party domain.
+            async getAll({ domain, storeId, partitionKey, ...rest }) {
+                if ('firstPartyDomain' in rest && firstPartyIsolation === 'unknown') {
+                    throw new Error('Unexpected property: firstPartyDomain');
+                }
+                if (!('firstPartyDomain' in rest) && firstPartyIsolation === 'on') {
+                    throw new Error('First-Party Isolation is enabled, but the required firstPartyDomain attribute was not set');
+                }
                 const store = storeId ?? cookieStores[0];
                 return cookieJar.filter(c => c.domain.replace(/^\./, '').endsWith(domain)
                     && c.storeId === store
@@ -307,7 +318,7 @@ test('a fill-grant remembers the grant with the host\'s expiry and wakes the tab
     await grants.onSignal();
 
     expect(sent).toEqual([ { action: 'get-signals', messageData: { action: 'get-signals' } } ]);
-    expect(area.store.rowelGrants).toEqual({ 'https://github.com': { grantId: 'g1', expiresAt: now + 5000 } });
+    expect(area.store.rowelGrants).toEqual({ 'https://github.com': { grantId: 'g1', expiresAt: now + 5000, agent: true } });
     expect(area.store.rowelAgentGrants).toEqual({ 'https://github.com': 'g1' });
     expect(clearedTabs).toEqual([ 3 ]);
     expect(tabMessages).toEqual([ { tabId: 3, message: { action: 'redetect_fields' } } ]);
@@ -331,6 +342,30 @@ test('a fill-grant without a tab at its origin only remembers the grant', async 
     expect(tabMessages).toEqual([]);
     expect(savedAgentMode).toEqual([]);
     expect(area.store.rowelAgentModeByGrant).toBeUndefined();
+    expect(area.store.rowelAgentGrants).toBeUndefined();
+});
+
+// A grant held for another profile is not one agent mode is on for here:
+// when the grant this profile did act under ends, agent mode goes off,
+// whatever else is still held in memory.
+test('a grant held only for another profile does not keep agent mode on', async () => {
+    globalThis.page.settings = { agentMode: false };
+    signals = [ fillGrant('g-bank', 'https://bank.example', now + 9000) ];
+    await grants.onSignal();
+    expect(savedAgentMode).toEqual([]);
+
+    tabList = [ { id: 1, url: 'https://github.com/login', active: true } ];
+    signals = [ fillGrant('g-gh', 'https://github.com', now + 5000) ];
+    await grants.onSignal();
+    expect(savedAgentMode).toEqual([ true ]);
+    expect(area.store.rowelAgentGrants).toEqual({ 'https://github.com': 'g-gh' });
+
+    signals = [ grantEnded('g-gh', [ 'https://github.com' ]) ];
+    await grants.onSignal();
+    expect(savedAgentMode).toEqual([ true, false ]);
+    expect(globalThis.page.settings.agentMode).toBe(false);
+    expect(area.store.rowelAgentGrants).toEqual({});
+    expect(await grants.grantFor('https://bank.example')).toBe('g-bank', 'still held, for its own end');
 });
 
 // The agent's page arrives after the grant did: the tab finishing its load
@@ -497,6 +532,45 @@ test('session end reaches every cookie store and partitioned cookies', async () 
         { url: 'https://github.com/', name: 'session', storeId: '0' },
         { url: 'https://github.com/', name: 'session', storeId: 'firefox-container-2' },
         { url: 'https://github.com/', name: 'embedded', storeId: 'firefox-container-2', partitionKey: { topLevelSite: 'https://example.com' } }
+    ]);
+});
+
+// Firefox with first-party isolation on: a query without firstPartyDomain is
+// rejected, so it is asked with null — every first-party domain — and each
+// removal names the cookie's own, without which it would name nothing.
+test('session end under Firefox first-party isolation', async () => {
+    await grants.rememberGrant('https://github.com', 'g1');
+    await grants.markServed('https://github.com', 'g1');
+    firstPartyIsolation = 'on';
+    cookieStores = [ 'firefox-default' ];
+    cookieJar = [
+        { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: 'firefox-default', firstPartyDomain: 'github.com' },
+        { name: 'embedded', domain: 'github.com', path: '/', secure: true, storeId: 'firefox-default', firstPartyDomain: 'example.com' }
+    ];
+    signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
+
+    await grants.onSignal();
+
+    expect(removedCookies).toEqual([
+        { url: 'https://github.com/', name: 'session', storeId: 'firefox-default', firstPartyDomain: 'github.com' },
+        { url: 'https://github.com/', name: 'embedded', storeId: 'firefox-default', firstPartyDomain: 'example.com' }
+    ]);
+});
+
+// Firefox with first-party isolation off accepts the field and answers the
+// same cookies to the query with it and without; each is removed once.
+test('session end on Firefox without first-party isolation removes each cookie once', async () => {
+    await grants.rememberGrant('https://github.com', 'g1');
+    await grants.markServed('https://github.com', 'g1');
+    firstPartyIsolation = 'off';
+    cookieStores = [ 'firefox-default' ];
+    cookieJar = [ { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: 'firefox-default', firstPartyDomain: '' } ];
+    signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
+
+    await grants.onSignal();
+
+    expect(removedCookies).toEqual([
+        { url: 'https://github.com/', name: 'session', storeId: 'firefox-default', firstPartyDomain: '' }
     ]);
 });
 

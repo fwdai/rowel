@@ -78,13 +78,19 @@ const writeMap = function(key, map) {
 
 // A grant from get-logins is given the host's window from now; a signalled one
 // comes with the host's own expiry (expiresAt, absolute ms).
-grants.rememberGrant = async function(origin, grantId, expiresAt = grants.now() + grants.GRANT_TTL_MS) {
+// `agent` marks a grant an agent asked for (a fill-grant signal), as opposed
+// to one this profile's own agent-mode fill was given: the former is held
+// by every profile and acted on by the one with the page.
+grants.rememberGrant = async function(origin, grantId, expiresAt = grants.now() + grants.GRANT_TTL_MS, agent = false) {
     if (!origin || !grantId) {
         return;
     }
 
     const map = await readMap(GRANTS_KEY);
     map[origin] = { grantId: grantId, expiresAt: expiresAt };
+    if (agent) {
+        map[origin].agent = true;
+    }
     await writeMap(GRANTS_KEY, map);
 };
 
@@ -364,20 +370,29 @@ grants.onFillGrant = async function({ grantId, origin, expiresAtMs }) {
         return;
     }
 
-    await grants.rememberGrant(origin, grantId, expiresAtMs);
-    const agentGrants = await readMap(AGENT_GRANTS_KEY);
-    agentGrants[origin] = grantId;
-    await writeMap(AGENT_GRANTS_KEY, agentGrants);
+    await grants.rememberGrant(origin, grantId, expiresAtMs, true);
 
     // The host tells every profile; the agent drives one. Agent mode — which
     // hides the person's in-page UI — goes on only where the agent's page
     // is: now, in the profile with a tab at the origin, or later, when one
-    // opens there (onTabUpdated). The others keep the grant in memory, so
+    // opens there (onTabUpdated). The others hold the grant in memory, so
     // they forget it with the rest when it ends, and change nothing else.
     if (await grants.hasTab(origin)) {
-        await grants.enterAgentMode();
-        await grants.wakeTab(origin);
+        await grants.actUnder(origin, grantId);
     }
+};
+
+// This profile acts under an agent's grant: it is one of the grants agent
+// mode is on for here (`rowelAgentGrants`, origin → grantId — only those,
+// never a grant merely held for another profile, since it is this map
+// emptying that turns agent mode back off), and the tab at the origin is
+// woken to fill.
+grants.actUnder = async function(origin, grantId) {
+    const acting = await readMap(AGENT_GRANTS_KEY);
+    acting[origin] = grantId;
+    await writeMap(AGENT_GRANTS_KEY, acting);
+    await grants.enterAgentMode();
+    await grants.wakeTab(origin);
 };
 
 // Agent mode on for a grant's sake, remembered as such so the last grant-ended
@@ -400,13 +415,12 @@ grants.onTabUpdated = function(tabId, changeInfo, tab) {
 
     return exclusive(async () => {
         const origin = grants.originOf(tab.url);
-        const agentGrants = await readMap(AGENT_GRANTS_KEY);
-        if (!agentGrants[origin] || await grants.grantFor(origin) !== agentGrants[origin]) {
+        const held = (await readMap(GRANTS_KEY))[origin];
+        if (!held?.agent || await grants.grantFor(origin) !== held.grantId) {
             return;
         }
 
-        await grants.enterAgentMode();
-        await grants.wakeTab(origin);
+        await grants.actUnder(origin, held.grantId);
     });
 };
 
@@ -492,6 +506,11 @@ grants.clearCookies = async function(origin) {
         if (cookie.partitionKey) {
             details.partitionKey = cookie.partitionKey;
         }
+        // Firefox names a cookie by its first-party domain too, and under
+        // first-party isolation a removal without it names nothing.
+        if (cookie.firstPartyDomain !== undefined) {
+            details.firstPartyDomain = cookie.firstPartyDomain;
+        }
         await browser.cookies.remove(details);
     }
 };
@@ -508,19 +527,37 @@ grants.cookiesOf = async function(domain) {
     const stores = browser.cookies.getAllCookieStores ? await browser.cookies.getAllCookieStores() : [ undefined ];
     const found = new Map();
     for (const store of stores) {
-        const details = { domain: domain };
+        const base = { domain: domain };
         if (store?.id !== undefined) {
-            details.storeId = store.id;
+            base.storeId = store.id;
         }
-        const batches = [ await browser.cookies.getAll(details) ];
-        try {
-            batches.push(await browser.cookies.getAll({ ...details, partitionKey: {} }));
-        } catch (_e) {
-            // The browser does not know partitioned cookies; there are none to find.
-        }
-        for (const cookie of batches.flat()) {
-            const key = [ cookie.storeId, cookie.name, cookie.domain, cookie.path, JSON.stringify(cookie.partitionKey ?? null) ].join('\u0000');
-            found.set(key, cookie);
+        // A query names one store, one partition and — on Firefox — one
+        // first-party domain, and leaves out what it does not name: the
+        // unpartitioned cookies unless partitionKey is {}, and under
+        // first-party isolation nothing at all unless firstPartyDomain is
+        // given (null for every one). Together the variants name them all; a
+        // browser that does not know a field rejects that variant, which is
+        // then a case it does not have.
+        const variants = [
+            {},
+            { partitionKey: {} },
+            { firstPartyDomain: null },
+            { firstPartyDomain: null, partitionKey: {} }
+        ];
+        for (const variant of variants) {
+            let batch;
+            try {
+                batch = await browser.cookies.getAll({ ...base, ...variant });
+            } catch (_e) {
+                continue;
+            }
+            for (const cookie of batch) {
+                const key = [
+                    cookie.storeId, cookie.name, cookie.domain, cookie.path,
+                    JSON.stringify(cookie.partitionKey ?? null), cookie.firstPartyDomain ?? ''
+                ].join('\u0000');
+                found.set(key, cookie);
+            }
         }
     }
     return [ ...found.values() ];
