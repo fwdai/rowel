@@ -315,8 +315,9 @@ impl Pending<Answer> {
 /// the other kind — a passkey dialog somehow answering an `associate` — is no
 /// answer at all.
 enum Answer {
-    /// The name given to an extension, or `None` for a refusal.
-    Name(Option<String>),
+    /// The name given to a client and whether an agent drives its browser,
+    /// or `None` for a refusal.
+    Pairing(Option<Pairing>),
     /// The account picked for a passkey ceremony, or `None` for a refusal.
     Account(Option<usize>),
     /// The item an agent may use, and for how long, or `None` for a refusal.
@@ -324,6 +325,15 @@ enum Answer {
 }
 
 static CONSENT: Pending<Answer> = Pending::new();
+
+/// What the user answered a client asking to connect with: the name to
+/// remember it by, and — for an extension — whether an AI agent drives the
+/// browser it is in ([`Client::driven_by_agent`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pairing {
+    pub name: String,
+    pub driven_by_agent: bool,
+}
 
 /// What the user answered a grant ask with: which of the candidates the
 /// dialog listed — the agent may be given that one and no other — and, for
@@ -385,27 +395,27 @@ pub fn refuse_grant_ask() -> Option<String> {
 }
 
 /// Ask the user whether the client holding `key`, which says it is `who`, may
-/// connect: the name they gave it, or `None`. Blocks the calling thread (see
+/// connect: their answer, or `None`. Blocks the calling thread (see
 /// [`Pending::ask`]). The ask is tagged with an id of its own rather than
 /// with the key: the same client asks again after a timeout, under the same
 /// key, and a dialog left up from the first ask must not be the yes to the
 /// second.
-pub fn ask(app: &AppHandle, key: &str, who: &Hello) -> Option<String> {
+pub fn ask(app: &AppHandle, key: &str, who: &Hello) -> Option<Pairing> {
     let id = crate::crypto::random_hex_id();
     let answer = CONSENT.ask(&id, AskKind::Associate, || {
         events::browser_associate(app, &id, key, who.kind, who.platform.as_deref());
         window::raise(app);
     });
     match answer {
-        Some(Answer::Name(name)) => name,
+        Some(Answer::Pairing(pairing)) => pairing,
         _ => None,
     }
 }
 
-/// The user's answer to the ask up under `id`: the name they gave the
-/// extension, or `None` for a refusal. Returns whether that ask was waiting.
-pub fn respond(id: &str, name: Option<String>) -> bool {
-    CONSENT.answer(id, Answer::Name(name))
+/// The user's answer to the ask up under `id`, or `None` for a refusal.
+/// Returns whether that ask was waiting.
+pub fn respond(id: &str, pairing: Option<Pairing>) -> bool {
+    CONSENT.answer(id, Answer::Pairing(pairing))
 }
 
 /// Ask the user whether the page at `origin`, through the client
@@ -483,6 +493,23 @@ pub fn clients(app: &AppHandle) -> Vec<Client> {
     let state = app.state::<AppState>();
     let session = state.session.lock().unwrap();
     session.store().map(clients_in).unwrap_or_default()
+}
+
+/// Mark the extension holding `key` as one in a browser an AI agent drives,
+/// or not: every fill it asks for is then a grant
+/// ([`Client::driven_by_agent`]). Only an extension carries the mark; an
+/// agent never receives a secret to begin with.
+pub fn set_driven_by_agent(app: &AppHandle, key: &str, driven: bool) -> Result<()> {
+    let state = app.state::<AppState>();
+    let session = state.session.lock().unwrap();
+    let store = session.store()?;
+    let mut clients = clients_in(store);
+    let client = clients
+        .iter_mut()
+        .find(|c| c.key == key && c.kind == ClientKind::Extension)
+        .ok_or(crate::error::Error::NotFound)?;
+    client.driven_by_agent = driven;
+    write_clients(store, &clients)
 }
 
 /// Take a client's access to the open vault back, on record: the row names
@@ -596,7 +623,7 @@ impl Host for AppHost {
         }
         let state = app.state::<AppState>();
         let epoch = commands::unlocked_epoch(&state).map_err(|_| Code::DatabaseNotOpened)?;
-        let name = ask(app, key, who).ok_or(Code::ActionCancelledOrDenied)?;
+        let pairing = ask(app, key, who).ok_or(Code::ActionCancelledOrDenied)?;
         let writer = storage::install_id(app);
         let now = agents::now_ms();
         let session = state.session.lock().unwrap();
@@ -611,13 +638,14 @@ impl Host for AppHost {
             return Ok(known.clone());
         }
         let client = Client {
-            name,
+            name: pairing.name,
             key: key.to_string(),
             kind: who.kind,
             platform: who.platform.clone(),
             created_at_ms: now,
             last_seen_at_ms: Some(now),
             agent_id: None,
+            driven_by_agent: pairing.driven_by_agent && who.kind == ClientKind::Extension,
         };
         clients.push(client.clone());
         write_clients(store, &clients).map_err(|e| {
@@ -933,28 +961,11 @@ impl Host for AppHost {
     // comes with no URL, and the grant was narrowed to its page when it was
     // issued.
     fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
-        let app = &self.0;
-        agents::initialise(app);
-        let writer = storage::install_id(app);
-        let state = app.state::<AppState>();
-        let now = agents::now_ms();
-        let session = state.session.lock().unwrap();
-        let Ok(store) = session.store() else {
-            return false;
-        };
-        let mut held = state.agents.lock().unwrap();
-        covered(
-            Locked {
-                store,
-                held: &mut held,
-                writer: &writer,
-                now,
-            },
-            &client.key,
-            grant_id,
-            item_id,
-            mode,
-        )
+        self.with_locked(|ctx| covered(ctx, &client.key, grant_id, item_id, mode))
+    }
+
+    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool {
+        self.with_locked(|ctx| client_covered(ctx, &client.key, item_id, mode))
     }
 
     // The page showed what was filled: the grant ends now, whatever was left
@@ -1048,6 +1059,27 @@ impl AppHost {
             row.detail = Some(r#"{"reason":"user"}"#.into());
         }
         agents::record(store, &writer, row, now);
+    }
+
+    // `check` under the session and agents locks, over the open store, once
+    // the session has read the switches; false while locked.
+    fn with_locked(&self, check: impl FnOnce(Locked<'_>) -> bool) -> bool {
+        let app = &self.0;
+        agents::initialise(app);
+        let writer = storage::install_id(app);
+        let state = app.state::<AppState>();
+        let now = agents::now_ms();
+        let session = state.session.lock().unwrap();
+        let Ok(store) = session.store() else {
+            return false;
+        };
+        let mut held = state.agents.lock().unwrap();
+        check(Locked {
+            store,
+            held: &mut held,
+            writer: &writer,
+            now,
+        })
     }
 
     // Everything a grant request decides before anyone is asked, under the
@@ -1553,6 +1585,18 @@ fn queue_fill(
 /// — an agent's, signalled to every extension — is claimed by the first
 /// extension served under it (`Grant::served_to`) and refused to any other.
 fn covered(ctx: Locked<'_>, client_key: &str, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+    covered_via(ctx, client_key, grant_id, item_id, mode, "grantId")
+}
+
+/// [`covered`], with what the `used` row says the grant was found by.
+fn covered_via(
+    ctx: Locked<'_>,
+    client_key: &str,
+    grant_id: &str,
+    item_id: &str,
+    mode: Mode,
+    via: &str,
+) -> bool {
     let Locked {
         store,
         held,
@@ -1600,12 +1644,40 @@ fn covered(ctx: Locked<'_>, client_key: &str, grant_id: &str, item_id: &str, mod
     let mut row = agents::about(
         agents::draft(Event::Used, &grant.client_key, &clients),
         grant,
-        Some(r#"{"via":"grantId"}"#),
+        Some(&format!(r#"{{"via":"{via}"}}"#)),
     );
     row.item_id = Some(item_id.to_string());
     row.mode = Some(mode);
     agents::record(store, writer, row, now);
     true
+}
+
+/// [`covered`] over the grants the client holding `client_key` was issued or
+/// already served under: the first that covers `item_id` counts the use.
+/// What an extension's TOTP step is served under when it names no grant; a
+/// grant nobody has been served under yet is not claimed this way.
+fn client_covered(ctx: Locked<'_>, client_key: &str, item_id: &str, mode: Mode) -> bool {
+    let Locked {
+        store,
+        held,
+        writer,
+        now,
+    } = ctx;
+    let ids: Vec<String> = held
+        .grants
+        .iter()
+        .filter(|g| g.client_key == client_key || g.served_to.as_deref() == Some(client_key))
+        .map(|g| g.id.clone())
+        .collect();
+    ids.iter().any(|id| {
+        let ctx = Locked {
+            store,
+            held: &mut *held,
+            writer,
+            now,
+        };
+        covered_via(ctx, client_key, id, item_id, mode, "client")
+    })
 }
 
 /// What a grant request came to before anyone was asked: answered already

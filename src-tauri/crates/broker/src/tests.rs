@@ -171,6 +171,7 @@ fn extension_client(name: &str, key: &str) -> Client {
         created_at_ms: 0,
         last_seen_at_ms: None,
         agent_id: None,
+        driven_by_agent: false,
     }
 }
 
@@ -345,6 +346,7 @@ fn a_client_row_from_before_kinds_reads_as_an_extension() {
         created_at_ms: 1_700_000_000_000,
         last_seen_at_ms: Some(1_700_000_001_000),
         agent_id: Some("def-1".into()),
+        driven_by_agent: false,
     };
     let wire = serde_json::to_value(&agent).unwrap();
     assert_eq!(
@@ -879,6 +881,108 @@ fn get_totp_in_agent_mode_is_refused_without_a_grant_and_served_under_one() {
         json!({ "uuid": "gh", "grantId": "g1" }),
     );
     assert_eq!(held["totp"], "654321");
+}
+
+// --- an extension the user marked as driven by an agent -------------------------
+
+/// Associated as an extension the user marked as driven by an agent, with
+/// two logins for GitHub and the host scripted to `answer`.
+fn driven_connection(answer: GrantAnswer) -> (Extension, Connection<Mock>) {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        logins: two_logins(),
+        grant_answer: answer,
+        ..Mock::unlocked().known_driven("Comet", "id-key")
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Comet", "key": "id-key" }),
+    );
+    (extension, connection)
+}
+
+// The mark is the host's: a marked extension's fill is a grant whether it
+// says `agentMode`, says it is off, or says nothing at all.
+#[test]
+fn a_marked_extension_s_fill_is_a_grant_whatever_it_says() {
+    for message in [
+        json!({ "url": GH_LOGIN }),
+        json!({ "url": GH_LOGIN, "agentMode": "false" }),
+        json!({ "url": GH_LOGIN, "agentMode": "true" }),
+    ] {
+        let (extension, mut connection) = driven_connection(GrantAnswer::Active("gh2".into()));
+        let response = extension.send(&mut connection, "get-logins", message.clone());
+        assert_eq!(response["count"], 1, "{message}");
+        assert_eq!(response["entries"][0]["uuid"], "gh2", "{message}");
+        assert_eq!(response["grantId"], GRANT_ID, "{message}");
+        assert_eq!(connection.host().grant_requests.borrow().len(), 1);
+    }
+
+    let (extension, mut connection) = driven_connection(GrantAnswer::Disabled);
+    let response = extension.send(&mut connection, "get-logins", json!({ "url": GH_LOGIN }));
+    assert_eq!(error_code(&response), Code::AgentsDisabled as u8);
+    assert!(response.get("entries").is_none());
+}
+
+// A marked extension's TOTP step needs a grant it holds or was served under,
+// named or not: none before its fill was granted, the code after, and never
+// by claiming a grant it was not served under.
+#[test]
+fn a_marked_extension_s_totp_step_is_served_only_under_its_own_grant() {
+    let (extension, mut connection) = driven_connection(GrantAnswer::Active("gh".into()));
+    let before = extension.send(&mut connection, "get-totp", json!({ "uuid": "gh" }));
+    assert_eq!(error_code(&before), Code::GrantDenied as u8);
+    assert!(before.get("totp").is_none());
+
+    extension.send(&mut connection, "get-logins", json!({ "url": GH_LOGIN }));
+    let after = extension.send(&mut connection, "get-totp", json!({ "uuid": "gh" }));
+    assert_eq!(after["totp"], "654321");
+
+    // An agent's grant nobody has been served under yet is not this
+    // extension's to claim without naming it.
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(
+        Mock::unlocked()
+            .known_driven("Comet", "id-key")
+            .granting("g1", "gh", Mode::Fill),
+    );
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Comet", "key": "id-key" }),
+    );
+    let unclaimed = extension.send(&mut connection, "get-totp", json!({ "uuid": "gh" }));
+    assert_eq!(error_code(&unclaimed), Code::GrantDenied as u8);
+    assert_eq!(connection.host().grants.borrow()["g1"].served_to, None);
+}
+
+// The mark changes nothing for an extension that does not carry it, and
+// an old record without it reads as unmarked and is written back as it was.
+#[test]
+fn an_unmarked_extension_fills_as_it_always_did() {
+    let (extension, mut connection) = agent_connection(GrantAnswer::Disabled);
+    let logins = extension.send(&mut connection, "get-logins", json!({ "url": GH_LOGIN }));
+    assert_eq!(logins["count"], 2);
+    let code = extension.send(&mut connection, "get-totp", json!({ "uuid": "gh" }));
+    assert_eq!(code["totp"], "654321");
+    assert!(connection.host().grant_requests.borrow().is_empty());
+
+    let old: Client = serde_json::from_str(r#"{"name":"Chrome","key":"k"}"#).unwrap();
+    assert!(!old.driven_by_agent);
+    assert!(!serde_json::to_string(&old)
+        .unwrap()
+        .contains("drivenByAgent"));
+    let marked = Client {
+        driven_by_agent: true,
+        ..old
+    };
+    assert_eq!(
+        serde_json::to_value(&marked).unwrap()["drivenByAgent"],
+        true
+    );
 }
 
 #[test]

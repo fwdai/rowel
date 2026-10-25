@@ -941,6 +941,7 @@ mod tests {
             created_at_ms: 0,
             last_seen_at_ms: None,
             agent_id: None,
+            driven_by_agent: false,
         }
     }
 

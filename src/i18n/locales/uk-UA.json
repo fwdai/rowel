@@ -821,5 +821,7 @@
   "End": "Завершити",
   "Ended": "Завершено",
   "Agents can use items in this lockbox": "Агенти можуть використовувати елементи в цій комірці",
-  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Поки {{appName}} розблоковано, агент із постійним правилом використовує елементи звідси без запиту."
+  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Поки {{appName}} розблоковано, агент із постійним правилом використовує елементи звідси без запиту.",
+  "Used by an AI agent": "Використовується ШІ-агентом",
+  "Every fill from it then waits for your approval in {{appName}}.": "Кожне заповнення тоді чекає вашого схвалення в {{appName}}."
 }

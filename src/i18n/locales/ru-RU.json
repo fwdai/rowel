@@ -821,5 +821,7 @@
   "End": "Завершить",
   "Ended": "Завершено",
   "Agents can use items in this lockbox": "Агенты могут использовать элементы в этой ячейке",
-  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Пока {{appName}} разблокирован, агент с постоянным правилом использует элементы отсюда без вопросов."
+  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Пока {{appName}} разблокирован, агент с постоянным правилом использует элементы отсюда без вопросов.",
+  "Used by an AI agent": "Используется ИИ-агентом",
+  "Every fill from it then waits for your approval in {{appName}}.": "Каждое заполнение тогда ждёт вашего одобрения в {{appName}}."
 }

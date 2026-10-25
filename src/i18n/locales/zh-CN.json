@@ -785,5 +785,7 @@
   "End": "结束",
   "Ended": "已结束",
   "Agents can use items in this lockbox": "代理可以使用此保管箱中的项目",
-  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "{{appName}} 处于解锁状态时，拥有常设规则的代理无需询问即可使用这里的项目。"
+  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "{{appName}} 处于解锁状态时，拥有常设规则的代理无需询问即可使用这里的项目。",
+  "Used by an AI agent": "由 AI 代理使用",
+  "Every fill from it then waits for your approval in {{appName}}.": "此后每次填充都需要你在 {{appName}} 中批准。"
 }

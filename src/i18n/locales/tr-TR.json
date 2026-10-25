@@ -797,5 +797,7 @@
   "End": "Sonlandır",
   "Ended": "Sonlandı",
   "Agents can use items in this lockbox": "Ajanlar bu kilitli kutudaki öğeleri kullanabilir",
-  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "{{appName}} kilidi açık olduğu sürece, kalıcı kuralı olan bir ajan buradaki öğeleri sormadan kullanır."
+  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "{{appName}} kilidi açık olduğu sürece, kalıcı kuralı olan bir ajan buradaki öğeleri sormadan kullanır.",
+  "Used by an AI agent": "Bir yapay zekâ ajanı kullanıyor",
+  "Every fill from it then waits for your approval in {{appName}}.": "Her doldurma için {{appName}} içinde onayınız beklenir."
 }

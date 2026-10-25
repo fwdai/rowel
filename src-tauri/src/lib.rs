@@ -306,6 +306,8 @@ pub fn run() {
             commands::browser::browser_passkey_respond,
             #[cfg(desktop)]
             commands::browser::browser_forget_client,
+            #[cfg(desktop)]
+            commands::browser::browser_set_driven_by_agent,
             // Agents through the extension host: the switch, the grant
             // dialog's answer, and the rules and grants Settings lists.
             #[cfg(desktop)]
