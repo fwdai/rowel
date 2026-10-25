@@ -12,13 +12,18 @@
 //! and an association under a key of this machine's own (`keys`, `agent`).
 //! The app's own binary is `rowel`; this one is `rowel-cli`, and Settings
 //! installs it under the short name.
+//!
+//! On a box without the app, `serve` is the broker itself — the headless
+//! one of `rowel-serve` — and `approve` and `admin` are its terminal.
 
 // Desktop only, as the broker's `socket` it connects through is: a phone has
 // no command line to run this from, so there the crate is empty and the
 // workspace still builds for one.
 #![cfg(not(any(target_os = "android", target_os = "ios")))]
 
+pub mod admin;
 pub mod agent;
+pub mod approve;
 pub mod args;
 pub mod authority;
 pub mod command;
@@ -28,6 +33,7 @@ pub mod mcp;
 pub mod proxy;
 pub mod redact;
 pub mod run;
+pub mod serve;
 pub mod status;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -107,6 +113,9 @@ pub fn run(program: &str, args: impl Iterator<Item = String>) -> i32 {
             };
             proxy::run(&proxy, Box::new(sidecar))
         }
+        Ok(args::Command::Serve(serve)) => serve::run(serve),
+        Ok(args::Command::Approve(approve)) => approve::run(approve),
+        Ok(args::Command::Admin(admin)) => admin::run(admin),
         Err(usage) => {
             eprintln!("{usage}");
             2

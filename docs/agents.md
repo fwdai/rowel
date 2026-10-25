@@ -199,6 +199,9 @@ section. In short:
   dialog and the rules still decide what it gets. On macOS and Windows the
   keys live in the OS secure store, where a foreign read prompts you.
 
-Not in this release: shared lockboxes with server-held keys, a headless broker
-for a machine with no desktop, approvals from your phone, OAuth token minting,
-and agents in remote browsers.
+On a machine with no desktop, the same broker runs from the command line as
+`rowel serve`, unlocked from a terminal or a key file, with standing rules in
+a config file and asks answered by `rowel approve`; see
+[`docs/serve.md`](./serve.md). Not in this release: shared lockboxes with
+server-held keys, approvals from your phone, OAuth token minting, and agents
+in remote browsers.

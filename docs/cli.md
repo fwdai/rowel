@@ -82,6 +82,23 @@ way it goes, and so are the two keys: the broker asks to let each one in the
 first time it sees it, as the app does. `rowel status` says which it tried
 (`app:` or `broker: … at ws://…`).
 
+## `rowel serve`, `rowel approve`, `rowel admin`
+
+The same binary is the broker on a box without the app:
+
+```
+rowel serve [--data-dir <path>] [--lockbox <id>] [--config <path>] [--key-file <path> | --key-fd <n>]
+            [--ws <addr>] [--no-socket] [--idle-lock <minutes>] [--ask-timeout <seconds>]
+rowel approve [<id> [--item <id>] [--days N] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
+rowel admin rules list|add|remove … | agents on|off [--lockbox <id>] | key-file <path> | lock
+```
+
+`serve` unlocks a device-held lockbox from the terminal or a key file and
+serves agents over the socket and a WebSocket under standing rules from a
+config file; `approve` answers the asks it queues; `admin` edits the rules,
+a lockbox's agent access and the key file. All of it is in
+[`serve.md`](serve.md).
+
 ## `rowel status`
 
 One line per fact: whether the app is reachable, whether the vault is open,

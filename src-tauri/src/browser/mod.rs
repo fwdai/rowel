@@ -1113,6 +1113,8 @@ impl AppHost {
             lockbox,
             client,
             req,
+            // The app's rules are all in the lockbox; it holds none beside it.
+            &[],
         )?;
         drop(held);
         drop(session);

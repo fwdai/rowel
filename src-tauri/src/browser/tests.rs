@@ -349,6 +349,7 @@ fn decided(store: &SqliteStore, held: &mut AgentState, now: i64) -> Result<Prepa
         "default",
         &extension(),
         fill_request(&["gh"]),
+        &[],
     )
 }
 
@@ -1123,6 +1124,7 @@ fn a_decision_that_waits_on_the_slot_is_not_an_ask_on_the_clients_record() {
                     "default",
                     &agent(),
                     agent_request("https://github.com"),
+                    &[]
                 ),
                 Ok(Prepared::Ask(_))
             ),
@@ -1152,6 +1154,7 @@ fn an_agents_fill_grant_is_signalled_to_the_extensions_and_not_to_the_agent() {
         "default",
         &agent(),
         agent_request("https://github.com"),
+        &[],
     ) {
         Ok(Prepared::Ask(asking)) => *asking,
         other => panic!("the baseline asks: {:?}", other.is_ok()),
@@ -1263,6 +1266,7 @@ fn an_agents_request_for_a_site_with_no_login_is_denied_on_record() {
             "default",
             &agent(),
             agent_request("https://gitlab.com"),
+            &[]
         ),
         Err(Code::GrantDenied)
     ));
@@ -2012,6 +2016,7 @@ fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_
         "default",
         &sidecar(),
         request(DEPLOY),
+        &[],
     ) {
         Ok(Prepared::Ask(asking)) => *asking,
         other => panic!("the baseline asks: {:?}", other.is_ok()),
@@ -2046,6 +2051,7 @@ fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_
         "default",
         &sidecar(),
         request(DEPLOY),
+        &[],
     ) {
         Ok(Prepared::Answered(reply)) => reply,
         other => panic!("the rule allows: {:?}", other.is_ok()),
@@ -2071,8 +2077,7 @@ fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_
             locked(&store, &mut held, now),
             "default",
             &sidecar(),
-            request(DEPLOY),
-        ),
+            request(DEPLOY), &[]),
         Ok(Prepared::Answered(reply)) if reply.grant_id == held.grants[0].id
     ));
     assert_eq!(held.grants[0].uses, 0);
@@ -2085,6 +2090,7 @@ fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_
                 "default",
                 &sidecar(),
                 request("node -e \"console.log(process.env)\""),
+                &[]
             ),
             Ok(Prepared::Ask(_))
         ),
@@ -2118,6 +2124,7 @@ fn a_header_request_asks_under_the_baseline_and_a_card_number_is_a_step_up() {
             vec![stripe(&["GET", "POST"])],
             vec![Mode::Header],
         ),
+        &[],
     ) {
         Ok(Prepared::Ask(asking)) => *asking,
         other => panic!("the baseline asks: {:?}", other.is_ok()),
@@ -2136,6 +2143,7 @@ fn a_header_request_asks_under_the_baseline_and_a_card_number_is_a_step_up() {
         "default",
         &agent(),
         secret_request("agent", &["visa"], vec![stripe(&[])], vec![Mode::Header]),
+        &[],
     ) {
         Ok(Prepared::Ask(asking)) => *asking,
         other => panic!("a card asks: {:?}", other.is_ok()),
@@ -2163,6 +2171,7 @@ fn a_yes_for_days_on_an_env_ask_writes_a_rule_for_the_command_line() {
             vec![Target::Command(DEPLOY.into())],
             vec![Mode::Env],
         ),
+        &[],
     ) {
         Ok(Prepared::Ask(asking)) => *asking,
         other => panic!("the baseline asks: {:?}", other.is_ok()),
@@ -2240,6 +2249,7 @@ fn a_two_item_env_request_is_asked_for_both_unless_a_rule_names_both() {
         "default",
         &sidecar(),
         env_request(&["ci", "ci2"]),
+        &[],
     ) {
         Ok(Prepared::Ask(asking)) => *asking,
         other => panic!("the baseline asks for both: {:?}", other.is_ok()),
@@ -2262,6 +2272,7 @@ fn a_two_item_env_request_is_asked_for_both_unless_a_rule_names_both() {
         "default",
         &sidecar(),
         env_request(&["ci", "ci2"]),
+        &[],
     ) {
         Ok(Prepared::Answered(reply)) => reply,
         other => panic!("a rule for both allows: {:?}", other.is_ok()),
@@ -2293,6 +2304,7 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
         "default",
         &sidecar(),
         env_request(&["ci", "ci2"]),
+        &[],
     ) {
         Ok(Prepared::Ask(asking)) => *asking,
         other => panic!("the baseline asks: {:?}", other.is_ok()),
@@ -2363,8 +2375,7 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
             locked(&store, &mut held, now),
             "default",
             &sidecar(),
-            env_request(&["ci", "ci2"]),
-        ),
+            env_request(&["ci", "ci2"]), &[]),
         Ok(Prepared::Answered(reply)) if reply.state == State::Active && reply.items.len() == 2
     ));
 }
@@ -2403,6 +2414,7 @@ fn a_held_grant_for_one_item_is_not_reused_for_a_request_naming_two() {
                 "default",
                 &sidecar(),
                 env_request(&["ci"]),
+                &[]
             ),
             Ok(Prepared::Answered(_))
         ),
@@ -2413,6 +2425,7 @@ fn a_held_grant_for_one_item_is_not_reused_for_a_request_naming_two() {
         "default",
         &sidecar(),
         env_request(&["ci", "ci2"]),
+        &[],
     ) {
         Ok(Prepared::Ask(asking)) => *asking,
         other => panic!("both are asked for: {:?}", other.is_ok()),
@@ -2450,6 +2463,7 @@ fn a_secret_request_naming_an_item_that_is_not_there_is_denied_no_candidates() {
                 "default",
                 &sidecar(),
                 env_request(&["ci", "ci"]),
+                &[]
             ),
             Ok(Prepared::Ask(_))
         ),
@@ -2467,6 +2481,7 @@ fn a_secret_request_naming_an_item_that_is_not_there_is_denied_no_candidates() {
                     "default",
                     &sidecar(),
                     env_request(ids),
+                    &[]
                 ),
                 Err(Code::GrantDenied)
             ),
@@ -2485,6 +2500,7 @@ fn a_secret_request_naming_an_item_that_is_not_there_is_denied_no_candidates() {
                 "default",
                 &sidecar(),
                 env_request(&["ci"]),
+                &[]
             ),
             Err(Code::RateLimited)
         ),
@@ -2549,7 +2565,13 @@ fn a_request_whose_targets_do_not_fit_its_modes_is_denied_no_target() {
     ];
     for request in misfits {
         assert!(matches!(
-            decide(locked(&store, &mut held, now), "default", &agent(), request,),
+            decide(
+                locked(&store, &mut held, now),
+                "default",
+                &agent(),
+                request,
+                &[]
+            ),
             Err(Code::GrantDenied)
         ));
     }

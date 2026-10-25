@@ -68,6 +68,14 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "tls1
 tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
 rustls-native-certs = "0.8"
 rustls-pki-types = { version = "1", features = ["std"] }
+# `rowel serve`, `rowel approve` and `rowel admin` (`serve`, `approve`,
+# `admin`): the headless broker and its control socket are the serve crate's;
+# this binary adds the command line and the terminal — `rpassword` reads the
+# master password without echo, and `chrono` prints a rule's end date.
+rowel-serve = { path = "../serve" }
+rowel-core = { path = "../core" }
+rpassword = "7"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 
 # The two client keys in the OS secure store (`keys`), with the crates and
 # features the app's own `secure_store` uses, so one keychain binding and one
@@ -83,5 +91,8 @@ keyring = { version = "3", features = ["windows-native"] }
 # `Connection` is under `test-support`, so the MCP server, `run` and the
 # hooks are tested end to end in-process.
 rowel-broker = { path = "../broker", features = ["test-support"] }
+# The vault-making helpers for the integration test that runs the built
+# binary as `rowel serve` (`tests/serve.rs`).
+rowel-serve = { path = "../serve", features = ["test-support"] }
 # A directory for the key file to be created in.
 tempfile = "3"

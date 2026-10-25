@@ -119,11 +119,16 @@ impl Lockbox {
 /// the value leaves only through `resolve`, which is where its uses are
 /// counted and its `used` rows written. The two never mix in one request,
 /// and `token` is nobody's yet.
+///
+/// `extra` are rules the host holds outside the lockbox — a headless
+/// broker's config file — evaluated after the baseline and before the
+/// lockbox's own; the app has none and passes `&[]`.
 pub fn decide(
     ctx: Locked<'_>,
     lockbox: &str,
     client: &Client,
     req: GrantRequest,
+    extra: &[policy::Rule],
 ) -> Result<Prepared, Code> {
     let Locked {
         store,
@@ -242,9 +247,11 @@ pub fn decide(
         return Ok(Prepared::Answered(reply_for(&grant, items)));
     }
 
-    // The baseline every lockbox with the switch on starts with, then its
-    // own rules — the ones the user wrote by answering "for N days".
+    // The baseline every lockbox with the switch on starts with, then the
+    // host's own rules, then the lockbox's — the ones the user wrote by
+    // answering "for N days".
     let mut rules = defaults::personal();
+    rules.extend(extra.iter().cloned());
     rules.extend(live_rules(store, now));
 
     if held

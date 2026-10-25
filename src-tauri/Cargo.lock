@@ -4750,6 +4750,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
+ "chrono",
  "dirs",
  "form_urlencoded",
  "http",
@@ -4762,6 +4763,9 @@ dependencies = [
  "rand 0.8.8",
  "reqwest",
  "rowel-broker",
+ "rowel-core",
+ "rowel-serve",
+ "rpassword",
  "rustls",
  "rustls-native-certs",
  "rustls-pki-types",
@@ -4814,6 +4818,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "rowel-serve"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "hex",
+ "interprocess",
+ "log",
+ "rowel-broker",
+ "rowel-core",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tungstenite",
+ "zeroize",
+]
+
+[[package]]
+name = "rpassword"
+version = "7.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2da316a15f47e3d053de9cb2c439650bd8fa4aaeb9365f2e5f27f492ff73c196"
+dependencies = [
+ "libc",
+ "rtoolbox",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4832,6 +4872,16 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rtoolbox"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a1efe12a1469752d0e6ff5ebec0b6ef4924cc5c4c71046b0ec730040535819d"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6433,6 +6483,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
@@ -6457,6 +6508,18 @@ checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
 dependencies = [
  "rustls",
  "tokio",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
 ]
 
 [[package]]
