@@ -1,8 +1,11 @@
-//! The command line beside the app. Two things so far: `status`, which says
-//! whether the app is there, the vault open and this machine's agent key let
-//! in; and `mcp`, a stdio MCP server that gives a coding agent the five
-//! grant actions and nothing else — the reply to "may I log into github.com?"
-//! is granted, denied or pending, never a password.
+//! The command line beside the app. `status` says whether the app is there,
+//! the vault open and this machine's two keys let in; `mcp` is a stdio MCP
+//! server that gives a coding agent the grant actions and nothing else —
+//! the reply to "may I log into github.com?" is granted, denied or pending,
+//! never a password; `run`, `proxy`, `redact` and `hook` are the sidecar,
+//! the one client that resolves a placeholder under a grant, and only into
+//! one child's environment, one outgoing request, or out of a stream, never
+//! to the agent.
 //!
 //! Everything reaches the app the way the extension does: a frame over the
 //! socket (`transport`), the sealed channel of the broker's `client` module,
@@ -17,23 +20,104 @@
 
 pub mod agent;
 pub mod args;
+pub mod command;
+pub mod hook;
 pub mod keys;
 pub mod mcp;
+pub mod proxy;
+pub mod redact;
+pub mod run;
 pub mod status;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod transport;
+
+use std::io;
+
+use crate::agent::Agent;
+use crate::keys::{Keys, Role};
+use crate::transport::Socket;
 
 /// The name every request's envelope carries, the way the extension's
 /// carries the browser's.
 pub const CLIENT_ID: &str = "rowel-mcp";
 
 /// Run the command the arguments name and return the process's exit code.
-pub fn run(args: impl Iterator<Item = String>) -> i32 {
+/// `program` is what this binary was invoked as, which the hook writes into
+/// the command it rewrites so the platform's shell finds the same binary.
+pub fn run(program: &str, args: impl Iterator<Item = String>) -> i32 {
     match args::parse(args) {
         Ok(args::Command::Status) => status::run(),
         Ok(args::Command::Mcp { platform, name }) => mcp::run(platform, name),
+        Ok(args::Command::Run(run)) => {
+            let Some(mut sidecar) = sidecar() else {
+                return 1;
+            };
+            let inherited: Vec<(String, String)> = std::env::vars().collect();
+            run::execute(
+                &run,
+                &inherited,
+                &mut sidecar,
+                &mut io::stdout(),
+                &mut io::stderr(),
+            )
+        }
+        Ok(args::Command::Redact(redact)) => {
+            let Some(mut sidecar) = sidecar() else {
+                return 1;
+            };
+            redact::execute(
+                &redact,
+                &mut sidecar,
+                io::stdin().lock(),
+                &mut io::stdout().lock(),
+                &mut io::stderr(),
+            )
+        }
+        Ok(args::Command::Hook { phase, platform }) => {
+            let platform = platform.unwrap_or_else(agent::detect_platform);
+            let Some(platform) = hook::Platform::from_name(&platform) else {
+                eprintln!(
+                    "rowel-cli: no hook for platform '{platform}' (claude-code, codex or cursor)"
+                );
+                return 2;
+            };
+            let Some(mut sidecar) = sidecar() else {
+                return 1;
+            };
+            match hook::serve(
+                phase,
+                platform,
+                program,
+                &mut sidecar,
+                io::stdin().lock(),
+                io::stdout().lock(),
+            ) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("rowel-cli: {error}");
+                    1
+                }
+            }
+        }
+        Ok(args::Command::Proxy(proxy)) => {
+            let Some(sidecar) = sidecar() else {
+                return 1;
+            };
+            proxy::run(&proxy, Box::new(sidecar))
+        }
         Err(usage) => {
             eprintln!("{usage}");
             2
         }
     }
+}
+
+/// The sidecar over the app's socket, or `None` with the reason printed.
+fn sidecar() -> Option<Agent<Socket>> {
+    let Some(keys) = Keys::for_platform(Role::Sidecar) else {
+        eprintln!("rowel-cli: no config directory for this user");
+        return None;
+    };
+    Some(Agent::sidecar(Box::new(transport::connect), keys))
 }
