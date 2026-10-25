@@ -163,9 +163,13 @@ actions". While it is on:
   remembers that a grant did it), and the active tab at that origin is told to
   redetect its fields, which reloads its settings and retrieves with the
   grant. A `grant-ended { grantId, origins }` is session end: every cookie of
-  each origin's registrable domain is deleted (`cookies.getAll({ domain })`,
-  then `cookies.remove` per cookie; Safari has no cookies API, so it is
-  best-effort there), the grant is forgotten, "The agent is done: Rowel signed
+  each origin's registrable domain is deleted — in every cookie store the
+  browser lists (`cookies.getAllCookieStores()`, then `getAll({ domain,
+  storeId })` per store, since one call sees one store), partitioned
+  cookies asked for by name (`partitionKey: {}`, skipped on a browser that
+  does not know the field), and each `cookies.remove` naming the cookie's
+  own store and partition; Safari has no cookies API, so it is best-effort
+  there — the grant is forgotten, "The agent is done: Rowel signed
   you out of the site in this browser" is shown, and agent mode goes back off
   once no agent grant is left, only if a grant turned it on. An origin a newer
   grant holds is left whole, session included: it is that grant's to end. A

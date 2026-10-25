@@ -49,6 +49,7 @@ let tabList: { id: number; url: string; active: boolean }[];
 let tabMessages: { tabId: number; message: object }[];
 let clearedTabs: number[];
 let cookieJar: object[];
+let cookieStores: string[];
 let removedCookies: object[];
 let savedAgentMode: boolean[];
 let notifications: string[];
@@ -65,6 +66,7 @@ test.beforeEach(() => {
     tabMessages = [];
     clearedTabs = [];
     cookieJar = [];
+    cookieStores = [ '0', '1' ];
     removedCookies = [];
     savedAgentMode = [];
     notifications = [];
@@ -108,9 +110,19 @@ test.beforeEach(() => {
                 tabMessages.push({ tabId, message });
             }
         },
+        // The real API's scoping: one store per call (the first when none is
+        // named), unpartitioned cookies unless partitionKey is given, {} being
+        // all of them. A fake that answered everything would hide exactly the
+        // cookies a one-call clearing misses.
         cookies: {
-            async getAll({ domain }) {
-                return cookieJar.filter(c => c.domain.replace(/^\./, '').endsWith(domain));
+            async getAllCookieStores() {
+                return cookieStores.map(id => ({ id }));
+            },
+            async getAll({ domain, storeId, partitionKey }) {
+                const store = storeId ?? cookieStores[0];
+                return cookieJar.filter(c => c.domain.replace(/^\./, '').endsWith(domain)
+                    && c.storeId === store
+                    && (partitionKey ? true : !c.partitionKey));
             },
             async remove(details) {
                 removedCookies.push(details);
@@ -391,6 +403,51 @@ test('a grant-ended deletes the domain\'s cookies, forgets the grant and notifie
     expect(await grants.grantFor('https://github.com')).toBeUndefined();
     expect(await grants.grantFor('https://other.example')).toBe('g-other');
     expect(notifications).toEqual([ 'agentModeGrantEndedNotification' ]);
+});
+
+// A session lives in whichever store the agent's browser profile used — a
+// Firefox container, a private window — and may be a partitioned cookie in a
+// cross-site frame. Each store is asked in turn, partitioned cookies are
+// asked for by name, and each removal names the cookie's own store and
+// partition; a store the browser does not list is not reachable and is left.
+test('session end reaches every cookie store and partitioned cookies', async () => {
+    await grants.rememberGrant('https://github.com', 'g1');
+    cookieStores = [ '0', 'firefox-container-2' ];
+    cookieJar = [
+        { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: '0' },
+        { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: 'firefox-container-2' },
+        { name: 'embedded', domain: 'github.com', path: '/', secure: true, storeId: 'firefox-container-2', partitionKey: { topLevelSite: 'https://example.com' } },
+        { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: 'unlisted' }
+    ];
+    signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
+
+    await grants.onSignal();
+
+    expect(removedCookies).toEqual([
+        { url: 'https://github.com/', name: 'session', storeId: '0' },
+        { url: 'https://github.com/', name: 'session', storeId: 'firefox-container-2' },
+        { url: 'https://github.com/', name: 'embedded', storeId: 'firefox-container-2', partitionKey: { topLevelSite: 'https://example.com' } }
+    ]);
+});
+
+// A browser that lists no stores and knows no partitionKey (the call throws
+// on the unknown field) still has its one store cleared.
+test('session end on a browser without store listing or partitioned cookies', async () => {
+    await grants.rememberGrant('https://github.com', 'g1');
+    cookieJar = [ { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: '0' } ];
+    const plain = globalThis.browser.cookies.getAll;
+    delete globalThis.browser.cookies.getAllCookieStores;
+    globalThis.browser.cookies.getAll = async (details) => {
+        if ('partitionKey' in details) {
+            throw new Error('Unexpected property: partitionKey');
+        }
+        return plain(details);
+    };
+    signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
+
+    await grants.onSignal();
+
+    expect(removedCookies).toEqual([ { url: 'https://github.com/', name: 'session', storeId: '0' } ]);
 });
 
 // An origin a newer grant holds is that grant's: ending the older one must

@@ -418,13 +418,47 @@ grants.clearCookies = async function(origin) {
     }
 
     const domain = await page.getBaseDomainFromUrl(new URL(origin).hostname, origin);
-    for (const cookie of await browser.cookies.getAll({ domain: domain })) {
-        await browser.cookies.remove({
+    for (const cookie of await grants.cookiesOf(domain)) {
+        const details = {
             url: (cookie.secure ? 'https://' : 'http://') + cookie.domain.replace(/^\./, '') + cookie.path,
             name: cookie.name,
             storeId: cookie.storeId
-        });
+        };
+        if (cookie.partitionKey) {
+            details.partitionKey = cookie.partitionKey;
+        }
+        await browser.cookies.remove(details);
     }
+};
+
+// Every cookie of a registrable domain the extension can reach. One
+// cookies.getAll() sees one store (the current one, unless storeId says
+// which) and no partitioned cookie (unless partitionKey says which, {} being
+// all of them), so a single call would leave a Firefox container, a private
+// window or a partitioned cross-site frame signed in. Each store is asked in
+// turn, for its unpartitioned cookies and, on a browser that knows the
+// field, its partitioned ones too; a cookie keeps its store and partition
+// so the removal names the same one.
+grants.cookiesOf = async function(domain) {
+    const stores = browser.cookies.getAllCookieStores ? await browser.cookies.getAllCookieStores() : [ undefined ];
+    const found = new Map();
+    for (const store of stores) {
+        const details = { domain: domain };
+        if (store?.id !== undefined) {
+            details.storeId = store.id;
+        }
+        const batches = [ await browser.cookies.getAll(details) ];
+        try {
+            batches.push(await browser.cookies.getAll({ ...details, partitionKey: {} }));
+        } catch (_e) {
+            // The browser does not know partitioned cookies; there are none to find.
+        }
+        for (const cookie of batches.flat()) {
+            const key = [ cookie.storeId, cookie.name, cookie.domain, cookie.path, JSON.stringify(cookie.partitionKey ?? null) ].join('\u0000');
+            found.set(key, cookie);
+        }
+    }
+    return [ ...found.values() ];
 };
 
 //--------------------------------------------------------------------------
