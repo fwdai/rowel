@@ -32,7 +32,7 @@ pub fn list() -> Value {
     json!([
         {
             "name": REQUEST_LOGIN,
-            "description": "Ask the user to let you sign in to a website with one of their logins. Rowel's browser extension fills the login on the page itself; you never see the password. The result is the grant's id and state: active (go ahead), pending (call rowel_wait), or denied.",
+            "description": "Ask the user to let you sign in to a website with one of their logins. Rowel's browser extension fills the login on the page itself; you never see the password. The call waits for the user's answer (up to a minute). The result is the grant's id and state: active (go ahead), denied, or pending — pending with retryAfterMs means another Rowel dialog is still on screen: call this tool again after that delay; pending without it is an approval routed to someone else: call rowel_wait.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -58,7 +58,7 @@ pub fn list() -> Value {
         },
         {
             "name": WAIT,
-            "description": "Wait for the user to answer a pending grant, up to a minute. The result is the grant's id and state as it stands when the call returns; call again while it is still pending.",
+            "description": "Wait for the answer to a grant Rowel reported as pending without a retryAfterMs (an approval routed to another person), up to a minute. The result is the grant's id and state as it stands when the call returns; call again while it is still pending. A grant pending with retryAfterMs was never issued: request it again instead.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "grant_id": text("The grant's id, from rowel_request_login or rowel_request_secret") },
@@ -121,7 +121,34 @@ fn request_login(args: &Map<String, Value>, broker: &mut dyn Broker) -> Result<V
         targets: vec![Target::Origin(origin)],
         modes: vec![Mode::Fill],
     };
-    Ok(pick(broker.request_grant(&ask)?, GRANT_FIELDS))
+    decided(broker, &ask)
+}
+
+/// How long a request keeps asking while the app's consent slot is busy
+/// before the agent is handed the `pending` as it stands.
+pub const PENDING_BUDGET_MS: u64 = 60_000;
+
+/// A grant request, asked again while the answer is `pending` with a
+/// `retryAfterMs`. In Tier 1 that reply means the app's one consent slot was
+/// taken by another dialog and the request was never put to the user — the
+/// grant it names was not issued, so nothing waits on it and `rowel_wait`
+/// cannot settle it; asking again once that dialog has closed is what
+/// settles it. The host is asked again as long as the waits fit the budget;
+/// a `pending` that will not, or one without a `retryAfterMs` (a routed
+/// approval, Tier 2), is the agent's to wait on.
+fn decided(broker: &mut dyn Broker, ask: &GrantAsk) -> Result<Value, ToolError> {
+    let mut spent_ms = 0;
+    loop {
+        let reply = pick(broker.request_grant(ask)?, GRANT_FIELDS);
+        let retry_after_ms = reply["retryAfterMs"].as_u64();
+        match (reply["state"].as_str(), retry_after_ms) {
+            (Some("pending"), Some(ms)) if spent_ms + ms <= PENDING_BUDGET_MS => {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                spent_ms += ms;
+            }
+            _ => return Ok(reply),
+        }
+    }
 }
 
 fn request_secret(args: &Map<String, Value>, broker: &mut dyn Broker) -> Result<Value, ToolError> {
@@ -144,7 +171,7 @@ fn request_secret(args: &Map<String, Value>, broker: &mut dyn Broker) -> Result<
         targets: vec![target],
         modes: vec![mode],
     };
-    Ok(pick(broker.request_grant(&ask)?, GRANT_FIELDS))
+    decided(broker, &ask)
 }
 
 fn wait(args: &Map<String, Value>, broker: &mut dyn Broker) -> Result<Value, ToolError> {
@@ -249,6 +276,7 @@ fn wrap(outcome: Result<Value, ToolError>) -> Value {
 
 /// Why a tool has no result: a short machine-readable kind — the refusal's
 /// code name, or what went wrong before the host was asked — and a sentence.
+#[derive(Debug)]
 struct ToolError {
     error: String,
     message: String,
@@ -298,6 +326,86 @@ impl From<AgentError> for ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A host whose answers to `request-grant` are scripted, in order; the
+    /// last one repeats.
+    struct Scripted {
+        answers: Vec<Map<String, Value>>,
+        asked: usize,
+    }
+
+    impl Broker for Scripted {
+        fn request_grant(&mut self, _ask: &GrantAsk) -> Result<Map<String, Value>, AgentError> {
+            let answer = self.answers[self.asked.min(self.answers.len() - 1)].clone();
+            self.asked += 1;
+            Ok(answer)
+        }
+        fn wait_grant(&mut self, _grant_id: &str) -> Result<Map<String, Value>, AgentError> {
+            Ok(Map::new())
+        }
+        fn end_grant(&mut self, _grant_id: &str) -> Result<Map<String, Value>, AgentError> {
+            Ok(Map::new())
+        }
+        fn list_visible(&mut self) -> Result<Map<String, Value>, AgentError> {
+            Ok(Map::new())
+        }
+    }
+
+    fn reply(value: Value) -> Map<String, Value> {
+        value.as_object().unwrap().clone()
+    }
+
+    fn login_ask() -> GrantAsk {
+        GrantAsk {
+            reason: None,
+            items: ItemSelector::Lockbox,
+            targets: vec![Target::Origin("https://github.com".into())],
+            modes: vec![Mode::Fill],
+        }
+    }
+
+    // A busy consent slot answers `pending` with a short `retryAfterMs` and
+    // issues nothing: the tool asks again after the wait, as many times as
+    // the budget allows, and hands the agent the decided state.
+    #[test]
+    fn a_pending_with_a_short_retry_is_asked_again_until_decided() {
+        let busy = reply(json!({ "grantId": "g", "state": "pending", "retryAfterMs": 1 }));
+        let active = reply(json!({ "grantId": "g", "state": "active", "items": [] }));
+        let mut broker = Scripted {
+            answers: vec![busy.clone(), busy, active],
+            asked: 0,
+        };
+        let result = decided(&mut broker, &login_ask()).unwrap();
+        assert_eq!(result["state"], "active");
+        assert_eq!(broker.asked, 3);
+    }
+
+    // A `pending` the agent must act on itself comes back as it is: one
+    // whose wait would not fit the budget, and one with no `retryAfterMs`
+    // at all, which is a routed approval to be waited on.
+    #[test]
+    fn a_pending_past_the_budget_or_without_a_retry_comes_back_as_it_is() {
+        let long = reply(
+            json!({ "grantId": "g", "state": "pending", "retryAfterMs": PENDING_BUDGET_MS + 1 }),
+        );
+        let mut broker = Scripted {
+            answers: vec![long],
+            asked: 0,
+        };
+        let result = decided(&mut broker, &login_ask()).unwrap();
+        assert_eq!(result["state"], "pending");
+        assert_eq!(result["retryAfterMs"], PENDING_BUDGET_MS + 1);
+        assert_eq!(broker.asked, 1);
+
+        let routed = reply(json!({ "grantId": "g", "state": "pending" }));
+        let mut broker = Scripted {
+            answers: vec![routed],
+            asked: 0,
+        };
+        let result = decided(&mut broker, &login_ask()).unwrap();
+        assert_eq!(result["state"], "pending");
+        assert_eq!(broker.asked, 1);
+    }
 
     #[test]
     fn a_site_becomes_its_origin() {

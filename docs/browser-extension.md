@@ -167,8 +167,12 @@ actions". While it is on:
   then `cookies.remove` per cookie; Safari has no cookies API, so it is
   best-effort there), the grant is forgotten, "The agent is done: Rowel signed
   you out of the site in this browser" is shown, and agent mode goes back off
-  once no agent grant is left, only if a grant turned it on. Agent mode the
-  person turned on is never touched.
+  once no agent grant is left, only if a grant turned it on. An origin a newer
+  grant holds is left whole, session included: it is that grant's to end. A
+  lock (`database-locked`) ends every grant with no `grant-ended` to follow,
+  so `grants.clearAll()` signs out of every origin a grant was held for, the
+  person's own agent-mode grants included. Agent mode the person turned on
+  is never touched.
 - **No in-page UI.** `content/agent-mode.js` (`kpxcAgentMode.isOn()`) gates
   the login-form icons, the username/TOTP autocomplete, the save/update
   banner, the custom-fields banner and the login popup. The admitted entry is

@@ -118,11 +118,22 @@ grants.forgetGrant = async function(origin) {
 };
 
 // On database-locked (and any other host reset): nothing is served from a locked
-// vault, and the agent grants died with it, so agent mode turned on by one of
-// them goes off here too; the grant-ended that may follow finds nothing to do.
+// vault, and every grant died with it — the host writes no row and sends no
+// grant-ended for a lock, so the sign-out every grant's end owes happens here,
+// for every origin a grant was held for. Agent mode turned on by one of them
+// goes off too. A reset the host did not announce (the worker starting afresh
+// with the port down) signs out as well: a grant the host can no longer be
+// asked about is not one to keep a session open on.
 grants.clearAll = async function() {
     const byGrant = await grants.agentModeByGrant();
+    const origins = Object.keys(await readMap(GRANTS_KEY));
     await grants.area().remove([ GRANTS_KEY, FILLED_KEY, AGENT_GRANTS_KEY, AGENT_MODE_BY_GRANT_KEY ]);
+    for (const origin of origins) {
+        await grants.clearCookies(origin);
+    }
+    if (origins.length > 0) {
+        showNotification(tr('agentModeGrantEndedNotification'));
+    }
     if (byGrant) {
         await grants.setAgentMode(false);
     }
@@ -345,12 +356,20 @@ grants.wakeTab = async function(origin) {
 // grant-ended { grantId, origins }: session end. The login the grant enabled is
 // signed out of by deleting the sites' cookies, the grant is forgotten, and
 // agent mode goes back off if this grant (or an earlier one) turned it on and
-// no agent grant is left. A newer grant at the same origin is kept.
+// no agent grant is left. An origin a newer grant holds is left whole: its
+// session is that grant's to end, and ending it now would cut that grant
+// off while the host still counts it active.
 grants.onGrantEnded = async function({ grantId, origins = [] }) {
     const agentGrants = await readMap(AGENT_GRANTS_KEY);
+    let signedOut = 0;
     for (const origin of origins) {
+        const live = await grants.grantFor(origin);
+        if (live && live !== grantId) {
+            continue;
+        }
         await grants.clearCookies(origin);
-        if (await grants.grantFor(origin) === grantId) {
+        signedOut += 1;
+        if (live === grantId) {
             await grants.forgetGrant(origin);
         }
         if (agentGrants[origin] === grantId) {
@@ -359,7 +378,7 @@ grants.onGrantEnded = async function({ grantId, origins = [] }) {
     }
     await writeMap(AGENT_GRANTS_KEY, agentGrants);
 
-    if (origins.length > 0) {
+    if (signedOut > 0) {
         showNotification(tr('agentModeGrantEndedNotification'));
     }
 

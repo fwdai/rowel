@@ -1348,6 +1348,22 @@ fn visible_items_are_the_clients_own_rules_and_grants_never_the_baseline() {
         "its own rule and its own active grant; not the extension's rule, not an ended grant"
     );
     assert_eq!(visible[0].title, "GitHub");
+
+    // The switches gate the names as they gate the uses.
+    held.access.as_mut().unwrap().lockbox_on = false;
+    assert!(
+        visible_in(&store, &held, &agent(), "default", now).is_empty(),
+        "nothing while the lockbox's access is off"
+    );
+    held.access = Some(AccessState {
+        enabled: false,
+        lockbox_on: true,
+    });
+    assert!(
+        visible_in(&store, &held, &agent(), "default", now).is_empty(),
+        "nothing while the Agents switch is off"
+    );
+    held.access = Some(on());
     assert_eq!(visible[0].kind, "login");
     assert_eq!(visible[0].fields, ["password", "otp"]);
 

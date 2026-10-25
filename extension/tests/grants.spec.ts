@@ -393,17 +393,28 @@ test('a grant-ended deletes the domain\'s cookies, forgets the grant and notifie
     expect(notifications).toEqual([ 'agentModeGrantEndedNotification' ]);
 });
 
-test('a grant-ended for an older grant leaves a newer grant at the same origin', async () => {
+// An origin a newer grant holds is that grant's: ending the older one must
+// not sign the browser out from under the one the host still counts active.
+test('a grant-ended for an older grant leaves a newer grant at the same origin, session included', async () => {
     globalThis.page.settings = { agentMode: false };
+    cookieJar = [ { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: '0' } ];
     signals = [ fillGrant('g1', 'https://github.com', now + 5000), fillGrant('g2', 'https://github.com', now + 9000) ];
     await grants.onSignal();
 
     signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
     await grants.onSignal();
 
+    expect(removedCookies).toEqual([]);
+    expect(notifications).toEqual([]);
     expect(await grants.grantFor('https://github.com')).toBe('g2');
     expect(area.store.rowelAgentGrants).toEqual({ 'https://github.com': 'g2' });
     expect(globalThis.page.settings.agentMode).toBe(true);
+
+    signals = [ grantEnded('g2', [ 'https://github.com' ]) ];
+    await grants.onSignal();
+    expect(removedCookies).toEqual([ { url: 'https://github.com/', name: 'session', storeId: '0' } ]);
+    expect(await grants.grantFor('https://github.com')).toBeUndefined();
+    expect(globalThis.page.settings.agentMode).toBe(false);
 });
 
 test('onSignal does nothing with an empty signals list', async () => {
@@ -428,6 +439,33 @@ test('onSignal asks nothing when the association test fails', async () => {
     globalThis.keepass.testAssociation = async () => false;
     await grants.onSignal();
     expect(sent).toEqual([]);
+});
+
+// A lock ends every grant on the host with no grant-ended to follow, so the
+// sign-out each grant's end owes happens here, for every origin held — the
+// person's own agent-mode grants as much as an agent's.
+test('clearAll signs the browser out of every origin a grant was held for', async () => {
+    await grants.rememberGrant('https://github.com', 'g1');
+    signals = [ fillGrant('g2', 'https://bank.example', now + 5000) ];
+    await grants.onSignal();
+    cookieJar = [
+        { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: '0' },
+        { name: 'sid', domain: 'bank.example', path: '/', secure: true, storeId: '0' },
+        { name: 'unrelated', domain: 'other.example', path: '/', secure: true, storeId: '0' }
+    ];
+
+    await grants.clearAll();
+
+    expect(removedCookies.map(c => c.name).sort()).toEqual([ 'session', 'sid' ]);
+    expect(notifications).toEqual([ 'agentModeGrantEndedNotification' ]);
+    expect(area.store).toEqual({});
+});
+
+test('clearAll with nothing held signs out of nothing', async () => {
+    cookieJar = [ { name: 'session', domain: '.github.com', path: '/', secure: true, storeId: '0' } ];
+    await grants.clearAll();
+    expect(removedCookies).toEqual([]);
+    expect(notifications).toEqual([]);
 });
 
 // A lock ends every grant on the host, agent grants included, so the agent

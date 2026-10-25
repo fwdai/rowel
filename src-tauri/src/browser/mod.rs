@@ -1746,6 +1746,12 @@ fn visible_in(
     lockbox: &str,
     now: i64,
 ) -> Vec<VisibleRef> {
+    // The switches gate the names as they gate the uses: an agent let in
+    // before the Agents switch, or the lockbox's access, went off learns
+    // nothing more from its standing rules than it could use.
+    if held.access_on().is_err() {
+        return Vec::new();
+    }
     let rules = agents::live_rules(store, now);
     let selectors: Vec<&ItemSelector> = rules
         .iter()

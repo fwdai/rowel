@@ -335,9 +335,14 @@ mod tests {
         assert_eq!(requests[1].1.modes, vec![Mode::Env]);
     }
 
+    // A `pending` whose wait is past the budget is the agent's to act on: it
+    // comes back as it is, and a wait on it is the refusal the host gives
+    // for a grant it never issued — the tool text sends the agent back to
+    // requesting. (A wait that fits the budget is retried inside the tool;
+    // `tools::tests` covers that.)
     #[test]
-    fn a_pending_grant_comes_back_as_it_is_and_wait_asks_again() {
-        let mut harness = known_agent(GrantAnswer::Pending(Some(1_500)));
+    fn a_pending_past_the_budget_comes_back_as_it_is_and_wait_cannot_settle_it() {
+        let mut harness = known_agent(GrantAnswer::Pending(Some(tools::PENDING_BUDGET_MS + 1)));
         let replies = served(
             &mut harness,
             &[
@@ -348,9 +353,7 @@ mod tests {
         let (pending, is_error) = tool_result(&replies[0]);
         assert!(!is_error);
         assert_eq!(pending["state"], "pending");
-        assert_eq!(pending["retryAfterMs"], 1_500);
-        // The scripted host never issued the grant, so a wait on it is the
-        // refusal the real host gives for a grant that is not the caller's.
+        assert_eq!(pending["retryAfterMs"], tools::PENDING_BUDGET_MS + 1);
         let (waited, is_error) = tool_result(&replies[1]);
         assert!(is_error);
         assert_eq!(waited["error"], "GrantDenied");

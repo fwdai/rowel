@@ -25,9 +25,15 @@ the command by Rowel.
 
 | tool | asks for | returns |
 | --- | --- | --- |
-| `rowel_request_login { site, reason? }` | to sign in to `site` with one of the user's logins (`site` is an origin or a URL; only its origin is sent) | the grant: `grantId`, `state` (`active`, `pending`, `denied`), `expiresAtMs`, `retryAfterMs` when pending, `items` as `{ id, title, username }` |
+| `rowel_request_login { site, reason? }` | to sign in to `site` with one of the user's logins (`site` is an origin or a URL; only its origin is sent); the call waits for the user's answer | the grant: `grantId`, `state` (`active`, `pending`, `denied`), `expiresAtMs`, `retryAfterMs` when pending, `items` as `{ id, title, username }` |
 | `rowel_request_secret { ref, mode, target, reason? }` | to use the item `ref` names (`rowel://<lockbox>/<item>/<field>`) as a header on calls to `target` (`mode: "header"`, `target` is `host/path-glob`) or as an environment variable of `target` (`mode: "env"`, the full command line) | the grant, as above |
-| `rowel_wait { grant_id }` | to wait up to a minute for the user to answer a pending grant | the grant as it stands |
+| `rowel_wait { grant_id }` | to wait up to a minute for the answer to a grant left `pending` without a `retryAfterMs` (an approval routed to someone else, which a server does) | the grant as it stands |
+
+A `pending` *with* `retryAfterMs` means Rowel's one consent dialog was busy
+with something else (another extension's ask, a passkey) and the request was
+never put to the user, so no grant was issued. The server asks again on the
+agent's behalf after that delay, for up to a minute; a `pending` the agent
+still gets back is one to request again, not one to wait on.
 | `rowel_list_visible {}` | what the user has made visible to this agent | `items` as `{ ref, title, kind, fields }` |
 | `rowel_end { grant_id }` | to end a grant; a sign-in grant also signs the browser out of the site | `{ ok: true }` |
 
