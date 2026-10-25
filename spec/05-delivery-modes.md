@@ -272,4 +272,8 @@ mode back off only if a grant turned it on and none is left. A lock ends
 every grant on the host with no row and no `grant-ended` (nothing is served
 from a locked vault), so on `database-locked` the extension signs out of
 every origin it held a grant for, the person's own agent-mode grants
-included. Safari: `browser.cookies` is absent, so the deletion is skipped.
+included. Signals, the lock and an exposure run through one queue in
+`grants.js`, each to its end before the next: a lockbox switch sends
+`database-locked` and `database-unlocked` back to back and a fill-grant may
+follow at once, and the lock's cleanup must not erase it. Safari:
+`browser.cookies` is absent, so the deletion is skipped.

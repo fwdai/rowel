@@ -205,8 +205,12 @@ URL for a fill, host + path + method for a header, the full command line for
 - **Rate limits** (`rowel_broker::policy::Limits`): per client, at most 10
   `request-grant` calls per minute that reach a person, and after three denials
   in a row a cool-down that doubles from 30 s. Exceeding either answers
-  `GrantDenied` without a dialog and writes an audit row. Rules may raise the
-  limits for a specific agent.
+  `RateLimited` without a dialog and writes an audit row. Rules may raise the
+  limits for a specific agent. An ask is on the record only when its dialog
+  goes up, under the consent slot (I2): a request the slot could not take
+  ("ask again shortly") is decided again at every retry, and none of those
+  counts, so a dialog another client holds cannot rate-limit the one waiting
+  on it.
 
 **Where rules and grants live.** In Tier 1 they are *device-local*, like the
 extension associations today (`browser::clients`, a sealed JSON value under a
