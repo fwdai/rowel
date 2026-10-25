@@ -45,6 +45,9 @@ coset = "0.4"
 # client: tokio's current-thread runtime drives the authenticator's async
 # traits on the connection's own thread. Already in the locked graph.
 tokio = { version = "1", features = ["rt"] }
+# A resolved value is handed to the connection wiped-on-drop (`Host::resolve`),
+# as the core hands out keys. Already in the locked graph.
+zeroize = "1"
 # The vault the `test-support` fixtures open (`testing::vault`).
 tempfile = { version = "3", optional = true }
 

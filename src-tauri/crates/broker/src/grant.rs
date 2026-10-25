@@ -121,6 +121,73 @@ impl Target {
             _ => false,
         }
     }
+
+    /// The concrete places a *request's* target stands for when policy is
+    /// evaluated: an origin is itself; an HTTP target is one probe per method
+    /// it names, or one with method `*` when it names none, so a rule that
+    /// names methods does not cover a request for any method while a rule
+    /// naming none does; a command is its line.
+    pub fn probes(&self) -> Vec<Probe<'_>> {
+        match self {
+            Target::Origin(origin) => vec![Probe::Origin(origin)],
+            Target::Http {
+                host,
+                path,
+                methods,
+            } => {
+                if methods.is_empty() {
+                    return vec![Probe::Http {
+                        host,
+                        path,
+                        method: "*",
+                    }];
+                }
+                methods
+                    .iter()
+                    .map(|method| Probe::Http { host, path, method })
+                    .collect()
+            }
+            Target::Command(line) => vec![Probe::Command(line)],
+        }
+    }
+}
+
+/// Where a sidecar is about to use the value it resolves: the one request or
+/// the one command line, concrete, never a pattern. Its kind says the mode:
+/// an HTTP target is `header`, a command is `env`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResolveTarget {
+    Http {
+        host: String,
+        path: String,
+        method: String,
+    },
+    Command(String),
+}
+
+impl ResolveTarget {
+    pub fn probe(&self) -> Probe<'_> {
+        match self {
+            ResolveTarget::Http { host, path, method } => Probe::Http { host, path, method },
+            ResolveTarget::Command(line) => Probe::Command(line),
+        }
+    }
+
+    pub fn mode(&self) -> Mode {
+        match self {
+            ResolveTarget::Http { .. } => Mode::Header,
+            ResolveTarget::Command(_) => Mode::Env,
+        }
+    }
+}
+
+/// What a sidecar says beside the placeholder it resolves: where the value
+/// is going.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveContext {
+    pub target: ResolveTarget,
 }
 
 /// `*.example.com` is the subdomains of `example.com`, not the apex: a rule
@@ -511,6 +578,66 @@ mod tests {
     }
 
     #[test]
+    fn a_requests_target_becomes_one_probe_per_method_or_one_for_any() {
+        let origin = Target::Origin("https://github.com".into());
+        assert_eq!(origin.probes(), vec![Probe::Origin("https://github.com")]);
+        let command = Target::Command("stripe balance retrieve --live".into());
+        assert_eq!(
+            command.probes(),
+            vec![Probe::Command("stripe balance retrieve --live")]
+        );
+
+        let request = |methods: &[&str]| Target::Http {
+            host: "api.stripe.com".into(),
+            path: "/v1/balance".into(),
+            methods: methods.iter().map(|m| m.to_string()).collect(),
+        };
+        let probe = |method| Probe::Http {
+            host: "api.stripe.com",
+            path: "/v1/balance",
+            method,
+        };
+        let two = request(&["GET", "POST"]);
+        assert_eq!(two.probes(), vec![probe("GET"), probe("POST")]);
+        let any = request(&[]);
+        assert_eq!(any.probes(), vec![probe("*")]);
+
+        // A rule naming methods does not cover a request for any method; a
+        // rule naming none covers both.
+        let rule = |methods: &[&str]| Target::Http {
+            host: "api.stripe.com".into(),
+            path: "/v1/*".into(),
+            methods: methods.iter().map(|m| m.to_string()).collect(),
+        };
+        let get_only = rule(&["GET"]);
+        let whatever = rule(&[]);
+        assert!(any.probes().iter().all(|p| !get_only.matches(p)));
+        assert!(any.probes().iter().all(|p| whatever.matches(p)));
+        assert!(two.probes().iter().all(|p| whatever.matches(p)));
+    }
+
+    #[test]
+    fn a_resolve_target_is_one_probe_and_says_its_mode() {
+        let http = ResolveTarget::Http {
+            host: "api.stripe.com".into(),
+            path: "/v1/balance".into(),
+            method: "GET".into(),
+        };
+        assert_eq!(
+            http.probe(),
+            Probe::Http {
+                host: "api.stripe.com",
+                path: "/v1/balance",
+                method: "GET",
+            }
+        );
+        assert_eq!(http.mode(), Mode::Header);
+        let command = ResolveTarget::Command("stripe balance retrieve".into());
+        assert_eq!(command.probe(), Probe::Command("stripe balance retrieve"));
+        assert_eq!(command.mode(), Mode::Env);
+    }
+
+    #[test]
     fn the_glob_handles_the_edges() {
         assert!(glob_matches("", ""));
         assert!(glob_matches("*", ""));
@@ -712,6 +839,27 @@ mod tests {
                 { "http": { "host": "api.stripe.com", "path": "/v1/*", "methods": ["GET"] } },
                 { "command": "node deploy.js*" },
             ])
+        );
+        let contexts = [
+            ResolveContext {
+                target: ResolveTarget::Http {
+                    host: "api.stripe.com".into(),
+                    path: "/v1/balance".into(),
+                    method: "GET".into(),
+                },
+            },
+            ResolveContext {
+                target: ResolveTarget::Command("stripe balance retrieve".into()),
+            },
+        ];
+        let wire = serde_json::json!([
+            { "target": { "http": { "host": "api.stripe.com", "path": "/v1/balance", "method": "GET" } } },
+            { "target": { "command": "stripe balance retrieve" } },
+        ]);
+        assert_eq!(serde_json::to_value(&contexts).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<Vec<ResolveContext>>(wire).unwrap(),
+            contexts
         );
         assert_eq!(
             serde_json::to_value(ItemSelector::Lockbox).unwrap(),
