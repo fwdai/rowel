@@ -33,7 +33,7 @@ history with it.
 
 ```sql
 CREATE TABLE audit (
-  id          TEXT PRIMARY KEY,      -- 16 random bytes hex
+  id          TEXT NOT NULL,         -- 16 random bytes hex
   writer_id   TEXT NOT NULL,         -- the device (workspace install id) or server that wrote it
   seq         INTEGER NOT NULL,      -- this writer's running counter
   ts_ms       INTEGER NOT NULL,
@@ -55,30 +55,40 @@ CREATE TABLE audit (
                                      -- rule_added | rule_removed | key_unwrapped |
                                      -- rate_limited | pruned_through
   detail      TEXT,                  -- small JSON, no secrets
-  UNIQUE (writer_id, seq)
+  PRIMARY KEY (id, hash)             -- a row is its (id, hash); see Sync
 );
 CREATE INDEX audit_ts ON audit(ts_ms);
+CREATE INDEX audit_chain ON audit(writer_id, seq);
 ```
 
 Rows are **insert-only**. Each writer keeps its own chain: `prev_hash` is the
 hash of the same writer's previous row (found by `writer_id, seq - 1`), so
 devices and the server never break each other's chains, and no `meta` head is
-needed. Verification walks each writer's chain in `seq` order and checks the
-`UNIQUE (writer_id, seq)` has no gaps below the newest row.
+needed. A writer never writes two rows at one `seq` (`audit_insert` refuses a
+taken one, a loud failure for two writers racing on one chain); the table
+does not forbid it, because a fork arriving through sync has to be kept (see
+Sync). Verification walks each writer's chain in `seq` order and checks it has
+no gaps below the newest row and no `seq` held twice (`Reason::Fork`).
 
 **Sync (✅ I4, engine + store).** A pack carries the whole SQLCipher snapshot,
 so audit rows always rode in it; what I4 added is reading them out, merging
-them and counting them. Audit rows travel and merge as a **union by `id`**,
+them and counting them. Audit rows travel and merge as a **union of rows**,
 never last-writer-wins and never tombstoned:
 
 - `Snapshot.audit: Vec<AuditRecord>`, filled by `records_from_snapshot` from
   `SqliteStore::audit_all()` (every row, `ORDER BY writer_id, seq`);
   `SqliteStore::merge(recs, atts, audit)` inserts them with `INSERT OR
-  IGNORE` in the same transaction as the entries and attachments. Both of the
-  table's constraints are ignored the same way: a known `id` is the same row
-  seen twice, and a known `(writer_id, seq)` under another id is a forked
-  chain, which never overwrites what the device holds (verification is what
-  names a fork). The merge's returned count (`SyncOutcome.merged`, "the entry
+  IGNORE` in the same transaction as the entries and attachments. A row is its
+  `(id, hash)` — exactly what the digest reads of it — so a known pair is the
+  same row seen twice and anything else is kept beside what the device holds,
+  never instead of it: a second row at a writer's `seq` (a forked chain, as
+  two installs sharing an install id write) or another copy of a known id.
+  Both devices of a fork then hold both sides, their digests agree and the
+  runs settle, and `verify` names the fork at the same `seq` on each; the
+  readers order a fork's sides by `(id, hash)` so every device picks the same
+  one to chain on and to cut at. (Review of PR #658: with `UNIQUE (writer_id,
+  seq)` each device kept its own side, the digests never agreed, and each run
+  pushed its side again.) The merge's returned count (`SyncOutcome.merged`, "the entry
   list changed") leaves audit rows out.
 - `store::hash::vault_digest(recs, atts, audit)` includes the audit rows as
   `(id, hash)` pairs sorted by id — the chain hash already covers every other
@@ -159,7 +169,9 @@ A `rule_added` for an env rule carries the command line as its target.
 
 - Tier 1 (✅ I4): `src/components/Main/Sidebar/Settings/Sections/Audit/AgentActivity/`
   (Vault Health, desktop only) shows the last 7 days of `used`/`denied`/`exposed`
-  events (newest first, 20 on the first screen, at most 200), standing rules
+  events (newest first, 20 on the first screen, at most 200; the store picks
+  the events in the query before the limit — `audit_recent(since, events,
+  limit)` — so a busy week's bookkeeping rows cannot crowd them out), standing rules
   older than 30 days with *Remove*, clients not seen in 90 days with *Forget*,
   and *Verify the log*, which walks every writer's chain and names the first
   break in words ("device <first 8 hex of the writer id>" for a peer, "this

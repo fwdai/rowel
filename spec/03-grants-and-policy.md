@@ -289,9 +289,10 @@ request is covered whole or not at all: a site request offers the page's
 logins and the dialog picks one, but a command runs with every secret it
 named or not at all, so an `Ids` selector naming anything that is not there
 is `no_candidates`, a held grant is reused only if it admits every candidate,
-and a rule that admits only some of them is set aside before the evaluator
-runs — a standing rule for one of two items does not win the request, the
-baseline asks for both. (Review of PR #657.)
+and a rule matches a secret request only when it admits every candidate —
+`evaluate` itself holds this (`Mode::is_secret`), so it holds in every tier;
+a standing rule for one of two items does not win the request, the baseline
+asks for both. (Review of PR #657.)
 `grant_covers` (the `grantId` paths of `get-logins` and `get-totp`) is a
 predicate with a side effect, on purpose: a yes there is a use too, counted
 and written with detail `{"via":"grantId"}`; a reuse before policy writes
