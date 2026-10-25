@@ -585,7 +585,7 @@ mod lock_scope {
         // down, has no session to borrow.
         let pack = body_of(
             engine,
-            "fn pack(&self, cutoff_ms: i64) -> Result<Vec<u8>> {",
+            "fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>> {",
         );
         at(&pack, "self.keys.pack(");
         // The whole-database copy is what `PackKeys::pack` is.
@@ -604,7 +604,7 @@ mod lock_scope {
         );
 
         // ...and the step that *does* take the lock stays short.
-        let reclaim = body_of(engine, "fn reclaim_and_open(&self, cutoff_ms: i64)");
+        let reclaim = body_of(engine, "fn reclaim_and_open(&self, reclaim: Reclaim)");
         at(&reclaim, "with_store");
         assert!(
             !reclaim.contains("pack_store"),

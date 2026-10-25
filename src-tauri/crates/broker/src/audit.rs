@@ -174,6 +174,20 @@ impl<'a, S: AuditSink> Writer<'a, S> {
     /// the last row's plus one (the first is 1), `prev_hash` the last row's
     /// hash (zeros for the first), `hash` over both and the row.
     pub fn record(&self, draft: Draft, ts_ms: i64) -> Result<AuditRecord, Error> {
+        let head = self.sink.last(&self.writer_id)?;
+        self.record_after(draft, ts_ms, head)
+    }
+
+    /// [`Writer::record`] chained onto `head` — the `(seq, hash)` of the row
+    /// before — rather than onto the sink's newest row. The two differ in one
+    /// case only: a chain retention took whole, whose next row must carry on
+    /// from the row that went (see [`prune`]) rather than start over at 1.
+    fn record_after(
+        &self,
+        draft: Draft,
+        ts_ms: i64,
+        head: Option<(i64, [u8; 32])>,
+    ) -> Result<AuditRecord, Error> {
         if draft
             .detail
             .as_ref()
@@ -183,7 +197,7 @@ impl<'a, S: AuditSink> Writer<'a, S> {
                 "audit: detail over {DETAIL_MAX_BYTES} bytes"
             )));
         }
-        let (seq, prev_hash) = match self.sink.last(&self.writer_id)? {
+        let (seq, prev_hash) = match head {
             Some((seq, hash)) => (seq + 1, hash),
             None => (1, [0u8; 32]),
         };
@@ -212,6 +226,49 @@ impl<'a, S: AuditSink> Writer<'a, S> {
         self.sink.insert(&record)?;
         Ok(record)
     }
+}
+
+/// Retention for the log in `store`, by the device whose writer is
+/// `writer_id`: reclaim every chain's rows stamped before `cutoff_ms`
+/// ([`SqliteStore::audit_prune`]), and when this writer's own rows were among
+/// them, chain a `pruned_through` row at `now_ms` saying how far —
+/// `{"seq":…,"beforeMs":…}` — so its chain stays verifiable from that row on.
+/// The actor is `policy`: this is the device's own housekeeping, not something
+/// a person or an agent did. Returns the row written, or `None` when nothing
+/// of this writer's was old enough (whatever went of the other chains).
+///
+/// Only its own chain gets the note: nobody else can extend another writer's
+/// chain, and [`verify`] takes a chain that starts past `seq` 1 as pruned, so
+/// another writer's chain losing its prefix here stays verifiable without one.
+///
+/// The note chains from the chain's newest remaining row — or, when the whole
+/// chain went, from the row the cut names, as if it had stayed: a peer still
+/// holding the old rows then reads them and the note as one unbroken chain,
+/// and the note never claims a `(writer_id, seq)` those rows already hold.
+pub fn prune(
+    store: &SqliteStore,
+    writer_id: &str,
+    cutoff_ms: i64,
+    now_ms: i64,
+) -> Result<Option<AuditRecord>, Error> {
+    let cuts = store.audit_prune(cutoff_ms).map_err(store_err)?;
+    let Some(cut) = cuts.iter().find(|cut| cut.writer_id == writer_id) else {
+        return Ok(None);
+    };
+    let head = store.last(writer_id)?.or(Some((cut.seq, cut.hash)));
+    // Spelled out rather than built as a `Value`: the field order is part of
+    // what the row hashes to, and a map's order is a crate feature's.
+    let detail = format!("{{\"seq\":{},\"beforeMs\":{cutoff_ms}}}", cut.seq);
+    Writer::new(writer_id, store)
+        .record_after(
+            Draft {
+                detail: Some(detail),
+                ..Draft::new(ActorKind::Policy, Event::PrunedThrough)
+            },
+            now_ms,
+            head,
+        )
+        .map(Some)
 }
 
 /// The row as it is hashed: every column but `hash`, **in this order**. The
@@ -654,5 +711,77 @@ mod tests {
         let rows = store.audit_rows("device-a").unwrap();
         assert_eq!(rows, vec![first, second]);
         assert_eq!(verify(&rows), Ok(()));
+    }
+
+    // Retention takes the old rows of every chain; the device's own chain gets
+    // a row that says so and verifies from it, and another writer's chain, cut
+    // without a note, verifies from where it now begins.
+    #[test]
+    fn a_pruned_chain_starts_at_its_pruned_through_row_and_verifies() {
+        let (_dir, store, _cipher) = crate::testing::vault();
+        let writer = Writer::new("device-a", &store);
+        for ts in [1_000, 2_000, 3_000] {
+            writer.record(used("g"), ts).unwrap();
+        }
+        let kept = writer.record(used("g4"), 9_000).unwrap();
+        let other = Writer::new("device-b", &store);
+        other.record(used("g"), 1_000).unwrap();
+        let other_kept = other.record(used("g"), 8_000).unwrap();
+
+        let row = prune(&store, "device-a", 5_000, 10_000).unwrap().unwrap();
+        assert_eq!(row.seq, 5);
+        assert_eq!(row.prev_hash, kept.hash);
+        assert_eq!(row.actor_kind, "policy");
+        assert_eq!(row.event, "pruned_through");
+        assert_eq!(row.detail.as_deref(), Some("{\"seq\":3,\"beforeMs\":5000}"));
+        assert_eq!(row.ts_ms, 10_000);
+
+        let rows = store.audit_rows("device-a").unwrap();
+        assert_eq!(rows, vec![kept, row]);
+        assert_eq!(verify(&rows), Ok(()));
+        let others = store.audit_rows("device-b").unwrap();
+        assert_eq!(others, vec![other_kept], "cut, with no note of its own");
+        assert_eq!(verify(&others), Ok(()));
+
+        // Nothing of this writer's old enough: no row is written and its chain
+        // is as it was — even when another chain still had rows to lose.
+        assert_eq!(prune(&store, "device-a", 5_000, 10_001).unwrap(), None);
+        assert_eq!(store.audit_rows("device-a").unwrap(), rows);
+        assert_eq!(prune(&store, "device-c", 8_001, 10_001).unwrap(), None);
+        assert!(store.audit_rows("device-b").unwrap().is_empty());
+        assert_eq!(store.audit_rows("device-a").unwrap(), rows);
+    }
+
+    // A chain retention takes whole does not start over: the note carries on
+    // from the row that went, so a peer still holding the old rows reads one
+    // chain, and the two copies cannot collide on a `(writer_id, seq)`.
+    #[test]
+    fn a_chain_pruned_whole_carries_on_from_the_row_that_went() {
+        let (_dir, store, _cipher) = crate::testing::vault();
+        let writer = Writer::new("device-a", &store);
+        let old: Vec<AuditRecord> = (0..3)
+            .map(|i| writer.record(used("g"), 1_000 + i).unwrap())
+            .collect();
+
+        let note = prune(&store, "device-a", 5_000, 10_000).unwrap().unwrap();
+        assert_eq!((note.seq, note.prev_hash), (4, old[2].hash));
+        assert_eq!(
+            note.detail.as_deref(),
+            Some("{\"seq\":3,\"beforeMs\":5000}")
+        );
+        assert_eq!(store.audit_rows("device-a").unwrap(), vec![note.clone()]);
+        assert_eq!(verify(std::slice::from_ref(&note)), Ok(()));
+
+        let whole: Vec<AuditRecord> = old.into_iter().chain([note]).collect();
+        assert_eq!(
+            verify(&whole),
+            Ok(()),
+            "as a peer holding the old rows sees it"
+        );
+        assert_eq!(
+            writer.record(used("g"), 10_001).unwrap().seq,
+            5,
+            "and the chain goes on from the note"
+        );
     }
 }

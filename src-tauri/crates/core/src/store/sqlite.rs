@@ -12,8 +12,8 @@ use zeroize::Zeroizing;
 
 use super::hash::{attachment_hash, derived_rank, record_hash, vault_digest};
 use super::{
-    now_ms, Attachment, AttachmentMeta, AuditRecord, EntryMeta, Record, Result, StoreError,
-    VaultStore,
+    now_ms, Attachment, AttachmentMeta, AuditCut, AuditRecord, EntryMeta, Record, Result,
+    StoreError, VaultStore,
 };
 
 // Ordered schema migrations, versioned via SQLite's `user_version` pragma. This
@@ -524,7 +524,7 @@ impl SqliteStore {
     /// Winners are written verbatim: no timestamp is stamped here, or the
     /// merged row would immediately look newer than its source everywhere else.
     pub fn merge_records(&self, recs: &[Record]) -> Result<usize> {
-        self.merge(recs, &[])
+        self.merge(recs, &[], &[])
     }
 
     /// [`SqliteStore::merge_records`] for attachment rows, by the same order:
@@ -533,40 +533,59 @@ impl SqliteStore {
     /// removed on one device never comes back from another, whatever its stamp.
     /// Returns how many rows were written.
     pub fn merge_attachments(&self, atts: &[Attachment]) -> Result<usize> {
-        self.merge(&[], atts)
+        self.merge(&[], atts, &[])
     }
 
     /// A pulled snapshot merged in one transaction: the entries, then the
     /// attachments, each by its own order, then every attachment brought into
-    /// line with its entry (see [`reconcile_attachments`]). Neither row merge
-    /// looks at the other table; the last step is what keeps a file from
-    /// outliving its entry, whichever device purged or archived it first.
-    /// Returns how many rows were written, the last step's included.
-    pub fn merge(&self, recs: &[Record], atts: &[Attachment]) -> Result<usize> {
+    /// line with its entry (see [`reconcile_attachments`]), then the audit
+    /// rows as a union (see [`merge_audit_rows`]). Neither row merge looks at
+    /// the other table; the reconcile is what keeps a file from outliving its
+    /// entry, whichever device purged or archived it first.
+    ///
+    /// Returns how many entry and attachment rows were written, the reconcile's
+    /// included — and **not** the audit rows: the figure is what tells the
+    /// frontend its entry list changed (`SyncOutcome.merged`), and a log row
+    /// arriving changes nothing it shows.
+    pub fn merge(
+        &self,
+        recs: &[Record],
+        atts: &[Attachment],
+        audit: &[AuditRecord],
+    ) -> Result<usize> {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         let changed = merge_entry_rows(&tx, recs)?
             + merge_attachment_rows(&tx, atts)?
             + reconcile_attachments(&tx)?;
+        merge_audit_rows(&tx, audit)?;
         tx.commit()?;
         Ok(changed)
     }
 
-    /// Fingerprint of everything sync carries — entries and attachments,
-    /// tombstones included. Two vaults hold the same state exactly when their
-    /// digests match, which is the sync engine's push decision: push when the
-    /// digests differ, full stop.
+    /// Fingerprint of everything sync carries — entries, attachments and the
+    /// audit log, tombstones included. Two vaults hold the same state exactly
+    /// when their digests match, which is the sync engine's push decision:
+    /// push when the digests differ, full stop.
     pub fn state_digest(&self) -> Result<[u8; 32]> {
         let records = self.export_for_sync()?;
+        let conn = self.lock()?;
         let atts: Vec<(AttachmentMeta, usize)> = {
-            let conn = self.lock()?;
             let mut stmt = conn.prepare(&attachment_states())?;
             let rows = stmt.query_map([], row_to_attachment_state)?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        // The id and the chain hash are all the digest reads of a log row, so
+        // that is all it asks the table for.
+        let audit: Vec<(String, [u8; 32])> = {
+            let mut stmt = conn.prepare("SELECT id, hash FROM audit")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.collect::<rusqlite::Result<_>>()?
         };
         Ok(vault_digest(
             &records,
             atts.iter().map(|(meta, len)| (meta, *len)),
+            audit.iter().map(|(id, hash)| (id.as_str(), hash)),
         ))
     }
 
@@ -692,32 +711,12 @@ impl SqliteStore {
     /// between two writers of one chain a loud failure rather than a fork.
     pub fn audit_insert(&self, rec: &AuditRecord) -> Result<()> {
         self.lock()?.execute(
-            "INSERT INTO audit (id, writer_id, seq, ts_ms, prev_hash, hash, actor_kind,
-                                actor_id, actor_name, run_id, acting_for, grant_id, item_id,
-                                target, mode, approval, approver, event, detail)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19)",
-            params![
-                rec.id,
-                rec.writer_id,
-                rec.seq,
-                rec.ts_ms,
-                rec.prev_hash,
-                rec.hash,
-                rec.actor_kind,
-                rec.actor_id,
-                rec.actor_name,
-                rec.run_id,
-                rec.acting_for,
-                rec.grant_id,
-                rec.item_id,
-                rec.target,
-                rec.mode,
-                rec.approval,
-                rec.approver,
-                rec.event,
-                rec.detail,
-            ],
+            &format!(
+                "INSERT INTO audit ({AUDIT_COLS})
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                         ?17, ?18, ?19)"
+            ),
+            audit_params(rec),
         )?;
         Ok(())
     }
@@ -757,6 +756,66 @@ impl SqliteStore {
         let rows = stmt.query_map(params![since_ts_ms, limit], row_to_audit)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    /// Every row of every writer, chain by chain in `seq` order: what a pulled
+    /// pack is read out as, and what two synced vaults must agree on.
+    pub fn audit_all(&self) -> Result<Vec<AuditRecord>> {
+        let conn = self.lock()?;
+        let sql = format!("SELECT {AUDIT_COLS} FROM audit ORDER BY writer_id, seq");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map([], row_to_audit)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Reclaim every writer's rows stamped before `before_ts_ms`, in one
+    /// transaction, returning for each writer that lost rows the newest row it
+    /// lost (see [`AuditCut`]), in `writer_id` order — empty when nothing was
+    /// that old.
+    ///
+    /// What goes of each chain is its *prefix* up to the newest row that is old
+    /// enough, not the old rows alone: a clock that stepped backwards can leave
+    /// a younger stamp below an older one, and deleting by stamp there would
+    /// cut a hole in the chain that reads as a missing row forever. A prefix
+    /// keeps the rest verifiable from where it now begins.
+    ///
+    /// Every writer's chain, not only this device's. Vaults merge their logs as
+    /// a union, so a device that reclaimed its own rows alone would be handed
+    /// them back by any peer that still held them, and the set would never
+    /// settle; with every device reclaiming every chain's aged prefix, the set
+    /// converges once each peer has pushed. Which writer notes the cut in its
+    /// chain (`pruned_through`) is the caller's business — only a chain's own
+    /// writer can — and so is when to call this, like the tombstone purge.
+    pub fn audit_prune(&self, before_ts_ms: i64) -> Result<Vec<AuditCut>> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let cuts: Vec<AuditCut> = {
+            // Each chain's newest row old enough to go, read before it does.
+            let mut stmt = tx.prepare(
+                "SELECT writer_id, seq, hash FROM audit AS newest
+                 WHERE ts_ms < ?1
+                   AND seq = (SELECT MAX(seq) FROM audit
+                              WHERE writer_id = newest.writer_id AND ts_ms < ?1)
+                 ORDER BY writer_id",
+            )?;
+            let rows = stmt.query_map(params![before_ts_ms], |r| {
+                Ok(AuditCut {
+                    writer_id: r.get(0)?,
+                    seq: r.get(1)?,
+                    hash: r.get(2)?,
+                })
+            })?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        for cut in &cuts {
+            tx.execute(
+                "DELETE FROM audit WHERE writer_id = ?1 AND seq <= ?2",
+                params![cut.writer_id, cut.seq],
+            )?;
+        }
+        tx.commit()?;
+        Ok(cuts)
     }
 
     /// Test seam: put the DB back the way the build before the favicon cache
@@ -1277,6 +1336,27 @@ fn merge_attachment_rows(tx: &Connection, atts: &[Attachment]) -> rusqlite::Resu
     Ok(changed)
 }
 
+// Take `audit` into the log as a union: a row this vault already holds is left
+// exactly as it is. The log is insert-only — no row is ever updated or
+// tombstoned, here or anywhere — so a union is the whole of the merge, and
+// `OR IGNORE` is what makes it one. It ignores both of the table's constraints
+// the same way: a known `id` is the same row seen twice, and a known
+// `(writer_id, seq)` under another id is a forked chain, which must never
+// overwrite what this device holds — verification is what names a fork, and it
+// can only do so over the rows that were here first. Returns nothing: these
+// rows are not what `SqliteStore::merge` counts.
+fn merge_audit_rows(tx: &Connection, audit: &[AuditRecord]) -> rusqlite::Result<()> {
+    let mut write = tx.prepare(&format!(
+        "INSERT OR IGNORE INTO audit ({AUDIT_COLS})
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                 ?17, ?18, ?19)"
+    ))?;
+    for rec in audit {
+        write.execute(audit_params(rec))?;
+    }
+    Ok(())
+}
+
 fn verbatim_attachment_upsert() -> String {
     format!(
         "INSERT INTO attachments ({ATT_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
@@ -1417,6 +1497,32 @@ fn row_to_record(row: &Row) -> rusqlite::Result<Record> {
 const AUDIT_COLS: &str = "id, writer_id, seq, ts_ms, prev_hash, hash, actor_kind, actor_id, \
                           actor_name, run_id, acting_for, grant_id, item_id, target, mode, \
                           approval, approver, event, detail";
+
+// A row's columns in `AUDIT_COLS` order, as both the insert and the merge bind
+// them.
+fn audit_params(rec: &AuditRecord) -> [&dyn rusqlite::ToSql; 19] {
+    [
+        &rec.id,
+        &rec.writer_id,
+        &rec.seq,
+        &rec.ts_ms,
+        &rec.prev_hash,
+        &rec.hash,
+        &rec.actor_kind,
+        &rec.actor_id,
+        &rec.actor_name,
+        &rec.run_id,
+        &rec.acting_for,
+        &rec.grant_id,
+        &rec.item_id,
+        &rec.target,
+        &rec.mode,
+        &rec.approval,
+        &rec.approver,
+        &rec.event,
+        &rec.detail,
+    ]
+}
 
 fn row_to_audit(row: &Row) -> rusqlite::Result<AuditRecord> {
     Ok(AuditRecord {

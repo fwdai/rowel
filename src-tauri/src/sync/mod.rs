@@ -271,7 +271,7 @@ pub fn run(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<S
         app: app.clone(),
         cryptor,
     });
-    let local = SessionVault::capture(app, store.provider())?;
+    let local = SessionVault::capture(app, store.provider(), audit_writer_id(app))?;
     // Which pack in the account is this vault's, decided before a byte is
     // pulled. A failure here is a sync failure like any other: addressing the
     // wrong pack — or a second one — is the one mistake the merge cannot undo.
@@ -345,7 +345,13 @@ pub(crate) fn run_workspace(
     let tokens = read_tokens_in(dir, &cryptor)?.ok_or(Error::SyncNotConfigured)?;
     let store = pending_store(app, tokens);
     let marker_key = key.delete_marker_key();
-    let local = engine::WorkspaceVault::open(dir, workspace_id, key, store.provider())?;
+    let local = engine::WorkspaceVault::open(
+        dir,
+        workspace_id,
+        key,
+        store.provider(),
+        audit_writer_id(app),
+    )?;
     let (ran, store) = run_closed(store, &local, marker_key, now_ms());
     // Kept whether or not the run got anywhere: a rotated refresh token that
     // lived only in memory would leave the lockbox holding a retired one.
@@ -430,7 +436,7 @@ pub fn replace_remote(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) 
         app: app.clone(),
         cryptor,
     });
-    let local = SessionVault::capture(app, store.provider())?;
+    let local = SessionVault::capture(app, store.provider(), audit_writer_id(app))?;
     let resolved = block_on(resolve_vault_id(&store, &local))?;
     if resolved.persist {
         local.adopt_vault_id(&resolved.id)?;
@@ -512,6 +518,21 @@ fn sweep_shares(app: &AppHandle) {
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// The audit writer whose chain a run's pack may prune: this install's id,
+/// the one every row the device writes carries (`storage::install_id`).
+#[cfg(desktop)]
+fn audit_writer_id(app: &AppHandle) -> Option<String> {
+    Some(crate::storage::install_id(app))
+}
+
+/// iOS writes no audit rows — the agent broker is desktop-only, and so is the
+/// install id — so it has no chain to reclaim, and the rows it holds for other
+/// devices are theirs to prune.
+#[cfg(not(desktop))]
+fn audit_writer_id(_app: &AppHandle) -> Option<String> {
+    None
 }
 
 // --- which pack is ours -----------------------------------------------------

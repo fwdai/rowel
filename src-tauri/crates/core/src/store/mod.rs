@@ -145,9 +145,11 @@ pub struct Attachment {
 /// with the lockbox's secrets, chained per writer. `prev_hash` is the same
 /// writer's previous row's `hash` (zeros for its first), and `hash` is over
 /// the row without itself, so a removed or altered row is detectable. Rows
-/// are insert-only; the store offers no update or delete for them. Plain data
-/// here: what the columns hold, nothing else (`rowel_broker::audit` writes
-/// and verifies them).
+/// are insert-only: the store offers no update, and the one delete is
+/// retention ([`SqliteStore::audit_prune`]), which takes an aged prefix of
+/// each chain and nothing else. Between vaults they merge as a union. Plain
+/// data here: what the columns hold, nothing else (`rowel_broker::audit`
+/// writes and verifies them).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditRecord {
     pub id: String,
@@ -169,6 +171,19 @@ pub struct AuditRecord {
     pub approver: Option<String>,
     pub event: String,
     pub detail: Option<String>,
+}
+
+/// What retention took off one writer's chain ([`SqliteStore::audit_prune`]):
+/// the `seq` and `hash` of the newest row that went. The writer's next row
+/// chains from these exactly as it would have had the row stayed, so a peer
+/// still holding the reclaimed rows reads one unbroken chain — and a chain
+/// reclaimed whole does not start over at `seq` 1 under a `(writer_id, seq)`
+/// the old rows already hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditCut {
+    pub writer_id: String,
+    pub seq: i64,
+    pub hash: [u8; 32],
 }
 
 /// The swappable storage contract. Any backend behind this interface is a drop-in.
