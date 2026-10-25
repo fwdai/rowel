@@ -161,10 +161,15 @@ point. Levers: standing rules with expiry, batched approvals ("approve the
 next 20 uses of this item by this agent for an hour"), and sensible defaults
 per item kind. Spec ships the levers, not the defaults.
 
-**Q21. Audit chain with many writers and pruning.** *Design chosen; verify.*
-Per-writer chains and a `pruned_through` row keep verification possible; an
-auditor's tooling has to understand both. Provide `rowel admin audit verify`
-and a documented algorithm.
+**Q21. Audit chain with many writers and pruning.** ✅ *Tier 1 built in I4
+(`09`, Retention).* Per-writer chains and a `pruned_through` row keep
+verification possible; `rowel_broker::audit::verify` is the algorithm and
+Vault Health's *Verify the log* runs it per writer. Two things the build
+settled that the draft did not: every device reclaims every writer's aged
+prefix (a union merge hands a device its own pruned rows back otherwise), and
+the cut is a chain prefix rather than the old rows alone (a stepped-back clock
+would leave a permanent gap). `rowel admin audit verify` for the server stays
+with I7.
 
 **Q22. Remote extension in cloud browsers.** *Phase 4.*
 The enrollment-code handshake, how the agent platform injects the extension

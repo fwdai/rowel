@@ -29,7 +29,7 @@ history with it.
 
 ### Technical details
 
-**Schema (❌, `rowel_core::store`, migration adding `audit`).**
+**Schema (✅ I1, `rowel_core::store`, migration adding `audit`).**
 
 ```sql
 CREATE TABLE audit (
@@ -66,27 +66,60 @@ devices and the server never break each other's chains, and no `meta` head is
 needed. Verification walks each writer's chain in `seq` order and checks the
 `UNIQUE (writer_id, seq)` has no gaps below the newest row.
 
-**Sync (🟡, engine + store).** Today a pack carries the whole SQLCipher
-snapshot, but the merge takes only entries, attachments and the name out of it
-(`sync::engine::records_from_snapshot` → `Snapshot { records, attachments,
-name, name_ms }`, `SqliteStore::merge`), and `meta` is ignored. Audit rows must
-travel and merge as a **union by `id`**, never last-writer-wins and never
-tombstoned. Changes:
+**Sync (✅ I4, engine + store).** A pack carries the whole SQLCipher snapshot,
+so audit rows always rode in it; what I4 added is reading them out, merging
+them and counting them. Audit rows travel and merge as a **union by `id`**,
+never last-writer-wins and never tombstoned:
 
-- `Snapshot` gains `audit: Vec<AuditRow>`; `SqliteStore::export_for_sync`
-  gains the audit rows (or a sibling `export_audit_for_sync`), and
-  `SqliteStore::merge` inserts them with `INSERT OR IGNORE`.
-- `store::hash::vault_digest` must include the audit rows, or a device whose
-  only change is new audit rows would never push (`engine::sync` pushes on a
-  digest difference).
+- `Snapshot.audit: Vec<AuditRecord>`, filled by `records_from_snapshot` from
+  `SqliteStore::audit_all()` (every row, `ORDER BY writer_id, seq`);
+  `SqliteStore::merge(recs, atts, audit)` inserts them with `INSERT OR
+  IGNORE` in the same transaction as the entries and attachments. Both of the
+  table's constraints are ignored the same way: a known `id` is the same row
+  seen twice, and a known `(writer_id, seq)` under another id is a forked
+  chain, which never overwrites what the device holds (verification is what
+  names a fork). The merge's returned count (`SyncOutcome.merged`, "the entry
+  list changed") leaves audit rows out.
+- `store::hash::vault_digest(recs, atts, audit)` includes the audit rows as
+  `(id, hash)` pairs sorted by id — the chain hash already covers every other
+  column — following the attachments pattern: a vault without audit rows
+  digests exactly as before, and a device whose only change is new audit rows
+  pushes (`engine::sync` pushes on a digest difference).
 - A restore from a pack on a fresh install already carries the whole file,
   audit included.
 
-**Retention.** Default 365 days, pruned at sync time like tombstones
-(`TOMBSTONE_TTL_MS` has the pattern): a writer deletes its own rows older than
-the cutoff and writes a `pruned_through` row whose `detail` names the cutoff
-`seq`, so its chain stays verifiable from that row on. Tiers 2/3 keep the
-server copy per tenant policy and export before pruning.
+**Retention (✅ I4).** `AUDIT_RETENTION_MS` = 365 days beside
+`TOMBSTONE_TTL_MS`; the engine passes both cutoffs to `LocalVault::pack` as a
+`Reclaim { tombstones_before, audit_before, at_ms }`, so the prune runs where
+the tombstone purge runs: only on a push (a digest-equal run returns before
+`pack`), and inside `SessionVault`'s key-checked reclaim step. Two things
+differ from the first draft, both forced by the union merge:
+
+- **Every device reclaims every writer's aged rows**, not only its own. With a
+  union merge a device that pruned only its own chain would be handed the rows
+  back by any peer that still held them, and an iOS device — which writes no
+  rows and so had nothing of its own to prune — would hold them forever and
+  never agree with the desktop's digest. `SqliteStore::audit_prune(before)`
+  reclaims every chain's prefix in one transaction and reports each writer
+  with the highest `seq` it lost; the set converges once each peer has pushed.
+- **A prefix, not the old rows alone.** The cut goes through the newest row
+  stamped before the cutoff, so a clock that stepped backwards cannot leave a
+  younger stamp below an older one and a hole that verifies as a gap forever.
+
+Only the chain's own writer notes the cut: `rowel_broker::audit::prune` (desktop,
+where the broker is linked) writes a `pruned_through` row with actor `policy`
+and detail `{"seq":<highest seq reclaimed>,"beforeMs":<cutoff>}` when its own
+rows were among those reclaimed; iOS (`writer_id: None`) reclaims and writes
+nothing. `verify` treats a chain that starts past `seq` 1 as pruned and checks
+it from where it begins, so another writer's chain losing its prefix with no
+note stays verifiable. **A chain reclaimed whole does not start over**: the
+store reports each cut as `AuditCut { writer_id, seq, hash }` (the newest row
+that went), and the note chains from that `(seq, hash)` as if the row had
+stayed — a note that restarted at `seq` 1 would collide with the old rows a
+peer still holds, be dropped by the union merge, and leave the two digests
+never agreeing; chained on, a peer reads its old copy and the note as one
+unbroken chain. Tiers 2/3 keep the server copy per tenant policy and export
+before pruning.
 
 **Writers.** `rowel_broker::audit::Writer` with `fn record(&self, Row)`; the
 `Host` implementations call it at every state change in `03`'s lifecycle.
@@ -124,14 +157,30 @@ A `rule_added` for an env rule carries the command line as its target.
 
 **Surfaces.**
 
-- Tier 1: `src/components/Main/Sidebar/Settings/Sections/Audit/` (Vault Health)
-  gains an *Agent activity* panel: last 7 days of `used`/`denied`/`exposed`
-  events, standing rules older than 30 days, agents unseen for 90 days, and
-  a *Verify log* action that walks the chains and reports the first break.
+- Tier 1 (✅ I4): `src/components/Main/Sidebar/Settings/Sections/Audit/AgentActivity/`
+  (Vault Health, desktop only) shows the last 7 days of `used`/`denied`/`exposed`
+  events (newest first, 20 on the first screen, at most 200), standing rules
+  older than 30 days with *Remove*, clients not seen in 90 days with *Forget*,
+  and *Verify the log*, which walks every writer's chain and names the first
+  break in words ("device <first 8 hex of the writer id>" for a peer, "this
+  device" for the install). The panel is rendered only when the Agents switch
+  is on or there is something to show, so a person who never uses agents sees
+  nothing about them. Commands (`src-tauri/src/commands/activity.rs`):
+  `audit_agent_activity` → `{ events, staleRules, idleClients }` where an event
+  carries `thisDevice` (the writer is this install), the item's current title
+  (null when gone), the `target`, `mode`, `approval` and the `reason` parsed
+  out of a `denied`/`exposed` row's detail; `audit_verify` → `{ ok, writers:
+  [{ writerId, thisDevice, rows, firstSeq, lastSeq, break: { seq, reason }
+  | null }] }`. A client never seen since it was let in is idle from its
+  `created_at_ms`.
 - Tier 2/3: `GET /v1/admin/audit/export` (JSONL, filters), webhook and OTLP
   (`08`). Each exported row carries `writer_id`, `seq`, `prev_hash`, `hash`.
 
 **Never in the log.** Secret values, TOTP codes, passkey private material,
 full URLs with query strings (the target is scheme+host+path), or reasons
-longer than 300 characters. The redactor (`05`) runs over `detail` before
-insert as a belt-and-braces check.
+longer than 300 characters. The redactor (`05`) running over `detail` before
+insert was proposed as a belt-and-braces check and is not built in Tier 1:
+every `detail` the app writes is spelled from a fixed vocabulary (a reason
+word, a rule id, a field name, a seq), so there is no free text to scan. It
+stays on the list for the server, where `detail` may carry a tenant's own
+reasons.

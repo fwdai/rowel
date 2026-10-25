@@ -182,7 +182,10 @@ where the 32 bytes come from and who else holds a wrapped copy:
 lockbox attribute on the server in Tier 2. `Host::request_grant` refuses with
 `GrantDenied` for a lockbox whose flag is off before policy is consulted.
 
-**What the threat model must say after phase 0.** In "The browser extension":
+**What the threat model must say after phase 0 (✅ I4: `docs/threat-model.md`
+gained an "Agents" section mirroring this document for the local tier, with
+the server-tier items named as not shipped; `docs/agents.md` is the user
+guide).** In "The browser extension":
 *"There are no per-site prompts, by design — a fill asks nothing"* becomes
 *"a fill asks nothing while a person is driving; while agent mode is on, or
 when a client of kind `agent` requested it, a fill is a grant and asks or is

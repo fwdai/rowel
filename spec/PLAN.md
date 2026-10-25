@@ -234,21 +234,30 @@ clients), `05 §4–5` (header, env, redaction).
 
 ---
 
-## I4 — Audit you can read, and Tier 1 released  `[ ]`
+## I4 — Audit you can read, and Tier 1 released  `[ ]`  *(in review: PR #658, branch `feat/agent-audit`, stacked on #657)*
 
 **Deliverable.** Vault Health shows what agents did, across the user's devices,
 with a verifiable chain; the threat model and docs say what shipped. This
 closes the free product. Spec `09`, `11 §2 PR 5 and PR 8`.
 
 - [ ] `Snapshot.audit`, export and `INSERT OR IGNORE` merge, `vault_digest`
-      including audit rows, retention with `pruned_through` (`09`).
+      including audit rows, retention with `pruned_through` (`09`). *Outcome:*
+      as specified, except that every device reclaims every writer's aged
+      prefix at pack time and only the chain's own writer writes the
+      `pruned_through` note — a union merge hands a device its own pruned rows
+      back otherwise, and iOS has no chain of its own (`09`, Q21).
 - [ ] Vault Health › *Agent activity*: recent events, standing rules older than
-      30 days, agents unseen for 90 days, *Verify log* (`09`).
+      30 days, agents unseen for 90 days, *Verify log* (`09`). *Outcome:*
+      `AgentActivity/` under the Vault Health section, desktop only, shown
+      when the Agents switch is on or the log has something to show; commands
+      `audit_agent_activity` and `audit_verify` in `commands/activity.rs`.
 - [ ] `docs/threat-model.md`: the extension section reworded and a new Agents
       section per `01`; `docs/agents.md` user guide; README claims worded to
       what shipped.
 - [ ] Release: extension version bump and store submissions; app release with
-      notes; the spec's revision history updated.
+      notes; the spec's revision history updated. *Outcome:* extension 0.2.0
+      in the PR; the store submissions and the app's Release workflow are the
+      owner's manual steps after the merge (`docs/releasing.md`).
 - [ ] **Acceptance:** two devices (the `two_devices.rs` harness) converge on
       the union of their audit logs and both chains verify; a device with only
       new audit rows pushes; an altered row breaks verification.
