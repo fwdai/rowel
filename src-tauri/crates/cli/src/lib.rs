@@ -20,6 +20,7 @@
 
 pub mod agent;
 pub mod args;
+pub mod authority;
 pub mod command;
 pub mod hook;
 pub mod keys;

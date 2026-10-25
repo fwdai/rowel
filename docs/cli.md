@@ -191,10 +191,27 @@ X-Rowel-Grant: <grant id from rowel_request_secret>
   in a request header value, and in the body when `Content-Type` is
   `application/json` or `application/x-www-form-urlencoded` (there also in
   its percent-encoded form, `rowel%3A%2F%2F…`), is resolved under that grant
-  for this host (without the port), path (without the query) and method —
-  each distinct placeholder once per request, every request a use — and
-  replaced in place. A placeholder anywhere in the URL is refused: URLs land
-  in logs upstream.
+  for this host, path (without the query) and method — each distinct
+  placeholder once per request, every request a use — and replaced in place.
+  A placeholder anywhere in the URL is refused: URLs land in logs upstream.
+- **The host**, everywhere an HTTP target names one (the grant
+  `rowel_request_secret` asks for, every resolve, `rowel redact --http`): lower
+  case, with the port when it is not the scheme's default (`localhost:3000`
+  stays, `api.example.com:443` is `api.example.com` under https), IPv6
+  brackets kept. One rule, so a grant for a dev server on a port matches the
+  requests it was asked for.
+- **How a value is written** depends on where it lands, decided once per
+  request from the content type: as is in a header; JSON-escaped in a JSON
+  body (a placeholder in a JSON document is always inside a string, and the
+  string becomes the one you wrote with the value in it); form-encoded in a
+  form body, whether you wrote the placeholder plain or percent-encoded. A
+  value holding a quote, a backslash, `&` or `=` therefore cannot
+  restructure the document or add a field.
+- **Redirects are not followed.** The grant was checked for the host, path
+  and method you asked for, not for wherever the upstream points next, so a
+  3xx comes back to you as it is — status, `Location` and body, redacted like
+  any response — and your client follows it through the proxy, where the hop
+  is a request of its own with its own check.
 - **Forwarding**: the method and headers are kept; `X-Rowel-Grant`, `Host`,
   `Content-Length` and the hop-by-hop headers (`Connection`, `Keep-Alive`,
   `Proxy-*`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`) are dropped.

@@ -42,9 +42,12 @@ rand = "0.8"
 # A resolved value is held wiped-on-drop from the reply to the child's
 # environment, and so are the redactor's needles and carry.
 zeroize = "1"
-# The encodings the redactor matches a value in besides itself (`redact`).
+# The encodings the redactor matches a value in besides itself (`redact`),
+# and the one a form body carries it in (`proxy`): already in the locked
+# graph under `url`.
 base64 = "0.23"
 percent-encoding = "2"
+form_urlencoded = "1"
 # `rowel proxy` (`proxy`): an HTTP/1.1 server on the loopback address, and
 # reqwest for the upstream with exactly the app's feature set — rustls with
 # the ring provider installed at startup, as `sync` does — so one TLS stack
