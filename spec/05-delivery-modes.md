@@ -142,7 +142,11 @@ line, and the redactor catches a value printed verbatim.
   script's settings and ends in a retrieval, so a tab loaded before agent
   mode went on fills as agent mode rather than through the person's icons
   (`page.clearLogins` first, so the retrieval reaches the host); the other
-  profiles keep the grant in memory and change nothing. A login served
+  profiles keep the grant in memory and change nothing. The grants agent
+  mode is on for in a profile are kept apart from the grants merely held
+  (`rowelAgentGrants` vs `rowelGrants`), and it is the former emptying
+  that turns agent mode back off — a grant held for another profile cannot
+  keep it on. A login served
   under a grant marks it `served` in that profile, and the sign-out at the
   end is only that profile's: signed out where it was signed in. `item`
   and `autoSubmit` are not read: the host serves the admitted item on
@@ -271,9 +275,11 @@ The extension deletes the cookies of each origin's registrable domain, found
 through upstream's own `page.getBaseDomainFromUrl` (which probes the public
 suffix list with a throwaway cookie, as it does for iframes), in every cookie
 store the browser lists and partitioned cookies included — one `getAll` sees
-one store and no partitioned cookie unless told, so each store is asked in
-turn with `partitionKey: {}` where the browser knows it, and each removal
-names the cookie's own store and partition; leaves an origin a newer grant
+one store and no partitioned cookie unless told, and under Firefox's
+first-party isolation nothing unless `firstPartyDomain` is given, so each
+store is asked in turn with `partitionKey: {}` and `firstPartyDomain: null`
+where the browser knows them, and each removal names the cookie's own
+store, partition and first-party domain; leaves an origin a newer grant
 holds whole, session included, since
 it is that grant's to end; shows a fixed-text notification; and turns agent
 mode back off only if a grant turned it on and none is left. A lock ends
