@@ -195,7 +195,13 @@ pub trait Host {
     fn end_grant(&self, client: &Client, id: &str) -> Result<(), Code>;
     /// The items `client` may ask for by name: those its own rules and active
     /// grants admit, in `lockbox` or the open one. Never the whole vault.
-    fn visible_items(&self, client: &Client, lockbox: Option<&str>) -> Vec<VisibleRef>;
+    /// A closed vault or either disabled agent-access switch is an explicit
+    /// refusal, not a successful empty list.
+    fn visible_items(
+        &self,
+        client: &Client,
+        lockbox: Option<&str>,
+    ) -> Result<Vec<VisibleRef>, Code>;
     /// The signals queued for `client` since it last asked, which this call
     /// clears.
     fn take_signals(&self, client: &Client) -> Vec<Signal>;
@@ -570,7 +576,7 @@ impl<H: Host> Connection<H> {
             "list-visible" => {
                 let client = self.admit(action, message)?;
                 let lockbox = Some(str_of(message, "lockbox")).filter(|l| !l.is_empty());
-                let items = self.host.visible_items(&client, lockbox);
+                let items = self.host.visible_items(&client, lockbox)?;
                 Ok(params(json!({ "items": items })))
             }
             // The extension asks for groups before saving a new login; a vault

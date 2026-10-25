@@ -10,8 +10,13 @@ import { grants } from '../rowel/background/grants.js';
 declare global {
     /* eslint-disable no-var */
     var page: { settings?: { agentMode?: boolean }; getBaseDomainFromUrl?; clearLogins? } | undefined;
-    var keepass: { isConnected: boolean; testAssociation } | undefined;
-    var keepassClient: { getNonce; sendMessage } | undefined;
+    var keepass: { isConnected: boolean; testAssociation; clientID? } | undefined;
+    var keepassClient: {
+        getNonce; sendMessage; buildRequest?; encrypt?; incrementedNonce?;
+        sendNativeMessage?; handleResponse?;
+    } | undefined;
+    var kpActions: { GET_LOGINS: string } | undefined;
+    var kpErrors: Record<string, number> | undefined;
     var kpxcEvent: { onSaveSettings } | undefined;
     var browser: { tabs; cookies; storage } | undefined;
     var showNotification: ((text: string) => void) | undefined;
@@ -149,7 +154,10 @@ test.beforeEach(() => {
 });
 
 test.afterEach(() => {
-    for (const name of [ 'page', 'keepass', 'keepassClient', 'kpxcEvent', 'browser', 'showNotification', 'tr', 'logError' ]) {
+    for (const name of [
+        'page', 'keepass', 'keepassClient', 'kpActions', 'kpErrors', 'kpxcEvent',
+        'browser', 'showNotification', 'tr', 'logError'
+    ]) {
         delete globalThis[name];
     }
 });
@@ -408,8 +416,56 @@ test('a login served under a grant marks the grant served here', async () => {
 
     expect(reply).toEqual({ entries: [ {} ] });
     expect(area.store.rowelGrants['https://github.com']).toEqual({ grantId: 'g1', expiresAt: now + grants.GRANT_TTL_MS, served: true });
-    delete globalThis.kpActions;
-    delete globalThis.kpErrors;
+});
+
+const holdGetLoginsResponse = () => {
+    let release;
+    let requestStarted;
+    const started = new Promise(resolve => requestStarted = resolve);
+    globalThis.kpActions = { GET_LOGINS: 'get-logins' };
+    globalThis.kpErrors = {};
+    globalThis.keepassClient.buildRequest = (action, message, nonce, id) => ({ action, message, nonce, id });
+    globalThis.keepassClient.encrypt = data => data;
+    globalThis.keepassClient.incrementedNonce = nonce => nonce;
+    globalThis.keepassClient.sendNativeMessage = () => new Promise(resolve => {
+        release = resolve;
+        requestStarted();
+    });
+    globalThis.keepassClient.handleResponse = response => (response.served ? { entries: [ { password: 'secret' } ] } : undefined);
+    globalThis.keepass.clientID = 'test';
+    return { started, release: response => release(response) };
+};
+
+// A native request may outlive the vault session it began in. The reply is
+// neither returned nor written back after the lock has cleared that session.
+test('a get-logins reply arriving after database lock is discarded', async () => {
+    await grants.rememberGrant('https://github.com', 'g1');
+    const native = holdGetLoginsResponse();
+    const pending = grants.sendGetLogins({ id: 1 }, { url: 'https://github.com/login' }, 'nonce');
+    await native.started;
+
+    await grants.onLocked();
+    native.release({ served: true });
+
+    expect(await pending).toBeUndefined();
+    expect(area.store.rowelGrants).toBeUndefined();
+});
+
+// grant-ended has the same race as a lock: once the terminal signal won the
+// queue, a response begun under that grant cannot return credentials or put
+// the grant back into session storage.
+test('a get-logins reply arriving after grant-ended is discarded', async () => {
+    await grants.rememberGrant('https://github.com', 'g1');
+    const native = holdGetLoginsResponse();
+    const pending = grants.sendGetLogins({ id: 1 }, { url: 'https://github.com/login' }, 'nonce');
+    await native.started;
+
+    signals = [ grantEnded('g1', [ 'https://github.com' ]) ];
+    await grants.onSignal();
+    native.release({ served: true });
+
+    expect(await pending).toBeUndefined();
+    expect(await grants.grantFor('https://github.com')).toBeUndefined();
 });
 
 // A profile that only ever held the grant in memory was never signed in

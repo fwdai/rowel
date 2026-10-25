@@ -32,6 +32,20 @@ grants.GRANT_TTL_MS = 15 * 60 * 1000; // A fill grant lives 15 minutes on the ho
 grants.FILLED_TTL_MS = 60 * 1000; // The next load must pick a handoff up within a minute
 grants.PENDING_RETRY_CAP_MS = 10 * 1000;
 
+// Every production read-modify-write of grant session state crosses this
+// queue. Native replies, signals, locks and content-script reports arrive
+// independently; without one order, a late get-logins reply can put back a
+// grant that a lock or grant-ended just removed. `grantEpoch` makes that ordering
+// fail closed: a reply begun before any terminal transition is never released
+// afterwards.
+let queue = Promise.resolve();
+let grantEpoch = 0;
+const exclusive = function(work) {
+    const run = queue.then(work);
+    queue = run.catch(err => logError(`grants: ${err}`));
+    return queue;
+};
+
 const GRANTS_KEY = 'rowelGrants';
 const FILLED_KEY = 'rowelFilled';
 const AGENT_GRANTS_KEY = 'rowelAgentGrants';
@@ -131,9 +145,48 @@ grants.markServed = async function(origin, grantId) {
     }
 };
 
-grants.forgetGrant = async function(origin) {
+// Commit a successful get-logins response in the same critical section as
+// terminal events. The grant must still be the one the request used (or, for
+// a new ask, no different grant may have arrived while the dialog was up).
+// Remembering and marking served is one write, so session-end cannot observe
+// the half-state and decide this profile has nothing to sign out of.
+grants.commitServed = async function(origin, requestedGrantId, responseGrantId, epoch) {
+    if (epoch !== grantEpoch || !origin) {
+        return false;
+    }
+    if (requestedGrantId && responseGrantId && requestedGrantId !== responseGrantId) {
+        return false;
+    }
+
+    const grantId = requestedGrantId ?? responseGrantId;
+    if (!grantId) {
+        return false;
+    }
     const map = await readMap(GRANTS_KEY);
-    if (origin in map) {
+    const current = map[origin];
+    if (requestedGrantId) {
+        if (current?.grantId !== requestedGrantId || current.expiresAt <= grants.now()) {
+            return false;
+        }
+        current.served = true;
+    } else {
+        if (current && current.grantId !== grantId) {
+            return false;
+        }
+        map[origin] = {
+            ...current,
+            grantId: grantId,
+            expiresAt: current?.expiresAt ?? grants.now() + grants.GRANT_TTL_MS,
+            served: true
+        };
+    }
+    await writeMap(GRANTS_KEY, map);
+    return true;
+};
+
+grants.forgetGrant = async function(origin, grantId) {
+    const map = await readMap(GRANTS_KEY);
+    if (origin in map && (!grantId || map[origin].grantId === grantId)) {
         delete map[origin];
         await writeMap(GRANTS_KEY, map);
     }
@@ -147,6 +200,7 @@ grants.forgetGrant = async function(origin) {
 // with the port down) signs out as well: a grant the host can no longer be
 // asked about is not one to keep a session open on.
 grants.clearAll = async function() {
+    grantEpoch += 1;
     const byGrant = await grants.agentModeByGrant();
     const held = await readMap(GRANTS_KEY);
     const signedIn = Object.keys(held).filter(origin => held[origin].served);
@@ -195,7 +249,7 @@ grants.sendGetLogins = async function(tab, messageData, nonce) {
     }
 
     const origin = grants.originOf(messageData.url);
-    let grantId = await grants.grantFor(origin);
+    let grantId = await exclusive(() => grants.grantFor(origin));
     let retried = false;
 
     for (;;) {
@@ -212,21 +266,26 @@ grants.sendGetLogins = async function(tab, messageData, nonce) {
             nonce,
             keepass.clientID,
         );
+        const requestEpoch = grantEpoch;
         const response = await keepassClient.sendNativeMessage(request);
         const parsed = keepassClient.handleResponse(response, keepassClient.incrementedNonce(nonce), tab);
         if (parsed) {
-            if (parsed.grantId) {
-                await grants.rememberGrant(origin, parsed.grantId);
-            }
             // A login came back under the grant: this profile is where the
-            // sign-in happens, and so where the sign-out is owed.
-            await grants.markServed(origin, grantId ?? parsed.grantId);
-            return parsed;
+            // sign-in happens, and so where the sign-out is owed. A terminal
+            // event or replacement grant while the native request was in
+            // flight discards the credentials instead of resurrecting it.
+            const committed = await exclusive(() => grants.commitServed(
+                origin,
+                grantId,
+                parsed.grantId,
+                requestEpoch,
+            ));
+            return committed ? parsed : undefined;
         }
 
         const code = response?.errorCode;
         if (grantId && (code === kpErrors.GRANT_DENIED || code === kpErrors.GRANT_EXPIRED)) {
-            await grants.forgetGrant(origin);
+            await exclusive(() => grants.forgetGrant(origin, grantId));
         }
 
         if (!retried) {
@@ -262,7 +321,7 @@ grants.totpFields = async function(tab, sender) {
     }
 
     const fields = { agentMode: 'true' };
-    const grantId = await grants.grantFor(grants.originOf(sender?.url ?? tab?.url));
+    const grantId = await exclusive(() => grants.grantFor(grants.originOf(sender?.url ?? tab?.url)));
     if (grantId) {
         fields.grantId = grantId;
     }
@@ -309,21 +368,6 @@ grants.reportExposure = async function(tab, args = []) {
 //--------------------------------------------------------------------------
 // Signals from the host
 //--------------------------------------------------------------------------
-
-// Every entry from outside — a signal, a lock, an exposure — runs to its end
-// before the next begins. They arrive from the native port and from content
-// scripts with nothing ordering them, and each is a read-modify-write of the
-// same session storage: a lock's cleanup overlapping a fill-grant from the
-// unlock right after it (a lockbox switch sends the two back to back) would
-// erase the new grant or turn off the agent mode it just turned on. One
-// queue, nothing in it awaits anything outside grants.js that could call back
-// in, and a failure is logged and lets the next entry run.
-let queue = Promise.resolve();
-const exclusive = function(work) {
-    const run = queue.then(work);
-    queue = run.catch(err => logError(`grants: ${err}`));
-    return queue;
-};
 
 // The clear `rowel-signal` arrived (client.js), or the port just came back
 // (keepass.reconnect): fetch what the host queued for this client and act on
@@ -451,6 +495,7 @@ grants.wakeTab = async function(origin) {
 // session is that grant's to end, and ending it now would cut that grant
 // off while the host still counts it active.
 grants.onGrantEnded = async function({ grantId, origins = [] }) {
+    grantEpoch += 1;
     const agentGrants = await readMap(AGENT_GRANTS_KEY);
     // The entries as stored, expiry not applied: the host's end of a grant
     // arrives at its expiry, and a look that dropped the expired entry on
@@ -469,7 +514,7 @@ grants.onGrantEnded = async function({ grantId, origins = [] }) {
             signedOut += 1;
         }
         if (entry?.grantId === grantId) {
-            await grants.forgetGrant(origin);
+            await grants.forgetGrant(origin, grantId);
         }
         if (agentGrants[origin] === grantId) {
             delete agentGrants[origin];
@@ -571,13 +616,14 @@ grants.cookiesOf = async function(domain) {
 // person, end the grant, and never reuse it, whatever the host answered.
 grants.onExposure = function(tab, args = []) {
     return exclusive(async () => {
+        grantEpoch += 1;
         const [ origin ] = args;
         showNotification(tr('agentModeExposedNotification'));
 
         const grantId = await grants.grantFor(origin);
         if (grantId) {
             await grants.reportExposure(tab, [ grantId ]);
-            await grants.forgetGrant(origin);
+            await grants.forgetGrant(origin, grantId);
         }
     });
 };
@@ -596,34 +642,38 @@ const pruneFilled = function(map) {
 
 // Handoff from a fill to the next page load of the same tab: { password, totp, url }.
 // One record per tab; the previous one is replaced.
-grants.setFilled = async function(tab, args = []) {
-    const [ record ] = args;
-    if (!tab?.id || !record) {
-        return;
-    }
+grants.setFilled = function(tab, args = []) {
+    return exclusive(async () => {
+        const [ record ] = args;
+        if (!tab?.id || !record) {
+            return;
+        }
 
-    const map = await readMap(FILLED_KEY);
-    pruneFilled(map);
-    map[String(tab.id)] = { ...record, storedAt: grants.now() };
-    await writeMap(FILLED_KEY, map);
+        const map = await readMap(FILLED_KEY);
+        pruneFilled(map);
+        map[String(tab.id)] = { ...record, storedAt: grants.now() };
+        await writeMap(FILLED_KEY, map);
+    });
 };
 
 // Read-and-delete. Undefined when there is none or it is older than FILLED_TTL_MS.
-grants.takeFilled = async function(tab) {
-    if (!tab?.id) {
-        return undefined;
-    }
+grants.takeFilled = function(tab) {
+    return exclusive(async () => {
+        if (!tab?.id) {
+            return undefined;
+        }
 
-    const map = await readMap(FILLED_KEY);
-    const key = String(tab.id);
-    const record = map[key];
-    const stale = pruneFilled(map);
-    if (record || stale) {
-        delete map[key];
-        await writeMap(FILLED_KEY, map);
-    }
+        const map = await readMap(FILLED_KEY);
+        const key = String(tab.id);
+        const record = map[key];
+        const stale = pruneFilled(map);
+        if (record || stale) {
+            delete map[key];
+            await writeMap(FILLED_KEY, map);
+        }
 
-    return record && record.storedAt + grants.FILLED_TTL_MS > grants.now() ? record : undefined;
+        return record && record.storedAt + grants.FILLED_TTL_MS > grants.now() ? record : undefined;
+    });
 };
 
 // In the background (not in the unit test): the action beside the others on

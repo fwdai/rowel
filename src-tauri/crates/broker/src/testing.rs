@@ -374,8 +374,15 @@ impl Host for Mock {
         self.ended.borrow_mut().push(id.to_string());
         Ok(())
     }
-    fn visible_items(&self, _client: &Client, _lockbox: Option<&str>) -> Vec<VisibleRef> {
-        self.visible.clone()
+    fn visible_items(
+        &self,
+        _client: &Client,
+        _lockbox: Option<&str>,
+    ) -> Result<Vec<VisibleRef>, Code> {
+        if !self.agents_enabled.get() {
+            return Err(Code::AgentsDisabled);
+        }
+        Ok(self.visible.clone())
     }
     fn take_signals(&self, client: &Client) -> Vec<Signal> {
         self.signals

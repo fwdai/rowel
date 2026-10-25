@@ -1397,6 +1397,10 @@ fn list_visible_answers_names_and_fields_never_values() {
     for secret in ["hunter2", "123456", "octocat"] {
         assert!(!wire.contains(secret), "{secret} in {wire}");
     }
+
+    connection.host().agents_enabled.set(false);
+    let off = extension.send(&mut connection, "list-visible", json!({ "lockbox": "lb" }));
+    assert_eq!(error_code(&off), Code::AgentsDisabled as u8);
 }
 
 // --- signals: what the host tells an extension that did not ask ------------------

@@ -345,12 +345,17 @@ mod tests {
         harness.link.0.borrow().host().agents_enabled.set(false);
         let replies = served(
             &mut harness,
-            &[call(tools::REQUEST_LOGIN, json!({ "site": "github.com" }))],
+            &[
+                call(tools::REQUEST_LOGIN, json!({ "site": "github.com" })),
+                call(tools::LIST_VISIBLE, json!({})),
+            ],
         );
-        let (result, is_error) = tool_result(&replies[0]);
-        assert!(is_error);
-        assert_eq!(result["error"], "AgentsDisabled");
-        assert_eq!(result["message"], AGENTS_DISABLED);
+        for reply in &replies {
+            let (result, is_error) = tool_result(reply);
+            assert!(is_error);
+            assert_eq!(result["error"], "AgentsDisabled");
+            assert_eq!(result["message"], AGENTS_DISABLED);
+        }
     }
 
     #[test]

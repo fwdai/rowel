@@ -1346,7 +1346,9 @@ fn visible_items_are_the_clients_own_rules_and_grants_never_the_baseline() {
     let mut held = ready();
 
     assert!(
-        visible_in(&store, &held, &agent(), "default", now).is_empty(),
+        visible_in(&store, &held, &agent(), "default", now)
+            .unwrap()
+            .is_empty(),
         "the baseline alone shows nothing"
     );
 
@@ -1368,7 +1370,7 @@ fn visible_items_are_the_clients_own_rules_and_grants_never_the_baseline() {
         ..active_grant("bank", now)
     });
 
-    let mut visible = visible_in(&store, &held, &agent(), "default", now);
+    let mut visible = visible_in(&store, &held, &agent(), "default", now).unwrap();
     visible.sort_by(|a, b| a.reference.cmp(&b.reference));
     assert_eq!(
         visible
@@ -1382,23 +1384,25 @@ fn visible_items_are_the_clients_own_rules_and_grants_never_the_baseline() {
 
     // The switches gate the names as they gate the uses.
     held.access.as_mut().unwrap().lockbox_on = false;
-    assert!(
-        visible_in(&store, &held, &agent(), "default", now).is_empty(),
-        "nothing while the lockbox's access is off"
+    assert_eq!(
+        visible_in(&store, &held, &agent(), "default", now),
+        Err(Code::GrantDenied),
+        "the lockbox's switch is an explicit refusal"
     );
     held.access = Some(AccessState {
         enabled: false,
         lockbox_on: true,
     });
-    assert!(
-        visible_in(&store, &held, &agent(), "default", now).is_empty(),
-        "nothing while the Agents switch is off"
+    assert_eq!(
+        visible_in(&store, &held, &agent(), "default", now),
+        Err(Code::AgentsDisabled),
+        "the app's Agents switch is an explicit refusal"
     );
     held.access = Some(on());
     assert_eq!(visible[0].kind, "login");
     assert_eq!(visible[0].fields, ["password", "otp"]);
 
-    let theirs = visible_in(&store, &held, &extension(), "default", now);
+    let theirs = visible_in(&store, &held, &extension(), "default", now).unwrap();
     assert_eq!(theirs.len(), 1);
     assert_eq!(theirs[0].reference, "rowel://default/bank");
 

@@ -899,22 +899,24 @@ impl Host for AppHost {
     // Tier 1, and the others are sealed. A request naming another lockbox
     // is answered with nothing rather than with the open one's items under
     // the wrong name.
-    fn visible_items(&self, client: &Client, lockbox: Option<&str>) -> Vec<VisibleRef> {
+    fn visible_items(
+        &self,
+        client: &Client,
+        lockbox: Option<&str>,
+    ) -> std::result::Result<Vec<VisibleRef>, Code> {
         let app = &self.0;
         agents::initialise(app);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
         let open = workspace::active_id(app);
-        if lockbox.is_some_and(|named| named != open) {
-            return Vec::new();
-        }
-        let lockbox = open;
         let session = state.session.lock().unwrap();
-        let Ok(store) = session.store() else {
-            return Vec::new();
-        };
+        let store = session.store().map_err(|_| Code::DatabaseNotOpened)?;
         let held = state.agents.lock().unwrap();
-        visible_in(store, &held, client, &lockbox, now)
+        visible_access(&held)?;
+        if lockbox.is_some_and(|named| named != open) {
+            return Ok(Vec::new());
+        }
+        visible_in(store, &held, client, &open, now)
     }
 
     fn take_signals(&self, client: &Client) -> Vec<Signal> {
@@ -1755,13 +1757,11 @@ fn visible_in(
     client: &Client,
     lockbox: &str,
     now: i64,
-) -> Vec<VisibleRef> {
+) -> std::result::Result<Vec<VisibleRef>, Code> {
     // The switches gate the names as they gate the uses: an agent let in
     // before the Agents switch, or the lockbox's access, went off learns
     // nothing more from its standing rules than it could use.
-    if held.access_on().is_err() {
-        return Vec::new();
-    }
+    visible_access(held)?;
     let rules = agents::live_rules(store, now);
     let selectors: Vec<&ItemSelector> = rules
         .iter()
@@ -1775,16 +1775,16 @@ fn visible_in(
         )
         .collect();
     if selectors.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let metas = match store.list() {
         Ok(metas) => metas,
         Err(e) => {
             log::warn!("browser host: could not list the vault: {e}");
-            return Vec::new();
+            return Err(Code::DatabaseNotOpened);
         }
     };
-    metas
+    Ok(metas
         .into_iter()
         .filter(|meta| {
             let item = CandidateItem {
@@ -1803,7 +1803,16 @@ fn visible_in(
                 .collect(),
             kind: meta.kind,
         })
-        .collect()
+        .collect())
+}
+
+fn visible_access(held: &AgentState) -> std::result::Result<(), Code> {
+    match held.access_on() {
+        Ok(()) => {}
+        Err("lockbox") => return Err(Code::GrantDenied),
+        Err(_) => return Err(Code::AgentsDisabled),
+    }
+    Ok(())
 }
 
 /// The fields of an item of `kind` a grant could cover, by the names the
