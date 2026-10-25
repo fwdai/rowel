@@ -10,6 +10,11 @@
 //! The app's own binary is `rowel`; this one is `rowel-cli`, and Settings
 //! installs it under the short name.
 
+// Desktop only, as the broker's `socket` it connects through is: a phone has
+// no command line to run this from, so there the crate is empty and the
+// workspace still builds for one.
+#![cfg(not(any(target_os = "android", target_os = "ios")))]
+
 pub mod agent;
 pub mod args;
 pub mod keys;

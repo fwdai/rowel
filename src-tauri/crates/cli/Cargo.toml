@@ -23,7 +23,9 @@ path = "src/main.rs"
 [lib]
 name = "rowel_cli"
 
-[dependencies]
+# Desktop only, as the broker's `socket` is: on a phone the crate is empty
+# (`src/lib.rs`) and links none of this.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 # The client half of the sealed channel (`client`), the framing (`frame`) and
 # where the socket is (`socket`) — the CLI speaks to the app with the same code
 # the protocol tests drive the host with.
@@ -38,7 +40,7 @@ dirs = "7"
 # The run id an `mcp` process mints once and sends with every grant request.
 rand = "0.8"
 
-[dev-dependencies]
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dev-dependencies]
 # The broker's scripted host (`testing::Mock`), and the `Transport` its
 # `Connection` is under `test-support`, so the MCP server is tested end to end
 # in-process.
