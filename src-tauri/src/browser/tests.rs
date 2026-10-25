@@ -8,10 +8,10 @@ use super::manifest::{self, Family, KEEPASSXC, ROWEL};
 use super::protocol::str_of;
 use super::protocol::Code;
 use super::{
-    clients_in, covered, decide, env_var, frame, group_container, group_socket_dir, item_by_name,
-    outcome, proxy, resolved, server, settle, socket_name, visible_in, Answer, AskKind, Asking,
-    Candidate, CandidateItem, Client, ClientKind, GrantAnswer, Lockbox, Locked, NotAsked, Pending,
-    Prepared, SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
+    client_covered, clients_in, covered, decide, env_var, frame, group_container, group_socket_dir,
+    item_by_name, outcome, proxy, resolved, server, settle, socket_name, visible_in, Answer,
+    AskKind, Asking, Candidate, CandidateItem, Client, ClientKind, GrantAnswer, Lockbox, Locked,
+    NotAsked, Pending, Prepared, SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
 };
 use crate::agents::{self, AccessState, AgentState};
 use crate::crypto::PayloadCipher;
@@ -99,10 +99,10 @@ fn refusing_the_grant_ask_answers_it_and_no_other_kind() {
         "an associate ask is not a grant ask"
     );
     assert!(
-        pending.answer("next", Answer::Name(None)),
+        pending.answer("next", Answer::Pairing(None)),
         "and is still up"
     );
-    assert!(matches!(next.try_recv(), Ok(Answer::Name(None))));
+    assert!(matches!(next.try_recv(), Ok(Answer::Pairing(None))));
 
     let (_, passkey) = pending.begin("p", AskKind::Passkey, up).unwrap();
     assert_eq!(pending.refuse_grant(), None);
@@ -324,6 +324,7 @@ fn client(name: &str, key: &str, kind: ClientKind) -> Client {
         created_at_ms: 0,
         last_seen_at_ms: None,
         agent_id: None,
+        driven_by_agent: false,
     }
 }
 
@@ -605,6 +606,47 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
         Mode::Fill
     ));
     assert_eq!(held.grants[0].uses, 2);
+}
+
+// An extension's TOTP step without a `grantId` (a marked extension whose
+// own agent mode is off) is served under a grant it was issued or already
+// served under, counted on that grant and logged as found by client; never
+// under another client's grant it was not served under, nor one for another
+// login.
+#[test]
+fn a_client_s_own_grant_covers_its_totp_step_and_no_one_else_s() {
+    let (_dir, store, _cipher) = vault();
+    let now = 1_000;
+    let mut held = ready();
+    held.grants.push(Grant {
+        client_key: "agent".into(),
+        ..active_grant("gh", now)
+    });
+    assert!(!client_covered(
+        locked(&store, &mut held, now),
+        "ext",
+        "gh",
+        Mode::Fill
+    ));
+    assert_eq!(held.grants[0].served_to, None, "not claimed");
+
+    held.grants[0].served_to = Some("ext".into());
+    held.grants.push(active_grant("gh2", now));
+    assert!(!client_covered(
+        locked(&store, &mut held, now),
+        "ext",
+        "gh3",
+        Mode::Fill
+    ));
+    assert!(client_covered(
+        locked(&store, &mut held, now),
+        "ext",
+        "gh",
+        Mode::Fill
+    ));
+    let uses: Vec<u32> = held.grants.iter().map(|g| g.uses).collect();
+    assert_eq!(uses, [1, 0], "the use is counted on the covering grant");
+    assert_eq!(rows(&store), vec![row("used", r#"{"via":"client"}"#)]);
 }
 
 // The reviewer's sequence: a request is decided and its ask goes up; one

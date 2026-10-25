@@ -480,6 +480,7 @@ mod tests {
             created_at_ms,
             last_seen_at_ms,
             agent_id: None,
+            driven_by_agent: false,
         }
     }
 

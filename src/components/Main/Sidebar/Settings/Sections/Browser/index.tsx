@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   browserForgetClient,
+  browserSetDrivenByAgent,
   browserSetAgentsEnabled,
   browserSetAgentsStandingDays,
   browserSetEnabled,
@@ -79,6 +80,8 @@ export default function Browser() {
   const toggleAgents = (enabled: boolean) => change(() => browserSetAgentsEnabled(enabled))
   const setDays = (days: number) => change(() => browserSetAgentsStandingDays(days))
   const forget = (key: string) => change(() => browserForgetClient(key))
+  const markDriven = (key: string, driven: boolean) =>
+    change(() => browserSetDrivenByAgent(key, driven))
 
   const enabled = !!status?.enabled
   const compat = !!status?.keepassxcCompat
@@ -137,7 +140,12 @@ export default function Browser() {
         <>
           <Agents agents={status.agents} busy={busy} onToggle={toggleAgents} onDays={setDays} />
           <Browsers browsers={status.browsers} enabled={enabled} />
-          <Clients clients={status.clients} busy={busy} onForget={forget} />
+          <Clients
+            clients={status.clients}
+            busy={busy}
+            onDriven={markDriven}
+            onForget={forget}
+          />
         </>
       )}
     </>

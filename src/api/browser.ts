@@ -50,6 +50,11 @@ export interface BrowserClient {
   platform?: string
   createdAtMs: number
   lastSeenAtMs?: number
+  /**
+   * An extension the user marked as being in a browser an AI agent drives:
+   * every fill it asks for is a grant, whatever its own agent mode says.
+   */
+  drivenByAgent?: boolean
 }
 
 /**
@@ -101,12 +106,20 @@ export interface AssociateAsk {
 }
 
 /**
- * Answer the `browser:associate` ask `id`: the name to remember the extension
- * by, or null to refuse. Rust honours it only for the ask up under that id —
- * not for the same extension's next ask, which has an id of its own.
+ * Answer the `browser:associate` ask `id`: the name to remember the client by
+ * and, for an extension, whether an AI agent drives that browser — or a null
+ * name to refuse. Rust honours it only for the ask up under that id — not for
+ * the same client's next ask, which has an id of its own.
  */
-export const browserRespond = (id: string, name: string | null): Promise<void> =>
-  call('browser_respond', { id, name })
+export const browserRespond = (
+  id: string,
+  name: string | null,
+  drivenByAgent = false
+): Promise<void> => call('browser_respond', { id, name, drivenByAgent })
+
+/** Mark a connected extension as one in a browser an AI agent drives, or not. */
+export const browserSetDrivenByAgent = (key: string, driven: boolean): Promise<BrowserStatus> =>
+  call('browser_set_driven_by_agent', { key, driven })
 
 export const browserForgetClient = (key: string): Promise<BrowserStatus> =>
   call('browser_forget_client', { key })

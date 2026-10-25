@@ -126,7 +126,16 @@ nothing else, and the options page stays reachable through the browser's
 extension menu. It is the `agentMode` setting (`defaultSettings` in
 `background/page.js`, default `false`, stored with the other settings). Spec:
 `spec/05-delivery-modes.md` §2, `spec/04-protocol.md` "Extension-side
-actions". While it is on:
+actions".
+
+The switch the agent cannot reach is Rowel's: an extension marked **Used by
+an AI agent** (the pairing dialog's checkbox, or the switch on its row in
+Settings › Browser & agents) is in agent mode on the host whatever it sends.
+Its `get-logins` is a grant request with or without `agentMode`, and its
+`get-totp` is served only under a grant it was issued or served under, named
+by `grantId` or not. The extension's own switch adds the in-page part below
+(hidden UI, automatic fill, exposure check); turning it off brings the icons
+back but serves nothing without a grant. While it is on:
 
 - **Every fill is a grant.** `get-logins` carries `agentMode: "true"`; the
   host asks the person in Rowel's dialog (or applies a standing rule) and

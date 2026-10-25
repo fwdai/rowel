@@ -853,5 +853,7 @@
   "two rows with the same number": "deux lignes portant le même numéro",
   "a missing row": "une ligne manquante",
   "a row that does not follow the one before it": "une ligne qui ne suit pas la précédente",
-  "a row that was altered": "une ligne qui a été modifiée"
+  "a row that was altered": "une ligne qui a été modifiée",
+  "Used by an AI agent": "Utilisé par un agent IA",
+  "Every fill from it then waits for your approval in {{appName}}.": "Chaque remplissage attend alors votre accord dans {{appName}}."
 }

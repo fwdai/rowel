@@ -97,6 +97,12 @@ pub struct Client {
     /// Tier 2 only: the agent definition this client resolved to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// An extension in a browser an AI agent drives, as the user marked it
+    /// in Rowel: every fill it asks for is a grant, whatever the extension
+    /// says of its own agent mode, so the agent cannot switch the extension
+    /// out of it. Not written while off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub driven_by_agent: bool,
 }
 
 /// What a client says it is, inside the sealed `associate` / `test-associate`.
@@ -217,6 +223,11 @@ pub trait Host {
     /// the first extension served under it and refused to any other
     /// (`Grant::served_to`). A yes is a use.
     fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool;
+    /// [`Host::grant_covers`] over the grants `client` holds or was served
+    /// under, for a step that names none: the TOTP step of an extension in
+    /// agent mode that sent no `grantId`. Never claims a grant it was not
+    /// served under.
+    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool;
     /// The extension found a filled secret showing on the page: end the grant
     /// and log it.
     fn report_exposure(&self, client: &Client, grant_id: &str);
@@ -384,7 +395,9 @@ impl<H: Host> Connection<H> {
                 // grant the extension already holds is served without asking
                 // again, and wins over `agentMode` when both are sent — the
                 // grant is the more specific instruction, and asking again
-                // would raise a second dialog for a yes already given.
+                // would raise a second dialog for a yes already given. An
+                // extension the user marked as driven by an agent is in agent
+                // mode whatever its message says.
                 let grant_id = str_of(message, "grantId");
                 let (logins, grant_id) = if !grant_id.is_empty() {
                     let covered: Vec<Login> = logins
@@ -398,7 +411,7 @@ impl<H: Host> Connection<H> {
                         return Err(Code::GrantDenied.into());
                     }
                     (covered, None)
-                } else if flag_of(message, "agentMode") {
+                } else if agent_mode(&client, message) {
                     let request = GrantRequest {
                         client_key: client.key.clone(),
                         agent_id: None,
@@ -460,18 +473,20 @@ impl<H: Host> Connection<H> {
                 }
                 // Under a grant, the code goes only with a login the grant
                 // covers for a fill — checked before any code is generated.
-                // In agent mode there is no code without a grant: the
-                // extension says `agentMode` on every TOTP step, with the
-                // fill's `grantId` when it holds one, and a step that has
-                // none (or a grant that does not cover the login) is refused
-                // rather than served the way a person's click would be.
+                // In agent mode there is no code without a grant: the one the
+                // step names by `grantId`, or else one the client holds for
+                // the login (a marked extension may send neither flag nor
+                // id). Refused otherwise, rather than served the way a
+                // person's click would be.
                 let grant_id = str_of(message, "grantId");
-                if flag_of(message, "agentMode") && grant_id.is_empty() {
-                    return Err(Code::GrantDenied.into());
-                }
-                if !grant_id.is_empty()
-                    && !self.host.grant_covers(&client, grant_id, id, Mode::Fill)
-                {
+                let covered = if !grant_id.is_empty() {
+                    self.host.grant_covers(&client, grant_id, id, Mode::Fill)
+                } else if agent_mode(&client, message) {
+                    self.host.client_grant_covers(&client, id, Mode::Fill)
+                } else {
+                    true
+                };
+                if !covered {
                     return Err(Code::GrantDenied.into());
                 }
                 let code = self.host.totp(id).ok_or(Code::NoValidUuidProvided)?;
@@ -767,6 +782,12 @@ fn params(value: Value) -> Map<String, Value> {
         Value::Object(map) => map,
         _ => Map::new(),
     }
+}
+
+/// Agent mode, as the extension says it or as the user marked the client in
+/// Rowel. Either turns it on; the extension cannot turn the mark off.
+fn agent_mode(client: &Client, message: &Map<String, Value>) -> bool {
+    client.driven_by_agent || flag_of(message, "agentMode")
 }
 
 /// A flag as the extension sends one — the string `"true"`, which is how

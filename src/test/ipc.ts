@@ -300,6 +300,7 @@ const DEFAULTS: Record<string, Handler> = {
   browser_respond: () => undefined,
   browser_passkey_respond: () => undefined,
   browser_forget_client: () => BROWSER_OFF,
+  browser_set_driven_by_agent: () => BROWSER_OFF,
   // Agents: the switch answers with the status as Rust would then have it;
   // nothing is listed until a spec seeds a rule or a grant.
   browser_set_agents_enabled: ({ enabled }) => ({

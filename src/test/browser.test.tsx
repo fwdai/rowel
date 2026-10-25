@@ -149,6 +149,28 @@ describe('Settings › Browser extension', () => {
     expect(calls('browser_forget_client')).toEqual([{ key: 'ZZZZyyyyXXXXwwww0000=' }])
   })
 
+  it('marks a connected extension as driven by an agent, and offers no mark for an agent', async () => {
+    const agent: BrowserClient = { ...ext('Claude Code', 'agent-key'), kind: 'agent' }
+    mockCommand('browser_status', () => status({ clients: [ext('Comet', KEY), agent] }))
+    mockCommand('browser_set_driven_by_agent', ({ driven }) =>
+      status({
+        clients: [{ ...ext('Comet', KEY), drivenByAgent: driven as boolean }, agent]
+      })
+    )
+    await openSection()
+    const marks = screen.getAllByTestId('settings-browser-client-driven')
+    expect(marks).toHaveLength(1)
+    expect(marks[0]).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(marks[0])
+
+    expect(calls('browser_set_driven_by_agent')).toEqual([{ key: KEY, driven: true }])
+    expect(screen.getByTestId('settings-browser-client-driven')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+  })
+
   it('takes one change at a time', async () => {
     let settle: (status: BrowserStatus) => void = () => {}
     mockCommand('browser_status', () =>
@@ -229,16 +251,32 @@ describe('the browser consent dialog', () => {
     await userEvent.type(name, 'Work laptop')
     await userEvent.click(screen.getByTestId('browser-associate-allow'))
 
-    expect(calls('browser_respond')).toEqual([{ id: 'ask-1', name: 'Work laptop' }])
+    expect(calls('browser_respond')).toEqual([{ id: 'ask-1', name: 'Work laptop', drivenByAgent: false }])
     expect(screen.queryByTestId('browser-associate-modal')).not.toBeInTheDocument()
     expect(useUi.getState().consentAsk).toBeNull()
+  })
+
+  it('marks the browser as driven by an agent when asked to, and never on a refusal', async () => {
+    await ask()
+    await userEvent.click(screen.getByTestId('browser-associate-driven'))
+    await userEvent.click(screen.getByTestId('browser-associate-allow'))
+    expect(calls('browser_respond')).toEqual([
+      { id: 'ask-1', name: 'Browser', drivenByAgent: true }
+    ])
+
+    act(() => emitEvent(EVENTS.browserAssociate, { id: 'ask-2', key: KEY, kind: 'extension' }))
+    await userEvent.click(await screen.findByTestId('browser-associate-driven'))
+    await userEvent.click(screen.getByTestId('browser-associate-deny'))
+    expect(calls('browser_respond').slice(-1)).toEqual([
+      { id: 'ask-2', name: null, drivenByAgent: false }
+    ])
   })
 
   it('sends null on Deny', async () => {
     await ask()
     await userEvent.click(screen.getByTestId('browser-associate-deny'))
 
-    expect(calls('browser_respond')).toEqual([{ id: 'ask-1', name: null }])
+    expect(calls('browser_respond')).toEqual([{ id: 'ask-1', name: null, drivenByAgent: false }])
     expect(screen.queryByTestId('browser-associate-modal')).not.toBeInTheDocument()
   })
 
@@ -267,9 +305,10 @@ describe('the browser consent dialog', () => {
     )
     expect(screen.getByTestId('browser-associate-agent')).toHaveTextContent('never to read them')
     expect(screen.getByTestId('browser-associate-name')).toHaveValue('Claude Code')
+    expect(screen.queryByTestId('browser-associate-driven')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('browser-associate-allow'))
-    expect(calls('browser_respond')).toEqual([{ id: 'ask-7', name: 'Claude Code' }])
+    expect(calls('browser_respond')).toEqual([{ id: 'ask-7', name: 'Claude Code', drivenByAgent: false }])
 
     // One that said nothing about its platform is an agent all the same.
     act(() => emitEvent(EVENTS.browserAssociate, { id: 'ask-8', key: KEY, kind: 'agent' }))
@@ -291,7 +330,7 @@ describe('the browser consent dialog', () => {
 
     expect(screen.getByTestId('browser-associate-fingerprint')).toHaveTextContent('ZZZZyyyy…000=')
     await userEvent.click(screen.getByTestId('browser-associate-allow'))
-    expect(calls('browser_respond')).toEqual([{ id: 'ask-2', name: 'Browser' }])
+    expect(calls('browser_respond')).toEqual([{ id: 'ask-2', name: 'Browser', drivenByAgent: false }])
 
     // The same extension asking again — a retry after a timeout — is a new
     // ask with an id of its own, and the answer names that one.
@@ -303,7 +342,7 @@ describe('the browser consent dialog', () => {
       })
     )
     await userEvent.click(screen.getByTestId('browser-associate-allow'))
-    expect(calls('browser_respond').slice(-1)).toEqual([{ id: 'ask-3', name: 'Browser' }])
+    expect(calls('browser_respond').slice(-1)).toEqual([{ id: 'ask-3', name: 'Browser', drivenByAgent: false }])
   })
 
   it('leaves on its own once Rust has given up on the ask', async () => {

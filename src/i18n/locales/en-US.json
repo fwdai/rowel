@@ -864,5 +864,7 @@
   "two rows with the same number": "two rows with the same number",
   "a missing row": "a missing row",
   "a row that does not follow the one before it": "a row that does not follow the one before it",
-  "a row that was altered": "a row that was altered"
+  "a row that was altered": "a row that was altered",
+  "Used by an AI agent": "Used by an AI agent",
+  "Every fill from it then waits for your approval in {{appName}}.": "Every fill from it then waits for your approval in {{appName}}."
 }

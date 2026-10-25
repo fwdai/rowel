@@ -836,5 +836,7 @@
   "two rows with the same number": "aynı numaraya sahip iki satır",
   "a missing row": "eksik bir satır",
   "a row that does not follow the one before it": "öncekini izlemeyen bir satır",
-  "a row that was altered": "değiştirilmiş bir satır"
+  "a row that was altered": "değiştirilmiş bir satır",
+  "Used by an AI agent": "Bir yapay zekâ ajanı kullanıyor",
+  "Every fill from it then waits for your approval in {{appName}}.": "Her doldurma için {{appName}} içinde onayınız beklenir."
 }

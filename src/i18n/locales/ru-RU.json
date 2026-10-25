@@ -864,5 +864,7 @@
   "two rows with the same number": "две строки с одним номером",
   "a missing row": "пропущенная строка",
   "a row that does not follow the one before it": "строка, не связанная с предыдущей",
-  "a row that was altered": "изменённая строка"
+  "a row that was altered": "изменённая строка",
+  "Used by an AI agent": "Используется ИИ-агентом",
+  "Every fill from it then waits for your approval in {{appName}}.": "Каждое заполнение тогда ждёт вашего одобрения в {{appName}}."
 }

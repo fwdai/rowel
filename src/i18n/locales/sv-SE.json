@@ -836,5 +836,7 @@
   "two rows with the same number": "två rader med samma nummer",
   "a missing row": "en rad som saknas",
   "a row that does not follow the one before it": "en rad som inte följer på den före",
-  "a row that was altered": "en rad som ändrats"
+  "a row that was altered": "en rad som ändrats",
+  "Used by an AI agent": "Används av en AI-agent",
+  "Every fill from it then waits for your approval in {{appName}}.": "Varje ifyllning väntar då på ditt godkännande i {{appName}}."
 }

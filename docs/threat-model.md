@@ -811,9 +811,10 @@ exposed process than the webview, and it is not ours.
   browser profile, in the clear: a process running as the same user can lift
   it from there and present it, which is the compromised-OS case below. There
   are no per-site prompts, by design, while a person is driving — a fill asks
-  nothing, and URL matching is the guard; while agent mode is on, or when a
-  client of kind `agent` requested it, a fill is a grant and asks or is
-  covered by a standing grant (see **Agents** below). And the host registers
+  nothing, and URL matching is the guard; while agent mode is on, when the
+  extension is marked in Rowel as one an agent drives, or when a client of
+  kind `agent` requested it, a fill is a grant and asks or is covered by a
+  standing grant (see **Agents** below). And the host registers
   under KeePassXC's own native messaging
   name, since that is the name the extension looks for: on a machine with
   KeePassXC installed as well, a manifest that is not Rowel's is never
@@ -858,6 +859,14 @@ product already has one, at the lockbox:
 The two properties are independent. A device-held lockbox with agent access on
 serves agents only while the app is unlocked and a person is there to approve,
 or has written a standing rule.
+
+**Which fills are an agent's** is Rowel's to say, not the browser's: an
+extension marked **Used by an AI agent** (in the pairing dialog or in
+Settings; `Client::driven_by_agent` in the lockbox's client list) has every
+fill and TOTP step handled as agent mode whatever it sends, so an agent
+driving that browser gains nothing by turning the extension's own switch off,
+which only adds to the mark. A pairing under a new key is a new pairing
+dialog, where the mark is offered again.
 
 **What each component can read**, for a device-held lockbox with agent access
 on:

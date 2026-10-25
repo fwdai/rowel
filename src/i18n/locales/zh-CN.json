@@ -822,5 +822,7 @@
   "two rows with the same number": "两行编号相同",
   "a missing row": "缺失的行",
   "a row that does not follow the one before it": "与前一行不衔接的行",
-  "a row that was altered": "被改动过的行"
+  "a row that was altered": "被改动过的行",
+  "Used by an AI agent": "由 AI 代理使用",
+  "Every fill from it then waits for your approval in {{appName}}.": "此后每次填充都需要你在 {{appName}} 中批准。"
 }

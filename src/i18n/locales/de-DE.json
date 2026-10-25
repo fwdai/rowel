@@ -864,5 +864,7 @@
   "two rows with the same number": "zwei Zeilen mit derselben Nummer",
   "a missing row": "eine fehlende Zeile",
   "a row that does not follow the one before it": "eine Zeile, die nicht an die vorige anschließt",
-  "a row that was altered": "eine Zeile, die verändert wurde"
+  "a row that was altered": "eine Zeile, die verändert wurde",
+  "Used by an AI agent": "Von einem KI-Agenten genutzt",
+  "Every fill from it then waits for your approval in {{appName}}.": "Jedes Ausfüllen wartet dann auf deine Freigabe in {{appName}}."
 }
