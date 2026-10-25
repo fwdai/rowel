@@ -6,6 +6,7 @@ import { keyFingerprint } from '@/lib/keyFingerprint'
 import { platformLabel } from '@/lib/clientPlatform'
 import Frame from '@/components/elements/Frame'
 import Button from '@/components/elements/Button'
+import Checkbox from '@/components/elements/Checkbox'
 import Field from '@/components/elements/Field'
 import { inputClass } from '@/components/elements/formStyles'
 
@@ -30,6 +31,7 @@ export default function AssociateDialog({ ask }: { ask: AssociateAsk }) {
   const agent = ask.kind !== 'extension'
   const platform = platformLabel(ask.platform)
   const [name, setName] = useState(() => (agent ? (platform ?? t('Agent')) : t('Browser')))
+  const [driven, setDriven] = useState(false)
 
   useEffect(() => {
     const expiry = setTimeout(closeConsentAsk, ASSOCIATE_TIMEOUT_MS)
@@ -38,7 +40,7 @@ export default function AssociateDialog({ ask }: { ask: AssociateAsk }) {
 
   const answer = (reply: string | null) => {
     closeConsentAsk()
-    browserRespond(ask.id, reply).catch(() => {})
+    browserRespond(ask.id, reply, !agent && reply !== null && driven).catch(() => {})
   }
   const allow = () => answer(name.trim() || (agent ? (platform ?? t('Agent')) : t('Browser')))
   const deny = () => answer(null)
@@ -98,6 +100,19 @@ export default function AssociateDialog({ ask }: { ask: AssociateAsk }) {
             />
           </Field>
         </div>
+
+        {/* Rowel's mark, not the extension's: an agent driving the browser
+            cannot turn it off from there. */}
+        {!agent && (
+          <div className="mt-4">
+            <Checkbox checked={driven} onChange={setDriven} testid="browser-associate-driven">
+              {t('Used by an AI agent')}
+            </Checkbox>
+            <p className="mt-1 pl-6.5 text-sm text-text2">
+              {t('Every fill from it then waits for your approval in {{appName}}.')}
+            </p>
+          </div>
+        )}
 
         <div className="mt-5 flex items-center gap-2">
           <Button size="md" onClick={allow} testid="browser-associate-allow">

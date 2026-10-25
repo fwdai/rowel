@@ -8,7 +8,7 @@ use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
 
 use crate::agents::{self, GrantRow, RuleRow};
-use crate::browser::{self, manifest, Client, GrantAnswer, StepUp};
+use crate::browser::{self, manifest, Client, GrantAnswer, Pairing, StepUp};
 use crate::error::{Error, Result};
 use crate::settings::{self, AgentsSettings, BrowserSettings, MAX_STANDING_DAYS};
 use crate::state::AppState;
@@ -107,13 +107,23 @@ pub fn browser_set_agents_standing_days(days: u32, app: AppHandle) -> Result<Bro
     status(&app)
 }
 
-/// The user's answer to the extension asking to connect under `id`: the name
-/// they gave it, or `null` to refuse. Nothing happens when no ask is up under
-/// that id — a dialog answering late, after its ask timed out and another
-/// took its place, approves nothing, not even the same extension's retry.
+/// The user's answer to the client asking to connect under `id`: the name
+/// they gave it and, for an extension, whether an AI agent drives that
+/// browser — or a `null` name to refuse. Nothing happens when no ask is up
+/// under that id — a dialog answering late, after its ask timed out and
+/// another took its place, approves nothing, not even the same client's
+/// retry.
 #[tauri::command]
-pub fn browser_respond(id: String, name: Option<String>) -> Result<()> {
-    browser::respond(&id, name);
+pub fn browser_respond(
+    id: String,
+    name: Option<String>,
+    driven_by_agent: Option<bool>,
+) -> Result<()> {
+    let pairing = name.map(|name| Pairing {
+        name,
+        driven_by_agent: driven_by_agent.unwrap_or(false),
+    });
+    browser::respond(&id, pairing);
     Ok(())
 }
 
@@ -199,6 +209,19 @@ pub fn agent_revoke_rule(id: String, app: AppHandle) -> Result<()> {
 #[tauri::command]
 pub fn agent_end_grant(id: String, app: AppHandle) -> Result<()> {
     agents::end_grant(&app, &id)
+}
+
+/// Mark a connected extension as one in a browser an AI agent drives, or not.
+/// Marked, every fill it asks for is a grant, whatever the extension's own
+/// agent mode says.
+#[tauri::command]
+pub fn browser_set_driven_by_agent(
+    key: String,
+    driven: bool,
+    app: AppHandle,
+) -> Result<BrowserStatus> {
+    browser::set_driven_by_agent(&app, &key, driven)?;
+    status(&app)
 }
 
 /// Take an extension's access to the open vault back. Its next request — on

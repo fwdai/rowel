@@ -6,6 +6,7 @@ import Button from '@/components/elements/Button'
 import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
+import Toggle from '@/components/elements/Toggle'
 
 // The clients let into the open vault: browser extensions and agents, each
 // with what it is (and, for an agent, what it runs on) beside its key.
@@ -15,13 +16,17 @@ import SettingsRow from '@/components/elements/SettingsRow'
 export default function Clients({
   clients,
   busy,
+  onDriven,
   onForget
 }: {
   clients: BrowserClient[]
   busy: boolean
+  /** Mark an extension as one in a browser an AI agent drives, or not. */
+  onDriven: (key: string, driven: boolean) => void
   onForget: (key: string) => void
 }) {
   const { t } = useTranslation()
+  const drivenLabel = t('Used by an AI agent')
 
   const describe = (client: BrowserClient) => {
     const platform = platformLabel(client.platform)
@@ -49,15 +54,30 @@ export default function Clients({
               </>
             }
             control={
-              <Button
-                variant="pale-danger"
-                size="md"
-                disabled={busy}
-                onClick={() => onForget(client.key)}
-                testid="settings-browser-forget"
-              >
-                {t('Forget')}
-              </Button>
+              <div className="flex items-center gap-3">
+                {client.kind === 'extension' && (
+                  <>
+                    <span className="text-sm text-text2">{drivenLabel}</span>
+                    <Toggle
+                      name="drivenByAgent"
+                      checked={!!client.drivenByAgent}
+                      disabled={busy}
+                      onChange={driven => onDriven(client.key, driven)}
+                      aria-label={drivenLabel}
+                      testid="settings-browser-client-driven"
+                    />
+                  </>
+                )}
+                <Button
+                  variant="pale-danger"
+                  size="md"
+                  disabled={busy}
+                  onClick={() => onForget(client.key)}
+                  testid="settings-browser-forget"
+                >
+                  {t('Forget')}
+                </Button>
+              </div>
             }
           />
         ))

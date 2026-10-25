@@ -182,6 +182,17 @@ impl Mock {
         self
     }
 
+    /// With an extension let in under `name` and marked by the user as one
+    /// in a browser an AI agent drives.
+    pub fn known_driven(self, name: &str, key: &str) -> Self {
+        let driven = Client {
+            driven_by_agent: true,
+            ..client(name, key, &Hello::default())
+        };
+        self.clients.borrow_mut().push(driven);
+        self
+    }
+
     /// With an agent from `platform` already let in under `name`.
     pub fn known_agent(self, name: &str, key: &str, platform: &str) -> Self {
         let hello = Hello {
@@ -235,6 +246,7 @@ fn client(name: &str, key: &str, hello: &Hello) -> Client {
         created_at_ms: 0,
         last_seen_at_ms: None,
         agent_id: None,
+        driven_by_agent: false,
     }
 }
 
@@ -410,6 +422,21 @@ impl Host for Mock {
         }
         grant.uses += 1;
         true
+    }
+    // Only the grants this client was issued or already served under: a step
+    // that names no grant never claims one.
+    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool {
+        let ids: Vec<String> = self
+            .grants
+            .borrow()
+            .iter()
+            .filter(|(_, g)| {
+                g.client_key == client.key || g.served_to.as_deref() == Some(&client.key)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.iter()
+            .any(|id| self.grant_covers(client, id, item_id, mode))
     }
     fn report_exposure(&self, _client: &Client, grant_id: &str) {
         self.exposures.borrow_mut().push(grant_id.to_string());

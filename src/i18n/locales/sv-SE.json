@@ -797,5 +797,7 @@
   "End": "Avsluta",
   "Ended": "Avslutat",
   "Agents can use items in this lockbox": "Agenter får använda objekt i det här bankfacket",
-  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Så länge {{appName}} är upplåst använder en agent med en stående regel objekt här utan att fråga."
+  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Så länge {{appName}} är upplåst använder en agent med en stående regel objekt här utan att fråga.",
+  "Used by an AI agent": "Används av en AI-agent",
+  "Every fill from it then waits for your approval in {{appName}}.": "Varje ifyllning väntar då på ditt godkännande i {{appName}}."
 }

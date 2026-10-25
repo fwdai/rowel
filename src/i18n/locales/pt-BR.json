@@ -809,5 +809,7 @@
   "End": "Encerrar",
   "Ended": "Encerrada",
   "Agents can use items in this lockbox": "Agentes podem usar itens deste compartimento",
-  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Enquanto o {{appName}} estiver desbloqueado, um agente com uma regra permanente usa itens daqui sem perguntar."
+  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Enquanto o {{appName}} estiver desbloqueado, um agente com uma regra permanente usa itens daqui sem perguntar.",
+  "Used by an AI agent": "Usado por um agente de IA",
+  "Every fill from it then waits for your approval in {{appName}}.": "Cada preenchimento passa a aguardar sua aprovação no {{appName}}."
 }

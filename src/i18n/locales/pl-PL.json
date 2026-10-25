@@ -821,5 +821,7 @@
   "End": "Zakończ",
   "Ended": "Zakończona",
   "Agents can use items in this lockbox": "Agenci mogą używać elementów w tej skrytce",
-  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Gdy {{appName}} jest odblokowany, agent ze stałą regułą używa elementów z tej skrytki bez pytania."
+  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Gdy {{appName}} jest odblokowany, agent ze stałą regułą używa elementów z tej skrytki bez pytania.",
+  "Used by an AI agent": "Używane przez agenta AI",
+  "Every fill from it then waits for your approval in {{appName}}.": "Każde wypełnienie czeka wtedy na Twoją zgodę w {{appName}}."
 }

@@ -812,5 +812,7 @@
   "End": "Terminer",
   "Ended": "Terminée",
   "Agents can use items in this lockbox": "Les agents peuvent utiliser les éléments de ce coffret",
-  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Tant que {{appName}} est déverrouillé, un agent disposant d’une règle permanente utilise les éléments de ce coffret sans demander."
+  "While {{appName}} is unlocked, an agent with a standing rule uses items here without asking.": "Tant que {{appName}} est déverrouillé, un agent disposant d’une règle permanente utilise les éléments de ce coffret sans demander.",
+  "Used by an AI agent": "Utilisé par un agent IA",
+  "Every fill from it then waits for your approval in {{appName}}.": "Chaque remplissage attend alors votre accord dans {{appName}}."
 }
