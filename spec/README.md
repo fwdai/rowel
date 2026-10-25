@@ -111,8 +111,9 @@ Read the overview first. Everything else hangs off it.
   Claude Code, Codex and Cursor (`04`, `05`, Q16, Q17); CLI keys in the OS
   secure store on macOS and Windows (Q9).
 - **2026-10-25, I4 as built.** The audit log syncs and is readable (`09`):
-  `Snapshot.audit`, the union merge that ignores both of the table's
-  constraints, the digest extended with `(id, hash)` pairs; retention changed
+  `Snapshot.audit`, the union merge of rows by their whole contents (forks
+  and altered copies kept beside, after review), the digest extended with
+  each row's content fingerprint; retention changed
   from "a writer prunes its own rows" to "every device reclaims every writer's
   aged prefix, and only the chain's own writer notes the cut", because a union
   merge hands a device its own pruned rows back and iOS writes no rows of its

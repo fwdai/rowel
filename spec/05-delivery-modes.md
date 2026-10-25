@@ -244,12 +244,19 @@ The floor in `03` keeps every passkey ceremony behind the tap, agent or not.
   values redacted, and the body's length recomputed. The log line is method,
   host and path, status — never a query, a header or a body.
 - *Review of PR #657, three rules.* **No redirect is ever followed**: a 3xx
-  is relayed to the agent as it is (`Location` redacted like any header), so
-  every hop comes back through the proxy as a request of its own with its
-  own grant check — a client that followed would carry the secret to a path
-  or a host the grant never named, and a 307 would replay a secret body
-  there. **A value is written for where it lands** (`Placement`): as is in a
-  header, JSON-string-escaped in a JSON body, form-encoded in a form body
+  is relayed to the agent with its `Location` resolved against the upstream
+  URL and addressed through the proxy (`/<scheme>/<host>[:port]<path>?query`,
+  then redacted like any header; a `Location` that is not an `http(s)` URL is
+  dropped), so every hop comes back through the proxy as a request of its own
+  with its own grant check, whether the agent's client follows it or the
+  agent rebuilds it — a client that followed upstream would carry the secret
+  to a path or a host the grant never named, and a 307 would replay a secret
+  body there; a `Location` relayed unchanged would send a following client
+  straight to the target, or (relative) to a proxy path without its prefix.
+  **A value is written for where it lands** (`Placement`): as is in a
+  header, JSON-string-escaped in a JSON body (the escaped value between the
+  one pair of quotes that wraps it — `redact::json_escaped`, which the
+  redactor uses too — so a value starting or ending with `"` keeps it), form-encoded in a form body
   whether the placeholder stood plain or percent-encoded, so a secret
   holding `"`, `\`, `&` or `=` can neither break the document nor add a
   field; the redactor knows the form-encoded shape too. **One authority

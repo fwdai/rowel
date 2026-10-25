@@ -33,7 +33,7 @@ history with it.
 
 ```sql
 CREATE TABLE audit (
-  id          TEXT NOT NULL,         -- 16 random bytes hex
+  id          TEXT NOT NULL,         -- 16 random bytes hex (not a key: see Sync)
   writer_id   TEXT NOT NULL,         -- the device (workspace install id) or server that wrote it
   seq         INTEGER NOT NULL,      -- this writer's running counter
   ts_ms       INTEGER NOT NULL,
@@ -54,8 +54,7 @@ CREATE TABLE audit (
                                      -- ended | revoked | associated | revoked_client |
                                      -- rule_added | rule_removed | key_unwrapped |
                                      -- rate_limited | pruned_through
-  detail      TEXT,                  -- small JSON, no secrets
-  PRIMARY KEY (id, hash)             -- a row is its (id, hash); see Sync
+  detail      TEXT                   -- small JSON, no secrets
 );
 CREATE INDEX audit_ts ON audit(ts_ms);
 CREATE INDEX audit_chain ON audit(writer_id, seq);
@@ -77,22 +76,30 @@ never last-writer-wins and never tombstoned:
 
 - `Snapshot.audit: Vec<AuditRecord>`, filled by `records_from_snapshot` from
   `SqliteStore::audit_all()` (every row, `ORDER BY writer_id, seq`);
-  `SqliteStore::merge(recs, atts, audit)` inserts them with `INSERT OR
-  IGNORE` in the same transaction as the entries and attachments. A row is its
-  `(id, hash)` — exactly what the digest reads of it — so a known pair is the
-  same row seen twice and anything else is kept beside what the device holds,
-  never instead of it: a second row at a writer's `seq` (a forked chain, as
-  two installs sharing an install id write) or another copy of a known id.
-  Both devices of a fork then hold both sides, their digests agree and the
-  runs settle, and `verify` names the fork at the same `seq` on each; the
-  readers order a fork's sides by `(id, hash)` so every device picks the same
-  one to chain on and to cut at. (Review of PR #658: with `UNIQUE (writer_id,
-  seq)` each device kept its own side, the digests never agreed, and each run
-  pushed its side again.) The merge's returned count (`SyncOutcome.merged`, "the entry
+  `SqliteStore::merge(recs, atts, audit)` inserts them in the same
+  transaction as the entries and attachments. A row is its **whole contents**
+  — `store::hash::audit_fingerprint`, every column (the stored `prev_hash`
+  and `hash` among them) in the fixed injective encoding, computed from the
+  columns wherever it is needed and never stored, since a row edited in place
+  would keep a stale stored one. The merge inserts each incoming row whose
+  fingerprint the vault does not hold, so the same row seen twice lands once
+  and anything else is kept beside what the device holds, never instead of
+  it: a second row at a writer's `seq` (a forked chain, as two installs
+  sharing an install id write) or a copy of a known row altered behind its
+  unchanged `id` and `hash` (how tampering looks). Every device then holds
+  the same rows to the byte, the digests agree only then and the runs
+  settle, and `verify` names the fork (`Reason::Fork`) or the altered copy
+  (`Reason::Hash`, each row's own hash being checked before its relations)
+  at the same `seq` everywhere — on a fresh restore from the account too.
+  Among a fork's sides the readers order by `(id, hash)`, which is all
+  `audit_last` and the prune's cut read. (Review of PR #658: with `UNIQUE
+  (writer_id, seq)` each device kept its own side of a fork and pushed it on
+  every run; keyed by `(id, hash)`, a copy altered behind its hash was taken
+  for the original and the digests agreed over different rows.) The merge's returned count (`SyncOutcome.merged`, "the entry
   list changed") leaves audit rows out.
 - `store::hash::vault_digest(recs, atts, audit)` includes the audit rows as
-  `(id, hash)` pairs sorted by id — the chain hash already covers every other
-  column — following the attachments pattern: a vault without audit rows
+  their fingerprints, sorted — never the stored chain hash alone, which an
+  altered row keeps — following the attachments pattern: a vault without audit rows
   digests exactly as before, and a device whose only change is new audit rows
   pushes (`engine::sync` pushes on a digest difference).
 - A restore from a pack on a fresh install already carries the whole file,
