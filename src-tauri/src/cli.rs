@@ -119,10 +119,10 @@ pub fn install_dir(dirs: &[PathBuf]) -> Option<PathBuf> {
 
 /// Make `dir/rowel` a link to `bundled`, in the directory [`install_dir`]
 /// picks among `dirs`, making it (owner-writable, world-readable, like a bin
-/// directory) if it is not there. A `rowel` already there that is a link —
-/// ours from an earlier install, now pointing at a moved or updated app — is
-/// replaced; one that is anything else is refused by its path, since it is
-/// not ours to overwrite.
+/// directory) if it is not there. A `rowel` already there is replaced only
+/// if it is ours — a link to a `rowel-cli`, from an earlier install of a
+/// since moved or updated app; a file, or a link to anything else, is
+/// refused by its path, since it is not ours to overwrite.
 pub fn install_in(dirs: &[PathBuf], bundled: &Path) -> io::Result<PathBuf> {
     let dir = install_dir(dirs).ok_or_else(|| {
         io::Error::new(
@@ -133,12 +133,12 @@ pub fn install_in(dirs: &[PathBuf], bundled: &Path) -> io::Result<PathBuf> {
     make_bin_dir(&dir)?;
     let link = dir.join(LINK);
     match std::fs::symlink_metadata(&link) {
-        Ok(meta) if meta.file_type().is_symlink() => std::fs::remove_file(&link)?,
+        Ok(meta) if meta.file_type().is_symlink() && is_ours(&link) => std::fs::remove_file(&link)?,
         Ok(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 format!(
-                    "{} exists and is not a link; move it aside first",
+                    "{} exists and is not a link to a Rowel command line tool; move it aside first",
                     link.display()
                 ),
             ))
@@ -148,6 +148,15 @@ pub fn install_in(dirs: &[PathBuf], bundled: &Path) -> io::Result<PathBuf> {
     }
     symlink(bundled, &link)?;
     Ok(link)
+}
+
+/// Whether the link at `link` is one of ours: it points at a `rowel-cli`,
+/// wherever that one is or was.
+fn is_ours(link: &Path) -> bool {
+    std::fs::read_link(link)
+        .ok()
+        .and_then(|target| target.file_name().map(|name| name == BINARY))
+        .unwrap_or(false)
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -261,16 +270,27 @@ mod tests {
         );
 
         // The system directory appears: it is preferred from now on, and the
-        // link there replaces an older one pointing elsewhere.
+        // link there replaces an older one of ours, pointing at the tool of
+        // an app that has since moved.
         std::fs::create_dir_all(&dirs[0]).unwrap();
-        std::os::unix::fs::symlink(app.join("rowel"), dirs[0].join(LINK)).unwrap();
+        std::os::unix::fs::symlink(app.join("old").join(BINARY), dirs[0].join(LINK)).unwrap();
         assert_eq!(installed_in(&dirs, &bundled), Some(dirs[1].join(LINK)));
         let link = install_in(&dirs, &bundled).unwrap();
         assert_eq!(link, dirs[0].join(LINK));
         assert_eq!(std::fs::read_link(&link).unwrap(), bundled);
         assert_eq!(installed_in(&dirs, &bundled), Some(link));
 
-        // Something that is not a link under the name is not ours to replace.
+        // A link under the name to anything else — someone's own `rowel` —
+        // is not ours to replace, and neither is a file.
+        std::fs::remove_file(dirs[0].join(LINK)).unwrap();
+        std::os::unix::fs::symlink(app.join("someone-elses-rowel"), dirs[0].join(LINK)).unwrap();
+        let err = install_in(&dirs, &bundled).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            std::fs::read_link(dirs[0].join(LINK)).unwrap(),
+            app.join("someone-elses-rowel"),
+            "left as it was"
+        );
         std::fs::remove_file(dirs[0].join(LINK)).unwrap();
         std::fs::write(dirs[0].join(LINK), "someone else's").unwrap();
         let err = install_in(&dirs, &bundled).unwrap_err();

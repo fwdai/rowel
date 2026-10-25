@@ -157,12 +157,17 @@ actions". While it is on:
   (`grants.onSignal()`, also run once after every reconnect so a signal
   queued while the port was down is delivered). A `fill-grant { grantId,
   origin, item, autoSubmit, expiresAtMs }` is remembered in the same map with
-  the host's expiry, the origin is marked agent-driven
-  (`browser.storage.session["rowelAgentGrants"]`), agent mode is turned on
-  through the popup's own path if it was off (`rowelAgentModeByGrant`
-  remembers that a grant did it), and the active tab at that origin is told to
-  redetect its fields, which reloads its settings and retrieves with the
-  grant. A `grant-ended { grantId, origins }` is session end: every cookie of
+  the host's expiry and the origin is marked agent-driven
+  (`browser.storage.session["rowelAgentGrants"]`). The host tells every
+  profile and the agent drives one, so only the profile with a tab at that
+  origin — now, or when one finishes loading there later
+  (`tabs.onUpdated`) — turns agent mode on through the popup's own path if
+  it was off (`rowelAgentModeByGrant` remembers that a grant did it) and
+  tells the tab to redetect its fields, which reloads its settings and
+  retrieves with the grant; the others keep the grant in memory and change
+  nothing. A login served under the grant marks it `served` in that profile:
+  signed out where it was signed in, the sign-out at the end (and on a lock)
+  is only that profile's. A `grant-ended { grantId, origins }` is session end: every cookie of
   each origin's registrable domain is deleted — in every cookie store the
   browser lists (`cookies.getAllCookieStores()`, then `getAll({ domain,
   storeId })` per store, since one call sees one store), partitioned

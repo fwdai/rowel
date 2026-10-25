@@ -47,12 +47,20 @@ export default function CommandLineTool() {
   }
 
   const label = t('Command line tool')
+  // A link in the user's own bin directory is on the PATH only if their
+  // shell was told so; the system one needs no telling.
+  const needsPathHint = !!status?.installed && status.installDir !== '/usr/local/bin'
   const description = !status
     ? null
     : status.installed
-      ? t('Installed as {{path}}. Coding agents connect through its MCP server.', {
-          path: status.installed
-        })
+      ? needsPathHint
+        ? t(
+            'Installed as {{path}}. Coding agents connect through its MCP server. If your terminal does not find rowel, add {{dir}} to your PATH.',
+            { path: status.installed, dir: status.installDir }
+          )
+        : t('Installed as {{path}}. Coding agents connect through its MCP server.', {
+            path: status.installed
+          })
       : status.bundled
         ? t(
             'Puts the rowel command on your PATH, so coding agents can connect through its MCP server.'

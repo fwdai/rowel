@@ -18,24 +18,22 @@ nothing — a key the app does not know yet is reported, not associated.
 ## `rowel mcp`
 
 A stdio [MCP](https://modelcontextprotocol.io) server for a coding agent.
-Five tools, each a 1:1 mapping onto an agent action of the broker protocol
+Four tools, each a 1:1 mapping onto an agent action of the broker protocol
 (`spec/04-protocol.md`). No tool ever returns a value: a sign-in is filled on
-the page by the browser extension, and a secret is served to the request or
-the command by Rowel.
+the page by the browser extension.
 
 | tool | asks for | returns |
 | --- | --- | --- |
 | `rowel_request_login { site, reason? }` | to sign in to `site` with one of the user's logins (`site` is an origin or a URL; only its origin is sent); the call waits for the user's answer | the grant: `grantId`, `state` (`active`, `pending`, `denied`), `expiresAtMs`, `retryAfterMs` when pending, `items` as `{ id, title, username }` |
-| `rowel_request_secret { ref, mode, target, reason? }` | to use the item `ref` names (`rowel://<lockbox>/<item>/<field>`) as a header on calls to `target` (`mode: "header"`, `target` is `host/path-glob`) or as an environment variable of `target` (`mode: "env"`, the full command line) | the grant, as above |
-| `rowel_wait { grant_id }` | to wait up to a minute for the answer to a grant left `pending` without a `retryAfterMs` (an approval routed to someone else, which a server does) | the grant as it stands |
+| `rowel_wait { grant_id }` | the state of a grant left `pending` without a `retryAfterMs` (an approval routed to someone else); the desktop app answers at once, a server holds the call while the approval is routed; call again while it is still pending | the grant as it stands |
+| `rowel_list_visible {}` | what the user has made visible to this agent | `items` as `{ ref, title, kind, fields }` |
+| `rowel_end { grant_id }` | to end a grant; a sign-in grant also signs the browser out of the site | `{ ok: true }` |
 
 A `pending` *with* `retryAfterMs` means Rowel's one consent dialog was busy
 with something else (another extension's ask, a passkey) and the request was
 never put to the user, so no grant was issued. The server asks again on the
 agent's behalf after that delay, for up to a minute; a `pending` the agent
 still gets back is one to request again, not one to wait on.
-| `rowel_list_visible {}` | what the user has made visible to this agent | `items` as `{ ref, title, kind, fields }` |
-| `rowel_end { grant_id }` | to end a grant; a sign-in grant also signs the browser out of the site | `{ ok: true }` |
 
 A refusal is a tool error (`isError: true`) whose text is `{ error, message }`
 — `error` is the broker's code name (`AgentsDisabled`, `GrantDenied`,
@@ -60,6 +58,12 @@ Two switches in Rowel first: Settings › Browser & agents › **Agents** must b
 on, and the lockbox the agent should see must have its agent access on. With
 Agents off, every tool call answers *Turn on Agents in Rowel › Settings ›
 Browser & agents*.
+
+The login itself is filled by the Rowel browser extension, so the agent must
+drive a browser profile that has the extension installed and connected to this
+app. A fresh profile an automation tool launches has none: install the
+extension in the profile the agent uses and let it connect first. When the
+grant ends, session end signs that profile out of the site's domain.
 
 Claude Code:
 

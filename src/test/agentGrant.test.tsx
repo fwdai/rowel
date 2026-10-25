@@ -66,7 +66,7 @@ describe('the agent grant dialog', () => {
       'Its reason: “deploying the <docs> site”'
     )
     expect(screen.getByTestId('agent-grant-ends-session')).toHaveTextContent(
-      'When this grant ends, Rowel will sign you out of https://github.com in that browser.'
+      'When this grant ends, Rowel will sign the browser that filled it out of https://github.com and the rest of its site.'
     )
 
     await userEvent.click(screen.getByTestId('agent-grant-once'))

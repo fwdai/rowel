@@ -88,7 +88,7 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
         )}
         {ask.endsSession && (
           <p className="mt-3 text-sm text-text2" data-testid="agent-grant-ends-session">
-            {t('When this grant ends, {{appName}} will sign you out of {{origin}} in that browser.', {
+            {t('When this grant ends, {{appName}} will sign the browser that filled it out of {{origin}} and the rest of its site.', {
               origin: ask.origin
             })}
           </p>

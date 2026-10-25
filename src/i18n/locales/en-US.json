@@ -808,11 +808,12 @@
   "Allow it only if you just set it up yourself. It will be able to ask to use your logins, each time with your say-so, and never to read them.": "Allow it only if you just set it up yourself. It will be able to ask to use your logins, each time with your say-so, and never to read them.",
   "{{client}} wants to log into {{origin}}": "{{client}} wants to log into {{origin}}",
   "Its reason: “{{reason}}”": "Its reason: “{{reason}}”",
-  "When this grant ends, {{appName}} will sign you out of {{origin}} in that browser.": "When this grant ends, {{appName}} will sign you out of {{origin}} in that browser.",
+  "When this grant ends, {{appName}} will sign the browser that filled it out of {{origin}} and the rest of its site.": "When this grant ends, {{appName}} will sign the browser that filled it out of {{origin}} and the rest of its site.",
   "Requested by {{name}}": "Requested by {{name}}",
   "The rowel command": "The rowel command",
   "Install": "Install",
   "Installed as {{path}}. Coding agents connect through its MCP server.": "Installed as {{path}}. Coding agents connect through its MCP server.",
+  "Installed as {{path}}. Coding agents connect through its MCP server. If your terminal does not find rowel, add {{dir}} to your PATH.": "Installed as {{path}}. Coding agents connect through its MCP server. If your terminal does not find rowel, add {{dir}} to your PATH.",
   "Puts the rowel command on your PATH, so coding agents can connect through its MCP server.": "Puts the rowel command on your PATH, so coding agents can connect through its MCP server.",
   "The command line tool ships with the packaged app; this build has none beside it.": "The command line tool ships with the packaged app; this build has none beside it."
 }

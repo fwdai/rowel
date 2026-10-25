@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn the_handshake_echoes_a_known_version_and_lists_five_tools() {
+    fn the_handshake_echoes_a_known_version_and_lists_four_tools() {
         let mut harness = known_agent(GrantAnswer::Denied);
         let replies = served(
             &mut harness,
@@ -238,7 +238,6 @@ mod tests {
             names,
             [
                 tools::REQUEST_LOGIN,
-                tools::REQUEST_SECRET,
                 tools::WAIT,
                 tools::LIST_VISIBLE,
                 tools::END
@@ -290,49 +289,6 @@ mod tests {
         assert_eq!(request.reason.as_deref(), Some("open a PR"));
         assert_eq!(request.run_id.as_deref(), Some(harness.agent.run_id()));
         assert_eq!(connection.host().seen.borrow().as_slice(), [KEY]);
-    }
-
-    #[test]
-    fn a_secret_is_requested_for_its_item_and_target() {
-        let mut harness = known_agent(GrantAnswer::Denied);
-        let replies = served(
-            &mut harness,
-            &[
-                call(
-                    tools::REQUEST_SECRET,
-                    json!({ "ref": "rowel://lb/stripe/apiKey", "mode": "header", "target": "api.stripe.com/v1/*" }),
-                ),
-                call(
-                    tools::REQUEST_SECRET,
-                    json!({ "ref": "rowel://lb/stripe/apiKey", "mode": "env", "target": "node deploy.js*" }),
-                ),
-            ],
-        );
-        for reply in &replies {
-            let (result, is_error) = tool_result(reply);
-            assert!(!is_error, "{result}");
-            assert_eq!(result["state"], "denied");
-        }
-        let connection = harness.link.0.borrow();
-        let requests = connection.host().grant_requests.borrow();
-        assert_eq!(
-            requests[0].1.items,
-            ItemSelector::Ids(vec!["stripe".into()])
-        );
-        assert_eq!(
-            requests[0].1.targets,
-            vec![Target::Http {
-                host: "api.stripe.com".into(),
-                path: "/v1/*".into(),
-                methods: vec![]
-            }]
-        );
-        assert_eq!(requests[0].1.modes, vec![Mode::Header]);
-        assert_eq!(
-            requests[1].1.targets,
-            vec![Target::Command("node deploy.js*".into())]
-        );
-        assert_eq!(requests[1].1.modes, vec![Mode::Env]);
     }
 
     // A `pending` whose wait is past the budget is the agent's to act on: it
@@ -422,10 +378,7 @@ mod tests {
             &[
                 call("rowel_read_password", json!({})),
                 call(tools::REQUEST_LOGIN, json!({})),
-                call(
-                    tools::REQUEST_SECRET,
-                    json!({ "ref": "rowel://lb/x", "mode": "token", "target": "a" }),
-                ),
+                call(tools::WAIT, json!({})),
             ],
         );
         let (unknown, is_error) = tool_result(&replies[0]);
@@ -434,9 +387,9 @@ mod tests {
         let (no_site, is_error) = tool_result(&replies[1]);
         assert!(is_error);
         assert_eq!(no_site["error"], "invalid_arguments");
-        let (bad_mode, is_error) = tool_result(&replies[2]);
+        let (no_grant, is_error) = tool_result(&replies[2]);
         assert!(is_error);
-        assert_eq!(bad_mode["error"], "invalid_arguments");
+        assert_eq!(no_grant["error"], "invalid_arguments");
         assert!(harness
             .link
             .0

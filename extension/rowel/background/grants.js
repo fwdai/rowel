@@ -109,6 +109,22 @@ grants.grantFor = async function(origin) {
     return grant.grantId;
 };
 
+// A login was served to this profile under the grant. The host tells every
+// extension of the lockbox about an agent's grant, and every one remembers
+// it, but only the profile the agent's page is in ever fills under it —
+// and only that profile is signed in, so only it is signed out at the end.
+grants.markServed = async function(origin, grantId) {
+    if (!origin || !grantId) {
+        return;
+    }
+
+    const map = await readMap(GRANTS_KEY);
+    if (map[origin]?.grantId === grantId) {
+        map[origin].served = true;
+        await writeMap(GRANTS_KEY, map);
+    }
+};
+
 grants.forgetGrant = async function(origin) {
     const map = await readMap(GRANTS_KEY);
     if (origin in map) {
@@ -126,12 +142,13 @@ grants.forgetGrant = async function(origin) {
 // asked about is not one to keep a session open on.
 grants.clearAll = async function() {
     const byGrant = await grants.agentModeByGrant();
-    const origins = Object.keys(await readMap(GRANTS_KEY));
+    const held = await readMap(GRANTS_KEY);
+    const signedIn = Object.keys(held).filter(origin => held[origin].served);
     await grants.area().remove([ GRANTS_KEY, FILLED_KEY, AGENT_GRANTS_KEY, AGENT_MODE_BY_GRANT_KEY ]);
-    for (const origin of origins) {
+    for (const origin of signedIn) {
         await grants.clearCookies(origin);
     }
-    if (origins.length > 0) {
+    if (signedIn.length > 0) {
         showNotification(tr('agentModeGrantEndedNotification'));
     }
     if (byGrant) {
@@ -195,6 +212,9 @@ grants.sendGetLogins = async function(tab, messageData, nonce) {
             if (parsed.grantId) {
                 await grants.rememberGrant(origin, parsed.grantId);
             }
+            // A login came back under the grant: this profile is where the
+            // sign-in happens, and so where the sign-out is owed.
+            await grants.markServed(origin, grantId ?? parsed.grantId);
             return parsed;
         }
 
@@ -349,12 +369,49 @@ grants.onFillGrant = async function({ grantId, origin, expiresAtMs }) {
     agentGrants[origin] = grantId;
     await writeMap(AGENT_GRANTS_KEY, agentGrants);
 
+    // The host tells every profile; the agent drives one. Agent mode — which
+    // hides the person's in-page UI — goes on only where the agent's page
+    // is: now, in the profile with a tab at the origin, or later, when one
+    // opens there (onTabUpdated). The others keep the grant in memory, so
+    // they forget it with the rest when it ends, and change nothing else.
+    if (await grants.hasTab(origin)) {
+        await grants.enterAgentMode();
+        await grants.wakeTab(origin);
+    }
+};
+
+// Agent mode on for a grant's sake, remembered as such so the last grant-ended
+// turns it back off; agent mode the person turned on is left as it is.
+grants.enterAgentMode = async function() {
     if (!grants.isOn()) {
         await grants.area().set({ [AGENT_MODE_BY_GRANT_KEY]: true });
         await grants.setAgentMode(true);
     }
+};
 
-    await grants.wakeTab(origin);
+// A tab finished loading. If its origin holds an agent's live grant and this
+// profile is not in agent mode, the agent's page has just arrived here: agent
+// mode goes on and the tab retrieves under the grant. A profile already in
+// agent mode fills on its own page load and needs nothing.
+grants.onTabUpdated = function(tabId, changeInfo, tab) {
+    if (changeInfo?.status !== 'complete' || !tab?.url || grants.isOn()) {
+        return Promise.resolve();
+    }
+
+    return exclusive(async () => {
+        const origin = grants.originOf(tab.url);
+        const agentGrants = await readMap(AGENT_GRANTS_KEY);
+        if (!agentGrants[origin] || await grants.grantFor(origin) !== agentGrants[origin]) {
+            return;
+        }
+
+        await grants.enterAgentMode();
+        await grants.wakeTab(origin);
+    });
+};
+
+grants.hasTab = async function(origin) {
+    return (await browser.tabs.query({})).some(tab => grants.originOf(tab.url) === origin);
 };
 
 // One tab at the origin, the active one first (page.retrieveCredentials serves
@@ -381,15 +438,23 @@ grants.wakeTab = async function(origin) {
 // off while the host still counts it active.
 grants.onGrantEnded = async function({ grantId, origins = [] }) {
     const agentGrants = await readMap(AGENT_GRANTS_KEY);
+    // The entries as stored, expiry not applied: the host's end of a grant
+    // arrives at its expiry, and a look that dropped the expired entry on
+    // the way would lose whether this profile was signed in under it.
+    const held = await readMap(GRANTS_KEY);
     let signedOut = 0;
     for (const origin of origins) {
-        const live = await grants.grantFor(origin);
-        if (live && live !== grantId) {
+        const entry = held[origin];
+        if (entry && entry.grantId !== grantId && entry.expiresAt > grants.now()) {
             continue;
         }
-        await grants.clearCookies(origin);
-        signedOut += 1;
-        if (live === grantId) {
+        // Signed out where it was signed in: only the profile a login was
+        // served to under this grant holds a session to end.
+        if (entry?.grantId === grantId && entry.served) {
+            await grants.clearCookies(origin);
+            signedOut += 1;
+        }
+        if (entry?.grantId === grantId) {
             await grants.forgetGrant(origin);
         }
         if (agentGrants[origin] === grantId) {
@@ -534,6 +599,7 @@ if (typeof kpxcEvent === 'object') {
         'agent_mode_take_filled': grants.takeFilled,
         'report_exposure': grants.onExposure
     });
+    browser.tabs.onUpdated.addListener(grants.onTabUpdated);
 }
 
 // Exports for tests

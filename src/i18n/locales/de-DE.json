@@ -808,11 +808,12 @@
   "Allow it only if you just set it up yourself. It will be able to ask to use your logins, each time with your say-so, and never to read them.": "Erlaube das nur, wenn du ihn gerade selbst eingerichtet hast. Er kann darum bitten, deine Zugangsdaten zu verwenden – jedes Mal mit deiner Zustimmung – und sie nie lesen.",
   "{{client}} wants to log into {{origin}}": "{{client}} möchte sich bei {{origin}} anmelden",
   "Its reason: “{{reason}}”": "Begründung: „{{reason}}“",
-  "When this grant ends, {{appName}} will sign you out of {{origin}} in that browser.": "Wenn diese Freigabe endet, meldet {{appName}} dich in diesem Browser bei {{origin}} ab.",
+  "When this grant ends, {{appName}} will sign the browser that filled it out of {{origin}} and the rest of its site.": "Wenn diese Freigabe endet, meldet {{appName}} den Browser, der sie ausgefüllt hat, bei {{origin}} und dem Rest der Site ab.",
   "Requested by {{name}}": "Angefragt von {{name}}",
   "The rowel command": "Der Befehl rowel",
   "Install": "Installieren",
   "Installed as {{path}}. Coding agents connect through its MCP server.": "Installiert als {{path}}. Coding-Agenten verbinden sich über seinen MCP-Server.",
+  "Installed as {{path}}. Coding agents connect through its MCP server. If your terminal does not find rowel, add {{dir}} to your PATH.": "Installiert als {{path}}. Coding-Agenten verbinden sich über seinen MCP-Server. Findet dein Terminal rowel nicht, füge {{dir}} deinem PATH hinzu.",
   "Puts the rowel command on your PATH, so coding agents can connect through its MCP server.": "Legt den Befehl rowel in deinen PATH, damit Coding-Agenten sich über seinen MCP-Server verbinden können.",
   "The command line tool ships with the packaged app; this build has none beside it.": "Das Befehlszeilenwerkzeug wird mit der paketierten App ausgeliefert; dieser Build hat keines dabei."
 }
