@@ -83,6 +83,36 @@ on Tauri. Configuration by file and environment: listen address, data
 directory, root key source, OIDC issuer for members, allowed workload issuers.
 In the diagram above, `rowel-server` is this binary in server mode.
 
+*As built in I5* (`src-tauri/crates/serve`, `rowel-serve`, linked by the
+CLI): the headless mode without `--server`. `HeadlessHost: Host` runs the
+broker's engine (`rowel_broker::agents`) over a device-held lockbox the
+operator copied to the box, under its own session → agents → approvals locks,
+with the lockbox's `agents` flag from the registry as the one switch (the
+app's Agents switch is implied on) and the data directory's `install_id` as
+the audit writer, so the chain a device started continues. Unlock: the master
+password at the terminal (no echo; one line from stdin when it is not a
+terminal), `--key-file` (the vault's key material, raw bytes, `0600`, written
+by `rowel admin key-file`; read again at every open, so an idle lock is lifted
+by the next request) or `--key-fd` (read once; an idle lock is refused in that
+mode). Config: `serve.json` beside the lockbox — `rules` as `policy::Rule`
+serializes, forced to `CreatedBy::Admin("config")`, `askTimeoutMs` (120 000),
+`idleLockMs`, `listen { socket, ws, tls { cert, key } }` — re-read on mtime.
+Approvals: a queue, not a slot (`03 §4`); each ask is announced once on
+stderr with the command that answers it, and answered by `rowel approve <id>`
+over an owner-only control socket (`serve.sock`, frames of JSON: `pending`,
+`answer`, `lock`, `status`) or refused at its deadline; associations are asks
+too, never automatic, for the WebSocket's sake; a step-up ask takes the
+master password at `rowel approve`, compared with the held key in constant
+time. Listeners: the data directory's socket through `rowel_broker::server`
+after a probe that refuses to start when the app answers there, and a
+WebSocket (tokio + tungstenite; TLS from PEM files through `tokio-rustls` or
+plain behind a reverse proxy) where a binary message is one frame and each
+connection is a reader task, a std thread owning the `Connection`, and a
+writer task the lock signals reach through the server's sink. SIGTERM and
+SIGINT seal and exit 0. `generate-password` is refused (the generator's
+settings are the app's). Server mode, tenants, `OrgHost`, workload identity
+and the member and admin APIs below remain I7.
+
 **Root key and wrapping.**
 
 ```

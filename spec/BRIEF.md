@@ -42,9 +42,11 @@ The project context (Fletch's `context_get`) holds the recorded decisions;
 
 ## 3. Where we are
 
-- **I0, I1, I2**: merged into `main` (PRs #652, #653, #655).
-- **I3, secrets for commands and APIs (the sidecar)**: PR #657 (`feat/agent-sidecar`, on `main`), in review.
-- **I4 onward**: not started. `PLAN.md`'s headers say which iteration is in progress and where.
+- **I0–I4**: merged into `main` (PRs #652, #653, #655, #657, #658). Tier 1
+  is complete; the store submissions and the app release are the owner's steps.
+- **I5, `rowel serve`**: in review (see `PLAN.md`'s I5 header for the PR).
+- **I6 onward**: not started. `PLAN.md`'s headers say which iteration is in
+  progress and where.
 
 Check `PLAN.md` first; its headers carry the current PR numbers and branches.
 Then run `pr_list`/`pr_checks` through the Fletch RPC mailbox for the live state.

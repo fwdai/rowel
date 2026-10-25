@@ -77,31 +77,31 @@ One core, two binaries, no second implementation of anything.
 
 ---
 
-## I0 — Extract the broker crate  `[ ]`  *(in review: PR #652, branch `refactor/broker-crate`)*
+## I0 — Extract the broker crate  `[x]`  *(merged: PR #652)*
 
 **Deliverable.** Nothing visible changes. The protocol, framing, `Host` trait,
 passkey glue and socket helpers live in `rowel-broker` with their tests, ready
 to be linked by the app, the CLI and the server. Spec `06` (Crate extraction),
 `11 §2 PR 1`.
 
-- [ ] Create `src-tauri/crates/broker`; move `protocol.rs`, `frame.rs`,
+- [x] Create `src-tauri/crates/broker`; move `protocol.rs`, `frame.rs`,
       `actions.rs`, `passkeys.rs`, the socket-name and root-dir helpers, and
       the protocol tests; `passkeys.rs` imports `rowel_core::passkey` directly.
-- [ ] Re-export from `src-tauri/src/browser/mod.rs`; no call-site changes.
-- [ ] Factor the lockbox-side functions `AppHost` uses into the broker crate
+- [x] Re-export from `src-tauri/src/browser/mod.rs`; no call-site changes.
+- [x] Factor the lockbox-side functions `AppHost` uses into the broker crate
       as functions over `SqliteStore` + `PayloadCipher`, so a headless host (I5)
       and `OrgHost` (I7) call the same code. Behaviour unchanged. *Outcome:*
       `save_login_in` moved (`rowel_broker::lockbox`); `logins_in` and the TOTP
       lookup stayed in the app because code generation lives in the app's
       `commands::generator` (core's `otp` only parses seeds). They move with
       the first item of I5.
-- [ ] Workspace member in `src-tauri/Cargo.toml`; crate list in `docs/development.md`.
-- [ ] **Acceptance:** `cargo test -p rowel-broker` passes the moved tests; app
+- [x] Workspace member in `src-tauri/Cargo.toml`; crate list in `docs/development.md`.
+- [x] **Acceptance:** `cargo test -p rowel-broker` passes the moved tests; app
       builds on macOS, Windows, Linux, iOS; the extension connects and fills.
 
 ---
 
-## I1 — Agent mode for agentic browsers  `[ ]`  *(in review: PR #653, branch `feat/agent-mode`, stacked on #652)*
+## I1 — Agent mode for agentic browsers  `[x]`  *(merged: PR #653)*
 
 **Deliverable.** A person using Claude in Chrome, Comet or any agentic browser
 turns on agent mode in the Rowel extension; from then on every fill is a grant
@@ -112,38 +112,38 @@ site for N days. No new clients, no CLI yet. Spec `01` (agent-access flag),
 
 *Decide first:* none (names in Q3 can stay provisional).
 
-- [ ] Per-lockbox agent-access flag: `Workspace.agents` in the registry, a
+- [x] Per-lockbox agent-access flag: `Workspace.agents` in the registry, a
       command, and the toggle with its plain-language copy in lockbox settings
       (`01`, `06 §3`).
-- [ ] `rowel_broker::{grant, policy}`: `Grant`, `Rule`, `Target`, `evaluate`,
+- [x] `rowel_broker::{grant, policy}`: `Grant`, `Rule`, `Target`, `evaluate`,
       `Floors`, `Limits`, with unit tests for specificity, both floors, rate
       limits and deny-by-default (`03`).
-- [ ] `rowel_broker::audit::Writer` and the `audit` table migration in core;
+- [x] `rowel_broker::audit::Writer` and the `audit` table migration in core;
       rows written for every grant event (`09`, not yet synced or shown).
-- [ ] `Answer::Grant` in the consent slot; `agent_grant` event;
+- [x] `Answer::Grant` in the consent slot; `agent_grant` event;
       `BrowserConsent/GrantDialog/` with once · this run · N days · deny, item
       picker, step-up via biometrics or master password (`03`, `06`).
-- [ ] Rules and standing grants as sealed `meta` JSON; Settings › Browser &
+- [x] Rules and standing grants as sealed `meta` JSON; Settings › Browser &
       agents lists rules and active grants with revoke (`03`, `06`).
-- [ ] `settings.browser.agents.enabled` (default off) gating all of the above.
-- [ ] Extension: agent-mode toggle in the popup, `agentMode`/`grantId` on
+- [x] `settings.browser.agents.enabled` (default off) gating all of the above.
+- [x] Extension: agent-mode toggle in the popup, `agentMode`/`grantId` on
       `get-logins` and `get-totp`, in-page UI and autocomplete suppressed,
       exposure check after fill and after submit with clear-on-failure (`05 §2`).
-- [ ] Host: in agent mode a fill runs the grant flow (policy → ask → serve the
+- [x] Host: in agent mode a fill runs the grant flow (policy → ask → serve the
       one admitted item); outside agent mode behaviour is unchanged.
-- [ ] Grant expiry via `timer::Timer` armed to the earliest deadline.
-- [ ] Tests: broker protocol tests through `Mock`; Playwright fixture page for
+- [x] Grant expiry via `timer::Timer` armed to the earliest deadline.
+- [x] Tests: broker protocol tests through `Mock`; Playwright fixture page for
       approved fill, denied fill, exposure; e2e spec for the dialog.
-- [ ] Threat model: one paragraph noting that agent mode makes fills ask
+- [x] Threat model: one paragraph noting that agent mode makes fills ask
       (`01`, full rewrite comes in I4).
-- [ ] **Acceptance:** with agent mode on, reaching a login page in an agentic
+- [x] **Acceptance:** with agent mode on, reaching a login page in an agentic
       browser raises the dialog; approve fills, deny fills nothing; a 7-day
       rule fills without a dialog next time and is listed and revocable; the
       exposure fixture is cleared and logged.
 
 ---
 
-## I2 — Agent clients and the MCP server  `[ ]`  *(in review: PR #655, branch `feat/agent-clients`, stacked on #653)*
+## I2 — Agent clients and the MCP server  `[x]`  *(merged: PR #655)*
 
 **Deliverable.** Claude Code, Codex or Cursor configured with `rowel mcp` can
 ask to log into a site; the person approves; the extension fills the open tab;
@@ -151,120 +151,120 @@ the grant ends and the site's cookies go with it. Tool results never contain a
 secret. Spec `02` (local association), `04`, `05` (signals, session end), `06`
 (CLI).
 
-- [ ] `Client { kind, platform, created_at, last_seen_at }` with `Extension`
+- [x] `Client { kind, platform, created_at, last_seen_at }` with `Extension`
       default on read; `hello` on `associate`/`test-associate`; the associate
       dialog shows kind and platform; Settings shows kinds;
       `browser_forget_client` revokes either (`02`, `11 §2 PR 2`).
-- [ ] Agent actions `request-grant` (blocking ask, `pending` + `retryAfterMs`
+- [x] Agent actions `request-grant` (blocking ask, `pending` + `retryAfterMs`
       when the slot is busy), `wait-grant`, `end-grant`, `grant-status`,
       `list-visible`; new `Code`s; implemented in `Mock` and `AppHost` (`04`).
-- [ ] Signals: clear `rowel-signal` push through `server::signal`, sealed
+- [x] Signals: clear `rowel-signal` push through `server::signal`, sealed
       `get-signals`, `fill-grant` queued for every extension client and
       claimed by the first one served (`Grant.served_to`); `get-signals` once
       after reconnect; Safari `isSignal` learns the action (`04`).
-- [ ] Extension `grants.js`: handles the wake-up, finds the tab by origin,
+- [x] Extension `grants.js`: handles the wake-up, finds the tab by origin,
       fills through the existing path with `grantId`, agent mode on for the
       grant's lifetime when it was off (derived in the extension; no
       `set-agent-mode` signal) (`05 §2`).
-- [ ] `src-tauri/crates/cli` (`rowel-cli`): `status`, `mcp` (stdio MCP, the
+- [x] `src-tauri/crates/cli` (`rowel-cli`): `status`, `mcp` (stdio MCP, the
       four tools the desktop host can serve — `rowel_request_secret` is
       listed from I3 — no values in results, agent key in a `0600` file for
       now) (`04`).
-- [ ] Session end: `grant-ended` on `end-grant` and on expiry; cookie deletion
+- [x] Session end: `grant-ended` on `end-grant` and on expiry; cookie deletion
       per registrable domain with the existing `cookies` permission; dialog
       notice (`05`).
-- [ ] Passkey ask shows *requested by …* and writes an audit row (`05 §3`).
-- [ ] Bundle the CLI in the desktop installers; *Install command line tool*
+- [x] Passkey ask shows *requested by …* and writes an audit row (`05 §3`).
+- [x] Bundle the CLI in the desktop installers; *Install command line tool*
       in Settings › General (`06`).
-- [ ] Tests: broker tests for every action and for "no reply carries a secret
+- [x] Tests: broker tests for every action and for "no reply carries a secret
       field"; an MCP harness test; Playwright for grant-driven fill, second
       client refused, cookie deletion in Chromium and Firefox.
-- [ ] **Acceptance:** Claude Code asks for github.com; dialog; approve; the
+- [x] **Acceptance:** Claude Code asks for github.com; dialog; approve; the
       extension fills the open tab; the MCP result is `active` with no secret;
       after expiry the GitHub cookies are gone; a revoked agent's next call is
       refused.
 
 ---
 
-## I3 — Secrets for commands and APIs: the sidecar  `[ ]`  *(in review: PR #657, branch `feat/agent-sidecar`, on `main`)*
+## I3 — Secrets for commands and APIs: the sidecar  `[x]`  *(merged: PR #657)*
 
 **Deliverable.** A coding agent uses an API key or an `.env` value for one
 command or one API call without the value ever appearing in its transcript,
 its environment or the MCP results. Spec `03` (floors, binding), `04` (thin
 clients), `05 §4–5` (header, env, redaction).
 
-- [ ] `sidecar` client kind and the CLI's second key; `resolve` action refused
+- [x] `sidecar` client kind and the CLI's second key; `resolve` action refused
       for any other kind and bound to the grant id and the same lockbox (`03`, `04`).
       *Outcome:* `Host::resolve` with a default refusal; `AppHost` resolves
       under the session and agents locks (`03` "as built in I3"); the sidecar
       key is `keys::Role::Sidecar`.
-- [ ] Placeholder resolution `rowel://<lockbox>/<item>/<field>`; `list-visible`
+- [x] Placeholder resolution `rowel://<lockbox>/<item>/<field>`; `list-visible`
       returns refs and fields (`04 §3`). *Outcome:* `rowel_broker::reference`;
       names resolve by id or slug (lockbox: registry name; item: title).
-- [ ] `rowel run --grant … -- cmd`: env mode, full-command-line targets, requests
+- [x] `rowel run --grant … -- cmd`: env mode, full-command-line targets, requests
       a grant when none is given, output through the redactor (`05 §5`).
       *Outcome:* as specified, plus `--env-file`, inherited `rowel://`
       variables, and the one `command::line` quoting rule (`05`).
-- [ ] `rowel redact`: streaming exact-match matcher with encodings and carry-over
+- [x] `rowel redact`: streaming exact-match matcher with encodings and carry-over
       window, as a library and a filter (`05`). *Outcome:* values under 6
       bytes are never matched; the filter resolves its values under a grant.
-- [ ] `rowel hook`: pre-tool rewrite to the `rowel run` form, post-tool redact;
+- [x] `rowel hook`: pre-tool rewrite to the `rowel run` form, post-tool redact;
       documented configs for Claude Code, Codex and Cursor (`04`). *Outcome:*
       the post hook is an exposure check (resolve the command's own
       placeholders, scan the output, end the grant on a hit), not a rewrite of
       the output, which the platforms' Bash hooks cannot do (`05`, Q16).
-- [ ] `rowel proxy`: path-prefix addressing, `X-Rowel-Grant`, header and body
+- [x] `rowel proxy`: path-prefix addressing, `X-Rowel-Grant`, header and body
       placement rules, response redaction, per-grant token bucket (`05 §4`).
       *Outcome:* loopback only; body placement gated on content type (JSON,
       form) since the grant has no placement field yet; `/http/` behind
       `--allow-http`.
-- [ ] Policy floors for `env` and `header`; Settings lists header and env rules
+- [x] Policy floors for `env` and `header`; Settings lists header and env rules
       with their targets (`03`). *Outcome:* the baseline admits `header` and
       `env` at `ask`; `RuleRow`/`GrantRow` carry `mode` and `target`.
-- [ ] CLI keys in the OS secure store on macOS and Windows (non-gated item in
+- [x] CLI keys in the OS secure store on macOS and Windows (non-gated item in
       `secure_store.rs`), `0600` files elsewhere (Q9). *Outcome:* in the CLI
       crate's own `keys` backend (the app's `secure_store.rs` links Tauri),
       with a one-time move of an existing file.
-- [ ] Tests: broker tests for `resolve` and binding; integration tests for
+- [x] Tests: broker tests for `resolve` and binding; integration tests for
       `run`, `proxy` and `redact`; a rule for `node deploy.js*` must not match
       `node -e …`.
-- [ ] **Acceptance:** Claude Code runs a Stripe CLI command through `rowel run`
+- [x] **Acceptance:** Claude Code runs a Stripe CLI command through `rowel run`
       and calls the Stripe API through `rowel proxy`; the key appears nowhere
       the agent can read; `env` printing the value comes back redacted.
 
 ---
 
-## I4 — Audit you can read, and Tier 1 released  `[ ]`  *(in review: PR #658, branch `feat/agent-audit`, stacked on #657)*
+## I4 — Audit you can read, and Tier 1 released  `[x]`  *(merged: PR #658; store submissions and the app release are the owner's steps)*
 
 **Deliverable.** Vault Health shows what agents did, across the user's devices,
 with a verifiable chain; the threat model and docs say what shipped. This
 closes the free product. Spec `09`, `11 §2 PR 5 and PR 8`.
 
-- [ ] `Snapshot.audit`, export and `INSERT OR IGNORE` merge, `vault_digest`
+- [x] `Snapshot.audit`, export and `INSERT OR IGNORE` merge, `vault_digest`
       including audit rows, retention with `pruned_through` (`09`). *Outcome:*
       as specified, except that every device reclaims every writer's aged
       prefix at pack time and only the chain's own writer writes the
       `pruned_through` note — a union merge hands a device its own pruned rows
       back otherwise, and iOS has no chain of its own (`09`, Q21).
-- [ ] Vault Health › *Agent activity*: recent events, standing rules older than
+- [x] Vault Health › *Agent activity*: recent events, standing rules older than
       30 days, agents unseen for 90 days, *Verify log* (`09`). *Outcome:*
       `AgentActivity/` under the Vault Health section, desktop only, shown
       when the Agents switch is on or the log has something to show; commands
       `audit_agent_activity` and `audit_verify` in `commands/activity.rs`.
-- [ ] `docs/threat-model.md`: the extension section reworded and a new Agents
+- [x] `docs/threat-model.md`: the extension section reworded and a new Agents
       section per `01`; `docs/agents.md` user guide; README claims worded to
       what shipped.
-- [ ] Release: extension version bump and store submissions; app release with
+- [x] Release: extension version bump and store submissions; app release with
       notes; the spec's revision history updated. *Outcome:* extension 0.2.0
       in the PR; the store submissions and the app's Release workflow are the
       owner's manual steps after the merge (`docs/releasing.md`).
-- [ ] **Acceptance:** two devices (the `two_devices.rs` harness) converge on
+- [x] **Acceptance:** two devices (the `two_devices.rs` harness) converge on
       the union of their audit logs and both chains verify; a device with only
       new audit rows pushes; an altered row breaks verification.
 
 ---
 
-## I5 — `rowel serve`: the broker without the GUI  `[ ]`
+## I5 — `rowel serve`: the broker without the GUI  `[ ]`  *(in review: PR #659, branch `feat/agent-serve`, on `main`)*
 
 **Deliverable.** The same crates run as a headless broker on a developer's VM,
 a CI runner or a Linux box without a desktop: a device-held lockbox is unlocked
@@ -278,23 +278,43 @@ or times out. This is the binary the server (I7) and the cloud (I9) run. Spec
       `rowel_core::otp`, route the app's command through it, then move
       `logins_in` and the TOTP lookup into `rowel_broker::lockbox` beside
       `save_login_in`. Behaviour unchanged; this is the seam I0 left open.
+      *Outcome:* done, and further: the whole Tauri-free grant engine moved
+      to `rowel_broker::agents` and the socket serve loop to
+      `rowel_broker::server`, so the headless host runs the app's code
+      rather than a copy (`06`).
 - [ ] `rowel-serve` library crate with `HeadlessHost: Host` over
       `SqliteStore` + `PayloadCipher`, built on the shared functions from I0;
-      the broker test-suite runs against it.
+      the broker test-suite runs against it. *Outcome:* `rowel-serve` with
+      `HeadlessHost`; its tests drive `Connection<HeadlessHost>` over a real
+      temp vault through the broker's test extension and peer (associate,
+      auto rule, ask → approve → resolve, deny, timeout, switch off, step-up
+      password, seal, key file, WebSocket, control socket).
 - [ ] Unlock: password prompt on a TTY, or key material from a `0600` key file
-      or a file descriptor; lock on `SIGTERM`; idle auto-lock.
+      or a file descriptor; lock on `SIGTERM`; idle auto-lock. *Outcome:* as
+      specified; the key file is written by `rowel admin key-file`; an idle
+      lock reopens from a key file, re-prompts in password mode and is
+      refused with `--key-fd`.
 - [ ] Transports: the local socket on the same path scheme as the app, plus a
       `ws://`/`wss://` listener (TLS from files, or plain behind a reverse
-      proxy) carrying the same frames (`04`).
+      proxy) carrying the same frames (`04`). *Outcome:* as specified, plus
+      the socket probe that refuses to take a running app's socket, and
+      `ROWEL_BROKER` on the client side.
 - [ ] Approvals without a GUI: rules from a config file; an `ask` waits for
       `rowel approve <id>` on the same machine or denies after the timeout;
-      every decision an audit row (`03`).
+      every decision an audit row (`03`). *Outcome:* `serve.json` rules; an
+      approvals queue with a control socket; associations and passkey
+      ceremonies are asks too; step-up by master password; 120 s default.
 - [ ] `rowel admin rules` to list, add and remove rules in the config; schema
-      documented.
+      documented. *Outcome:* plus `admin agents on|off`, `admin key-file`,
+      `admin lock`; schema in `docs/serve.md`.
 - [ ] Optional: `rowel serve --install-host` writes the native-messaging
       manifest so a browser on that box can use the extension against it.
+      *Not built in I5.*
 - [ ] Integration test: `rowel serve` + `rowel mcp` + `rowel proxy` in a
       container, standing rules, one `ask` answered by `rowel approve`.
+      *Outcome:* `crates/cli/tests/serve.rs` over the built binary and a temp
+      data directory; runs where the CLI's keys are files (Linux), ignored on
+      macOS and Windows, whose secure store a test must not touch.
 - [ ] **Acceptance:** on a Linux VM without a GUI a coding agent gets a header
       grant under a standing rule and an env grant after a TTY approval; the
       app's extension connects to the same broker when the host manifest is

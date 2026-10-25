@@ -251,6 +251,15 @@ carries content.
   NaCl channel still runs inside it so the server's TLS terminator never sees
   plaintext requests, and so the same code serves both transports. The
   association's `proof` replaces the human dialog (`02`).
+- *As built in I5.* `rowel serve` listens on the data directory's socket
+  and on `ws://host:port` (or `wss://` with TLS from PEM files); a binary
+  message carries exactly one frame's JSON body, and the clear signals
+  (`database-locked`, `database-unlocked`, `rowel-signal`) arrive as binary
+  messages too. The CLI's `transport` reaches it when `ROWEL_BROKER` names
+  it (`ROWEL_BROKER_CA` adds a CA), and on either transport skips the clear
+  signals when reading a reply, which the socket path did not do before.
+  There is no `proof` yet: a client reaching the WebSocket is let in only
+  through an association ask answered with `rowel approve`.
 - Remote extension (cloud browser, Tier 2/3, phase 4): upstream
   KeePassXC-Browser already has a WebSocket transport to `ws://localhost:<port>`
   (`client.js::connectToWebSocket`, same `onNativeMessage` handler). The

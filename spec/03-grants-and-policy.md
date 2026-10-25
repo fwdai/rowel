@@ -348,6 +348,19 @@ password and verifies it against the open lockbox's KDF sidecar.
 use. Usernames are already list-visible metadata in Rowel; a lockbox-level
 `hide_usernames` flag is a later addition if a customer needs it.
 
+**As built in I5 (the headless broker).** The rule list a host evaluates is
+`defaults::personal()`, then the host's own rules (`decide`'s `extra`: the
+operator's `serve.json`, each `CreatedBy::Admin("config")`), then the
+lockbox's live rules; the app has no host rules. Without a dialog the asks
+queue rather than share a slot: each is on the client's rate record when it
+is queued, announced once, and settled by `rowel approve` or by its deadline
+(`askTimeoutMs`, 120 s by default, the interactive default of §4) as
+`denied {"reason":"timeout"}`; a change of the lockbox's switch refuses the
+grant asks waiting, as the app closes its dialog. Step-up with no biometrics
+is the master password typed at `rowel approve`, derived through the
+lockbox's KDF sidecar and compared with the held key's SQLCipher subkey in
+constant time; a mismatch is `denied {"reason":"user"}`.
+
 **Server routing (❌, Tier 2).** `pending_approvals` table: grant id, approver
 candidates, created, expires, state. The approver's app subscribes
 (`GET /v1/members/me/approvals/stream`, server-sent events or long poll) and

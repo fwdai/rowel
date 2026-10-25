@@ -77,7 +77,10 @@ CLI crate's own non-gated backend (`keys::SecureStore`), since the app's
 `secure_store.rs` links Tauri — and in `0600` files elsewhere, moving an
 older file into the store on first read (`06`); grants, floors,
 full-command-line targets and rate limits bound what a lifted key buys; audit
-shows it. Not solvable without OS-level process identity.
+shows it. Not solvable without OS-level process identity. The headless broker
+(I5) rests on the same trust: `rowel approve` answers asks over an owner-only
+control socket on the same box, so a same-user process could answer them too;
+the key file is the vault's key for whoever reads it (`docs/serve.md`).
 
 **Q10. Agent access on device-held lockboxes while unlocked.** *Design is settled; wording is not.*
 In Tier 1 there is no escrow: a standing `auto` rule serves an agent without a
@@ -195,7 +198,11 @@ same crates and runs it headless with `serve`. Splitting the app into a UI
 and a daemon would move keys into a second process, add an IPC trust boundary
 between two same-user processes, and complicate biometric unlock and iOS for
 no security gain. Revisit only if a concrete need appears, such as serving
-agents while the GUI is not running on a desktop OS.
+agents while the GUI is not running on a desktop OS. Built in I5 as
+`rowel serve` (`rowel-serve`, `07`): the engine lifted into the broker crate
+and run headless. On a desktop with the app running, `rowel serve` refuses to
+take the app's socket; the optional `--install-host` manifest writer of
+PLAN I5 was not built.
 
 ## Process
 

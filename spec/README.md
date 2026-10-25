@@ -123,6 +123,16 @@ Read the overview first. Everything else hangs off it.
   redactor-over-`detail` check left to the server tier. `docs/threat-model.md`
   gained its "Agents" section and `docs/agents.md` the user guide (`01`, `11
   §2 PR 8`); extension version 0.2.0.
+- **2026-10-26, I5 as built.** The grant engine, the lockbox-side reads and
+  the socket serve loop lifted out of the app into `rowel_broker::{agents,
+  lockbox, server}`, TOTP into `rowel_core::otp`, so the app and the headless
+  broker are thin hosts over one engine (`06`); `rowel serve` as the
+  `rowel-serve` crate: unlock from a terminal, a key file or a descriptor,
+  `serve.json` rules after the baseline, an approvals queue answered by
+  `rowel approve` over a control socket, the socket (probed) and a WebSocket
+  with bare frames, idle lock and SIGTERM (`03`, `04`, `07`); `ROWEL_BROKER`
+  on the client side and clients skipping clear signals (`04`); Q9 and Q26
+  annotated; I0–I4 ticked as merged in `PLAN.md`.
 
 ## Relationship to the other docs
 

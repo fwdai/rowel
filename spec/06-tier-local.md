@@ -172,6 +172,27 @@ command line), which the lists show beside the mode in words; `origin` is
 kept for fill rows. A secret grant's end signals no extension: there is no
 site to sign out of.
 
+**As built in I5.** The engine left the app. Everything above that knows no
+window, session or timer lives in `rowel_broker::agents` — `AgentState` with
+its access epoch, the audit words (`draft`, `about`, `record`, the target
+texts), `decide`, `settle`, `deny_unasked`, `covered`, `client_covered`,
+`resolved`, `visible_in`, the Settings rows — and takes a `Locked { store,
+held, writer, now }` the host hands it under its own session → agents locks;
+`decide` also takes the host's `extra` rules, evaluated after the baseline and
+before the lockbox's own (the app passes none). The lockbox-side reads
+(`logins_in`, `totp_in`, `clients_in`/`write_clients`, `rules_in`/`live_rules`,
+`item_by_name`, `field_value`) sit in `rowel_broker::lockbox` beside
+`save_login_in`; the socket serve loop and the signal registry in
+`rowel_broker::server`, whose `register` takes a transport-neutral sink so a
+WebSocket connection joins the same lock signals; TOTP code generation in
+`rowel_core::otp::code_now`, with `totp-rs` a core dependency.
+`src-tauri/src/browser/mod.rs` keeps the consent slot, `AppHost` as a thin
+host (the locks, the dialog, the epoch check, the events, the expiry timer)
+and the Safari socket paths; `src-tauri/src/agents.rs` keeps `initialise`,
+`change_access`, `rearm`, `clear` and the Settings wrappers. Nothing about
+the release invariant or the lock order changed; the headless host
+(`rowel-serve`, `07`) runs the same functions under locks of its own.
+
 **Server loop (✅, unchanged).** `server.rs::accept` spawns a thread per
 connection and `serve` stays one-request-one-reply; a blocking ask inside
 `request_grant` parks only that connection's thread, exactly as `associate`
@@ -231,9 +252,11 @@ from an earlier release is moved into the store the first time it is read,
 and a store that refuses is stood in for by the file for that run, said once
 on stderr, so a broken keychain never strands an association (Q9). It is the
 CLI crate's own backend rather than the app's `secure_store.rs`, which links
-Tauri. The same binary later gains `serve` (the headless broker, and in
-`--server` mode the Rowel Server), `approve` and `admin` (`07`, `PLAN.md` I5
-and I7). The desktop app is not split into a UI plus this daemon: it embeds
+Tauri. The same binary gained `serve` (the headless broker, I5; in `--server`
+mode later the Rowel Server), `approve` and `admin rules|agents|key-file|lock`
+(`07`, `docs/serve.md`), and since I5 every client command reaches a broker
+elsewhere when `ROWEL_BROKER=ws://…|wss://…` is set, with `ROWEL_BROKER_CA`
+for a CA of one's own (`04`). The desktop app is not split into a UI plus this daemon: it embeds
 the same crates and is the broker itself (Q26).
 
 **Extension (🟡).** `extension/rowel/background/grants.js` (new), changes in
