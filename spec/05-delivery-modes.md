@@ -266,8 +266,10 @@ extension of the lockbox from one helper, on every way a grant ends: expiry,
 The extension deletes the cookies of each origin's registrable domain, found
 through upstream's own `page.getBaseDomainFromUrl` (which probes the public
 suffix list with a throwaway cookie, as it does for iframes), in every cookie
-store; drops the grant only if the stored id is the signal's, so a stale end
-never kills a newer grant at the same origin; shows a fixed-text notification;
-and turns agent mode back off only if a grant turned it on and none is left.
-`database-locked` does the same clearing, since every grant died with the
-lock. Safari: `browser.cookies` is absent, so the deletion is skipped.
+store; leaves an origin a newer grant holds whole, session included, since
+it is that grant's to end; shows a fixed-text notification; and turns agent
+mode back off only if a grant turned it on and none is left. A lock ends
+every grant on the host with no row and no `grant-ended` (nothing is served
+from a locked vault), so on `database-locked` the extension signs out of
+every origin it held a grant for, the person's own agent-mode grants
+included. Safari: `browser.cookies` is absent, so the deletion is skipped.

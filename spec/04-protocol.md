@@ -251,8 +251,13 @@ carries content.
   `expiresAtMs`, `retryAfterMs`, `uses`, `items` / `ok`), never a value, by
   construction: the client is of kind `agent`, with its own key, associated
   lazily at the first tool call so `initialize` and `tools/list` work with
-  the app closed. `runId` is minted once per process. `rowel status` says
-  whether the app is reachable, the vault open and the key associated.
+  the app closed. `runId` is minted once per process. A `pending` with
+  `retryAfterMs` (the consent slot was busy; no grant was issued) is asked
+  again by the server itself, for up to a minute, before the agent sees it;
+  `rowel_wait` is for a `pending` without one, a routed approval (Tier 2).
+  `list-visible` answers empty while either switch is off, as every use is
+  refused. `rowel status` says whether the app is reachable, the vault open
+  and the key associated.
 - `rowel hook` — Claude Code / Codex / Cursor hooks: *pre-tool* rewrites a shell
   command containing `rowel://` placeholders to run under `rowel run`
   (requesting a grant in `env` mode, so the agent's own shell never sees the
