@@ -1852,10 +1852,7 @@ fn resolve_is_denied_in_one_word_for_whatever_is_wrong_and_counts_no_use() {
         );
         let wire = serde_json::to_string(&response).unwrap();
         for secret in ["sk_test_mock", "hunter2", "value"] {
-            assert!(
-                !wire.contains(secret),
-                "{secret} in {what}'s refusal: {wire}"
-            );
+            assert!(!wire.contains(secret), "a value in {what}'s refusal");
         }
     }
     assert_eq!(uses_of(&connection, "g1"), 0);
