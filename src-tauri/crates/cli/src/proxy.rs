@@ -867,14 +867,17 @@ mod tests {
     fn a_json_value_is_escaped_so_the_document_still_parses() {
         // Quotes inside, at the start, at the end, and nothing but quotes:
         // only the one pair wrapping the JSON string is not the value's.
-        for secret in [
+        for (case, secret) in [
             "sk\"live\\\nend\ttab",
             "ends\"",
             "\"starts",
             "\"both\"",
             "\"\"",
             "\\\"",
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let values = vec![(
                 "rowel://lb/stripe/apiKey".to_string(),
                 Zeroizing::new(secret.to_string()),
@@ -885,7 +888,7 @@ mod tests {
                 Placement::Json,
             );
             let parsed: serde_json::Value = serde_json::from_str(&document).unwrap();
-            assert_eq!(parsed["key"], secret, "{secret}");
+            assert_eq!(parsed["key"], secret, "case {case}");
             assert_eq!(parsed["n"], 1);
             assert_eq!(parsed.as_object().unwrap().len(), 2);
         }

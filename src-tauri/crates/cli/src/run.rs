@@ -189,16 +189,18 @@ fn placeholders(
         let (name, value) = assignment
             .split_once('=')
             .filter(|(name, _)| !name.is_empty())
-            .ok_or_else(|| format!("--env takes NAME=rowel://…, not '{assignment}'"))?;
+            .ok_or_else(|| "--env takes NAME=rowel://…".to_string())?;
         found.insert(name.to_string(), parse_placeholder(value, name)?);
     }
     Ok(found)
 }
 
+/// The error names the variable, never what it holds: an `--env-file`
+/// pointed at a real `.env` would otherwise print its secrets to stderr,
+/// which is the agent's transcript.
 fn parse_placeholder(value: &str, name: &str) -> Result<Reference, String> {
-    Reference::parse(value).ok_or_else(|| {
-        format!("{name}: '{value}' is not a placeholder (rowel://<lockbox>/<item>/<field>)")
-    })
+    Reference::parse(value)
+        .ok_or_else(|| format!("{name} is not a placeholder (rowel://<lockbox>/<item>/<field>)"))
 }
 
 /// The `NAME=value` lines of the file at `path`: blank lines and `#` comments
@@ -448,13 +450,14 @@ mod end_to_end {
             ..Mock::unlocked()
         });
         let args = RunArgs {
-            env: vec!["STRIPE_KEY=not-a-placeholder".into()],
+            env: vec!["STRIPE_KEY=sk_live_pasted_by_mistake".into()],
             argv: vec!["true".into()],
             ..RunArgs::default()
         };
         let (code, _, err) = ran(&mut harness, &args);
         assert_eq!(code, USAGE);
-        assert!(err.contains("not a placeholder"), "{err}");
+        assert!(err.contains("STRIPE_KEY is not a placeholder"), "{err}");
+        assert!(!err.contains("sk_live"), "the value is never echoed");
         assert!(harness.host().host().grant_requests.borrow().is_empty());
     }
 }
