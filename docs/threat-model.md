@@ -862,6 +862,33 @@ exposed process than the webview, and it is not ours.
   the grant enabled ends with the grant. The agent's own key is a `0600` file
   in the user's config directory, which the same-user residual above covers:
   a process that lifts it can ask, and the dialog still decides.
+- **Secrets for commands and APIs (the sidecar).** An API key or an `.env`
+  value reaches a command or an HTTP request without the agent ever holding
+  it. The agent names it by a placeholder (`rowel://<lockbox>/<item>/<field>`)
+  and asks for a grant in `env` or `header` mode naming the full command line
+  or the host, path and methods; the dialog shows that place and the person
+  allows once, for N days (a rule for exactly that command line or that
+  request pattern), or not at all — `env` is never silent unless a rule
+  names the full line, because a child process can print what it is given.
+  The value is released by one protocol action, `resolve`, that only a client
+  of kind `sidecar` may say (`rowel run`, `rowel proxy`, `rowel redact`,
+  `rowel hook post`, under a second key the MCP server never holds), under
+  the session's switches and the same locks as a fill, for a grant that is
+  active in the open lockbox and covers that item at that concrete place in
+  that mode; each resolve is a counted use and an audit row naming the
+  sidecar, the field and the place, never the value. `rowel run` sets the
+  value in one child's environment only and passes the child's output through
+  a redactor that replaces the value and its common encodings with the
+  placeholder; the proxy swaps it into the outgoing request and scrubs the
+  response; the hook rewrites `NAME=rowel://… cmd` into `rowel run` and ends
+  a grant whose value shows in a command's output. What this does not do: the
+  redactor is a safety net, not a guarantee (a value transformed any other way
+  passes, and values shorter than six bytes are never matched); the child
+  process itself holds the value and can do anything with it, which is what
+  the full-command-line rule and the dialog are for; and the grant id is a
+  bearer capability between agent and sidecar — 128 random bits, bound to one
+  lockbox, one item set, one place and one mode, for 15 minutes — so a
+  process that reads it can resolve exactly what the person allowed, no more.
 
 ## iOS AutoFill
 
