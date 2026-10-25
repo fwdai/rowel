@@ -1,7 +1,5 @@
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Map, Value};
 
 use super::manifest::{self, Family, KEEPASSXC, ROWEL};
@@ -9,22 +7,23 @@ use super::protocol::str_of;
 use super::protocol::Code;
 use super::{
     client_covered, clients_in, covered, decide, env_var, frame, group_container, group_socket_dir,
-    item_by_name, outcome, proxy, resolved, server, settle, socket_name, visible_in, Answer,
-    AskKind, Asking, Candidate, CandidateItem, Client, ClientKind, GrantAnswer, Lockbox, Locked,
-    NotAsked, Pending, Prepared, SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
+    item_by_name, outcome, proxy, resolved, settle, visible_in, Answer, AskKind, Asking, Candidate,
+    Client, ClientKind, GrantAnswer, Lockbox, Locked, NotAsked, Pending, Prepared,
+    SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
 };
 use crate::agents::{self, AccessState, AgentState};
 use crate::crypto::PayloadCipher;
 use crate::models::Entry;
-use crate::session::{Epoch, Session};
 use crate::store::{migrate, SqliteStore, VaultStore};
+use rowel_broker::agents::switch_changed;
 use rowel_broker::grant::{
-    Approval, CreatedBy, Grant, GrantRequest, ItemSelector, Mode, ResolveContext, ResolveTarget,
-    State, Target, Terms, VisibleItem,
+    Approval, CandidateItem, CreatedBy, Grant, GrantRequest, ItemSelector, Mode, ResolveContext,
+    ResolveTarget, State, Target, Terms, VisibleItem,
 };
+use rowel_broker::lockbox::{live_rules, write_rules};
 use rowel_broker::policy::{defaults, Limits};
 use rowel_broker::reference::{fields_for, Reference};
-use rowel_broker::testing::{nonce, seed, vault, Extension, Mock};
+use rowel_broker::testing::{seed, vault};
 use rowel_broker::Signal;
 use rowel_core::app::DESKTOP_APP_GROUP;
 use zeroize::Zeroizing;
@@ -311,10 +310,6 @@ fn locked<'a>(store: &'a SqliteStore, held: &'a mut AgentState, now: i64) -> Loc
     }
 }
 
-fn epoch() -> Epoch {
-    Session::default().epoch()
-}
-
 fn client(name: &str, key: &str, kind: ClientKind) -> Client {
     Client {
         name: name.into(),
@@ -351,7 +346,6 @@ fn let_in(store: &SqliteStore, clients: &[Client]) {
 fn decided(store: &SqliteStore, held: &mut AgentState, now: i64) -> Result<Prepared, Code> {
     decide(
         locked(store, held, now),
-        epoch(),
         "default",
         &extension(),
         fill_request(&["gh"]),
@@ -480,7 +474,7 @@ fn an_auto_release_requires_the_switches_the_session_holds() {
     let (_dir, store, cipher) = vault();
     seed(&store, &cipher, &github_login("gh"));
     let now = 1_000;
-    agents::write_rules(
+    write_rules(
         &store,
         &[defaults::standing(
             "ext",
@@ -1025,7 +1019,7 @@ fn a_change_that_cuts_the_open_lockbox_off_ends_its_grants_and_says_which_switch
     let mut held = ready();
     held.grants.push(active_grant("gh", now));
     held.access.as_mut().unwrap().enabled = false;
-    agents::switch_changed(None, &mut held, "dev", "switch", now);
+    switch_changed(None, &mut held, "dev", "switch", now);
     assert_eq!(held.access_epoch, 1);
     assert_eq!(held.grants[0].state, State::Revoked);
 }
@@ -1126,7 +1120,6 @@ fn a_decision_that_waits_on_the_slot_is_not_an_ask_on_the_clients_record() {
             matches!(
                 decide(
                     locked(&store, &mut held, now),
-                    epoch(),
                     "default",
                     &agent(),
                     agent_request("https://github.com"),
@@ -1156,7 +1149,6 @@ fn an_agents_fill_grant_is_signalled_to_the_extensions_and_not_to_the_agent() {
 
     let asking = match decide(
         locked(&store, &mut held, now),
-        epoch(),
         "default",
         &agent(),
         agent_request("https://github.com"),
@@ -1268,7 +1260,6 @@ fn an_agents_request_for_a_site_with_no_login_is_denied_on_record() {
     assert!(matches!(
         decide(
             locked(&store, &mut held, now),
-            epoch(),
             "default",
             &agent(),
             agent_request("https://gitlab.com"),
@@ -1397,7 +1388,7 @@ fn visible_items_are_the_clients_own_rules_and_grants_never_the_baseline() {
         "the baseline alone shows nothing"
     );
 
-    agents::write_rules(
+    write_rules(
         &store,
         &[
             defaults::standing("agent", "gh", "https://github.com", 7, now),
@@ -2018,7 +2009,6 @@ fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_
 
     let asking = match decide(
         locked(&store, &mut held, now),
-        epoch(),
         "default",
         &sidecar(),
         request(DEPLOY),
@@ -2039,7 +2029,7 @@ fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_
     );
     assert!(rows(&store).is_empty(), "an ask is on record once it is up");
 
-    agents::write_rules(
+    write_rules(
         &store,
         &[defaults::standing_for(
             "side",
@@ -2053,7 +2043,6 @@ fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_
     .unwrap();
     let reply = match decide(
         locked(&store, &mut held, now),
-        epoch(),
         "default",
         &sidecar(),
         request(DEPLOY),
@@ -2080,7 +2069,6 @@ fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_
     assert!(matches!(
         decide(
             locked(&store, &mut held, now),
-            epoch(),
             "default",
             &sidecar(),
             request(DEPLOY),
@@ -2094,7 +2082,6 @@ fn an_env_request_asks_under_the_baseline_and_goes_auto_under_a_rule_naming_the_
         matches!(
             decide(
                 locked(&store, &mut held, now),
-                epoch(),
                 "default",
                 &sidecar(),
                 request("node -e \"console.log(process.env)\""),
@@ -2123,7 +2110,6 @@ fn a_header_request_asks_under_the_baseline_and_a_card_number_is_a_step_up() {
 
     let asking = match decide(
         locked(&store, &mut held, now),
-        epoch(),
         "default",
         &agent(),
         secret_request(
@@ -2147,7 +2133,6 @@ fn a_header_request_asks_under_the_baseline_and_a_card_number_is_a_step_up() {
 
     let asking = match decide(
         locked(&store, &mut held, now),
-        epoch(),
         "default",
         &agent(),
         secret_request("agent", &["visa"], vec![stripe(&[])], vec![Mode::Header]),
@@ -2170,7 +2155,6 @@ fn a_yes_for_days_on_an_env_ask_writes_a_rule_for_the_command_line() {
     let mut held = ready();
     let asking = match decide(
         locked(&store, &mut held, now),
-        epoch(),
         "default",
         &sidecar(),
         secret_request(
@@ -2195,7 +2179,7 @@ fn a_yes_for_days_on_an_env_ask_writes_a_rule_for_the_command_line() {
     assert_eq!(reply.uses, 0);
     assert_eq!(held.grants[0].uses, 0);
 
-    let rules = agents::live_rules(&store, now);
+    let rules = live_rules(&store, now);
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].targets, [Target::Command(DEPLOY.into())]);
     assert_eq!(rules[0].modes, [Mode::Env]);
@@ -2249,11 +2233,10 @@ fn a_two_item_env_request_is_asked_for_both_unless_a_rule_names_both() {
         7,
         now,
     );
-    agents::write_rules(&store, std::slice::from_ref(&one)).unwrap();
+    write_rules(&store, std::slice::from_ref(&one)).unwrap();
 
     let asking = match decide(
         locked(&store, &mut held, now),
-        epoch(),
         "default",
         &sidecar(),
         env_request(&["ci", "ci2"]),
@@ -2273,10 +2256,9 @@ fn a_two_item_env_request_is_asked_for_both_unless_a_rule_names_both() {
         items: ItemSelector::Ids(vec!["ci".into(), "ci2".into()]),
         ..one
     };
-    agents::write_rules(&store, &[both]).unwrap();
+    write_rules(&store, &[both]).unwrap();
     let reply = match decide(
         locked(&store, &mut held, now),
-        epoch(),
         "default",
         &sidecar(),
         env_request(&["ci", "ci2"]),
@@ -2308,7 +2290,6 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
     let mut held = ready();
     let ask = |held: &mut AgentState| match decide(
         locked(&store, held, now),
-        epoch(),
         "default",
         &sidecar(),
         env_request(&["ci", "ci2"]),
@@ -2353,10 +2334,7 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
     assert_eq!(ids, ["ci", "ci2"], "the reply lists both");
     assert_eq!(held.grants[0].items, both);
     assert_eq!(held.grants[0].uses, 0);
-    assert!(
-        agents::live_rules(&store, now).is_empty(),
-        "once writes no rule"
-    );
+    assert!(live_rules(&store, now).is_empty(), "once writes no rule");
 
     held.grants.clear();
     let asking = ask(&mut held);
@@ -2368,7 +2346,7 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
     )
     .expect("the yes stands");
     assert_eq!(held.grants[0].items, both);
-    let rules = agents::live_rules(&store, now);
+    let rules = live_rules(&store, now);
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].items, both);
     assert_eq!(rules[0].targets, [Target::Command(DEPLOY.into())]);
@@ -2383,7 +2361,6 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
     assert!(matches!(
         decide(
             locked(&store, &mut held, now),
-            epoch(),
             "default",
             &sidecar(),
             env_request(&["ci", "ci2"]),
@@ -2423,7 +2400,6 @@ fn a_held_grant_for_one_item_is_not_reused_for_a_request_naming_two() {
         matches!(
             decide(
                 locked(&store, &mut held, now),
-                epoch(),
                 "default",
                 &sidecar(),
                 env_request(&["ci"]),
@@ -2434,7 +2410,6 @@ fn a_held_grant_for_one_item_is_not_reused_for_a_request_naming_two() {
     );
     let asking = match decide(
         locked(&store, &mut held, now),
-        epoch(),
         "default",
         &sidecar(),
         env_request(&["ci", "ci2"]),
@@ -2472,7 +2447,6 @@ fn a_secret_request_naming_an_item_that_is_not_there_is_denied_no_candidates() {
         matches!(
             decide(
                 locked(&store, &mut held, now),
-                epoch(),
                 "default",
                 &sidecar(),
                 env_request(&["ci", "ci"]),
@@ -2490,7 +2464,6 @@ fn a_secret_request_naming_an_item_that_is_not_there_is_denied_no_candidates() {
             matches!(
                 decide(
                     locked(&store, &mut held, now),
-                    epoch(),
                     "default",
                     &sidecar(),
                     env_request(ids),
@@ -2509,7 +2482,6 @@ fn a_secret_request_naming_an_item_that_is_not_there_is_denied_no_candidates() {
         matches!(
             decide(
                 locked(&store, &mut held, now),
-                epoch(),
                 "default",
                 &sidecar(),
                 env_request(&["ci"]),
@@ -2577,13 +2549,7 @@ fn a_request_whose_targets_do_not_fit_its_modes_is_denied_no_target() {
     ];
     for request in misfits {
         assert!(matches!(
-            decide(
-                locked(&store, &mut held, now),
-                epoch(),
-                "default",
-                &agent(),
-                request,
-            ),
+            decide(locked(&store, &mut held, now), "default", &agent(), request,),
             Err(Code::GrantDenied)
         ));
     }
@@ -2664,189 +2630,6 @@ fn a_tampered_url_host_column_does_not_serve_a_login_elsewhere() {
     // Nor does the real site get it while the column points away: the
     // column only narrows.
     assert!(served(&store, &cipher, "https://bank.com/").is_empty());
-}
-
-// --- framing and the wire ----------------------------------------------------
-
-#[test]
-fn serve_ends_the_connection_once_the_host_is_switched_off() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let served = std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        let host = Mock::unlocked();
-        host.enabled.set(false);
-        server::serve(stream, host);
-    });
-
-    let mut stream = TcpStream::connect(address).unwrap();
-    let request = json!({ "action": "change-public-keys", "publicKey": "x", "nonce": "y" });
-    frame::write(&mut stream, &serde_json::to_vec(&request).unwrap()).unwrap();
-    // No reply: the other end hangs up instead.
-    assert_eq!(frame::read(&mut stream).unwrap(), None);
-    served.join().unwrap();
-}
-
-#[test]
-fn serve_answers_frames_on_a_stream_until_it_closes() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let served = std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        server::serve(stream, Mock::unlocked());
-    });
-
-    let mut stream = TcpStream::connect(address).unwrap();
-    let extension = Extension::new();
-    let request = json!({
-        "action": "change-public-keys",
-        "publicKey": extension.public_key(),
-        "nonce": STANDARD.encode(nonce()),
-    });
-    frame::write(&mut stream, &serde_json::to_vec(&request).unwrap()).unwrap();
-    let reply: Value = serde_json::from_slice(&frame::read(&mut stream).unwrap().unwrap()).unwrap();
-    assert_eq!(reply["success"], "true");
-    assert!(reply["publicKey"].is_string());
-
-    drop(stream);
-    served.join().unwrap();
-}
-
-// The signal registry is one per process, so the tests that register with it
-// run one at a time: with both up at once, one's broadcasts would land on the
-// other's connection, ahead of the frames it is counting.
-static SIGNAL_TESTS: Mutex<()> = Mutex::new(());
-
-#[test]
-fn a_lock_signal_reaches_every_connection_and_drops_the_gone_ones() {
-    let _one_at_a_time = SIGNAL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let mut extension = TcpStream::connect(address).unwrap();
-    let (open, _) = listener.accept().unwrap();
-    let _gone_peer = TcpStream::connect(address).unwrap();
-    let (gone, _) = listener.accept().unwrap();
-    gone.shutdown(std::net::Shutdown::Write).unwrap();
-
-    let open = Arc::new(Mutex::new(open));
-    let gone = Arc::new(Mutex::new(gone));
-    let open_id = server::register(open.clone());
-    server::register(gone.clone());
-    server::notify_locked();
-    server::notify_unlocked();
-
-    // In order, on the connection that reads.
-    let signal: Value =
-        serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
-    assert_eq!(signal, json!({ "action": "database-locked" }));
-    let signal: Value =
-        serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
-    assert_eq!(signal, json!({ "action": "database-unlocked" }));
-
-    // The gone one's write failed on its own thread, which let the writer go.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while Arc::strong_count(&gone) > 1 && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert_eq!(
-        Arc::strong_count(&gone),
-        1,
-        "a failed write drops the writer"
-    );
-    assert_eq!(Arc::strong_count(&open), 2, "a live one stays registered");
-
-    // The connection ending lets its writer go too.
-    server::forget(open_id);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while Arc::strong_count(&open) > 1 && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert_eq!(Arc::strong_count(&open), 1, "a forgotten one is let go");
-}
-
-#[test]
-fn a_peer_that_stops_reading_stalls_no_one_else() {
-    let _one_at_a_time = SIGNAL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    // A peer that never reads: its socket buffer fills, then writes block.
-    let _stalled_peer = TcpStream::connect(address).unwrap();
-    let (stalled, _) = listener.accept().unwrap();
-    let mut extension = TcpStream::connect(address).unwrap();
-    let (open, _) = listener.accept().unwrap();
-
-    let stalled_id = server::register(Arc::new(Mutex::new(stalled)));
-    let open_id = server::register(Arc::new(Mutex::new(open)));
-    // Far more than a socket buffer holds; every one of these would block a
-    // shared thread on the stalled peer.
-    for _ in 0..4096 {
-        server::notify_locked();
-    }
-    server::notify_unlocked();
-
-    // The reading peer still gets every signal, in order.
-    for _ in 0..4096 {
-        let signal: Value =
-            serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
-        assert_eq!(signal, json!({ "action": "database-locked" }));
-    }
-    let signal: Value =
-        serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
-    assert_eq!(signal, json!({ "action": "database-unlocked" }));
-
-    server::forget(stalled_id);
-    server::forget(open_id);
-}
-
-#[test]
-fn bind_listens_at_the_root_and_takes_over_a_socket_left_behind() {
-    use interprocess::local_socket::{prelude::*, Stream};
-    let dir = tempfile::tempdir().unwrap();
-    let listener = server::bind(dir.path()).expect("a listener at a fresh root");
-    let mut client = Stream::connect(socket_name(dir.path()).unwrap()).unwrap();
-    let mut served = listener.accept().unwrap();
-    frame::write(&mut client, b"{}").unwrap();
-    assert_eq!(
-        frame::read(&mut served).unwrap().as_deref(),
-        Some(&b"{}"[..])
-    );
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(dir.path().join(super::SOCKET_FILE))
-            .unwrap()
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600, "owner-only socket file");
-    }
-
-    // A crash leaves the file behind with nobody listening: the next launch
-    // binds over it rather than refusing.
-    std::mem::forget(listener);
-    let again = server::bind(dir.path()).expect("a listener over a stale socket file");
-    drop(again);
-}
-
-#[test]
-fn bind_makes_a_missing_socket_directory_owner_only() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir
-        .path()
-        .join("Group Containers")
-        .join("group")
-        .join("dev");
-    let listener = server::bind(&root).expect("a listener in a directory not yet made");
-    assert!(root.join(super::SOCKET_FILE).exists());
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        for made in [&root, root.parent().unwrap()] {
-            let mode = std::fs::metadata(made).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o700, "{} is owner-only", made.display());
-        }
-    }
-    drop(listener);
 }
 
 #[test]

@@ -65,13 +65,6 @@ subtle = "2"
 rand = "0.8"
 hex = "0.4"
 base64 = "0.23"
-# 6.0 turns what used to be unconditional into features. `alloc` is the one we
-# need — it is what gates base32 secrets. Deliberately *not* `std`: all it adds
-# over `alloc` is the `*_current` helpers that read the clock themselves, and it
-# names `rand?/thread_rng`, which is enough to drag `rand` 0.10 into Cargo.lock
-# beside the 0.8 this crate uses. `commands::generator` passes the timestamp in
-# instead, which it already had to compute for the window countdown.
-totp-rs = { version = "6", default-features = false, features = ["alloc"] }
 zxcvbn = "3"
 log = "0.4.34"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
