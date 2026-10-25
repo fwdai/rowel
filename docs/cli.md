@@ -144,8 +144,9 @@ With no placeholder at all the command simply runs; nothing is asked. Without
 placeholders' items, this command line as the target, mode `env`, and your
 `--reason`. Rowel asks you (env mode is never silent unless a standing rule
 names the full command line); a `denied`, or a refusal, is one line on stderr
-and exit 1. The grant is for this one command, so it is ended when the
-command is. A `--grant` you bring — from `rowel_request_secret`, say — is
+and exit 1. The grant is for this one command, so it is ended as soon as
+every value is resolved, before the command starts: nothing after that needs
+it, and a signal or a kill cannot leave it open. A `--grant` you bring — from `rowel_request_secret`, say — is
 used and left alone.
 
 Every placeholder is then resolved under the grant at this command line; one
@@ -221,8 +222,10 @@ X-Rowel-Grant: <grant id from rowel_request_secret>
   `Content-Length` and the hop-by-hop headers (`Connection`, `Keep-Alive`,
   `Proxy-*`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`) are dropped.
   The body is buffered whole, at most 32 MiB.
-- **The response**: status, headers and body come back with every value this
-  request released redacted (its placeholder in its place, in headers and
+- **The response** is asked for unencoded (`Accept-Encoding: identity`,
+  whatever your client sent), since a compressed echo of a value would pass
+  the redactor; an upstream that answers encoded anyway gets a `502`. Status,
+  headers and body come back with every value this request released redacted (its placeholder in its place, in headers and
   body alike, through the same redactor as `rowel run`); hop-by-hop headers
   are dropped and `Content-Length` is the redacted body's.
 - **Limits**: 60 requests a minute per grant id (a bucket of 60, refilled one

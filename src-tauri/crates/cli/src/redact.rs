@@ -99,51 +99,56 @@ impl Redactor {
         buffer.extend_from_slice(&self.carry);
         buffer.extend_from_slice(chunk);
         self.carry.clear();
-
-        let mut pos = 0;
-        while let Some((at, len, placeholder)) = self.earliest_match(&buffer[pos..]) {
-            out.write_all(&buffer[pos..pos + at])?;
-            out.write_all(self.placeholders[placeholder].as_bytes())?;
-            pos += at + len;
-        }
-        let rest = &buffer[pos..];
-        let keep = self.partial_suffix(rest);
-        out.write_all(&rest[..rest.len() - keep])?;
-        self.carry.extend_from_slice(&rest[rest.len() - keep..]);
+        let done = self.write_redacted(&buffer, out, false)?;
+        self.carry.extend_from_slice(&buffer[done..]);
         out.flush()
     }
 
-    /// Write out what was carried: the stream has ended, so it was not the
-    /// start of anything.
+    /// Write out what was carried, redacted: the stream has ended, so nothing
+    /// in it can grow into a longer match any more.
     pub fn finish(&mut self, out: &mut impl Write) -> io::Result<()> {
-        out.write_all(&self.carry)?;
-        self.carry.clear();
+        let carried = std::mem::take(&mut self.carry);
+        self.write_redacted(&carried, out, true)?;
         out.flush()
     }
 
-    /// The first match in `hay` — the longest needle where several start at
-    /// the same place — as (offset, length, placeholder index).
-    fn earliest_match(&self, hay: &[u8]) -> Option<(usize, usize, usize)> {
-        (0..hay.len()).find_map(|at| {
-            self.needles
+    /// Write `buffer` with every needle replaced, left to right, the longest
+    /// where several start at one place, and return how much of it was
+    /// written. Short of the stream's `end`, it stops at the first place
+    /// where the buffer runs out partway through a needle: what is there may
+    /// still be that needle — or a longer one around a shorter value that
+    /// already matched, a password inside a URL — and deciding now would
+    /// print part of it. The rest is carried to the next chunk.
+    fn write_redacted(&self, buffer: &[u8], out: &mut impl Write, end: bool) -> io::Result<usize> {
+        let (mut at, mut written) = (0, 0);
+        while at < buffer.len() {
+            let hay = &buffer[at..];
+            if !end
+                && hay.len() < self.longest
+                && self
+                    .needles
+                    .iter()
+                    .any(|n| n.bytes.len() > hay.len() && n.bytes.starts_with(hay))
+            {
+                break;
+            }
+            match self
+                .needles
                 .iter()
-                .filter(|n| hay[at..].starts_with(&n.bytes))
+                .filter(|n| hay.starts_with(&n.bytes))
                 .max_by_key(|n| n.bytes.len())
-                .map(|n| (at, n.bytes.len(), n.placeholder))
-        })
-    }
-
-    /// How many bytes at the end of `rest` are the beginning of some needle,
-    /// and so cannot be written out yet.
-    fn partial_suffix(&self, rest: &[u8]) -> usize {
-        let most = rest.len().min(self.longest.saturating_sub(1));
-        (1..=most)
-            .rev()
-            .find(|&k| {
-                let tail = &rest[rest.len() - k..];
-                self.needles.iter().any(|n| n.bytes.starts_with(tail))
-            })
-            .unwrap_or(0)
+            {
+                Some(needle) => {
+                    out.write_all(&buffer[written..at])?;
+                    out.write_all(self.placeholders[needle.placeholder].as_bytes())?;
+                    at += needle.bytes.len();
+                    written = at;
+                }
+                None => at += 1,
+            }
+        }
+        out.write_all(&buffer[written..at])?;
+        Ok(at)
     }
 }
 
@@ -390,6 +395,27 @@ mod tests {
             );
         }
         assert_eq!(json_escaped("ends\""), "ends\\\"");
+    }
+
+    // Two released values where one holds the other — a token and the
+    // `user:token` pair, a password and the URL around it: wherever a chunk
+    // ends, the longer one is replaced whole and no part of it is printed.
+    #[test]
+    fn a_value_inside_a_longer_one_never_lets_the_longer_one_through() {
+        let password = "s3cr3t-pw";
+        let url = "postgres://admin:s3cr3t-pw@db.internal/app";
+        let pair = "s3cr3t-pw:extra-tail";
+        let text = format!("a {url} b {pair} c {password} d");
+        let expected = "a <url> b <pair> c <pw> d";
+        for split in 0..=text.len() {
+            let mut r = redactor(&[(password, "<pw>"), (url, "<url>"), (pair, "<pair>")]);
+            let (head, tail) = text.as_bytes().split_at(split);
+            assert_eq!(through(&mut r, &[head, tail]), expected, "split at {split}");
+        }
+        // A stream that ends inside the longer value still redacts the
+        // shorter one it holds.
+        let mut r = redactor(&[(password, "<pw>"), (pair, "<pair>")]);
+        assert_eq!(through(&mut r, &[b"x s3cr3t-pw:ext"]), "x <pw>:ext");
     }
 
     #[test]

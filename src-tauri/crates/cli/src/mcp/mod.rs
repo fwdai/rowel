@@ -294,7 +294,7 @@ mod tests {
                 json!({
                     "ref": "rowel://lb/stripe/apiKey",
                     "mode": "env",
-                    "target": "stripe balance retrieve --live",
+                    "target": "stripe balance retrieve --live --memo \"a b\"",
                 }),
             )],
         );
@@ -302,7 +302,7 @@ mod tests {
         assert!(!is_error, "{result}");
         assert_eq!(result["state"], "active");
         assert!(result["use"].as_str().unwrap().starts_with(
-            "rowel run --grant grant-1 --env NAME=rowel://lb/stripe/apiKey -- stripe balance retrieve --live"
+            "rowel run --grant grant-1 --env NAME=rowel://lb/stripe/apiKey -- stripe balance retrieve --live --memo 'a b'"
         ));
         let connection = harness.host();
         let requests = connection.host().grant_requests.borrow();
@@ -310,7 +310,10 @@ mod tests {
         assert_eq!(request.items, ItemSelector::Ids(vec!["stripe".into()]));
         assert_eq!(
             request.targets,
-            vec![Target::Command("stripe balance retrieve --live".into())]
+            vec![Target::Command(
+                "stripe balance retrieve --live --memo 'a b'".into()
+            )],
+            "written as `rowel run` will name the line"
         );
         assert_eq!(request.modes, vec![Mode::Env]);
     }
@@ -327,6 +330,8 @@ mod tests {
             ("mode", json!("fill")),
             ("mode", json!("token")),
             ("target", json!("")),
+            ("target", json!("stripe balance | cat")),
+            ("target", json!("echo $STRIPE_KEY")),
         ] {
             let mut args = good.clone();
             args[key] = value;
@@ -341,7 +346,7 @@ mod tests {
             json!({ "ref": "rowel://lb/stripe/apiKey", "mode": "header", "target": "api.stripe.com" }),
         ));
         let replies = served(&mut harness, &calls);
-        assert_eq!(replies.len(), 7);
+        assert_eq!(replies.len(), 9);
         for reply in &replies {
             let (result, is_error) = tool_result(reply);
             assert!(is_error, "{result}");

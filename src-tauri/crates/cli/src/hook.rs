@@ -98,7 +98,7 @@ pub fn serve(
 pub fn pre(event: &Value, platform: Platform, program: &str) -> Option<Value> {
     let tool_input = shell_event(event, platform)?;
     let line = tool_input.get("command")?.as_str()?;
-    if command::has_operator(line) {
+    if command::needs_shell(line) {
         return None;
     }
     let words = command::words(line)?;

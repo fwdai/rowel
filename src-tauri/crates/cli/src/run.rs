@@ -2,7 +2,7 @@
 //! command are resolved under a grant into that one child's environment,
 //! the child's output passes through the redactor on its way to the
 //! parent's, and the grant — asked for here when the caller brought none —
-//! is ended when the child is. The parent shell, and so the agent that
+//! is ended as soon as every value is resolved, before the child starts. The parent shell, and so the agent that
 //! typed the command, never holds the value.
 //!
 //! The command line the grant names is the one every resolve names and the
@@ -94,6 +94,11 @@ pub fn execute(
             }
         }
     }
+    // Every value is in hand before the child starts, so a grant this run
+    // asked for has done its work: it ends now rather than when the child
+    // does, which a signal, a timeout's kill or a grandchild holding the
+    // pipes open could keep from ever coming.
+    end(broker);
 
     let mut child = Command::new(&args.argv[0]);
     child
@@ -107,7 +112,6 @@ pub fn execute(
     let mut child = match child.spawn() {
         Ok(child) => child,
         Err(error) => {
-            end(broker);
             return fail(
                 stderr,
                 FAILED,
@@ -128,7 +132,6 @@ pub fn execute(
         scope.spawn(move || pump(child_err, &mut err_redactor, stderr));
         child.wait()
     });
-    end(broker);
     match status {
         Ok(status) => status.code().unwrap_or(FAILED),
         Err(_) => FAILED,
