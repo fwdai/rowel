@@ -134,15 +134,19 @@ line, and the redactor catches a value printed verbatim.
 - **As built in I2** (`grants.js::onSignal`): `rowel-signal` → `test-associate`
   → sealed `get-signals`, also once after every reconnect. A `fill-grant`
   is remembered under its origin with the host's `expiresAtMs`, the origin
-  is marked agent-driven (`rowelAgentGrants`), and the active tab at that
-  origin (exact origin match, port included) is told `redetect_fields`,
-  upstream's own message that reloads the content script's settings and
-  ends in a retrieval — so a tab loaded before agent mode went on fills as
-  agent mode rather than through the person's icons; `page.clearLogins`
-  first, so the retrieval reaches the host. Without a tab the grant waits
-  for the next load at that origin. `item` and `autoSubmit` are not read:
-  the host serves the admitted item on `get-logins`, and submit stays
-  upstream's `autoSubmit` setting.
+  is marked agent-driven (`rowelAgentGrants`). The host tells every profile
+  and the agent drives one: only the profile with a tab at that origin —
+  now, or when one finishes loading there within the grant's life
+  (`tabs.onUpdated`) — turns agent mode on and tells the tab
+  `redetect_fields`, upstream's own message that reloads the content
+  script's settings and ends in a retrieval, so a tab loaded before agent
+  mode went on fills as agent mode rather than through the person's icons
+  (`page.clearLogins` first, so the retrieval reaches the host); the other
+  profiles keep the grant in memory and change nothing. A login served
+  under a grant marks it `served` in that profile, and the sign-out at the
+  end is only that profile's: signed out where it was signed in. `item`
+  and `autoSubmit` are not read: the host serves the admitted item on
+  `get-logins`, and submit stays upstream's `autoSubmit` setting.
 - **As built in I1** (`extension/rowel/background/grants.js`,
   `content/agent-mode.js`, `popups/agent-mode.js`): the flag is the
   `agentMode` entry of the extension's settings object; the grant map is

@@ -244,9 +244,11 @@ carries content.
 
 - `rowel mcp` (✅ I2) — a stdio MCP server (newline-delimited JSON-RPC 2.0)
   exposing tools that map 1:1 onto the agent actions:
-  `rowel_request_login(site, reason?)`, `rowel_request_secret(ref, mode,
-  target, reason?)` (served from I3; denied by policy until then),
-  `rowel_wait(grant_id)`, `rowel_list_visible()`, `rowel_end(grant_id)`. A
+  `rowel_request_login(site, reason?)`, `rowel_wait(grant_id)`,
+  `rowel_list_visible()`, `rowel_end(grant_id)`; `rowel_request_secret(ref,
+  mode, target, reason?)` is listed only from I3, when the host can serve a
+  header or env grant — a listed tool that always fails teaches an agent to
+  retry it. A
   tool result is the opened reply's named fields only (`grantId`, `state`,
   `expiresAtMs`, `retryAfterMs`, `uses`, `items` / `ok`), never a value, by
   construction: the client is of kind `agent`, with its own key, associated

@@ -166,8 +166,10 @@ secret. Spec `02` (local association), `04`, `05` (signals, session end), `06`
       fills through the existing path with `grantId`, agent mode on for the
       grant's lifetime when it was off (derived in the extension; no
       `set-agent-mode` signal) (`05 §2`).
-- [ ] `src-tauri/crates/cli` (`rowel`): `status`, `mcp` (stdio MCP, five tools,
-      no values in results, agent key in a `0600` file for now) (`04`).
+- [ ] `src-tauri/crates/cli` (`rowel-cli`): `status`, `mcp` (stdio MCP, the
+      four tools the desktop host can serve — `rowel_request_secret` is
+      listed from I3 — no values in results, agent key in a `0600` file for
+      now) (`04`).
 - [ ] Session end: `grant-ended` on `end-grant` and on expiry; cookie deletion
       per registrable domain with the existing `cookies` permission; dialog
       notice (`05`).
