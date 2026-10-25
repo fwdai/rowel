@@ -61,6 +61,16 @@ pub struct Workspace {
     /// so it does not travel in the pack or reach the user's other devices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Whether agents may use items in this workspace: the lockbox's own
+    /// agent-access switch, off until the user turns it on in its settings. A
+    /// lockbox with it off never answers an agent, whatever the rules say.
+    ///
+    /// Device-local like the colour: a rule or a grant names a client key
+    /// that exists only on this device, so the switch has nothing to travel
+    /// with. Not written while off, so a registry from before agents existed
+    /// reads back as it was.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agents: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -81,6 +91,7 @@ impl Default for Registry {
                 vault_id: None,
                 item_count: None,
                 color: None,
+                agents: false,
             }],
         }
     }
@@ -259,6 +270,7 @@ mod tests {
                     vault_id: None,
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -266,6 +278,7 @@ mod tests {
                     vault_id: Some("cafe".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
             ],
         };
@@ -317,6 +330,31 @@ mod tests {
         assert_eq!(json.matches("color").count(), 1, "{json}");
     }
 
+    // The agent-access switch survives a save, an entry written before it
+    // existed reads as off, and off is not written back at all.
+    #[test]
+    fn agent_access_round_trips_and_is_off_and_unwritten_by_default() {
+        let root = tmp_root();
+        fs::write(
+            root.join(REGISTRY_FILE),
+            r#"{"active":"default","workspaces":[{"id":"default","name":null},{"id":"a1b2","name":"Work"}]}"#,
+        )
+        .unwrap();
+        let mut registry = Registry::load(&root);
+        assert!(!registry.workspaces[0].agents);
+        assert!(!registry.workspaces[1].agents);
+
+        registry.workspaces[1].agents = true;
+        registry.save(&root).unwrap();
+        let loaded = Registry::load(&root);
+        assert!(!loaded.workspaces[0].agents);
+        assert!(loaded.workspaces[1].agents);
+
+        let json = fs::read_to_string(root.join(REGISTRY_FILE)).unwrap();
+        assert_eq!(json.matches("\"agents\":true").count(), 1, "{json}");
+        assert!(!json.contains("\"agents\":false"), "{json}");
+    }
+
     #[test]
     fn recolor_sets_and_clears_and_refuses_an_unknown_id() {
         let mut registry = Registry::default();
@@ -345,6 +383,7 @@ mod tests {
                     vault_id: Some("cafe".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -352,6 +391,7 @@ mod tests {
                     vault_id: None,
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
             ],
         };
@@ -377,6 +417,7 @@ mod tests {
                 vault_id: None,
                 item_count: None,
                 color: None,
+                agents: false,
             }],
         }
         .save(&root)
@@ -406,6 +447,7 @@ mod tests {
                     vault_id: Some("beef".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -413,6 +455,7 @@ mod tests {
                     vault_id: Some("cafe".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "c3d4".into(),
@@ -420,6 +463,7 @@ mod tests {
                     vault_id: None,
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
             ],
         }
@@ -460,6 +504,7 @@ mod tests {
                 vault_id: Some("cafe".into()),
                 item_count: None,
                 color: None,
+                agents: false,
             }
         );
         // The one that was not promoted is untouched, and still second.

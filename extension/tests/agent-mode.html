@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Agent mode tests</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="stylesheet" href="../css/colors.css">
+    <link rel="stylesheet" href="../bootstrap/bootstrap.min.css">
+    <link rel="stylesheet" href="../fonts/fork-awesome.min.css">
+    <link rel="stylesheet" href="../options/options.css">
+    <!-- Rowel: the fixture page for agent mode (content/agent-mode.js). Loads the
+         content scripts the way tests.html does, behind a stub WebExtension API
+         so the fill, the exposure check and the clear-on-failure path can run
+         without a background script or the native host. -->
+    <script src="browser-stub.js"></script>
+    <script src="../common/browser-polyfill.min.js"></script>
+    <script defer src="../common/global.js"></script>
+    <script defer src="../common/sites.js"></script>
+    <script defer src="../content/ui.js"></script>
+    <script defer src="../content/icon.js"></script>
+    <script defer src="../content/pwgen.js"></script>
+    <script defer src="../content/autocomplete.js"></script>
+    <script defer src="../content/banner.js"></script>
+    <script defer src="../content/credential-autocomplete.js"></script>
+    <script defer src="../content/custom-fields-banner.js"></script>
+    <script defer src="../content/fields.js"></script>
+    <script defer src="../content/form.js"></script>
+    <script defer src="../content/fill.js"></script>
+    <script defer src="../content/agent-mode.js"></script>
+    <script defer src="../content/icon-handler.js"></script>
+    <script defer src="../content/rowel.js"></script>
+    <script defer src="../content/observer-helper.js"></script>
+    <script defer src="../content/totp-autocomplete.js"></script>
+    <script defer src="../content/totp-field.js"></script>
+    <script defer src="../content/username-field.js"></script>
+    <script defer src="assert.js"></script>
+    <script defer src="agent-mode-tests.js"></script>
+  </head>
+  <body class="pt-3 pb-5">
+    <div class="container-fluid">
+      <div class="row">
+        <main class="col-md-9 col-lg-10 offset-md-3 offset-lg-2 px-4 mt-5 mt-md-0">
+          <div class="content">
+
+            <!-- The fixtures come first: rows added to the cards below must not push a form
+                 out of the viewport, where kpxcFields.isVisible (elementFromPoint) cannot see it. -->
+            <!-- Test content -->
+            <!-- =================================== -->
+
+            <!-- A login form with a one-time code field, and a line the page can echo into -->
+            <div id="agent-login" style="display: none;">
+              <form action="#" id="agent-login-form">
+                <input placeholder="username" type="text" name="username" id="agent-username">
+                <input placeholder="password" type="password" name="password" id="agent-password">
+                <input placeholder="code" type="text" name="otp" id="agent-otp" maxlength="6" autocomplete="one-time-code">
+                <input type="submit" value="Sign in">
+              </form>
+              <div id="agent-login-echo"></div>
+            </div>
+
+            <!-- The variant that echoes the submitted password back into the page -->
+            <div id="agent-echo" style="display: none;">
+              <form action="#" id="agent-echo-form">
+                <input placeholder="username" type="text" name="username" id="agent-echo-username">
+                <input placeholder="password" type="password" name="password" id="agent-echo-password">
+                <input type="submit" value="Sign in">
+              </form>
+              <div id="agent-echo-text"></div>
+              <input type="text" id="agent-echo-input">
+              <textarea id="agent-echo-area"></textarea>
+            </div>
+
+            <!-- The same URL came back with the password the server put into the form -->
+            <div id="agent-failed" style="display: none;">
+              <form action="#" id="agent-failed-form">
+                <input type="text" name="username" id="agent-failed-username">
+                <input type="password" name="password" id="agent-failed-password">
+                <input type="text" name="other" id="agent-failed-other">
+              </form>
+            </div>
+
+            <!-- Upstream's basic1 fixture (tests.html), for the reused input-field assertion -->
+            <div id="basic1" style="display: none;">
+              <input placeholder="username" type="text" name="loginField">
+              <input placeholder="password" type="password" name="passwordField">
+            </div>
+
+            <div class="tab">
+              <h2 class="pb-3 mt-0">Agent mode tests</h2>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Agent mode on: hidden UI and automatic fill (agent-mode.js)</div>
+                <div class="card-body" id="agent-on-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Agent mode retrieves on its own (rowel.js)</div>
+                <div class="card-body" id="agent-retrieve-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Exposure scan and clear (agent-mode.js)</div>
+                <div class="card-body" id="agent-scan-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Exposure after fill: the page echoes the password (agent-mode.js)</div>
+                <div class="card-body" id="agent-exposure-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Clear on failure (agent-mode.js)</div>
+                <div class="card-body" id="agent-failure-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> One fill's state does not reach the next (agent-mode.js)</div>
+                <div class="card-body" id="agent-fill-state-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> A fill ends when the next begins (agent-mode.js)</div>
+                <div class="card-body" id="agent-lifecycle-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Agent mode off: upstream behaviour (agent-mode.js)</div>
+                <div class="card-body" id="agent-off-results"></div>
+              </div>
+
+              <div class="card my-4 shadow">
+                <div class="card-header h6 rounded-0"><i class="fa fa-meh-o" aria-hidden="true"></i> Input field matching in both modes (rowel.js)</div>
+                <div class="card-body" id="input-field-results"></div>
+              </div>
+            </div>
+
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      // The echo variant: a sign-in that fails and shows what was typed, without navigating —
+      // in its text, in two fields of its own, and copied into the login form's username field.
+      document.getElementById('agent-echo-form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          const password = document.getElementById('agent-echo-password').value;
+          document.getElementById('agent-echo-text').textContent = 'Wrong password: ' + password;
+          document.getElementById('agent-echo-input').value = password;
+          document.getElementById('agent-echo-area').value = 'debug: ' + password;
+          document.getElementById('agent-echo-username').value = password;
+      });
+    </script>
+  </body>
+</html>

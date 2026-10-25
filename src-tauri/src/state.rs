@@ -272,6 +272,22 @@ pub struct AppState {
     /// rather than a sleeping thread per activation; the latest resume wins.
     #[cfg(mobile)]
     pub consent_grace: std::sync::Arc<crate::timer::Timer>,
+    /// The grants issued to agents through the browser extension, and each
+    /// client's recent asking (`crate::agents`). Memory only, and cleared with
+    /// every lock: a grant outlives nothing. Taken after `session`, never
+    /// before it, since writing a grant's audit row needs the open store.
+    #[cfg(desktop)]
+    pub agents: Mutex<crate::agents::AgentState>,
+    /// Armed to the earliest moment a grant expires, and re-armed from its own
+    /// callback (`agents::rearm`). One timer for every grant, like the auto-lock.
+    #[cfg(desktop)]
+    pub agent_expiry: std::sync::Arc<crate::timer::Timer>,
+    /// This install's id, the audit log's writer id (`storage::install_id`),
+    /// read or minted once per process and then fixed: two first calls cannot
+    /// mint two ids, and a root that will not take the file still leaves the
+    /// process with one id.
+    #[cfg(desktop)]
+    pub install_id: std::sync::OnceLock<String>,
 }
 
 impl AppState {
@@ -317,6 +333,12 @@ impl Default for AppState {
             pending_auth: Mutex::default(),
             #[cfg(mobile)]
             consent_grace: crate::timer::Timer::spawn(),
+            #[cfg(desktop)]
+            agents: Mutex::default(),
+            #[cfg(desktop)]
+            agent_expiry: crate::timer::Timer::spawn(),
+            #[cfg(desktop)]
+            install_id: std::sync::OnceLock::new(),
         }
     }
 }

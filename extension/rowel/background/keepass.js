@@ -156,7 +156,7 @@ keepass.retrieveCredentials = async function(tab, args = []) {
             messageData.httpAuth = 'true';
         }
 
-        const response = await keepassClient.sendMessage(kpAction, tab, messageData, nonce);
+        const response = await grants.sendGetLogins(tab, messageData, nonce); // Rowel: agent mode adds grantId / agentMode (background/grants.js)
         if (response) {
             entries = removeDuplicateEntries(response.entries);
             keepass.updateLastUsed(keepass.databaseHash);
@@ -565,7 +565,7 @@ keepass.createNewGroup = async function(tab, args = []) {
     }
 };
 
-keepass.getTotp = async function(tab, args = []) {
+keepass.getTotp = async function(tab, args = [], sender) { // Rowel: the sender names the frame asking
     const [ uuid, oldTotp ] = args;
     if (!keepass.featuresList.newTotp) {
         return oldTotp;
@@ -583,6 +583,7 @@ keepass.getTotp = async function(tab, args = []) {
         action: kpAction,
         uuid: uuid
     };
+    Object.assign(messageData, await grants.totpFields(tab, sender)); // Rowel: agent mode adds agentMode and the frame's grantId
 
     try {
         const response = await keepassClient.sendMessage(kpAction, tab, messageData, nonce);
@@ -986,6 +987,7 @@ keepass.updateDatabase = async function() {
     keepass.associated.value = false;
     keepass.associated.hash = null;
     page.clearAllLogins();
+    grants.clearAll(); // Rowel: a lock ends every grant; nothing is served from a locked vault
 
     await keepass.testAssociation(null, [ true ]);
 

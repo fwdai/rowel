@@ -43,6 +43,9 @@ pub struct WorkspaceStatus {
     /// known while the workspace is locked. `None` (`null`) exactly when
     /// `synced` is false.
     pub provider: Option<crate::sync::Provider>,
+    /// The registry's agent-access switch, lifted beside `synced` so the
+    /// frontend reads it off every row (see [`Workspace::agents`]).
+    pub agents: bool,
 }
 
 /// Every workspace in `registry` with its live sync state, for `app_status`.
@@ -55,10 +58,75 @@ pub fn statuses(registry: &Registry, root: &Path) -> Vec<WorkspaceStatus> {
             WorkspaceStatus {
                 synced: provider.is_some(),
                 provider,
+                agents: workspace.agents,
                 workspace: workspace.clone(),
             }
         })
         .collect()
+}
+
+/// Whether agents may use items in workspace `id`, as the registry at `root`
+/// has it, for a caller that holds `workspace_lock` — the session's first
+/// look at the switches (`agents::initialise`), which has to be whole with
+/// respect to [`set_agents`]. For the extension host, which is desktop only,
+/// like `agents`.
+#[cfg(desktop)]
+pub(crate) fn agents_enabled_locked(root: &Path, id: &str) -> bool {
+    Registry::load(root)
+        .workspaces
+        .iter()
+        .any(|w| w.id == id && w.agents)
+}
+
+/// Turn agent access for workspace `id` on or off, through the registry's
+/// own write path. `NotFound` for an id the registry does not name. This is
+/// the one place the flag is written, so it is the one place a change of it
+/// is acted on, and it holds `workspace_lock` for the whole of it — the
+/// registry's lock, and the outer one: inside it, `agents::change_access`
+/// takes the session and agents locks, writes the registry, and gives the
+/// switch the session holds the same value in the same section, so a
+/// request reading the registry for its first look at the switches (under
+/// this lock too) and a release (under the agents lock) each see this whole
+/// or not at all. Any change moves the access epoch, for any lockbox, on or
+/// off; the open lockbox's access going off also ends every grant up.
+pub fn set_agents(app: &AppHandle, id: &str, enabled: bool) -> Result<()> {
+    let root = storage::root_dir(app)?;
+    let state = app.state::<AppState>();
+    let _paths = state.workspace_lock.lock().unwrap();
+    // Strict, as every registry write is: a file that is there and unreadable
+    // is refused, not saved over.
+    let mut registry = Registry::read(&root)?.unwrap_or_default();
+    let Some(workspace) = registry.workspaces.iter_mut().find(|w| w.id == id) else {
+        return Err(Error::NotFound);
+    };
+    if !agents_switched(enabled)(workspace) {
+        return Ok(());
+    }
+    #[cfg(desktop)]
+    {
+        let of_open = *state.active_workspace.lock().unwrap() == id;
+        crate::agents::change_access(app, "lockbox", |access| {
+            registry.save(&root)?;
+            if of_open {
+                if let Some(access) = access {
+                    access.lockbox_on = enabled;
+                }
+            }
+            Ok(((), true))
+        })
+    }
+    #[cfg(not(desktop))]
+    registry.save(&root)
+}
+
+fn agents_switched(enabled: bool) -> impl FnOnce(&mut Workspace) -> bool {
+    move |workspace| {
+        if workspace.agents == enabled {
+            return false;
+        }
+        workspace.agents = enabled;
+        true
+    }
 }
 
 /// Where a delete parks files until it is safe to remove them, under the root.
@@ -308,11 +376,12 @@ pub fn record_vault_id_of(app: &AppHandle, id: &str, vault_id: &str) -> Result<(
         workspace.vault_id = Some(vault_id.to_string());
         true
     })
+    .map(drop)
 }
 
 /// [`record_vault_name`] for workspace `id` rather than the active one.
 pub fn record_vault_name_of(app: &AppHandle, id: &str, name: &str) -> Result<()> {
-    update_of(app, id, named(name))
+    update_of(app, id, named(name)).map(drop)
 }
 
 /// [`record_vault_name`] for a caller that already holds `workspace_lock`.
@@ -321,7 +390,7 @@ pub fn record_vault_name_of(app: &AppHandle, id: &str, name: &str) -> Result<()>
 /// this one without letting go in between, so it cannot take the lock again
 /// here (see `commands::workspace::name_the_open_vault`).
 pub(crate) fn record_vault_name_locked(root: &Path, active: &str, name: &str) -> Result<()> {
-    update_active_locked(root, active, named(name))
+    update_active_locked(root, active, named(name)).map(drop)
 }
 
 // The single edit both mirrors make, so the two callers cannot drift apart.
@@ -366,7 +435,7 @@ fn count_in(root: &Path, id: &str, count: u32) -> Result<()> {
     if Registry::read(root)?.is_none() {
         return Ok(());
     }
-    update_active_locked(root, id, counted(count))
+    update_active_locked(root, id, counted(count)).map(drop)
 }
 
 /// [`record_item_count`] for a caller that already holds `workspace_lock` and
@@ -409,11 +478,17 @@ fn update_active(app: &AppHandle, change: impl FnOnce(&mut Workspace) -> bool) -
     let state = app.state::<AppState>();
     let _paths = state.workspace_lock.lock().unwrap();
     let active = state.active_workspace.lock().unwrap().clone();
-    update_active_locked(&root, &active, change)
+    update_active_locked(&root, &active, change).map(drop)
 }
 
-// [`update_active`] for a named workspace, under the same lock.
-fn update_of(app: &AppHandle, id: &str, change: impl FnOnce(&mut Workspace) -> bool) -> Result<()> {
+// [`update_active`] for a named workspace, under the same lock. Says whether
+// anything was written, for a caller that acts on a change and not on a
+// write of the same value.
+fn update_of(
+    app: &AppHandle,
+    id: &str,
+    change: impl FnOnce(&mut Workspace) -> bool,
+) -> Result<bool> {
     let root = storage::root_dir(app)?;
     let state = app.state::<AppState>();
     let _paths = state.workspace_lock.lock().unwrap();
@@ -423,11 +498,12 @@ fn update_of(app: &AppHandle, id: &str, change: impl FnOnce(&mut Workspace) -> b
 /// [`update_active`]'s core, for a caller that already holds `workspace_lock`
 /// and already knows which workspace is active — one with more than the
 /// registry to write, which must not let go of the lock between the two.
+/// `Ok(false)` when `change` changed nothing and nothing was written.
 fn update_active_locked(
     root: &Path,
     active: &str,
     change: impl FnOnce(&mut Workspace) -> bool,
-) -> Result<()> {
+) -> Result<bool> {
     // Strict: a file that is there and unreadable is refused, not saved over
     // (see `Registry::read`). No file is the single-workspace default.
     let mut registry = Registry::read(root)?.unwrap_or_default();
@@ -435,9 +511,10 @@ fn update_active_locked(
         return Err(Error::NotFound);
     };
     if !change(workspace) {
-        return Ok(());
+        return Ok(false);
     }
-    registry.save(root)
+    registry.save(root)?;
+    Ok(true)
 }
 
 /// Which workspace the app's paths currently resolve to.
@@ -517,6 +594,7 @@ mod tests {
                     vault_id: None,
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -524,6 +602,7 @@ mod tests {
                     vault_id: None,
                     item_count: Some(3),
                     color: None,
+                    agents: false,
                 },
             ],
         };
@@ -581,6 +660,7 @@ mod tests {
                     vault_id: None,
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -588,6 +668,7 @@ mod tests {
                     vault_id: Some("cafe".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
             ],
         };
@@ -852,6 +933,7 @@ mod tests {
                     vault_id: Some("beef".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
                 Workspace {
                     id: "w2".into(),
@@ -859,6 +941,7 @@ mod tests {
                     vault_id: Some("cafe".into()),
                     item_count: None,
                     color: None,
+                    agents: false,
                 },
             ],
         };
@@ -901,6 +984,7 @@ mod tests {
                 vault_id: Some("cafe".into()),
                 item_count: None,
                 color: None,
+                agents: false,
             }],
         };
         let token = dir_of(&root, "w2").join(Provider::Dropbox.token_file_name());
@@ -918,5 +1002,42 @@ mod tests {
         // Not configured is no provider, whatever the empty file is named.
         fs::write(&token, b"").unwrap();
         assert_eq!(statuses(&registry, &root)[0].provider, None);
+    }
+
+    // Off until turned on, per lockbox, written through the registry's own
+    // path and readable while locked — and the frontend sees it on every row.
+    #[test]
+    fn agent_access_is_off_by_default_and_kept_per_lockbox_in_the_registry() {
+        let root = tmp_root();
+        two_workspaces(&root);
+        let off = Registry::load(&root);
+        assert!(off.workspaces.iter().all(|w| !w.agents));
+        assert!(statuses(&off, &root).iter().all(|s| !s.agents));
+
+        update_active_locked(&root, "a1b2", agents_switched(true)).unwrap();
+        let on = Registry::load(&root);
+        assert!(!on.workspaces[0].agents && on.workspaces[1].agents);
+        let listed = statuses(&on, &root);
+        assert!(!listed[0].agents && listed[1].agents);
+        assert_eq!(serde_json::to_value(&listed[1]).unwrap()["agents"], true);
+
+        update_active_locked(&root, "a1b2", agents_switched(false)).unwrap();
+        assert!(Registry::load(&root).workspaces.iter().all(|w| !w.agents));
+    }
+
+    // A switch already in the asked-for position is no change to write, and a
+    // lockbox the registry does not name cannot be switched at all.
+    #[test]
+    fn agent_access_writes_only_a_change_and_only_for_a_known_lockbox() {
+        let root = tmp_root();
+        let mut registry = two_workspaces(&root);
+        assert!(!agents_switched(false)(&mut registry.workspaces[1]));
+        assert!(agents_switched(true)(&mut registry.workspaces[1]));
+        assert!(!agents_switched(true)(&mut registry.workspaces[1]));
+
+        assert!(matches!(
+            update_active_locked(&root, "missing", agents_switched(true)),
+            Err(Error::NotFound)
+        ));
     }
 }

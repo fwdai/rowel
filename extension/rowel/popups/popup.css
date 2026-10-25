@@ -211,3 +211,41 @@ hr {
 #left-margin {
     margin-left: 1em;
 }
+
+/* Rowel: agent mode (agent-mode.js). The switch sits under the status blocks.
+   While it is on, the body class leaves only the brand row and the
+   "Agent mode is on" screen. Upstream's statusResponse shows its blocks with
+   inline display, hence !important. */
+#rowel-agent-mode .form-check {
+    margin-bottom: 0;
+    padding-left: 2.5em;
+}
+
+#rowel-agent-mode .form-check-label {
+    font-weight: 600;
+}
+
+#rowel-agent-mode .help-text {
+    color: var(--c-text2);
+    font-size: 12px;
+    margin-top: 2px;
+}
+
+#rowel-agent-mode-on {
+    display: none;
+}
+
+#rowel-agent-mode-on .rowel-agent-mode-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+body.rowel-agent-mode-on .container > :not(#settings):not(#rowel-agent-mode-on),
+body.rowel-agent-mode-on #settings .action-buttons-area,
+body.rowel-agent-mode-on #settings .lock-button-area {
+    display: none !important;
+}
+
+body.rowel-agent-mode-on #rowel-agent-mode-on {
+    display: block;
+}

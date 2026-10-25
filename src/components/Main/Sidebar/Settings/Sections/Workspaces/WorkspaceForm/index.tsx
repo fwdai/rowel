@@ -6,6 +6,7 @@ import { CARD } from '@/components/elements/tokens'
 import Preview from './Preview'
 import NameField from './NameField'
 import ColorSwatches from './ColorSwatches'
+import AgentsToggle from './AgentsToggle'
 import { nameTaken } from './nameTaken'
 
 interface Props {
@@ -16,6 +17,11 @@ interface Props {
   /** Every other workspace's label: a name can't be one of them. */
   taken: string[]
   preview: { seed: string; meta: string }
+  /**
+   * The agent-access switch, for a lockbox that exists: a new one starts off
+   * and is switched from its edit page, so the create form leaves this out.
+   */
+  agents?: { value: boolean; onChange: (next: boolean) => void }
   disabled?: boolean
   testidPrefix: string
 }
@@ -30,6 +36,7 @@ export default function WorkspaceForm({
   onColor,
   taken,
   preview,
+  agents,
   disabled,
   testidPrefix
 }: Props) {
@@ -61,6 +68,14 @@ export default function WorkspaceForm({
             testidPrefix={testidPrefix}
           />
         </Field>
+        {agents && (
+          <AgentsToggle
+            value={agents.value}
+            onChange={agents.onChange}
+            disabled={disabled}
+            testidPrefix={testidPrefix}
+          />
+        )}
       </div>
     </div>
   )

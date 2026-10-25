@@ -9,7 +9,7 @@ kpxcEvent.onMessage = async function(request, sender) {
             sender.tab.id = tabs.currentTabId;
         }
 
-        return await kpxcEvent.messageHandlers[request.action](sender.tab, request.args);
+        return await kpxcEvent.messageHandlers[request.action](sender.tab, request.args, sender); // Rowel: the sender too, for a handler that keys by the frame (grants.totpFields)
     }
 };
 

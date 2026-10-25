@@ -12,7 +12,8 @@ use zeroize::Zeroizing;
 
 use super::hash::{attachment_hash, derived_rank, record_hash, vault_digest};
 use super::{
-    now_ms, Attachment, AttachmentMeta, EntryMeta, Record, Result, StoreError, VaultStore,
+    now_ms, Attachment, AttachmentMeta, AuditRecord, EntryMeta, Record, Result, StoreError,
+    VaultStore,
 };
 
 // Ordered schema migrations, versioned via SQLite's `user_version` pragma. This
@@ -127,6 +128,37 @@ fn migration_list() -> Vec<M<'static>> {
            uri        TEXT,
            fetched_at INTEGER NOT NULL
          );",
+        ),
+        // What agents, people and policy did with the lockbox's secrets: one
+        // row per decision and per use, inside the lockbox so it syncs and
+        // restores with it. Each writer (a device, a server) keeps its own
+        // hash chain — `prev_hash` is that writer's previous row's `hash`,
+        // found by `(writer_id, seq - 1)` — so devices never break each
+        // other's chains and no `meta` head is needed. Insert-only.
+        M::up(
+            "CREATE TABLE audit (
+           id          TEXT PRIMARY KEY,
+           writer_id   TEXT NOT NULL,
+           seq         INTEGER NOT NULL,
+           ts_ms       INTEGER NOT NULL,
+           prev_hash   BLOB NOT NULL,
+           hash        BLOB NOT NULL,
+           actor_kind  TEXT NOT NULL,
+           actor_id    TEXT,
+           actor_name  TEXT,
+           run_id      TEXT,
+           acting_for  TEXT,
+           grant_id    TEXT,
+           item_id     TEXT,
+           target      TEXT,
+           mode        TEXT,
+           approval    TEXT,
+           approver    TEXT,
+           event       TEXT NOT NULL,
+           detail      TEXT,
+           UNIQUE (writer_id, seq)
+         );
+         CREATE INDEX audit_ts ON audit(ts_ms);",
         ),
     ]
 }
@@ -654,15 +686,89 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Append one audit row. The row is the writer's to chain (`seq`,
+    /// `prev_hash`, `hash` come filled in); a second row for the same
+    /// `(writer_id, seq)` is refused by the table, which is what makes a race
+    /// between two writers of one chain a loud failure rather than a fork.
+    pub fn audit_insert(&self, rec: &AuditRecord) -> Result<()> {
+        self.lock()?.execute(
+            "INSERT INTO audit (id, writer_id, seq, ts_ms, prev_hash, hash, actor_kind,
+                                actor_id, actor_name, run_id, acting_for, grant_id, item_id,
+                                target, mode, approval, approver, event, detail)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18, ?19)",
+            params![
+                rec.id,
+                rec.writer_id,
+                rec.seq,
+                rec.ts_ms,
+                rec.prev_hash,
+                rec.hash,
+                rec.actor_kind,
+                rec.actor_id,
+                rec.actor_name,
+                rec.run_id,
+                rec.acting_for,
+                rec.grant_id,
+                rec.item_id,
+                rec.target,
+                rec.mode,
+                rec.approval,
+                rec.approver,
+                rec.event,
+                rec.detail,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The newest row of one writer's chain — its `seq` and `hash`, which is
+    /// what the next row chains from — or `None` for a writer with no rows.
+    pub fn audit_last(&self, writer_id: &str) -> Result<Option<(i64, [u8; 32])>> {
+        Ok(self
+            .lock()?
+            .query_row(
+                "SELECT seq, hash FROM audit WHERE writer_id = ?1 ORDER BY seq DESC LIMIT 1",
+                params![writer_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    /// One writer's whole chain, in `seq` order: what verification walks.
+    pub fn audit_rows(&self, writer_id: &str) -> Result<Vec<AuditRecord>> {
+        let conn = self.lock()?;
+        let sql = format!("SELECT {AUDIT_COLS} FROM audit WHERE writer_id = ?1 ORDER BY seq");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![writer_id], row_to_audit)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Rows stamped at or after `since_ts_ms`, newest first, at most `limit`
+    /// of them: what an activity panel shows.
+    pub fn audit_recent(&self, since_ts_ms: i64, limit: u32) -> Result<Vec<AuditRecord>> {
+        let conn = self.lock()?;
+        let sql = format!(
+            "SELECT {AUDIT_COLS} FROM audit WHERE ts_ms >= ?1
+             ORDER BY ts_ms DESC, writer_id, seq DESC LIMIT ?2"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![since_ts_ms, limit], row_to_audit)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     /// Test seam: put the DB back the way the build before the favicon cache
     /// left it — no `favicons` table, no columns added since, stamped at the
     /// version that preceded it — so a test can watch the migrations land on an
     /// existing vault. Keep in step with `migration_list`.
     #[cfg(test)]
     pub(crate) fn drop_favicons_for_test(&self) -> Result<()> {
-        let previous = schema_version() - 5;
+        let previous = schema_version() - 6;
         self.lock()?.execute_batch(&format!(
-            "DROP TABLE emblems;
+            "DROP TABLE audit;
+             DROP TABLE emblems;
              ALTER TABLE entries DROP COLUMN doc_type;
              ALTER TABLE entries DROP COLUMN doc_country;
              DROP TABLE attachments;
@@ -1305,6 +1411,34 @@ fn row_to_record(row: &Row) -> rusqlite::Result<Record> {
         username: row.get(14)?,
         doc_type: row.get(15)?,
         doc_country: row.get(16)?,
+    })
+}
+
+const AUDIT_COLS: &str = "id, writer_id, seq, ts_ms, prev_hash, hash, actor_kind, actor_id, \
+                          actor_name, run_id, acting_for, grant_id, item_id, target, mode, \
+                          approval, approver, event, detail";
+
+fn row_to_audit(row: &Row) -> rusqlite::Result<AuditRecord> {
+    Ok(AuditRecord {
+        id: row.get(0)?,
+        writer_id: row.get(1)?,
+        seq: row.get(2)?,
+        ts_ms: row.get(3)?,
+        prev_hash: row.get(4)?,
+        hash: row.get(5)?,
+        actor_kind: row.get(6)?,
+        actor_id: row.get(7)?,
+        actor_name: row.get(8)?,
+        run_id: row.get(9)?,
+        acting_for: row.get(10)?,
+        grant_id: row.get(11)?,
+        item_id: row.get(12)?,
+        target: row.get(13)?,
+        mode: row.get(14)?,
+        approval: row.get(15)?,
+        approver: row.get(16)?,
+        event: row.get(17)?,
+        detail: row.get(18)?,
     })
 }
 

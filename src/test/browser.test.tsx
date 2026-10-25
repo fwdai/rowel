@@ -15,6 +15,7 @@ const KEY = 'AAAAbbbbCCCCddddEEEEffffGGGGhhhhIIIIjjjjKKK='
 const status = (overrides: Partial<BrowserStatus> = {}): BrowserStatus => ({
   enabled: false,
   keepassxcCompat: true,
+  agents: { enabled: false, defaultStandingDays: 7 },
   browsers: [
     { id: 'chrome', label: 'Google Chrome', detected: true, installed: false, conflict: false },
     { id: 'edge', label: 'Microsoft Edge', detected: true, installed: false, conflict: true },

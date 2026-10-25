@@ -48,6 +48,14 @@ const kpErrors = {
     PASSKEYS_EVAL_BY_CREDENTIAL_NOT_SUPPORTED: 35,
     PASSKEYS_EVAL_BY_CREDENTIAL_NOT_EMPTY: 36,
     PASSKEYS_EVAL_BY_CREDENTIAL_NOT_FOUND: 37,
+    // Rowel: grant refusals in agent mode (spec/04-protocol.md), above KeePassXC's range
+    GRANT_DENIED: 40,
+    GRANT_PENDING: 41,
+    GRANT_EXPIRED: 42,
+    NOT_PERMITTED_FOR_KIND: 43,
+    POLICY_REQUIRES_APPROVAL: 44,
+    RATE_LIMITED: 45,
+    AGENTS_DISABLED: 46,
 
     errorMessages: {
         0: { msg: tr('errorMessageUnknown') },
@@ -87,7 +95,15 @@ const kpErrors = {
         34: { msg: tr('errorMessageCannotUseReferences') },
         35: { msg: tr('errorMessagePasskeysEvalByCredentialNotSupported') },
         36: { msg: tr('errorMessagePasskeysEvalByCredentialNotEmpty') },
-        37: { msg: tr('errorMessagePasskeysEvalByCredentialNotFound') }
+        37: { msg: tr('errorMessagePasskeysEvalByCredentialNotFound') },
+        // Rowel: grant refusals in agent mode
+        40: { msg: tr('errorMessageGrantDenied') },
+        41: { msg: tr('errorMessageGrantPending') },
+        42: { msg: tr('errorMessageGrantExpired') },
+        43: { msg: tr('errorMessageNotPermittedForKind') },
+        44: { msg: tr('errorMessagePolicyRequiresApproval') },
+        45: { msg: tr('errorMessageRateLimited') },
+        46: { msg: tr('errorMessageAgentsDisabled') }
     },
 
     getError(errorCode) {

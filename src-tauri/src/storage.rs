@@ -23,6 +23,10 @@ pub const LOCKOUT_SIDECAR_FILE: &str = "vault.lock.json";
 // User preferences (theme, locale, auto-lock, …). Plaintext and readable while
 // locked by design: the shell has to know what to draw before the vault opens.
 pub const SETTINGS_FILE: &str = "settings.json";
+// This install's own id (see `install_id`): the audit log's writer id, which
+// a workspace id cannot be — every install's primary lockbox is `default`.
+#[cfg(desktop)]
+pub const INSTALL_ID_FILE: &str = "install_id";
 // The sealed account a workspace syncs through, one file per provider and at
 // most one of them present (see `sync::Provider::token_file_name`). Google's
 // keeps the name it had before there was a choice, so an existing install is
@@ -541,6 +545,58 @@ pub fn write_settings(app: &AppHandle, json: &str) -> Result<()> {
     atomic_write_file(&settings_path(app)?, json)
 }
 
+/// This install's id: 16 random bytes, hex, minted the first time it is asked
+/// for and kept in `INSTALL_ID_FILE` on the root, owner-only like the files
+/// beside it. The audit log chains rows per writer (`rowel_broker::audit`),
+/// and two devices sharing a lockbox must not share a writer: the workspace
+/// id would collide — every install's primary lockbox is `default` — the
+/// moment a sync or a restore brings one device's rows to the other.
+///
+/// One id per process: the first call reads or mints it into the one cell on
+/// `AppState` and every later call, on any thread, gets that one. So two
+/// first calls cannot mint two ids, the file is touched once, and a root that
+/// cannot be had or written still leaves the process with one id — logged
+/// once — rather than every row its own writer.
+#[cfg(desktop)]
+pub fn install_id(app: &AppHandle) -> String {
+    let state = app.state::<crate::state::AppState>();
+    install_id_once(&state.install_id, || root_dir(app)).to_string()
+}
+
+/// [`install_id`] over `cell`, with the root looked up only on the first
+/// call.
+#[cfg(desktop)]
+pub(crate) fn install_id_once(
+    cell: &std::sync::OnceLock<String>,
+    root: impl FnOnce() -> Result<PathBuf>,
+) -> &str {
+    cell.get_or_init(|| match root() {
+        Ok(root) => install_id_in(&root),
+        Err(e) => {
+            log::warn!("storage: no data dir for the install id: {e}");
+            crate::crypto::random_hex_id()
+        }
+    })
+}
+
+/// The id kept at `root`, or a fresh one written there — or, when the write
+/// fails, just minted: the caller's cell is what makes it stick.
+#[cfg(desktop)]
+pub(crate) fn install_id_in(root: &Path) -> String {
+    let path = root.join(INSTALL_ID_FILE);
+    if let Ok(id) = fs::read_to_string(&path) {
+        let id = id.trim();
+        if !id.is_empty() {
+            return id.to_string();
+        }
+    }
+    let id = crate::crypto::random_hex_id();
+    if let Err(e) = atomic_write_private(&path, id.as_bytes()) {
+        log::warn!("storage: could not keep the install id: {e}");
+    }
+    id
+}
+
 // The failed-unlock backoff state JSON, or `None` when absent (no failed
 // attempts recorded yet, or a fresh vault).
 //
@@ -948,6 +1004,96 @@ mod tests {
         assert_eq!(fs::read_to_string(to.join(DB_FILE)).unwrap(), "db");
         assert!(!to.join(WAL_FILE).exists());
         assert!(!to.join(GDRIVE_FILE).exists());
+    }
+
+    // The install id is minted once and read back after that, owner-only on
+    // disk like everything beside it; a file emptied by a torn write mints
+    // a fresh one rather than chaining audit rows under no writer.
+    #[cfg(desktop)]
+    #[test]
+    fn the_install_id_is_minted_once_and_kept_owner_only() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let id = super::install_id_in(&root);
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(super::install_id_in(&root), id, "read back, not re-minted");
+        assert_eq!(
+            fs::read_to_string(root.join(super::INSTALL_ID_FILE)).unwrap(),
+            id
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(root.join(super::INSTALL_ID_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        fs::write(root.join(super::INSTALL_ID_FILE), "").unwrap();
+        let fresh = super::install_id_in(&root);
+        assert_ne!(fresh, id);
+        assert_eq!(super::install_id_in(&root), fresh);
+    }
+
+    // Several first calls at once — the first audit rows of a session can
+    // come from more than one connection — see one id, the one the file
+    // ends up holding.
+    #[cfg(desktop)]
+    #[test]
+    fn concurrent_first_calls_see_one_install_id() {
+        let root = tmp_sidecar().parent().unwrap().to_path_buf();
+        let cell = std::sync::OnceLock::new();
+        let seen: Vec<String> = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| super::install_id_once(&cell, || Ok(root.clone())).to_string())
+                })
+                .collect();
+            threads.into_iter().map(|t| t.join().unwrap()).collect()
+        });
+        assert!(seen.iter().all(|id| id == &seen[0]), "{seen:?}");
+        assert_eq!(
+            fs::read_to_string(root.join(super::INSTALL_ID_FILE)).unwrap(),
+            seen[0]
+        );
+        assert_eq!(super::install_id_once(&cell, || Ok(root.clone())), seen[0]);
+    }
+
+    // A root that will not take the file — or no root at all — still leaves
+    // the process with one id: minted once, kept in the cell. Without the
+    // cell every call would mint afresh, and every row would be its own
+    // one-row chain.
+    #[cfg(all(desktop, unix))]
+    #[test]
+    fn a_root_that_cannot_be_written_still_yields_one_id_per_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tmp_sidecar().parent().unwrap().join("read-only");
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let cell = std::sync::OnceLock::new();
+        let id = super::install_id_once(&cell, || Ok(root.clone())).to_string();
+        assert_eq!(id.len(), 32);
+        assert_eq!(super::install_id_once(&cell, || Ok(root.clone())), id);
+        assert!(!root.join(super::INSTALL_ID_FILE).exists());
+        assert_ne!(
+            super::install_id_in(&root),
+            id,
+            "the file alone keeps nothing"
+        );
+
+        let no_root = std::sync::OnceLock::new();
+        let minted =
+            super::install_id_once(&no_root, || Err(Error::Other("no root".into()))).to_string();
+        assert_eq!(minted.len(), 32);
+        assert_eq!(
+            super::install_id_once(&no_root, || Ok(root.clone())),
+            minted,
+            "the root is looked up once"
+        );
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     // A move stopped between a database and its WAL is finished by running the

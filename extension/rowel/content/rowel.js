@@ -395,7 +395,7 @@ kpxc.initCredentialFields = async function() {
 
 // Initializes the login lists for popup and Autocomplete Menu
 kpxc.initLoginPopup = function() {
-    if (kpxc.credentials.length === 0) {
+    if (kpxc.credentials.length === 0 || kpxcAgentMode.isOn()) { // Rowel: the popup stays on its agent-mode screen
         return;
     }
 
@@ -508,6 +508,10 @@ kpxc.prepareCredentials = async function() {
     if (kpxc.credentials.length === 0) {
         logDebug('Error: No combination found.');
         return;
+    }
+
+    if (kpxcAgentMode.isOn()) { // Rowel: the one admitted entry is filled, no autocomplete or login popup
+        return kpxcAgentMode.fill();
     }
 
     if (kpxc.settings.autoFillSingleEntry && kpxc.credentials.length === 1) {
@@ -658,7 +662,7 @@ kpxc.retrieveCredentials = async function(force = false) {
     const firstCombination = kpxc.combinations?.find((combination) => combination?.username || combination?.password);
     kpxc.submitUrl = kpxc.getFormActionUrl(firstCombination);
 
-    if (kpxc.settings.autoRetrieveCredentials && kpxc.url && kpxc.submitUrl) {
+    if ((kpxc.settings.autoRetrieveCredentials || kpxcAgentMode.isOn()) && kpxc.url && kpxc.submitUrl) { // Rowel: agent mode retrieves on its own, its UI is hidden
         await kpxc.retrieveCredentialsCallback(
             await sendMessage('retrieve_credentials', [ kpxc.url, kpxc.submitUrl, force ]),
         );
@@ -854,6 +858,7 @@ const initContentScript = async function() {
 
         kpxc.settings = settings;
         kpxc.isFirefox = await sendMessage('is_firefox');
+        await kpxcAgentMode.onPageLoad(); // Rowel: clear-on-failure and the after-submit exposure check, before field detection
 
         if (await kpxc.siteIgnored()) {
             logDebug('This site is ignored in Site Preferences.');

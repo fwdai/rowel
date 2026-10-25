@@ -128,7 +128,7 @@ kpxcIcons.deleteIcons = function(iconList) {
 
 // Initializes all icons needed to be shown
 kpxcIcons.initIcons = async function(combinations = []) {
-    if (combinations.length === 0) {
+    if (combinations.length === 0 || kpxcAgentMode.isOn()) { // Rowel: no in-page icons in agent mode
         return;
     }
 

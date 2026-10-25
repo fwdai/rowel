@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{
-    migrate, record_hash, Attachment, AttachmentMeta, ImageCache, Record, SqliteStore, StoreError,
-    VaultStore, SYNC_META_PREFIX,
+    migrate, record_hash, Attachment, AttachmentMeta, AuditRecord, ImageCache, Record, SqliteStore,
+    StoreError, VaultStore, SYNC_META_PREFIX,
 };
 use crate::crypto::{self, KdfParams, VaultKey};
 use crate::models::Entry;
@@ -885,9 +885,89 @@ fn the_favicons_table_is_migrated_into_an_existing_vault() {
             .unwrap(),
         Some(None)
     );
-    // Everything after it lands too: the document columns and the emblem cache.
+    // Everything after it lands too: the document columns, the emblem cache
+    // and the audit log.
     store.set_doc_meta("1", "passport", Some("UKR")).unwrap();
     store.put_image(ImageCache::Emblems, "UKR", None).unwrap();
+    store.audit_insert(&audit_rec("dev", 1, 1)).unwrap();
+    assert_eq!(store.audit_rows("dev").unwrap().len(), 1);
+}
+
+// --- the audit log -------------------------------------------------------------
+
+fn audit_rec(writer_id: &str, seq: i64, ts_ms: i64) -> AuditRecord {
+    AuditRecord {
+        id: format!("{writer_id}-{seq}"),
+        writer_id: writer_id.into(),
+        seq,
+        ts_ms,
+        prev_hash: [seq as u8; 32],
+        hash: [seq as u8 + 1; 32],
+        actor_kind: "extension".into(),
+        actor_id: Some("id-key".into()),
+        actor_name: Some("Chrome".into()),
+        run_id: None,
+        acting_for: None,
+        grant_id: Some("g1".into()),
+        item_id: Some("gh".into()),
+        target: Some("https://github.com".into()),
+        mode: Some("fill".into()),
+        approval: Some("ask".into()),
+        approver: Some("user".into()),
+        event: "used".into(),
+        detail: Some("{\"submitted\":true}".into()),
+    }
+}
+
+#[test]
+fn an_audit_row_round_trips_and_each_writer_has_its_own_newest() {
+    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    assert_eq!(store.audit_last("dev-a").unwrap(), None);
+    assert!(store.audit_rows("dev-a").unwrap().is_empty());
+
+    let first = audit_rec("dev-a", 1, 100);
+    let second = audit_rec("dev-a", 2, 300);
+    let other = audit_rec("dev-b", 1, 200);
+    store.audit_insert(&first).unwrap();
+    store.audit_insert(&second).unwrap();
+    store.audit_insert(&other).unwrap();
+
+    assert_eq!(
+        store.audit_rows("dev-a").unwrap(),
+        vec![first.clone(), second.clone()]
+    );
+    assert_eq!(store.audit_rows("dev-b").unwrap(), vec![other.clone()]);
+    assert_eq!(store.audit_last("dev-a").unwrap(), Some((2, second.hash)));
+    assert_eq!(store.audit_last("dev-b").unwrap(), Some((1, other.hash)));
+
+    // Recent: across writers, newest first, bounded, from the stamp given.
+    assert_eq!(
+        store.audit_recent(0, 10).unwrap(),
+        vec![second.clone(), other.clone(), first.clone()]
+    );
+    assert_eq!(
+        store.audit_recent(0, 2).unwrap(),
+        vec![second.clone(), other]
+    );
+    assert_eq!(store.audit_recent(300, 10).unwrap(), vec![second]);
+    assert!(store.audit_recent(301, 10).unwrap().is_empty());
+}
+
+#[test]
+fn a_second_audit_row_with_a_writers_seq_is_refused() {
+    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    store.audit_insert(&audit_rec("dev-a", 1, 100)).unwrap();
+    let fork = AuditRecord {
+        id: "another-id".into(),
+        ..audit_rec("dev-a", 1, 101)
+    };
+    assert!(matches!(
+        store.audit_insert(&fork),
+        Err(StoreError::Sqlite(_))
+    ));
+    assert_eq!(store.audit_rows("dev-a").unwrap().len(), 1);
+    // The same seq under another writer is another chain.
+    store.audit_insert(&audit_rec("dev-b", 1, 100)).unwrap();
 }
 
 // The caches share their rules, not their rows: an emblem is never answered

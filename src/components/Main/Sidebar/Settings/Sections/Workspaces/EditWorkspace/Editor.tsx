@@ -9,7 +9,7 @@ import {
   selectActiveWorkspace,
   selectWorkspaces
 } from '@/store'
-import { workspaceRename, workspaceSetColor } from '@/api/workspace'
+import { workspaceRename, workspaceSetAgents, workspaceSetColor } from '@/api/workspace'
 import { describeError } from '@/api/errors'
 import { workspaceLabel } from '@/lib/workspace'
 import { isWorkspaceColor, type WorkspaceColor } from '@/lib/workspaceColor'
@@ -35,6 +35,7 @@ export default function Editor({ workspace }: { workspace: Workspace }) {
   const saved = isWorkspaceColor(workspace.color) ? workspace.color : null
   const [name, setName] = useState(label)
   const [color, setColor] = useState<WorkspaceColor | null>(saved)
+  const [agents, setAgents] = useState(!!workspace.agents)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -42,12 +43,14 @@ export default function Editor({ workspace }: { workspace: Workspace }) {
   const taken = list.filter(({ id }) => id !== workspace.id).map(other => workspaceLabel(other, t))
   const renamed = next !== label
   const recoloured = color !== saved
-  const changed = renamed || recoloured
+  const agentsChanged = agents !== !!workspace.agents
+  const changed = renamed || recoloured || agentsChanged
   const valid = !!next && !nameTaken(next, taken)
   const ready = changed && valid
 
-  // The probe is what carries names and colours, so an edit is complete once
-  // it has been re-read — the list and the header both redraw from it.
+  // The probe is what carries names, colours and the agents switch, so an
+  // edit is complete once it has been re-read — the list and the header both
+  // redraw from it.
   const submit = async () => {
     if (!ready || busy) return
     setBusy(true)
@@ -58,6 +61,7 @@ export default function Editor({ workspace }: { workspace: Workspace }) {
       try {
         if (renamed) await workspaceRename(workspace.id, next)
         if (recoloured) await workspaceSetColor(workspace.id, color)
+        if (agentsChanged) await workspaceSetAgents(workspace.id, agents)
       } catch (err: unknown) {
         failure = err
       }
@@ -100,6 +104,7 @@ export default function Editor({ workspace }: { workspace: Workspace }) {
         onColor={setColor}
         taken={taken}
         preview={{ seed: workspace.id, meta }}
+        agents={{ value: agents, onChange: setAgents }}
         disabled={busy}
         testidPrefix="workspace-edit"
       />

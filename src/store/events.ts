@@ -13,7 +13,16 @@ import {
   useApp
 } from './app'
 import { setEntries, loadArchive, runAudit } from './vault'
-import { useUi, showNotice, askBrowser, askPasskey, browserClientsChanged } from './ui'
+import {
+  useUi,
+  showNotice,
+  askBrowser,
+  askPasskey,
+  askGrant,
+  closeGrantAsk,
+  browserClientsChanged,
+  agentsChanged
+} from './ui'
 import { t } from '@/i18n'
 import { providerName } from '@/api/provider'
 import { syncProvider } from '@/api/sync'
@@ -79,7 +88,13 @@ export const subscribeToEvents = (): (() => void) => {
     // A page's passkey ceremony, through that extension; `Main` answers it too.
     on(EVENTS.browserPasskey, askPasskey),
     // One let in: Settings › Browser extension re-reads its list.
-    on(EVENTS.browserClients, () => browserClientsChanged())
+    on(EVENTS.browserClients, () => browserClientsChanged()),
+    // An agent asking to use a login, through that extension; `Main` answers it.
+    on(EVENTS.agentGrant, askGrant),
+    // That ask refused behind the dialog's back (a switch went off): close it.
+    on(EVENTS.agentGrantClosed, payload => closeGrantAsk(payload.id)),
+    // A rule or a grant came or went: Settings › Browser & agents re-reads.
+    on(EVENTS.agentsChanged, () => agentsChanged())
   ]
 
   return () => {

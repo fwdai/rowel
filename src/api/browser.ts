@@ -11,6 +11,8 @@ export interface BrowserStatus {
   enabled: boolean
   /** Whether the host also registers under KeePassXC's name, for the stock extension. */
   keepassxcCompat: boolean
+  /** Agents through the extension: the switch, and the grant dialog's default. */
+  agents: AgentsSettings
   /**
    * Every browser Rust knows how to register with. `detected` is its profile
    * directory being there; `installed` is Rowel's own manifest, which is
@@ -34,6 +36,19 @@ export interface BrowserStatus {
 
 export type BrowserClient = BrowserStatus['clients'][number]
 
+/**
+ * Whether a fill in agent mode may be a grant at all — off by default, and so
+ * is agent access on every lockbox — and what "allow for N days" starts at.
+ */
+export interface AgentsSettings {
+  enabled: boolean
+  defaultStandingDays: number
+}
+
+/** The range a standing rule's length is held to, here and in Rust. */
+export const MIN_STANDING_DAYS = 1
+export const MAX_STANDING_DAYS = 90
+
 export const browserStatus = (): Promise<BrowserStatus> => call('browser_status')
 
 export const browserSetEnabled = (enabled: boolean): Promise<BrowserStatus> =>
@@ -42,10 +57,18 @@ export const browserSetEnabled = (enabled: boolean): Promise<BrowserStatus> =>
 export const browserSetKeepassxcCompat = (enabled: boolean): Promise<BrowserStatus> =>
   call('browser_set_keepassxc_compat', { enabled })
 
+/** Turn agents on or off. Off ends every grant that is up. */
+export const browserSetAgentsEnabled = (enabled: boolean): Promise<BrowserStatus> =>
+  call('browser_set_agents_enabled', { enabled })
+
+/** The grant dialog's default for "allow for N days"; Rust refuses outside 1–90. */
+export const browserSetAgentsStandingDays = (days: number): Promise<BrowserStatus> =>
+  call('browser_set_agents_standing_days', { days })
+
 /**
- * How long Rust holds an `associate` or a passkey ask open for the user (its
- * `CONSENT_TIMEOUT`). Each dialog closes itself on the same clock, so one left
- * up is never answering an ask that has already been given up on.
+ * How long Rust holds an `associate`, a passkey or a grant ask open for the
+ * user (its `CONSENT_TIMEOUT`). Each dialog closes itself on the same clock,
+ * so one left up is never answering an ask that has already been given up on.
  */
 export const ASSOCIATE_TIMEOUT_MS = 60_000
 
@@ -95,14 +118,53 @@ export interface PasskeyAsk {
   accounts?: PasskeyAccount[]
 }
 
+/** One of the page's logins an agent may be given: nothing secret. */
+export interface GrantCandidate {
+  id: string
+  title: string
+  username?: string | null
+}
+
+/**
+ * A client asking, through the extension in agent mode, to use a login on a
+ * page. `clientName` is what the user called it (or its key's two ends),
+ * `candidates` the page's logins the policy admits — the dialog picks one.
+ * `stepUp` asks are the ones a yes alone does not settle: `verify` says
+ * whether Rust will run the biometric prompt or needs the master password
+ * sent with the answer.
+ */
+export interface AgentGrantAsk {
+  /** Names this ask; the answer carries it, and Rust honours it for this ask alone. */
+  id: string
+  clientName: string
+  origin: string
+  mode: 'fill'
+  stepUp: boolean
+  verify?: 'biometric' | 'password'
+  candidates: GrantCandidate[]
+  defaultStandingDays: number
+}
+
+/**
+ * The yes to a grant ask: which candidate, and — for "allow for N days" — how
+ * many, which writes a standing rule for this client, this login and this
+ * site. `null` days is this once.
+ */
+export interface GrantAnswer {
+  itemId: string
+  standingDays: number | null
+}
+
 /**
  * The one decision the extension host has put to the user: an extension
- * asking to connect (`key` is its identification public key), or a page's
- * passkey ceremony. Rust holds one at a time, in one slot, whichever kind.
+ * asking to connect (`key` is its identification public key), a page's
+ * passkey ceremony, or an agent's grant. Rust holds one at a time, in one
+ * slot, whichever kind.
  */
 export type BrowserConsent =
   | { kind: 'associate'; ask: AssociateAsk }
   | { kind: 'passkey'; ask: PasskeyAsk }
+  | { kind: 'grant'; ask: AgentGrantAsk }
 
 /**
  * Answer the `browser:passkey` ask `id`, with which of its accounts a sign-in
@@ -114,3 +176,47 @@ export const browserPasskeyRespond = (
   allow: boolean,
   account?: number
 ): Promise<void> => call('browser_passkey_respond', { id, allow, account })
+
+/**
+ * Answer the `agent:grant` ask `id`: the pick, or null to refuse. For a
+ * step-up ask Rust verifies the person before the yes counts — the biometric
+ * prompt, or `password` where the device has none — and a verification that
+ * fails rejects here and refuses the ask. Rust honours the answer only for
+ * the ask up under that id.
+ */
+export const agentGrantRespond = (
+  id: string,
+  answer: GrantAnswer | null,
+  password?: string
+): Promise<void> => call('agent_grant_respond', { id, answer, password })
+
+/** A standing rule the user wrote from the grant dialog, as Settings lists it. */
+export interface AgentRule {
+  id: string
+  clientKey: string
+  clientName: string
+  itemId: string | null
+  itemTitle: string | null
+  origin: string | null
+  /** Unix ms; null is until removed. */
+  expiresAtMs: number | null
+  createdAtMs: number
+}
+
+/** A grant Rust still holds: active, or ended within the hour. */
+export interface AgentGrant {
+  id: string
+  clientKey: string
+  clientName: string
+  itemId: string | null
+  itemTitle: string | null
+  origin: string | null
+  state: 'pending' | 'active' | 'spent' | 'expired' | 'revoked' | 'denied'
+  expiresAtMs: number
+  uses: number
+}
+
+export const agentRules = (): Promise<AgentRule[]> => call('agent_rules')
+export const agentGrants = (): Promise<AgentGrant[]> => call('agent_grants')
+export const agentRevokeRule = (id: string): Promise<void> => call('agent_revoke_rule', { id })
+export const agentEndGrant = (id: string): Promise<void> => call('agent_end_grant', { id })

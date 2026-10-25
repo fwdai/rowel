@@ -54,6 +54,7 @@
                 "content/custom-fields-banner.js",
                 "content/fields.js",
                 "content/fill.js",
+                "content/agent-mode.js",
                 "content/form.js",
                 "content/icon.js",
                 "content/icon-handler.js",
