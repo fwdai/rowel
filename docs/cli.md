@@ -209,9 +209,14 @@ X-Rowel-Grant: <grant id from rowel_request_secret>
   restructure the document or add a field.
 - **Redirects are not followed.** The grant was checked for the host, path
   and method you asked for, not for wherever the upstream points next, so a
-  3xx comes back to you as it is — status, `Location` and body, redacted like
-  any response — and your client follows it through the proxy, where the hop
-  is a request of its own with its own check.
+  3xx comes back to you — status and body, redacted like any response — with
+  its `Location` addressed through the proxy: `/other` or
+  `https://elsewhere.example/x` comes back as `/https/<host>/other` or
+  `/https/elsewhere.example/x`, a path on the proxy. Your client follows it
+  (or you rebuild the hop) back through the proxy, where it is a request of
+  its own with its own grant check: a hop to a host the grant does not name
+  is refused there, and nothing ever goes to it directly. A `Location` that
+  is not an `http`/`https` URL is dropped.
 - **Forwarding**: the method and headers are kept; `X-Rowel-Grant`, `Host`,
   `Content-Length` and the hop-by-hop headers (`Connection`, `Keep-Alive`,
   `Proxy-*`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`) are dropped.

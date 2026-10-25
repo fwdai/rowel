@@ -275,6 +275,19 @@ pub fn form_encoded(value: &str) -> String {
     form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
+/// `value` as a JSON string carries it between its quotes: escaped, without
+/// the one pair of quotes that wraps it — exactly one, so a value that
+/// itself starts or ends with `"` keeps its escaped quote (`\"`). What the
+/// proxy writes into a JSON body, and so one of the forms the redactor must
+/// know.
+pub fn json_escaped(value: &str) -> String {
+    let quoted = Zeroizing::new(serde_json::to_string(value).unwrap_or_default());
+    quoted
+        .get(1..quoted.len().saturating_sub(1))
+        .unwrap_or_default()
+        .to_string()
+}
+
 /// The forms of `value` a program may print it in, the value itself first.
 fn encodings(value: &str) -> Vec<Zeroizing<Vec<u8>>> {
     let bytes = value.as_bytes();
@@ -288,8 +301,7 @@ fn encodings(value: &str) -> Vec<Zeroizing<Vec<u8>>> {
             .into_bytes(),
     ));
     forms.push(Zeroizing::new(form_encoded(value).into_bytes()));
-    let json = Zeroizing::new(serde_json::to_string(value).unwrap_or_default());
-    forms.push(Zeroizing::new(json.trim_matches('"').as_bytes().to_vec()));
+    forms.push(Zeroizing::new(json_escaped(value).into_bytes()));
     forms
 }
 
@@ -343,10 +355,7 @@ mod tests {
             URL_SAFE_NO_PAD.encode(value),
             utf8_percent_encode(value, RESERVED).to_string(),
             form_encoded(value),
-            serde_json::to_string(value)
-                .unwrap()
-                .trim_matches('"')
-                .to_string(),
+            json_escaped(value),
         ];
         assert_eq!(forms[4], "p%40ss%2Fw%2Brd%20%22quoted%22%20%5C%20end");
         assert_eq!(forms[5], "p%40ss%2Fw%2Brd+%22quoted%22+%5C+end");
@@ -358,6 +367,29 @@ mod tests {
                 "{form}"
             );
         }
+    }
+
+    // A value that starts or ends with a quote keeps its escaped quote in its
+    // JSON form: the form is the value inside a JSON string, so it is caught
+    // inside the document the proxy wrote, and an `ends\` is never its form.
+    #[test]
+    fn a_value_with_quotes_at_its_ends_is_caught_in_its_json_form() {
+        for value in ["value-ends\"", "\"starts-value", "\"both-ends\""] {
+            assert_eq!(
+                json_escaped(value),
+                serde_json::to_string(value).unwrap()[1..]
+                    .strip_suffix('"')
+                    .unwrap()
+            );
+            let mut r = redactor(&[(value, "<secret>")]);
+            let document = serde_json::json!({ "key": value }).to_string();
+            assert_eq!(
+                through(&mut r, &[document.as_bytes()]),
+                r#"{"key":"<secret>"}"#,
+                "{value}"
+            );
+        }
+        assert_eq!(json_escaped("ends\""), "ends\\\"");
     }
 
     #[test]
