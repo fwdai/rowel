@@ -798,7 +798,9 @@ exposed process than the webview, and it is not ours.
 - **What it does not defend against.** A compromised browser profile, or a
   malicious extension holding an association key, can pull every login it
   asks for by URL — and ask for URL after URL — and overwrite the password of
-  any login it was handed. With passkeys it gets less: it can ask for a
+  any login it was handed, for as long as a person is driving: in agent mode
+  each of those fills is a grant and costs a dialog or a standing rule (see
+  **Agents** below). With passkeys it gets less: it can ask for a
   registration or an assertion for any site, but each one costs a click in
   the app's dialog, which names the site, and nothing it can ask for hands it
   a private key. This is the same position as KeePassXC's; the guard is what
@@ -817,78 +819,247 @@ exposed process than the webview, and it is not ours.
   KeePassXC installed as well, a manifest that is not Rowel's is never
   overwritten or removed; Settings reports that browser as a conflict, and it
   stays KeePassXC's until the extension is forked under a name of Rowel's own.
-- **Agents (agent mode).** Off twice over by default: the Agents switch in
-  Settings › Browser & agents (`settings.browser.agents.enabled`) and a
-  per-lockbox agent-access flag on the registry entry (`Workspace.agents` in
-  `workspaces.json`, device-local like the colour), and a fill in agent mode
-  is refused until both are on. With them on, every such
-  fill is a *grant* (`rowel_broker::grant`): the extension names the page's
-  logins, policy (`rowel_broker::policy`) decides deny-by-default against the
-  baseline rule — any client may *ask* to fill any login of the lockbox,
-  for a 15-minute window — and the lockbox's own standing rules, and the
-  app's dialog asks the person, who allows once, allows for N days (which
-  writes a standing rule for that client, that login and that site, listed
-  and revocable in Settings), or denies; cards and identities take a biometric
-  prompt or the master password on top. The grant carries one login to one
-  origin; a second request for the same page under it is served without
-  asking again, the TOTP step is served under it, and a page that echoes the
-  secret ends it (`exposed`). Every decision and use is a chained row in the
-  lockbox's `audit` table (`rowel_broker::audit`), never carrying a secret or
-  a query string; the chain is per writer, and the writer is this install's
-  own id (`storage::install_id`, minted once per data directory), so two
-  devices' rows merge side by side after a sync or a restore rather than
-  colliding. Grants live in memory only: a lock, an auto-lock or a
-  lockbox switch drops every one, so nothing is served from a locked vault.
-  The residual is the one above, unchanged: a process running as the same
-  user can lift the association key and present it as the extension, and the
-  dialog — not the key — is then what stands between it and a fill; a
-  standing rule it matches removes that dialog for its site, which is why
-  the rule names one client, one login and one origin, and ends.
-- **Agent clients.** A coding agent reaches the same socket through the
-  `rowel-cli` sidecar (`rowel mcp`, a stdio MCP server) and associates like an
-  extension does, saying what it is (`hello { kind: "agent", platform }`); the
-  dialog names the kind and platform, and an agent is refused outright while
-  the Agents switch is off. The kind is stored with the association and gates
-  every later request: a client of kind `agent` may ask for a grant, wait on
-  it, end it and list what its own rules let it see, and is refused every
-  action whose reply carries a secret — `get-logins`, `get-totp`, passkeys —
-  so an MCP tool result never contains a value, by construction rather than
-  by filtering. An agent's grant to log into a site is approved in the same
-  dialog, with the agent's stated reason shown as text, and reaches the
-  browser extension as a content-free wake-up followed by a sealed fetch; the
-  first extension served under it claims it, and when it ends — by expiry,
-  by the agent, from Settings, or by a switch going off — the extension
-  deletes that site's cookies in the agent's browser profile, so the login
-  the grant enabled ends with the grant. The agent's own key is a `0600` file
-  in the user's config directory, which the same-user residual above covers:
-  a process that lifts it can ask, and the dialog still decides.
-- **Secrets for commands and APIs (the sidecar).** An API key or an `.env`
-  value reaches a command or an HTTP request without the agent ever holding
-  it. The agent names it by a placeholder (`rowel://<lockbox>/<item>/<field>`)
-  and asks for a grant in `env` or `header` mode naming the full command line
-  or the host, path and methods; the dialog shows that place and the person
-  allows once, for N days (a rule for exactly that command line or that
-  request pattern), or not at all — `env` is never silent unless a rule
-  names the full line, because a child process can print what it is given.
-  The value is released by one protocol action, `resolve`, that only a client
-  of kind `sidecar` may say (`rowel run`, `rowel proxy`, `rowel redact`,
-  `rowel hook post`, under a second key the MCP server never holds), under
-  the session's switches and the same locks as a fill, for a grant that is
-  active in the open lockbox and covers that item at that concrete place in
-  that mode; each resolve is a counted use and an audit row naming the
-  sidecar, the field and the place, never the value. `rowel run` sets the
-  value in one child's environment only and passes the child's output through
-  a redactor that replaces the value and its common encodings with the
-  placeholder; the proxy swaps it into the outgoing request and scrubs the
-  response; the hook rewrites `NAME=rowel://… cmd` into `rowel run` and ends
-  a grant whose value shows in a command's output. What this does not do: the
-  redactor is a safety net, not a guarantee (a value transformed any other way
-  passes, and values shorter than six bytes are never matched); the child
-  process itself holds the value and can do anything with it, which is what
-  the full-command-line rule and the dialog are for; and the grant id is a
-  bearer capability between agent and sidecar — 128 random bits, bound to one
-  lockbox, one item set, one place and one mode, for 15 minutes — so a
-  process that reads it can resolve exactly what the person allowed, no more.
+
+## Agents
+
+Desktop only, and off twice over until the user turns it on. This section
+covers what the extension's agent mode, the `rowel` command line and the local
+socket let an agent do with the vault, and what a person sees of it afterwards.
+It describes the free, local tier this build ships. The server tier the spec
+plans (org lockboxes with server-held keys, `rowel serve`, Rowel Server, Rowel
+Cloud, approvals pushed to a phone, OAuth token mode, remote browsers, policy
+as code, workload identity) is not in it, and is named below only where a
+reader would otherwise assume it.
+
+**The one honest line.** Rowel's promise is that no backend holds the user's
+secrets: a lockbox is sealed under a key derived from the master password and
+nothing else can open it. An unattended agent breaks that promise by
+definition, since something that is not the user would have to open an item
+while nobody is there. Rather than blur the promise, two properties of a
+lockbox are kept separate and visible, and both lines are drawn where the
+product already has one, at the lockbox:
+
+- **Where the key lives.** Every lockbox in this build is *device-held*: its
+  key derives from the master password, it syncs as an opaque pack through a
+  cloud account the user owns, and no server can read it. A server-held *org
+  lockbox*, whose key would be escrowed to a broker so that it can act while
+  nobody is present, is a planned server tier and not in this build. Nothing
+  here serves an agent while the vault is locked or the person is away.
+- **Whether agents may use it.** Every lockbox has an agent-access switch,
+  *Agents can use items in this lockbox* in its settings (`Workspace.agents`
+  in `workspaces.json`, off by default, device-local like the colour). Above
+  it sits the **Agents** switch in Settings › Browser & agents
+  (`settings.browser.agents.enabled`, off by default). Both must be on. A
+  lockbox with agent access off never answers an agent, whatever the rules
+  say: `AppHost::request_grant` refuses it before policy is consulted. The
+  recommended shape is a dedicated lockbox for the items agents need, which is
+  the same gesture as splitting Personal from Work.
+
+The two properties are independent. A device-held lockbox with agent access on
+serves agents only while the app is unlocked and a person is there to approve,
+or has written a standing rule.
+
+**What each component can read**, for a device-held lockbox with agent access
+on:
+
+| component | reads |
+| --- | --- |
+| the app | plaintext, while unlocked |
+| the browser extension | the logins for the page in front of it, after URL match; under a grant, the one item the grant admits |
+| a local agent (`rowel mcp`, kind `agent`) | nothing: grant ids and states, and the title and username of the items a grant admits |
+| a local sidecar (`rowel run`, `rowel proxy`, `rowel redact`, `rowel hook post`, kind `sidecar`) | the value of one field per `resolve`, for a grant that is active and covers that item at that place in that mode |
+
+The invariant that holds in every cell: **a client of kind `agent` never
+receives a secret value.** Only `extension` (to fill) and `sidecar` (to inject
+at the edge) do, and only for the items a grant names. An agent is refused
+every action whose reply carries a secret (`get-logins`, `get-totp`, the
+passkey ceremonies, `resolve`) by its kind, so an MCP tool result never
+contains a value by construction rather than by filtering.
+
+**Why not an environment variable on the box.** The usual answer for an
+agent's secrets fails on an agent's machine for eight reasons, and the design
+above is an answer to each: the agent can read it with one shell call, and
+will if a web page tells it to; it is standing, alive for the box's lifetime
+and every task; it is unscoped, good for every endpoint; it is unattributed,
+since the upstream sees the key and not the run or the person; it cannot wait
+for a human on a sensitive action; it cannot log into a website; it leaks
+through transcripts, logs, screenshots and child processes; and rotation is a
+redeploy that burns the key everywhere at once. For a deterministic service a
+key in the environment is fine; this design is specific to agent workloads.
+
+**Agent mode and grants.** With both switches on, a fill in agent mode is a
+*grant* (`rowel_broker::grant`): this client may use this item at this origin
+in this mode until this time. The extension names the page's logins; policy
+(`rowel_broker::policy`) decides deny-by-default against the baseline rule,
+which lets any client *ask* to fill any login of the lockbox for a 15-minute
+window, and against the lockbox's own standing rules; and the app's dialog
+asks the person, who allows once, allows for N days, or denies. Allowing for
+N days writes a standing rule for that client, that login and that site, kept
+sealed in the lockbox's `meta` (`agent_rules`) and device-local like the
+extension associations, since it names a client key that exists only on this
+device; it is listed and revocable in Settings › Browser & agents. Cards and
+identities take a biometric prompt (Touch ID, Face ID, Windows Hello) or the
+master password on top, and no rule lowers that floor; a passkey ceremony is
+never silent, agent or not, because the tap is the user-presence gesture. A
+request the policy does not cover is denied, not asked: asking is itself
+something policy grants, so an agent cannot spam the person for items it was
+never meant to touch, and a client that reaches a person more than ten times a
+minute, or is denied three times in a row, is slowed down (`policy::Limits`)
+with an audit row and no dialog.
+
+The grant carries one login to one origin. A second request for the same page
+under it is served without asking again, the TOTP step is served under it, and
+a page that echoes the secret in text ends it (`exposed`): the extension scans
+the page after the fill and again after the submit, clears the fields and
+reports it, within same-origin frames and text only, no shadow roots and no
+pixels. The extension's own in-page UI is hidden for the duration, so the
+agent cannot drive the extension itself. Grants live in memory only: a lock,
+an auto-lock or a lockbox switch drops every one, so nothing is served from a
+locked vault.
+
+The ask goes through the same consent slot as an `associate` and a passkey
+ceremony: one security decision on screen at a time, refused after a minute
+unanswered. A grant request that finds the slot taken is told to retry after
+a delay rather than queued or refused, and does not count against its rate
+limit, so a dialog another client holds can neither be jumped nor used to
+starve the one waiting. A credential is released (a fill served, a code
+served, a grant reused or activated by a rule) only inside one critical
+section under the session and agents locks, in that order, and only if
+nothing about access changed since the request looked: the switch state lives
+under the agents lock with an epoch beside it, every change to either switch
+bumps the epoch and revokes the active grants when the open lockbox's access
+is now off, and every release point re-reads both. A request that read "on"
+before a switch went off sees the bumped epoch and is refused; locking,
+auto-locking or switching lockbox resets the state, bumps the epoch, drops the
+grants and closes the ask that is up. The residual is the extension's own,
+unchanged: a process running as the same user can lift the association key
+from the browser profile and present it as the extension, and the dialog, not
+the key, is then what stands between it and a fill; a standing rule it matches
+removes that dialog for its site, which is why the rule names one client, one
+login and one origin, and ends.
+
+**Agent clients and the MCP server.** A coding agent reaches the same socket
+through the `rowel-cli` sidecar (`rowel mcp`, a stdio MCP server for Claude
+Code, Codex and Cursor) and associates like an extension does, saying what it
+is (`hello { kind: "agent", platform }`); the dialog names the kind and
+platform, and an agent is refused outright while the Agents switch is off. The
+kind is stored with the association and gates every later request: a client
+of kind `agent` may ask for a grant, wait on it, end it and list what its own
+rules let it see, and nothing else. An agent's grant to log into a site is
+approved in the same dialog, with the agent's stated reason shown as text, and
+reaches the browser extension as a content-free wake-up (`rowel-signal`)
+followed by a sealed fetch; the extension with a tab at that origin fills
+through the ordinary fill path, and the first extension served under the grant
+claims it, so a second one asking under the same id is refused. When the grant
+ends, by expiry, by the agent, from Settings, by an exposure or by a switch
+going off, the extension deletes that site's cookies in the browser profile
+that filled it, in every cookie store and partition the browser lists, so the
+login the grant enabled ends with the grant; the dialog says so before the
+person allows. Safari's extension has no cookies API, and there session end
+does not run. The agent's own key is the first of the two CLI keys below.
+
+**The sidecar.** An API key or an `.env` value reaches a command or an HTTP
+request without the agent ever holding it. The agent names it by a placeholder
+(`rowel://<lockbox>/<item>/<field>`), which is a name and not a capability,
+and asks for a grant in `env` or `header` mode naming the full command line or
+the host, path and methods; the dialog shows that place and the person allows
+once, for N days (a rule for exactly that command line or that request
+pattern), or not at all. `env` is never silent unless a rule names the full
+line, because a child process can print what it is given, and a rule for
+`node deploy.js*` does not match `node -e …`. The value is released by one
+protocol action, `resolve`, that only a client of kind `sidecar` may say
+(`rowel run`, `rowel proxy`, `rowel redact`, `rowel hook post`), under the
+session's switches and the same locks as a fill, for a grant that is active in
+the open lockbox and covers that item at that concrete place in that mode;
+each resolve is a counted use and an audit row naming the sidecar, the field
+and the place, never the value. `rowel run` sets the value in one child's
+environment only and passes the child's output through a redactor that
+replaces the value and its common encodings (base64 in both alphabets,
+percent-encoding, JSON escaping) with the placeholder; the proxy, which listens
+on the loopback address only, swaps it into the outgoing request's headers or
+its JSON or form body, never the URL, and scrubs the response; the hook
+rewrites `NAME=rowel://… cmd` into `rowel run` before the agent's shell runs it
+and ends a grant whose value shows in a command's output.
+
+The CLI holds two keys, and the split is the point: the *agent* key, which
+`rowel mcp` presents and which cannot resolve whatever it is asked to do, and
+the *sidecar* key, which the model-facing surface never holds. On macOS they
+are two generic passwords in the login keychain (service `app.rowel.cli`,
+accounts `agent` and `sidecar`); on Windows two Credential Manager entries;
+elsewhere files readable by the user alone, `~/.config/rowel/agent.json` and
+`sidecar.json`. The store is not gated by Touch ID or Hello, since the CLI
+runs unattended, but another program reading the item makes the OS prompt the
+user, which a file cannot do. What this path does not do: the redactor is a
+safety net, not a guarantee (a value transformed any other way passes, and
+values shorter than six bytes are never matched, since a needle that short
+would redact ordinary text); the child process itself holds the value and can
+do anything with it, which is what the full-command-line rule and the dialog
+are for; and the grant id is a bearer capability between agent and sidecar,
+128 random bits bound to one lockbox, one item set, one place and one mode for
+15 minutes, so a process that reads it can resolve exactly what the person
+allowed, no more, and only while the grant is active.
+
+**The audit log.** Every decision and every use is a row in the lockbox's
+`audit` table (`rowel_broker::audit`), inside the same SQLCipher file as the
+items: `requested`, `granted`, `denied`, `used`, `exposed`, `ended` and
+`revoked` for grants; `associated` and `revoked_client` for clients;
+`rule_added` and `rule_removed` for standing rules; `rate_limited`; and
+`pruned_through`. A row carries the actor's kind and name, the agent's run id,
+the grant, the item id, the target, the mode, the approval and a small detail
+object, and never a secret value, a TOTP code, passkey material or a URL's
+query: the target is the page reduced to scheme, host and path, or the command
+line clamped to 300 characters. Rows are insert-only and hash-chained per
+writer: `hash` is SHA-256 over the writer's previous hash and the row's
+canonical JSON, with zeros before the first row, and `(writer_id, seq)` is
+unique. The writer is the install's own id (`storage::install_id`, minted once
+into an owner-only file beside the vault; never the workspace id, which is
+"default" on every install and would collide after a sync or a restore), so
+two devices' rows sit side by side rather than breaking each other's chains.
+Rows travel in the sync pack and merge as a union by `id`, never
+last-writer-wins and never tombstoned, so devices converge on the union of
+their logs and no device removes another's rows through sync; the pack's
+digest includes them, so a device whose only change is new audit rows still
+pushes, and a restore from a pack carries the history with it. Retention is
+365 days: at sync time a device deletes its own rows older than that and
+writes a `pruned_through` row naming the cutoff `seq`, so its chain stays
+verifiable from there on. Vault Health › *Agent activity* shows the last seven
+days of `used`, `denied` and `exposed` events, standing rules older than 30
+days and agents not seen in 90 days, and *Verify the log* walks every writer's
+chain in `seq` order and names the first break: a missing row, a row that does
+not follow the one before it, or a row that was altered. Verification is per
+writer and detects a row altered or removed behind the chain's back. The chain
+carries no signature, so whoever holds the lockbox key can rewrite a writer's
+chain whole and recompute it; that is the compromised-OS case below, and not
+something a log inside the lockbox can see.
+
+**Residual risks, stated.**
+
+- **Same-user local processes.** A process running as the same OS user can
+  lift the extension's association key from the browser profile, or the CLI's
+  two keys from where they live (the login keychain on macOS, Credential
+  Manager on Windows, owner-only files elsewhere), and present it. The secure
+  store makes a foreign read prompt the user; a file does not. Grants,
+  approval modes, the floors, full-command-line targets and the rate limits
+  bound what a lifted key buys; they do not remove it. A lifted *agent* key
+  buys the right to ask; a lifted *sidecar* key plus a live grant id buys what
+  that grant covers, for its lifetime.
+- **The logged-in session.** After a fill, the agent's browser holds the
+  site's cookies. Session end deletes them with the grant, but an agent that
+  controls the browser through the devtools protocol can read them *during*
+  the grant, so the end bounds the window, not the capability; a site that
+  issues long-lived tokens elsewhere is out of reach; and on Safari the
+  deletion does not run.
+- **The child process in `env` mode.** It holds the value and can print,
+  store or send it. Policy floors the mode to `ask`, a standing rule names the
+  full command line, and the redactor is the second net. The mode exists for
+  tools that take nothing else and is labelled the weakest for a reason.
+- **Vision.** A screenshot taken after a fill can show an autofilled username
+  or a password field's dots, and a page that renders a secret as pixels
+  passes the exposure check. Redaction covers text, not pixels. An agent that
+  needs vision should submit before the next capture.
+- **The broker's memory.** Applies only to the server tier that is not
+  shipped, where an org lockbox's key would sit in a server's memory while it
+  serves; nothing in this build holds a key anywhere but the unlocked app.
 
 ## iOS AutoFill
 
@@ -1019,4 +1190,8 @@ any server that could be breached. It assumes the user's device and operating
 system are trustworthy while the vault is unlocked. It does not try to defend a
 device that is already compromised. Live key derivation is Argon2id, from a
 versioned descriptor in a sidecar beside the vault; PBKDF2 remains only to read
-what older formats wrote.
+what older formats wrote. An agent gets none of this to hold: it asks for a
+grant, a person or a standing rule answers, the extension or a sidecar uses
+the credential at the edge, and every decision and use is a chained row in the
+lockbox's own audit log. Every lockbox in this build is device-held; a server
+that could act for an agent while nobody is present is not part of it.

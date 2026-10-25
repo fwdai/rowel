@@ -16,7 +16,7 @@
 <div align="center">
 Free and open source, because basic personal security should be. Runs on macOS, Windows, Linux and iOS. Sync is optional and goes through your own cloud, which only ever stores ciphertext.
 
-[rowel.app](https://rowel.app) · [Threat model](docs/threat-model.md) · [Browser extension](docs/browser-extension.md) · [Security policy](SECURITY.md)
+[rowel.app](https://rowel.app) · [Threat model](docs/threat-model.md) · [Browser extension](docs/browser-extension.md) · [Agents](docs/agents.md) · [Security policy](SECURITY.md)
 
 </div>
 
@@ -83,6 +83,7 @@ Down the road there may be a paid option for professional teams that need extra 
 - Vault Health: strength scoring, reused-password checks, and an optional private breach check that never sends your password
 - Browser autofill and passkeys for Chrome, Edge, Brave, Vivaldi and Firefox, plus Safari on macOS ([details](docs/browser-extension.md)). Passkeys are on by default from extension 0.1.1; an earlier install turns them on in the extension's options
 - iOS AutoFill for passwords and passkeys, unlocked with Face ID (passkeys need iOS 17 or later)
+- Agents: Claude Code, Codex, Cursor and agentic browsers use your logins and API keys through grants you approve, never holding the value, with a readable audit log in Vault Health ([details](docs/agents.md))
 - Touch ID, Face ID or Windows Hello unlock
 - Locks itself when you're inactive and clears copied secrets from the clipboard
 - Export to CSV, FIDO CXF, or Bitwarden-compatible JSON, plus encrypted backups
@@ -97,6 +98,7 @@ Your vault is everything your master password opens. Each lockbox in it is an en
 - [`docs/threat-model.md`](docs/threat-model.md): what Rowel defends against, and what it doesn't
 - [`SECURITY.md`](SECURITY.md): how to report a vulnerability
 - [`docs/browser-extension.md`](docs/browser-extension.md) and [`docs/safari-extension.md`](docs/safari-extension.md): browser autofill
+- [`docs/agents.md`](docs/agents.md) and [`docs/cli.md`](docs/cli.md): AI agents using logins and API keys through grants, and the `rowel` command line tool
 
 ## Verifying a release
 
