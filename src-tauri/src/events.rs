@@ -278,15 +278,38 @@ pub fn browser_clients(app: &AppHandle) {
     let _ = app.emit(BROWSER_CLIENTS, ());
 }
 
-/// A client asking to use a login on a page: who asks (the name the user gave
-/// it, or its key's two ends, and what kind of client it is), where, how, and
-/// which of the page's logins it may be given — the dialog picks one. An
-/// agent may say why (`reason`, its own words, bounded and never interpreted);
-/// `ends_session` is the sign-out notice: when a fill grant ends, the site's
-/// cookies go with it in the browser that filled, whichever client asked for
-/// it. `verify` says what a step-up
-/// ask takes before the answer counts: a biometric prompt, or the master
-/// password where the device has none. The answer comes back through
+/// Where a grant ask would let the item be used, as the dialog names it: the
+/// site for a fill (its origin, never the page's path or query), the request
+/// pattern an agent wrote for a header, the command line for `env` — the
+/// one place the value goes, shown verbatim so the person can read what the
+/// child process will be.
+#[cfg(desktop)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AskTarget {
+    Origin {
+        origin: String,
+    },
+    Http {
+        host: String,
+        path: String,
+        methods: Vec<String>,
+    },
+    Command {
+        line: String,
+    },
+}
+
+/// A client asking to use an item somewhere: who asks (the name the user
+/// gave it, or its key's two ends, and what kind of client it is), where
+/// (`targets`, the request's own), how (`mode`), and which of the items it
+/// may be given — the dialog picks one. An agent may say why (`reason`, its
+/// own words, bounded and never interpreted); `ends_session` is the sign-out
+/// notice: when a fill grant ends, the site's cookies go with it in the
+/// browser that filled, whichever client asked for it, and no other mode
+/// signs anything out. `verify` says what a step-up ask takes before the
+/// answer counts: a biometric prompt, or the master password where the
+/// device has none. The answer comes back through
 /// `commands::browser::agent_grant_respond`, naming `id`, so a dialog left up
 /// past this ask cannot answer the next.
 #[cfg(desktop)]
@@ -296,7 +319,7 @@ pub struct AgentGrantAsk<'a> {
     pub id: &'a str,
     pub client_name: &'a str,
     pub client_kind: rowel_broker::actions::ClientKind,
-    pub origin: &'a str,
+    pub targets: Vec<AskTarget>,
     pub mode: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'a str>,
