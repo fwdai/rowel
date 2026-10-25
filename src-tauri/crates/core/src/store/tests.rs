@@ -942,15 +942,41 @@ fn an_audit_row_round_trips_and_each_writer_has_its_own_newest() {
 
     // Recent: across writers, newest first, bounded, from the stamp given.
     assert_eq!(
-        store.audit_recent(0, 10).unwrap(),
+        store.audit_recent(0, &["used"], 10).unwrap(),
         vec![second.clone(), other.clone(), first.clone()]
     );
     assert_eq!(
-        store.audit_recent(0, 2).unwrap(),
+        store.audit_recent(0, &["used"], 2).unwrap(),
         vec![second.clone(), other]
     );
-    assert_eq!(store.audit_recent(300, 10).unwrap(), vec![second]);
-    assert!(store.audit_recent(301, 10).unwrap().is_empty());
+    assert_eq!(
+        store.audit_recent(300, &["used"], 10).unwrap(),
+        vec![second]
+    );
+    assert!(store.audit_recent(301, &["used"], 10).unwrap().is_empty());
+    assert!(store.audit_recent(0, &[], 10).unwrap().is_empty());
+}
+
+// The events asked for are chosen before the limit: a week whose newest rows
+// are all bookkeeping still shows the uses behind them.
+#[test]
+fn recent_audit_rows_are_chosen_by_event_before_the_limit() {
+    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    let used = audit_rec("dev-a", 1, 100);
+    store.audit_insert(&used).unwrap();
+    for seq in 2..=11 {
+        store
+            .audit_insert(&AuditRecord {
+                event: "granted".into(),
+                ..audit_rec("dev-a", seq, 100 + seq)
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        store.audit_recent(0, &["used", "denied"], 5).unwrap(),
+        vec![used]
+    );
+    assert_eq!(store.audit_recent(0, &["granted"], 5).unwrap().len(), 5);
 }
 
 #[test]
@@ -961,43 +987,75 @@ fn a_second_audit_row_with_a_writers_seq_is_refused() {
         id: "another-id".into(),
         ..audit_rec("dev-a", 1, 101)
     };
-    assert!(matches!(
-        store.audit_insert(&fork),
-        Err(StoreError::Sqlite(_))
-    ));
+    assert!(store.audit_insert(&fork).is_err());
     assert_eq!(store.audit_rows("dev-a").unwrap().len(), 1);
     // The same seq under another writer is another chain.
     store.audit_insert(&audit_rec("dev-b", 1, 100)).unwrap();
 }
 
-// The log merges as a union: a row seen twice lands once, and a second row
-// claiming a writer's `seq` under another id — a forked chain — never replaces
-// the one already here. Neither counts as a change to the entry list.
+// The log merges as a union of rows, a row being its `(id, hash)`: a row seen
+// twice lands once, and anything else — a second row at a writer's `seq` (a
+// forked chain), another copy of a known id — lands beside what is here and
+// never replaces it, so both devices of a fork end up holding the same rows.
+// None of it counts as a change to the entry list.
 #[test]
 fn merge_takes_audit_rows_as_a_union_and_never_overwrites_one() {
     let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
     let first = audit_rec("dev-a", 1, 100);
     store.audit_insert(&first).unwrap();
 
-    let duplicate = AuditRecord {
+    let seen_twice = AuditRecord {
         target: Some("https://altered.example".into()),
         ..first.clone()
     };
     let fork = AuditRecord {
-        id: "fork".into(),
-        target: Some("https://altered.example".into()),
+        id: "dev-a-1-fork".into(),
+        hash: [7u8; 32],
+        ..first.clone()
+    };
+    let altered_copy = AuditRecord {
+        hash: [8u8; 32],
         ..first.clone()
     };
     let other = audit_rec("dev-b", 1, 200);
     assert_eq!(
         store
-            .merge(&[], &[], &[duplicate, fork, other.clone()])
+            .merge(
+                &[],
+                &[],
+                &[
+                    seen_twice,
+                    fork.clone(),
+                    altered_copy.clone(),
+                    other.clone()
+                ]
+            )
             .unwrap(),
         0,
         "log rows are not what the merge counts"
     );
 
-    assert_eq!(store.audit_all().unwrap(), vec![first, other]);
+    assert_eq!(
+        store.audit_all().unwrap(),
+        vec![
+            first.clone(),
+            altered_copy.clone(),
+            fork.clone(),
+            other.clone()
+        ]
+    );
+    // Merged again, in any order, nothing changes: the set is settled.
+    let digest = store.state_digest().unwrap();
+    store
+        .merge(&[], &[], &[other, fork, altered_copy, first])
+        .unwrap();
+    assert_eq!(store.audit_all().unwrap().len(), 4);
+    assert_eq!(store.state_digest().unwrap(), digest);
+    // The writer carries on from one side of the fork, the same one anywhere.
+    assert_eq!(
+        store.audit_last("dev-a").unwrap().map(|(seq, _)| seq),
+        Some(1)
+    );
 }
 
 #[test]

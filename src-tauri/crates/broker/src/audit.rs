@@ -150,8 +150,9 @@ impl AuditSink for SqliteStore {
 
 /// One writer's pen: rows it records chain from the last row it wrote. A
 /// writer is not a lock — two of them with the same id racing on one sink
-/// would compute the same `seq`, and the table's `UNIQUE (writer_id, seq)`
-/// refuses the second — so a host keeps one and records under its own lock.
+/// would compute the same `seq`, and the sink refuses the second
+/// (`SqliteStore::audit_insert`) — so a host keeps one and records under its
+/// own lock.
 pub struct Writer<'a, S> {
     writer_id: String,
     sink: &'a S,
@@ -350,6 +351,10 @@ pub struct Break {
 pub enum Reason {
     /// A row of another writer is in this chain.
     Writer,
+    /// Two rows claim this `seq`: the chain forked, or a row was altered and
+    /// kept beside its original. Sync keeps both on every device, so every
+    /// device names the same `seq`.
+    Fork,
     /// A sequence number is missing.
     Gap,
     /// The row does not chain from the one before it.
@@ -359,7 +364,8 @@ pub enum Reason {
 }
 
 /// Walk one writer's rows in `seq` order: each must follow the one before it
-/// by one, chain from its hash, and hash to what it says. A chain that starts
+/// by one (never share its `seq`), chain from its hash, and hash to what it
+/// says. A chain that starts
 /// at `seq` 1 must start from zeros; one that starts later is taken as
 /// pruned, and is verified from where it begins.
 pub fn verify(rows: &[AuditRecord]) -> Result<(), Break> {
@@ -371,6 +377,12 @@ pub fn verify(rows: &[AuditRecord]) -> Result<(), Break> {
                     return Err(Break {
                         seq: row.seq,
                         reason: Reason::Writer,
+                    });
+                }
+                if row.seq == prev.seq {
+                    return Err(Break {
+                        seq: row.seq,
+                        reason: Reason::Fork,
                     });
                 }
                 if row.seq != prev.seq + 1 {
@@ -640,6 +652,25 @@ mod tests {
                 reason: Reason::Writer
             })
         );
+    }
+
+    #[test]
+    fn two_rows_at_one_seq_are_a_fork() {
+        let (_, mut rows) = chain(2);
+        // Each side hashes and chains correctly on its own: only the two of
+        // them together say the chain forked.
+        let mut other = rows[1].clone();
+        other.id = "other-side".into();
+        other.hash = hash_of(&other).unwrap();
+        rows.push(other);
+        assert_eq!(
+            verify(&rows),
+            Err(Break {
+                seq: 2,
+                reason: Reason::Fork
+            })
+        );
+        assert_eq!(verify(&rows[..2]), Ok(()));
     }
 
     #[test]

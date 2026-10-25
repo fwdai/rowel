@@ -59,6 +59,8 @@ const breakWords = (t: TFunction, reason: ChainBreak): string => {
   switch (reason) {
     case 'writer':
       return t('a row from another device')
+    case 'fork':
+      return t('two rows with the same number')
     case 'gap':
       return t('a missing row')
     case 'prevHash':

@@ -833,6 +833,7 @@
   "this device": "den här enheten",
   "device {{id}}": "enheten {{id}}",
   "a row from another device": "en rad från en annan enhet",
+  "two rows with the same number": "två rader med samma nummer",
   "a missing row": "en rad som saknas",
   "a row that does not follow the one before it": "en rad som inte följer på den före",
   "a row that was altered": "en rad som ändrats"

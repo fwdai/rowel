@@ -819,6 +819,7 @@
   "this device": "本设备",
   "device {{id}}": "设备 {{id}}",
   "a row from another device": "来自另一台设备的行",
+  "two rows with the same number": "两行编号相同",
   "a missing row": "缺失的行",
   "a row that does not follow the one before it": "与前一行不衔接的行",
   "a row that was altered": "被改动过的行"

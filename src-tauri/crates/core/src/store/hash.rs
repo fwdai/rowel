@@ -174,7 +174,9 @@ pub fn vault_digest<'a>(
     if rows.is_empty() {
         return with_files;
     }
-    rows.sort_unstable_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    // By id, then hash: a row's identity is the pair, and two copies of one
+    // id (an altered row beside the original) must order the same everywhere.
+    rows.sort_unstable_by(|a, b| (a.0.as_bytes(), a.1).cmp(&(b.0.as_bytes(), b.1)));
     let mut h = Sha256::new();
     h.update(with_files);
     for (id, hash) in rows {

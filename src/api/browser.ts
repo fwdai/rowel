@@ -320,7 +320,7 @@ export interface AuditVerification {
   writers: WriterChain[]
 }
 
-export type ChainBreak = 'writer' | 'gap' | 'prevHash' | 'hash'
+export type ChainBreak = 'writer' | 'fork' | 'gap' | 'prevHash' | 'hash'
 
 export interface WriterChain {
   writerId: string

@@ -1010,23 +1010,28 @@ object, and never a secret value, a TOTP code, passkey material or a URL's
 query: the target is the page reduced to scheme, host and path, or the command
 line clamped to 300 characters. Rows are insert-only and hash-chained per
 writer: `hash` is SHA-256 over the writer's previous hash and the row's
-canonical JSON, with zeros before the first row, and `(writer_id, seq)` is
-unique. The writer is the install's own id (`storage::install_id`, minted once
+canonical JSON, with zeros before the first row, and a writer never writes
+two rows at one `seq`. The writer is the install's own id (`storage::install_id`, minted once
 into an owner-only file beside the vault; never the workspace id, which is
 "default" on every install and would collide after a sync or a restore), so
 two devices' rows sit side by side rather than breaking each other's chains.
-Rows travel in the sync pack and merge as a union by `id`, never
-last-writer-wins and never tombstoned, so devices converge on the union of
-their logs and no device removes another's rows through sync; the pack's
+Rows travel in the sync pack and merge as a union of rows (a row being its
+`id` and `hash`), never last-writer-wins and never tombstoned, so devices
+converge on the union of their logs and no device removes another's rows
+through sync. A forked chain — two rows at one writer's `seq`, as when an app
+folder copied to a second machine carries its install id — is kept whole on
+every device rather than each keeping its own side, so the digests agree and
+verification names the fork at the same `seq` everywhere; the pack's
 digest includes them, so a device whose only change is new audit rows still
 pushes, and a restore from a pack carries the history with it. Retention is
-365 days: at sync time a device deletes its own rows older than that and
-writes a `pruned_through` row naming the cutoff `seq`, so its chain stays
-verifiable from there on. Vault Health › *Agent activity* shows the last seven
+365 days: at sync time a device reclaims every writer's chain up to its newest
+row older than that, and in its own chain writes a `pruned_through` row naming
+the cutoff `seq`, so the chain stays verifiable from there on. Vault Health › *Agent activity* shows the last seven
 days of `used`, `denied` and `exposed` events, standing rules older than 30
 days and agents not seen in 90 days, and *Verify the log* walks every writer's
-chain in `seq` order and names the first break: a missing row, a row that does
-not follow the one before it, or a row that was altered. Verification is per
+chain in `seq` order and names the first break: a missing row, two rows with
+the same number, a row that does not follow the one before it, or a row that
+was altered. Verification is per
 writer and detects a row altered or removed behind the chain's back. The chain
 carries no signature, so whoever holds the lockbox key can rewrite a writer's
 chain whole and recompute it; that is the compromised-OS case below, and not

@@ -160,6 +160,42 @@ fn migration_list() -> Vec<M<'static>> {
          );
          CREATE INDEX audit_ts ON audit(ts_ms);",
         ),
+        // The log merges as a union of rows, and a row is its `(id, hash)` —
+        // what the vault digest reads of it. `UNIQUE (writer_id, seq)` made a
+        // forked chain's second row unstorable, so two devices each holding
+        // one side of a fork never held the same set, digested differently
+        // forever, and pushed on every run. Without it both sides of a fork
+        // are kept on every device and `verify` names it; a local write is
+        // still refused a taken `seq` (`SqliteStore::audit_insert`).
+        M::up(
+            "CREATE TABLE audit_rows (
+           id          TEXT NOT NULL,
+           writer_id   TEXT NOT NULL,
+           seq         INTEGER NOT NULL,
+           ts_ms       INTEGER NOT NULL,
+           prev_hash   BLOB NOT NULL,
+           hash        BLOB NOT NULL,
+           actor_kind  TEXT NOT NULL,
+           actor_id    TEXT,
+           actor_name  TEXT,
+           run_id      TEXT,
+           acting_for  TEXT,
+           grant_id    TEXT,
+           item_id     TEXT,
+           target      TEXT,
+           mode        TEXT,
+           approval    TEXT,
+           approver    TEXT,
+           event       TEXT NOT NULL,
+           detail      TEXT,
+           PRIMARY KEY (id, hash)
+         );
+         INSERT INTO audit_rows SELECT * FROM audit;
+         DROP TABLE audit;
+         ALTER TABLE audit_rows RENAME TO audit;
+         CREATE INDEX audit_ts ON audit(ts_ms);
+         CREATE INDEX audit_chain ON audit(writer_id, seq);",
+        ),
     ]
 }
 
@@ -707,53 +743,81 @@ impl SqliteStore {
 
     /// Append one audit row. The row is the writer's to chain (`seq`,
     /// `prev_hash`, `hash` come filled in); a second row for the same
-    /// `(writer_id, seq)` is refused by the table, which is what makes a race
-    /// between two writers of one chain a loud failure rather than a fork.
+    /// `(writer_id, seq)` is refused, which is what makes a race between two
+    /// writers of one chain a loud failure rather than a fork. Only a merge
+    /// stores a fork, when the other side arrives from a peer.
     pub fn audit_insert(&self, rec: &AuditRecord) -> Result<()> {
-        self.lock()?.execute(
+        let written = self.lock()?.execute(
             &format!(
                 "INSERT INTO audit ({AUDIT_COLS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                         ?17, ?18, ?19)"
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                        ?17, ?18, ?19
+                 WHERE NOT EXISTS (SELECT 1 FROM audit WHERE writer_id = ?2 AND seq = ?3)"
             ),
             audit_params(rec),
         )?;
+        if written == 0 {
+            return Err(StoreError::Other(format!(
+                "audit: {} already holds seq {}",
+                rec.writer_id, rec.seq
+            )));
+        }
         Ok(())
     }
 
     /// The newest row of one writer's chain — its `seq` and `hash`, which is
     /// what the next row chains from — or `None` for a writer with no rows.
+    /// Of a fork at the top, the side every device picks the same way.
     pub fn audit_last(&self, writer_id: &str) -> Result<Option<(i64, [u8; 32])>> {
         Ok(self
             .lock()?
             .query_row(
-                "SELECT seq, hash FROM audit WHERE writer_id = ?1 ORDER BY seq DESC LIMIT 1",
+                "SELECT seq, hash FROM audit WHERE writer_id = ?1
+                 ORDER BY seq DESC, id, hash LIMIT 1",
                 params![writer_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?)
     }
 
-    /// One writer's whole chain, in `seq` order: what verification walks.
+    /// One writer's whole chain, in `seq` order — both sides of a fork side by
+    /// side, in the order every device reads them: what verification walks.
     pub fn audit_rows(&self, writer_id: &str) -> Result<Vec<AuditRecord>> {
         let conn = self.lock()?;
-        let sql = format!("SELECT {AUDIT_COLS} FROM audit WHERE writer_id = ?1 ORDER BY seq");
+        let sql =
+            format!("SELECT {AUDIT_COLS} FROM audit WHERE writer_id = ?1 ORDER BY seq, id, hash");
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![writer_id], row_to_audit)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
 
-    /// Rows stamped at or after `since_ts_ms`, newest first, at most `limit`
-    /// of them: what an activity panel shows.
-    pub fn audit_recent(&self, since_ts_ms: i64, limit: u32) -> Result<Vec<AuditRecord>> {
+    /// Rows stamped at or after `since_ts_ms` whose event is one of `events`,
+    /// newest first, at most `limit` of them: what an activity panel shows.
+    /// The events are chosen before the limit is applied, so a busy week's
+    /// other rows cannot crowd out the ones asked for.
+    pub fn audit_recent(
+        &self,
+        since_ts_ms: i64,
+        events: &[&str],
+        limit: u32,
+    ) -> Result<Vec<AuditRecord>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
         let conn = self.lock()?;
+        let wanted = (3..3 + events.len())
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let sql = format!(
-            "SELECT {AUDIT_COLS} FROM audit WHERE ts_ms >= ?1
+            "SELECT {AUDIT_COLS} FROM audit WHERE ts_ms >= ?1 AND event IN ({wanted})
              ORDER BY ts_ms DESC, writer_id, seq DESC LIMIT ?2"
         );
+        let mut args: Vec<&dyn rusqlite::ToSql> = vec![&since_ts_ms, &limit];
+        args.extend(events.iter().map(|e| e as &dyn rusqlite::ToSql));
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![since_ts_ms, limit], row_to_audit)?;
+        let rows = stmt.query_map(args.as_slice(), row_to_audit)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
@@ -762,7 +826,7 @@ impl SqliteStore {
     /// pack is read out as, and what two synced vaults must agree on.
     pub fn audit_all(&self) -> Result<Vec<AuditRecord>> {
         let conn = self.lock()?;
-        let sql = format!("SELECT {AUDIT_COLS} FROM audit ORDER BY writer_id, seq");
+        let sql = format!("SELECT {AUDIT_COLS} FROM audit ORDER BY writer_id, seq, id, hash");
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([], row_to_audit)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -791,13 +855,14 @@ impl SqliteStore {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         let cuts: Vec<AuditCut> = {
-            // Each chain's newest row old enough to go, read before it does.
+            // Each chain's newest row old enough to go, read before it does —
+            // of a fork at that `seq`, the side `audit_last` would pick.
             let mut stmt = tx.prepare(
                 "SELECT writer_id, seq, hash FROM audit AS newest
                  WHERE ts_ms < ?1
                    AND seq = (SELECT MAX(seq) FROM audit
                               WHERE writer_id = newest.writer_id AND ts_ms < ?1)
-                 ORDER BY writer_id",
+                 ORDER BY writer_id, id, hash",
             )?;
             let rows = stmt.query_map(params![before_ts_ms], |r| {
                 Ok(AuditCut {
@@ -806,7 +871,9 @@ impl SqliteStore {
                     hash: r.get(2)?,
                 })
             })?;
-            rows.collect::<rusqlite::Result<_>>()?
+            let mut cuts: Vec<AuditCut> = rows.collect::<rusqlite::Result<_>>()?;
+            cuts.dedup_by(|later, first| later.writer_id == first.writer_id);
+            cuts
         };
         for cut in &cuts {
             tx.execute(
@@ -824,7 +891,7 @@ impl SqliteStore {
     /// existing vault. Keep in step with `migration_list`.
     #[cfg(test)]
     pub(crate) fn drop_favicons_for_test(&self) -> Result<()> {
-        let previous = schema_version() - 6;
+        let previous = schema_version() - 7;
         self.lock()?.execute_batch(&format!(
             "DROP TABLE audit;
              DROP TABLE emblems;
@@ -1339,12 +1406,13 @@ fn merge_attachment_rows(tx: &Connection, atts: &[Attachment]) -> rusqlite::Resu
 // Take `audit` into the log as a union: a row this vault already holds is left
 // exactly as it is. The log is insert-only — no row is ever updated or
 // tombstoned, here or anywhere — so a union is the whole of the merge, and
-// `OR IGNORE` is what makes it one. It ignores both of the table's constraints
-// the same way: a known `id` is the same row seen twice, and a known
-// `(writer_id, seq)` under another id is a forked chain, which must never
-// overwrite what this device holds — verification is what names a fork, and it
-// can only do so over the rows that were here first. Returns nothing: these
-// rows are not what `SqliteStore::merge` counts.
+// `OR IGNORE` on the row's `(id, hash)` is what makes it one: a known pair is
+// the same row seen twice. Anything else is kept beside what this device
+// holds, never instead of it — a second row at a writer's `seq` (a forked
+// chain) or under a known id (an altered copy) — so every device ends up with
+// the same rows, the digest (which reads exactly `(id, hash)`) agrees, and
+// verification names the fork or the alteration the same way everywhere.
+// Returns nothing: these rows are not what `SqliteStore::merge` counts.
 fn merge_audit_rows(tx: &Connection, audit: &[AuditRecord]) -> rusqlite::Result<()> {
     let mut write = tx.prepare(&format!(
         "INSERT OR IGNORE INTO audit ({AUDIT_COLS})

@@ -847,6 +847,7 @@
   "this device": "este dispositivo",
   "device {{id}}": "dispositivo {{id}}",
   "a row from another device": "uma linha de outro dispositivo",
+  "two rows with the same number": "duas linhas com o mesmo número",
   "a missing row": "uma linha ausente",
   "a row that does not follow the one before it": "uma linha que não segue a anterior",
   "a row that was altered": "uma linha que foi alterada"

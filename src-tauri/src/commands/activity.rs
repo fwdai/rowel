@@ -19,7 +19,7 @@ use crate::browser::{self, Client};
 use crate::error::{store_err, Result};
 use crate::state::AppState;
 use crate::storage;
-use crate::store::AuditRecord;
+use crate::store::{AuditRecord, Result as StoreResult, SqliteStore};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
@@ -36,11 +36,6 @@ pub const IDLE_CLIENT_MS: i64 = 90 * DAY_MS;
 /// The bookkeeping around them (`requested`, `granted`, `ended`, …) is on the
 /// log for the auditor, not for the panel.
 const SHOWN_EVENTS: [&str; 3] = ["used", "denied", "exposed"];
-
-// The store's window is by time alone, and most rows of a busy week are the
-// bookkeeping kind, so the week is read with room to spare and filtered here.
-// A week with more rows than this shows its newest.
-const RECENT_FETCH_LIMIT: u32 = 5_000;
 
 /// What the panel shows: the week's rows, and what has gone stale.
 #[derive(Serialize, Clone, Debug)]
@@ -112,6 +107,7 @@ pub struct ChainBreak {
 #[serde(rename_all = "camelCase")]
 pub enum BreakReason {
     Writer,
+    Fork,
     Gap,
     PrevHash,
     Hash,
@@ -121,6 +117,7 @@ impl From<audit::Break> for ChainBreak {
     fn from(b: audit::Break) -> Self {
         let reason = match b.reason {
             Reason::Writer => BreakReason::Writer,
+            Reason::Fork => BreakReason::Fork,
             Reason::Gap => BreakReason::Gap,
             Reason::PrevHash => BreakReason::PrevHash,
             Reason::Hash => BreakReason::Hash,
@@ -144,9 +141,7 @@ pub fn audit_agent_activity(app: AppHandle) -> Result<AgentActivity> {
     let (rows, titles, clients) = {
         let session = state.session.lock().unwrap();
         let store = session.store()?;
-        let rows = store
-            .audit_recent(now - EVENT_WINDOW_MS, RECENT_FETCH_LIMIT)
-            .map_err(store_err)?;
+        let rows = recent_rows(store, now).map_err(store_err)?;
         (rows, agents::titles_in(store), browser::clients_in(store))
     };
     Ok(AgentActivity {
@@ -168,6 +163,13 @@ pub async fn audit_verify(app: AppHandle) -> Result<AuditVerification> {
         session.store()?.audit_all().map_err(store_err)?
     };
     super::blocking(move || Ok(verify_chains(&rows, &this_device))).await
+}
+
+/// The week before `now_ms` of the events the list shows, newest first, at
+/// most [`EVENT_CAP`]: chosen by event in the query, before the cap, so a busy
+/// week's bookkeeping rows cannot crowd the uses out of it.
+fn recent_rows(store: &SqliteStore, now_ms: i64) -> StoreResult<Vec<AuditRecord>> {
+    store.audit_recent(now_ms - EVENT_WINDOW_MS, &SHOWN_EVENTS, EVENT_CAP as u32)
 }
 
 /// The rows the list shows, shaped: those stamped within the week before
@@ -262,7 +264,6 @@ mod tests {
     use rowel_broker::actions::ClientKind;
     use rowel_broker::audit::{ActorKind, Draft, Event, Writer};
     use rowel_broker::grant::{Approval, Mode};
-    use rowel_core::store::SqliteStore;
 
     const NOW: i64 = 1_000 * DAY_MS;
     const THIS: &str = "device-a";
@@ -289,9 +290,7 @@ mod tests {
     }
 
     fn week(store: &SqliteStore) -> Vec<AuditRecord> {
-        store
-            .audit_recent(NOW - EVENT_WINDOW_MS, RECENT_FETCH_LIMIT)
-            .unwrap()
+        recent_rows(store, NOW).unwrap()
     }
 
     fn titles() -> HashMap<String, String> {
@@ -435,6 +434,21 @@ mod tests {
         assert_eq!(events.len(), EVENT_CAP);
         assert_eq!(events[0].ts_ms, NOW, "the newest are kept");
         assert_eq!(events[EVENT_CAP - 1].ts_ms, NOW - (EVENT_CAP as i64 - 1));
+    }
+
+    // A busy week's bookkeeping is newer and more plentiful than its uses, and
+    // must not crowd them out of the list: the query picks the events first.
+    #[test]
+    fn bookkeeping_rows_do_not_crowd_the_uses_out_of_the_week() {
+        let (_dir, store, _cipher) = rowel_broker::testing::vault();
+        write(&store, THIS, Event::Used, NOW - DAY_MS, None);
+        for i in 0..EVENT_CAP as i64 + 50 {
+            write(&store, THIS, Event::Granted, NOW - i, None);
+        }
+        let rows = week(&store);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].event, "used");
+        assert_eq!(recent_events(rows, &titles(), THIS, NOW).len(), 1);
     }
 
     fn rule(created_at_ms: i64) -> RuleRow {

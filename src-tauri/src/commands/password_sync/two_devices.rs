@@ -657,6 +657,48 @@ mod audit_log {
         assert_eq!(a.digest(), b.digest());
     }
 
+    // Two installs writing as one writer — an app folder copied to a new Mac
+    // carries its install id — each chain a different row at the same seq. The
+    // union keeps both sides on both devices, so the digests agree and the runs
+    // settle instead of each pushing its own side forever, and verification
+    // names the fork at the same seq on both.
+    #[test]
+    fn a_forked_chain_converges_on_both_sides_and_is_named_on_both_devices() {
+        let account = FakeStore::default();
+        let (a, b) = two_synced_devices(&account);
+        let draft = |target: &str| Draft {
+            target: Some(target.into()),
+            ..Draft::new(ActorKind::Agent, Event::Used)
+        };
+        Writer::new("a", a.store())
+            .record(draft("https://github.com/login"), NOW)
+            .unwrap();
+        Writer::new("a", b.store())
+            .record(draft("https://gitlab.com/login"), NOW)
+            .unwrap();
+
+        assert!(a.sync(&account).unwrap().pushed);
+        assert!(
+            b.sync(&account).unwrap().pushed,
+            "B's side goes up beside A's"
+        );
+        assert!(
+            !a.sync(&account).unwrap().pushed,
+            "A took B's side and matched"
+        );
+        assert!(!b.sync(&account).unwrap().pushed);
+
+        assert_eq!(a.digest(), b.digest());
+        assert_eq!(a.chain("a").len(), 2);
+        assert_eq!(a.chain("a"), b.chain("a"));
+        let fork = Err(Break {
+            seq: 1,
+            reason: Reason::Fork,
+        });
+        assert_eq!(audit::verify(&a.chain("a")), fork);
+        assert_eq!(audit::verify(&b.chain("a")), fork);
+    }
+
     // The merge is a union by id and cannot tell a forged row from a real one; that
     // is the verification's job. Here the device holding A's chain appends a row
     // under A's id whose contents were changed after it was hashed — what an
