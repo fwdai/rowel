@@ -131,6 +131,14 @@ config file; `approve` answers the asks it queues; `admin` edits the rules,
 a lockbox's agent access and the key file. All of it is in
 [`serve.md`](serve.md).
 
+`rowel admin server …` is the same binary as a Rowel Server's terminal: run
+on the server's data directory, it initializes the server and manages its
+members and their devices, the org lockboxes and who holds them, agents and
+the trust policies that recognise them, policy rules, and the audit export
+and its verification. The server need not be running. All of it, with the
+systemd unit, the reverse proxy and backups, is in
+[`server.md`](server.md).
+
 ## `rowel status`
 
 One line per fact: whether the app is reachable, whether the vault is open,
