@@ -1,14 +1,20 @@
+use std::cell::RefCell;
 use std::io::Cursor;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Map, Value};
+use zeroize::Zeroizing;
 
-use crate::actions::{Client, ClientKind, Connection, Hello, Login, VisibleRef};
+use crate::actions::{Client, ClientKind, Connection, Hello, Host, Login, Proof, VisibleRef};
 use crate::client::{Peer, PeerError};
 use crate::frame;
-use crate::grant::{GrantRequest, ItemSelector, Mode, Target, VisibleItem};
+use crate::grant::{
+    GrantReply, GrantRequest, ItemSelector, Mode, ResolveContext, Target, VisibleItem,
+};
 use crate::lockbox::save_login_in;
+use crate::passkeys::{Assertion, Registration};
 use crate::protocol::{increment, Code, NONCE_LEN, VERSION};
+use crate::reference::Reference;
 use crate::signal::{Signal, ROWEL_SIGNAL};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::socket::{root_dir, socket_name, IDENTIFIER};
@@ -376,6 +382,7 @@ fn a_hello_reads_with_every_field_optional() {
             platform: Some("claude-code".into()),
             version: None,
             capabilities: Vec::new(),
+            proof: None,
         }
     );
     assert!(serde_json::from_value::<Hello>(json!({ "kind": "robot" })).is_err());
@@ -418,6 +425,167 @@ fn associate_with_a_hello_stores_the_kind_and_platform_and_names_the_client() {
     assert_eq!(stored[0].kind, ClientKind::Agent);
     assert_eq!(stored[0].platform.as_deref(), Some("claude-code"));
     assert_eq!(stored[0].key, "agent-key");
+}
+
+/// The scripted host, remembering every `Hello` an `associate` brought it.
+/// `Mock` keeps only what it stores of one, and a proof is read by a server
+/// rather than stored, so this is the one way to see it arrive whole.
+struct Recording {
+    inner: Mock,
+    hellos: RefCell<Vec<Hello>>,
+}
+
+impl Host for Recording {
+    fn enabled(&self) -> bool {
+        self.inner.enabled()
+    }
+    fn database_hash(&self) -> Option<String> {
+        self.inner.database_hash()
+    }
+    fn clients(&self) -> Vec<Client> {
+        self.inner.clients()
+    }
+    fn associate(&self, key: &str, who: &Hello) -> Result<Client, Code> {
+        self.hellos.borrow_mut().push(who.clone());
+        self.inner.associate(key, who)
+    }
+    fn client_seen(&self, key: &str) {
+        self.inner.client_seen(key)
+    }
+    fn logins_for(&self, page_url: &str, host: &str) -> Vec<Login> {
+        self.inner.logins_for(page_url, host)
+    }
+    fn totp(&self, id: &str) -> Option<String> {
+        self.inner.totp(id)
+    }
+    fn generate_password(&self) -> Option<String> {
+        self.inner.generate_password()
+    }
+    fn save_login(
+        &self,
+        id: Option<&str>,
+        url: &str,
+        host: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<(), Code> {
+        self.inner.save_login(id, url, host, username, password)
+    }
+    fn passkey_register(&self, client: &Client, registration: Registration) -> Result<Value, Code> {
+        self.inner.passkey_register(client, registration)
+    }
+    fn passkey_get(&self, client: &Client, assertion: Assertion) -> Result<Value, Code> {
+        self.inner.passkey_get(client, assertion)
+    }
+    fn lock(&self) {
+        self.inner.lock()
+    }
+    fn unlock_requested(&self) {
+        self.inner.unlock_requested()
+    }
+    fn request_grant(&self, client: &Client, req: GrantRequest) -> Result<GrantReply, Code> {
+        self.inner.request_grant(client, req)
+    }
+    fn wait_grant(&self, client: &Client, id: &str, timeout_ms: u64) -> Result<GrantReply, Code> {
+        self.inner.wait_grant(client, id, timeout_ms)
+    }
+    fn grant_status(&self, client: &Client, id: &str) -> Result<GrantReply, Code> {
+        self.inner.grant_status(client, id)
+    }
+    fn end_grant(&self, client: &Client, id: &str) -> Result<(), Code> {
+        self.inner.end_grant(client, id)
+    }
+    fn visible_items(
+        &self,
+        client: &Client,
+        lockbox: Option<&str>,
+    ) -> Result<Vec<VisibleRef>, Code> {
+        self.inner.visible_items(client, lockbox)
+    }
+    fn take_signals(&self, client: &Client) -> Vec<Signal> {
+        self.inner.take_signals(client)
+    }
+    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+        self.inner.grant_covers(client, grant_id, item_id, mode)
+    }
+    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool {
+        self.inner.client_grant_covers(client, item_id, mode)
+    }
+    fn report_exposure(&self, client: &Client, grant_id: &str) {
+        self.inner.report_exposure(client, grant_id)
+    }
+    fn resolve(
+        &self,
+        client: &Client,
+        grant_id: &str,
+        reference: &Reference,
+        ctx: &ResolveContext,
+    ) -> Result<Zeroizing<String>, Code> {
+        self.inner.resolve(client, grant_id, reference, ctx)
+    }
+}
+
+// A workload identity proof (`spec/02`) rides inside the hello; the broker
+// reads it strictly like the rest and carries it to the host untouched, for
+// a server to verify.
+#[test]
+fn a_proof_inside_the_hello_reaches_the_host_whole() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Recording {
+        inner: Mock::unlocked(),
+        hellos: RefCell::new(Vec::new()),
+    });
+    extension.exchange(&mut connection);
+    let response = extension.send(
+        &mut connection,
+        "associate",
+        json!({
+            "key": extension.public_key(),
+            "idKey": "agent-key",
+            "hello": {
+                "kind": "agent",
+                "platform": "cli",
+                "proof": { "kind": "oidc", "token": "eyJhbGciOi.claims.signature", "nonce": "n-1" },
+            },
+        }),
+    );
+    assert_eq!(response["clientId"], "agent-key");
+    let hellos = connection.host().hellos.borrow();
+    assert_eq!(hellos.len(), 1);
+    assert_eq!(hellos[0].kind, ClientKind::Agent);
+    assert_eq!(
+        hellos[0].proof,
+        Some(Proof {
+            kind: "oidc".into(),
+            token: "eyJhbGciOi.claims.signature".into(),
+            nonce: Some("n-1".into()),
+        })
+    );
+}
+
+// A client from before proofs sends none and reads as none, and none is
+// what goes on the wire for it; a proof that is shown — a `Hello` is
+// logged — never shows the token, which is the credential.
+#[test]
+fn a_hello_without_a_proof_has_none_and_a_proof_is_shown_without_its_token() {
+    let hello: Hello =
+        serde_json::from_value(json!({ "kind": "agent", "platform": "cli" })).unwrap();
+    assert_eq!(hello.proof, None);
+    assert_eq!(serde_json::to_value(&hello).unwrap().get("proof"), None);
+
+    let proof = Proof {
+        kind: "oidc".into(),
+        token: "eyJhbGciOi.secret-claims.signature".into(),
+        nonce: None,
+    };
+    let shown = format!("{proof:?}");
+    assert!(shown.contains("oidc"));
+    assert!(!shown.contains("secret-claims"));
+    let hello = Hello {
+        proof: Some(proof),
+        ..Hello::default()
+    };
+    assert!(!format!("{hello:?}").contains("secret-claims"));
 }
 
 #[test]

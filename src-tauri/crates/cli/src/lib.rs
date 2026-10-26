@@ -38,6 +38,7 @@ pub mod status;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod transport;
+pub mod workload;
 
 use std::io;
 

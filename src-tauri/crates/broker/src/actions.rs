@@ -118,6 +118,37 @@ pub struct Hello {
     pub version: Option<String>,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Who the client is, said with a token its platform minted rather than
+    /// by a person answering the dialog (`spec/02`, workload identity). Only
+    /// a Rowel Server verifies one; this broker carries it to the host, and
+    /// a host that does not read proofs ignores it. Inside the `hello` rather
+    /// than beside it so `Host::associate` keeps its shape across every host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<Proof>,
+}
+
+/// A workload identity proof: `kind` names the verifier (`oidc` for a JWT a
+/// platform minted), `token` is the credential as the platform gave it, and
+/// `nonce` echoes the server's challenge for a platform whose audience is
+/// fixed. The token is what grants access, so `Debug` never shows it: a
+/// `Hello` is logged by hosts, and a proof travels inside one.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Proof {
+    pub kind: String,
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+}
+
+impl std::fmt::Debug for Proof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Proof")
+            .field("kind", &self.kind)
+            .field("token", &format_args!("<{} chars>", self.token.len()))
+            .field("nonce", &self.nonce)
+            .finish()
+    }
 }
 
 /// What this broker can do beyond KeePassXC's protocol, told to every client
