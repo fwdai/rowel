@@ -119,7 +119,10 @@ impl Vault {
 
     /// Unwrap the master and open the file if the session holds none, under
     /// the session lock the caller holds; the row and the full mirror pass
-    /// that every unwrap owes go in the same section.
+    /// that every unwrap owes go in the same section. The `key_unwrapped`
+    /// row is the record that the server used a key it holds, so an unwrap
+    /// whose row will not write is no open: the key is dropped with the file
+    /// and the request refused (`AuditUnavailable`).
     ///
     /// The row is read here, under the lock, every time: a frozen lockbox is
     /// sealed if it was open and refused (`GrantDenied`), and a row that
@@ -152,7 +155,7 @@ impl Vault {
             &state.writer_id,
             Draft::new(ActorKind::Server, Event::KeyUnwrapped),
             now,
-        );
+        )?;
         // Every writer's rows, once: the file may carry rows the mirror has
         // not seen — a device's whose mirroring failed at its push — and from
         // here on another writer's rows arrive only through a push, which

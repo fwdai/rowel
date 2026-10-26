@@ -74,6 +74,9 @@ pub struct Mock {
     pub signals: RefCell<HashMap<String, Vec<Signal>>>,
     /// Every exposure reported, by grant id.
     pub exposures: RefCell<Vec<String>>,
+    /// The log will not take a row: every use a grant would allow is
+    /// refused with `AuditUnavailable`, as the real host refuses it.
+    pub audit_fails: Cell<bool>,
 }
 
 pub type Save = (Option<String>, String, String, String, String);
@@ -164,6 +167,7 @@ impl Mock {
             visible: Vec::new(),
             signals: RefCell::new(HashMap::new()),
             exposures: RefCell::new(Vec::new()),
+            audit_fails: Cell::new(false),
         }
     }
 
@@ -448,28 +452,42 @@ impl Host for Mock {
     }
     // The claim as the real host makes it: the grant's own client is always
     // served; anyone else is served only if nobody, or they themselves, were
-    // served before. A yes is a use.
-    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+    // served before. A yes is a use, and goes nowhere without its row.
+    fn grant_covers(
+        &self,
+        client: &Client,
+        grant_id: &str,
+        item_id: &str,
+        mode: Mode,
+    ) -> Result<bool, Code> {
         let mut grants = self.grants.borrow_mut();
         let Some(grant) = grants.get_mut(grant_id) else {
-            return false;
+            return Ok(false);
         };
         if grant.state != State::Active || grant.item != item_id || grant.mode != mode {
-            return false;
+            return Ok(false);
         }
         if grant.client_key != client.key {
             match &grant.served_to {
                 None => grant.served_to = Some(client.key.clone()),
                 Some(served) if *served == client.key => {}
-                Some(_) => return false,
+                Some(_) => return Ok(false),
             }
         }
+        if self.audit_fails.get() {
+            return Err(Code::AuditUnavailable);
+        }
         grant.uses += 1;
-        true
+        Ok(true)
     }
     // Only the grants this client was issued or already served under: a step
     // that names no grant never claims one.
-    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool {
+    fn client_grant_covers(
+        &self,
+        client: &Client,
+        item_id: &str,
+        mode: Mode,
+    ) -> Result<bool, Code> {
         let ids: Vec<String> = self
             .grants
             .borrow()
@@ -479,8 +497,12 @@ impl Host for Mock {
             })
             .map(|(id, _)| id.clone())
             .collect();
-        ids.iter()
-            .any(|id| self.grant_covers(client, id, item_id, mode))
+        for id in &ids {
+            if self.grant_covers(client, id, item_id, mode)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
     fn report_exposure(&self, _client: &Client, grant_id: &str) {
         self.exposures.borrow_mut().push(grant_id.to_string());
@@ -511,6 +533,9 @@ impl Host for Mock {
             .secrets
             .get(&(reference.item.clone(), reference.field.to_string()))
             .ok_or(Code::GrantDenied)?;
+        if self.audit_fails.get() {
+            return Err(Code::AuditUnavailable);
+        }
         grant.uses += 1;
         Ok(Zeroizing::new(value.clone()))
     }

@@ -528,7 +528,7 @@ pub fn forget(app: &AppHandle, key: &str) -> Result<()> {
     let clients: Vec<Client> = before.iter().filter(|c| c.key != key).cloned().collect();
     write_clients(store, &clients)?;
     if clients.len() != before.len() {
-        agents::record(
+        agents::note(
             store,
             &writer,
             agents::draft(Event::RevokedClient, key, &before),
@@ -643,7 +643,7 @@ impl Host for AppHost {
             log::warn!("browser host: could not remember the client: {e}");
             Code::AssociationFailed
         })?;
-        agents::record(
+        agents::note(
             store,
             &writer,
             agents::draft(Event::Associated, key, &clients),
@@ -731,8 +731,7 @@ impl Host for AppHost {
         let origin = registration.origin.clone();
         let consent = self.ask_user(&origin, client);
         let outcome = passkeys::register(vault, consent, registration);
-        self.passkey_row(epoch, client, &origin, &outcome);
-        let credential = outcome?;
+        let credential = self.passkey_row(epoch, client, &origin, outcome)?;
         // The passkey is on a login — a new one, or the one for the site.
         let entries = {
             let state = self.0.state::<AppState>();
@@ -754,8 +753,7 @@ impl Host for AppHost {
         let origin = assertion.origin.clone();
         let consent = self.ask_user(&origin, client);
         let outcome = passkeys::assert(vault, consent, assertion);
-        self.passkey_row(epoch, client, &origin, &outcome);
-        outcome
+        self.passkey_row(epoch, client, &origin, outcome)
     }
 
     fn lock(&self) {
@@ -946,11 +944,22 @@ impl Host for AppHost {
     // in hand to say so. The targets are not checked again: the TOTP step
     // comes with no URL, and the grant was narrowed to its page when it was
     // issued.
-    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+    fn grant_covers(
+        &self,
+        client: &Client,
+        grant_id: &str,
+        item_id: &str,
+        mode: Mode,
+    ) -> std::result::Result<bool, Code> {
         self.with_locked(|ctx| covered(ctx, &client.key, grant_id, item_id, mode))
     }
 
-    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool {
+    fn client_grant_covers(
+        &self,
+        client: &Client,
+        item_id: &str,
+        mode: Mode,
+    ) -> std::result::Result<bool, Code> {
         self.with_locked(|ctx| client_covered(ctx, &client.key, item_id, mode))
     }
 
@@ -1056,27 +1065,29 @@ impl AppHost {
     // went through — a sign-in or a registration is a use of the site's
     // passkey, in the passkey mode, approved by the user at the dialog — and
     // a `denied` row for one the user refused. No grant object is involved:
-    // the dialog is the grant. Written in the session the ceremony began in,
-    // and nowhere if that session is gone; any other failure of the ceremony
-    // is the page's business, not the log's.
+    // the dialog is the grant. Written in the session the ceremony began in;
+    // any other failure of the ceremony is the page's business, not the
+    // log's. The outcome comes back as it may go out: a ceremony that went
+    // through leaves only once its row is in, and is refused when that
+    // session is gone or the row will not write.
     fn passkey_row(
         &self,
         epoch: Epoch,
         client: &Client,
         origin: &str,
-        outcome: &std::result::Result<Value, Code>,
-    ) {
-        let event = match outcome {
+        outcome: std::result::Result<Value, Code>,
+    ) -> std::result::Result<Value, Code> {
+        let event = match &outcome {
             Ok(_) => Event::Used,
             Err(Code::PasskeyRequestCanceled) => Event::Denied,
-            Err(_) => return,
+            Err(_) => return outcome,
         };
         let writer = storage::install_id(&self.0);
         let now = agents::now_ms();
         let state = self.0.state::<AppState>();
         let session = state.session.lock().unwrap();
         let Ok(store) = session.store_at(epoch) else {
-            return;
+            return outcome.and(Err(Code::DatabaseNotOpened));
         };
         let mut row = agents::draft(event, &client.key, &clients_in(store));
         row.mode = Some(Mode::Passkey);
@@ -1084,15 +1095,20 @@ impl AppHost {
         row.approval = Some(Approval::Ask);
         if event == Event::Used {
             row.approver = Some("user".into());
+            agents::record(store, &writer, row, now)?;
         } else {
             row.detail = Some(r#"{"reason":"user"}"#.into());
+            agents::note(store, &writer, row, now);
         }
-        agents::record(store, &writer, row, now);
+        outcome
     }
 
     // `check` under the session and agents locks, over the open store, once
     // the session has read the switches; false while locked.
-    fn with_locked(&self, check: impl FnOnce(Locked<'_>) -> bool) -> bool {
+    fn with_locked(
+        &self,
+        check: impl FnOnce(Locked<'_>) -> std::result::Result<bool, Code>,
+    ) -> std::result::Result<bool, Code> {
         let app = &self.0;
         agents::initialise(app);
         let writer = storage::install_id(app);
@@ -1100,7 +1116,7 @@ impl AppHost {
         let now = agents::now_ms();
         let session = state.session.lock().unwrap();
         let Ok(store) = session.store() else {
-            return false;
+            return Ok(false);
         };
         let mut held = state.agents.lock().unwrap();
         check(Locked {

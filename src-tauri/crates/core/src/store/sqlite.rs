@@ -502,6 +502,17 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Test seam: make every audit row fail to write, so a test can watch
+    /// what a host does when its log will not take a row.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn refuse_audit_writes(&self) -> Result<()> {
+        self.lock()?.execute_batch(
+            "CREATE TRIGGER refuse_audit BEFORE INSERT ON audit
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )?;
+        Ok(())
+    }
+
     /// Fetch one row's metadata by id **including tombstones**, unlike
     /// [`VaultStore::list`] which hides them. Save, restore, favorite and purge
     /// all report back the row they just wrote, and restore and purge act on

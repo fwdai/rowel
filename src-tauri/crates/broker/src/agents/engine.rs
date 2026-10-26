@@ -22,7 +22,7 @@ use crate::reference::{self, Reference};
 use crate::signal::Signal;
 
 use super::audit::{
-    about, audit_target_of, client_label, draft, origin_of, record, resolve_target_text,
+    about, audit_target_of, client_label, draft, note, origin_of, record, resolve_target_text,
     site_origin,
 };
 use super::state::AgentState;
@@ -153,7 +153,7 @@ pub fn decide(
         draft
     };
     if !well_targeted(&req) {
-        record(
+        note(
             store,
             writer,
             refusal(Event::Denied, r#"{"reason":"no_target"}"#.into()),
@@ -168,7 +168,7 @@ pub fn decide(
     match held.access_on() {
         Ok(()) => {}
         Err("lockbox") => {
-            record(
+            note(
                 store,
                 writer,
                 refusal(Event::Denied, r#"{"reason":"lockbox"}"#.into()),
@@ -191,7 +191,7 @@ pub fn decide(
         match secret_candidates_in(store, &req.items) {
             Some(candidates) => candidates,
             None => {
-                record(
+                note(
                     store,
                     writer,
                     refusal(Event::Denied, r#"{"reason":"no_candidates"}"#.into()),
@@ -243,7 +243,7 @@ pub fn decide(
                 writer,
                 about(row(Event::Used), grant, Some(r#"{"reuse":true}"#)),
                 now,
-            );
+            )?;
         }
         let grant = grant.clone();
         queue_fill(held, &clients, client, &grant, &items);
@@ -262,7 +262,7 @@ pub fn decide(
         .check(&Limits::default(), now)
         .is_err()
     {
-        record(
+        note(
             store,
             writer,
             refusal(Event::RateLimited, r#"{"reason":"rate"}"#.into()),
@@ -276,7 +276,7 @@ pub fn decide(
     let (terms, rule_id) = match &decision {
         Decision::Denied(reason) => {
             let reason = serde_json::to_string(reason).unwrap_or_default();
-            record(
+            note(
                 store,
                 writer,
                 refusal(Event::Denied, format!(r#"{{"reason":{reason}}}"#)),
@@ -312,7 +312,7 @@ pub fn decide(
         // here; an ask writes its own once the dialog has really gone up,
         // so a slot that was busy leaves no row behind.
         Approval::Auto => {
-            record(
+            note(
                 store,
                 writer,
                 about(row(Event::Requested), &grant, None),
@@ -353,7 +353,7 @@ pub fn deny_unasked(
     let clients = clients_in(store);
     let mut grant = asking.grant.clone();
     grant.state = State::Denied;
-    record(
+    note(
         store,
         writer,
         about(
@@ -368,7 +368,8 @@ pub fn deny_unasked(
 /// A grant goes active, on record: `granted`, and — for a site grant, whose
 /// reply carries the login — a use counted and written at once. A secret
 /// grant's reply carries nothing, so nothing is counted here: its uses are
-/// `resolve`'s to count, one per value served.
+/// `resolve`'s to count, one per value served. A row that will not write is
+/// `AuditUnavailable`, and the caller keeps nothing of the grant.
 fn activate(
     store: &SqliteStore,
     writer: &str,
@@ -380,9 +381,9 @@ fn activate(
     if !secret {
         grant.use_once(now)?;
     }
-    record(store, writer, about(row(Event::Granted), grant, None), now);
+    record(store, writer, about(row(Event::Granted), grant, None), now)?;
     if !secret {
-        record(store, writer, about(row(Event::Used), grant, None), now);
+        record(store, writer, about(row(Event::Used), grant, None), now)?;
     }
     Ok(())
 }
@@ -454,7 +455,7 @@ pub fn settle(
 
     // The ask went up and came down: the request is on record first,
     // whatever the answer was, as it stood when the user saw it.
-    record(
+    note(
         store,
         writer,
         about(row(Event::Requested), &grant, None),
@@ -476,7 +477,7 @@ pub fn settle(
         Ok((picked, standing_days)) => (vec![picked.visible.clone()], standing_days),
         Err(reason) => {
             grant.state = State::Denied;
-            record(
+            note(
                 store,
                 writer,
                 about(
@@ -497,8 +498,9 @@ pub fn settle(
     if let Some(days) = standing_days {
         let days = days.clamp(1, defaults::MAX_STANDING_DAYS);
         let rule = standing_rule(client_key, &grant, days, now);
-        let mut rules = live_rules(store, now);
+        let kept = live_rules(store, now);
         let rule_id = rule.id.clone();
+        let mut rules = kept.clone();
         rules.push(rule);
         match write_rules(store, &rules) {
             Ok(()) => {
@@ -509,7 +511,14 @@ pub fn settle(
                 );
                 added.grant_id = None;
                 added.approval = Some(Approval::Auto);
-                record(store, writer, added, now);
+                // A rule is a release to come: one the log does not hold is
+                // taken back, and the yes it came with goes with it.
+                if let Err(code) = record(store, writer, added, now) {
+                    if let Err(e) = write_rules(store, &kept) {
+                        log::warn!("browser host: could not take the standing rule back: {e}");
+                    }
+                    return Err(code);
+                }
             }
             // The fill the user said yes to still goes ahead; only the
             // memory of it is missing, and the next visit asks again.
@@ -599,7 +608,8 @@ fn queue_fill(
 /// now, for the client holding `client_key` — a predicate with a side
 /// effect, on purpose: a yes here is the login or its code about to be
 /// served, so it is a use of the grant, counted on it and written as a
-/// `used` row, and this is the one place the grant is in hand to say so. The
+/// `used` row, and this is the one place the grant is in hand to say so. A
+/// yes whose row will not write is `AuditUnavailable`: nothing is served. The
 /// switches come first, under the same locks: a grant still on the list is
 /// not served once the session's switches say no. The targets are not
 /// checked again: the TOTP step comes with no URL, and the grant was
@@ -612,7 +622,7 @@ pub fn covered(
     grant_id: &str,
     item_id: &str,
     mode: Mode,
-) -> bool {
+) -> Result<bool, Code> {
     covered_via(ctx, client_key, grant_id, item_id, mode, "grantId")
 }
 
@@ -624,7 +634,7 @@ fn covered_via(
     item_id: &str,
     mode: Mode,
     via: &str,
-) -> bool {
+) -> Result<bool, Code> {
     let Locked {
         store,
         held,
@@ -632,19 +642,19 @@ fn covered_via(
         now,
     } = ctx;
     if held.access_on().is_err() {
-        return false;
+        return Ok(false);
     }
     let Some(grant) = held.find_mut(grant_id) else {
-        return false;
+        return Ok(false);
     };
     if !grant.is_active(now) || !grant.modes.contains(&mode) {
-        return false;
+        return Ok(false);
     }
     if grant.client_key != client_key {
         match &grant.served_to {
             None => grant.served_to = Some(client_key.to_string()),
             Some(served) if served == client_key => {}
-            Some(_) => return false,
+            Some(_) => return Ok(false),
         }
     }
     // The item as the grant's selector sees it. Every grant issued here
@@ -658,11 +668,11 @@ fn covered_via(
         },
         _ => match store.row_meta(item_id) {
             Ok(Some(meta)) => candidate_item(&meta),
-            _ => return false,
+            _ => return Ok(false),
         },
     };
     if !grant.items.admits(&item) || grant.use_once(now).is_err() {
-        return false;
+        return Ok(false);
     }
     let clients = clients_in(store);
     let mut row = about(
@@ -672,15 +682,20 @@ fn covered_via(
     );
     row.item_id = Some(item_id.to_string());
     row.mode = Some(mode);
-    record(store, writer, row, now);
-    true
+    record(store, writer, row, now)?;
+    Ok(true)
 }
 
 /// [`covered`] over the grants the client holding `client_key` was issued or
 /// already served under: the first that covers `item_id` counts the use.
 /// What an extension's TOTP step is served under when it names no grant; a
 /// grant nobody has been served under yet is not claimed this way.
-pub fn client_covered(ctx: Locked<'_>, client_key: &str, item_id: &str, mode: Mode) -> bool {
+pub fn client_covered(
+    ctx: Locked<'_>,
+    client_key: &str,
+    item_id: &str,
+    mode: Mode,
+) -> Result<bool, Code> {
     let Locked {
         store,
         held,
@@ -693,15 +708,18 @@ pub fn client_covered(ctx: Locked<'_>, client_key: &str, item_id: &str, mode: Mo
         .filter(|g| g.client_key == client_key || g.served_to.as_deref() == Some(client_key))
         .map(|g| g.id.clone())
         .collect();
-    ids.iter().any(|id| {
+    for id in &ids {
         let ctx = Locked {
             store,
             held: &mut *held,
             writer,
             now,
         };
-        covered_via(ctx, client_key, id, item_id, mode, "client")
-    })
+        if covered_via(ctx, client_key, id, item_id, mode, "client")? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The value `reference` names, for a sidecar acting under `grant_id` at
@@ -715,9 +733,10 @@ pub fn client_covered(ctx: Locked<'_>, client_key: &str, item_id: &str, mode: Mo
 /// the mode the target implies. Only then is the payload unsealed and the
 /// field read, and a field that is absent or empty is a refusal — there is
 /// nothing to serve. A yes is a use, counted and written as a `used` row
-/// that names the sidecar, the field and the one place the value went.
-/// Every no is `GrantDenied` (or `GrantExpired` from `use_once`), whatever
-/// the reason: why a capability did not work is not for whoever holds it.
+/// that names the sidecar, the field and the one place the value went, and
+/// a row that will not write is `AuditUnavailable` with no value. Every no
+/// is `GrantDenied` (or `GrantExpired` from `use_once`), whatever the
+/// reason: why a capability did not work is not for whoever holds it.
 pub fn resolved(
     ctx: Locked<'_>,
     cipher: &PayloadCipher,
@@ -773,7 +792,7 @@ pub fn resolved(
     row.item_id = Some(item.id);
     row.mode = Some(mode);
     row.target = Some(resolve_target_text(&rctx.target));
-    record(store, writer, row, now);
+    record(store, writer, row, now)?;
     Ok(value)
 }
 

@@ -20,7 +20,11 @@
 //! lock, with the host's install id as the writer id — the chain is per
 //! writer, and the workspace id is `default` on every device. Nothing secret
 //! goes in a row: the target is reduced to scheme, host and path before it
-//! is written.
+//! is written. The log fails closed: a release — a grant going active, a
+//! use, a standing rule — is made only once its row is in ([`record`]), and
+//! a row that will not write refuses it with `AuditUnavailable`; a row about
+//! something that only restricts ([`note`]) is logged when it fails, and the
+//! restriction still happens.
 //!
 //! Two switches gate all of it: the app's Agents switch and the open
 //! lockbox's agent access. The host's files hold them between launches;
@@ -62,7 +66,7 @@ use crate::lockbox::{clients_in, live_rules, rules_in, titles_in, write_rules};
 use crate::signal::Signal;
 
 pub use audit::{
-    about, actor_kind, audit_target, audit_target_of, client_label, draft, origin_of, record,
+    about, actor_kind, audit_target, audit_target_of, client_label, draft, note, origin_of, record,
     resolve_target_text, single_id, site_origin, target_text,
 };
 use audit::{first_mode, rule_client};
@@ -151,7 +155,7 @@ pub fn ended(
         return;
     };
     let clients = clients_in(store);
-    record(
+    note(
         store,
         writer_id,
         about(
@@ -268,7 +272,7 @@ pub fn revoke_rule_in(store: &SqliteStore, writer_id: &str, id: &str, now: i64) 
     draft.mode = rule.modes.first().copied();
     draft.approval = Some(rule.approval);
     draft.detail = Some(format!(r#"{{"ruleId":"{}"}}"#, rule.id));
-    record(store, writer_id, draft, now);
+    note(store, writer_id, draft, now);
     Ok(())
 }
 

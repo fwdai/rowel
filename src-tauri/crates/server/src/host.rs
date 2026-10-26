@@ -146,10 +146,14 @@ impl OrgHost {
 
     /// `check` under the vault's session and agents locks; false while the
     /// vault is sealed.
-    fn with_locked(&self, bound: &Bound, check: impl FnOnce(Locked<'_>) -> bool) -> bool {
+    fn with_locked(
+        &self,
+        bound: &Bound,
+        check: impl FnOnce(Locked<'_>) -> Result<bool, Code>,
+    ) -> Result<bool, Code> {
         let session = bound.vault.session();
         let Ok(store) = session.store() else {
-            return false;
+            return Ok(false);
         };
         let mut held = bound.vault.agents();
         initialise(&mut held, bound.lockbox.agents);
@@ -454,7 +458,7 @@ impl Host for OrgHost {
         {
             let session = vault.session();
             if let Ok(store) = session.store() {
-                agents::record(
+                agents::note(
                     store,
                     self.writer(),
                     agents::draft(Event::Associated, key, std::slice::from_ref(&client)),
@@ -598,20 +602,33 @@ impl Host for OrgHost {
         held.signals.remove(&client.key).unwrap_or_default()
     }
 
-    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+    // A client bound to no lockbox is covered by nothing; a yes whose row
+    // will not write is the engine's refusal, passed on.
+    fn grant_covers(
+        &self,
+        client: &Client,
+        grant_id: &str,
+        item_id: &str,
+        mode: Mode,
+    ) -> Result<bool, Code> {
         self.with_bound(client, |bound| {
             Ok(self.with_locked(bound, |ctx| {
                 covered(ctx, &client.key, grant_id, item_id, mode)
             }))
         })
-        .unwrap_or(false)
+        .unwrap_or(Ok(false))
     }
 
-    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool {
+    fn client_grant_covers(
+        &self,
+        client: &Client,
+        item_id: &str,
+        mode: Mode,
+    ) -> Result<bool, Code> {
         self.with_bound(client, |bound| {
             Ok(self.with_locked(bound, |ctx| client_covered(ctx, &client.key, item_id, mode)))
         })
-        .unwrap_or(false)
+        .unwrap_or(Ok(false))
     }
 
     // The page showed what was filled: the grant ends now and the log says

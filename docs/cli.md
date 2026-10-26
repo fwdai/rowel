@@ -179,6 +179,9 @@ still gets back is one to request again, not one to wait on.
 A refusal is a tool error (`isError: true`) whose text is `{ error, message }`
 — `error` is the broker's code name (`AgentsDisabled`, `GrantDenied`,
 `DatabaseNotOpened`, …) or `unreachable` when the app is not running.
+`AuditUnavailable` means the app could not write the audit row the release
+stood on, so it released nothing; it is the host's trouble, not the grant's,
+and the same request may succeed once the log takes rows again.
 
 `initialize` and `tools/list` work with the app closed; a tool call needs it
 running and the vault unlocked.
@@ -321,6 +324,7 @@ placeholder when one is at fault and never a value:
 | 400 | `bad_header` | a resolved value that cannot be sent as a header |
 | 403 | `no_grant` | no `X-Rowel-Grant` |
 | 403 | the broker's code name (`GrantDenied`, `GrantExpired`, …) or `unreachable` | a placeholder the grant does not cover, or the app not running |
+| 503 | `AuditUnavailable` | the app could not write the `used` row, so it released nothing |
 | 413 | `body_too_large` | a body over 32 MiB |
 | 429 | `rate_limited` (with `Retry-After`) | the bucket is empty |
 | 502 | `upstream` | the upstream could not be reached or did not answer |

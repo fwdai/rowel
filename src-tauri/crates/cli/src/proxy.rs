@@ -43,12 +43,13 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use percent_encoding::percent_decode_str;
 use rowel_broker::grant::{ResolveContext, ResolveTarget};
+use rowel_broker::protocol::Code;
 use rowel_broker::reference::{Reference, SCHEME};
 use serde_json::json;
 use tokio::net::TcpListener;
 use zeroize::Zeroizing;
 
-use crate::agent::Broker;
+use crate::agent::{AgentError, Broker};
 use crate::authority::authority;
 use crate::redact::{form_encoded, json_escaped, Redactor};
 
@@ -561,11 +562,19 @@ async fn resolve_all(
             match broker.resolve(&grant, &reference, &ctx) {
                 Ok(value) => released.push((reference, value)),
                 Err(error) => {
+                    // A log that would not take the row is the host's
+                    // trouble, not a grant that does not cover.
+                    let status = match &error {
+                        AgentError::Refused(r) if r.code == Some(Code::AuditUnavailable) => {
+                            StatusCode::SERVICE_UNAVAILABLE
+                        }
+                        _ => StatusCode::FORBIDDEN,
+                    };
                     return Err(Refusal::new(
-                        StatusCode::FORBIDDEN,
+                        status,
                         &error.kind(),
                         format!("{reference} could not be resolved under this grant: {error}"),
-                    ))
+                    ));
                 }
             }
         }
@@ -1288,6 +1297,27 @@ mod end_to_end {
         assert_eq!(body["error"], "GrantDenied");
         assert!(body["message"].as_str().unwrap().contains(REF));
         assert_eq!(proxy.uses(), 0);
+    }
+
+    // A host whose log will not take the `used` row releases nothing, and
+    // the proxy says it is the host's trouble, not a grant that does not
+    // cover: 503, and nothing goes out.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_resolve_the_log_will_not_hold_is_unavailable_and_sends_nothing() {
+        let proxy = proxy(granting_stripe).await;
+        proxy.harness.host().host().audit_fails.set(true);
+        let response = proxy
+            .client
+            .get(proxy.url("/v1/balance"))
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, GRANT)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "AuditUnavailable");
+        assert!(proxy.seen.lock().unwrap().is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

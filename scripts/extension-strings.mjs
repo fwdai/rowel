@@ -80,6 +80,10 @@ const ROWEL_MESSAGES = {
     'Too many requests; wait a minute.',
     'Rowel: notification when the app rate-limits fill requests.'
   ],
+  agentModeAuditUnavailableNotification: [
+    'Rowel could not write its activity log, so nothing was filled',
+    'Rowel: notification when a fill was refused because its audit row could not be written.'
+  ],
   agentModeExposedNotification: [
     'Rowel ended the grant: the page showed the password',
     'Rowel: notification when a filled secret showed in the page and the grant was ended.'
@@ -94,7 +98,11 @@ const ROWEL_MESSAGES = {
   errorMessageNotPermittedForKind: ['Not permitted for this kind of client', 'Rowel: error code 43.'],
   errorMessagePolicyRequiresApproval: ['This fill needs your approval in Rowel', 'Rowel: error code 44.'],
   errorMessageRateLimited: ['Too many requests', 'Rowel: error code 45.'],
-  errorMessageAgentsDisabled: ["Agents are turned off in Rowel's settings", 'Rowel: error code 46.']
+  errorMessageAgentsDisabled: ["Agents are turned off in Rowel's settings", 'Rowel: error code 46.'],
+  errorMessageAuditUnavailable: [
+    'Rowel could not write its activity log, so nothing was released',
+    'Rowel: error code 47.'
+  ]
 }
 
 const rename = text =>

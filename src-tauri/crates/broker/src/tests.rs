@@ -68,6 +68,7 @@ fn a_code_is_found_by_its_number_and_an_unknown_number_is_none() {
     assert_eq!(Code::from_number(8), Some(Code::AssociationFailed));
     assert_eq!(Code::from_number(43), Some(Code::NotPermittedForKind));
     assert_eq!(Code::from_number(46), Some(Code::AgentsDisabled));
+    assert_eq!(Code::from_number(47), Some(Code::AuditUnavailable));
     assert_eq!(
         Code::from_number(2),
         None,
@@ -505,10 +506,21 @@ impl Host for Recording {
     fn take_signals(&self, client: &Client) -> Vec<Signal> {
         self.inner.take_signals(client)
     }
-    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+    fn grant_covers(
+        &self,
+        client: &Client,
+        grant_id: &str,
+        item_id: &str,
+        mode: Mode,
+    ) -> Result<bool, Code> {
         self.inner.grant_covers(client, grant_id, item_id, mode)
     }
-    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool {
+    fn client_grant_covers(
+        &self,
+        client: &Client,
+        item_id: &str,
+        mode: Mode,
+    ) -> Result<bool, Code> {
         self.inner.client_grant_covers(client, item_id, mode)
     }
     fn report_exposure(&self, client: &Client, grant_id: &str) {
@@ -1001,6 +1013,43 @@ fn a_grant_the_extension_holds_serves_only_what_it_covers() {
     );
     assert_eq!(both["count"], 1);
     assert!(connection.host().grant_requests.borrow().is_empty());
+}
+
+// A host whose log will not take the `used` row serves nothing under the
+// grant: the fill and the TOTP step are refused with `AuditUnavailable`, and
+// neither carries a credential.
+#[test]
+fn a_use_the_log_will_not_hold_serves_nothing_and_says_why() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        logins: two_logins(),
+        ..Mock::unlocked()
+            .known("Chrome", "id-key")
+            .granting("g1", "gh", Mode::Fill)
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+    connection.host().audit_fails.set(true);
+
+    let fill = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&fill), Code::AuditUnavailable as u8);
+    assert!(fill.get("entries").is_none());
+    let totp = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "agentMode": "true", "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&totp), Code::AuditUnavailable as u8);
+    assert!(totp.get("totp").is_none());
+    assert_eq!(connection.host().grants.borrow()["g1"].uses, 0);
 }
 
 // In agent mode the TOTP step never falls back to the ungranted path: a

@@ -379,6 +379,43 @@ fn an_expired_grant_has_one_ended_row_whoever_sees_it_first() {
     assert_eq!(data.rows().len(), 3, "the tick has nothing left to end");
 }
 
+// The log fails closed: with the vault's log refusing rows, a value is not
+// resolved and a grant is not issued, each refused as `AuditUnavailable`,
+// while the agent's end of its grant still takes.
+#[test]
+fn a_log_that_will_not_write_releases_nothing_and_still_ends_a_grant() {
+    let data = seeded();
+    config_with(&data, vec![stripe_rule(AGENT_KEY, Approval::Auto)]);
+    let host = data.host(&Notices::default());
+    let mut agent = peer(&host, AGENT_KEY);
+    let mut sidecar = peer(&host, SIDECAR_KEY);
+    let reply = agent
+        .call("request-grant", header_request("check the balance"))
+        .unwrap();
+    data.open().store.refuse_audit_writes().unwrap();
+
+    let resolved = sidecar.call(
+        "resolve",
+        json!({
+            "grantId": reply["grantId"],
+            "ref": format!("rowel://default/{STRIPE}/apiKey"),
+            "context": { "target": { "http": { "host": "api.stripe.com", "path": "/v1/balance", "method": "GET" } } },
+        }),
+    );
+    assert_eq!(refused(resolved.unwrap_err()), Code::AuditUnavailable);
+
+    agent
+        .call("end-grant", json!({ "grantId": reply["grantId"] }))
+        .unwrap();
+    let status = agent
+        .call("grant-status", json!({ "grantId": reply["grantId"] }))
+        .unwrap();
+    assert_eq!(status["state"], "revoked");
+    let again = agent.call("request-grant", header_request("once more"));
+    assert_eq!(refused(again.unwrap_err()), Code::AuditUnavailable);
+    assert_eq!(events(&data.rows()), ["requested", "granted"]);
+}
+
 #[test]
 fn a_request_no_rule_covers_asks_and_approve_activates_it() {
     let data = seeded();

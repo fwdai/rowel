@@ -520,6 +520,102 @@ fn an_auto_release_requires_the_switches_the_session_holds() {
     assert_eq!(events, ["denied", "requested", "granted", "used"]);
 }
 
+// The log fails closed. With the lockbox's log refusing every row, nothing
+// is released, each refusal `AuditUnavailable`: a dialog's yes (and the
+// standing rule it came with, which is taken back), a standing rule's yes,
+// the reuse of a grant held, a fill or TOTP check under one, a resolve. What
+// only restricts still happens: an expiry ends its grant and queues the
+// sign-out, and the lockbox's access going off ends the rest.
+#[test]
+fn a_log_that_will_not_write_releases_nothing_and_still_ends_grants() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    seed(
+        &store,
+        &cipher,
+        &api_key("stripe", "Stripe", Some("sk_live_x")),
+    );
+    let_in(&store, &[extension(), agent(), sidecar()]);
+    store.refuse_audit_writes().unwrap();
+    let now = 1_000;
+    let mut held = ready();
+    fn refused<T>(outcome: &Result<T, Code>) -> bool {
+        matches!(outcome, Err(Code::AuditUnavailable))
+    }
+
+    let asking = asked(&store, &mut held, now);
+    let settled = settle(
+        locked(&store, &mut held, now),
+        &extension(),
+        asking,
+        yes("gh"),
+    );
+    assert!(refused(&settled));
+    assert!(held.grants.is_empty(), "no grant");
+    assert!(live_rules(&store, now).is_empty(), "and no rule");
+
+    write_rules(
+        &store,
+        &[defaults::standing(
+            "ext",
+            "gh",
+            "https://github.com",
+            7,
+            now,
+        )],
+    )
+    .unwrap();
+    assert!(refused(&decided(&store, &mut held, now)));
+    assert!(held.grants.is_empty(), "a rule's yes is no grant either");
+
+    held.grants.push(active_grant("gh", now));
+    let fill = held.grants[0].id.clone();
+    assert!(refused(&decided(&store, &mut held, now)), "a reuse");
+    assert!(refused(&covered(
+        locked(&store, &mut held, now),
+        "ext",
+        &fill,
+        "gh",
+        Mode::Fill
+    )));
+    assert!(refused(&client_covered(
+        locked(&store, &mut held, now),
+        "ext",
+        "gh",
+        Mode::Fill
+    )));
+    held.grants.push(header_grant(&["stripe"], now));
+    let header = held.grants[1].id.clone();
+    assert!(refused(&resolve(
+        &store,
+        &cipher,
+        &mut held,
+        now,
+        &header,
+        "rowel://default/stripe/apiKey",
+        &call("GET", "api.stripe.com"),
+    )));
+
+    let later = held.grants[0].expires_at_ms;
+    held.grants[1].expires_at_ms = later + 1;
+    assert!(agents::expire_due(Some(&store), &mut held, "dev", later));
+    assert_eq!(held.grants[0].state, State::Expired);
+    assert_eq!(
+        held.signals.get("ext").map(Vec::len),
+        Some(1),
+        "the sign-out is queued"
+    );
+    switched(
+        &store,
+        &mut held,
+        "lockbox",
+        |access| access.lockbox_on = false,
+        later,
+    );
+    assert_eq!(held.grants[1].state, State::Revoked);
+    assert!(rows(&store).is_empty(), "the log took nothing");
+}
+
 // `grant_covers` — the login or its code about to be served under a grant
 // in hand — is a release like any other: the lockbox's access going off
 // ends the grant in the same section as the change, and the switches the
@@ -532,13 +628,7 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
     held.grants.push(active_grant("gh", now));
     let id = held.grants[0].id.clone();
 
-    assert!(covered(
-        locked(&store, &mut held, now),
-        "ext",
-        &id,
-        "gh",
-        Mode::Fill
-    ));
+    assert!(covered(locked(&store, &mut held, now), "ext", &id, "gh", Mode::Fill).unwrap());
     assert_eq!(held.grants[0].uses, 1);
     assert_eq!(rows(&store), vec![row("used", r#"{"via":"grantId"}"#)]);
 
@@ -550,13 +640,7 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
         now,
     );
     assert_eq!(held.grants[0].state, State::Revoked);
-    assert!(!covered(
-        locked(&store, &mut held, now),
-        "ext",
-        &id,
-        "gh",
-        Mode::Fill
-    ));
+    assert!(!covered(locked(&store, &mut held, now), "ext", &id, "gh", Mode::Fill).unwrap());
     assert_eq!(held.grants[0].uses, 1, "not used");
     assert_eq!(
         rows(&store).len(),
@@ -567,13 +651,7 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
     // The switches alone refuse: a grant back on the list, with the access
     // still off, covers nothing; with it back on, it does.
     held.grants[0].state = State::Active;
-    assert!(!covered(
-        locked(&store, &mut held, now),
-        "ext",
-        &id,
-        "gh",
-        Mode::Fill
-    ));
+    assert!(!covered(locked(&store, &mut held, now), "ext", &id, "gh", Mode::Fill).unwrap());
     assert_eq!(held.grants[0].uses, 1);
     switched(
         &store,
@@ -582,24 +660,12 @@ fn a_held_grant_covers_nothing_once_the_lockbox_access_went_off() {
         |access| access.lockbox_on = true,
         now,
     );
-    assert!(covered(
-        locked(&store, &mut held, now),
-        "ext",
-        &id,
-        "gh",
-        Mode::Fill
-    ));
+    assert!(covered(locked(&store, &mut held, now), "ext", &id, "gh", Mode::Fill).unwrap());
     assert_eq!(held.grants[0].uses, 2);
 
     // And a session whose switches are not read yet serves nothing.
     held.access = None;
-    assert!(!covered(
-        locked(&store, &mut held, now),
-        "ext",
-        &id,
-        "gh",
-        Mode::Fill
-    ));
+    assert!(!covered(locked(&store, &mut held, now), "ext", &id, "gh", Mode::Fill).unwrap());
     assert_eq!(held.grants[0].uses, 2);
 }
 
@@ -617,28 +683,13 @@ fn a_client_s_own_grant_covers_its_totp_step_and_no_one_else_s() {
         client_key: "agent".into(),
         ..active_grant("gh", now)
     });
-    assert!(!client_covered(
-        locked(&store, &mut held, now),
-        "ext",
-        "gh",
-        Mode::Fill
-    ));
+    assert!(!client_covered(locked(&store, &mut held, now), "ext", "gh", Mode::Fill).unwrap());
     assert_eq!(held.grants[0].served_to, None, "not claimed");
 
     held.grants[0].served_to = Some("ext".into());
     held.grants.push(active_grant("gh2", now));
-    assert!(!client_covered(
-        locked(&store, &mut held, now),
-        "ext",
-        "gh3",
-        Mode::Fill
-    ));
-    assert!(client_covered(
-        locked(&store, &mut held, now),
-        "ext",
-        "gh",
-        Mode::Fill
-    ));
+    assert!(!client_covered(locked(&store, &mut held, now), "ext", "gh3", Mode::Fill).unwrap());
+    assert!(client_covered(locked(&store, &mut held, now), "ext", "gh", Mode::Fill).unwrap());
     let uses: Vec<u32> = held.grants.iter().map(|g| g.uses).collect();
     assert_eq!(uses, [1, 0], "the use is counted on the covering grant");
     assert_eq!(rows(&store), vec![row("used", r#"{"via":"client"}"#)]);
@@ -1332,7 +1383,7 @@ fn a_fill_grant_is_claimed_by_the_first_extension_served_under_it() {
     });
     let id = held.grants[0].id.clone();
     let covers = |held: &mut AgentState, key: &str| {
-        covered(locked(&store, held, now), key, &id, "gh", Mode::Fill)
+        covered(locked(&store, held, now), key, &id, "gh", Mode::Fill).unwrap()
     };
 
     assert!(
@@ -1369,7 +1420,8 @@ fn a_fill_grant_is_claimed_by_the_first_extension_served_under_it() {
         &own,
         "gh2",
         Mode::Fill
-    ));
+    )
+    .unwrap());
     assert_eq!(held.grants[1].served_to, None);
 }
 

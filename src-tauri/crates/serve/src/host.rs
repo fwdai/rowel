@@ -525,11 +525,14 @@ impl HeadlessHost {
 
     /// `check` under the session and agents locks, over the open store, once
     /// the session has read the switches; false while sealed.
-    fn with_locked(&self, check: impl FnOnce(Locked<'_>) -> bool) -> bool {
+    fn with_locked(
+        &self,
+        check: impl FnOnce(Locked<'_>) -> Result<bool, Code>,
+    ) -> Result<bool, Code> {
         let now = now_ms();
         let session = self.session();
         let Ok(store) = session.store() else {
-            return false;
+            return Ok(false);
         };
         let mut held = self.agents();
         self.initialise(&mut held);
@@ -628,22 +631,23 @@ impl HeadlessHost {
 
     /// What a passkey ceremony leaves on the log, as the app writes it: a
     /// `used` row for one that went through, `denied` for one refused, in
-    /// the session the ceremony began in.
+    /// the session the ceremony began in — and the outcome as it may go
+    /// out, which for one that went through is only once its row is in.
     fn passkey_row(
         &self,
         epoch: u64,
         client: &Client,
         origin: &str,
-        outcome: &Result<Value, Code>,
-    ) {
-        let event = match outcome {
+        outcome: Result<Value, Code>,
+    ) -> Result<Value, Code> {
+        let event = match &outcome {
             Ok(_) => Event::Used,
             Err(Code::PasskeyRequestCanceled) => Event::Denied,
-            Err(_) => return,
+            Err(_) => return outcome,
         };
         let session = self.session();
         let Ok(store) = session.store_at(epoch) else {
-            return;
+            return outcome.and(Err(Code::DatabaseNotOpened));
         };
         let mut row = agents::draft(event, &client.key, &clients_in(store));
         row.mode = Some(Mode::Passkey);
@@ -651,10 +655,12 @@ impl HeadlessHost {
         row.approval = Some(Approval::Ask);
         if event == Event::Used {
             row.approver = Some("user".into());
+            agents::record(store, &self.0.writer_id, row, now_ms())?;
         } else {
             row.detail = Some(r#"{"reason":"user"}"#.into());
+            agents::note(store, &self.0.writer_id, row, now_ms());
         }
-        agents::record(store, &self.0.writer_id, row, now_ms());
+        outcome
     }
 
     fn open_vault(&self) -> Result<OpenVault, Code> {
@@ -803,7 +809,7 @@ impl Host for HeadlessHost {
             log::warn!("rowel serve: could not remember the client: {e}");
             Code::AssociationFailed
         })?;
-        agents::record(
+        agents::note(
             store,
             &self.0.writer_id,
             agents::draft(Event::Associated, key, &clients),
@@ -880,8 +886,7 @@ impl Host for HeadlessHost {
             client: client.clone(),
         };
         let outcome = passkeys::register(vault, consent, registration);
-        self.passkey_row(epoch, client, &origin, &outcome);
-        outcome
+        self.passkey_row(epoch, client, &origin, outcome)
     }
 
     fn passkey_get(&self, client: &Client, assertion: Assertion) -> Result<Value, Code> {
@@ -895,8 +900,7 @@ impl Host for HeadlessHost {
             client: client.clone(),
         };
         let outcome = passkeys::assert(vault, consent, assertion);
-        self.passkey_row(epoch, client, &origin, &outcome);
-        outcome
+        self.passkey_row(epoch, client, &origin, outcome)
     }
 
     fn lock(&self) {
@@ -1040,12 +1044,23 @@ impl Host for HeadlessHost {
         held.signals.remove(&client.key).unwrap_or_default()
     }
 
-    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+    fn grant_covers(
+        &self,
+        client: &Client,
+        grant_id: &str,
+        item_id: &str,
+        mode: Mode,
+    ) -> Result<bool, Code> {
         self.touch();
         self.with_locked(|ctx| covered(ctx, &client.key, grant_id, item_id, mode))
     }
 
-    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool {
+    fn client_grant_covers(
+        &self,
+        client: &Client,
+        item_id: &str,
+        mode: Mode,
+    ) -> Result<bool, Code> {
         self.touch();
         self.with_locked(|ctx| client_covered(ctx, &client.key, item_id, mode))
     }
