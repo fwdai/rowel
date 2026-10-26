@@ -126,21 +126,6 @@ pub(crate) fn reseal(root: &Path, old: &[u8], new: &[u8]) -> Result<()> {
     storage::atomic_write_private(&path, sealed.as_bytes())
 }
 
-/// A sealed key the current app key does not open was sealed under one this
-/// device no longer has — what deleting the primary leaves behind — and no
-/// server will ever hand a master to it again: it goes, with a note, and the
-/// next sign-in enrolls a fresh key as a new device. The rule that a file
-/// that does not open is never silently replaced ([`load_or_create`]) stands
-/// everywhere else; this is the one caller that has proved the app key.
-pub(crate) fn remove_if_stale(root: &Path, app_key: &[u8]) {
-    let path = root.join(storage::ENROLLMENT_KEY_FILE);
-    if !path.exists() || load_or_create(root, app_key).is_ok() {
-        return;
-    }
-    log::warn!("this device's enrollment key does not open under the app key; removing it");
-    let _ = storage::remove_if_present(&path);
-}
-
 /// `master` sealed to the device whose enrollment public key is
 /// `public_key_b64`, as the server wraps one: the fake server's half of
 /// [`EnrollmentKey::unseal_master`].
@@ -168,11 +153,15 @@ pub(crate) fn load_or_create(root: &Path, app_key: &[u8]) -> Result<EnrollmentKe
     let path = root.join(storage::ENROLLMENT_KEY_FILE);
     if path.exists() {
         let sealed = std::fs::read_to_string(&path)?;
-        let secret = crypto::open_workspace_key(app_key, SEAL_ID, &sealed).map_err(|e| {
-            Error::Crypto(format!(
-                "this device's enrollment key does not open under the app key: {e}"
-            ))
-        })?;
+        // The wrong-key verdict passes through as it is: the one failure a
+        // caller may act on (`org::set_aside_stale`).
+        let secret =
+            crypto::open_workspace_key(app_key, SEAL_ID, &sealed).map_err(|e| match e {
+                Error::SealedUnderAnotherKey => e,
+                e => Error::Crypto(format!(
+                    "this device's enrollment key does not open under the app key: {e}"
+                )),
+            })?;
         return EnrollmentKey::from_bytes(&secret);
     }
     let key = EnrollmentKey::generate();
@@ -242,10 +231,11 @@ mod tests {
         assert!(fingerprint_of(&STANDARD.encode([1u8; 16])).is_err());
     }
 
-    // A password change moves the sealed key onto the new app key; a key left
-    // under one the device no longer has goes, and one that opens stays.
+    // A password change moves the sealed key onto the new app key, and under
+    // the old one it reads as sealed under another key: the verdict
+    // `org::set_aside_stale` acts on, which a load never acts on itself.
     #[test]
-    fn the_sealed_key_follows_the_app_key_and_a_stale_one_is_removed() {
+    fn the_sealed_key_follows_the_app_key() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(storage::ENROLLMENT_KEY_FILE);
         reseal(root.path(), APP_KEY, &[5u8; 32]).unwrap();
@@ -253,20 +243,16 @@ mod tests {
 
         let minted = load_or_create(root.path(), APP_KEY).unwrap();
         reseal(root.path(), APP_KEY, &[5u8; 32]).unwrap();
-        assert!(load_or_create(root.path(), APP_KEY).is_err());
+        assert!(matches!(
+            load_or_create(root.path(), APP_KEY),
+            Err(Error::SealedUnderAnotherKey)
+        ));
+        assert!(path.exists(), "a load that fails never replaces the key");
         assert_eq!(
             load_or_create(root.path(), &[5u8; 32])
                 .unwrap()
                 .public_key_b64(),
             minted.public_key_b64()
-        );
-
-        remove_if_stale(root.path(), &[5u8; 32]);
-        assert!(path.exists(), "it opens, so it stays");
-        remove_if_stale(root.path(), APP_KEY);
-        assert!(
-            !path.exists(),
-            "sealed under a key this device no longer has"
         );
     }
 

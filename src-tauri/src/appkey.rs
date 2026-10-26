@@ -29,7 +29,7 @@ use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
 
 use crate::crypto::{self, VaultKey};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::state::AppState;
 use crate::storage;
 use crate::workspace::{self, Registry, PRIMARY_ID};
@@ -118,26 +118,29 @@ fn wrap(root: &Path, id: &str, app_key: &[u8], material: &[u8]) -> Result<()> {
 
 /// The key sealed for workspace `id`, if it has a sidecar the app key opens.
 ///
-/// A sidecar the app key does *not* open is stale — sealed under an app key
-/// this device no longer has, which is what deleting the primary leaves behind
-/// — and is removed, so the next unlock of that workspace writes a fresh one
-/// rather than the probe offering a biometric unlock that cannot work.
+/// A sidecar that is whole but sealed under an app key this device no
+/// longer has — what deleting the primary leaves behind — is stale and is
+/// removed, so the next unlock of that workspace writes a fresh one rather
+/// than the probe offering a biometric unlock that cannot work. Only on that
+/// verdict (`Error::SealedUnderAnotherKey`): a read that fails, or a file
+/// that is not a sealed blob, says nothing about the key — a disk that is
+/// slow or briefly unavailable is not a stale sidecar — so it is reported
+/// and the file left alone.
 fn unwrap(root: &Path, id: &str, app_key: &[u8]) -> Result<Option<Zeroizing<Vec<u8>>>> {
     let path = sidecar(root, id);
     if !path.exists() {
         return Ok(None);
     }
-    // A read that fails says nothing about the file — a disk that is slow or
-    // briefly unavailable is not a stale sidecar — so it is reported and the
-    // file left alone. One that reads but will not decode, or fails its tag,
-    // will never open: the probe offers a biometric unlock on the strength of
-    // the file being there, so that one must not stay there.
     let text = fs::read_to_string(&path)?;
     match crypto::open_workspace_key(app_key, id, &text) {
         Ok(material) => Ok(Some(material)),
-        Err(e) => {
-            log::warn!("workspace {id}'s sealed key does not open under the app key; removing it");
+        Err(Error::SealedUnderAnotherKey) => {
+            log::warn!("workspace {id}'s sealed key is under an app key this device no longer has; removing it");
             let _ = fs::remove_file(&path);
+            Err(Error::SealedUnderAnotherKey)
+        }
+        Err(e) => {
+            log::warn!("workspace {id}'s sealed key could not be read and is left as it is: {e}");
             Err(e)
         }
     }
@@ -233,8 +236,10 @@ fn open_all_in(state: &AppState, root: &Path, app_key: &[u8]) {
     // The install-level files sealed under the app key — the server
     // connections, the enrollment key — are read by this key from here on;
     // one it does not open was sealed under a key this device no longer has,
-    // and goes now, as a stale sidecar does above.
-    crate::org::remove_stale(root, app_key);
+    // and is set aside now so the next sign-in starts clean. Renamed, never
+    // removed: unlike a workspace sidecar above, which the workspace's own
+    // password rewrites, nothing rewrites the enrollment key's private half.
+    crate::org::set_aside_stale(root, app_key);
 
     // Into the ring under the session guards again, and only if the session is
     // still live: a lock that landed during the reads above cleared the ring,
@@ -502,17 +507,25 @@ mod tests {
         assert!(!is_wrapped(&root, "a1b2"));
     }
 
-    // A file that is not even a sealed key — truncated, overwritten, not
-    // base64 — is advertised by the probe for as long as it exists, so it goes
-    // the same way a stale one does.
+    // A file that is not a sealed key — truncated, overwritten, not base64 —
+    // says nothing about the app key, so it is an error and nothing more: it
+    // stays, and only the wrong-key verdict ever removes a sidecar.
     #[test]
-    fn a_malformed_sidecar_is_removed_too() {
+    fn a_malformed_sidecar_is_left_in_place() {
         let root = tmp_root();
         fs::create_dir_all(workspace::dir_of(&root, "a1b2")).unwrap();
         fs::write(sidecar(&root, "a1b2"), "not a sealed key").unwrap();
+        assert!(matches!(
+            unwrap(&root, "a1b2", APP_KEY),
+            Err(Error::Crypto(_))
+        ));
+        assert!(is_wrapped(&root, "a1b2"));
 
+        wrap(&root, "a1b2", APP_KEY, b"vault-key").unwrap();
+        let sealed = fs::read_to_string(sidecar(&root, "a1b2")).unwrap();
+        fs::write(sidecar(&root, "a1b2"), &sealed[..sealed.len() / 2]).unwrap();
         assert!(unwrap(&root, "a1b2", APP_KEY).is_err());
-        assert!(!is_wrapped(&root, "a1b2"));
+        assert!(is_wrapped(&root, "a1b2"), "truncated, not stale");
     }
 
     // The id is authenticated: a sidecar moved under another workspace's
@@ -603,9 +616,9 @@ mod tests {
 
     // The server connections and the enrollment key are sealed under the app
     // key too: a password change carries them onto the new one, and a primary
-    // unlock under a key that does not open them removes what is left.
+    // unlock under a key that does not open them sets what is left aside.
     #[test]
-    fn a_password_change_reseals_the_org_files_and_a_primary_unlock_drops_stale_ones() {
+    fn a_password_change_reseals_the_org_files_and_a_primary_unlock_sets_stale_ones_aside() {
         use crate::org::{connections, enrollment};
 
         let root = tmp_root();
@@ -634,11 +647,18 @@ mod tests {
         );
 
         // The primary deleted and another key proved in its place: the files
-        // the old key sealed do not open, and are not left to fail forever.
+        // the old key sealed do not open, and are not left to fail forever —
+        // nor deleted: both are moved aside with their bytes.
         state.keyring.lock().unwrap().clear();
         open_all_in(&state, &root, X_KEY);
         assert!(!root.join(storage::SERVERS_FILE).exists());
         assert!(!root.join(storage::ENROLLMENT_KEY_FILE).exists());
+        let aside = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|name| name.contains(".stale-"))
+            .count();
+        assert_eq!(aside, 2);
     }
 
     #[test]

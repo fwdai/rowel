@@ -376,19 +376,30 @@ pub fn agents_changed(app: &AppHandle) {
 #[derive(Serialize, Clone)]
 struct OrgConnect<'a> {
     url: &'a str,
+    attempt: u64,
     status: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<&'a str>,
 }
 
-/// Where the sign-in to the Rowel Server at `url` stands (`org::connect`):
-/// `pending` while the browser has it, `done` once the install is signed in
-/// and this device enrolled, or `error` with the reason. The command that
-/// starts it returns as soon as the browser is open, so this is the one way
-/// its outcome reaches the Settings section that asked.
+/// Where sign-in `attempt` to the Rowel Server at `url` stands
+/// (`org::connect`): `pending` while the browser has it, `done` once the
+/// install is signed in and this device enrolled, or `error` with the
+/// reason. The command that starts it returns the attempt's number as soon
+/// as the browser is open, so this is the one way its outcome reaches the
+/// Settings section that asked, and the number is how that section tells
+/// the attempt it started from one it has since replaced.
 #[cfg(desktop)]
-pub fn org_connect(app: &AppHandle, url: &str, status: &str, error: Option<&str>) {
-    let _ = app.emit(ORG_CONNECT, OrgConnect { url, status, error });
+pub fn org_connect(app: &AppHandle, url: &str, attempt: u64, status: &str, error: Option<&str>) {
+    let _ = app.emit(
+        ORG_CONNECT,
+        OrgConnect {
+            url,
+            attempt,
+            status,
+            error,
+        },
+    );
 }
 
 /// Something about the install's Rowel Servers changed behind the Settings

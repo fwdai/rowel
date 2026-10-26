@@ -183,6 +183,14 @@ pub enum Error {
     #[error("crypto error: {0}")]
     Crypto(String),
 
+    /// A sealed blob that is whole and well-formed but was sealed under a
+    /// key other than the one offered (`crypto::open_workspace_key`): the
+    /// one failure of an open that is conclusive about the key rather than
+    /// about the file. What lets a caller remove a sidecar as stale without
+    /// ever removing one it merely could not read.
+    #[error("sealed under another key")]
+    SealedUnderAnotherKey,
+
     #[error("{0}")]
     Other(String),
 }
@@ -240,6 +248,7 @@ impl Error {
             Error::Io(_) => "io",
             Error::Serde(_) => "serde",
             Error::Crypto(_) => "crypto",
+            Error::SealedUnderAnotherKey => "sealedUnderAnotherKey",
             Error::Other(_) => "other",
         }
     }

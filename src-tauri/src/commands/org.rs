@@ -118,8 +118,11 @@ pub async fn org_connections(app: AppHandle) -> Result<Vec<OrgConnection>> {
                         .map(|d| d.state)
                         .unwrap_or(DeviceState::Revoked);
                     if connection.device_state != Some(state) {
-                        connection.device_state = Some(state);
-                        resolver.persist(&connection)?;
+                        // In place, over the record as it stands now: the
+                        // listing above may have refreshed the session, and
+                        // the copy read before it holds the tokens it retired.
+                        connection = resolver
+                            .update(&connection.url, |held| held.device_state = Some(state))?;
                         changed = true;
                     }
                 }
@@ -141,19 +144,20 @@ pub async fn org_connections(app: AppHandle) -> Result<Vec<OrgConnection>> {
 }
 
 /// Sign the install in to the server at `url` and enroll this device
-/// (`org::connect`): returns once the browser is open, and `org:connect`
-/// reports the rest.
+/// (`org::connect`): returns the attempt's number once the browser is open,
+/// and `org:connect` reports the rest under it.
 #[cfg(desktop)]
 #[tauri::command]
-pub fn org_connect(url: String, app: AppHandle) -> Result<()> {
+pub fn org_connect(url: String, app: AppHandle) -> Result<u64> {
     crate::org::connect::start(&app, &url)
 }
 
 /// A phone has no loopback listener to come back to; its sign-in is a
-/// deep-link flow of its own, in a later release.
+/// deep-link flow of its own, in a later release. `AppStatus::org_connect`
+/// says so up front, so the section is not drawn here at all.
 #[cfg(mobile)]
 #[tauri::command]
-pub fn org_connect(url: String) -> Result<()> {
+pub fn org_connect(url: String) -> Result<u64> {
     connections::normalize_url(&url)?;
     Err(Error::Unsupported(
         "connecting to a Rowel Server from a phone is coming in a later release; connect from \

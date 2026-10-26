@@ -34,6 +34,13 @@ pub struct AppStatus {
     /// whose binary is signed for CloudKit (`sync::Provider::supported`), so
     /// the frontend never offers a connect that cannot start.
     providers: Vec<crate::sync::Provider>,
+    /// Whether this build can sign in to a company's Rowel Server: on
+    /// desktop, where the sign-in comes back to a loopback listener; not yet
+    /// on a phone, whose deep-link twin of that flow is a later release. As
+    /// with `providers`, the frontend reads it here rather than offering a
+    /// connect that cannot start, so the Rowel Server section is left out of
+    /// Settings on a build that would refuse it.
+    org_connect: bool,
     scan_supported: bool,
     biometric: Biometric,
     /// Every vault on this install — exactly one until the user makes a second,
@@ -112,6 +119,7 @@ pub fn snapshot(app: &AppHandle) -> Result<AppStatus> {
         settings,
         sync,
         providers: crate::sync::Provider::available(),
+        org_connect: cfg!(desktop),
         scan_supported: scan::is_supported(),
         biometric: Biometric {
             available: hardware && storage::biometric_enrolled(app) && openable,

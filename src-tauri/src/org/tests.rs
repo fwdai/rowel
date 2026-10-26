@@ -184,6 +184,42 @@ fn a_code_is_exchanged_for_a_session_and_the_session_refreshed() {
     .is_err());
 }
 
+// (a') A refresh that rotates the tokens, then a change of the device's
+// standing: every write is a read-modify-write of the record as it stands,
+// so the second keeps what the first rotated rather than putting back the
+// copy it read beforehand.
+#[test]
+fn a_rotated_session_survives_a_later_change_to_the_record() {
+    let server = FakeServer::start();
+    let pat = Signed::enroll(&server, "Pat's Mac");
+    let resolver = SessionResolver::Memory(pat.connections.clone());
+    let before = resolver.connection(&server.url).unwrap();
+    assert_eq!(before.device_state, Some(DeviceState::Pending));
+
+    server.expire_sessions();
+    let listed =
+        block_on(resolver.as_member(&server.url, |client| async move { client.devices().await }))
+            .unwrap();
+    assert_eq!(listed.len(), 1, "served under the refreshed session");
+
+    let noted = resolver
+        .update(&server.url, |held| {
+            held.device_state = Some(DeviceState::Approved)
+        })
+        .unwrap();
+    assert_eq!(noted.device_state, Some(DeviceState::Approved));
+    assert_ne!(noted.access_token, before.access_token);
+    assert_ne!(
+        noted.refresh_token, before.refresh_token,
+        "the rotation stands"
+    );
+    // And the record is what the next call runs under.
+    assert!(
+        block_on(resolver.as_member(&server.url, |client| async move { client.me().await }))
+            .is_ok()
+    );
+}
+
 // (b) A new device is pending, is handed nothing, and is approved from a
 // device that already is — after which the master it is handed opens.
 #[test]
@@ -295,6 +331,24 @@ fn two_devices_converge_through_the_server_and_a_stale_put_is_retried() {
     assert!(pat.sync(&server, &a).unwrap().pushed);
     assert_ne!(pat.access_token(), before, "the refreshed session was kept");
     assert!(pat.sync(&server, &b).unwrap().merged >= 1);
+
+    // A pack is never written unconditionally: an entry with no revision to
+    // match on is refused before anything is sent, and the engine's next run
+    // pulls one. (The fake answers a blind PUT with 428, so the pushes above
+    // prove `If-Match` goes out on every update.)
+    for revision in [None, Some(String::new())] {
+        let blind = crate::sync::store::RemoteEntry {
+            handle: lockbox.clone(),
+            name: crate::sync::layout::vault_file_name(&lockbox),
+            size: None,
+            modified: String::new(),
+            revision,
+        };
+        match block_on(pat.store(&server).update(&blind, b"not sent")) {
+            Err(Error::Other(why)) => assert!(why.contains("no revision"), "{why}"),
+            other => panic!("a PUT without If-Match must not go out, got {other:?}"),
+        }
+    }
 
     // A device never deletes an org lockbox.
     match block_on(pat.store(&server).delete(&lockbox)) {

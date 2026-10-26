@@ -99,13 +99,38 @@ impl Connection {
 /// no trailing slash, and nothing after it. Two spellings of one server then
 /// find one connection, and a URL that is not a server (`mailto:`, a bare
 /// word) is refused before anything is sent to it.
+///
+/// `https` always. `http` only to a loopback host — `localhost`,
+/// `127.0.0.0/8`, `[::1]` — which is a server on this machine (a
+/// developer's own, the tests' fake); a bearer token and a wrapped master
+/// over plaintext to anywhere else is refused here, before a request is
+/// built, rather than left to a server to redirect.
 pub(crate) fn normalize_url(url: &str) -> Result<String> {
     let parsed =
         url::Url::parse(url.trim()).map_err(|e| Error::Other(format!("not a server URL: {e}")))?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(Error::Other(
-            "a Rowel Server URL starts with https://".into(),
-        ));
+    let host = parsed
+        .host()
+        .ok_or_else(|| Error::Other("a Rowel Server URL names a host".into()))?;
+    let loopback = match host {
+        url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(addr) => addr.is_loopback(),
+        url::Host::Ipv6(addr) => addr.is_loopback(),
+    };
+    match parsed.scheme() {
+        "https" => {}
+        "http" if loopback => {}
+        "http" => {
+            return Err(Error::Other(
+                "a Rowel Server is reached over https; http is only for a server on this \
+                 machine (localhost or 127.0.0.1)"
+                    .into(),
+            ))
+        }
+        _ => {
+            return Err(Error::Other(
+                "a Rowel Server URL starts with https://".into(),
+            ))
+        }
     }
     let host = parsed
         .host_str()
@@ -129,12 +154,55 @@ pub(crate) fn load(root: &Path, app_key: &[u8]) -> Result<Vec<Connection>> {
         return Ok(Vec::new());
     }
     let sealed = std::fs::read_to_string(&path)?;
-    let json = crypto::open_workspace_key(app_key, SEAL_ID, &sealed).map_err(|e| {
-        Error::Crypto(format!(
+    // The wrong-key verdict passes through as it is: it is the one failure a
+    // caller may act on (`org::set_aside_stale`), and wrapping it would hide it.
+    let json = crypto::open_workspace_key(app_key, SEAL_ID, &sealed).map_err(|e| match e {
+        Error::SealedUnderAnotherKey => e,
+        e => Error::Crypto(format!(
             "the server connections do not open under the app key: {e}"
-        ))
+        )),
     })?;
     Ok(serde_json::from_slice(&json)?)
+}
+
+/// Change the connection to the server at `url` in place: `change` runs over
+/// the record as the file holds it now, and the result is written back as
+/// one step. The one way a held connection is ever written, so two writers
+/// — a refresh rotating the tokens, a listing noting the device's standing —
+/// never put a snapshot of theirs over the other's write. The record as it
+/// now stands comes back.
+pub(crate) fn update(
+    root: &Path,
+    app_key: &[u8],
+    url: &str,
+    change: impl FnOnce(&mut Connection),
+) -> Result<Connection> {
+    let url = normalize_url(url)?;
+    let mut connections = load(root, app_key)?;
+    let held = connections
+        .iter_mut()
+        .find(|c| c.url == url)
+        .ok_or_else(|| not_signed_in(&url))?;
+    change(held);
+    let changed = held.clone();
+    save(root, app_key, &connections)?;
+    Ok(changed)
+}
+
+fn not_signed_in(url: &str) -> Error {
+    Error::Other(format!("not signed in to the Rowel Server at {url}"))
+}
+
+/// A sign-in's record, written whole under the sidecars lock: the one write
+/// that is not an [`update`], since the session it carries is new and the
+/// record it replaces, if any, held a session this one supersedes.
+#[cfg(desktop)]
+pub(crate) fn record_sign_in(app: &tauri::AppHandle, connection: Connection) -> Result<()> {
+    use tauri::Manager;
+    let state = app.state::<crate::state::AppState>();
+    let _sidecars = state.sidecars.lock().unwrap();
+    let (root, app_key) = app_root_and_key(app)?;
+    upsert(&root, &app_key, connection)
 }
 
 /// Write `connections` as the whole list, sealed under `app_key`. An empty
@@ -150,7 +218,9 @@ pub(crate) fn save(root: &Path, app_key: &[u8], connections: &[Connection]) -> R
     storage::atomic_write_private(&path, sealed.as_bytes())
 }
 
-/// Add `connection`, or replace the one for the same server.
+/// Add `connection`, or replace the one for the same server: a sign-in's
+/// write ([`record_sign_in`]), which is desktop's alone for now.
+#[cfg(any(desktop, test))]
 pub(crate) fn upsert(root: &Path, app_key: &[u8], connection: Connection) -> Result<()> {
     let mut connections = load(root, app_key)?;
     match connections.iter_mut().find(|c| c.url == connection.url) {
@@ -188,19 +258,6 @@ pub(crate) fn reseal(root: &Path, old: &[u8], new: &[u8]) -> Result<()> {
     }
     let connections = load(root, old)?;
     save(root, new, &connections)
-}
-
-/// A file the current app key does not open is one sealed under an app key
-/// this device no longer has — what deleting the primary leaves behind — and
-/// nothing will ever open it again: it goes, with a note, and the member
-/// signs in again. A file that is simply not there, or that opens, is left.
-pub(crate) fn remove_if_stale(root: &Path, app_key: &[u8]) {
-    let path = path_in(root);
-    if !path.exists() || load(root, app_key).is_ok() {
-        return;
-    }
-    log::warn!("the server connections do not open under the app key; removing them");
-    let _ = storage::remove_if_present(&path);
 }
 
 /// The root and the app key of the running app, for whatever reads or writes
@@ -247,36 +304,46 @@ impl SessionResolver {
             #[cfg(test)]
             Self::Memory(held) => held.lock().unwrap().iter().find(|c| c.url == url).cloned(),
         };
-        found.ok_or_else(|| Error::Other(format!("not signed in to the Rowel Server at {url}")))
+        found.ok_or_else(|| not_signed_in(&url))
     }
 
-    /// Keep `connection` as it is now, over the record for the same server.
-    pub(crate) fn persist(&self, connection: &Connection) -> Result<()> {
+    /// [`update`] on the connection to `url`: the one way a held connection
+    /// is written, as one read-modify-write under the sidecars lock.
+    pub(crate) fn update(
+        &self,
+        url: &str,
+        change: impl FnOnce(&mut Connection),
+    ) -> Result<Connection> {
         match self {
             Self::App(app) => {
                 use tauri::Manager;
                 let state = app.state::<crate::state::AppState>();
                 let _sidecars = state.sidecars.lock().unwrap();
                 let (root, app_key) = app_root_and_key(app)?;
-                upsert(&root, &app_key, connection.clone())
+                update(&root, &app_key, url, change)
             }
             #[cfg(test)]
             Self::Memory(held) => {
+                let url = normalize_url(url)?;
                 let mut held = held.lock().unwrap();
-                match held.iter_mut().find(|c| c.url == connection.url) {
-                    Some(slot) => *slot = connection.clone(),
-                    None => held.push(connection.clone()),
-                }
-                Ok(())
+                let slot = held
+                    .iter_mut()
+                    .find(|c| c.url == url)
+                    .ok_or_else(|| not_signed_in(&url))?;
+                change(slot);
+                Ok(slot.clone())
             }
         }
     }
 
     /// A fresh session for the server at `url` from the refresh token its
-    /// connection holds, kept over the record before it is handed back: what
-    /// a 401 asks for. Without a refresh token the session is simply over.
+    /// connection holds, taken on over the record as it stands when the
+    /// token endpoint has answered — not over the copy read before the round
+    /// trip, which another writer may have moved on from meanwhile — and
+    /// handed back. What a 401 asks for. Without a refresh token the session
+    /// is simply over.
     pub(crate) async fn refresh(&self, url: &str) -> Result<Connection> {
-        let mut connection = self.connection(url)?;
+        let connection = self.connection(url)?;
         let refresh_token = connection.refresh_token.clone().ok_or_else(|| {
             Error::Other(format!(
                 "the Rowel Server at {} no longer accepts this sign-in; sign in again",
@@ -286,9 +353,8 @@ impl SessionResolver {
         let fresh = ServerClient::new(&connection.url)?
             .refresh(&refresh_token)
             .await?;
-        connection.adopt(fresh, chrono::Utc::now().timestamp_millis());
-        self.persist(&connection)?;
-        Ok(connection)
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        self.update(url, |held| held.adopt(fresh, now_ms))
     }
 
     /// `call` as the member signed in to `url`, and once more under a
@@ -367,6 +433,62 @@ pub(crate) mod tests {
         assert!(normalize_url("ftp://rowel.example.com").is_err());
     }
 
+    // Plaintext reaches a server on this machine and nowhere else.
+    #[test]
+    fn http_is_for_loopback_hosts_alone() {
+        for loopback in [
+            "http://localhost:8080",
+            "http://LocalHost",
+            "http://127.0.0.1",
+            "http://127.1.2.3:9000",
+            "http://[::1]:8080",
+        ] {
+            assert!(normalize_url(loopback).is_ok(), "{loopback}");
+        }
+        for elsewhere in [
+            "http://rowel.example.com",
+            "http://10.0.0.5:8080",
+            "http://192.168.1.10",
+            "http://[fe80::1]",
+            "http://localhost.example.com",
+        ] {
+            match normalize_url(elsewhere) {
+                Err(Error::Other(why)) => assert!(why.contains("https"), "{elsewhere}: {why}"),
+                other => panic!("{elsewhere} must be refused, got {other:?}"),
+            }
+        }
+        assert!(
+            normalize_url("https://10.0.0.5").is_ok(),
+            "https goes anywhere"
+        );
+    }
+
+    // Every write to a held connection is one read-modify-write, so a change
+    // never carries a stale copy of the fields it did not touch.
+    #[test]
+    fn an_update_changes_the_record_in_place() {
+        let root = tempfile::tempdir().unwrap();
+        upsert(root.path(), APP_KEY, connection("https://a.example", "a1")).unwrap();
+        let rotated = update(root.path(), APP_KEY, "https://A.example/", |c| {
+            c.refresh_token = Some("rotated".into());
+        })
+        .unwrap();
+        assert_eq!(rotated.refresh_token.as_deref(), Some("rotated"));
+        let noted = update(root.path(), APP_KEY, "https://a.example", |c| {
+            c.device_state = Some(DeviceState::Pending);
+        })
+        .unwrap();
+        assert_eq!(noted.refresh_token.as_deref(), Some("rotated"));
+        assert_eq!(noted.device_state, Some(DeviceState::Pending));
+        assert_eq!(
+            find(root.path(), APP_KEY, "https://a.example")
+                .unwrap()
+                .unwrap(),
+            noted
+        );
+        assert!(update(root.path(), APP_KEY, "https://b.example", |_| {}).is_err());
+    }
+
     #[test]
     fn connections_round_trip_sealed_under_the_app_key() {
         let root = tempfile::tempdir().unwrap();
@@ -389,9 +511,10 @@ pub(crate) mod tests {
             .unwrap()
             .is_none());
 
-        // The file is ciphertext, and only this app key opens it.
+        // The file is ciphertext, and only this app key opens it. Looked for
+        // by the whole secrets: two characters turn up in base64 by chance.
         let raw = std::fs::read_to_string(root.path().join(storage::SERVERS_FILE)).unwrap();
-        assert!(!raw.contains("a2") && !raw.contains("acme"));
+        assert!(!raw.contains("a2-refresh") && !raw.contains("pat@acme.example"));
         assert!(load(root.path(), &[4u8; 32]).is_err());
 
         assert!(remove(root.path(), APP_KEY, "https://a.example").unwrap());
@@ -400,10 +523,12 @@ pub(crate) mod tests {
         assert!(!root.path().join(storage::SERVERS_FILE).exists());
     }
 
-    // A password change moves the file onto the new app key; a file left
-    // under a key the device no longer has goes, and one that opens stays.
+    // A password change moves the file onto the new app key, and the old one
+    // no longer opens it; the wrong-key verdict passes through `load` as it
+    // is, for `org::set_aside_stale` to act on. A file too short to be a
+    // sealed blob is malformed instead, and says nothing about the key.
     #[test]
-    fn the_file_follows_the_app_key_and_a_stale_one_is_removed() {
+    fn the_file_follows_the_app_key() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(storage::SERVERS_FILE);
         reseal(root.path(), APP_KEY, &[5u8; 32]).unwrap();
@@ -411,16 +536,15 @@ pub(crate) mod tests {
 
         upsert(root.path(), APP_KEY, connection("https://a.example", "a1")).unwrap();
         reseal(root.path(), APP_KEY, &[5u8; 32]).unwrap();
-        assert!(load(root.path(), APP_KEY).is_err());
+        assert!(matches!(
+            load(root.path(), APP_KEY),
+            Err(Error::SealedUnderAnotherKey)
+        ));
         assert_eq!(load(root.path(), &[5u8; 32]).unwrap()[0].access_token, "a1");
 
-        remove_if_stale(root.path(), &[5u8; 32]);
-        assert!(path.exists(), "it opens, so it stays");
-        remove_if_stale(root.path(), APP_KEY);
-        assert!(
-            !path.exists(),
-            "sealed under a key this device no longer has"
-        );
+        let sealed = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, &sealed[..20]).unwrap();
+        assert!(matches!(load(root.path(), APP_KEY), Err(Error::Crypto(_))));
     }
 
     #[test]
@@ -455,15 +579,15 @@ pub(crate) mod tests {
     // included, so a test run against it exercises what the app runs.
     #[test]
     fn the_memory_resolver_answers_like_the_sealed_file() {
-        let resolver = SessionResolver::Memory(Arc::default());
-        assert!(resolver.connection("https://a.example").is_err());
-        resolver
-            .persist(&connection("https://a.example", "a1"))
-            .unwrap();
-        let mut held = resolver.connection("https://A.example/").unwrap();
+        let resolver = SessionResolver::Memory(Arc::new(Mutex::new(vec![connection(
+            "https://a.example",
+            "a1",
+        )])));
+        let held = resolver.connection("https://A.example/").unwrap();
         assert_eq!(held.access_token, "a1");
-        held.access_token = "a2".into();
-        resolver.persist(&held).unwrap();
+        resolver
+            .update("https://a.example", |c| c.access_token = "a2".into())
+            .unwrap();
         assert_eq!(
             resolver
                 .connection("https://a.example")
@@ -471,9 +595,14 @@ pub(crate) mod tests {
                 .access_token,
             "a2"
         );
-        match resolver.connection("https://b.example") {
-            Err(Error::Other(why)) => assert!(why.contains("not signed in"), "{why}"),
-            other => panic!("an unknown server is not signed in, got {other:?}"),
+        for unknown in [
+            resolver.connection("https://b.example").err(),
+            resolver.update("https://b.example", |_| {}).err(),
+        ] {
+            match unknown {
+                Some(Error::Other(why)) => assert!(why.contains("not signed in"), "{why}"),
+                other => panic!("an unknown server is not signed in, got {other:?}"),
+            }
         }
     }
 }

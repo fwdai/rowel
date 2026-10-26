@@ -244,21 +244,33 @@ impl VaultStore for Store {
         })
     }
 
-    // `If-Match` on the revision the run pulled: a pack rewritten since —
-    // by a device or by the server's own merge of an agent's write — is a
-    // 412, and the run fails with the retry message rather than overwrite a
-    // write it never merged. A pack that is gone is an error, never a create.
+    // `If-Match` on the revision the run pulled, always: a pack rewritten
+    // since — by a device or by the server's own merge of an agent's write —
+    // is a 412, and the run fails with the retry message rather than
+    // overwrite a write it never merged. An entry with no revision to match
+    // on is refused here, before anything is sent: a PUT without the
+    // precondition would be exactly that overwrite, and the engine's next
+    // run pulls a revision to match. A pack that is gone is an error, never
+    // a create.
     async fn update(&self, entry: &RemoteEntry, bytes: &[u8]) -> Result<Option<String>> {
+        let revision = entry
+            .revision
+            .as_deref()
+            .filter(|rev| !rev.is_empty())
+            .ok_or_else(|| {
+                Error::Other(
+                    "the lockbox's pack on the Rowel Server has no revision to update against; \
+                     sync will retry"
+                        .into(),
+                )
+            })?;
         let resp = self
             .send(|client, server, bearer| {
-                let request = client
+                client
                     .put(Self::pack_url(server, &entry.handle))
                     .bearer_auth(bearer)
-                    .body(bytes.to_vec());
-                match entry.revision.as_deref().filter(|rev| !rev.is_empty()) {
-                    Some(revision) => request.header(IF_MATCH, revision),
-                    None => request,
-                }
+                    .header(IF_MATCH, revision)
+                    .body(bytes.to_vec())
             })
             .await?;
         match resp.status() {

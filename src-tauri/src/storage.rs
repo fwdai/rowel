@@ -294,20 +294,20 @@ fn move_data_dir(from: &Path, to: &Path, leave: &[PathBuf]) -> Result<Vec<String
         .collect())
 }
 
-/// What a vault the container held of its own is renamed to when the app's
-/// moves in: `<data dir>.stale-<time>`, beside the data dir in the container,
-/// where nothing reads it again — it is there for a recovery by hand, not for
-/// the app, which enumerates the data dir and never the container.
-#[cfg(any(target_os = "ios", test))]
+/// What a file or directory the app will not read again is renamed to:
+/// `<name>.stale-<time>`, beside where it was, where nothing reads it — it is
+/// there for a recovery by hand, not for the app. A vault the iOS container
+/// held of its own when the app's moved in is one; a file sealed under an app
+/// key the device no longer has is another (`org::set_aside_stale`).
 const STALE_SUFFIX: &str = ".stale-";
 
-/// Rename the data dir `to` — the vault the container holds, whole — to a
-/// fresh `<to>.stale-<time>` beside it, and return where it went. One rename,
-/// so there is no moment at which the vault is half in each place: an
-/// interruption leaves it either where it was, to be set aside by the next
-/// launch, or set aside, for the next launch's move to find `to` empty.
-#[cfg(any(target_os = "ios", test))]
-fn set_aside(to: &Path) -> Result<PathBuf> {
+/// Rename `to` — a file, or a directory whole — to a fresh `<to>.stale-<time>`
+/// beside it, and return where it went. One rename, so there is no moment at
+/// which it is half in each place: an interruption leaves it either where it
+/// was, to be set aside next time, or set aside. Never a delete: whatever
+/// decided `to` is no longer the app's may be wrong, and a rename costs
+/// nothing if it was.
+pub(crate) fn set_aside(to: &Path) -> Result<PathBuf> {
     let (parent, name) = match (to.parent(), to.file_name()) {
         (Some(parent), Some(name)) => (parent, name.to_string_lossy()),
         _ => {

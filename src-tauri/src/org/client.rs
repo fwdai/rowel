@@ -377,17 +377,9 @@ impl ServerClient {
             .await
             .map_err(other)?;
         let mut resp = checked(resp).await?;
-        let mut buffer: Vec<u8> = Vec::new();
+        let mut framer = Framer::default();
         while let Some(chunk) = resp.chunk().await.map_err(other)? {
-            buffer.extend_from_slice(&chunk);
-            if buffer.len() > MAX_SSE_BUFFER_BYTES {
-                return Err(Error::Other(
-                    "the Rowel Server's approvals stream sent a frame too large to read".into(),
-                ));
-            }
-            while let Some(end) = buffer.windows(2).position(|pair| pair == b"\n\n") {
-                let frame: Vec<u8> = buffer.drain(..end + 2).collect();
-                let frame = String::from_utf8_lossy(&frame);
+            for frame in framer.feed(&chunk)? {
                 if !on_frame(approval_in(&frame)?) {
                     return Ok(());
                 }
@@ -459,15 +451,81 @@ async fn json<T: serde::de::DeserializeOwned>(resp: Response) -> Result<T> {
     serde_json::from_slice(&body).map_err(other)
 }
 
-/// The approval in one SSE frame — the lines up to a blank one — or `None`
-/// for a keepalive comment or an event of another kind. `data:` lines are
-/// joined with newlines, as the SSE specification has it.
+/// A server-sent event stream cut into frames as the bytes arrive, by the
+/// specification's own rules: a line ends at `\r\n`, `\n` or a lone `\r`,
+/// and a frame at an empty line. A `\r` ends its line at once, whatever
+/// follows: waiting for the next byte to see whether it is a `\r\n` would
+/// leave a CR-only server's last frame unfinished, since nothing comes after
+/// the `\r` that ends it. A `\n` straight after a `\r` is then the second half
+/// of that one line end, even when it opens the next chunk, and is skipped.
+/// Comment lines are kept in the frame (the reader over a frame skips them),
+/// so a keepalive is a frame of nothing but comments and reaches the caller
+/// as one, which is what lets a caller stop between approvals.
 #[cfg(desktop)]
-fn approval_in(frame: &str) -> Result<Option<Approval>> {
+#[derive(Default)]
+struct Framer {
+    /// Bytes past the last complete line.
+    buffer: Vec<u8>,
+    /// The lines of the frame under way.
+    lines: Vec<String>,
+    /// Whether the last line end read was a `\r`, so a `\n` opening the next
+    /// chunk belongs to it.
+    after_cr: bool,
+}
+
+#[cfg(desktop)]
+impl Framer {
+    /// The frames `chunk` completes, in order. What is held between calls —
+    /// the frame under way and the line under way — is bounded by
+    /// [`MAX_SSE_BUFFER_BYTES`].
+    fn feed(&mut self, chunk: &[u8]) -> Result<Vec<Vec<String>>> {
+        self.buffer.extend_from_slice(chunk);
+        let held = self.buffer.len() + self.lines.iter().map(String::len).sum::<usize>();
+        if held > MAX_SSE_BUFFER_BYTES {
+            return Err(Error::Other(
+                "the Rowel Server's approvals stream sent a frame too large to read".into(),
+            ));
+        }
+        let mut frames = Vec::new();
+        let mut start = 0;
+        let mut at = 0;
+        while at < self.buffer.len() {
+            let byte = self.buffer[at];
+            if byte == b'\n' && std::mem::take(&mut self.after_cr) && at == start {
+                at += 1;
+                start = at;
+                continue;
+            }
+            self.after_cr = false;
+            if byte != b'\n' && byte != b'\r' {
+                at += 1;
+                continue;
+            }
+            let line = String::from_utf8_lossy(&self.buffer[start..at]).into_owned();
+            at += 1;
+            self.after_cr = byte == b'\r';
+            start = at;
+            if line.is_empty() {
+                if !self.lines.is_empty() {
+                    frames.push(std::mem::take(&mut self.lines));
+                }
+            } else {
+                self.lines.push(line);
+            }
+        }
+        self.buffer.drain(..start);
+        Ok(frames)
+    }
+}
+
+/// The approval in one frame's lines, or `None` for a keepalive comment or
+/// an event of another kind. `data:` lines are joined with newlines, as the
+/// SSE specification has it.
+#[cfg(desktop)]
+fn approval_in(frame: &[String]) -> Result<Option<Approval>> {
     let mut event = None;
     let mut data = Vec::new();
-    for line in frame.lines() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
+    for line in frame {
         if line.starts_with(':') {
             continue;
         }
@@ -517,26 +575,98 @@ mod tests {
         .unwrap()
     }
 
+    fn lines(text: &str) -> Vec<String> {
+        text.lines().map(String::from).collect()
+    }
+
     #[test]
     fn an_approval_frame_is_read_and_everything_else_is_skipped() {
         let json = approval_json();
-        let approval = approval_in(&format!("event: approval\ndata: {json}\n\n"))
+        let approval = approval_in(&lines(&format!("event: approval\ndata: {json}")))
             .unwrap()
             .unwrap();
         assert_eq!(approval.id, "ap1");
         assert_eq!(approval.candidates[0].title, "Stripe");
-        // A CRLF server, and data without the optional space.
+        // Data without the optional space, and a comment inside the frame.
         assert!(
-            approval_in(&format!("event:approval\r\ndata:{json}\r\n\r\n"))
+            approval_in(&lines(&format!(": note\nevent:approval\ndata:{json}")))
                 .unwrap()
                 .is_some()
         );
-        assert!(approval_in(": keepalive\n\n").unwrap().is_none());
-        assert!(approval_in(&format!("event: revoked\ndata: {json}\n\n"))
-            .unwrap()
-            .is_none());
-        assert!(approval_in("event: approval\n\n").unwrap().is_none());
-        assert!(approval_in("event: approval\ndata: {not json\n\n").is_err());
+        assert!(approval_in(&lines(": keepalive")).unwrap().is_none());
+        assert!(
+            approval_in(&lines(&format!("event: revoked\ndata: {json}")))
+                .unwrap()
+                .is_none()
+        );
+        assert!(approval_in(&lines("event: approval")).unwrap().is_none());
+        assert!(approval_in(&lines("event: approval\ndata: {not json")).is_err());
+    }
+
+    // Every line ending the specification allows, arriving in chunks cut
+    // anywhere — a `\r` on a chunk's edge included — frames the same.
+    #[test]
+    fn frames_are_found_whatever_the_line_ending_and_however_the_chunks_fall() {
+        let expected = vec![
+            vec![": keepalive".to_string()],
+            vec!["event: approval".to_string(), "data: {\"a\":1}".to_string()],
+            vec!["data: x".to_string(), "data: y".to_string()],
+        ];
+        for ending in ["\r\n", "\n", "\r"] {
+            let text = format!(
+                ": keepalive{e}{e}event: approval{e}data: {{\"a\":1}}{e}{e}data: x{e}data: y{e}{e}",
+                e = ending
+            );
+            let bytes = text.as_bytes();
+            // Whole, one byte at a time, and in a few odd pieces.
+            let mut by_byte = Framer::default();
+            let mut per_byte = Vec::new();
+            for byte in bytes {
+                per_byte.extend(by_byte.feed(std::slice::from_ref(byte)).unwrap());
+            }
+            assert_eq!(per_byte, expected, "{ending:?} byte by byte");
+            assert_eq!(
+                Framer::default().feed(bytes).unwrap(),
+                expected,
+                "{ending:?} whole"
+            );
+            let mut pieces = Framer::default();
+            let mut framed = Vec::new();
+            for piece in bytes.chunks(7) {
+                framed.extend(pieces.feed(piece).unwrap());
+            }
+            assert_eq!(framed, expected, "{ending:?} in pieces");
+        }
+
+        // A `\r` ending a chunk ends its line at once; a `\n` opening the next
+        // chunk is the rest of that `\r\n`, not a blank line, and a frame
+        // ends at the `\r` that ends its blank line rather than waiting on a
+        // byte that may never come.
+        let mut framer = Framer::default();
+        assert!(framer.feed(b"data: a\r").unwrap().is_empty());
+        assert_eq!(
+            framer.feed(b"\n\r").unwrap(),
+            vec![vec!["data: a".to_string()]]
+        );
+        assert!(framer.feed(b"\n").unwrap().is_empty(), "the rest of \\r\\n");
+        assert_eq!(
+            framer.feed(b"data: c\n\n").unwrap(),
+            vec![vec!["data: c".to_string()]]
+        );
+        let mut framer = Framer::default();
+        assert!(framer.feed(b"data: a\r").unwrap().is_empty());
+        assert_eq!(
+            framer.feed(b"data: b\r\r").unwrap(),
+            vec![vec!["data: a".to_string(), "data: b".to_string()]]
+        );
+        // Extra blank lines between frames are nothing, and a frame left
+        // unfinished at the end stays unfinished.
+        let mut framer = Framer::default();
+        assert!(framer.feed(b"\n\n\ndata: tail").unwrap().is_empty());
+        assert!(framer.feed(b"\n").unwrap().is_empty());
+        // Past the cap, the stream is given up on rather than buffered on.
+        let mut framer = Framer::default();
+        assert!(framer.feed(&vec![b'x'; MAX_SSE_BUFFER_BYTES + 1]).is_err());
     }
 
     // The authorization request names everything RFC 7636 asks for, encoded,

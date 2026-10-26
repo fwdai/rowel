@@ -20,7 +20,7 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 use super::client::ServerClient;
-use super::connections::{self, normalize_url, Connection, SessionResolver};
+use super::connections::{self, normalize_url, Connection};
 use super::{approvals, enrollment};
 use crate::error::{Error, Result};
 use crate::sync::{self, Provider};
@@ -34,39 +34,57 @@ pub(crate) const PENDING: &str = "pending";
 pub(crate) const DONE: &str = "done";
 pub(crate) const ERROR: &str = "error";
 
-/// Start signing in to the server at `url`. Returns as soon as the flow is
-/// scheduled; `org:connect` reports the rest. Refused before anything is
-/// opened for a URL that is not a server's, and while the vault is not open
-/// at the app level — the enrollment key and the record of the session are
-/// both sealed under the app key, so without it there is nothing to enroll
-/// with and nowhere to keep what the sign-in produces.
-pub(crate) fn start(app: &AppHandle, url: &str) -> Result<()> {
+/// Start signing in to the server at `url`: the attempt's number comes back
+/// as soon as the flow is scheduled, and `org:connect` reports the rest
+/// under it. Refused before anything is opened for a URL that is not a
+/// server's, and while the vault is not open at the app level — the
+/// enrollment key and the record of the session are both sealed under the
+/// app key, so without it there is nothing to enroll with and nowhere to
+/// keep what the sign-in produces.
+///
+/// An attempt reports only while it is the current one. A cancel, or a
+/// newer attempt, disowns it: its sign-in just stops, nothing it produced is
+/// kept, and nothing — not even its stopping — is said of it, since the
+/// section that asked has moved on and a late word from an old attempt
+/// would land on the new one.
+pub(crate) fn start(app: &AppHandle, url: &str) -> Result<u64> {
     let url = normalize_url(url)?;
     connections::app_root_and_key(app)?;
     let attempt = ATTEMPT.fetch_add(1, Ordering::SeqCst) + 1;
-    events::org_connect(app, &url, PENDING, None);
+    events::org_connect(app, &url, attempt, PENDING, None);
     let app = app.clone();
     // A blocking-pool thread: the loopback listener is polled, the HTTP calls
     // are driven with `block_on`.
-    commands::detached(move || match sign_in(&app, &url, attempt) {
-        Ok(()) => {
-            events::org_connect(&app, &url, DONE, None);
-            events::org_changed(&app);
-            approvals::restart(&app);
+    commands::detached(move || {
+        let outcome = sign_in(&app, &url, attempt);
+        if superseded(attempt) {
+            return;
         }
-        Err(e) => events::org_connect(&app, &url, ERROR, Some(&e.to_string())),
+        match outcome {
+            Ok(()) => {
+                events::org_connect(&app, &url, attempt, DONE, None);
+                events::org_changed(&app);
+                approvals::restart(&app);
+            }
+            Err(e) => events::org_connect(&app, &url, attempt, ERROR, Some(&e.to_string())),
+        }
     });
-    Ok(())
+    Ok(attempt)
 }
 
 /// Disown the sign-in under way: its listener closes and nothing it produces
-/// is kept.
+/// is kept or reported.
 pub(crate) fn cancel() {
     ATTEMPT.fetch_add(1, Ordering::SeqCst);
 }
 
+/// Whether `attempt` is no longer the current sign-in.
+fn superseded(attempt: u64) -> bool {
+    ATTEMPT.load(Ordering::SeqCst) != attempt
+}
+
 fn sign_in(app: &AppHandle, url: &str, attempt: u64) -> Result<()> {
-    let cancelled = || ATTEMPT.load(Ordering::SeqCst) != attempt;
+    let cancelled = || superseded(attempt);
     let listener = sync::bind_loopback(&[])?;
     let redirect_uri = sync::loopback_redirect_uri(listener.local_addr()?.port());
     let (verifier, state) = (sync::gen_nonce(), sync::gen_nonce());
@@ -117,7 +135,7 @@ fn sign_in(app: &AppHandle, url: &str, attempt: u64) -> Result<()> {
     if cancelled() {
         return Err(Error::Cancelled);
     }
-    SessionResolver::App(app.clone()).persist(&connection)
+    connections::record_sign_in(app, connection)
 }
 
 /// What this device is called in the member's device list: the machine's

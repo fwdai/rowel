@@ -454,13 +454,20 @@ async fn put_pack(
     }
     let header = |name| headers.get(name).and_then(|v| v.to_str().ok());
     let exists = lockbox.pack.is_some();
-    if header(IF_NONE_MATCH) == Some("*") && exists {
-        return Err(StatusCode::PRECONDITION_FAILED);
-    }
-    if let Some(expected) = header(IF_MATCH) {
-        if !exists || expected != etag(lockbox.etag) {
-            return Err(StatusCode::PRECONDITION_FAILED);
+    match (header(IF_NONE_MATCH), header(IF_MATCH)) {
+        (Some("*"), _) if exists => return Err(StatusCode::PRECONDITION_FAILED),
+        (Some("*"), _) => {}
+        // `If-None-Match` with an ETag is a conditional GET's, not a PUT's.
+        (Some(_), None) => return Err(StatusCode::BAD_REQUEST),
+        (_, Some(expected)) if !exists || expected != etag(lockbox.etag) => {
+            return Err(StatusCode::PRECONDITION_FAILED)
         }
+        (_, Some(_)) => {}
+        // A device never writes a pack unconditionally: the server merges on
+        // its side too, and a blind PUT would put a device's copy over a
+        // write it never merged. The adapter refuses before sending, and the
+        // fake refuses in case it ever does not.
+        (None, None) => return Err(StatusCode::PRECONDITION_REQUIRED),
     }
     lockbox.pack = Some(body.to_vec());
     lockbox.etag += 1;
@@ -481,7 +488,7 @@ async fn approvals(State(shared): App, headers: HeaderMap) -> Result<Response, S
         (shared.approvals.subscribe(), state.pending.clone())
     };
     let head = futures_util::stream::iter(
-        std::iter::once(Bytes::from(": keepalive\n\n"))
+        std::iter::once(Bytes::from(": keepalive\r\n\r\n"))
             .chain(backlog.into_iter().map(frame))
             .map(Ok::<_, std::convert::Infallible>),
     );
@@ -498,10 +505,12 @@ async fn approvals(State(shared): App, headers: HeaderMap) -> Result<Response, S
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+// CRLF line endings, which the specification allows and which a framer that
+// only looks for `\n\n` never sees a frame in.
 #[cfg(desktop)]
 fn frame(approval: super::client::Approval) -> Bytes {
     Bytes::from(format!(
-        "event: approval\ndata: {}\n\n",
+        "event: approval\r\ndata: {}\r\n\r\n",
         serde_json::to_string(&approval).unwrap()
     ))
 }

@@ -250,7 +250,25 @@ fn a_workspace_key_opens_only_under_its_app_key_and_its_own_id() {
             .as_slice(),
         b"material"
     );
-    assert!(open_workspace_key(&[2u8; 32], "w1", &sealed).is_err());
-    assert!(open_workspace_key(&[1u8; 32], "w2", &sealed).is_err());
-    assert!(open_workspace_key(&[1u8; 32], "w1", "not base64!").is_err());
+    // Whole, and under another key or id: the one verdict a caller may
+    // remove a sidecar on.
+    assert!(matches!(
+        open_workspace_key(&[2u8; 32], "w1", &sealed),
+        Err(crate::error::Error::SealedUnderAnotherKey)
+    ));
+    assert!(matches!(
+        open_workspace_key(&[1u8; 32], "w2", &sealed),
+        Err(crate::error::Error::SealedUnderAnotherKey)
+    ));
+    // Not a sealed blob at all — not base64, or too short to hold a nonce
+    // and a tag — says nothing about the key.
+    assert!(matches!(
+        open_workspace_key(&[1u8; 32], "w1", "not base64!"),
+        Err(crate::error::Error::Crypto(_))
+    ));
+    let short = STANDARD.encode([0u8; 8]);
+    assert!(matches!(
+        open_workspace_key(&[1u8; 32], "w1", &short),
+        Err(crate::error::Error::Crypto(_))
+    ));
 }
