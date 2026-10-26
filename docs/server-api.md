@@ -57,7 +57,16 @@ Unauthenticated; opened in the browser. Query: `response_type=code`,
 is listening on), `state`, `code_challenge`, `code_challenge_method=S256`.
 The server takes the person through sign-in and redirects to `redirect_uri`
 with `code` and the same `state`. A request with a client id, response type
-or challenge method other than these is a 400.
+or challenge method other than these is a 400, and so is a `redirect_uri`
+that is not `http://127.0.0.1:<port>/…` or `http://localhost:<port>/…`: no
+redirect is registered with the server, so anything but the app's own
+listener would let a crafted link send a member's code elsewhere. A sign-in
+the server refuses after the person went through the IdP — an address
+outside the allowed domains, a disabled member, an unknown one where the
+server does not provision — comes back to `redirect_uri` too, as RFC 6749
+§4.1.2.1 has it: `error=access_denied`, `error_description` in words, and
+the same `state`, never a `code`. A server with no IdP configured answers
+503.
 
 ### `POST /v1/members/auth/token` ✅
 
@@ -303,23 +312,144 @@ the stream above.
 `WS <origin>/v1/extension` ❌ is the same channel for a remote browser's
 extension, let in by a one-time enrollment code minted for a fill grant.
 
-## Admin API ❌ (planned, not yet served by any build)
+## Admin API ✅
 
-Authenticated as a member with the admin role, with the same bearer. The
-spec sketches the surface; the shapes are not settled and nothing public
-speaks it yet.
-
-```
-/v1/admin/agents          agent definitions and their trust policies: create, read, update, disable
-/v1/admin/lockboxes       create (mints a master and wraps it under the tenant key), freeze,
-                          members: who holds it, and the master wrapped to each of their approved devices
-/v1/admin/rules           policy rules per lockbox or per tenant (`policy::Rule`)
-/v1/admin/audit/export    JSONL stream; filters by time, agent, lockbox. Each row carries
-                          writerId, seq, prevHash and hash, so an export verifies as the lockbox does
-```
-
+Member calls under the same bearer, for a member with the admin role: no
+bearer, or one the server does not hold, is a 401 as everywhere; any other
+member is a 403 on every route. JSON, camelCase. A create answers 201 with
+the row, an update 200 with the row as it now is, a removal 204. A path
+naming a row that does not exist is a 404; a body naming one (`lockboxId`)
+is a 400; a body that does not read is a 400 saying why. Every change is
+written down as a tenant event naming the admin (`GET /v1/admin/events`).
 The first admin UI is the app's Settings for members with that role; a web
 console comes later.
+
+### Members and devices ✅
+
+```
+GET   /v1/admin/members                 → [Member]
+POST  /v1/admin/members                 { email, name?, role: member|admin }  → 201 Member   | 409 taken
+PATCH /v1/admin/members/{id}            { role?, disabled?: true }            → Member
+GET   /v1/admin/members/{id}/devices    → [Device]
+POST  /v1/admin/devices/{id}/approve    → Device                               | 409 revoked
+POST  /v1/admin/devices/{id}/revoke     → 204
+```
+
+```json
+{ "id": "m1", "email": "pat@acme.example", "name": "Pat", "role": "member",
+  "createdAtMs": 1700000000000, "disabledAtMs": null }
+{ "id": "d1", "memberId": "m1", "name": "Pat's MacBook", "publicKey": "<base64>",
+  "state": "approved", "createdAtMs": 1700000000000,
+  "approvedAtMs": 1700000001000, "approvedBy": "<device id, or an admin's member id>" }
+```
+
+A member who signs in for the first time is provisioned as `member` when the
+server names allowed domains and the address is in one; with no domains
+named, an admin adds each member here first. `disabled: true` offboards: the
+member is marked (their sessions stop at the next request), every session is
+revoked, and every device revoked with the masters sealed to it. A disabled
+member is not enabled again (409). An admin cannot demote or disable
+themselves (409), so the tenant always keeps an admin. Approving here is how
+a member's first device gets in; a revoked device is never approved again.
+
+### Lockboxes ✅
+
+```
+GET    /v1/admin/lockboxes                             → [Lockbox]
+POST   /v1/admin/lockboxes                             { name }              → 201 Lockbox
+PATCH  /v1/admin/lockboxes/{id}                        { frozen?, agents? }  → Lockbox
+PUT    /v1/admin/lockboxes/{id}/members/{memberId}     { role: reader|approver|admin }  → 204
+DELETE /v1/admin/lockboxes/{id}/members/{memberId}     → 204
+```
+
+```json
+{ "id": "lb1", "name": "Deploy", "kdf": "{\"kind\":\"external\",…}", "gen": 1,
+  "frozen": false, "agents": false, "revision": 0, "createdAtMs": 1700000000000,
+  "members": [ { "memberId": "m1", "role": "approver" } ] }
+```
+
+Creating mints the master, wraps it under the tenant key and writes the
+lockbox file; the wrapped master is never in a reply. A member given a role
+gets the master sealed to each of their approved devices at their next
+listing. `approver` and `admin` are who an agent's ask is routed to.
+
+### Agents and trust policies ✅
+
+```
+GET    /v1/admin/agents                 → [Agent]
+POST   /v1/admin/agents                 { name, lockboxId }    → 201 Agent
+PATCH  /v1/admin/agents/{id}            { name?, enabled? }    → Agent
+DELETE /v1/admin/agents/{id}            → 204   (its trust policies and clients go with it)
+POST   /v1/admin/agents/{id}/trust      { issuer, claims: { "<claim>": "<pattern>" }, fixedAudience? }
+                                        → 201 TrustPolicy
+DELETE /v1/admin/trust/{id}             → 204
+```
+
+```json
+{ "id": "a1", "name": "release-bot", "lockboxId": "lb1", "enabled": true,
+  "createdAtMs": 1700000000000,
+  "trust": [ { "id": "t1", "agentId": "a1", "issuer": "https://token.actions.githubusercontent.com",
+               "claims": { "repository": "acme/deploy", "ref": "refs/heads/main" },
+               "fixedAudience": false, "createdAtMs": 1700000000000 } ] }
+```
+
+A trust policy names at least one claim: one with none would admit every
+token the issuer mints. `fixedAudience` (default `false`) is for a platform
+that cannot set a token's audience (see "Verification"). An agent switched
+off is refused at its clients' next request.
+
+### Rules ✅
+
+```
+GET    /v1/admin/rules         → [ { lockboxId, rule } ]
+POST   /v1/admin/rules         { lockboxId?, rule: Rule }   → 201 { lockboxId, rule }   | 409 id taken
+DELETE /v1/admin/rules/{id}    → 204
+```
+
+`rule` is `rowel_broker::policy::Rule` as it serializes, with its own `id`;
+`lockboxId` absent or `null` is a rule for every lockbox. The server stamps
+`createdAtMs` and makes `createdBy` `{ "admin": "server" }`, whatever the
+body says.
+
+### Audit export ✅
+
+```
+GET /v1/admin/audit/export ?since&until&lockbox&actor   → 200, application/x-ndjson
+```
+
+One JSON object per line, in `(lockboxId, writerId, seq)` order: the
+lockbox's audit row as its chain holds it, with the hashes in lowercase hex,
+so each `(lockboxId, writerId)` run verifies as the lockbox does. `since` is
+inclusive and `until` exclusive, both ms; `lockbox` is a lockbox id; `actor`
+matches `actorId`.
+
+```json
+{ "lockboxId": "lb1", "id": "…", "writerId": "…", "seq": 7, "tsMs": 1700000000000,
+  "prevHash": "<64 hex>", "hash": "<64 hex>", "actorKind": "agent", "actorId": "a1",
+  "actorName": "release-bot", "runId": null, "actingFor": null, "grantId": "g1",
+  "itemId": "i1", "target": "api.stripe.com/v1/charges", "mode": "header",
+  "approval": "ask", "approver": null, "event": "used", "detail": null }
+```
+
+### Tenant events ✅
+
+```
+GET /v1/admin/events ?since&limit   → [ServerEvent]   (oldest first; limit 100 by default, at most 1000)
+```
+
+```json
+{ "id": "e1", "tsMs": 1700000000000, "event": "lockbox_created", "memberId": "m-ada",
+  "deviceId": null, "detail": "{\"lockboxId\":\"lb1\",\"name\":\"Deploy\"}" }
+```
+
+What happened at the tenant rather than inside one lockbox, kept apart from
+the lockboxes' audit chains (which sync to devices): `signed_in`,
+`device_enrolled`, `device_approved`, `device_revoked`, `member_added`,
+`member_updated`, `lockbox_created`, `lockbox_updated`, `lockbox_member_set`,
+`lockbox_member_removed`, `agent_added`, `agent_updated`, `agent_removed`,
+`trust_added`, `trust_removed`, `rule_added`, `rule_removed`. `memberId` is
+who acted; `deviceId` the device the event is about; `detail` compact JSON
+naming what else it touched. No token or key is ever in one.
 
 ## What a conforming server must never do
 

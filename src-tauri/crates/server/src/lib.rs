@@ -20,12 +20,17 @@
 // workspace still builds for one.
 #![cfg(not(any(target_os = "android", target_os = "ios")))]
 
+pub mod admin;
+pub mod api;
 pub mod auth;
 pub mod config;
 pub mod identity;
 pub mod lockboxes;
+pub mod members;
 pub mod rootkey;
 pub mod state;
 pub mod store;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
+#[cfg(test)]
+mod tests;

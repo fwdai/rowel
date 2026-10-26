@@ -302,6 +302,14 @@ impl Store {
             "DELETE FROM device_masters WHERE device_id = ?1",
             params![id],
         )?;
+        // The sessions the device holds end with it: withholding the master
+        // alone would leave its bearer answering approvals and pulling packs
+        // it can no longer open, but still could read the names of.
+        tx.execute(
+            "UPDATE sessions SET revoked_at_ms = ?1
+             WHERE device_id = ?2 AND revoked_at_ms IS NULL",
+            params![now_ms(), id],
+        )?;
         tx.commit()?;
         self.one_row_changed(changed, || format!("device {id}"))
     }

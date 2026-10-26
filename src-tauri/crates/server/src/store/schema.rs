@@ -22,6 +22,11 @@ fn migration_list() -> Vec<M<'static>> {
         // generation it was sealed at, so a rotation is seen as a stale
         // generation. The audit mirror is keyed as a lockbox's own chain is,
         // per writer and sequence, so a row mirrored twice is one row.
+        //
+        // The schema has shipped in no build yet, so a table added while the
+        // first server iteration is being built (`server_events`) goes into
+        // this first migration rather than a second one; from the first
+        // release on, the rule at the top of this file holds.
         M::up(
             "CREATE TABLE tenant (
                id            TEXT PRIMARY KEY,
@@ -158,6 +163,15 @@ fn migration_list() -> Vec<M<'static>> {
                PRIMARY KEY (lockbox_id, writer_id, seq)
              );
              CREATE INDEX audit_ts ON audit(ts_ms);
+             CREATE TABLE server_events (
+               id        TEXT PRIMARY KEY,
+               ts_ms     INTEGER NOT NULL,
+               event     TEXT NOT NULL,
+               member_id TEXT,
+               device_id TEXT,
+               detail    TEXT
+             );
+             CREATE INDEX server_events_ts ON server_events(ts_ms);
              CREATE TABLE replay (
                jti           TEXT PRIMARY KEY,
                expires_at_ms INTEGER NOT NULL

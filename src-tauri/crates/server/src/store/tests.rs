@@ -167,8 +167,15 @@ fn a_revoked_device_loses_the_masters_sealed_to_it() {
     store
         .put_device_master(&lockbox.id, &device.id, 1, "sealed")
         .unwrap();
+    let (_, access, _) = store
+        .create_session(&pat.id, Some(&device.id), 60_000)
+        .unwrap();
     store.revoke_device(&device.id).unwrap();
     assert_eq!(store.device_master(&lockbox.id, &device.id).unwrap(), None);
+    assert!(
+        store.session_by_access(&access).unwrap().is_none(),
+        "a revoked device's session ends with it"
+    );
 }
 
 #[test]

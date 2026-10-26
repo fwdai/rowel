@@ -55,6 +55,7 @@ macro_rules! text_enum {
 
 mod agents;
 mod audit;
+pub mod events;
 mod lockboxes;
 mod members;
 mod policy;
