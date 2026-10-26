@@ -134,7 +134,7 @@ pub struct State {
     broker: Mutex<Box<dyn Broker + Send>>,
     upstream: reqwest::Client,
     allow_http: bool,
-    buckets: Mutex<HashMap<String, Bucket>>,
+    buckets: Mutex<Buckets>,
 }
 
 impl State {
@@ -152,7 +152,7 @@ impl State {
             broker: Mutex::new(broker),
             upstream,
             allow_http,
-            buckets: Mutex::new(HashMap::new()),
+            buckets: Mutex::new(Buckets::default()),
         })
     }
 }
@@ -514,23 +514,41 @@ fn bad_gateway(error: reqwest::Error) -> Refusal {
 /// anything is resolved under it again.
 fn take_token(state: &State, grant: &str, accepted: bool) -> Result<bool, Refusal> {
     let mut buckets = state.buckets.lock().unwrap_or_else(|e| e.into_inner());
-    let bucket = match buckets.get_mut(grant) {
-        Some(bucket) => bucket,
-        None if accepted => buckets
-            .entry(grant.to_string())
-            .or_insert_with(Bucket::full),
-        None => return Ok(false),
-    };
-    match bucket.take(Instant::now()) {
-        Ok(()) => Ok(true),
-        Err(secs) => Err(Refusal {
+    buckets
+        .take(grant, accepted, Instant::now())
+        .map_err(|secs| Refusal {
             retry_after_secs: Some(secs),
             ..Refusal::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "rate_limited",
                 format!("at most {RATE_PER_MINUTE} requests a minute under one grant"),
             )
-        }),
+        })
+}
+
+/// The grants' buckets. A bucket that has refilled to the brim says nothing
+/// a new one would not — a grant with none starts full — so every take first
+/// forgets the full ones: the map holds only the grants a token was taken
+/// under in the last [`RATE_PER_MINUTE`] seconds, the time an emptied bucket
+/// takes to refill, however long the proxy runs and however many grants pass
+/// through it. A sweep is a walk of the map, which that bound keeps short.
+#[derive(Default)]
+struct Buckets(HashMap<String, Bucket>);
+
+impl Buckets {
+    /// One token from `grant`'s bucket at `now` — whether one was taken, or
+    /// in how many whole seconds one will be there (see [`take_token`]).
+    fn take(&mut self, grant: &str, accepted: bool, now: Instant) -> Result<bool, u64> {
+        self.0.retain(|_, bucket| !bucket.is_full_at(now));
+        let bucket = match self.0.get_mut(grant) {
+            Some(bucket) => bucket,
+            None if accepted => self
+                .0
+                .entry(grant.to_string())
+                .or_insert_with(|| Bucket::full_at(now)),
+            None => return Ok(false),
+        };
+        bucket.take(now).map(|()| true)
     }
 }
 
@@ -541,17 +559,26 @@ struct Bucket {
 }
 
 impl Bucket {
-    fn full() -> Self {
+    fn full_at(at: Instant) -> Self {
         Self {
             tokens: RATE_PER_MINUTE as f64,
-            at: Instant::now(),
+            at,
         }
+    }
+
+    /// What the bucket holds at `now`, refilled since it was last taken from.
+    fn tokens_at(&self, now: Instant) -> f64 {
+        let refill = now.saturating_duration_since(self.at).as_secs_f64();
+        (self.tokens + refill).min(RATE_PER_MINUTE as f64)
+    }
+
+    fn is_full_at(&self, now: Instant) -> bool {
+        self.tokens_at(now) >= RATE_PER_MINUTE as f64
     }
 
     /// Take one, or say in how many whole seconds one will be there.
     fn take(&mut self, now: Instant) -> Result<(), u64> {
-        let refill = now.saturating_duration_since(self.at).as_secs_f64();
-        self.tokens = (self.tokens + refill).min(RATE_PER_MINUTE as f64);
+        self.tokens = self.tokens_at(now);
         self.at = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
@@ -980,6 +1007,40 @@ mod tests {
         assert_eq!(bucket.tokens, (RATE_PER_MINUTE - 1) as f64);
     }
 
+    // The map forgets a grant once its bucket has refilled, and never sooner:
+    // within the window the limit still holds, across a sweep and for a
+    // grant only ever seen before the resolve.
+    #[test]
+    fn a_bucket_is_forgotten_once_it_has_refilled_and_not_before() {
+        use std::time::Duration;
+        let start = Instant::now();
+        let at = |secs: u64| start + Duration::from_secs(secs);
+        let mut buckets = Buckets::default();
+        assert_eq!(buckets.take("made-up", false, start), Ok(false));
+        assert!(buckets.0.is_empty(), "an id never accepted takes no place");
+
+        for _ in 0..RATE_PER_MINUTE {
+            assert_eq!(buckets.take("busy", true, start), Ok(true));
+        }
+        assert_eq!(buckets.take("idle", true, start), Ok(true));
+        assert_eq!(buckets.take("busy", false, start), Err(1));
+
+        // A minute on, the idle grant's bucket is full again and goes; the
+        // busy one, emptied at the start, is one token short and stays.
+        assert_eq!(buckets.take("other", true, at(59)), Ok(true));
+        let mut kept: Vec<&String> = buckets.0.keys().collect();
+        kept.sort();
+        assert_eq!(kept, ["busy", "other"]);
+        for _ in 0..(RATE_PER_MINUTE - 1) {
+            assert_eq!(buckets.take("busy", false, at(59)), Ok(true));
+        }
+        assert_eq!(buckets.take("busy", false, at(59)), Err(1), "still held");
+
+        // Idle for a full refill, every bucket is forgotten.
+        assert_eq!(buckets.take("made-up", false, at(59 + 60)), Ok(false));
+        assert!(buckets.0.is_empty());
+    }
+
     #[test]
     fn the_placement_follows_the_content_type_and_hop_by_hop_is_known() {
         let with = |kind: &str| {
@@ -1180,7 +1241,15 @@ mod end_to_end {
 
         /// The grant ids the proxy keeps a bucket for.
         fn buckets(&self) -> Vec<String> {
-            let mut ids: Vec<String> = self.state.buckets.lock().unwrap().keys().cloned().collect();
+            let mut ids: Vec<String> = self
+                .state
+                .buckets
+                .lock()
+                .unwrap()
+                .0
+                .keys()
+                .cloned()
+                .collect();
             ids.sort();
             ids
         }
