@@ -73,10 +73,10 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // A browser launched this binary as its native messaging host: relay its
-    // stdio to the running app and never build a window (see `browser::proxy`).
+    // stdio to the running app and never build a window (`rowel_broker::relay`).
     #[cfg(desktop)]
-    if browser::proxy::launched_by_browser(std::env::args().skip(1)) {
-        std::process::exit(browser::proxy::run());
+    if rowel_broker::relay::launched_by_browser(std::env::args().skip(1)) {
+        std::process::exit(rowel_broker::relay::run(browser::root_dir()));
     }
 
     // Before anything else: on mobile Tauri builds a reqwest client while

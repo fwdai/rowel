@@ -17,8 +17,6 @@
 //! identification key, kept inside that vault, is what it proves itself with
 //! — to that vault, and to no other workspace on the device.
 
-pub mod manifest;
-pub mod proxy;
 pub mod server;
 #[cfg(test)]
 mod tests;
@@ -43,7 +41,7 @@ pub use rowel_broker::agents::{
 };
 pub use rowel_broker::lockbox::{clients_in, env_var, item_by_name, logins_in};
 pub use rowel_broker::socket::{root_dir, socket_name, IDENTIFIER, SOCKET_FILE, SUN_PATH_MAX};
-pub use rowel_broker::{actions, frame, passkeys, protocol};
+pub use rowel_broker::{actions, frame, manifest, passkeys, protocol};
 
 pub use self::actions::Client;
 use self::actions::{ClientKind, Hello, Host, Login, VisibleRef};

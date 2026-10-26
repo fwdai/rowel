@@ -253,9 +253,8 @@ windows = { version = "0.62", features = ["Security_Credentials", "Security_Cred
 # Credential Manager storage. It holds only the Hello-wrapped blob — Credential
 # Manager itself has no biometric gate (see `secure_store::GateMode::HelloKey`).
 keyring = { version = "3", features = ["windows-native"] }
-# Where a browser looks for a native messaging host on Windows is a registry
-# key, not a file (`browser::manifest`); so is the user's PATH the command
-# line tool goes on (`cli::user_path`).
+# The user's PATH the command line tool goes on is a registry value on
+# Windows (`cli::user_path`).
 windows-registry = "0.100"
 
 [dev-dependencies]

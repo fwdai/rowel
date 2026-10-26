@@ -26,9 +26,19 @@ pub struct ServeArgs {
     pub ask_timeout_seconds: Option<u64>,
     /// Server mode: only `data_dir` and `config` go with it (`args`).
     pub server: bool,
+    /// Register the extension's native messaging host for this data
+    /// directory, or take it back (`native_host`), and serve nothing.
+    pub install_host: bool,
+    pub uninstall_host: bool,
 }
 
 pub fn run(args: ServeArgs) -> i32 {
+    if args.install_host {
+        return crate::native_host::install(args.data_dir);
+    }
+    if args.uninstall_host {
+        return crate::native_host::uninstall(args.data_dir);
+    }
     if args.server {
         let Some(data_dir) = args.data_dir else {
             eprintln!("rowel serve --server: --data-dir is required");

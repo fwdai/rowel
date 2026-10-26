@@ -3,7 +3,9 @@
 //! channel of the KeePassXC-Browser protocol (`protocol`), the native
 //! messaging framing (`frame`), what the extension may ask for and the
 //! [`actions::Host`] a vault answers it through (`actions`), the passkey
-//! ceremonies (`passkeys`), where the socket is (`socket`), the lockbox-side
+//! ceremonies (`passkeys`), where the socket is (`socket`), how a browser
+//! finds it (`manifest`) and the relay it launches to reach it (`relay`),
+//! the lockbox-side
 //! functions every host shares (`lockbox`), and what agents get: grants
 //! (`grant`), the policy that issues them (`policy`), the placeholder they name
 //! a secret by (`reference`), the signals that wake an extension for an
@@ -32,6 +34,10 @@ pub mod signal;
 pub use signal::{Signal, ROWEL_SIGNAL};
 // Desktop only, as the app's `browser` module is: it is where `interprocess`
 // and `dirs` are linked, and neither has a place on a phone.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod manifest;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod relay;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod server;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

@@ -31,6 +31,7 @@ pub mod command;
 pub mod hook;
 pub mod keys;
 pub mod mcp;
+pub mod native_host;
 pub mod proxy;
 pub mod redact;
 pub mod run;
@@ -121,6 +122,7 @@ pub fn run(program: &str, args: impl Iterator<Item = String>) -> i32 {
             proxy::run(&proxy, Box::new(sidecar))
         }
         Ok(args::Command::Serve(serve)) => serve::run(serve),
+        Ok(args::Command::NativeHost { data_dir }) => native_host::run(data_dir),
         Ok(args::Command::Approve(approve)) => approve::run(approve),
         Ok(args::Command::Admin(admin)) => admin::run(admin),
         Ok(args::Command::AdminServer(server)) => server_admin::run(server),

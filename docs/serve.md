@@ -274,6 +274,44 @@ loopback address or behind a reverse proxy that authenticates, as with any
 service; the ceiling keeps a flood from taking the process down, it does
 not keep a flood from occupying the connections an agent would use.
 
+## The browser extension on the box
+
+The broker serves the same socket the app does, so the Rowel extension in a
+browser on the box can fill from it — once the browser can find it. A
+browser finds a native messaging host by a manifest in a directory of its
+own, which the app writes for itself; on a box without the app, the broker
+writes it:
+
+```bash
+rowel serve --install-host [--data-dir /srv/rowel]     # register, then exit
+rowel serve --uninstall-host [--data-dir /srv/rowel]   # take it back
+```
+
+`--install-host` writes `native-host` into the data directory — a launcher,
+executable by you alone, that runs `rowel native-host --data-dir <dir>`, the
+relay between the browser's stdio and the broker's socket — and a manifest
+naming it, `app.rowel.browser.json`, for every browser that has run here:
+Chrome, Chromium, Edge, Brave and Vivaldi under their own directories
+(`~/.config/<browser>/NativeMessagingHosts/` on Linux, `~/Library/Application
+Support/<browser>/NativeMessagingHosts/` on macOS) and Firefox under
+Mozilla's (`~/.mozilla/native-messaging-hosts/`, `~/Library/Application
+Support/Mozilla/NativeMessagingHosts/`). The manifest lets in the Rowel
+extension's ids and nothing else. Start the browser and install the
+extension first, so its directory exists; then run `--install-host`, and
+again after moving the binary or the data directory. It serves nothing and
+takes only `--data-dir`; `rowel serve` itself is started as usual, and the
+extension connects while it runs.
+
+A manifest the app wrote (or another program) under the same name is left
+alone and reported, and the app leaves the broker's alone in turn: on a
+machine with both, whichever registered first is the one the browser
+launches. Both relays reach the socket in the app's data directory, which is
+`rowel serve`'s default, so either works there; a broker on another
+`--data-dir` needs its own. Windows is not supported: browsers find a host
+there through the registry, and the app registers itself. A browser
+installed as a Snap or a Flatpak may not be allowed to launch a host outside
+its sandbox.
+
 ## A systemd unit
 
 ```ini
