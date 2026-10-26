@@ -300,13 +300,13 @@ pub fn summary(ask: &PendingAsk) -> String {
                 .as_deref()
                 .map(|r| format!(" — reason: {r}"))
                 .unwrap_or_default();
-            let password = if *step_up {
+            let step_up_note = if *step_up {
                 " (the master password is asked for)"
             } else {
                 ""
             };
             format!(
-                "{client_name} ({}) asks to use {items} in {} mode at {}{reason}{password}",
+                "{client_name} ({}) asks to use {items} in {} mode at {}{reason}{step_up_note}",
                 kind_word(*client_kind),
                 mode.as_str(),
                 targets.join("; "),
@@ -316,14 +316,14 @@ pub fn summary(ask: &PendingAsk) -> String {
             origin,
             client_name,
             ceremony,
-            accounts,
+            accounts: names,
         } => {
-            let accounts = if accounts.is_empty() {
+            let choices = if names.is_empty() {
                 String::new()
             } else {
                 format!(
                     " as {}",
-                    accounts
+                    names
                         .iter()
                         .enumerate()
                         .map(|(n, name)| format!("[{n}] {name}"))
@@ -331,7 +331,7 @@ pub fn summary(ask: &PendingAsk) -> String {
                         .join(", ")
                 )
             };
-            format!("{origin} through {client_name} asks to {ceremony}{accounts}")
+            format!("{origin} through {client_name} asks to {ceremony}{choices}")
         }
     }
 }
