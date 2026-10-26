@@ -21,7 +21,9 @@ import {
   setupAccountPending,
   initialApp,
   setFilterType,
-  lockVault
+  lockVault,
+  togglePicked,
+  pickAll
 } from './index'
 
 const meta = (id: string, title = id): EntryMeta =>
@@ -139,6 +141,26 @@ describe('selection', () => {
 
     expect(useVault.getState().editing).toBe(false)
     expect(current()).toBeNull()
+  })
+
+  // Everything that acts on the open entry (⌘E, the copy chords, a dropped
+  // file) reads it through `selectCurrent`, so a batch opens nothing.
+  it('has no current entry while a batch is picked', () => {
+    setEntries([meta('a'), meta('b')])
+    setCurrentEntry('a')
+    togglePicked('b', ['a', 'b'])
+
+    expect([...useVault.getState().picked]).toEqual(['a', 'b'])
+    expect(current()).toBeNull()
+  })
+
+  it('lets a batch go whole when a list replacement drops one of its rows', () => {
+    setEntries([meta('a'), meta('b'), meta('c')])
+    pickAll(['a', 'b', 'c'])
+
+    setEntries([meta('a'), meta('c')])
+
+    expect(useVault.getState().picked.size).toBe(0)
   })
 })
 

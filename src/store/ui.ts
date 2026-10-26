@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { EntryType } from '@/api/types'
 import type { SshKeyPair } from '@/api/tools'
 import type { AgentGrantAsk, AssociateAsk, BrowserConsent, PasskeyAsk } from '@/api/browser'
-import { loadArchive, setNoEntry, useVault, selectCurrent } from './vault'
+import { loadArchive, setNoEntry, useVault, selectCurrent, clearPicked } from './vault'
 
 /**
  * The surfaces open over the vault and how the list is narrowed. Everything
@@ -214,7 +214,12 @@ export const setView = (view: View) => enterView(view)
 
 export const showTag = (tag: string) => enterView('tags', { filterTag: tag })
 
-export const setFilterQuery = (query: string) => useUi.setState({ query })
+// A new query or filter is a new list, and a batch is a pick out of the old one:
+// it ends rather than carry rows the list may no longer show.
+export const setFilterQuery = (query: string) => {
+  useUi.setState({ query })
+  clearPicked()
+}
 
 // ⌘F comes off the window, where there is no ref to the field. Asked of the
 // store rather than of the DOM: the field is one of ours, so what it should be
@@ -232,11 +237,13 @@ const dropHidden = (hidden: (current: { type: EntryType; tags: string[] }) => bo
 
 export const setFilterType = (type: EntryType | null) => {
   useUi.setState({ filterType: type })
+  clearPicked()
   if (type) dropHidden(current => current.type !== type)
 }
 
 export const setFilterTag = (tag: string | null) => {
   useUi.setState({ filterTag: tag })
+  clearPicked()
   if (tag) dropHidden(current => !current.tags.includes(tag))
 }
 

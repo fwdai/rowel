@@ -863,5 +863,18 @@
   "a row that does not follow the one before it": "eine Zeile, die nicht an die vorige anschließt",
   "a row that was altered": "eine Zeile, die verändert wurde",
   "Used by an AI agent": "Von einem KI-Agenten genutzt",
-  "Every fill from it then waits for your approval in {{appName}}.": "Jedes Ausfüllen wartet dann auf deine Freigabe in {{appName}}."
+  "Every fill from it then waits for your approval in {{appName}}.": "Jedes Ausfüllen wartet dann auf deine Freigabe in {{appName}}.",
+  "{{count}} selected_one": "{{count}} ausgewählt",
+  "{{count}} selected_other": "{{count}} ausgewählt",
+  "{{count}} items selected_one": "{{count}} Eintrag ausgewählt",
+  "{{count}} items selected_other": "{{count}} Einträge ausgewählt",
+  "Archive {{count}} items?_one": "{{count}} Eintrag archivieren?",
+  "Archive {{count}} items?_other": "{{count}} Einträge archivieren?",
+  "Some items could not be changed. Please try again.": "Einige Einträge konnten nicht geändert werden. Bitte versuchen Sie es erneut.",
+  "add or remove": "hinzufügen oder entfernen",
+  "select a range": "Bereich auswählen",
+  "select all": "alle auswählen",
+  "archive": "archivieren",
+  "delete forever": "endgültig löschen",
+  "deselect": "Auswahl aufheben"
 }

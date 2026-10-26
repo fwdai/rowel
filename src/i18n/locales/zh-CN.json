@@ -821,5 +821,15 @@
   "a row that does not follow the one before it": "与前一行不衔接的行",
   "a row that was altered": "被改动过的行",
   "Used by an AI agent": "由 AI 代理使用",
-  "Every fill from it then waits for your approval in {{appName}}.": "此后每次填充都需要你在 {{appName}} 中批准。"
+  "Every fill from it then waits for your approval in {{appName}}.": "此后每次填充都需要你在 {{appName}} 中批准。",
+  "{{count}} selected_other": "已选择 {{count}} 个",
+  "{{count}} items selected_other": "已选择 {{count}} 个条目",
+  "Archive {{count}} items?_other": "归档 {{count}} 个条目？",
+  "Some items could not be changed. Please try again.": "部分条目无法更改，请重试。",
+  "add or remove": "添加或移除",
+  "select a range": "选择范围",
+  "select all": "全选",
+  "archive": "归档",
+  "delete forever": "彻底删除",
+  "deselect": "取消选择"
 }

@@ -849,5 +849,21 @@
   "a row that does not follow the one before it": "uma linha que não segue a anterior",
   "a row that was altered": "uma linha que foi alterada",
   "Used by an AI agent": "Usado por um agente de IA",
-  "Every fill from it then waits for your approval in {{appName}}.": "Cada preenchimento passa a aguardar sua aprovação no {{appName}}."
+  "Every fill from it then waits for your approval in {{appName}}.": "Cada preenchimento passa a aguardar sua aprovação no {{appName}}.",
+  "{{count}} selected_one": "{{count}} selecionado",
+  "{{count}} selected_many": "{{count}} selecionados",
+  "{{count}} selected_other": "{{count}} selecionados",
+  "{{count}} items selected_one": "{{count}} item selecionado",
+  "{{count}} items selected_many": "{{count}} de itens selecionados",
+  "{{count}} items selected_other": "{{count}} itens selecionados",
+  "Archive {{count}} items?_one": "Arquivar {{count}} item?",
+  "Archive {{count}} items?_many": "Arquivar {{count}} de itens?",
+  "Archive {{count}} items?_other": "Arquivar {{count}} itens?",
+  "Some items could not be changed. Please try again.": "Alguns itens não puderam ser alterados. Tente novamente.",
+  "add or remove": "adicionar ou remover",
+  "select a range": "selecionar intervalo",
+  "select all": "selecionar tudo",
+  "archive": "arquivar",
+  "delete forever": "excluir para sempre",
+  "deselect": "desmarcar"
 }
