@@ -332,10 +332,11 @@ impl Verifier<'_> {
         };
         // Keyed by issuer too: a `jti` is unique within one issuer only, and
         // two platforms minting the same id must not refuse each other.
-        if !self
-            .replay
-            .note(&format!("{issuer}|{jti}"), claims.exp_ms(), now_ms)
-        {
+        if !self.replay.note(
+            &format!("{issuer}|{jti}"),
+            claims.accepted_until_ms(),
+            now_ms,
+        ) {
             return Err(ProofError::Replayed);
         }
 

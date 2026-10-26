@@ -264,6 +264,37 @@ async fn a_replayed_jti_is_refused() {
     assert_eq!(replayed, ProofError::Replayed);
 }
 
+// A token is accepted until `exp` plus the leeway, so its `jti` must be
+// remembered that long: past `exp` but inside the leeway, a second
+// presentation is still a replay.
+#[tokio::test]
+async fn a_jti_is_remembered_for_the_whole_leeway() {
+    let h = Harness::start().await;
+    let key = session_key();
+    let audience = expected_audience(TENANT, &key).unwrap();
+    let policies = [github_policy(&h.idp, false)];
+    let verifier = h.verifier();
+
+    let now = now_ms() / 1000;
+    let token = h.idp.mint(deploy_claims(), &audience, now - 120, now);
+    let inside_leeway = (now + jwt::LEEWAY_SECS / 2) * 1000;
+    verifier
+        .verify_proof(&proof(&token, None), &key, TENANT, &policies, inside_leeway)
+        .await
+        .unwrap();
+    let replayed = verifier
+        .verify_proof(
+            &proof(&token, None),
+            &key,
+            TENANT,
+            &policies,
+            inside_leeway + 1_000,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(replayed, ProofError::Replayed);
+}
+
 #[tokio::test]
 async fn a_token_from_an_issuer_no_policy_names_or_matching_none_is_said_so() {
     let h = Harness::start().await;
@@ -457,7 +488,10 @@ async fn expiry_and_lifetime_follow_the_callers_clock() {
     let claims = jwt::verify(&jwks, &token, &expect(now, None))
         .await
         .unwrap();
-    assert_eq!(claims.exp_ms(), (now + 600) * 1000);
+    assert_eq!(
+        claims.accepted_until_ms(),
+        (now + 600 + jwt::LEEWAY_SECS) * 1000
+    );
     assert_eq!(claims.iat, Some(now));
     assert_eq!(
         claims.sub.as_deref(),

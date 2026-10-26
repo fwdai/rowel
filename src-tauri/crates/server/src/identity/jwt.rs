@@ -357,10 +357,14 @@ impl Claims {
         })
     }
 
-    /// When the token expires, in the server's millisecond clock: the
-    /// window a replay cache has to remember its `jti` for.
-    pub fn exp_ms(&self) -> i64 {
-        self.exp.saturating_mul(1000)
+    /// The last instant, in the server's millisecond clock, at which this
+    /// token is still accepted: its `exp` plus the clock-skew leeway. The one
+    /// definition both the expiry check below and every replay record use,
+    /// so a `jti` is remembered for exactly as long as its token can be
+    /// presented — remembering it only until the bare `exp` let the token
+    /// through again, once per request, for the whole leeway.
+    pub fn accepted_until_ms(&self) -> i64 {
+        self.exp.saturating_add(LEEWAY_SECS).saturating_mul(1000)
     }
 
     fn check(&self, expected: &Expect) -> Result<(), VerifyError> {
@@ -371,10 +375,10 @@ impl Claims {
         if !self.aud.iter().any(|aud| aud == audience) {
             return Err(VerifyError::Audience);
         }
-        let now = expected.now_ms.div_euclid(1000);
-        if now >= self.exp.saturating_add(LEEWAY_SECS) {
+        if expected.now_ms >= self.accepted_until_ms() {
             return Err(VerifyError::Expired);
         }
+        let now = expected.now_ms.div_euclid(1000);
         if let Some(nbf) = self.nbf {
             if now < nbf.saturating_sub(LEEWAY_SECS) {
                 return Err(VerifyError::NotYetValid);

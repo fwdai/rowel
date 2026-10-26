@@ -311,7 +311,10 @@ impl Store {
 
     /// Remember a workload token's `jti` until `expires_at_ms`: `true` the
     /// first time, `false` for one already held and not yet expired, which
-    /// is a replay.
+    /// is a replay. `expires_at_ms` must be the last instant the token is
+    /// still accepted (`Claims::accepted_until_ms`, its `exp` plus the
+    /// leeway), never the bare `exp`: a row dropped while the token still
+    /// verifies lets it in again.
     pub fn note_jti(&self, jti: &str, expires_at_ms: i64) -> Result<bool> {
         self.note_jti_at(jti, expires_at_ms, now_ms())
     }
@@ -331,7 +334,8 @@ impl Store {
         Ok(inserted == 1)
     }
 
-    /// Drop every `jti` whose token has expired by `now_ms`; how many went.
+    /// Drop every `jti` whose token is no longer accepted at `now_ms`; how
+    /// many went.
     pub fn prune_replay(&self, now_ms: i64) -> Result<usize> {
         Ok(self.conn().execute(
             "DELETE FROM replay WHERE expires_at_ms <= ?1",
