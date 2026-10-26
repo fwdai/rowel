@@ -103,8 +103,8 @@ over an owner-only control socket (`serve.sock`, frames of JSON: `pending`,
 `answer`, `lock`, `status`) or refused at its deadline; associations are asks
 too, never automatic, for the WebSocket's sake; a step-up ask takes the
 master password at `rowel approve`, compared with the held key in constant
-time. Listeners: the data directory's socket through `rowel_broker::server`
-after a probe that refuses to start when the app answers there, and a
+time. Listeners: the data directory's socket through `rowel_broker::server`,
+and a
 WebSocket (tokio + tungstenite; TLS from PEM files through `tokio-rustls` or
 plain behind a reverse proxy) where a binary message is one frame and each
 connection is a reader task, a std thread owning the `Connection`, and a
@@ -112,10 +112,12 @@ writer task the lock signals reach through the server's sink. What a
 stranger at the port can cost is bounded before association: 256 open
 connections, a 10 s handshake deadline, the broker's 1 MiB frame cap per
 message, and a queue of four requests per connection past which the reader
-stops taking from the socket. One broker runs per data directory, under an
-exclusive lock on `serve.lock` taken before the password prompt and before
-any socket is bound, so a second instance can never unlink a running one's
-control socket. `--key-fd` is for a descriptor a wrapper hands in (`3<
+stops taking from the socket; a connection's place under the ceiling is the
+serving thread's, so hanging up mid-ask releases nothing. One broker runs
+per data directory: the app and `rowel serve` take the same exclusive lock,
+`rowel_broker::server::Lock` on `broker.lock`, before binding anything,
+whatever they listen on, so neither can unlink the other's live socket.
+`--key-fd` is for a descriptor a wrapper hands in (`3<
 file`); a systemd `LoadCredential=` is a file under `$CREDENTIALS_DIRECTORY`
 and is passed with `--key-file`, so the idle lock works under systemd.
 SIGTERM and SIGINT seal and exit 0, also while the idle-lock password prompt
