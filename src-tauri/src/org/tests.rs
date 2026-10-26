@@ -227,24 +227,44 @@ fn a_rotated_session_survives_a_later_change_to_the_record() {
     );
 }
 
-// (a'') The review's concurrent-refresh finding: sync and the approvals
-// stream can meet a 401 at the same moment and both refresh. The refresh
-// token is single use, so without a turn the second would present the token
-// the first just spent and be told the sign-in is over; taking turns, it
-// finds the session already moved on and uses that.
+// (a'') The review's concurrent-refresh findings: sync and the approvals
+// stream can meet a 401 for the same session and both refresh. A refresh
+// replaces the session the failed request was made under and no later one:
+// the caller names it, and a refresh that finds it already replaced — while
+// it waited its turn, or before it started — hands back the replacement
+// rather than spending its token and retiring the access token the other
+// caller is about to retry under.
 #[test]
 fn two_refreshes_at_once_spend_the_refresh_token_once() {
     let server = FakeServer::start();
     let pat = Signed::enroll(&server, "Pat's Mac");
     let resolver = SessionResolver::Memory(pat.connections.clone());
+    let spent = resolver.connection(&server.url).unwrap();
     server.expire_sessions();
     let (a, b) = block_on(futures_util::future::join(
-        resolver.refresh(&server.url),
-        resolver.refresh(&server.url),
+        resolver.refresh(&spent),
+        resolver.refresh(&spent),
     ));
     let (a, b) = (a.unwrap(), b.unwrap());
     assert_eq!(a.access_token, b.access_token);
     let client = ServerClient::with_session(&server.url, &a.access_token).unwrap();
+    assert_eq!(block_on(client.devices()).unwrap().len(), 1);
+}
+
+// The same, one after the other: the second caller's request failed under
+// the old session too, but its refresh starts only once the first has
+// finished. It must still take the first's session, not refresh it away.
+#[test]
+fn a_refresh_after_another_finished_keeps_the_session_it_made() {
+    let server = FakeServer::start();
+    let pat = Signed::enroll(&server, "Pat's Mac");
+    let resolver = SessionResolver::Memory(pat.connections.clone());
+    let spent = resolver.connection(&server.url).unwrap();
+    server.expire_sessions();
+    let first = block_on(resolver.refresh(&spent)).unwrap();
+    let second = block_on(resolver.refresh(&spent)).unwrap();
+    assert_eq!(second.access_token, first.access_token);
+    let client = ServerClient::with_session(&server.url, &first.access_token).unwrap();
     assert_eq!(block_on(client.devices()).unwrap().len(), 1);
 }
 

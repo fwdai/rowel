@@ -117,7 +117,7 @@ impl Store {
         if resp.status() != StatusCode::UNAUTHORIZED {
             return Ok(resp);
         }
-        connection = self.session.refresh(server).await?;
+        connection = self.session.refresh(&connection).await?;
         build(&self.client, server, &connection.access_token)
             .send()
             .await
