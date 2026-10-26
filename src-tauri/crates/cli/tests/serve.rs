@@ -450,9 +450,9 @@ fn serve_mcp_approve_and_proxy_end_to_end() {
         "{events:?}"
     );
     drop(mcp);
-    let pid = serve.0.id();
     #[cfg(unix)]
     {
+        let pid = serve.0.id();
         let killed = Command::new("kill")
             .args(["-TERM", &pid.to_string()])
             .status()

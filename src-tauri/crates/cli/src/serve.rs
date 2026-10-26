@@ -4,7 +4,7 @@
 //! password at the terminal, which is the one thing this module does that
 //! `rowel-serve` will not: read a TTY.
 
-use std::io::{self, BufRead, IsTerminal, Read};
+use std::io::{self, BufRead, IsTerminal};
 use std::path::PathBuf;
 
 use rowel_serve::{PasswordPrompt, ServeOptions, Unlock};
@@ -78,6 +78,7 @@ pub fn read_password(label: &str) -> io::Result<Zeroizing<String>> {
 /// and macOS both have, so no handle is adopted blind.
 #[cfg(unix)]
 fn read_fd(fd: u32) -> io::Result<Zeroizing<Vec<u8>>> {
+    use std::io::Read;
     let mut material = Zeroizing::new(Vec::new());
     std::fs::File::open(format!("/dev/fd/{fd}"))?.read_to_end(&mut material)?;
     if material.is_empty() {
