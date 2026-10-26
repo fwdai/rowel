@@ -63,6 +63,8 @@ usage: rowel-cli <command>
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
+    /// `--help`, `-h` or `help`: the usage, on stdout, and success.
+    Help,
     Status,
     Mcp {
         platform: Option<String>,
@@ -81,16 +83,13 @@ pub enum Command {
     AdminServer(ServerAdminArgs),
 }
 
-/// Why the arguments did not make a command, with the usage to print. The
-/// message is empty for `--help`, which is not a mistake.
+/// Why the arguments did not make a command, with the usage to print.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Usage(String);
 
 impl fmt::Display for Usage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.0.is_empty() {
-            writeln!(f, "rowel-cli: {}", self.0)?;
-        }
+        writeln!(f, "rowel-cli: {}", self.0)?;
         f.write_str(USAGE)
     }
 }
@@ -307,7 +306,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
                 command,
             }))
         }
-        Some("--help") | Some("-h") | Some("help") => Err(Usage(String::new())),
+        Some("--help") | Some("-h") | Some("help") => Ok(Command::Help),
         Some(other) => Err(Usage(format!("unknown command '{other}'"))),
         None => Err(Usage("a command is needed".into())),
     }
@@ -1033,11 +1032,18 @@ mod tests {
             .contains("loopback"));
     }
 
+    // Asking for the usage is not a mistake: it is a command of its own.
+    #[test]
+    fn help_is_a_command() {
+        for line in ["--help", "-h", "help"] {
+            assert_eq!(parsed(line), Ok(Command::Help), "{line:?}");
+        }
+    }
+
     #[test]
     fn anything_else_is_usage() {
         for line in [
             "",
-            "--help",
             "serve --key-file /k --key-fd 3",
             "serve --idle-lock soon",
             "serve --bogus",
@@ -1065,10 +1071,7 @@ mod tests {
         ] {
             assert!(parsed(line).is_err(), "{line:?}");
         }
-        assert!(parsed("--help")
-            .unwrap_err()
-            .to_string()
-            .starts_with("usage:"));
+        assert!(parsed("").unwrap_err().to_string().contains("\nusage:"));
         assert!(parsed("serv")
             .unwrap_err()
             .to_string()
