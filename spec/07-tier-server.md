@@ -70,7 +70,7 @@ provider. From then on the app is also the member's approval device.
 
 ### Technical details
 
-**Binary and crate (❌).** The server is not a separate binary. It is the
+**Binary and crate (✅ I7).** The server is not a separate binary. It is the
 `rowel` CLI's `serve` subcommand in **server mode** (`rowel serve --server`),
 built from a `rowel-serve` library crate (`src-tauri/crates/serve`) that the
 CLI links. The same `serve` without `--server` is the headless broker for one
@@ -142,7 +142,7 @@ Lockbox masters are unwrapped into memory on first use and held in a
 `Zeroizing` LRU keyed by lockbox id with an idle timeout (default 10 min), so
 a quiet server holds no plaintext keys. Every unwrap is an audit row.
 
-**OrgHost (❌).** `impl Host for OrgHost` over `rowel_core::store::SqliteStore`
+**OrgHost (✅ I7).** `impl Host for OrgHost` over `rowel_core::store::SqliteStore`
 opened with the lockbox's SQLCipher subkey, exactly as `sync::engine::WorkspaceVault`
 opens a lockbox the app does not have active. Method by method:
 
@@ -163,7 +163,7 @@ One `Connection<OrgHost>` per WebSocket; the broker crate's connection code is
 unchanged. Concurrency: the lockbox store is behind a per-lockbox `Mutex`
 (SQLite writes serialize anyway); reads for grants are short.
 
-**Device sync through the server (🟡).** The app gains `Provider::RowelServer`
+**Device sync through the server (✅ I7).** The app gains `Provider::RowelServer`
 beside Google Drive, Dropbox and iCloud (`sync/provider.rs`, `sync/store.rs`
 `AnyStore`). Its `VaultStore` talks to:
 
@@ -207,8 +207,8 @@ listing whose `gen` is above the local sidecar's re-keys the local copy to
 the new master through the existing re-key saga, retiring the old epoch so a
 pack pushed under it still opens (`opened_under_retired`).
 
-**Member API (🟡 the app's side is built in I6, `src-tauri/src/org/client.rs`
-is the contract; the server implements it in I7).** camelCase JSON, except
+**Member API (✅ the app's side built in I6, `src-tauri/src/org/client.rs`;
+the server's in I7, `crates/server/src/members.rs`).** camelCase JSON, except
 the token endpoint, which is RFC 6749's and keeps its snake_case.
 
 ```
@@ -288,7 +288,7 @@ step-up as for a local ask, and the answer is posted back; a timeout posts
 nothing and the server's own deadline decides. The server's log is the
 record of its grants; the device writes no local audit row for them.
 
-**Agent and admin API (❌).**
+**Agent and admin API (✅ I7, except `/v1/extension`).**
 
 ```
   WS   /v1/agent            the sealed channel; `associate` carries `proof`
@@ -306,12 +306,86 @@ Admin UI: start inside the Rowel app's Settings for members with the admin
 role (the app already has the lockbox and rule concepts); a web console is a
 later addition, not a prerequisite.
 
+**As built in I7 (the server).** The server mode is its own crate,
+`src-tauri/crates/server` (`rowel-server`), not a mode inside `rowel-serve`:
+the open-core boundary as a directory (`00 §4`). `rowel serve --server
+--data-dir` runs it (`run.rs`): `server.json` (tenant name, `publicUrl` held
+to the app's https-or-loopback rule, `listen.http` and optional TLS PEM
+files, `rootKeyFile`, `members.oidc { issuer, clientId, clientSecret,
+allowedDomains }`, `askTimeoutMs`, `keyIdleMs`, `sessionTtlMs`), a SQLite
+`server.db`, `lockboxes/<id>/vault.db` + `vault.kdf.json`, one router for
+every API plus an anonymous `GET /v1/health`, the broker's `Lock` on the data
+directory, a one-second ticker, and on SIGTERM a five-second drain then every
+lockbox sealed. `rowel admin server …` administers the same directory
+directly (`docs/server.md`); the contract is `docs/server-api.md`.
+
+- *Root key.* `RootKey` with `FileRootKey` (32 raw bytes, owner-only, never
+  overwritten); tenant key `hkdf_subkey(root, "rowel-server tenant " ++
+  tenant_id)`; a master is AES-GCM-sealed under it with the lockbox id as
+  associated data. KMS implementations stay later.
+- *Open lockboxes.* A vault cache (`vaults.rs`) rather than a sized LRU: a
+  master is unwrapped on first use, written as a `key_unwrapped` row, and
+  sealed after `keyIdleMs` (10 min), on a freeze and at shutdown, which ends
+  that lockbox's grants. Per vault the locks are session → agents, the map
+  lock never held across them, the approvals queue only under agents, the
+  metadata store innermost. A pull from a frozen lockbox opens it outside the
+  cache and records the unwrap as a tenant event, since a row would move a
+  frozen lockbox's revision on every device's run.
+- *OrgHost.* Tenant-scoped; the lockbox a request is about is the client's
+  agent's: **an agent definition is bound to exactly one lockbox** in I7.
+  `associate` is by proof only (`02`), through the new
+  `Host::associate_on_channel`, which hands the host the session key the
+  channel was opened with (its default calls `associate`). `request_grant` is
+  `HeadlessHost`'s three phases over the vault with the lockbox's rules and
+  the tenant's as `extra`; a lockbox with agents off is denied before policy
+  (`denied {"reason":"lockbox"}`), a frozen one refused. `logins_for`,
+  `totp`, `save_login` and the passkey ceremonies serve nothing (Q5 (a); a
+  remote extension is I11). `wait_grant` is the status at once, as in I5;
+  long-parked asks are I8. Every row the server writes into a lockbox is
+  mirrored into the metadata store and moves the lockbox's revision.
+- *Pack endpoints.* `HEAD|GET|PUT` for a member who holds the lockbox from an
+  approved device (403 otherwise, 404 to a non-member). The server's file
+  exists from creation, so the listing always carries an `etag` and
+  `If-None-Match: *` is 412, which the device treats as "pull first". A
+  `PUT` is read, merged (`rowel_core::sync::snapshot::read` →
+  `SqliteStore::merge`; the incoming name ignored), mirrored and the revision
+  bumped, all under the vault's session lock; a push that changes nothing
+  still bumps. A pack under any descriptor but the lockbox's current one is
+  409 until rotation (I8) gives the server retired epochs. A frozen lockbox
+  takes no pushes (423) and still serves pulls. The server never purges
+  tombstones or prunes audit rows in I7, so a device that purged one gets it
+  back at each pull and purges it again: harmless churn until server
+  retention exists.
+- *Approvals.* `pending_approvals` rows; an ask routes to members holding the
+  lockbox as `approver` or `admin`, and to an `acting_for` member only if
+  they hold it (the claim is the agent's own until delegation); SSE with a
+  20 s keepalive; the first answer from an approved device wins, a late one is
+  409; one server-wide `askTimeoutMs`. Asks a previous run left pending are
+  expired at startup.
+- *Members.* `GET /v1/members/auth/callback` is the server's OIDC callback;
+  an unverified email is refused; a member is auto-provisioned only when
+  `allowedDomains` is set and matches, otherwise an admin adds them; a
+  refusal goes back to the app's loopback as an RFC 6749 error. Access
+  tokens are stored as hashes; a refresh token is single-use and a reused one
+  revokes the session; revoking a device withdraws its sealed masters and
+  ends its sessions.
+- *Admin.* `/v1/admin/{members, devices, lockboxes, agents, trust, rules,
+  audit/export, events}`, admin role only; a trust policy carries
+  `clientKind`. Shapes in `docs/server-api.md`.
+
 **Metadata schema (sketch).** `tenants`, `members`, `devices`, `lockboxes`
 (id, tenant, name, wrapped_master, frozen), `lockbox_members` (lockbox, member,
 role, wrapped_master_for_device per device), `agents`, `trust_policies`,
 `clients`, `rules`, `grants`, `pending_approvals`, `audit` (also mirrored
 inside each lockbox per `09`, so a lockbox restored elsewhere carries its own
 history).
+*As built in I7:* `tenant`, `members`, `devices`, `sessions` (hashed
+tokens), `auth_codes`, `lockboxes` (with `gen`, `agents`, `revision`),
+`lockbox_members`, `device_masters` (sealed per device, by `gen`), `agents`
+(each bound to one lockbox), `trust_policies` (with `client_kind`), `clients`,
+`rules`, `pending_approvals`, `audit` (the mirror, keyed by lockbox, writer,
+seq), `server_events` (tenant-level rows) and `replay` (`jti`, keyed by
+issuer).
 
 **Operational notes.** Single binary, `rowel serve --server` and `rowel
 admin …`. Health endpoint. Backups = metadata DB dump + lockbox files + the

@@ -48,6 +48,20 @@ Read the overview first. Everything else hangs off it.
 
 ## Revision history
 
+- **2026-10-26, I7 built (the Rowel Server, single node; PR #665).** I6
+  ticked as merged (PR #662). The server mode is its own crate,
+  `rowel-server`, built in this repository by the owner's decision (`00 §4`,
+  Q1). Recorded as built: the proof inside `hello` and
+  `Host::associate_on_channel`, the key-bound audience format, replay keyed
+  by issuer, and a trust policy that admits one client kind, which is how a
+  sidecar is bound instead of `sidecar_for` (`02`, `05`); an agent
+  definition bound to one lockbox, the vault cache with an idle seal, no
+  fills or passkeys from a server-held lockbox (`07`, Q5); pack endpoints as
+  merge authority with the file existing from creation, revision bumps on
+  every server-side write and 409 for another key generation (`07`, Q19 ✅);
+  routing to approver members with one server-wide timeout (`03`); the
+  audit mirror, export, verify and the separate tenant event table (`09`,
+  Q21); the pack format lifted into `rowel_core::sync`.
 - **2026-10-26, I6 built (org lockboxes in the app).** I5 ticked as merged
   (PR #659). Settled the enrollment key to one X25519 curve (Q7, half) and
   the sign-in model: the Rowel Server is the OAuth2 authorization server the

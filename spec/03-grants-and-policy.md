@@ -361,7 +361,7 @@ is the master password typed at `rowel approve`, derived through the
 lockbox's KDF sidecar and compared with the held key's SQLCipher subkey in
 constant time; a mismatch is `denied {"reason":"user"}`.
 
-**Server routing (❌, Tier 2).** `pending_approvals` table: grant id, approver
+**Server routing (✅ I7, Tier 2; per-rule timeouts and queued asks are I8).** `pending_approvals` table: grant id, approver
 candidates, created, expires, state. The approver's app subscribes
 (`GET /v1/members/me/approvals/stream`, server-sent events or long poll) and
 answers (`POST /v1/approvals/{id}`) with the same `GrantAnswer`; the server
@@ -370,3 +370,10 @@ returns. First answer wins; the others are told it was handled. Per-rule
 timeout: default 120 s interactive, up to 24 h for queued approvals of
 unattended agents, after which the run is told `Denied` and may retry within
 the rate limits.
+*As built in I7:* candidates are the members holding the lockbox as
+`approver` or `admin`, plus an `acting_for` member who holds it; first answer
+from an approved device wins and a later one is told 409; the timeout is the
+server's `askTimeoutMs` (120 s) for every rule, and `wait-grant` answers at
+once as in I5, so an unattended agent's long-parked ask is I8 (Q20). The rule
+list evaluated is `defaults::personal()`, then the tenant's and the lockbox's
+rules (`CreatedBy::Admin("server")`), then the lockbox's own.

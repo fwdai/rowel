@@ -14,6 +14,9 @@ proprietary in a private repository that depends on the public crates;
 contributions are inbound = outbound with a DCO sign-off. See `00 §4`,
 the README License section and `CONTRIBUTING.md`. What remains open is only
 whether the single-node server is ever offered as a supported product (Q2).
+*2026-10-26 (I7):* the owner chose to build the server mode for now in the
+public repository as its own crate (`crates/server`, `rowel-server`), so that
+moving it to the private repository later is a crate move.
 
 **Q2. Self-host first or cloud first.** *Owner decides.*
 Spec assumes self-host binary first (`11`), because the cloud is that binary
@@ -46,7 +49,8 @@ device, is a stretch of that requirement. FIDO's Agentic Authentication
 working group (announced April 2026) has not settled delegation. Options:
 (a) refuse passkeys in server-held lockboxes until standards land; (b) allow
 with `step_up` floor and clear labelling; (c) allow only for relying parties
-the tenant owns. Assumed: (a) in phase 2, revisit at phase 4. Settled for
+the tenant owns. Assumed: (a) in phase 2, revisit at phase 4 (applied in I7: `OrgHost` serves no
+passkey ceremony and no fill). Settled for
 Tier 1 regardless: a passkey grant is never `auto`; the approver's tap on the
 device holding the key is the user-presence gesture (`03`).
 
@@ -153,7 +157,7 @@ merge engine reusable as-is. Rows in Postgres scale and index better. Spec:
 files per lockbox, metadata in Postgres/SQLite, shard by lockbox when needed.
 Revisit at the first tenant with thousands of lockboxes.
 
-**Q19. Merge authority and write interleaving.** *Design chosen; validate with tests.*
+**Q19. Merge authority and write interleaving.** ✅ *Tested in I7* (`crates/server/src/tests/interleave.rs`: an agent's write between a device's probe and push is a 412 then a merge; two devices and an agent in turn converge; a device offline past the tombstone TTL loses to the tombstone unless edited after it).
 The server merges device pushes with `engine::sync` and bumps the revision on
 every agent write, so device CAS retries. Needs a test matrix: agent
 `save_login` during a device push; two devices and one agent; a device offline
@@ -172,8 +176,8 @@ Vault Health's *Verify the log* runs it per writer. Two things the build
 settled that the draft did not: every device reclaims every writer's aged
 prefix (a union merge hands a device its own pruned rows back otherwise), and
 the cut is a chain prefix rather than the old rows alone (a stepped-back clock
-would leave a permanent gap). `rowel admin audit verify` for the server stays
-with I7.
+would leave a permanent gap). `rowel admin server audit verify` (I7) runs
+the same algorithm over the server's mirror, per lockbox and writer.
 
 **Q22. Remote extension in cloud browsers.** *Phase 4.*
 The enrollment-code handshake, how the agent platform injects the extension

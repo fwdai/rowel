@@ -117,6 +117,10 @@ contains no proprietary code; its team-facing surface is small and generic
 (connect, enroll, approve, manage my devices), and administration lives in the
 console. An open client exposes the server contract by nature; the business
 lives in the server and its operation, as Bitwarden and Tailscale show.
+*As built in I7:* by the owner's decision the server mode is built for now in
+the public repository, as its own crate (`src-tauri/crates/server`,
+`rowel-server`, `publish = false`), so the boundary is a directory and moving
+it to the private repository is a crate move.
 
 ```
                  ┌────────────────────────────────────────────────────────────┐
@@ -138,11 +142,11 @@ lives in the server and its operation, as Bitwarden and Tailscale show.
        │              │              │                     │
  ┌─────┴─────┐  ┌─────┴──────┐  ┌────┴─────────────────────┴──────────────┐
  │ Rowel app │  │ rowel CLI ✅│  │ rowel serve ✅ (I5, headless)            │
- │ AppHost ✅ │  │ mcp, hook, │  │ HeadlessHost ✅ · OrgHost ❌ (org lockbox) │
- │ dialog ✅  │  │ run, proxy,│  │ workload identity verifiers ❌           │
- │ Settings ✅│  │ redact (I3)│  │ config rules ✅ · approval router ❌     │
- └───┬───────┘  └────────────┘  │ pack endpoints = Remote for devices 🟡   │
-                                 │   (device side ✅ I6, server ❌ I7)       │
+ │ AppHost ✅ │  │ mcp, hook, │  │ HeadlessHost ✅ · OrgHost ✅ (org lockbox) │
+ │ dialog ✅  │  │ run, proxy,│  │ workload identity verifiers ✅           │
+ │ Settings ✅│  │ redact (I3)│  │ config rules ✅ · approval router ✅     │
+ └───┬───────┘  └────────────┘  │ pack endpoints = Remote for devices ✅   │
+                                 │   (device side ✅ I6, server ✅ I7)       │
      │                          └──────────────────────────────────────────┘
  ┌───┴─────────────────────────┐
  │ browser extension (fork) ✅  │   gains: agent mode, grant-driven fill,

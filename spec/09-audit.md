@@ -198,6 +198,15 @@ A `rule_added` for an env rule carries the command line as its target.
   `created_at_ms`.
 - Tier 2/3: `GET /v1/admin/audit/export` (JSONL, filters), webhook and OTLP
   (`08`). Each exported row carries `writer_id`, `seq`, `prev_hash`, `hash`.
+  *As built in I7:* the server mirrors every lockbox's rows (its own after
+  each request, the devices' at each push) into an `audit` table keyed by
+  lockbox, writer and seq; `GET /v1/admin/audit/export` and `rowel admin
+  server audit export` stream it as JSONL (camelCase, hashes hex, `lockboxId`
+  first) and `rowel admin server audit verify` runs `audit::verify` per
+  lockbox and writer (Q21). Tenant-level events — sign-in, enrollment, device
+  approval, admin changes, an unwrap for a pull of a frozen lockbox — go in a
+  separate `server_events` table, since they are not a lockbox's history and
+  must not sync to devices. The server never prunes in I7.
 
 **Never in the log.** Secret values, TOTP codes, passkey private material,
 full URLs with query strings (the target is scheme+host+path), or reasons

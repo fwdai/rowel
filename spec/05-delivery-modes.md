@@ -226,6 +226,12 @@ The floor in `03` keeps every passkey ceremony behind the tap, agent or not.
   sandbox reaches it over the pod network; the agent's egress to the real
   upstream is blocked by the company's network policy, which is what makes the
   proxy the only path.
+  *As built in I7:* the binding is the trust policy's client kind, not
+  `sidecar_for`: a sidecar associates with a token matching a `sidecar`
+  policy of the agent definition and resolves under that lockbox's grants by
+  grant id; `sidecar_for` on rules is still not enforced. Where the agent and
+  the sidecar share one platform identity the separation is only as strong as
+  that identity.
 - *As built in I3* (`crates/cli/src/proxy.rs`, hyper 1 server + reqwest
   upstream, loopback only — a non-loopback `--listen` is a usage error, since
   the proxy holds a sidecar key). `/https/<host>/<path>?<query>`; `/http/…`

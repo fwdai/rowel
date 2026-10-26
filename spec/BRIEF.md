@@ -45,8 +45,9 @@ The project context (Fletch's `context_get`) holds the recorded decisions;
 - **I0–I4**: merged into `main` (PRs #652, #653, #655, #657, #658). Tier 1
   is complete; the store submissions and the app release are the owner's steps.
 - **I5, `rowel serve`**: merged (PR #659).
-- **I6, org lockboxes in the app**: in review (see `PLAN.md`'s I6 header).
-- **I7 onward**: not started. `PLAN.md`'s headers say which iteration is in
+- **I6, org lockboxes in the app**: merged (PR #662).
+- **I7, the Rowel Server**: in review (PR #665, `feat/agent-server`).
+- **I8 onward**: not started. `PLAN.md`'s headers say which iteration is in
   progress and where.
 
 Check `PLAN.md` first; its headers carry the current PR numbers and branches.

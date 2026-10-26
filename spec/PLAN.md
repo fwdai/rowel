@@ -324,7 +324,7 @@ or times out. This is the binary the server (I7) and the cloud (I9) run. Spec
 
 ---
 
-## I6 — Org lockboxes and enrollment in the app  `[ ]`  *(in review: PR #662, branch `feat/agent-org-lockboxes`, on `main`)*
+## I6 — Org lockboxes and enrollment in the app  `[x]`  *(merged: PR #662)*
 
 **Deliverable.** The desktop and iOS apps can hold a lockbox whose key came from
 a server, sync it through that server, and answer that server's approval
@@ -334,46 +334,46 @@ requests in the same dialog. No visible change for users without a server. Spec
 *Decide first:* Q7 (one curve or two for the enrollment key). *Settled: one
 X25519 key; a signing key is minted beside it when delegation lands.*
 
-- [ ] `KdfParams::External { kid, gen }`: serde, `validate`, `derive` refuses,
+- [x] `KdfParams::External { kid, gen }`: serde, `validate`, `derive` refuses,
       `next_generation`; unlock resolves the master from `Keyring` or the server
       and refuses clearly otherwise (`01`). *Outcome:* as specified; the
       server is asked only on a gesture (`org_refresh_lockbox_key`, which also
       adopts a rotation), never during an unlock. A password typed for an org
       lockbox, a master-password change from inside one, and promoting one to
       primary are refused; the password-change saga skips org lockboxes.
-- [ ] Device enrollment key generated once and kept under the app key; shown
+- [x] Device enrollment key generated once and kept under the app key; shown
       with a fingerprint in Settings (`01`, `02`). *Outcome:*
       `enrollment.key.sealed` in the root; the member session once per install
       beside it (`servers.sealed`); both re-sealed by a password change and
       purged when stale after a primary deletion.
-- [ ] `Provider::RowelServer`: `VaultStore` over the pack endpoints with ETag
+- [x] `Provider::RowelServer`: `VaultStore` over the pack endpoints with ETag
       compare-and-swap; member session in `Tokens` (`07`). *Outcome:* the
       token file names the server only; the session is resolved from the
       install's sealed file; never in the account pickers.
-- [ ] Settings › Lockboxes › *Connect to a Rowel Server*: sign in, enroll
+- [x] Settings › Lockboxes › *Connect to a Rowel Server*: sign in, enroll
       (pending until approved), list org lockboxes, add one as a workspace with
       the `External` sidecar and `WRAPPED_KEY_FILE` (`07`). *Outcome:* the
       app signs in against the server as its OAuth2 authorization server
       (PKCE, loopback); desktop only in I6, the phone's deep-link twin later.
-- [ ] Approve another device of mine from Settings (`02`). *Outcome:* with
+- [x] Approve another device of mine from Settings (`02`). *Outcome:* with
       the pending device's fingerprint quoted in the confirmation.
-- [ ] Approvals stream client (SSE or long poll) feeding `GrantDialog`; push
+- [x] Approvals stream client (SSE or long poll) feeding `GrantDialog`; push
       token registration stubbed for I10 (`03 §4`). *Outcome:* SSE, one
       thread per approved connection while the vault is open, through the
       consent slot with the tenant named; no push stub yet.
-- [ ] Tests against a fake server (in-process `axum`): add, sync, re-key,
+- [x] Tests against a fake server (in-process `axum`): add, sync, re-key,
       approve; unlock paths with and without a wrapped master. *Outcome:*
       `org::fake_server` + `org::tests` (sign-in, enrollment, two devices
       converging with a stale PUT, rotation, approvals loop, stale-file
       reseal); the frontend's `org.test.tsx`.
-- [ ] **Acceptance:** against the fake server the app adds an org lockbox,
+- [x] **Acceptance:** against the fake server the app adds an org lockbox,
       edits an item on two devices and converges, answers an approval, and
       survives a master rotation; a vault holding an `External` lockbox still
       unlocks offline with the password when the wrapped master is local.
 
 ---
 
-## I7 — Rowel Server, single node  `[ ]`
+## I7 — Rowel Server, single node  `[ ]`  *(in review: PR #665, branch `feat/agent-server`, on `main`)*
 
 **Deliverable.** A company runs one binary. Members sign in with their identity
 provider and enroll devices. Agents in GitHub Actions prove who they are with
@@ -382,32 +382,71 @@ for a tap on the owner's Mac. Audit exports as JSONL. Spec `02` (workload
 identity, enrollment), `03 §4` (routing), `07`.
 
 *Decide first:* Q1 (server license), Q2 (self-host first, assumed), Q3 (names).
+*Settled for I7: the owner chose to build the server mode in this public
+repository as its own crate, `crates/server` (`rowel-server`), so a later move
+to a private repository is a crate move (`00 §4`, Q1); self-host first (Q2);
+names stay provisional (Q3).*
 
 - [ ] `rowel serve --server`: tenant metadata in SQLite, config file, data
       directory, `RootKey` from a key file (KMS implementations later) (`07`).
+      *Outcome:* `rowel-server`, linked by the CLI; `server.json`,
+      `server.db`, `FileRootKey` (HKDF per tenant, AES-GCM with the lockbox
+      id as associated data); one server per data directory (the broker's
+      `Lock`); seal on SIGTERM; `GET /v1/health`; TLS from PEM files or
+      plain behind a proxy. `rowel admin server init` bootstraps a data
+      directory.
 - [ ] Org lockbox lifecycle: create (mint, wrap, `External` descriptor),
       freeze, members and roles, wrapped masters per approved device (`07`).
+      *Outcome:* as specified; lockbox roles `reader`, `approver`, `admin`;
+      a master is sealed only to an approved device and withdrawn with it.
+      Rotation is I8.
 - [ ] Member sign-in through generic OIDC; device enrollment pending → approve
-      by an existing device or an admin; audit rows (`02`).
+      by an existing device or an admin; audit rows (`02`). *Outcome:* the
+      server is the app's OAuth2 server and an OIDC relying party to the IdP
+      (verified email required; auto-provisioning only under
+      `allowedDomains`); enrollment, approval and admin actions are rows of
+      a tenant `server_events` table, not lockbox audit rows (`09`).
 - [ ] Pack endpoints as merge authority: `decode_pack` → `merge` → `pack`,
       revision bumps on every server-side write; the Q19 interleaving test
-      matrix on the `two_devices.rs` harness (`07`).
+      matrix on the `two_devices.rs` harness (`07`). *Outcome:* the pack
+      format and snapshot reader lifted into `rowel_core::sync`; the matrix
+      runs in the server crate with core-built devices over HTTP rather than
+      on the app's `two_devices.rs`, which links Tauri (`10`, Q19 ✅).
 - [ ] `OrgHost: Host` over org lockbox files with the key LRU and idle timeout;
-      `key_unwrapped` audit rows (`07`).
+      `key_unwrapped` audit rows (`07`). *Outcome:* a vault cache with an
+      idle seal (10 min) rather than a sized LRU; an agent definition is
+      bound to one lockbox; no fills, saves or passkeys from a server-held
+      lockbox (Q5).
 - [ ] Workload identity: challenge endpoint, `Oidc` verifier with GitHub
       Actions trust policies, audience binding, `jti` replay cache, token
-      lifetime cap (`02`).
+      lifetime cap (`02`). *Outcome:* `proof` rides inside `hello`; the
+      host gets the session key through `Host::associate_on_channel`; a
+      trust policy admits one client kind.
 - [ ] `wss://…/v1/agent`; sidecar associations with `sidecar_for` binding (`03`, `05 §4`).
+      *Outcome:* the WebSocket loop of `rowel serve` lifted and shared; a
+      sidecar is bound by a trust policy of kind `sidecar`, not by
+      `sidecar_for`, which stays unenforced (`05`).
 - [ ] Approvals: `pending_approvals`, routing to owner / group / principal, SSE
-      stream, answer endpoint, per-rule timeouts (`03 §4`).
+      stream, answer endpoint, per-rule timeouts (`03 §4`). *Outcome:*
+      routing to the lockbox's `approver`/`admin` members (and `acting_for`
+      only if that member holds the lockbox); first answer wins; one
+      server-wide ask timeout (`askTimeoutMs`), per-rule timeouts and
+      long-parked asks are I8.
 - [ ] `rowel admin` for agents, trust policies, rules, members, devices,
       lockboxes; `rowel admin audit export` and the HTTP export (`07`, `09`).
+      *Outcome:* `rowel admin server …` on the data directory, the HTTP
+      admin API, and `audit verify` per lockbox and writer (Q21).
 - [ ] Install docs: systemd unit, reverse proxy example, backup and restore
-      (metadata + lockbox files + root key held apart).
+      (metadata + lockbox files + root key held apart). *Outcome:*
+      `docs/server.md`; the contract is `docs/server-api.md`.
 - [ ] **Acceptance:** a GitHub Actions job with `rowel proxy` as a step-level
       sidecar authenticates by OIDC, gets an `auto` header grant for a read
       endpoint and waits for the owner's tap for a `money` endpoint; the audit
       export shows both; agent writes and device pushes interleave correctly.
+      *Outcome so far:* the in-process equivalent is tested (fake IdP minting
+      GitHub-shaped tokens, `auto` and `ask` grants, approver's answer,
+      export, Q19 matrix); the run against real GitHub Actions needs a
+      deployed server and is the owner's step.
 
 ---
 

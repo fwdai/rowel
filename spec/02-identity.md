@@ -34,7 +34,7 @@ lockbox it was let into. Agents extend this, not replace it.
   it is an *agent*, which platform it claims to be, and asks for a name. The
   name and key are stored with the lockbox. Good enough for one person's
   machine, which is what Tier 1 is.
-- **Workload identity (❌, Tier 2).** The agent presents a token its platform
+- **Workload identity (✅ I7, Tier 2).** The agent presents a token its platform
   minted. The server verifies the signature against the issuer and checks the
   claims against a *trust policy* an admin wrote ("repo `acme/deploy`, branch
   `main`, workflow `release.yml`"). A match maps to an **agent definition** the
@@ -104,7 +104,7 @@ and told what it will and will not be able to do). The stored row gets
 minted, opaque, ≤ 64 chars) and may carry `reason` (≤ 300 chars). The broker
 records them; it never trusts them for authorization.
 
-**Workload identity verification (❌, Tier 2).** `rowel_server::identity`:
+**Workload identity verification (✅ I7, Tier 2).** `rowel_server::identity`:
 
 ```
   agent ──(1) GET /v1/agent/challenge ───────────────────▶ server
@@ -140,6 +140,29 @@ records them; it never trusts them for authorization.
   "refs/heads/main", workflow: "release.yml" } }`. Exact match per claim, with
   glob allowed on values an admin marks as such.
 
+*As built in I7* (`crates/server/src/identity`, `crates/cli/src/workload.rs`):
+`proof { kind: "oidc", token, nonce }` rides **inside** `hello`, not beside
+it, so `Host::associate` is unchanged for every host that asks a person; the
+connection calls `Host::associate_on_channel(session_key, key, hello)`, whose
+default drops the key. The challenge's audience is `rowel:<tenant id>`; the
+key-bound audience is that plus `:<lowercase hex SHA-256 of the session key's
+32 raw bytes>`. The CLI fetches a token only when `ROWEL_BROKER` is remote:
+from GitHub Actions (`ACTIONS_ID_TOKEN_REQUEST_URL`/`_TOKEN`, asking for the
+key-bound audience) or from `ROWEL_WORKLOAD_TOKEN_FILE` (sent as is, with the
+nonce, for platforms with a fixed audience); a source that is set but fails
+is an error, never a fallback to a dialog. Verification: RS256 or ES256 only,
+a per-issuer JWKS cache refreshed at most once a minute on an unknown `kid`,
+then the trust policies of the token's issuer; a fixed-audience policy needs
+a live single-use nonce, a `jti` and a lifetime of at most ten minutes; every
+token goes through the replay record keyed by `issuer|jti` (a token without
+a `jti` under the key-bound audience is recorded by its digest). **A trust
+policy admits exactly one client kind**, `agent` or `sidecar`, so a sidecar
+proves its own identity (`05`); where a platform gives the agent and the
+sidecar one identity (one CI job) the server cannot tell them apart, and the
+docs say so. A proof that fails is `AssociationFailed`; there is no dialog to
+fall back on. Disabling an agent definition ends its clients at their next
+request, through `Host::clients()`.
+
 **Delegation proof (❌).** A compact signed statement by a device signing key
 minted beside the X25519 enrollment key when delegation lands (Q7 settled the
 enrollment key itself to one curve in I6; the proof's format stays open):
@@ -155,7 +178,7 @@ user is the principal. The format deliberately stays inside the sealed channel
 for v1; converging on OAuth token exchange with an `act` claim (RFC 8693) is a
 later interoperability step, not a v1 requirement.
 
-**Device enrollment (🟡 app side built in I6; the server is I7).** A member
+**Device enrollment (✅ app side I6, server I7).** A member
 signs in and the app submits its enrollment public key (`01`). The new device
 is *pending* until an already-enrolled device of the same member, or an
 admin, approves it; only then does the server return wrapped lockbox masters

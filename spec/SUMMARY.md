@@ -123,7 +123,9 @@ be settled before step 8.
 - **License for the server.** Keep everything open source and earn from
   hosting and support, or make the server source-available or proprietary
   while the app stays open. This decides who can run the server without
-  paying.
+  paying. *(Settled: libraries permissive, apps GPL, server proprietary; for
+  now the server is built in the public repository as its own crate, ready
+  to move.)*
 - **Self-hosted first, or cloud first.** The plan assumes self-hosted first,
   because the cloud is the same program plus operations, and early customers
   in regulated industries will want to run it inside.

@@ -260,6 +260,11 @@ carries content.
   signals when reading a reply, which the socket path did not do before.
   There is no `proof` yet: a client reaching the WebSocket is let in only
   through an association ask answered with `rowel approve`.
+- *As built in I7.* `rowel serve --server` serves `GET /v1/agent/challenge`
+  and `WS /v1/agent` on its HTTP listener, the same binary frames through the
+  serving loop lifted out of `rowel serve`. `associate`'s `hello` carries the
+  `proof` (`02`), checked against the channel's session key; 256 connections
+  at once, past which the upgrade is 503.
 - Remote extension (cloud browser, Tier 2/3, phase 4): upstream
   KeePassXC-Browser already has a WebSocket transport to `ws://localhost:<port>`
   (`client.js::connectToWebSocket`, same `onNativeMessage` handler). The
