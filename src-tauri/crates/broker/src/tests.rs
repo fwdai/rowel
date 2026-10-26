@@ -2846,7 +2846,9 @@ mod server {
 
     use crate::frame;
     use crate::server;
-    use crate::socket::{socket_name, SOCKET_FILE};
+    use crate::socket::socket_name;
+    #[cfg(unix)]
+    use crate::socket::SOCKET_FILE;
     use crate::testing::{nonce, Extension, Mock};
 
     #[test]
@@ -3011,10 +3013,22 @@ mod server {
         }
 
         // A crash leaves the file behind with nobody listening: the next launch
-        // binds over it rather than refusing.
-        std::mem::forget(listener);
-        let again = server::bind(dir.path()).expect("a listener over a stale socket file");
-        drop(again);
+        // binds over it rather than refusing. A Windows pipe is no file and
+        // goes with the process that made it, so nothing is left behind there,
+        // and a listener leaked in this process is a live pipe, not a stale
+        // one; the next bind after it is gone is what holds there.
+        #[cfg(unix)]
+        {
+            std::mem::forget(listener);
+            let again = server::bind(dir.path()).expect("a listener over a stale socket file");
+            drop(again);
+        }
+        #[cfg(windows)]
+        {
+            drop((client, served, listener));
+            let again = server::bind(dir.path()).expect("a listener once the last one is gone");
+            drop(again);
+        }
     }
 
     #[test]
@@ -3048,6 +3062,10 @@ mod server {
             .join("group")
             .join("dev");
         let listener = server::bind(&root).expect("a listener in a directory not yet made");
+        // The socket is a file in it on Unix; on Windows it is a namespaced
+        // pipe (`socket_name`), and the directory is made all the same.
+        assert!(root.is_dir());
+        #[cfg(unix)]
         assert!(root.join(SOCKET_FILE).exists());
         #[cfg(unix)]
         {
