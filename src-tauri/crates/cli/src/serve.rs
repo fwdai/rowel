@@ -2,12 +2,15 @@
 //! says where the data directory and the lockbox are and how to unlock —
 //! a key file, a file descriptor a service manager hands in, or the master
 //! password at the terminal, which is the one thing this module does that
-//! `rowel-serve` will not: read a TTY.
+//! `rowel-serve` will not: read a TTY. With `--server` it is a Rowel Server
+//! instead (`rowel_server::run`), which unlocks nothing at the terminal: its
+//! lockboxes open under the root key `server.json` names.
 
 use std::io::{self, BufRead, IsTerminal};
 use std::path::PathBuf;
 
 use rowel_serve::{PasswordPrompt, ServeOptions, Unlock};
+use rowel_server::run::RunOptions;
 use zeroize::Zeroizing;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -21,9 +24,21 @@ pub struct ServeArgs {
     pub no_socket: bool,
     pub idle_lock_minutes: Option<u64>,
     pub ask_timeout_seconds: Option<u64>,
+    /// Server mode: only `data_dir` and `config` go with it (`args`).
+    pub server: bool,
 }
 
 pub fn run(args: ServeArgs) -> i32 {
+    if args.server {
+        let Some(data_dir) = args.data_dir else {
+            eprintln!("rowel serve --server: --data-dir is required");
+            return 2;
+        };
+        return rowel_server::run::run(RunOptions {
+            data_dir,
+            config: args.config,
+        });
+    }
     let unlock = match (args.key_file, args.key_fd) {
         (Some(path), _) => Some(Unlock::KeyFile(path)),
         (None, Some(fd)) => match read_fd(fd) {

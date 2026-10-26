@@ -3,8 +3,12 @@
 //! bundle. `run`'s `--` is the one structural rule: everything after it is
 //! the child's, untouched.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
+
+use rowel_broker::actions::ClientKind;
+use rowel_server::store::AuditFilter;
 
 use crate::admin::{AdminArgs, AdminCommand, RuleAdd};
 use crate::approve::ApproveArgs;
@@ -13,6 +17,7 @@ use crate::proxy::{self, ProxyArgs};
 use crate::redact::{HttpTarget, RedactArgs};
 use crate::run::RunArgs;
 use crate::serve::ServeArgs;
+use crate::server_admin::{ServerAdminArgs, ServerCommand};
 
 pub const USAGE: &str = "\
 usage: rowel-cli <command>
@@ -30,6 +35,8 @@ usage: rowel-cli <command>
   serve [--data-dir <path>] [--lockbox <id>] [--config <path>] [--key-file <path> | --key-fd <n>]
         [--ws <addr>] [--no-socket] [--idle-lock <minutes>] [--ask-timeout <seconds>]
                                       the headless broker: serve a lockbox to agents on a box without the app
+  serve --server --data-dir <path> [--config <path>]
+                                      a Rowel Server: org lockboxes for a company's members and agents
   approve [<id> [--item <id>] [--days N] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
                                       list what a running broker is waiting on, or answer one ask
   admin rules list | rules add --agent <key|any> --items <lockbox|id,id|tag:<t>|kind:<k>> --mode <fill|passkey|header|env>
@@ -37,6 +44,19 @@ usage: rowel-cli <command>
                    [--ttl <minutes>] [--max-uses N] [--days N] | rules remove <id>
         agents on|off [--lockbox <id>] | key-file <path> | lock      [--data-dir <path>] [--config <path>]
                                       a broker's standing rules, a lockbox's agent access, a key file, a seal
+  admin server <command> --data-dir <path> [--config <path>]
+        init [--tenant <name>] [--public-url <url>] [--root-key <path>]
+        members add <email> [--name <n>] [--admin] | members list | members disable <email|id>
+        devices list --member <email|id> | devices approve|revoke <id>
+        lockboxes create <name> [--root-key <path>] | lockboxes list | lockboxes freeze|unfreeze <id>
+        lockboxes agents on|off <id> | lockboxes members add <lockbox> <email|id> --role reader|approver|admin
+        lockboxes members remove <lockbox> <email|id> | lockboxes members list <lockbox>
+        agents add <name> --lockbox <id> | agents list | agents enable|disable|remove <id>
+        trust add --agent <id> --issuer <url> --claim <name>=<pattern>… [--fixed-audience] [--sidecar]
+        trust remove <id>
+        rules add <admin rules add's flags, --agent <agent id|any>> [--lockbox <id>] | rules list | rules remove <id>
+        audit export [--since <time>] [--until <time>] [--lockbox <id>] [--actor <id>] | audit verify
+                                      a Rowel Server's members, devices, lockboxes, agents, rules and audit
 
   --platform  what the agent is: claude-code, codex, cursor, … (default: detected, else cli)
   --name      the name to introduce as until the app gives one (default: the platform's label)";
@@ -58,6 +78,7 @@ pub enum Command {
     Serve(ServeArgs),
     Approve(ApproveArgs),
     Admin(AdminArgs),
+    AdminServer(ServerAdminArgs),
 }
 
 /// Why the arguments did not make a command, with the usage to print. The
@@ -189,11 +210,15 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
                     "--ask-timeout" => {
                         serve.ask_timeout_seconds = Some(number_of(&arg, &mut args)?)
                     }
+                    "--server" => serve.server = true,
                     other => return Err(unexpected(other)),
                 }
             }
             if serve.key_file.is_some() && serve.key_fd.is_some() {
                 return Err(Usage("serve takes --key-file or --key-fd, not both".into()));
+            }
+            if serve.server {
+                server_mode(&serve)?;
             }
             Ok(Command::Serve(serve))
         }
@@ -226,6 +251,11 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
             Ok(Command::Approve(approve))
         }
         Some("admin") => {
+            let rest: Vec<String> = args.collect();
+            if rest.first().map(String::as_str) == Some("server") {
+                return admin_server(rest.into_iter().skip(1));
+            }
+            let mut args = rest.into_iter();
             let mut data_dir = None;
             let mut config = None;
             let mut words = Vec::new();
@@ -283,6 +313,275 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
     }
 }
 
+/// What `serve --server` may be given: a data directory, which it must be
+/// since a server has no conventional location, and a config. Every other
+/// flag is the headless broker's — a lockbox to unlock, how to unlock it,
+/// where its socket and WebSocket are, its idle lock and ask timeout — and
+/// is a mistake here rather than something passed over, since the operator
+/// who wrote it expected it to do something.
+fn server_mode(serve: &ServeArgs) -> Result<(), Usage> {
+    let headless = [
+        ("--lockbox", serve.lockbox.is_some()),
+        ("--key-file", serve.key_file.is_some()),
+        ("--key-fd", serve.key_fd.is_some()),
+        ("--ws", serve.ws.is_some()),
+        ("--no-socket", serve.no_socket),
+        ("--idle-lock", serve.idle_lock_minutes.is_some()),
+        ("--ask-timeout", serve.ask_timeout_seconds.is_some()),
+    ];
+    if let Some((flag, _)) = headless.iter().find(|(_, given)| *given) {
+        return Err(Usage(format!(
+            "{flag} is the headless broker's; serve --server takes --data-dir and --config, and the rest from server.json"
+        )));
+    }
+    if serve.data_dir.is_none() {
+        return Err(Usage(
+            "serve --server needs --data-dir <path>: a server has no conventional place".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// `rowel admin server …`: the words name the subcommand and its operands;
+/// the flags are gathered first and each subcommand takes the ones it reads,
+/// so a flag left over — misspelt, or another subcommand's — is a mistake
+/// rather than something passed over.
+fn admin_server(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
+    let mut flags = Flags::default();
+    let mut words = Vec::new();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--admin" | "--fixed-audience" | "--sidecar" => flags.0.push((arg, None)),
+            flag if flag.starts_with("--") => {
+                let value = value_of(flag, &mut args)?;
+                flags.0.push((arg, Some(value)));
+            }
+            other if other.starts_with('-') => return Err(unexpected(other)),
+            word => words.push(word.to_string()),
+        }
+    }
+    let data_dir = flags
+        .path("--data-dir")
+        .ok_or_else(|| Usage("admin server needs --data-dir <path>".into()))?;
+    let config = flags.path("--config");
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let id = |id: &&str| id.to_string();
+    let command = match words.as_slice() {
+        ["init"] => ServerCommand::Init {
+            tenant: flags.take("--tenant"),
+            public_url: flags.take("--public-url"),
+            root_key: flags.path("--root-key"),
+        },
+        ["members", "add", email] => ServerCommand::MembersAdd {
+            email: id(email),
+            name: flags.take("--name"),
+            admin: flags.switch("--admin"),
+        },
+        ["members", "list"] => ServerCommand::MembersList,
+        ["members", "disable", member] => ServerCommand::MembersDisable { member: id(member) },
+        ["devices", "list"] => ServerCommand::DevicesList {
+            member: flags.required("--member", "devices list needs --member <email|id>")?,
+        },
+        ["devices", "approve", device] => ServerCommand::DevicesApprove { id: id(device) },
+        ["devices", "revoke", device] => ServerCommand::DevicesRevoke { id: id(device) },
+        ["lockboxes", "create", name] => ServerCommand::LockboxesCreate {
+            name: id(name),
+            root_key: flags.path("--root-key"),
+        },
+        ["lockboxes", "list"] => ServerCommand::LockboxesList,
+        ["lockboxes", "freeze", lockbox] => ServerCommand::LockboxesFreeze {
+            id: id(lockbox),
+            frozen: true,
+        },
+        ["lockboxes", "unfreeze", lockbox] => ServerCommand::LockboxesFreeze {
+            id: id(lockbox),
+            frozen: false,
+        },
+        ["lockboxes", "agents", switch @ ("on" | "off"), lockbox] => {
+            ServerCommand::LockboxesAgents {
+                id: id(lockbox),
+                on: *switch == "on",
+            }
+        }
+        ["lockboxes", "members", "add", lockbox, member] => ServerCommand::LockboxMembersAdd {
+            lockbox: id(lockbox),
+            member: id(member),
+            role: flags
+                .required(
+                    "--role",
+                    "lockboxes members add needs --role reader|approver|admin",
+                )?
+                .parse()
+                .map_err(|_| Usage("--role is reader, approver or admin".into()))?,
+        },
+        ["lockboxes", "members", "remove", lockbox, member] => {
+            ServerCommand::LockboxMembersRemove {
+                lockbox: id(lockbox),
+                member: id(member),
+            }
+        }
+        ["lockboxes", "members", "list", lockbox] => ServerCommand::LockboxMembersList {
+            lockbox: id(lockbox),
+        },
+        ["agents", "add", name] => ServerCommand::AgentsAdd {
+            name: id(name),
+            lockbox: flags.required("--lockbox", "agents add needs --lockbox <id>")?,
+        },
+        ["agents", "list"] => ServerCommand::AgentsList,
+        ["agents", switch @ ("enable" | "disable"), agent] => ServerCommand::AgentsEnable {
+            id: id(agent),
+            enabled: *switch == "enable",
+        },
+        ["agents", "remove", agent] => ServerCommand::AgentsRemove { id: id(agent) },
+        ["trust", "add"] => ServerCommand::TrustAdd {
+            agent: flags.required("--agent", "trust add needs --agent <id>")?,
+            issuer: issuer_of(flags.required("--issuer", "trust add needs --issuer <url>")?)?,
+            claims: claims_of(flags.all("--claim"))?,
+            fixed_audience: flags.switch("--fixed-audience"),
+            kind: if flags.switch("--sidecar") {
+                ClientKind::Sidecar
+            } else {
+                ClientKind::Agent
+            },
+        },
+        ["trust", "remove", policy] => ServerCommand::TrustRemove { id: id(policy) },
+        ["rules", "add"] => ServerCommand::RulesAdd {
+            rule: RuleAdd {
+                agent: flags.take("--agent"),
+                items: flags.take("--items"),
+                mode: flags.take("--mode"),
+                target: flags.take("--target"),
+                approval: flags.take("--approval"),
+                ttl_minutes: flags.number("--ttl")?,
+                max_uses: flags.number("--max-uses")?,
+                days: flags.number("--days")?,
+            },
+            lockbox: flags.take("--lockbox"),
+        },
+        ["rules", "list"] => ServerCommand::RulesList,
+        ["rules", "remove", rule] => ServerCommand::RulesRemove { id: id(rule) },
+        ["audit", "export"] => ServerCommand::AuditExport(AuditFilter {
+            since_ms: flags.instant("--since")?,
+            until_ms: flags.instant("--until")?,
+            lockbox_id: flags.take("--lockbox"),
+            actor_id: flags.take("--actor"),
+        }),
+        ["audit", "verify"] => ServerCommand::AuditVerify,
+        _ => return Err(Usage(
+            "admin server takes init, members, devices, lockboxes, agents, trust, rules or audit"
+                .into(),
+        )),
+    };
+    flags.done()?;
+    Ok(Command::AdminServer(ServerAdminArgs {
+        data_dir,
+        config,
+        command,
+    }))
+}
+
+/// An issuer as a token's `iss` spells it: an https URL, matched verbatim.
+fn issuer_of(issuer: String) -> Result<String, Usage> {
+    if !issuer.starts_with("https://") {
+        return Err(Usage(format!(
+            "--issuer is the https URL the tokens name as iss, not {issuer:?}"
+        )));
+    }
+    Ok(issuer)
+}
+
+/// `--claim name=pattern`, at least one: a policy with no claims would make
+/// every token the issuer mints — every repository's, on GitHub — this agent.
+fn claims_of(claims: Vec<String>) -> Result<BTreeMap<String, String>, Usage> {
+    if claims.is_empty() {
+        return Err(Usage(
+            "trust add needs at least one --claim <name>=<pattern>; with none, every token the issuer mints would be this agent"
+                .into(),
+        ));
+    }
+    let mut map = BTreeMap::new();
+    for claim in claims {
+        let (name, pattern) = claim
+            .split_once('=')
+            .filter(|(name, _)| !name.is_empty())
+            .ok_or_else(|| Usage(format!("--claim is <name>=<pattern>, not {claim:?}")))?;
+        if map.insert(name.to_string(), pattern.to_string()).is_some() {
+            return Err(Usage(format!("--claim {name} is given twice")));
+        }
+    }
+    Ok(map)
+}
+
+/// The flags of `rowel admin server`, in the order given: a switch has no
+/// value. Each subcommand takes what it reads; [`Flags::done`] refuses the
+/// rest.
+#[derive(Default)]
+struct Flags(Vec<(String, Option<String>)>);
+
+impl Flags {
+    fn take(&mut self, name: &str) -> Option<String> {
+        let at = self.0.iter().position(|(flag, _)| flag == name)?;
+        self.0.remove(at).1
+    }
+
+    fn switch(&mut self, name: &str) -> bool {
+        match self.0.iter().position(|(flag, _)| flag == name) {
+            Some(at) => {
+                self.0.remove(at);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn all(&mut self, name: &str) -> Vec<String> {
+        std::iter::from_fn(|| self.take(name)).collect()
+    }
+
+    fn path(&mut self, name: &str) -> Option<PathBuf> {
+        self.take(name).map(PathBuf::from)
+    }
+
+    fn required(&mut self, name: &str, missing: &str) -> Result<String, Usage> {
+        self.take(name).ok_or_else(|| Usage(missing.into()))
+    }
+
+    fn number<N: std::str::FromStr>(&mut self, name: &str) -> Result<Option<N>, Usage> {
+        self.take(name)
+            .map(|value| {
+                value
+                    .parse()
+                    .map_err(|_| Usage(format!("{name} needs a number")))
+            })
+            .transpose()
+    }
+
+    /// A moment as RFC 3339 or as milliseconds since the epoch, in ms.
+    fn instant(&mut self, name: &str) -> Result<Option<i64>, Usage> {
+        self.take(name)
+            .map(|value| {
+                value
+                    .parse::<i64>()
+                    .or_else(|_| {
+                        chrono::DateTime::parse_from_rfc3339(&value).map(|t| t.timestamp_millis())
+                    })
+                    .map_err(|_| {
+                        Usage(format!(
+                            "{name} is an RFC 3339 time or milliseconds since the epoch"
+                        ))
+                    })
+            })
+            .transpose()
+    }
+
+    fn done(self) -> Result<(), Usage> {
+        match self.0.first() {
+            Some((flag, _)) => Err(unexpected(flag)),
+            None => Ok(()),
+        }
+    }
+}
+
 fn unexpected(arg: &str) -> Usage {
     Usage(format!("unexpected argument '{arg}'"))
 }
@@ -304,6 +603,7 @@ fn number_of<N: std::str::FromStr>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rowel_server::store::LockboxRole;
 
     fn parsed(line: &str) -> Result<Command, Usage> {
         parse(line.split_whitespace().map(String::from))
@@ -390,6 +690,16 @@ mod tests {
                 no_socket: true,
                 idle_lock_minutes: Some(10),
                 ask_timeout_seconds: Some(90),
+                server: false,
+            }))
+        );
+        assert_eq!(
+            parsed("serve --server --data-dir /var/lib/rowel --config /etc/rowel/server.json"),
+            Ok(Command::Serve(ServeArgs {
+                server: true,
+                data_dir: Some(PathBuf::from("/var/lib/rowel")),
+                config: Some(PathBuf::from("/etc/rowel/server.json")),
+                ..ServeArgs::default()
             }))
         );
         assert_eq!(
@@ -465,6 +775,243 @@ mod tests {
             })
         );
         assert_eq!(parsed("admin lock"), admin(AdminCommand::Lock));
+    }
+
+    #[test]
+    fn the_server_admin_commands_parse() {
+        let server = |command| {
+            Ok(Command::AdminServer(ServerAdminArgs {
+                data_dir: PathBuf::from("/d"),
+                config: None,
+                command,
+            }))
+        };
+        let at = |line: &str| parsed(&format!("admin server {line} --data-dir /d"));
+        assert_eq!(
+            parsed("admin server init --data-dir /d --config /c.json --tenant Acme --public-url https://rowel.acme.example --root-key /etc/rowel/root.key"),
+            Ok(Command::AdminServer(ServerAdminArgs {
+                data_dir: PathBuf::from("/d"),
+                config: Some(PathBuf::from("/c.json")),
+                command: ServerCommand::Init {
+                    tenant: Some("Acme".into()),
+                    public_url: Some("https://rowel.acme.example".into()),
+                    root_key: Some(PathBuf::from("/etc/rowel/root.key")),
+                },
+            }))
+        );
+        assert_eq!(
+            at("members add pat@acme.example --name Pat --admin"),
+            server(ServerCommand::MembersAdd {
+                email: "pat@acme.example".into(),
+                name: Some("Pat".into()),
+                admin: true,
+            })
+        );
+        assert_eq!(at("members list"), server(ServerCommand::MembersList));
+        assert_eq!(
+            at("members disable pat@acme.example"),
+            server(ServerCommand::MembersDisable {
+                member: "pat@acme.example".into()
+            })
+        );
+        assert_eq!(
+            at("devices list --member pat@acme.example"),
+            server(ServerCommand::DevicesList {
+                member: "pat@acme.example".into()
+            })
+        );
+        assert_eq!(
+            at("devices approve d1"),
+            server(ServerCommand::DevicesApprove { id: "d1".into() })
+        );
+        assert_eq!(
+            at("devices revoke d1"),
+            server(ServerCommand::DevicesRevoke { id: "d1".into() })
+        );
+        assert_eq!(
+            at("lockboxes create Deploy"),
+            server(ServerCommand::LockboxesCreate {
+                name: "Deploy".into(),
+                root_key: None
+            })
+        );
+        assert_eq!(at("lockboxes list"), server(ServerCommand::LockboxesList));
+        assert_eq!(
+            at("lockboxes unfreeze lb"),
+            server(ServerCommand::LockboxesFreeze {
+                id: "lb".into(),
+                frozen: false
+            })
+        );
+        assert_eq!(
+            at("lockboxes agents on lb"),
+            server(ServerCommand::LockboxesAgents {
+                id: "lb".into(),
+                on: true
+            })
+        );
+        assert_eq!(
+            at("lockboxes members add lb pat@acme.example --role approver"),
+            server(ServerCommand::LockboxMembersAdd {
+                lockbox: "lb".into(),
+                member: "pat@acme.example".into(),
+                role: LockboxRole::Approver,
+            })
+        );
+        assert_eq!(
+            at("lockboxes members remove lb m1"),
+            server(ServerCommand::LockboxMembersRemove {
+                lockbox: "lb".into(),
+                member: "m1".into()
+            })
+        );
+        assert_eq!(
+            at("lockboxes members list lb"),
+            server(ServerCommand::LockboxMembersList {
+                lockbox: "lb".into()
+            })
+        );
+        assert_eq!(
+            at("agents add Deployer --lockbox lb"),
+            server(ServerCommand::AgentsAdd {
+                name: "Deployer".into(),
+                lockbox: "lb".into()
+            })
+        );
+        assert_eq!(at("agents list"), server(ServerCommand::AgentsList));
+        assert_eq!(
+            at("agents disable a1"),
+            server(ServerCommand::AgentsEnable {
+                id: "a1".into(),
+                enabled: false
+            })
+        );
+        assert_eq!(
+            at("agents remove a1"),
+            server(ServerCommand::AgentsRemove { id: "a1".into() })
+        );
+        assert_eq!(
+            at("trust add --agent a1 --issuer https://token.actions.githubusercontent.com --claim repository=acme/api --claim ref=glob:refs/heads/* --fixed-audience"),
+            server(ServerCommand::TrustAdd {
+                agent: "a1".into(),
+                issuer: "https://token.actions.githubusercontent.com".into(),
+                claims: BTreeMap::from([
+                    ("repository".to_string(), "acme/api".to_string()),
+                    ("ref".to_string(), "glob:refs/heads/*".to_string()),
+                ]),
+                fixed_audience: true,
+                kind: ClientKind::Agent,
+            })
+        );
+        assert_eq!(
+            at("trust add --agent a1 --issuer https://token.actions.githubusercontent.com --claim job_workflow_ref=acme/ci/.github/workflows/proxy.yml@refs/heads/main --sidecar"),
+            server(ServerCommand::TrustAdd {
+                agent: "a1".into(),
+                issuer: "https://token.actions.githubusercontent.com".into(),
+                claims: BTreeMap::from([(
+                    "job_workflow_ref".to_string(),
+                    "acme/ci/.github/workflows/proxy.yml@refs/heads/main".to_string()
+                )]),
+                fixed_audience: false,
+                kind: ClientKind::Sidecar,
+            })
+        );
+        assert_eq!(
+            at("trust remove t1"),
+            server(ServerCommand::TrustRemove { id: "t1".into() })
+        );
+        assert_eq!(
+            at("rules add --agent a1 --items lockbox --mode header --target api.stripe.com/v1/* --approval ask --ttl 30 --max-uses 2 --days 7 --lockbox lb"),
+            server(ServerCommand::RulesAdd {
+                rule: RuleAdd {
+                    agent: Some("a1".into()),
+                    items: Some("lockbox".into()),
+                    mode: Some("header".into()),
+                    target: Some("api.stripe.com/v1/*".into()),
+                    approval: Some("ask".into()),
+                    ttl_minutes: Some(30),
+                    max_uses: Some(2),
+                    days: Some(7),
+                },
+                lockbox: Some("lb".into()),
+            })
+        );
+        assert_eq!(at("rules list"), server(ServerCommand::RulesList));
+        assert_eq!(
+            at("rules remove r1"),
+            server(ServerCommand::RulesRemove { id: "r1".into() })
+        );
+        assert_eq!(
+            at("audit export --since 2026-10-01T00:00:00Z --until 1790000000000 --lockbox lb --actor a1"),
+            server(ServerCommand::AuditExport(AuditFilter {
+                since_ms: Some(1_790_812_800_000),
+                until_ms: Some(1_790_000_000_000),
+                lockbox_id: Some("lb".into()),
+                actor_id: Some("a1".into()),
+            }))
+        );
+        assert_eq!(at("audit verify"), server(ServerCommand::AuditVerify));
+    }
+
+    #[test]
+    fn a_server_admin_mistake_is_usage() {
+        for line in [
+            "admin server members list",
+            "admin server --data-dir /d",
+            "admin server bogus --data-dir /d",
+            "admin server members list --name x --data-dir /d",
+            "admin server members add --data-dir /d",
+            "admin server devices list --data-dir /d",
+            "admin server lockboxes agents maybe lb --data-dir /d",
+            "admin server lockboxes members add lb m --data-dir /d",
+            "admin server lockboxes members add lb m --role owner --data-dir /d",
+            "admin server agents add Deployer --data-dir /d",
+            "admin server trust add --agent a --issuer https://i --data-dir /d",
+            "admin server trust add --agent a --issuer http://i --claim a=b --data-dir /d",
+            "admin server trust add --agent a --issuer https://i --claim =b --data-dir /d",
+            "admin server trust add --agent a --issuer https://i --claim a=b --claim a=c --data-dir /d",
+            "admin server rules add --ttl soon --data-dir /d",
+            "admin server audit export --since yesterday --data-dir /d",
+            "admin server audit verify -v --data-dir /d",
+        ] {
+            assert!(parsed(line).is_err(), "{line:?}");
+        }
+        assert!(parsed("admin server members list --name x --data-dir /d")
+            .unwrap_err()
+            .to_string()
+            .contains("unexpected argument '--name'"));
+    }
+
+    #[test]
+    fn a_server_takes_a_data_directory_and_none_of_the_headless_brokers_flags() {
+        let error = |line: &str| parsed(line).unwrap_err().to_string();
+        assert!(
+            error("serve --server").contains("serve --server needs --data-dir"),
+            "{}",
+            error("serve --server")
+        );
+        for flag in [
+            "--lockbox lb",
+            "--key-file /k",
+            "--key-fd 3",
+            "--ws 127.0.0.1:7401",
+            "--no-socket",
+            "--idle-lock 10",
+            "--ask-timeout 90",
+        ] {
+            let name = flag.split_whitespace().next().unwrap();
+            for line in [
+                format!("serve --server --data-dir /d {flag}"),
+                format!("serve {flag} --data-dir /d --server"),
+            ] {
+                let message = error(&line);
+                assert!(
+                    message.starts_with(&format!("rowel-cli: {name} is the headless broker's")),
+                    "{line}: {message}"
+                );
+            }
+        }
+        assert!(parsed("admin server trust add --agent a --issuer https://i --claim a=b --sidecar x --data-dir /d").is_err());
     }
 
     #[test]

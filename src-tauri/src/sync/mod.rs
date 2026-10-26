@@ -29,7 +29,9 @@ pub mod engine;
 pub mod layout;
 // The deletion marker's sealed body.
 pub(crate) mod marker;
-pub mod pack;
+// The pack format lives in the core (see `rowel_core::sync`), so a server
+// reads and writes the same bytes; it keeps the path it always had here.
+pub use rowel_core::sync::pack;
 mod provider;
 // One directory per provider. Crate-visible: `share` reaches Drive's share
 // transport through it.

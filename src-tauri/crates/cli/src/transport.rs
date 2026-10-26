@@ -99,6 +99,18 @@ impl Broker {
             .port_u16()
             .unwrap_or(if self.tls() { 443 } else { 80 })
     }
+
+    /// The broker's HTTP origin — `https://host[:port]` for `wss://`,
+    /// `http://` for `ws://` — where a Rowel Server answers what is not a
+    /// sealed action, such as the workload identity challenge (`workload`).
+    /// The WebSocket's path is the channel's, not the origin's.
+    pub fn origin(&self) -> String {
+        let scheme = if self.tls() { "https" } else { "http" };
+        match self.uri.port_u16() {
+            Some(port) => format!("{scheme}://{}:{port}", self.host()),
+            None => format!("{scheme}://{}", self.host()),
+        }
+    }
 }
 
 impl fmt::Display for Broker {
@@ -361,6 +373,20 @@ mod tests {
     fn the_variable_unset_or_empty_is_the_app() {
         assert_eq!(broker_from(None).unwrap(), None);
         assert_eq!(broker_from(Some(String::new())).unwrap(), None);
+    }
+
+    #[test]
+    fn the_origin_is_the_brokers_host_over_http_without_the_channels_path() {
+        let origin = |value: &str| Broker::parse(value).unwrap().origin();
+        assert_eq!(
+            origin("wss://broker.example:8443/v1/agent"),
+            "https://broker.example:8443"
+        );
+        assert_eq!(
+            origin("wss://broker.example/v1/agent"),
+            "https://broker.example"
+        );
+        assert_eq!(origin("ws://127.0.0.1:7401"), "http://127.0.0.1:7401");
     }
 
     #[test]

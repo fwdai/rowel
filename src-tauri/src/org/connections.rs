@@ -15,7 +15,6 @@
 //! on drop everywhere it is held.
 
 use std::path::{Path, PathBuf};
-#[cfg(test)]
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -425,17 +424,37 @@ impl SessionResolver {
         }
     }
 
-    /// A fresh session for the server at `url` from the refresh token its
-    /// connection holds: what a 401 asks for. The answer is taken on only by
-    /// the record it was asked for — the same member and device under the
+    /// A fresh session in place of `spent`: the connection a request was
+    /// made under and answered 401 for. The answer is taken on only by the
+    /// record it was asked for — the same member and device under the
     /// refresh token just spent — checked when the token endpoint has
     /// answered, not when the request went out. A record that moved on
     /// meanwhile (a re-sign-in, another member, a refresh that finished
     /// first) keeps what it has, this answer is dropped, and the record as it
     /// stands is handed back for the caller to retry under. Without a refresh
     /// token the session is simply over.
-    pub(crate) async fn refresh(&self, url: &str) -> Result<Connection> {
+    ///
+    /// A refresh replaces one session, the one the failed request used, and
+    /// never a later one; so the caller names it, and nothing here reads
+    /// "the current session" as if it were the failed one. One refresh at a
+    /// time per server ([`refresh_turn`]), and inside the turn: a record
+    /// whose access token is no longer `spent`'s has been replaced since that
+    /// request went out — by a refresh another caller made, before this one
+    /// started or while it waited — and is handed back as it is. Refreshing
+    /// it again would spend a token for nothing and, since the server
+    /// retires an access token with its refresh, take away the session the
+    /// other caller is about to retry under. The refresh token is single-use
+    /// and a server that sees one spent twice ends the session (RFC 6819
+    /// §5.2.2.3); in turns, each refresh spends the token the one before it
+    /// stored.
+    pub(crate) async fn refresh(&self, spent: &Connection) -> Result<Connection> {
+        let url = spent.url.as_str();
+        let gate = refresh_turn(url);
+        let _turn = gate.lock().await;
         let connection = self.connection(url)?;
+        if connection.access_token != spent.access_token {
+            return Ok(connection);
+        }
         let refresh_token = connection.refresh_token.clone().ok_or_else(|| {
             Error::Other(format!(
                 "the Rowel Server at {} no longer accepts this sign-in; sign in again",
@@ -475,7 +494,7 @@ impl SessionResolver {
         let client = ServerClient::with_session(&connection.url, &connection.access_token)?;
         match call(client).await {
             Err(e) if session_over(&e) => {
-                let connection = self.refresh(url).await?;
+                let connection = self.refresh(&connection).await?;
                 call(ServerClient::with_session(
                     &connection.url,
                     &connection.access_token,
@@ -485,6 +504,24 @@ impl SessionResolver {
             outcome => outcome,
         }
     }
+}
+
+/// The turn every refresh of the session at `url` waits for: one async lock
+/// per server URL, for the life of the process (a handful of servers at
+/// most). Async, because the refresh holds it across the token endpoint's
+/// answer; process-wide, because sync, the approvals stream and the commands
+/// each make their own resolver.
+fn refresh_turn(url: &str) -> Arc<futures_util::lock::Mutex<()>> {
+    static TURNS: std::sync::LazyLock<
+        Mutex<std::collections::HashMap<String, Arc<futures_util::lock::Mutex<()>>>>,
+    > = std::sync::LazyLock::new(Mutex::default);
+    let key = normalize_url(url).unwrap_or_else(|_| url.to_string());
+    TURNS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(key)
+        .or_default()
+        .clone()
 }
 
 #[cfg(test)]

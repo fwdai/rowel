@@ -118,6 +118,37 @@ pub struct Hello {
     pub version: Option<String>,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Who the client is, said with a token its platform minted rather than
+    /// by a person answering the dialog (`spec/02`, workload identity). Only
+    /// a Rowel Server verifies one; this broker carries it to the host, and
+    /// a host that does not read proofs ignores it. Inside the `hello` rather
+    /// than beside it so `Host::associate` keeps its shape across every host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<Proof>,
+}
+
+/// A workload identity proof: `kind` names the verifier (`oidc` for a JWT a
+/// platform minted), `token` is the credential as the platform gave it, and
+/// `nonce` echoes the server's challenge for a platform whose audience is
+/// fixed. The token is what grants access, so `Debug` never shows it: a
+/// `Hello` is logged by hosts, and a proof travels inside one.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Proof {
+    pub kind: String,
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+}
+
+impl std::fmt::Debug for Proof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Proof")
+            .field("kind", &self.kind)
+            .field("token", &format_args!("<{} chars>", self.token.len()))
+            .field("nonce", &self.nonce)
+            .finish()
+    }
 }
 
 /// What this broker can do beyond KeePassXC's protocol, told to every client
@@ -161,6 +192,20 @@ pub trait Host {
     /// `AssociationFailed`, so the client is never told it is in when the next
     /// request will find it is not.
     fn associate(&self, key: &str, who: &Hello) -> Result<Client, Code>;
+    /// [`Host::associate`], told the session key the channel was opened
+    /// with: what the connection calls. A Rowel Server needs it, since a
+    /// workload proof is bound to the channel by that key and a token lifted
+    /// from one channel must fail on every other (`spec/02`); every other
+    /// host asks a person, and the person is the binding, so the default
+    /// lets the key go.
+    fn associate_on_channel(
+        &self,
+        _session_key: &str,
+        key: &str,
+        who: &Hello,
+    ) -> Result<Client, Code> {
+        self.associate(key, who)
+    }
     /// A known client proved itself again (`test-associate`): the host notes
     /// `last_seen_at_ms`. A host with nothing to note need not answer.
     fn client_seen(&self, _key: &str) {}
@@ -355,7 +400,7 @@ impl<H: Host> Connection<H> {
                     return Err(Code::AssociationFailed.into());
                 }
                 let hello = hello_of(message)?;
-                let client = self.host.associate(id_key, &hello)?;
+                let client = self.host.associate_on_channel(key, id_key, &hello)?;
                 let reply = association_reply(hash, &client);
                 self.associated = Some(client);
                 Ok(reply)

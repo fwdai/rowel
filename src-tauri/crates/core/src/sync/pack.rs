@@ -22,11 +22,10 @@
 //! directly.
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
+use super::Scratch;
 use crate::crypto::KdfParams;
-use crate::storage;
 use crate::store::SqliteStore;
 
 /// The most a pack may be when pulled from Drive. A vault is metadata plus
@@ -175,44 +174,24 @@ pub fn pack_store(
     kdf_params_json: &str,
     scratch_dir: &Path,
 ) -> Result<Vec<u8>> {
-    fs::create_dir_all(scratch_dir)?;
-    let scratch = Scratch(scratch_dir.join(scratch_name()));
+    let scratch = Scratch::new(scratch_dir, "pack")?;
 
     store
-        .snapshot_to(&scratch.0, key)
+        .snapshot_to(scratch.path(), key)
         .map_err(|e| PackError::Store(e.to_string()))?;
 
-    let snapshot = fs::read(&scratch.0)?;
+    let snapshot = fs::read(scratch.path())?;
     if snapshot.is_empty() {
         return Err(PackError::EmptySnapshot);
     }
     Ok(pack(kdf_params_json, &snapshot))
 }
 
-// Unique per call so two concurrent packs (a scheduled sync and a manual one)
-// cannot write over each other's snapshot.
-fn scratch_name() -> String {
-    static N: AtomicU64 = AtomicU64::new(0);
-    format!(
-        "rowel-sync-{}-{}.db",
-        std::process::id(),
-        N.fetch_add(1, Ordering::SeqCst)
-    )
-}
-
-// Removes the scratch snapshot however `pack_store` returns.
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        storage::remove_db_files(&self.0);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::store::VaultStore;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     const KEY: &[u8] = &[0x33; 32];
@@ -301,28 +280,6 @@ mod tests {
 
         // The scratch snapshot is cleaned up, siblings included.
         assert!(fs::read_dir(&scratch).unwrap().next().is_none());
-    }
-
-    // The guard is what makes every `pack_store` exit — including the `?` early
-    // returns — leave no encrypted scratch file behind.
-    #[test]
-    fn the_scratch_guard_removes_the_snapshot_and_its_siblings() {
-        let dir = tmp_dir();
-        let base = dir.join("snap.db");
-        let siblings = [
-            base.clone(),
-            dir.join("snap.db-wal"),
-            dir.join("snap.db-shm"),
-        ];
-        for p in &siblings {
-            fs::write(p, b"x").unwrap();
-        }
-
-        drop(Scratch(base));
-
-        for p in &siblings {
-            assert!(!p.exists(), "{} survived the guard", p.display());
-        }
     }
 
     #[test]

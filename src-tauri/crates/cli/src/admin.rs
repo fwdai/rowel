@@ -52,7 +52,27 @@ const MINUTE_MS: i64 = 60 * 1000;
 const DEFAULT_TTL_MINUTES: u64 = 15;
 
 pub fn run(args: AdminArgs) -> i32 {
-    match execute(args) {
+    exit_code(execute(args))
+}
+
+/// Why an admin command did not do what it was asked: a usage mistake the
+/// parser could not see (a flag's value that does not make a rule), or a
+/// failure on the way. Shared with `rowel admin server`, so both print the
+/// same way and exit with the same codes.
+#[derive(Debug)]
+pub(crate) enum Failure {
+    Usage(String),
+    Failed(String),
+}
+
+pub(crate) fn failed(e: impl std::fmt::Display) -> Failure {
+    Failure::Failed(e.to_string())
+}
+
+/// The process's exit code for an admin command's outcome: one line on
+/// stderr for a failure, 2 for a usage mistake and 1 for anything else.
+pub(crate) fn exit_code(outcome: Result<(), Failure>) -> i32 {
+    match outcome {
         Ok(()) => 0,
         Err(Failure::Usage(message)) => {
             eprintln!("rowel admin: {message}");
@@ -63,16 +83,6 @@ pub fn run(args: AdminArgs) -> i32 {
             1
         }
     }
-}
-
-#[derive(Debug)]
-enum Failure {
-    Usage(String),
-    Failed(String),
-}
-
-fn failed(e: impl std::fmt::Display) -> Failure {
-    Failure::Failed(e.to_string())
 }
 
 fn execute(args: AdminArgs) -> Result<(), Failure> {
@@ -167,8 +177,10 @@ fn execute(args: AdminArgs) -> Result<(), Failure> {
 }
 
 /// A rule from `rowel admin rules add`'s flags: the operator's, under a
-/// fresh id, with the request's own target shape for its mode.
-fn rule_of(add: RuleAdd) -> Result<Rule, Failure> {
+/// fresh id, with the request's own target shape for its mode. The one
+/// parser for both brokers: `rowel admin server rules add` takes the same
+/// flags.
+pub(crate) fn rule_of(add: RuleAdd) -> Result<Rule, Failure> {
     let usage = |message: &str| Failure::Usage(message.to_string());
     let agents = match add.agent.as_deref() {
         None => return Err(usage("rules add needs --agent <client key|any>")),
@@ -293,7 +305,7 @@ pub fn describe(rule: &Rule) -> String {
     )
 }
 
-fn rfc3339(ms: i64) -> String {
+pub(crate) fn rfc3339(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
         .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
         .unwrap_or_else(|| ms.to_string())

@@ -82,6 +82,38 @@ way it goes, and so are the two keys: the broker asks to let each one in the
 first time it sees it, as the app does. `rowel status` says which it tried
 (`app:` or `broker: … at ws://…`).
 
+## Proving identity to a Rowel Server
+
+A job in CI has no one at the dialog. When `ROWEL_BROKER` names a Rowel
+Server and the platform the CLI runs on can say what the job is, the first
+`associate` under each key carries that statement as a *proof*, and the
+server's trust policy decides instead of a person (`spec/02`, workload
+identity). The CLI first asks the server for a challenge at
+`https://<host>/v1/agent/challenge` (`http://` for a `ws://` broker), then
+gets a token from one of two sources, tried in this order:
+
+- **GitHub Actions.** With `ACTIONS_ID_TOKEN_REQUEST_URL` and
+  `ACTIONS_ID_TOKEN_REQUEST_TOKEN` set, which the runner does for a job that
+  may mint id tokens, the CLI asks the runner for a token whose audience is
+  the server's audience followed by the SHA-256 of this connection's session
+  key, so the token proves this channel and no other. The job needs:
+
+  ```yaml
+  permissions:
+    id-token: write
+  ```
+
+- **A token file.** `ROWEL_WORKLOAD_TOKEN_FILE=<path>` sends the file's
+  contents, trimmed, as the token, with the server's challenge nonce beside
+  it: for a platform that mints tokens for a fixed audience, such as a
+  Kubernetes projected service account token.
+
+With neither set the association asks as before, answered with
+`rowel approve`. A source that is set but cannot be read, or a server that
+answers no challenge, is an error the command reports rather than a quiet
+fall back to the ask: in CI nobody would answer it. The token is never
+printed or logged, and is never sent to the app on this machine.
+
 ## `rowel serve`, `rowel approve`, `rowel admin`
 
 The same binary is the broker on a box without the app:
@@ -98,6 +130,14 @@ serves agents over the socket and a WebSocket under standing rules from a
 config file; `approve` answers the asks it queues; `admin` edits the rules,
 a lockbox's agent access and the key file. All of it is in
 [`serve.md`](serve.md).
+
+`rowel admin server …` is the same binary as a Rowel Server's terminal: run
+on the server's data directory, it initializes the server and manages its
+members and their devices, the org lockboxes and who holds them, agents and
+the trust policies that recognise them, policy rules, and the audit export
+and its verification. The server need not be running. All of it, with the
+systemd unit, the reverse proxy and backups, is in
+[`server.md`](server.md).
 
 ## `rowel status`
 

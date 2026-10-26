@@ -19,7 +19,8 @@
 //!                                  redirect_uri | refresh_token; client_id
 //!                                  → {access_token, refresh_token, expires_in, token_type}
 //! GET  /v1/members/me              → {member:{id,email,name}, tenant:{name}}
-//! POST /v1/members/enroll          {devicePubkey, deviceName} → {deviceId, state}
+//! POST /v1/members/enroll/challenge  {devicePubkey} → {challenge}
+//! POST /v1/members/enroll          {devicePubkey, deviceName, proof} → {deviceId, state}
 //! GET  /v1/members/me/devices      → [{id,name,state,publicKey,createdAtMs}]
 //! POST /v1/members/devices/{id}/approve
 //! GET  /v1/members/me/lockboxes    → [{id,name,kdf,wrappedMaster,etag}]
@@ -27,10 +28,14 @@
 //! POST /v1/approvals/{id}          {answer: GrantAnswer | null}
 //! ```
 
+#[cfg(any(desktop, test))]
+use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{Response, StatusCode};
 use serde::{Deserialize, Serialize};
 
 use super::connections::normalize_url;
+#[cfg(any(desktop, test))]
+use super::enrollment::EnrollmentKey;
 use crate::error::{Error, Result};
 use crate::sync::{http_client, read_capped};
 
@@ -137,6 +142,16 @@ pub(crate) enum DeviceState {
 pub(crate) struct Enrolled {
     pub device_id: String,
     pub state: DeviceState,
+}
+
+/// What the server seals to a device's enrollment key for the device to
+/// prove it holds the key (`EnrollmentKey::open_challenge`): a `crypto_box`
+/// sealed box, base64.
+#[cfg(any(desktop, test))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EnrollChallenge {
+    pub challenge: String,
 }
 
 /// One of the member's devices, as the server lists them.
@@ -304,17 +319,29 @@ impl ServerClient {
         json(self.get("/v1/members/me")?.send().await.map_err(other)?).await
     }
 
-    /// Enroll this device under `device_name` with its enrollment public key
-    /// (`EnrollmentKey::public_key_b64`). The device comes back pending.
+    /// Enroll this device under `device_name` with its enrollment key: a
+    /// challenge sealed to the key's public half, opened here only if it
+    /// names this server, and the enrollment sent with what it opened to,
+    /// which is how the server knows this app holds the key rather than
+    /// naming another device's. The device comes back pending, or as it stood
+    /// if this key enrolled before — approved stays approved — and either way
+    /// this session is the device's from now on.
     #[cfg(any(desktop, test))]
-    pub(crate) async fn enroll(
-        &self,
-        device_pubkey_b64: &str,
-        device_name: &str,
-    ) -> Result<Enrolled> {
+    pub(crate) async fn enroll(&self, key: &EnrollmentKey, device_name: &str) -> Result<Enrolled> {
+        let device_pubkey = key.public_key_b64();
+        let challenge: EnrollChallenge = json(
+            self.post("/v1/members/enroll/challenge")?
+                .json(&serde_json::json!({ "devicePubkey": device_pubkey }))
+                .send()
+                .await
+                .map_err(other)?,
+        )
+        .await?;
+        let proof = STANDARD.encode(&*key.open_challenge(&challenge.challenge, &self.base_url)?);
         let body = serde_json::json!({
-            "devicePubkey": device_pubkey_b64,
+            "devicePubkey": device_pubkey,
             "deviceName": device_name,
+            "proof": proof,
         });
         json(
             self.post("/v1/members/enroll")?

@@ -9,7 +9,7 @@
 use std::fmt;
 use std::io;
 
-use rowel_broker::actions::Hello;
+use rowel_broker::actions::{Hello, Proof};
 use rowel_broker::client::{ChannelError, Peer, PeerError, Refused, Transport};
 use rowel_broker::grant::{ItemSelector, Mode, ResolveContext, Target};
 use rowel_broker::protocol::{str_of, Code};
@@ -19,6 +19,7 @@ use serde_json::{json, Map, Value};
 use zeroize::Zeroizing;
 
 use crate::keys::{ClientKey, Keys, Role};
+use crate::workload;
 use crate::CLIENT_ID;
 
 /// What this process is, for the app's dialog and its record of the client.
@@ -127,12 +128,14 @@ pub fn decided(broker: &mut dyn Broker, ask: &GrantAsk) -> Result<Map<String, Va
 pub const AGENTS_DISABLED: &str = "Turn on Agents in Rowel › Settings › Browser & agents";
 
 /// Why an action got no answer: the app was not there, the key file could
-/// not be read or written, the channel made no sense of a reply, or the host
-/// said no.
+/// not be read or written, the workload token the environment offered could
+/// not be turned into a proof, the channel made no sense of a reply, or the
+/// host said no.
 #[derive(Debug)]
 pub enum AgentError {
     Unreachable(io::Error),
     Keys(io::Error),
+    Identity(io::Error),
     Channel(ChannelError),
     Refused(Refused),
 }
@@ -156,6 +159,7 @@ impl AgentError {
         match self {
             AgentError::Unreachable(_) => "unreachable".to_string(),
             AgentError::Keys(_) => "key_file".to_string(),
+            AgentError::Identity(_) => "workload_identity".to_string(),
             AgentError::Channel(_) => "protocol".to_string(),
             AgentError::Refused(refused) => refused
                 .code
@@ -169,6 +173,7 @@ impl fmt::Display for AgentError {
         match self {
             AgentError::Unreachable(e) => write!(f, "Rowel is not running or not reachable: {e}"),
             AgentError::Keys(e) => write!(f, "the client key could not be used: {e}"),
+            AgentError::Identity(e) => write!(f, "the workload identity could not be proved: {e}"),
             AgentError::Channel(e) => write!(f, "the app answered out of protocol: {e}"),
             AgentError::Refused(r) if r.code == Some(Code::AgentsDisabled) => {
                 f.write_str(AGENTS_DISABLED)
@@ -188,14 +193,16 @@ pub fn test_associate<T: Transport>(peer: &mut Peer<T>, key: &ClientKey) -> Resu
 }
 
 /// `associate` under `key` as a client of `role` from `platform`: the user is
-/// asked, and the name they gave comes back as the reply's `id`. The
-/// capabilities name what this binary can do with a grant, so a host can
-/// tell a sidecar that resolves from an agent that only asks.
+/// asked — or, with a `proof`, a Rowel Server verifies who this is instead —
+/// and the name given comes back as the reply's `id`. The capabilities name
+/// what this binary can do with a grant, so a host can tell a sidecar that
+/// resolves from an agent that only asks.
 pub fn associate<T: Transport>(
     peer: &mut Peer<T>,
     key: &ClientKey,
     role: Role,
     platform: &str,
+    proof: Option<Proof>,
 ) -> Result<String, PeerError> {
     let capabilities = match role {
         Role::Agent => vec!["grants".to_string()],
@@ -206,6 +213,7 @@ pub fn associate<T: Transport>(
         platform: Some(platform.to_string()),
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         capabilities,
+        proof,
     };
     let reply = peer.call(
         "associate",
@@ -274,8 +282,10 @@ impl<T: Transport> Agent<T> {
 
     /// The connection, made and let in if it is not yet. `test-associate` first
     /// — a key the app knows is let straight in — then `associate`, which asks
-    /// the user and names the client. A connection whose association failed is
-    /// dropped, so the next action starts over rather than on a half-open door.
+    /// the user and names the client, or at a Rowel Server carries the
+    /// workload token the environment offers so no one need be asked
+    /// (`workload`). A connection whose association failed is dropped, so
+    /// the next action starts over rather than on a half-open door.
     fn associated(&mut self) -> Result<&mut Peer<T>, AgentError> {
         if self.peer.is_none() {
             let transport = (self.connect)().map_err(AgentError::Unreachable)?;
@@ -296,7 +306,10 @@ impl<T: Transport> Agent<T> {
             Err(PeerError::Refused(refused)) if refused.code == Some(Code::AssociationFailed) => {}
             Err(other) => return Err(other.into()),
         }
-        let name = associate(peer, &key, self.keys.role(), &self.platform)?;
+        // The proof is fetched only now: it is bound to the session key the
+        // exchange just made, and a known key needs none.
+        let proof = workload::proof_for(&peer.public_key()).map_err(AgentError::Identity)?;
+        let name = associate(peer, &key, self.keys.role(), &self.platform, proof)?;
         if !name.is_empty() && name != key.name {
             key.name = name;
             self.keys.save(&key).map_err(AgentError::Keys)?;

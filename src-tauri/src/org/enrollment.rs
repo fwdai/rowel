@@ -1,10 +1,11 @@
 //! This device's enrollment key: the one X25519 keypair an install generates,
 //! whose public half a Rowel Server wraps org lockbox masters to.
 //!
-//! One curve, one job. The key only ever receives sealed boxes — a master at
-//! enrollment, a new master at every rotation — and signs nothing; a member
-//! proves who they are to the server through the sign-in, and a device
-//! proves it is this device by being able to open what was sealed to it.
+//! One curve, one job. The key only ever receives sealed boxes — a challenge
+//! at enrollment, a master once approved, a new master at every rotation —
+//! and signs nothing; a member proves who they are to the server through the
+//! sign-in, and a device proves it is this device by being able to open what
+//! was sealed to it, which is what answering the challenge shows the server.
 //! Approving a new device is comparing its fingerprint on a device that is
 //! already approved, which is why the fingerprint is short enough to read
 //! aloud.
@@ -19,7 +20,6 @@ use std::path::Path;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use crypto_box::SecretKey;
-use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use crate::crypto;
@@ -30,9 +30,12 @@ use crate::storage;
 /// sidecar moved under another name does not open.
 const SEAL_ID: &str = "enrollment";
 
-/// An org lockbox master is the vault key's 32 bytes, and nothing else is
-/// ever sealed to this key.
+/// An org lockbox master is the vault key's 32 bytes.
 const MASTER_LEN: usize = 32;
+
+/// The random secret of an enrollment challenge, behind its context.
+#[cfg(any(desktop, test))]
+const CHALLENGE_LEN: usize = 32;
 
 pub(crate) struct EnrollmentKey(SecretKey);
 
@@ -62,21 +65,14 @@ impl EnrollmentKey {
 
     /// The public key as a person compares it ([`fingerprint_of`]).
     pub(crate) fn fingerprint(&self) -> String {
-        fingerprint_bytes(self.0.public_key().as_bytes())
+        crypto::key_fingerprint_bytes(self.0.public_key().as_bytes())
     }
 
     /// The master inside a sealed box the server wrapped to this key
     /// (`Lockbox::wrapped_master`). Anything that opens to other than 32
     /// bytes is refused: it is not a master, whoever sealed it.
     pub(crate) fn unseal_master(&self, sealed_b64: &str) -> Result<Zeroizing<Vec<u8>>> {
-        let sealed = STANDARD
-            .decode(sealed_b64.trim())
-            .map_err(|e| Error::Crypto(format!("the wrapped master is not base64: {e}")))?;
-        let master = Zeroizing::new(self.0.unseal(&sealed).map_err(|_| {
-            Error::Crypto(
-                "the wrapped master does not open under this device's enrollment key".into(),
-            )
-        })?);
+        let master = self.open_sealed("the wrapped master", sealed_b64)?;
         if master.len() != MASTER_LEN {
             return Err(Error::Crypto(format!(
                 "the wrapped master is {} bytes, not {MASTER_LEN}",
@@ -85,32 +81,58 @@ impl EnrollmentKey {
         }
         Ok(master)
     }
-}
 
-/// A public key as a person compares it: SHA-256 of the 32 raw bytes, the
-/// first 16 hex digits in four groups of four. Sixty-four bits is what a
-/// member reads off one screen and checks against another; the full key is
-/// what the server actually wraps to. Of the base64 the server lists a
-/// device's key as (`client::Device::public_key`), so the device being
-/// approved and the device approving derive the same digits from the same
-/// bytes.
-pub(crate) fn fingerprint_of(public_key_b64: &str) -> Result<String> {
-    let bytes = STANDARD
-        .decode(public_key_b64.trim())
-        .map_err(|e| Error::Crypto(format!("a device public key is base64: {e}")))?;
-    if bytes.len() != 32 {
-        return Err(Error::Crypto("a device public key is 32 bytes".into()));
+    /// The secret inside an enrollment challenge the server at `server_url`
+    /// (as `connections::normalize_url` spells it) sealed to this key, which
+    /// `ServerClient::enroll` hands back as the proof that this app holds the
+    /// key. Only a challenge for that server is opened: the context
+    /// `ENROLL_CHALLENGE_CONTEXT`, then `server_url` and a NUL, then the 32
+    /// bytes. A wrapped master sent in its place is refused rather than handed
+    /// back in the clear, and so is another server's challenge, which a
+    /// server this app also signs in to could otherwise relay to it and pass
+    /// the answer off as this device's there.
+    #[cfg(any(desktop, test))]
+    pub(crate) fn open_challenge(
+        &self,
+        sealed_b64: &str,
+        server_url: &str,
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        let not_one = || Error::Crypto("the enrollment challenge is not one".into());
+        let opened = self.open_sealed("the enrollment challenge", sealed_b64)?;
+        let named = opened
+            .strip_prefix(crypto::ENROLL_CHALLENGE_CONTEXT)
+            .filter(|named| named.len() > CHALLENGE_LEN)
+            .ok_or_else(not_one)?;
+        let (head, secret) = named.split_at(named.len() - CHALLENGE_LEN);
+        let url = head.strip_suffix(&[0]).ok_or_else(not_one)?;
+        if url != server_url.as_bytes() {
+            return Err(Error::Crypto(format!(
+                "the enrollment challenge was issued for another server than {server_url}; \
+                 nothing was sent back"
+            )));
+        }
+        Ok(Zeroizing::new(secret.to_vec()))
     }
-    Ok(fingerprint_bytes(&bytes))
+
+    /// What `sealed_b64`, named `what` in any error, opens to under this key.
+    fn open_sealed(&self, what: &str, sealed_b64: &str) -> Result<Zeroizing<Vec<u8>>> {
+        let sealed = STANDARD
+            .decode(sealed_b64.trim())
+            .map_err(|e| Error::Crypto(format!("{what} is not base64: {e}")))?;
+        Ok(Zeroizing::new(self.0.unseal(&sealed).map_err(|_| {
+            Error::Crypto(format!(
+                "{what} does not open under this device's enrollment key"
+            ))
+        })?))
+    }
 }
 
-fn fingerprint_bytes(public_key: &[u8]) -> String {
-    let digest = hex::encode(Sha256::digest(public_key));
-    digest.as_bytes()[..16]
-        .chunks(4)
-        .map(|group| std::str::from_utf8(group).expect("hex is ASCII"))
-        .collect::<Vec<_>>()
-        .join(" ")
+/// A public key as a person compares it, of the base64 the server lists a
+/// device's key as (`client::Device::public_key`): the one rule in
+/// `rowel_core::crypto::key_fingerprint`, shared with the server's command
+/// line so every screen shows the same digits.
+pub(crate) fn fingerprint_of(public_key_b64: &str) -> Result<String> {
+    crypto::key_fingerprint(public_key_b64)
 }
 
 /// The sealed key under `new` instead of `old`: a master-password change
@@ -126,18 +148,19 @@ pub(crate) fn reseal(root: &Path, old: &[u8], new: &[u8]) -> Result<()> {
     storage::atomic_write_private(&path, sealed.as_bytes())
 }
 
-/// `master` sealed to the device whose enrollment public key is
-/// `public_key_b64`, as the server wraps one: the fake server's half of
-/// [`EnrollmentKey::unseal_master`].
+/// `plaintext` sealed to the device whose enrollment public key is
+/// `public_key_b64`, as the server seals a master or a challenge: the fake
+/// server's half of [`EnrollmentKey::unseal_master`] and
+/// [`EnrollmentKey::open_challenge`].
 #[cfg(test)]
-pub(crate) fn seal_to(public_key_b64: &str, master: &[u8]) -> Result<String> {
+pub(crate) fn seal_to(public_key_b64: &str, plaintext: &[u8]) -> Result<String> {
     let bytes: [u8; 32] = STANDARD
         .decode(public_key_b64)
         .map_err(|e| Error::Crypto(e.to_string()))?
         .try_into()
         .map_err(|_| Error::Crypto("a device public key is 32 bytes".into()))?;
     let sealed = crypto_box::PublicKey::from(bytes)
-        .seal(&mut rand::thread_rng(), master)
+        .seal(&mut rand::thread_rng(), plaintext)
         .map_err(|_| Error::Crypto("sealing to the device failed".into()))?;
     Ok(STANDARD.encode(sealed))
 }
@@ -205,6 +228,52 @@ mod tests {
         let other = EnrollmentKey::generate();
         assert!(other.unseal_master(&sealed).is_err(), "not this device");
         assert!(key.unseal_master("not base64!").is_err());
+    }
+
+    // The proof a challenge is answered with is what it opened to, so a
+    // master sent as a challenge must not open as one — the context sets the
+    // two apart, and the length alone does not — and neither may a challenge
+    // another server issued.
+    #[test]
+    fn a_challenge_opens_to_its_secret_for_its_server_alone() {
+        const SERVER: &str = "https://rowel.acme.example";
+        let key = EnrollmentKey::generate();
+        let secret = [9u8; 32];
+        let challenge_for = |url: &str| {
+            let plaintext = [
+                crypto::ENROLL_CHALLENGE_CONTEXT,
+                url.as_bytes(),
+                &[0],
+                &secret,
+            ];
+            seal_to(&key.public_key_b64(), &plaintext.concat()).unwrap()
+        };
+        let sealed = challenge_for(SERVER);
+        assert_eq!(&*key.open_challenge(&sealed, SERVER).unwrap(), &secret[..]);
+        assert!(key.unseal_master(&sealed).is_err(), "not a master");
+        assert!(EnrollmentKey::generate()
+            .open_challenge(&sealed, SERVER)
+            .is_err());
+
+        for elsewhere in [
+            "https://rowel.evil.example",
+            "https://rowel.acme.example/x",
+            "",
+        ] {
+            let refused = key.open_challenge(&challenge_for(elsewhere), SERVER);
+            assert!(refused.is_err(), "{elsewhere:?}");
+        }
+        let master = seal_to(&key.public_key_b64(), &[42u8; 32]).unwrap();
+        assert!(
+            key.open_challenge(&master, SERVER).is_err(),
+            "not a challenge"
+        );
+        let unlabelled = [SERVER.as_bytes(), &[0], &secret].concat();
+        let unlabelled = seal_to(&key.public_key_b64(), &unlabelled).unwrap();
+        assert!(
+            key.open_challenge(&unlabelled, SERVER).is_err(),
+            "no context"
+        );
     }
 
     #[test]

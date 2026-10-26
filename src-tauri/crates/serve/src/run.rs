@@ -301,8 +301,11 @@ fn prompt_and_open(
     Err(Exit::Failed("wrong password".into()))
 }
 
+/// SIGTERM or SIGINT, whichever comes first; Ctrl-C alone where there are
+/// no Unix signals. The one stop both `rowel serve` and a Rowel Server
+/// answer to.
 #[cfg(unix)]
-async fn stop_signal() {
+pub async fn stop_signal() {
     use tokio::signal::unix::{signal, SignalKind};
     let mut term = match signal(SignalKind::terminate()) {
         Ok(term) => term,
@@ -319,6 +322,6 @@ async fn stop_signal() {
 }
 
 #[cfg(not(unix))]
-async fn stop_signal() {
+pub async fn stop_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }

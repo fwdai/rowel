@@ -257,5 +257,8 @@ broker is doing at the time, including waiting at a password prompt.
   reach the box when the directory is copied again.
 - No `generate-password`: the generator's settings are the app's; the
   extension handles the refusal.
-- No server mode yet (`--server`, tenants, workload identity): that is the
-  Rowel Server of spec `07`.
+- No tenants, members or workload identity: that is server mode,
+  `rowel serve --server`, the Rowel Server, documented in
+  [`docs/server.md`](./server.md).
+
+What a Rowel Server speaks, as the app and the CLI already speak it, is [`docs/server-api.md`](./server-api.md).

@@ -33,7 +33,7 @@ use tauri::async_runtime::block_on;
 use tauri::AppHandle;
 
 use super::client::{session_over, Approval, DeviceState, ServerClient};
-use super::connections::{self, SessionResolver};
+use super::connections::{self, Connection, SessionResolver};
 use crate::error::{Error, Result};
 use crate::{browser, events, settings};
 
@@ -143,18 +143,26 @@ pub(crate) fn follow(
     let mut backoff = BACKOFF_MIN;
     while !stop.load(Ordering::SeqCst) {
         let started = Instant::now();
-        let ended = attempt(resolver, url, stop, &mut ask);
+        // The session the stream is opened under is kept to name it if the
+        // server answers that it is over: a refresh replaces that one, and
+        // never a later one another caller has already put in its place.
+        let ended = match resolver.connection(url) {
+            Ok(session) => {
+                attempt(resolver, &session, stop, &mut ask).map_err(|e| (Some(session), e))
+            }
+            Err(e) => Err((None, e)),
+        };
         if stop.load(Ordering::SeqCst) {
             return;
         }
         match ended {
             Ok(()) => log::info!("org approvals: the Rowel Server at {url} ended the stream"),
-            Err(e) if session_over(&e) => {
-                if let Err(e) = block_on(resolver.refresh(url)) {
+            Err((Some(session), e)) if session_over(&e) => {
+                if let Err(e) = block_on(resolver.refresh(&session)) {
                     log::warn!("org approvals: the session at {url} could not be refreshed: {e}");
                 }
             }
-            Err(e) => log::warn!("org approvals: the stream from {url} failed: {e}"),
+            Err((_, e)) => log::warn!("org approvals: the stream from {url} failed: {e}"),
         }
         // A stream that held for a while earned a fresh start; one that
         // failed at once waits longer each time.
@@ -180,11 +188,11 @@ enum Frame {
 // `block_on` is never nested inside the stream's.
 fn attempt(
     resolver: &SessionResolver,
-    url: &str,
+    connection: &Connection,
     stop: &Arc<AtomicBool>,
     ask: &mut impl FnMut(&Approval) -> Verdict,
 ) -> Result<()> {
-    let connection = resolver.connection(url)?;
+    let url = connection.url.as_str();
     let client = ServerClient::with_session(&connection.url, &connection.access_token)?;
     let (tx, rx) = channel::<Frame>();
     let task_stop = stop.clone();
