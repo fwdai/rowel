@@ -4,7 +4,7 @@
 //! catalogue the frontend subscribes to can be read in one place, and so no
 //! caller can invent a third spelling of `{ error }`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 use crate::models::EntryMetaDto;
@@ -38,6 +38,11 @@ pub const AGENT_GRANT: &str = "agent:grant";
 pub const AGENT_GRANT_CLOSED: &str = "agent:grant:closed";
 #[cfg(desktop)]
 pub const AGENTS_CHANGED: &str = "agents:changed";
+// The sign-in to a Rowel Server runs in the browser, so its progress is an
+// event like a consent flow's (`org::connect`); desktop only, like that flow.
+#[cfg(desktop)]
+pub const ORG_CONNECT: &str = "org:connect";
+pub const ORG_CHANGED: &str = "org:changed";
 
 #[derive(Serialize, Clone)]
 struct Entries {
@@ -284,7 +289,7 @@ pub fn browser_clients(app: &AppHandle) {
 /// one place the value goes, shown verbatim so the person can read what the
 /// child process will be.
 #[cfg(desktop)]
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AskTarget {
     Origin {
@@ -311,7 +316,9 @@ pub enum AskTarget {
 /// answer counts: a biometric prompt, or the master password where the
 /// device has none. The answer comes back through
 /// `commands::browser::agent_grant_respond`, naming `id`, so a dialog left up
-/// past this ask cannot answer the next.
+/// past this ask cannot answer the next. `server` names the company whose
+/// Rowel Server routed the ask here (`org::approvals`), so the dialog can say
+/// the agent is not one of this machine's; absent for the app's own asks.
 #[cfg(desktop)]
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -329,6 +336,8 @@ pub struct AgentGrantAsk<'a> {
     pub verify: Option<&'static str>,
     pub candidates: Vec<rowel_broker::grant::VisibleItem>,
     pub default_standing_days: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server: Option<&'a str>,
 }
 
 #[cfg(desktop)]
@@ -358,4 +367,31 @@ pub fn agent_grant_closed(app: &AppHandle, id: &str) {
 #[cfg(desktop)]
 pub fn agents_changed(app: &AppHandle) {
     let _ = app.emit(AGENTS_CHANGED, ());
+}
+
+#[cfg(desktop)]
+#[derive(Serialize, Clone)]
+struct OrgConnect<'a> {
+    url: &'a str,
+    status: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<&'a str>,
+}
+
+/// Where the sign-in to the Rowel Server at `url` stands (`org::connect`):
+/// `pending` while the browser has it, `done` once the install is signed in
+/// and this device enrolled, or `error` with the reason. The command that
+/// starts it returns as soon as the browser is open, so this is the one way
+/// its outcome reaches the Settings section that asked.
+#[cfg(desktop)]
+pub fn org_connect(app: &AppHandle, url: &str, status: &str, error: Option<&str>) {
+    let _ = app.emit(ORG_CONNECT, OrgConnect { url, status, error });
+}
+
+/// Something about the install's Rowel Servers changed behind the Settings
+/// section — a sign-in landed, a device was approved, a lockbox was added,
+/// a server was forgotten. No payload: the section re-reads
+/// `org_connections`, which is the one answer it draws from.
+pub fn org_changed(app: &AppHandle) {
+    let _ = app.emit(ORG_CHANGED, ());
 }

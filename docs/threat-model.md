@@ -841,12 +841,14 @@ while nobody is there. Rather than blur the promise, two properties of a
 lockbox are kept separate and visible, and both lines are drawn where the
 product already has one, at the lockbox:
 
-- **Where the key lives.** Every lockbox in this build is *device-held*: its
+- **Where the key lives.** A lockbox the user makes is *device-held*: its
   key derives from the master password, it syncs as an opaque pack through a
   cloud account the user owns, and no server can read it. A server-held *org
-  lockbox*, whose key would be escrowed to a broker so that it can act while
-  nobody is present, is a planned server tier and not in this build. Nothing
-  here serves an agent while the vault is locked or the person is away.
+  lockbox*, whose key is escrowed to a company's Rowel Server so that it can
+  act while nobody is present, is one the app can hold and answer approvals
+  for (*Org lockboxes* below); the server itself is not in this build.
+  Nothing on the device serves an agent while the vault is locked or the
+  person is away.
 - **Whether agents may use it.** Every lockbox has an agent-access switch,
   *Agents can use items in this lockbox* in its settings (`Workspace.agents`
   in `workspaces.json`, off by default, device-local like the colour). Above
@@ -1109,8 +1111,39 @@ id.
   does an unlocked `rowel serve`, for as long as it runs unattended under a
   standing rule; a key file holds it on disk. The idle lock, `SIGTERM` and
   `rowel admin lock` bound the first; file permissions and a service manager's
-  credential handling bound the second. The server tier that is not shipped
-  would hold an org lockbox's escrowed key the same way.
+  credential handling bound the second. A Rowel Server holds an org lockbox's
+  escrowed key the same way, in its own memory while serving.
+
+**Org lockboxes.** The app's half of the server tier is in this build: it
+can sign in to a company's Rowel Server, hold the org lockboxes the server
+hands its member, and answer the approvals the server routes to them
+(`org`, `commands::org`, [docs/agents.md](./agents.md#org-lockboxes-and-a-rowel-server));
+the server itself is not. An org lockbox's master is not derived from the
+master password: the server minted it, holds a copy wrapped under its own
+root key — so the server can open the lockbox, which is the point and is said
+in the UI — and hands each enrolled device a copy sealed to that device's
+X25519 enrollment key (`crypto_box` sealed box). On the device the unwrapped
+master is one more non-primary workspace key: in the ring and in a sidecar
+sealed under the app key, with the server's `KdfParams::External` descriptor
+as the KDF sidecar, so the lockbox opens with the main lockbox and never with
+a typed password, and a master-password change re-seals its sidecar and
+nothing else. The enrollment key and the member session (`enrollment.key.sealed`,
+`servers.sealed`) are sealed under the app key beside the workspace keys,
+re-sealed with it on a password change and removed as stale when a primary
+unlock no longer opens them; without an unlocked vault neither exists in the
+clear. What a stolen member session buys on its own: the device list, the
+lockbox list without any wrapped master, and the ability to enroll a *new*
+device, which is pending until an already approved device or an admin
+approves it after comparing fingerprints — so the session alone yields no
+lockbox key and no pack a device could open. What it does not touch: the
+packs, which are sealed under the master; the approvals, which an attacker
+could read and answer in the member's name for the session's lifetime, and
+which is why the session is short-lived and refreshed, and why a step-up ask
+still takes the person's biometrics or password on the device. Rotation is
+the password-change saga on the server's new master (the old epoch retired,
+so older packs still open), followed on each device at its next sync or on
+demand; a device the server revokes is handed no new master and keeps only
+the copy it has, which the next rotation leaves behind.
 
 ## iOS AutoFill
 

@@ -175,8 +175,7 @@ pub async fn workspace_select(
     // iOS is handed this vault's logins in place of the last one's, and a vault
     // named before names lived inside it takes the registry's label.
     crate::autolock::touch(&app);
-    #[cfg(desktop)]
-    crate::browser::server::notify_unlocked();
+    crate::session::opened(&app);
     crate::credential_identities::publish(&app);
     super::auth::seed_vault_name(&app, &state);
     Ok(Some(UnlockResult {
@@ -352,6 +351,7 @@ pub async fn workspace_create(
             item_count: None,
             color,
             agents: false,
+            server: None,
         });
         registry.active = id.clone();
         Ok(())
@@ -383,8 +383,7 @@ pub async fn workspace_create(
     // put it on the idle clock from here rather than from whenever the webview
     // next reports activity.
     crate::autolock::touch(&app);
-    #[cfg(desktop)]
-    crate::browser::server::notify_unlocked();
+    crate::session::opened(&app);
     // An empty vault: what iOS suggests is emptied with it.
     crate::credential_identities::publish(&app);
     // And open at the app level: sealed under the app key, which the check
@@ -667,6 +666,7 @@ async fn restore_workspace(
                 item_count: None,
                 color: None,
                 agents: false,
+                server: None,
             };
             return install_closed(state, &root, workspace, previous_active, previous, account);
         }
@@ -691,6 +691,7 @@ async fn restore_workspace(
             item_count: None,
             color: None,
             agents: false,
+            server: None,
         });
         registry.active = id.clone();
         Ok(())
@@ -725,8 +726,7 @@ async fn restore_workspace(
     // starts here — and it is open at the app level, sealed under the app key
     // when the ring holds one.
     crate::autolock::touch(app);
-    #[cfg(desktop)]
-    crate::browser::server::notify_unlocked();
+    crate::session::opened(app);
     crate::credential_identities::publish(app);
     appkey::adopt(app, &id, &material);
     super::autojoin::with_password(app, join);
@@ -956,7 +956,7 @@ pub async fn workspace_delete(
 
     // Asked before the derive, so the only refusals the user can do nothing
     // about cost them no Argon2id wait.
-    Registry::load(&root).without(&id)?;
+    workspace::deletion_of(&root, &Registry::load(&root), &id)?;
 
     // Under the target's own failed-attempt backoff, exactly as `unlock` runs
     // under the open workspace's. This command proves a password on demand and
@@ -993,7 +993,7 @@ pub async fn workspace_delete(
     let (ended_session, was_primary, applied) = {
         let _paths = state.workspace_lock.lock().unwrap();
         let registry = Registry::load(&root);
-        let deletion = registry.without(&id)?;
+        let deletion = workspace::deletion_of(&root, &registry, &id)?;
         // The claim above is this delete's own, so only the flows beside it are
         // asked about here.
         guard_sync_flows_idle(&state)?;
@@ -1370,6 +1370,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
                 Workspace {
                     id: "b2c3".into(),
@@ -1378,6 +1379,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
             ],
         }
@@ -1531,6 +1533,7 @@ mod tests {
             item_count: None,
             color: None,
             agents: false,
+            server: None,
         };
 
         let refused = install_closed(

@@ -50,6 +50,15 @@ pub async fn unlock(
     // during a password change can leave the DB and the sidecar disagreeing, and
     // the rollback has to land before either is consulted.
     auth::recover_interrupted_rekey(&app, &state)?;
+    // An org lockbox has no password: its master is the one its server handed
+    // this device, held in the ring once the main lockbox is open. Said before
+    // the backoff is consulted, since a password typed here is not a guess at
+    // anything, and before Argon2id would fail on a descriptor it cannot run.
+    if let Some(holder) = crate::org::lockboxes::held_by_server(&app)? {
+        return Err(Error::Other(format!(
+            "this lockbox's key is held by {holder}; unlock your main lockbox and it opens with it"
+        )));
+    }
 
     let lockout = LockoutState::load(&app)?;
     let now = auth::now_ms();
@@ -100,8 +109,7 @@ pub async fn unlock(
             // whose bundle failed, a page left untouched) would otherwise leave
             // the vault open for good.
             crate::autolock::touch(&app);
-            #[cfg(desktop)]
-            crate::browser::server::notify_unlocked();
+            crate::session::opened(&app);
             // And iOS suggests this vault's logins from here on.
             crate::credential_identities::publish(&app);
             seed_vault_name(&app, &state);
@@ -273,8 +281,7 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     // extension hears of it, iOS is handed its logins, and a vault named before
     // names lived inside it takes the registry's label.
     crate::autolock::touch(&app);
-    #[cfg(desktop)]
-    crate::browser::server::notify_unlocked();
+    crate::session::opened(&app);
     crate::credential_identities::publish(&app);
     seed_vault_name(&app, &state);
     // The app key opens the app: every workspace sealed under it joins the ring.
@@ -376,6 +383,15 @@ pub async fn change_master_password(
     // the session this one is still holding.
     let _step = super::setup::begin_step(&state)?;
     let root = storage::root_dir(&app)?;
+    // The master password is the main lockbox's; an org lockbox's key is its
+    // server's, and a change made from inside one would have nothing to
+    // re-key. The workspaces beside it are reached from the main lockbox.
+    if let Some(holder) = crate::org::lockboxes::held_by_server(&app)? {
+        return Err(Error::Other(format!(
+            "this lockbox's key is held by {holder}; change the master password from your main \
+             lockbox"
+        )));
+    }
 
     // Bring the account up to date under the password being replaced, so the
     // fewest edits are left for another device to push under it afterwards —
@@ -593,6 +609,11 @@ pub(super) async fn restore_enrollment(app: &AppHandle, material: Zeroizing<Vec<
 // copy is wrapped under, so replacing it once the rest are in the ring under
 // their new keys reseals every sidecar in a single pass
 // (`appkey::replace_app_key`) rather than once per workspace.
+//
+// An org lockbox is not on the password at all — its master is its server's
+// (`org::lockboxes`), sealed under the app key like the rest — so it is left
+// out rather than reported: the change reaches its sidecar through the
+// primary's re-seal, and its key is not the user's to change.
 async fn rekey_beside(
     app: &AppHandle,
     state: &AppState,
@@ -606,6 +627,9 @@ async fn rekey_beside(
         .into_iter()
         .map(|workspace| workspace.id)
         .filter(|id| id != active)
+        .filter(|id| {
+            !crate::org::lockboxes::is_org_lockbox_dir(&crate::workspace::dir_of(root, id))
+        })
         .collect();
     ids.sort_by_key(|id| id == PRIMARY_ID);
 

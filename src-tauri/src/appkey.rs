@@ -230,6 +230,12 @@ fn open_all_in(state: &AppState, root: &Path, app_key: &[u8]) {
         }
     }
 
+    // The install-level files sealed under the app key — the server
+    // connections, the enrollment key — are read by this key from here on;
+    // one it does not open was sealed under a key this device no longer has,
+    // and goes now, as a stale sidecar does above.
+    crate::org::remove_stale(root, app_key);
+
     // Into the ring under the session guards again, and only if the session is
     // still live: a lock that landed during the reads above cleared the ring,
     // and what was read before it does not undo that. The app key is still the
@@ -265,17 +271,27 @@ pub fn replace_app_key(app: &AppHandle, app_key: &[u8]) {
 
 fn replace_app_key_in(state: &AppState, root: &Path, app_key: &[u8]) {
     let _sidecars = sidecars(state);
-    let others = {
+    let (replaced, others) = {
         let session = state.session.lock().unwrap();
         if !session.is_live() {
             return;
         }
         let mut ring = state.keyring.lock().unwrap();
+        // The key being retired, read before the ring takes the new one: the
+        // install-level files are sealed under it and open under nothing else.
+        let replaced = ring.app_key();
         ring.insert(PRIMARY_ID, app_key);
-        ring.others()
+        (replaced, ring.others())
     };
     for (id, material) in others {
         seal(root, &id, app_key, &material);
+    }
+    // The server connections and the enrollment key follow the sidecars
+    // onto the new app key. A ring that held no app key — the primary opened
+    // by nothing this session — leaves them under the old one, and they go
+    // as stale at the next primary unlock.
+    if let Some(replaced) = replaced {
+        crate::org::reseal_under(root, &replaced, app_key);
     }
 }
 
@@ -357,7 +373,7 @@ pub fn forget(app: &AppHandle, id: &str, promoted: Option<&str>) {
     let state = app.state::<AppState>();
     let _sidecars = sidecars(&state);
     let mut ring = state.keyring.lock().unwrap();
-    ring.remove(id);
+    let removed = ring.remove(id);
     let Some(promoted) = promoted else {
         return;
     };
@@ -373,6 +389,14 @@ pub fn forget(app: &AppHandle, id: &str, promoted: Option<&str>) {
     };
     for (id, material) in others {
         seal(&root, &id, &app_key, &material);
+    }
+    // A promotion only ever follows the primary's deletion, so what was just
+    // removed from the ring is the app key the install-level files are
+    // sealed under: they move onto the promoted key while the old one is
+    // still here to open them. Deleted from the lock screen, with no key in
+    // the ring, they go as stale at the next primary unlock instead.
+    if let Some(replaced) = removed {
+        crate::org::reseal_under(&root, &replaced, &app_key);
     }
 }
 
@@ -542,6 +566,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 })
                 .collect(),
         };
@@ -574,6 +599,46 @@ mod tests {
         assert_eq!(&**ring.get("y").unwrap(), Y_KEY, "opened from its sidecar");
         drop(ring);
         assert_eq!(sealed_under(&root, "x", OLD_KEY), X_KEY, "sealed now");
+    }
+
+    // The server connections and the enrollment key are sealed under the app
+    // key too: a password change carries them onto the new one, and a primary
+    // unlock under a key that does not open them removes what is left.
+    #[test]
+    fn a_password_change_reseals_the_org_files_and_a_primary_unlock_drops_stale_ones() {
+        use crate::org::{connections, enrollment};
+
+        let root = tmp_root();
+        let state = live_state(&root);
+        state.keyring.lock().unwrap().insert(PRIMARY_ID, OLD_KEY);
+        connections::upsert(
+            &root,
+            OLD_KEY,
+            connections::tests::connection("https://a.example", "a1"),
+        )
+        .unwrap();
+        let minted = enrollment::load_or_create(&root, OLD_KEY).unwrap();
+
+        replace_app_key_in(&state, &root, NEW_KEY);
+
+        assert!(connections::load(&root, OLD_KEY).is_err());
+        assert_eq!(
+            connections::load(&root, NEW_KEY).unwrap()[0].access_token,
+            "a1"
+        );
+        assert_eq!(
+            enrollment::load_or_create(&root, NEW_KEY)
+                .unwrap()
+                .public_key_b64(),
+            minted.public_key_b64()
+        );
+
+        // The primary deleted and another key proved in its place: the files
+        // the old key sealed do not open, and are not left to fail forever.
+        state.keyring.lock().unwrap().clear();
+        open_all_in(&state, &root, X_KEY);
+        assert!(!root.join(storage::SERVERS_FILE).exists());
+        assert!(!root.join(storage::ENROLLMENT_KEY_FILE).exists());
     }
 
     #[test]

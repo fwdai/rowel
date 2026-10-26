@@ -92,6 +92,12 @@ fn join_all(app: &AppHandle, password: &str) -> Result<()> {
         };
         (account, own, tokens)
     };
+    // A Rowel Server's lockboxes are not under any password: they are added
+    // from its Settings section with the key it hands this device
+    // (`commands::org`), so there is nothing here for a password to open.
+    if tokens.provider == sync::Provider::RowelServer {
+        return Ok(());
+    }
     let started = Instant::now();
 
     // No lock held from here on: everything below is network or the new
@@ -278,6 +284,7 @@ fn join_one(
         item_count: None,
         color: None,
         agents: false,
+        server: None,
     };
     if let Err(e) = account.commit(state, root, &vault_id, workspace) {
         discard(root, &id);
@@ -432,6 +439,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
                 Workspace {
                     id: "b2c3".into(),
@@ -440,6 +448,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
             ],
         };

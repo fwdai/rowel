@@ -357,7 +357,7 @@ pub(super) async fn sync_before_rekey(app: &AppHandle) -> Option<RunClaim> {
         if configured {
             if let Some((cryptor, marker_key)) = session_keys(&state) {
                 started(&app);
-                report(&app, sync::run(&app, cryptor, marker_key));
+                report(&app, run_following_rotation(&app, cryptor, marker_key));
             }
         }
         Ok(Some(claim))
@@ -796,11 +796,37 @@ fn launch(app: &AppHandle) {
     spawn_run(app, claim, cryptor, marker_key);
 }
 
+/// [`sync::run`], and — when the open lockbox is an org lockbox and the run
+/// found the account's pack under a later key epoch than the sidecar's,
+/// which is its server having rotated the master — the key fetched from the
+/// server again, the lockbox re-keyed onto it as a password change would be
+/// (`commands::org`), and the run once more on the new key. Any other
+/// epoch mismatch, or a rotation that cannot be followed, is the run's own
+/// error. Blocking, on the run's thread, with its claim held.
+fn run_following_rotation(
+    app: &AppHandle,
+    cryptor: Cryptor,
+    marker_key: sync::MarkerKey,
+) -> Result<sync::engine::SyncOutcome> {
+    let outcome = sync::run(app, cryptor, marker_key);
+    if !matches!(outcome, Err(Error::PasswordChangedRemotely))
+        || sync::sealed_provider(app) != sync::Provider::RowelServer
+    {
+        return outcome;
+    }
+    super::org::rotate_open_lockbox(app)?;
+    let state = app.state::<AppState>();
+    let Some((cryptor, marker_key)) = session_keys(&state) else {
+        return Err(Error::Locked);
+    };
+    sync::run(app, cryptor, marker_key)
+}
+
 fn spawn_run(app: &AppHandle, claim: RunClaim, cryptor: Cryptor, marker_key: sync::MarkerKey) {
     let app = app.clone();
     super::detached(move || {
         started(&app);
-        report(&app, sync::run(&app, cryptor, marker_key));
+        report(&app, run_following_rotation(&app, cryptor, marker_key));
         // Release first, then look: a request that found the claim held raised
         // the flag before it looked, so whichever order the two land in, one of
         // them sees the other (see `AppState::sync_rerun`). `launch` rather

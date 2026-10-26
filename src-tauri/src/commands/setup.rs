@@ -546,8 +546,7 @@ fn adopt(
             // it goes on the idle clock here rather than waiting for the
             // frontend's first activity ping.
             crate::autolock::touch(app);
-            #[cfg(desktop)]
-            crate::browser::server::notify_unlocked();
+            crate::session::opened(app);
             crate::credential_identities::publish(app);
             crate::appkey::adopt(app, &crate::workspace::active_id(app), &material);
             take_pending(state);
