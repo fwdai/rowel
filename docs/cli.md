@@ -339,9 +339,14 @@ for a header grant). With no `--ref` it copies.
 The redactor replaces every occurrence of a released value with its
 placeholder, in the value's exact bytes and in the forms a program commonly
 prints it: standard and URL-safe base64 (padded or not), percent-encoded
-(RFC 3986, upper-case hex) and JSON-escaped. It streams, carrying over at most
-one byte less than the longest form between reads, so a value split across
-two reads is still caught. It is a safety net, not a guarantee: a value
+(RFC 3986, upper-case hex) and JSON-escaped. It streams at a constant lag:
+the last bytes it has read, one fewer than the longest form, are always held
+until more output comes or the stream ends, whatever they are, so a value
+split across two reads is still caught and how soon output appears never
+says whether it began like a value. Output therefore trails by up to that
+many bytes (a prompt the program prints may wait for the next line or for
+the end), and there is no flush on a timer: one would print a slowly printed
+value in pieces. It is a safety net, not a guarantee: a value
 hashed, truncated, printed in parts, or transformed any other way passes.
 **Values shorter than 6 bytes are not matched at all** — a needle that short
 would redact ordinary text.

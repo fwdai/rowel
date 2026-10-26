@@ -224,7 +224,9 @@ section. In short:
 - **The redactor is a safety net, not a guarantee.** It catches the value
   printed as is or in the common encodings (base64, percent-encoding, JSON
   escaping). A value hashed, truncated, split or shown as pixels passes, and
-  values shorter than six bytes are never matched.
+  values shorter than six bytes are never matched. It always holds back
+  the last bytes of output, one fewer than the longest form of a value, until
+  more comes or the command ends, so streamed output trails a little.
 - **A logged-in session is a session.** Rowel signs the agent's browser out of
   the site when the grant ends. While the grant is live, an agent that controls
   the browser can use the session like any logged-in user.
