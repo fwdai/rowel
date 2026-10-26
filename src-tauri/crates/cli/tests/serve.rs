@@ -417,6 +417,9 @@ fn serve_mcp_approve_and_proxy_end_to_end() {
         .unwrap()
         .to_string();
     let body: Value = runtime.block_on(async {
+        // The CLI installs the ring provider in its own process; this one
+        // builds a client too, under the same `rustls-no-provider` reqwest.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = reqwest::Client::new();
         let response = client
             .get(format!("{proxy_base}/http/{upstream_host}/echo"))

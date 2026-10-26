@@ -16,7 +16,7 @@ use interprocess::local_socket::{prelude::*, Listener, ListenerOptions, RecvHalf
 use crate::actions::{Connection, Host};
 use crate::frame;
 use crate::signal::ROWEL_SIGNAL;
-use crate::socket::{socket_name, SOCKET_FILE};
+use crate::socket::socket_name;
 
 /// A connection's writing end, shared by the thread serving it and the lock
 /// signals, so a signal never lands inside a reply.
@@ -70,7 +70,7 @@ pub fn bind(root: &Path) -> io::Result<Listener> {
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(
-            root.join(SOCKET_FILE),
+            root.join(crate::socket::SOCKET_FILE),
             std::fs::Permissions::from_mode(0o600),
         )?;
     }
