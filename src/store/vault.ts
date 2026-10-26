@@ -85,7 +85,14 @@ const findEntry = (state: Pick<VaultState, 'items' | 'archive'>, id: string | nu
 // A batch has no current entry, so everything that acts on the open one — ⌘E,
 // the copy chords, a dropped file, the palette — stands down while it is up.
 export const selectCurrent = (state: VaultState): EntryMeta | null =>
-  state.picked.size ? null : findEntry(state, state.currentId)
+  selectBatch(state) ? null : findEntry(state, state.currentId)
+
+/**
+ * A batch is up. The one test of it, for every surface that changes with it —
+ * the bar, the detail pane, the list's padding, the phone's push — so none can
+ * think a batch is up while another has let it go.
+ */
+export const selectBatch = (state: VaultState): boolean => state.picked.size > 0
 
 export const useCurrentEntry = () => useVault(selectCurrent)
 
@@ -119,7 +126,7 @@ export const newEntry = (type: EntryType, prefill?: Record<string, string>) =>
 
 // What is picked before this gesture: the batch, or else the open row.
 const pickedIn = (state: VaultState, order: readonly string[]): string[] =>
-  order.filter(id => (state.picked.size ? state.picked.has(id) : id === state.currentId))
+  order.filter(id => (selectBatch(state) ? state.picked.has(id) : id === state.currentId))
 
 // Two rows or more are a batch, with the keyboard on `cursor`; one is simply
 // that row selected; none is nothing open.
@@ -162,11 +169,27 @@ export const pickAll = (order: readonly string[]) =>
   })
 
 /**
- * End the batch (Esc, a new query) on the row the keyboard is on, opening it:
- * the list keeps its place rather than dropping back to nothing.
+ * Hold the batch to the rows the list shows, whatever took the others out of
+ * view: a query, a filter, a sync that unstarred or retagged them, a delete.
+ * The list calls it each time what it shows changes (List/Manager), so a batch
+ * is always a pick out of what is on screen — one row left is simply
+ * selected, none is nothing open.
+ */
+export const keepPicked = (order: readonly string[]) =>
+  useVault.setState(state => {
+    const kept = new Set(order.filter(id => state.picked.has(id)))
+    if (kept.size === state.picked.size) return {}
+    const { currentId, anchor } = state
+    const cursor = currentId !== null && order.includes(currentId) ? currentId : [...kept][0]
+    return settle(kept, cursor, anchor !== null && order.includes(anchor) ? anchor : null)
+  })
+
+/**
+ * End the batch (Esc, the bar's close) on the row the keyboard is on, opening
+ * it: the list keeps its place rather than dropping back to nothing.
  */
 export const clearPicked = () =>
-  useVault.setState(state => (state.picked.size ? NO_BATCH : {}))
+  useVault.setState(state => (selectBatch(state) ? NO_BATCH : {}))
 
 export const setPrefill = (prefill: Record<string, string>) => useVault.setState({ prefill })
 export const clearPrefill = () => useVault.setState({ prefill: null })
@@ -194,18 +217,11 @@ export const startEntry = (type: EntryType, prefill?: Record<string, string>) =>
 
 // --- rows ---------------------------------------------------------------------
 
-const holdsAll = (picked: ReadonlySet<string>, ...lists: EntryMeta[][]) => {
-  if (!picked.size) return true
-  const ids = new Set(lists.flat().map(row => row.id))
-  return [...picked].every(id => ids.has(id))
-}
-
 // The list is replaced wholesale by a sync merge as well as by our own writes.
 // A selection the incoming rows no longer have is dropped, and the edit with
 // it: an edit is an edit *of* the selection, and the phone (whose form is a
 // whole screen) would otherwise draw a form with no subject and no way back.
-// A batch that lost a row is let go whole rather than quietly shrunk under the
-// user's next action.
+// A batch is held to what the list then shows by the list itself (`keepPicked`).
 export const setEntries = (items: EntryMeta[]) =>
   useVault.setState(state => {
     const kept = findEntry({ items, archive: state.archive }, state.currentId) !== null
@@ -213,7 +229,6 @@ export const setEntries = (items: EntryMeta[]) =>
       items,
       currentId: kept ? state.currentId : null,
       editing: kept && state.editing,
-      ...(holdsAll(state.picked, items, state.archive) ? {} : NO_BATCH),
       revision: state.revision + 1
     }
   })

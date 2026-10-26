@@ -1,5 +1,5 @@
 import type { KeyboardEvent } from 'react'
-import { useVault, setCurrentEntry, pickAll, pickRange } from '@/store'
+import { useVault, selectBatch, setCurrentEntry, pickAll, pickRange } from '@/store'
 import { copySecret } from '@/services/entries'
 import { useLayout } from '@/hooks/useLayout'
 import { keyCode } from '@/utils/keys'
@@ -14,7 +14,7 @@ import { useVisibleEntries } from '../List/useVisibleEntries'
 export const useListKeys = () => {
   const entries = useVisibleEntries()
   const currentId = useVault(state => state.currentId)
-  const batching = useVault(state => state.picked.size > 0)
+  const batching = useVault(selectBatch)
   // The phone picks no batches (see List/Manager).
   const batch = useLayout() === 'wide'
   // Where the keyboard sits in the list: -1 when nothing is selected, or when a

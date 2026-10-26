@@ -1,4 +1,4 @@
-import { useVault, useUi } from '@/store'
+import { useVault, useUi, selectBatch } from '@/store'
 import { useVisualViewport, viewportStyle } from '@/hooks/useVisualViewport'
 import Attached from '../Generator/Attached'
 import Entry from './Entry'
@@ -33,7 +33,7 @@ export default function Compact() {
   const writing = useVault(state => state.creating !== null || state.editing)
   // A batch picked on the wide shell opens nothing: the window narrowed under
   // it lands on the list, where a tap ends it.
-  const entry = useVault(state => state.currentId !== null && !state.picked.size)
+  const entry = useVault(state => state.currentId !== null && !selectBatch(state))
   const settings = useUi(state => state.settings)
   // The standalone generator is a root here. Opened from a password row it
   // carries somewhere to put the value, and stays the overlay it is on the

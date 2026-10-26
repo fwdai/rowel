@@ -1,6 +1,6 @@
-import { useMemo } from 'react'
+import { useLayoutEffect, useMemo } from 'react'
 import type { EntryMeta } from '@/api/types'
-import { useUi } from '@/store'
+import { useUi, keepPicked } from '@/store'
 import { useLayout } from '@/hooks/useLayout'
 import Item from './Item'
 import Section from './Section'
@@ -26,6 +26,10 @@ export default function Manager() {
   // Batches are the wide shell's: the phone has no modifier keys to pick
   // with, and no bar to act on what was picked.
   const batch = useLayout() === 'wide'
+  // This is the one place that knows what the list shows, so it is the one
+  // that holds a batch to it — after a query, a filter or a sync alike. A
+  // layout effect, so a frame with rows picked out of sight is never painted.
+  useLayoutEffect(() => keepPicked(order), [order])
 
   if (entries.length === 0) return <ListEmpty />
 

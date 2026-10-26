@@ -1,4 +1,4 @@
-import { useVault, useCurrentEntry } from '@/store'
+import { useVault, useCurrentEntry, selectBatch } from '@/store'
 import { useVariant } from '../Empty/variant'
 import { DetailEmpty } from '../Empty'
 import Summary from '../Batch/Summary'
@@ -11,7 +11,7 @@ export default function Aside() {
   // The kind being created, or null. An edit takes its kind from the entry.
   const draftType = useVault(state => state.creating)
   const editing = useVault(state => state.editing)
-  const batch = useVault(state => state.picked.size > 0)
+  const batch = useVault(selectBatch)
   const entry = useCurrentEntry()
   const variant = useVariant()
 

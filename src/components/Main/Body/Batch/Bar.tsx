@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { EntryMeta } from '@/api/types'
 import {
   useUi,
   useVault,
@@ -12,6 +11,7 @@ import {
 } from '@/store'
 import EscClose from '@/components/elements/EscClose'
 import Actions from './Actions'
+import { usePickedRows } from './usePickedRows'
 
 export type Run = (op: (ids: string[]) => Promise<void>) => void
 
@@ -21,8 +21,9 @@ const typing = (target: EventTarget | null) =>
 // The batch's action bar, floated over the foot of the list column: the
 // pointer is already there, picking rows, so the verbs come to it rather than
 // sit across the window. The count, the verbs, and the way out.
-export default function Bar({ rows }: { rows: EntryMeta[] }) {
+export default function Bar() {
   const { t } = useTranslation()
+  const rows = usePickedRows()
   const picked = useVault(state => state.picked)
   const archived = useUi(state => state.view === 'archive')
   // Armed for this pick and no other: picking anything else disarms.
@@ -55,7 +56,10 @@ export default function Bar({ rows }: { rows: EntryMeta[] }) {
   // time — the armed verb first, then the batch.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isModalOpen() || busy) return
+      // A held key is one press, however long it repeats: the press that
+      // confirms the armed verb, like the Esc that lets the batch go after
+      // the one that disarmed, has to be a press of its own.
+      if (event.repeat || isModalOpen() || busy) return
       if (event.key === 'Escape') {
         if (armed) setArmedFor(null)
         else clearPicked()

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import Body from '@/components/Main/Body'
 import NoticeToast from '@/components/elements/NoticeToast'
-import { useVault, useUi, setView, setFilterQuery } from '@/store'
+import { useVault, useUi, setView, setFilterQuery, setFilterType, setEntries } from '@/store'
 import { withEntries, loginMeta, deletedMeta } from './utils'
 import { calls, mockCommand } from './ipc'
 
@@ -114,14 +114,51 @@ describe('picking a batch', () => {
     expect(useVault.getState().picked.size).toBe(0)
   })
 
-  it('a new query ends the batch', async () => {
+})
+
+// A batch is always a pick out of what the list shows, whatever changed what
+// it shows — and it is never left up with fewer than two rows in it.
+describe('holding the batch to the list', () => {
+  const picked = () => [...useVault.getState().picked].sort()
+
+  it('a filter keeps the picked rows it still shows, and one left is just selected', async () => {
+    withEntries([
+      ...entries.slice(0, 2),
+      loginMeta({ id: 'charlie', title: 'Charlie', type: 'note' }),
+      loginMeta({ id: 'delta', title: 'Delta', type: 'note' })
+    ])
     renderBody()
     await user.click(row('Alpha'))
-    await cmdClick('Bravo')
+    await user.keyboard('{Meta>}a{/Meta}')
+    expect(picked()).toEqual(['alpha', 'bravo', 'charlie', 'delta'])
 
-    setFilterQuery('a')
+    act(() => setFilterType('login'))
+    expect(picked()).toEqual(['alpha', 'bravo'])
+    expect(screen.getByTestId('batch-count')).toHaveTextContent('2 selected')
 
-    await waitFor(() => expect(screen.queryByTestId('batch-bar')).not.toBeInTheDocument())
+    act(() => setFilterQuery('Bravo'))
+    expect(picked()).toEqual([])
+    expect(useVault.getState().currentId).toBe('bravo')
+    expect(screen.queryByTestId('batch-bar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('batch-summary')).not.toBeInTheDocument()
+  })
+
+  it('a sync that unstars picked rows in Favorites takes them out of the batch', async () => {
+    const starred = entries.map(entry => ({ ...entry, favorite: true }))
+    withEntries(starred)
+    renderBody()
+    act(() => setView('favorites'))
+    await user.click(row('Alpha'))
+    await shiftClick('Charlie')
+    expect(picked()).toEqual(['alpha', 'bravo', 'charlie'])
+
+    // Another device unstarred two of them; the merge replaces the rows.
+    act(() => setEntries(starred.map(e => (e.id === 'bravo' || e.id === 'charlie' ? { ...e, favorite: false } : e))))
+
+    expect(picked()).toEqual([])
+    expect(selected()).toEqual(['Alpha'])
+    expect(screen.queryByTestId('batch-bar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('batch-summary')).not.toBeInTheDocument()
   })
 })
 
@@ -151,6 +188,25 @@ describe('acting on a batch', () => {
     expect(screen.getByTestId('batch-archive-confirm')).toBeInTheDocument()
 
     await user.keyboard('{Escape}')
+    expect(screen.getByTestId('batch-archive')).toBeInTheDocument()
+    expect(selected()).toEqual(['Alpha', 'Bravo'])
+  })
+
+  // The OS repeats a held key; a repeat is not the second press a
+  // destructive verb waits for, nor the second Esc that lets the batch go.
+  it('never confirms or lets go on a held key', async () => {
+    renderBody()
+    await user.click(row('Alpha'))
+    await cmdClick('Bravo')
+
+    fireEvent.keyDown(window, { key: 'Backspace', metaKey: true })
+    fireEvent.keyDown(window, { key: 'Backspace', metaKey: true, repeat: true })
+    fireEvent.keyDown(window, { key: 'Backspace', metaKey: true, repeat: true })
+    expect(screen.getByTestId('batch-archive-confirm')).toBeInTheDocument()
+    expect(calls('delete_entry')).toHaveLength(0)
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(window, { key: 'Escape', repeat: true })
     expect(screen.getByTestId('batch-archive')).toBeInTheDocument()
     expect(selected()).toEqual(['Alpha', 'Bravo'])
   })

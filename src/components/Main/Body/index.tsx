@@ -1,4 +1,4 @@
-import { useVault } from '@/store'
+import { useVault, selectBatch } from '@/store'
 import { cx } from '@/utils/cx'
 import ListColumn from './ListColumn'
 import SortMenu from './List/SortMenu'
@@ -11,7 +11,7 @@ import DetailPane from './DetailPane'
 // compete with, or navigate away from, an unsaved draft.
 export default function Body() {
   const writing = useVault(state => state.editing || !!state.creating)
-  const batch = useVault(state => state.picked.size > 0)
+  const batch = useVault(selectBatch)
 
   return (
     <>

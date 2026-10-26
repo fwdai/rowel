@@ -1,6 +1,6 @@
 import { useEffect, useRef, type MouseEvent } from 'react'
 import { cx } from '@/utils/cx'
-import { useVault, setCurrentEntry } from '@/store'
+import { useVault, selectBatch, setCurrentEntry } from '@/store'
 import type { EntryMeta } from '@/api/types'
 import { kindOf } from '@/kinds'
 import { useDates } from '@/hooks/useDates'
@@ -28,7 +28,7 @@ export default function Item({ entry, onClick }: Props) {
   const current = useVault(state => state.currentId === entry.id)
   // In a batch every picked row wears the selection; otherwise the open one.
   const selected = useVault(state =>
-    state.picked.size ? state.picked.has(entry.id) : state.currentId === entry.id
+    selectBatch(state) ? state.picked.has(entry.id) : state.currentId === entry.id
   )
   // Read the flag off the audit the vault already ran on unlock — never score
   // a password during a row render (see src/hooks/useStrength.ts).

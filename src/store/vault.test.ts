@@ -23,7 +23,8 @@ import {
   setFilterType,
   lockVault,
   togglePicked,
-  pickAll
+  pickAll,
+  keepPicked
 } from './index'
 
 const meta = (id: string, title = id): EntryMeta =>
@@ -154,13 +155,28 @@ describe('selection', () => {
     expect(current()).toBeNull()
   })
 
-  it('lets a batch go whole when a list replacement drops one of its rows', () => {
+  // `keepPicked` is what the list calls with the rows it shows: a batch never
+  // holds a row out of sight, and never stays up with fewer than two.
+  it('holds a batch to the rows shown, settling to a selection when one is left', () => {
     setEntries([meta('a'), meta('b'), meta('c')])
     pickAll(['a', 'b', 'c'])
 
-    setEntries([meta('a'), meta('c')])
+    keepPicked(['a', 'c'])
+    expect([...useVault.getState().picked].sort()).toEqual(['a', 'c'])
+
+    keepPicked(['c'])
+    expect(useVault.getState().picked.size).toBe(0)
+    expect(current()?.id).toBe('c')
+  })
+
+  it('opens nothing when a batch has no row left in view', () => {
+    setEntries([meta('a'), meta('b')])
+    pickAll(['a', 'b'])
+
+    keepPicked([])
 
     expect(useVault.getState().picked.size).toBe(0)
+    expect(useVault.getState().currentId).toBeNull()
   })
 })
 
