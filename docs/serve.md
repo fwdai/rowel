@@ -259,3 +259,5 @@ broker is doing at the time, including waiting at a password prompt.
   extension handles the refusal.
 - No server mode yet (`--server`, tenants, workload identity): that is the
   Rowel Server of spec `07`.
+
+What a Rowel Server speaks, as the app and the CLI already speak it, is [`docs/server-api.md`](./server-api.md).
