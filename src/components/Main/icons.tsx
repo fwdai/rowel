@@ -61,6 +61,7 @@ import {
   RefreshCw,
   ScanLine,
   Search,
+  Server,
   Settings,
   Settings2,
   Share2,
@@ -216,6 +217,9 @@ export const GlobeGlyph = glyph(Globe, 16)
 export const ActivityGlyph = glyph(Activity, 16)
 // Settings › Lockboxes: one sealed container among several in the vault.
 export const BoxGlyph = glyph(Box, 16)
+// A company's Rowel Server: the row that connects to one, each connection's
+// card, and the provider mark of a lockbox synced through one.
+export const ServerGlyph = glyph(Server, 16)
 // Settings › General: the app's own preferences, as sliders rather than the gear
 // the rail already uses for Settings as a whole.
 export const GeneralGlyph = glyph(Settings2, 16)

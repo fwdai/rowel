@@ -317,6 +317,20 @@ const DEFAULTS: Record<string, Handler> = {
   agent_revoke_rule: () => undefined,
   agent_end_grant: () => undefined,
 
+  // A Rowel Server: this device's key as a fingerprint, and nothing connected.
+  // A connect's outcome arrives as `org:connect`, never through its promise; a
+  // spec about a connection seeds `org_connections` and the lists under it.
+  org_enrollment_fingerprint: () => '1a92 f238 52dc 908d',
+  org_connections: () => [],
+  org_connect: () => undefined,
+  org_cancel_connect: () => undefined,
+  org_disconnect: () => undefined,
+  org_devices: () => [],
+  org_approve_device: () => undefined,
+  org_lockboxes: () => [],
+  org_add_lockbox: () => 'w-org',
+  org_refresh_lockbox_key: () => undefined,
+
   // The command line tool: a dev build, with nothing bundled beside it. A
   // spec about the Install button mocks a bundled one.
   cli_status: () => ({ bundled: null, installed: null, installDir: null }),

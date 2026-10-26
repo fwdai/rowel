@@ -1,15 +1,19 @@
 /**
- * The cloud a workspace syncs through. Serialized as Rust's `Provider` enum is
+ * Where a workspace syncs through. Serialized as Rust's `Provider` enum is
  * (camelCase), and named on every connect command, on `sync:status`, on each
- * workspace in `app_status` and on every pack a probe lists.
+ * workspace in `app_status` and on every pack a probe lists. The clouds are
+ * accounts the user owns; `rowelServer` is a company's server, which an org
+ * lockbox syncs through and which is joined from Settings › Lockboxes rather
+ * than picked from a connect button.
  */
-export type Provider = 'googleDrive' | 'dropbox' | 'iCloud'
+export type Provider = 'googleDrive' | 'dropbox' | 'iCloud' | 'rowelServer'
 
 /**
- * Every provider the app knows, in the order the pickers offer them. Which of
- * them *this* build can connect is the backend's answer (`AppStatus.providers`,
- * read through `useProviders`): iCloud exists only on an Apple build signed for
- * it, and the frontend does not second-guess that with a platform check.
+ * Every cloud the pickers may offer, in their order. Which of them *this* build
+ * can connect is the backend's answer (`AppStatus.providers`, read through
+ * `useProviders`): iCloud exists only on an Apple build signed for it, and the
+ * frontend does not second-guess that with a platform check. A Rowel Server is
+ * never in that answer: there is no account to pick, only a URL to sign in at.
  */
 export const PROVIDERS: readonly Provider[] = ['googleDrive', 'dropbox', 'iCloud']
 
@@ -17,7 +21,8 @@ export const PROVIDERS: readonly Provider[] = ['googleDrive', 'dropbox', 'iCloud
 const NAMES: Record<Provider, string> = {
   googleDrive: 'Google Drive',
   dropbox: 'Dropbox',
-  iCloud: 'iCloud'
+  iCloud: 'iCloud',
+  rowelServer: 'Rowel Server'
 }
 
 export const providerName = (provider: Provider): string => NAMES[provider]

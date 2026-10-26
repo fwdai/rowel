@@ -203,6 +203,13 @@ export interface AgentGrantAsk {
   verify?: 'biometric' | 'password'
   candidates: GrantCandidate[]
   defaultStandingDays: number
+  /**
+   * The tenant's name when the ask was routed here by a Rowel Server rather
+   * than put by a local client: the agent runs against an org lockbox, and
+   * this app is the member's approval device. Nothing is filled here, so no
+   * session ends when such a grant does.
+   */
+  server?: string
 }
 
 /**

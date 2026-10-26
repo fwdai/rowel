@@ -8,8 +8,14 @@ interface Props {
   id: string
   title: string
   message?: string
-  /** The destructive verb, spelled out ("Remove attachment"), never "OK". */
+  /** The verb, spelled out ("Remove attachment", "Approve device"), never "OK". */
   action: string
+  /**
+   * The verb's ink: the warning red of something that cannot be undone, or
+   * the accent for a question that is weighty without being destructive — an
+   * approval the user is asked to check a fingerprint for.
+   */
+  tone?: 'danger' | 'accent'
   onConfirm: () => void
   onClose: () => void
   testid: string
@@ -34,6 +40,7 @@ export default function ConfirmSheet({
   title,
   message,
   action,
+  tone = 'danger',
   onConfirm,
   onClose,
   testid,
@@ -64,7 +71,7 @@ export default function ConfirmSheet({
             type="button"
             data-testid={actionTestid}
             onClick={onConfirm}
-            className={cx(ROW, 'font-medium text-bad')}
+            className={cx(ROW, 'font-medium', tone === 'danger' ? 'text-bad' : 'text-accent')}
           >
             {action}
           </button>

@@ -6,9 +6,11 @@ import {
   useUi,
   useVault,
   usePrefs,
+  useOrg,
   initialApp,
   initialUi,
   initialVault,
+  initialOrg,
   DEFAULT_PREFS
 } from '@/store'
 import type { AppStatus } from '@/api/app'
@@ -29,6 +31,7 @@ export const resetStores = () => {
   useApp.setState({ ...initialApp, status: appStatusDefault() }, true)
   useUi.setState(initialUi, true)
   useVault.setState(initialVault, true)
+  useOrg.setState(initialOrg, true)
   usePrefs.setState(DEFAULT_PREFS)
 }
 

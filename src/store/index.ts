@@ -6,6 +6,8 @@
  *             lives as long as the process, survives a lock.
  * - `vault` — the unlocked vault's rows, selection and audit; wiped on lock.
  * - `ui`    — surfaces open over the vault and the list's filters; wiped on lock.
+ * - `org`   — the Rowel Servers this device is connected to; read on demand,
+ *             kept across a lock.
  *
  * Each is a plain zustand store whose actions are exported module functions, so
  * they are called the same way from a component, a keyboard shortcut, a Tauri
@@ -18,3 +20,4 @@ export * from './vault'
 export * from './ui'
 export * from './workspace'
 export * from './account'
+export * from './org'
