@@ -1066,12 +1066,18 @@ broker is unlocked and nobody is there; that is the point of a broker on a CI
 runner, and the broker's own memory then holds the lockbox key for as long as
 it is unlocked, which the idle lock and `SIGTERM` end. The key file is the
 vault's key material and opens the lockbox to whoever reads it; it belongs
-outside the data directory, readable by the service user alone, or on a
-descriptor a service manager hands the process. Over the WebSocket the sealed
-channel is unchanged inside TLS; a client is let in only through an answered
-association, never by reaching the port. The broker refuses to start on a
-data directory the app is serving, so it cannot take the extension's socket
-over by accident.
+outside the data directory, readable by the service user alone — a systemd
+credential, or a descriptor a wrapper hands the process. Over the WebSocket
+the sealed channel is unchanged inside TLS; a client is let in only through
+an answered association, never by reaching the port, and what a stranger at
+the port can cost is bounded (a ceiling on open connections, a handshake
+deadline, the frame cap on a message, a short request queue per connection
+that stops the reader when full), so a flood occupies connections and
+nothing more. One broker runs per data directory, under an exclusive lock
+taken before any socket is bound, so a second instance cannot unlink the
+first one's control socket and leave it running unreachable; and the broker
+refuses to start on a data directory the app is serving, so it cannot take
+the extension's socket over by accident.
 
 **Residual risks, stated.**
 

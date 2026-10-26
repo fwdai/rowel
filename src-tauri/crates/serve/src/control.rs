@@ -13,6 +13,7 @@
 //! here, never over the broker's own socket or the WebSocket, and is wiped
 //! once compared.
 
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::thread;
@@ -28,6 +29,71 @@ use crate::host::{AnswerRequest, HeadlessHost, Status};
 
 /// The control socket's file on Unix, beside `browser.sock`.
 pub const SOCKET_FILE: &str = "serve.sock";
+
+/// The lock file that makes one broker per data directory.
+pub const LOCK_FILE: &str = "serve.lock";
+
+/// Why the data directory cannot be served.
+#[derive(Debug)]
+pub enum GuardError {
+    /// Another `rowel serve` holds the lock: it is running on this data
+    /// directory now.
+    Held,
+    Io(io::Error),
+}
+
+impl std::fmt::Display for GuardError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Held => f.write_str(
+                "another rowel serve is running on this data directory; stop it, or point this one at another --data-dir",
+            ),
+            Self::Io(e) => write!(f, "could not take the lock: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for GuardError {}
+
+impl From<io::Error> for GuardError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+/// One broker per data directory: an exclusive advisory lock on `serve.lock`
+/// in it, taken before any socket is touched and held for the life of the
+/// process (the kernel releases it when the process ends, however it ends).
+/// It is what lets `bind` replace a socket file without looking: a second
+/// broker never gets that far, so a file that is there is a dead process's.
+/// Without it a second `rowel serve` would unlink the first one's control
+/// socket on its way to failing to start, and leave the first running and
+/// unreachable by `rowel approve`.
+pub struct Guard {
+    _lock: File,
+}
+
+impl Guard {
+    pub fn take(root: &Path) -> Result<Self, GuardError> {
+        let path = root.join(LOCK_FILE);
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        match lock.try_lock() {
+            Ok(()) => Ok(Self { _lock: lock }),
+            Err(TryLockError::WouldBlock) => Err(GuardError::Held),
+            Err(TryLockError::Error(e)) => Err(GuardError::Io(e)),
+        }
+    }
+}
 
 /// The control socket in `root`: a file in it on Unix, on Windows a named
 /// pipe whose name carries a digest of `root`, as the broker's own is
@@ -62,9 +128,9 @@ pub enum Request {
     Status,
 }
 
-/// The listener at `root`'s control socket, owner-only, a stale file a
-/// crashed process left behind replaced — as `server::bind` binds the
-/// broker's.
+/// The listener at `root`'s control socket, owner-only. A file already there
+/// is replaced, which is safe only behind `Guard::take`: with the lock held,
+/// the file is one a dead process left behind.
 pub fn bind(root: &Path) -> io::Result<Listener> {
     let listener = ListenerOptions::new()
         .name(socket_name(root)?)

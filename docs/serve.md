@@ -30,10 +30,17 @@ agents it names while the broker is unlocked, with no one in the loop; that
 is the point of a broker on a CI runner, and it is also the whole of what a
 process on that box can get by speaking as the agent. The key file is the
 vault's key: whoever reads it opens the lockbox. Keep it outside the data
-directory, readable by the service user alone, and prefer `--key-fd` under a
-service manager that hands credentials as descriptors. Nothing is served
-from a sealed lockbox; `SIGTERM`, `rowel admin lock` and the idle lock seal
-it, and every grant goes with the seal.
+directory, readable by the service user alone — under systemd, as a
+credential the unit loads (below). Nothing is served from a sealed lockbox;
+`SIGTERM`, `rowel admin lock` and the idle lock seal it, and every grant
+goes with the seal.
+
+**One broker per data directory.** The broker takes an exclusive lock on
+`serve.lock` in the data directory before it asks for a password or binds a
+socket, and holds it until it exits. A second `rowel serve` on the same
+directory is refused at once, so it can never replace a running broker's
+sockets on its way to failing; a lock a dead process left is released by the
+kernel, so a crash needs no cleanup.
 
 ## Installing on a Linux box
 
@@ -69,10 +76,13 @@ must be on, as in the app.
 - **`--key-file <path>`**: the vault's key material, written once by
   `rowel admin key-file <path>` from the master password (`0600`, raw bytes).
   Read again at every open, so an idle lock in this mode is lifted by the
-  next request — the broker runs unattended.
-- **`--key-fd <n>`**: the same material on a file descriptor, read once at
-  start — what `systemd`'s `LoadCredential=` hands a service. The material is
-  gone after the first seal, so an idle lock is refused in this mode.
+  next request — the broker runs unattended. This is the mode for a systemd
+  credential, which is a file under `$CREDENTIALS_DIRECTORY`.
+- **`--key-fd <n>`**: the same material on an open file descriptor, read
+  once at start — for a wrapper that redirects the file onto one
+  (`rowel serve --key-fd 3 3< /run/secrets/vault.key`) or a supervisor that
+  passes secrets as descriptors. The material is gone after the first seal,
+  so an idle lock is refused in this mode.
 
 A lockbox whose password change was interrupted (its `vault.db.rekey-backup`
 is still beside the database) is refused: the app's next unlock rolls it
@@ -141,6 +151,9 @@ broker.
   `null` serves `ws://` in the clear, for a reverse proxy that terminates
   TLS.
 
+The data directory also gets `serve.lock` (the one-broker lock above) and
+`serve.sock` (the control socket below) while the broker runs.
+
 ## Approvals: `rowel approve`
 
 An ask the rules do not settle is queued — approvers see one at a time, the
@@ -195,6 +208,17 @@ of your own) before `rowel mcp`, `rowel run`, `rowel proxy` — see
 [`cli.md`](cli.md#reaching-a-broker). The two keys are let in the first time
 each is seen, through an association ask answered with `rowel approve`.
 
+Anyone who can reach the port can open a connection and hold an association
+ask for its timeout, so what a stranger can cost the broker is bounded:
+at most 256 connections are open at once (one past that is closed before
+the handshake, and the agent retries), a handshake has ten seconds to
+finish, a message may carry no more than the broker's 1 MiB frame, and each
+connection has a queue of four requests after which the broker stops
+reading from it until its thread catches up. Put the listener on the
+loopback address or behind a reverse proxy that authenticates, as with any
+service; the ceiling keeps a flood from taking the process down, it does
+not keep a flood from occupying the connections an agent would use.
+
 ## A systemd unit
 
 ```ini
@@ -204,7 +228,7 @@ After=network.target
 
 [Service]
 User=rowel
-ExecStart=/usr/local/bin/rowel-cli serve --data-dir /var/lib/rowel --key-fd 3 --ws 127.0.0.1:7401
+ExecStart=/usr/local/bin/rowel-cli serve --data-dir /var/lib/rowel --key-file ${CREDENTIALS_DIRECTORY}/vault.key --ws 127.0.0.1:7401
 LoadCredential=vault.key:/etc/rowel/vault.key
 StandardInput=null
 Restart=on-failure
@@ -213,11 +237,12 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-`LoadCredential` opens the key file as a descriptor the service may read
-once; `--key-fd 3` is that descriptor when the credential is the first and
-stdio is not redirected elsewhere — check `CREDENTIALS_DIRECTORY` in your
-unit's environment if the number differs. `SIGTERM` from `systemctl stop`
-seals the lockbox and exits 0.
+`LoadCredential` copies the key file into a private directory the service
+alone can read, named by `$CREDENTIALS_DIRECTORY` in its environment, which
+systemd expands in `ExecStart`; the broker reads it there at every open, so
+the idle lock works, and the directory goes when the service stops.
+`SIGTERM` from `systemctl stop` seals the lockbox and exits 0, whatever the
+broker is doing at the time, including waiting at a password prompt.
 
 ## What is not there
 

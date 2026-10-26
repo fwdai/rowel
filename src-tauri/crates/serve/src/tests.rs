@@ -731,6 +731,28 @@ fn the_control_socket_lists_and_answers_asks_and_seals() {
     assert!(!client.status().unwrap().unlocked);
 }
 
+#[test]
+fn the_lock_makes_one_broker_per_data_directory() {
+    let data = seeded();
+    let first = control::Guard::take(&data.root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(data.root.join(control::LOCK_FILE))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let second = control::Guard::take(&data.root);
+    assert!(
+        matches!(second, Err(control::GuardError::Held)),
+        "a second broker on the same directory is refused while the first holds the lock"
+    );
+    drop(first);
+    control::Guard::take(&data.root).expect("the lock is free once the holder is gone");
+}
+
 // --- the WebSocket ------------------------------------------------------------------
 
 /// One frame out over the WebSocket, and the next binary message in.
@@ -785,6 +807,78 @@ async fn the_websocket_carries_frames_and_pushed_signals() {
             }
         }
         let _ = socket.close(None);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_websocket_turns_connections_past_the_ceiling_away() {
+    let data = seeded();
+    let host = data.host(&Notices::default());
+    let listener = listen::bind_ws("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(listen::serve_ws_limited(listener, None, host.clone(), 1));
+
+    tokio::task::spawn_blocking(move || {
+        let url = format!("ws://{address}/");
+        let (mut first, _) = tungstenite::connect(&url).unwrap();
+        // The one slot is taken: the next handshake is closed before it
+        // completes, and the broker is otherwise unaffected.
+        assert!(
+            tungstenite::connect(&url).is_err(),
+            "a connection past the ceiling was accepted"
+        );
+        let mut channel = Channel::new();
+        let (request, nonce) = channel.exchange_request("rowel-mcp");
+        let reply = roundtrip(&mut first, &request);
+        channel.accept_exchange(&nonce, &reply).unwrap();
+        // Closing the first frees its slot; the release follows the close by
+        // the time the connection task notices it.
+        let _ = first.close(None);
+        drop(first);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match tungstenite::connect(&url) {
+                Ok((mut third, _)) => {
+                    let _ = third.close(None);
+                    break;
+                }
+                Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+                Err(e) => panic!("the slot was not released: {e}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_websocket_message_over_the_frame_cap_ends_the_connection() {
+    let data = seeded();
+    let host = data.host(&Notices::default());
+    let listener = listen::bind_ws("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(listen::serve_ws(listener, None, host.clone()));
+
+    tokio::task::spawn_blocking(move || {
+        let (mut socket, _) = tungstenite::connect(format!("ws://{address}/")).unwrap();
+        let too_big = vec![b'x'; rowel_broker::frame::MAX_FRAME + 1];
+        // The broker refuses the message on its header, never buffering it
+        // whole, and closes; the client's send breaks on the closed socket,
+        // or its next read sees the close. Neither way is there a reply.
+        if socket.send(tungstenite::Message::binary(too_big)).is_err() {
+            return;
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(Instant::now() < deadline, "the connection stayed open");
+            match socket.read() {
+                Ok(tungstenite::Message::Close(_)) | Err(_) => break,
+                Ok(tungstenite::Message::Binary(_)) => panic!("an oversized message was answered"),
+                Ok(_) => {}
+            }
+        }
     })
     .await
     .unwrap();

@@ -5,7 +5,9 @@
 //! crate never touches a TTY.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -21,7 +23,9 @@ use crate::{control, listen};
 
 /// Asks the person at the terminal for the master password: what the CLI
 /// supplies, and what is asked again after an idle lock in password mode.
-pub type PasswordPrompt = Box<dyn Fn() -> io::Result<Zeroizing<String>> + Send>;
+/// `Sync` because the second ask runs on a thread of its own, so a stop
+/// signal is still heard while it waits for the terminal.
+pub type PasswordPrompt = Box<dyn Fn() -> io::Result<Zeroizing<String>> + Send + Sync>;
 
 pub struct ServeOptions {
     /// The data directory; the app's when `None`, so the extension on this
@@ -115,6 +119,10 @@ fn serve(options: ServeOptions) -> Result<(), Exit> {
     };
     let password_mode = matches!(options.unlock, None | Some(Unlock::Password(_)));
 
+    // One broker per data directory, settled before the password is asked
+    // for and before any socket is bound or replaced.
+    let _guard = control::Guard::take(&root).map_err(failed)?;
+
     let host = HeadlessHost::new(
         &root,
         &lockbox,
@@ -151,7 +159,8 @@ fn serve(options: ServeOptions) -> Result<(), Exit> {
         eprintln!("rowel serve: listening on the socket in {}", root.display());
     }
 
-    // The control socket, for `rowel approve` and `rowel admin`.
+    // The control socket, for `rowel approve` and `rowel admin`; the guard
+    // above is what makes replacing a file there safe.
     let control = control::bind(&root).map_err(failed)?;
     let controlled = host.clone();
     thread::spawn(move || control::serve(control, controlled));
@@ -207,44 +216,49 @@ fn serve(options: ServeOptions) -> Result<(), Exit> {
 }
 
 /// Wait for SIGTERM or SIGINT, prompting for the password again after an
-/// idle lock when that is the mode.
+/// idle lock when that is the mode. The signal future lives across the whole
+/// wait, and the prompt runs on a thread of its own, so `systemctl stop` or
+/// Ctrl-C at the password prompt still seals and exits instead of waiting
+/// for a line that is not coming.
 async fn until_stopped(
     host: &HeadlessHost,
-    root: &std::path::Path,
+    root: &Path,
     lockbox: &str,
     password_mode: bool,
     prompt: Option<PasswordPrompt>,
-    idle: std::sync::mpsc::Receiver<()>,
+    idle: Receiver<()>,
 ) {
-    let mut prompt = prompt.filter(|_| password_mode);
+    let stop = stop_signal();
+    tokio::pin!(stop);
+    let mut prompt = prompt.filter(|_| password_mode).map(Arc::new);
     loop {
-        let sealed = async {
-            // Polled rather than awaited: the ticker is a std thread.
-            loop {
-                match idle.try_recv() {
-                    Ok(()) => return true,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => return false,
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        tokio::time::sleep(Duration::from_millis(250)).await
-                    }
-                }
-            }
-        };
         tokio::select! {
-            _ = stop_signal() => return,
-            again = sealed => {
-                if !again {
-                    continue;
+            _ = &mut stop => return,
+            sealed = idle_sealed(&idle) => {
+                if !sealed {
+                    // The ticker is gone, so nothing more will arrive here;
+                    // only the signal can end the wait now.
+                    stop.await;
+                    return;
                 }
-                let Some(ask) = prompt.as_ref() else { continue };
-                match prompt_and_open(root, lockbox, ask) {
-                    Ok(opened) => {
-                        host.unlock(opened);
-                        eprintln!("rowel serve: lockbox {lockbox} unlocked");
-                    }
-                    Err(Exit::Usage(message)) | Err(Exit::Failed(message)) => {
-                        eprintln!("rowel serve: {message}; the lockbox stays sealed");
-                        prompt = None;
+                let Some(ask) = prompt.clone() else { continue };
+                let (done, reopened) = tokio::sync::oneshot::channel();
+                let (asked_root, asked_lockbox) = (root.to_path_buf(), lockbox.to_string());
+                thread::spawn(move || {
+                    let _ = done.send(prompt_and_open(&asked_root, &asked_lockbox, &ask));
+                });
+                tokio::select! {
+                    _ = &mut stop => return,
+                    reopened = reopened => match reopened {
+                        Ok(Ok(opened)) => {
+                            host.unlock(opened);
+                            eprintln!("rowel serve: lockbox {lockbox} unlocked");
+                        }
+                        Ok(Err(Exit::Usage(message)) | Err(Exit::Failed(message))) => {
+                            eprintln!("rowel serve: {message}; the lockbox stays sealed");
+                            prompt = None;
+                        }
+                        Err(_) => prompt = None,
                     }
                 }
             }
@@ -252,9 +266,22 @@ async fn until_stopped(
     }
 }
 
+/// Whether the ticker reported an idle seal: `true` on one, `false` once the
+/// ticker is gone. Polled rather than awaited, because the ticker is a std
+/// thread.
+async fn idle_sealed(idle: &Receiver<()>) -> bool {
+    loop {
+        match idle.try_recv() {
+            Ok(()) => return true,
+            Err(TryRecvError::Disconnected) => return false,
+            Err(TryRecvError::Empty) => tokio::time::sleep(Duration::from_millis(250)).await,
+        }
+    }
+}
+
 /// Ask for the password and open with it, three tries.
 fn prompt_and_open(
-    root: &std::path::Path,
+    root: &Path,
     lockbox: &str,
     prompt: &PasswordPrompt,
 ) -> Result<unlock::Opened, Exit> {

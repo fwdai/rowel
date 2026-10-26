@@ -73,9 +73,12 @@ pub fn read_password(label: &str) -> io::Result<Zeroizing<String>> {
     Ok(line)
 }
 
-/// The key material on file descriptor `fd`, read once and whole: what
-/// `LoadCredential=` hands a systemd unit. Through `/dev/fd`, which Linux
-/// and macOS both have, so no handle is adopted blind.
+/// The key material on file descriptor `fd`, read once and whole: what a
+/// wrapper hands in with `3< /path/to/key`, or a supervisor that passes
+/// secrets as open descriptors (systemd does not; its `LoadCredential=` is
+/// a file under `$CREDENTIALS_DIRECTORY`, for `--key-file`). Through
+/// `/dev/fd`, which Linux and macOS both have, so no handle is adopted
+/// blind.
 #[cfg(unix)]
 fn read_fd(fd: u32) -> io::Result<Zeroizing<Vec<u8>>> {
     use std::io::Read;
