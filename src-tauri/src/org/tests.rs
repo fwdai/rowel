@@ -227,6 +227,27 @@ fn a_rotated_session_survives_a_later_change_to_the_record() {
     );
 }
 
+// (a'') The review's concurrent-refresh finding: sync and the approvals
+// stream can meet a 401 at the same moment and both refresh. The refresh
+// token is single use, so without a turn the second would present the token
+// the first just spent and be told the sign-in is over; taking turns, it
+// finds the session already moved on and uses that.
+#[test]
+fn two_refreshes_at_once_spend_the_refresh_token_once() {
+    let server = FakeServer::start();
+    let pat = Signed::enroll(&server, "Pat's Mac");
+    let resolver = SessionResolver::Memory(pat.connections.clone());
+    server.expire_sessions();
+    let (a, b) = block_on(futures_util::future::join(
+        resolver.refresh(&server.url),
+        resolver.refresh(&server.url),
+    ));
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.access_token, b.access_token);
+    let client = ServerClient::with_session(&server.url, &a.access_token).unwrap();
+    assert_eq!(block_on(client.devices()).unwrap().len(), 1);
+}
+
 // (a''') The enrollment proves the key to the server this app is enrolling
 // at. A challenge naming another server — one a server this app also signs
 // in to relayed from it — is refused here, before an answer goes back that

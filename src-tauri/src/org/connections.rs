@@ -15,7 +15,6 @@
 //! on drop everywhere it is held.
 
 use std::path::{Path, PathBuf};
-#[cfg(test)]
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -434,8 +433,23 @@ impl SessionResolver {
     /// first) keeps what it has, this answer is dropped, and the record as it
     /// stands is handed back for the caller to retry under. Without a refresh
     /// token the session is simply over.
+    ///
+    /// One refresh at a time per server ([`refresh_turn`]). A refresh token
+    /// is single-use, and a server that sees one spent twice takes it for a
+    /// stolen copy and ends the session (RFC 6819 §5.2.2.3): sync and the
+    /// approvals stream meeting a 401 together would otherwise both spend
+    /// the token they read, and the second would sign the member out under
+    /// the first's fresh session. In turn, each refresh reads the token the
+    /// one before it stored; and one that finds the session already moved on
+    /// while it waited has nothing left to do but use it.
     pub(crate) async fn refresh(&self, url: &str) -> Result<Connection> {
+        let seen = self.connection(url)?.refresh_token.clone();
+        let gate = refresh_turn(url);
+        let _turn = gate.lock().await;
         let connection = self.connection(url)?;
+        if connection.refresh_token != seen {
+            return Ok(connection);
+        }
         let refresh_token = connection.refresh_token.clone().ok_or_else(|| {
             Error::Other(format!(
                 "the Rowel Server at {} no longer accepts this sign-in; sign in again",
@@ -485,6 +499,24 @@ impl SessionResolver {
             outcome => outcome,
         }
     }
+}
+
+/// The turn every refresh of the session at `url` waits for: one async lock
+/// per server URL, for the life of the process (a handful of servers at
+/// most). Async, because the refresh holds it across the token endpoint's
+/// answer; process-wide, because sync, the approvals stream and the commands
+/// each make their own resolver.
+fn refresh_turn(url: &str) -> Arc<futures_util::lock::Mutex<()>> {
+    static TURNS: std::sync::LazyLock<
+        Mutex<std::collections::HashMap<String, Arc<futures_util::lock::Mutex<()>>>>,
+    > = std::sync::LazyLock::new(Mutex::default);
+    let key = normalize_url(url).unwrap_or_else(|_| url.to_string());
+    TURNS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(key)
+        .or_default()
+        .clone()
 }
 
 #[cfg(test)]
