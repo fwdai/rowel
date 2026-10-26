@@ -1,0 +1,77 @@
+[package]
+name = "rowel-server"
+# Internal to the workspace and never released on its own, like the broker,
+# the headless serve crate and the CLI that links it.
+version = "0.1.0"
+description = "Rowel Server: the broker in server mode — org lockboxes the server can open, members and their devices, workload identity for agents, policy, approval routing and the audit export — linked by the CLI as `rowel serve --server`"
+authors = ["Alex Chaplinsky"]
+# The server mode is the open-core boundary (spec Q1): it lives in this one
+# crate so that moving it to a private repository is a crate move, and it is
+# never published from here.
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+
+[lib]
+name = "rowel_server"
+
+[features]
+# The fake identity provider and the in-memory tenant the crate's own tests
+# and the app's org tests share.
+test-support = ["rowel-serve/test-support", "rowel-broker/test-support", "dep:tempfile"]
+
+# Desktop only, as `rowel-serve` is: a phone never runs a server, so there the
+# crate is empty and the workspace still builds for one.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# The vault, the grant engine and the sealed channel; the headless crate for
+# the approvals queue and the WebSocket serving loop the server reuses.
+rowel-core = { path = "../core" }
+rowel-broker = { path = "../broker" }
+rowel-serve = { path = "../serve" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4.34"
+thiserror = "2"
+# The metadata database: plain SQLite through the same rusqlite build the
+# core links for SQLCipher, so one SQLite is compiled into the binary;
+# migrations as the core runs them.
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
+rusqlite_migration = "1"
+# The HTTP surface: the member, pack, agent and admin APIs, and the agent
+# WebSocket, on one listener.
+axum = { version = "0.8", features = ["ws", "json", "form", "query"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "signal", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+# Outbound: the identity provider's discovery document, JWKS and token
+# endpoint, with the feature set the app and the CLI already build reqwest with.
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "query", "rustls-no-provider"] }
+# Workload tokens and the identity provider's id tokens are JWTs; RS256 and
+# ES256 over the ring provider the TLS stack already links.
+jsonwebtoken = "9"
+url = "2"
+# Wrapped masters: the tenant key is an HKDF subkey of the root key (core's
+# `hkdf_subkey`); each enrolled device gets the master in a sealed box to its
+# X25519 enrollment key, the crate the app and the broker's channel use.
+crypto_box = { version = "0.9", features = ["seal"] }
+sha2 = "0.11"
+hex = "0.4"
+base64 = "0.23"
+rand = "0.8"
+subtle = "2"
+# Every master, token and resolved value held wiped on drop.
+zeroize = { version = "1", features = ["serde"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+tempfile = { version = "3", optional = true }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dev-dependencies]
+rowel-broker = { path = "../broker", features = ["test-support"] }
+rowel-core = { path = "../core", features = ["test-support"] }
+rowel-serve = { path = "../serve", features = ["test-support"] }
+tempfile = "3"
+# The blocking WebSocket client the CLI reaches a broker with, driving the
+# agent endpoint end to end.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
