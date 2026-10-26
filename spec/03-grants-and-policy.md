@@ -162,6 +162,17 @@ clamped to 300 characters).
    expires_at → Expired; end-grant or Settings → Revoked
 ```
 
+*As built in PR A (agent hardening).* A grant leaves `Active` by time in one
+place only, `agents::expire_due`, which writes the `ended` row and queues the
+`GrantEnded` sign-out for each grant it flips; the bare flip
+(`AgentState::expire_due`) is private to the engine, and `Grant::use_once`
+refuses a grant past its window with `GrantExpired` without flipping it
+(`Grant::is_due` reads that without mutating). Every read that shows the
+state now — `grant-status` on each host, the Settings list
+(`list_grants_in`) — goes through that path and tells the host whether
+anything expired, so it re-arms and wakes the extensions as a timer firing
+would.
+
 **Policy evaluation (❌, `rowel_broker::policy`).**
 
 ```rust

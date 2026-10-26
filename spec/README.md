@@ -162,6 +162,15 @@ Read the overview first. Everything else hangs off it.
   with bare frames, idle lock and SIGTERM (`03`, `04`, `07`); `ROWEL_BROKER`
   on the client side and clients skipping clear signals (`04`); Q9 and Q26
   annotated; I0–I4 ticked as merged in `PLAN.md`.
+- **2026-10-27, Tier 1 audit and PR A.** An audit of I0–I7 on `main`: I7
+  ticked as merged; items ticked without being delivered reopened (*this
+  run*, the denied-fill fixture, the e2e dialog spec, `--install-host`, the
+  I5 extension acceptance); the follow-up PRs A–D listed in `PLAN.md`. PR A
+  (#666) recorded: the redactor at a constant lag (`05`), one expiry path and
+  a wall-clock recheck (`03`, `06`), the audit failing closed with
+  `AuditUnavailable` (`09`), the proxy forwarding only what a grant covers
+  (`05`). The server mode moved to the private `fwdai/rowel-server` (`00 §4`,
+  Q1).
 
 ## Relationship to the other docs
 

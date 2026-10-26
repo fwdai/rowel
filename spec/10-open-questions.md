@@ -17,6 +17,8 @@ whether the single-node server is ever offered as a supported product (Q2).
 *2026-10-26 (I7):* the owner chose to build the server mode for now in the
 public repository as its own crate (`crates/server`, `rowel-server`), so that
 moving it to the private repository later is a crate move.
+*2026-10-27:* moved. The server mode lives in the private `fwdai/rowel-server`
+under a proprietary license; the public repository removes it (PLAN, PR D).
 
 **Q2. Self-host first or cloud first.** *Owner decides.*
 Spec assumes self-host binary first (`11`), because the cloud is that binary

@@ -99,7 +99,16 @@ host.
   `fill` pushes `server::signal(ROWEL_SIGNAL)` after queueing.
 - Expiry: a `timer::Timer` (one pending callback, re-armable) armed to the
   earliest `expires_at`; when it fires, expire what is due, queue
-  `grant-ended` signals, re-arm to the next deadline.
+  `grant-ended` signals, re-arm to the next deadline. *As built in PR A:*
+  the timer waits on an `Instant`, which does not advance while an Apple
+  machine sleeps, and grants end by the wall clock, so each wait is capped at
+  30 seconds (`agents::EXPIRY_RECHECK`) and the deadline re-read against
+  `now_ms` when it comes due: a grant ends, and its site is signed out, at
+  most half a minute after a wake. Listing the grants in Settings expires
+  through the same recording path (`list_grants_in`) and is followed up like
+  a firing (`grants_changed`: lists, re-arm, wake the extensions), with the
+  locks let go. `rowel serve` and the Rowel Server already sweep every
+  second.
 - The session epoch rule applies throughout: a lock or lockbox switch between
   ask and answer discards the grant (`commands::unlocked_epoch`,
   `session.store_at(epoch)` as `associate` does). A lock also clears the

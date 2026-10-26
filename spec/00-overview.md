@@ -120,7 +120,13 @@ lives in the server and its operation, as Bitwarden and Tailscale show.
 *As built in I7:* by the owner's decision the server mode is built for now in
 the public repository, as its own crate (`src-tauri/crates/server`,
 `rowel-server`, `publish = false`), so the boundary is a directory and moving
-it to the private repository is a crate move.
+it to the private repository is a crate move. *Moved 2026-10-27:* the server
+mode now lives in the private repository `fwdai/rowel-server`, one package
+with its own binary (`rowel-server serve`, `rowel-server admin …`, replacing
+`rowel serve --server` and `rowel admin server …`), depending on the public
+`rowel-core`, `rowel-broker` and `rowel-serve` by a pinned git rev; the
+public repository drops the crate, the admin commands and `docs/server.md`
+(PLAN, PR D) and keeps `docs/server-api.md`, the contract its clients speak.
 
 ```
                  ┌────────────────────────────────────────────────────────────┐

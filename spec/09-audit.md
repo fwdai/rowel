@@ -60,6 +60,20 @@ CREATE INDEX audit_ts ON audit(ts_ms);
 CREATE INDEX audit_chain ON audit(writer_id, seq);
 ```
 
+**Failing closed (PR A).** A release is made only once its row is in, in the
+same locked section as its decision: `agents::record` returns
+`Result<(), Code>` and is for the rows a release stands on (`granted`, `used`
+— a fill, a TOTP code, a resolve, a passkey ceremony — `rule_added`, and the
+server's `key_unwrapped`), each written `record(…)?` before the release; a
+row that will not write refuses it with `AuditUnavailable` (47), a standing
+rule whose row will not write is taken back, and the Rowel Server drops a key
+whose `key_unwrapped` row will not write and refuses the open.
+`agents::note` is for rows about something that only restricts (`denied`,
+`ended`, `revoked`, `exposed`, `rule_removed`, `rate_limited`) or bookkeeping
+(`requested`, `associated`, `revoked_client`): a failure is logged and the
+restriction still happens. `rowel proxy` answers `AuditUnavailable` with 503;
+the extension has a message and a notification for it.
+
 Rows are **insert-only**. Each writer keeps its own chain: `prev_hash` is the
 hash of the same writer's previous row (found by `writer_id, seq - 1`), so
 devices and the server never break each other's chains, and no `meta` head is

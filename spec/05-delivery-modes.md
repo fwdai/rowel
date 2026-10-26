@@ -249,6 +249,15 @@ The floor in `03` keeps every passkey ceremony behind the tap, agent or not.
   response's status, headers and body come back with the request's released
   values redacted, and the body's length recomputed. The log line is method,
   host and path, status — never a query, a header or a body.
+- *As built in PR A (agent hardening).* The resolve is the proxy's only
+  check of the grant, so a request with no placeholder to put in is refused
+  as `no_placeholder` (400) before anything is resolved or sent, whatever
+  grant it names: the proxy forwards only what a live grant covers, and a
+  call that needs no secret goes direct. A token bucket is made only for a
+  grant id the host has accepted (the first request whose placeholders
+  resolved under it); a grant with a bucket is held to it before anything is
+  resolved again, and a made-up id is refused by the resolve and never
+  enters the map. A resolve refused with `AuditUnavailable` is 503, not 403.
 - *Review of PR #657, round 4.* The answer is asked for with
   `Accept-Encoding: identity` and an encoded one is refused (`502`), since
   the redactor reads the bytes as sent; the grant is checked against the
@@ -306,9 +315,16 @@ hook and the proxy).** Input: a byte stream and the values released under the
 grants this process resolved, each with its placeholder. Output: the stream
 with every occurrence of a value replaced by its placeholder — the exact
 bytes, standard and URL-safe base64 (padded or not), percent-encoded (RFC
-3986, upper-case hex) and JSON-escaped. Streaming matcher carrying over at
-most one byte less than the longest form between reads, so a value split
-across chunks is still caught. Values shorter than 6 bytes are not matched
+3986, upper-case hex) and JSON-escaped. Streaming matcher at a constant
+lag (PR A): short of the end, a place is decided only once the longest
+form's length of bytes stands after it, whatever they are, and the tail
+shorter than that is always carried; `finish` decides the rest. What is
+released, and when, depends on the values only through a whole match, so
+feeding guesses a byte at a time and watching for output reveals nothing
+(holding back only a possible prefix was a prefix oracle). Output trails by
+up to one fewer than the longest form until more comes or the stream ends;
+there is no idle flush, which would print a slowly printed value in pieces.
+A value split across chunks is still caught. Values shorter than 6 bytes are not matched
 at all: a needle that short would redact ordinary text. It is a safety net,
 not a guarantee: a value transformed otherwise passes (Q16). Needles are held
 `Zeroizing`. The filter form, `rowel redact --grant <id> --ref <rowel://…>…

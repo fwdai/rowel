@@ -120,9 +120,11 @@ site for N days. No new clients, no CLI yet. Spec `01` (agent-access flag),
       limits and deny-by-default (`03`).
 - [x] `rowel_broker::audit::Writer` and the `audit` table migration in core;
       rows written for every grant event (`09`, not yet synced or shown).
-- [x] `Answer::Grant` in the consent slot; `agent_grant` event;
+- [ ] `Answer::Grant` in the consent slot; `agent_grant` event;
       `BrowserConsent/GrantDialog/` with once · this run · N days · deny, item
       picker, step-up via biometrics or master password (`03`, `06`).
+      *Audit 2026-10-27:* built except *this run*, which the dialog never
+      offered; it lands in PR C.
 - [x] Rules and standing grants as sealed `meta` JSON; Settings › Browser &
       agents lists rules and active grants with revoke (`03`, `06`).
 - [x] `settings.browser.agents.enabled` (default off) gating all of the above.
@@ -132,8 +134,10 @@ site for N days. No new clients, no CLI yet. Spec `01` (agent-access flag),
 - [x] Host: in agent mode a fill runs the grant flow (policy → ask → serve the
       one admitted item); outside agent mode behaviour is unchanged.
 - [x] Grant expiry via `timer::Timer` armed to the earliest deadline.
-- [x] Tests: broker protocol tests through `Mock`; Playwright fixture page for
+- [ ] Tests: broker protocol tests through `Mock`; Playwright fixture page for
       approved fill, denied fill, exposure; e2e spec for the dialog.
+      *Audit 2026-10-27:* the denied-fill fixture and the `tests/e2e` dialog
+      spec were never written (the dialog has a Vitest test only); PR C.
 - [x] Threat model: one paragraph noting that agent mode makes fills ask
       (`01`, full rewrite comes in I4).
 - [x] **Acceptance:** with agent mode on, reaching a login page in an agentic
@@ -309,18 +313,19 @@ or times out. This is the binary the server (I7) and the cloud (I9) run. Spec
 - [x] `rowel admin rules` to list, add and remove rules in the config; schema
       documented. *Outcome:* plus `admin agents on|off`, `admin key-file`,
       `admin lock`; schema in `docs/serve.md`.
-- [x] Optional: `rowel serve --install-host` writes the native-messaging
+- [ ] Optional: `rowel serve --install-host` writes the native-messaging
       manifest so a browser on that box can use the extension against it.
-      *Not built in I5.*
+      *Not built in I5; the owner chose to build it in PR C (2026-10-27).*
 - [x] Integration test: `rowel serve` + `rowel mcp` + `rowel proxy` in a
       container, standing rules, one `ask` answered by `rowel approve`.
       *Outcome:* `crates/cli/tests/serve.rs` over the built binary and a temp
       data directory; runs where the CLI's keys are files (Linux), ignored on
       macOS and Windows, whose secure store a test must not touch.
-- [x] **Acceptance:** on a Linux VM without a GUI a coding agent gets a header
+- [ ] **Acceptance:** on a Linux VM without a GUI a coding agent gets a header
       grant under a standing rule and an env grant after a TTY approval; the
       app's extension connects to the same broker when the host manifest is
-      installed.
+      installed. *Audit 2026-10-27:* the agent half holds; the extension half
+      waits on `--install-host` (PR C) and a standalone CLI artifact (PR B).
 
 ---
 
@@ -373,7 +378,7 @@ X25519 key; a signing key is minted beside it when delegation lands.*
 
 ---
 
-## I7 — Rowel Server, single node  `[ ]`  *(in review: PR #665, branch `feat/agent-server`, on `main`)*
+## I7 — Rowel Server, single node  `[ ]`  *(merged: PR #665; acceptance against real GitHub Actions is the owner's step; moved to the private repository `fwdai/rowel-server` on 2026-10-27, see "Tier 1 audit" below)*
 
 **Deliverable.** A company runs one binary. Members sign in with their identity
 provider and enroll devices. Agents in GitHub Actions prove who they are with
@@ -387,7 +392,7 @@ repository as its own crate, `crates/server` (`rowel-server`), so a later move
 to a private repository is a crate move (`00 §4`, Q1); self-host first (Q2);
 names stay provisional (Q3).*
 
-- [ ] `rowel serve --server`: tenant metadata in SQLite, config file, data
+- [x] `rowel serve --server`: tenant metadata in SQLite, config file, data
       directory, `RootKey` from a key file (KMS implementations later) (`07`).
       *Outcome:* `rowel-server`, linked by the CLI; `server.json`,
       `server.db`, `FileRootKey` (HKDF per tenant, AES-GCM with the lockbox
@@ -395,48 +400,48 @@ names stay provisional (Q3).*
       `Lock`); seal on SIGTERM; `GET /v1/health`; TLS from PEM files or
       plain behind a proxy. `rowel admin server init` bootstraps a data
       directory.
-- [ ] Org lockbox lifecycle: create (mint, wrap, `External` descriptor),
+- [x] Org lockbox lifecycle: create (mint, wrap, `External` descriptor),
       freeze, members and roles, wrapped masters per approved device (`07`).
       *Outcome:* as specified; lockbox roles `reader`, `approver`, `admin`;
       a master is sealed only to an approved device and withdrawn with it.
       Rotation is I8.
-- [ ] Member sign-in through generic OIDC; device enrollment pending → approve
+- [x] Member sign-in through generic OIDC; device enrollment pending → approve
       by an existing device or an admin; audit rows (`02`). *Outcome:* the
       server is the app's OAuth2 server and an OIDC relying party to the IdP
       (verified email required; auto-provisioning only under
       `allowedDomains`); enrollment, approval and admin actions are rows of
       a tenant `server_events` table, not lockbox audit rows (`09`).
-- [ ] Pack endpoints as merge authority: `decode_pack` → `merge` → `pack`,
+- [x] Pack endpoints as merge authority: `decode_pack` → `merge` → `pack`,
       revision bumps on every server-side write; the Q19 interleaving test
       matrix on the `two_devices.rs` harness (`07`). *Outcome:* the pack
       format and snapshot reader lifted into `rowel_core::sync`; the matrix
       runs in the server crate with core-built devices over HTTP rather than
       on the app's `two_devices.rs`, which links Tauri (`10`, Q19 ✅).
-- [ ] `OrgHost: Host` over org lockbox files with the key LRU and idle timeout;
+- [x] `OrgHost: Host` over org lockbox files with the key LRU and idle timeout;
       `key_unwrapped` audit rows (`07`). *Outcome:* a vault cache with an
       idle seal (10 min) rather than a sized LRU; an agent definition is
       bound to one lockbox; no fills, saves or passkeys from a server-held
       lockbox (Q5).
-- [ ] Workload identity: challenge endpoint, `Oidc` verifier with GitHub
+- [x] Workload identity: challenge endpoint, `Oidc` verifier with GitHub
       Actions trust policies, audience binding, `jti` replay cache, token
       lifetime cap (`02`). *Outcome:* `proof` rides inside `hello`; the
       host gets the session key through `Host::associate_on_channel`; a
       trust policy admits one client kind.
-- [ ] `wss://…/v1/agent`; sidecar associations with `sidecar_for` binding (`03`, `05 §4`).
+- [x] `wss://…/v1/agent`; sidecar associations with `sidecar_for` binding (`03`, `05 §4`).
       *Outcome:* the WebSocket loop of `rowel serve` lifted and shared; a
       sidecar is bound by a trust policy of kind `sidecar`, not by
       `sidecar_for`, which stays unenforced (`05`).
-- [ ] Approvals: `pending_approvals`, routing to owner / group / principal, SSE
+- [x] Approvals: `pending_approvals`, routing to owner / group / principal, SSE
       stream, answer endpoint, per-rule timeouts (`03 §4`). *Outcome:*
       routing to the lockbox's `approver`/`admin` members (and `acting_for`
       only if that member holds the lockbox); first answer wins; one
       server-wide ask timeout (`askTimeoutMs`), per-rule timeouts and
       long-parked asks are I8.
-- [ ] `rowel admin` for agents, trust policies, rules, members, devices,
+- [x] `rowel admin` for agents, trust policies, rules, members, devices,
       lockboxes; `rowel admin audit export` and the HTTP export (`07`, `09`).
       *Outcome:* `rowel admin server …` on the data directory, the HTTP
       admin API, and `audit verify` per lockbox and writer (Q21).
-- [ ] Install docs: systemd unit, reverse proxy example, backup and restore
+- [x] Install docs: systemd unit, reverse proxy example, backup and restore
       (metadata + lockbox files + root key held apart). *Outcome:*
       `docs/server.md`; the contract is `docs/server-api.md`.
 - [ ] **Acceptance:** a GitHub Actions job with `rowel proxy` as a step-level
@@ -447,6 +452,37 @@ names stay provisional (Q3).*
       GitHub-shaped tokens, `auto` and `ask` grants, approver's answer,
       export, Q19 matrix); the run against real GitHub Actions needs a
       deployed server and is the owner's step.
+
+---
+
+## Tier 1 audit (2026-10-27): follow-ups before testers
+
+An audit of I0–I7 on `main` against this plan and the spec found the items
+above that were ticked but not delivered, two correctness bugs and the
+distribution gaps. They land as four PRs; Tier 1 is ready for outside testers
+when A, B and C are merged.
+
+- [ ] **PR A, security and correctness** (branch `fix/agent-hardening`): the
+      redactor at a constant lag (no prefix oracle); one expiry path that always
+      writes `ended` and signs out, with a 30 s wall-clock recheck; the audit
+      fails closed (`AuditUnavailable` = 47); the proxy forwards only what a
+      grant covers (`05`, `06`, `09`).
+- [ ] **PR B, distribution:** the Windows *Install command line tool* path,
+      the AppImage link, standalone CLI tarballs (Linux x86_64 and arm64),
+      extension zips attached to releases, `docs/releasing.md`.
+- [ ] **PR C, plan gaps:** *this run* in the grant dialog, the denied-fill
+      fixture, the `tests/e2e` dialog spec, the untranslated agent strings,
+      `rowel serve --install-host`.
+- [ ] **PR D, open-core boundary:** remove `crates/server`, `rowel admin
+      server`, the `--server` wiring and `docs/server.md` from the public
+      repository; they live in the private `fwdai/rowel-server` (one package,
+      binary `rowel-server serve` / `rowel-server admin`, public crates pinned by
+      git rev) (`00 §4`, Q1).
+
+Tier 2, before any server is deployed (in the private repository): members
+bound by the IdP's `sub` rather than matched by email, and `email_verified`
+required; `ws://` refused off loopback for agents; workload issuers and JWKS
+over https only.
 
 ---
 
