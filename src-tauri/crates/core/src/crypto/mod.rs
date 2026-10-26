@@ -86,6 +86,28 @@ pub fn sqlcipher_key(secret: &str) -> [u8; KEY_LEN] {
     key
 }
 
+/// A device's enrollment public key as a person compares it: SHA-256 of the
+/// 32 raw bytes, the first 16 hex digits in four groups of four. Sixty-four
+/// bits is what a member reads off one screen and checks against another;
+/// the full key is what a Rowel Server wraps to. Of the base64 a server lists
+/// a device's key as, so the device being approved, the device approving and
+/// an admin at the server's command line all derive the same digits from the
+/// same bytes — which is why the rule lives here and nowhere else.
+pub fn key_fingerprint(public_key_b64: &str) -> Result<String> {
+    let bytes = STANDARD
+        .decode(public_key_b64.trim())
+        .map_err(|e| Error::Crypto(format!("a device public key is base64: {e}")))?;
+    if bytes.len() != 32 {
+        return Err(Error::Crypto("a device public key is 32 bytes".into()));
+    }
+    let digest = hex::encode(sha2::Sha256::digest(&bytes));
+    Ok(digest.as_bytes()[..16]
+        .chunks(4)
+        .map(|group| std::str::from_utf8(group).expect("hex is ASCII"))
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+
 /// Derive a 32-byte subkey from `ikm` (an Argon2id master key) for the given
 /// `info` label via HKDF-SHA256. One master yields the SQLCipher key and the
 /// payload key as independent subkeys (distinct `info`), so a single KDF pass

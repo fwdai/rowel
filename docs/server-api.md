@@ -2,16 +2,15 @@
 
 A Rowel Server is the company's broker: it holds org lockboxes, verifies
 agents by the identity their platforms give them, decides by policy, routes
-approvals to members' Rowel apps and keeps the audit log (spec `07`). The
-server itself is not in this repository; what is here is everything that
-talks to one — the app, `rowel-cli`, the browser extension — and this
-document, which is the contract between them and any server, ours or one you
-run yourself. The app's half shipped first, so the member and pack sections
-below describe what `src-tauri/src/org/client.rs`, `org/approvals.rs` and
-`sync/providers/rowel` send and expect, as the code does; the in-process
-server the tests run against, `org/fake_server.rs`, answers it the same way
-and is the reference where this page leaves a choice. Each endpoint is marked
-✅ when a shipped build speaks it today and ❌ when it is planned.
+approvals to members' Rowel apps and keeps the audit log (spec `07`). This
+document is the contract between a server and everything that talks to one —
+the app, `rowel-cli`, the browser extension — so any server, ours or one you
+write yourself, can be checked against it. `rowel serve --server`
+(`src-tauri/crates/server`, [docs/server.md](./server.md)) implements it;
+the app's half, `src-tauri/src/org/client.rs`, `org/approvals.rs` and
+`sync/providers/rowel`, speaks it, and the in-process server the app's tests
+run against, `org/fake_server.rs`, answers it the same way. Each endpoint is
+marked ✅ when a shipped build serves and speaks it and ❌ when it is planned.
 
 ## Transport rules
 
@@ -131,7 +130,7 @@ device a 404. Reply 204.
 
 ```json
 [ { "id": "lb1", "name": "Deploy",
-    "kdf": "{\"kind\":\"external\",\"kid\":\"…\",\"gen\":1}",
+    "kdf": "{\"algo\":\"external\",\"kid\":\"…\",\"gen\":1}",
     "wrappedMaster": "<crypto_box sealed box to this device's enrollment key, base64>",
     "etag": "\"42\"" } ]
 ```
@@ -275,7 +274,7 @@ DELETE                                  → 405
 - A device never deletes an org lockbox; a `DELETE` is refused on the device
   and is 405 at the server.
 
-## Agent API ❌ (being built; the shapes here are final)
+## Agent API ✅
 
 Agents reach the server the way they reach `rowel serve`: the CLI's
 `ROWEL_BROKER=wss://host/v1/agent`, the sealed channel inside the WebSocket.
@@ -286,7 +285,7 @@ channel it is on.
 `<origin>` below is the `wss://` agent URL with the scheme swapped to
 `https://`.
 
-### `GET <origin>/v1/agent/challenge` ❌
+### `GET <origin>/v1/agent/challenge` ✅
 
 Unauthenticated.
 
@@ -296,7 +295,7 @@ Unauthenticated.
 
 The nonce is single-use and short-lived.
 
-### `WS <origin>/v1/agent` ❌
+### `WS <origin>/v1/agent` ✅
 
 The sealed channel, unchanged: `change-public-keys`, then the sealed
 `associate`. Its `hello` object gains `proof`:
@@ -396,7 +395,7 @@ DELETE /v1/admin/lockboxes/{id}/members/{memberId}     → 204
 ```
 
 ```json
-{ "id": "lb1", "name": "Deploy", "kdf": "{\"kind\":\"external\",…}", "gen": 1,
+{ "id": "lb1", "name": "Deploy", "kdf": "{\"algo\":\"external\",…}", "gen": 1,
   "frozen": false, "agents": false, "revision": 0, "createdAtMs": 1700000000000,
   "members": [ { "memberId": "m1", "role": "approver" } ] }
 ```

@@ -19,7 +19,6 @@ use std::path::Path;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use crypto_box::SecretKey;
-use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use crate::crypto;
@@ -62,7 +61,7 @@ impl EnrollmentKey {
 
     /// The public key as a person compares it ([`fingerprint_of`]).
     pub(crate) fn fingerprint(&self) -> String {
-        fingerprint_bytes(self.0.public_key().as_bytes())
+        fingerprint_of(&self.public_key_b64()).expect("an X25519 public key is 32 bytes")
     }
 
     /// The master inside a sealed box the server wrapped to this key
@@ -87,30 +86,12 @@ impl EnrollmentKey {
     }
 }
 
-/// A public key as a person compares it: SHA-256 of the 32 raw bytes, the
-/// first 16 hex digits in four groups of four. Sixty-four bits is what a
-/// member reads off one screen and checks against another; the full key is
-/// what the server actually wraps to. Of the base64 the server lists a
-/// device's key as (`client::Device::public_key`), so the device being
-/// approved and the device approving derive the same digits from the same
-/// bytes.
+/// A public key as a person compares it, of the base64 the server lists a
+/// device's key as (`client::Device::public_key`): the one rule in
+/// `rowel_core::crypto::key_fingerprint`, shared with the server's command
+/// line so every screen shows the same digits.
 pub(crate) fn fingerprint_of(public_key_b64: &str) -> Result<String> {
-    let bytes = STANDARD
-        .decode(public_key_b64.trim())
-        .map_err(|e| Error::Crypto(format!("a device public key is base64: {e}")))?;
-    if bytes.len() != 32 {
-        return Err(Error::Crypto("a device public key is 32 bytes".into()));
-    }
-    Ok(fingerprint_bytes(&bytes))
-}
-
-fn fingerprint_bytes(public_key: &[u8]) -> String {
-    let digest = hex::encode(Sha256::digest(public_key));
-    digest.as_bytes()[..16]
-        .chunks(4)
-        .map(|group| std::str::from_utf8(group).expect("hex is ASCII"))
-        .collect::<Vec<_>>()
-        .join(" ")
+    crypto::key_fingerprint(public_key_b64)
 }
 
 /// The sealed key under `new` instead of `old`: a master-password change

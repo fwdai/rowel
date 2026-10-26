@@ -11,10 +11,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use rowel_broker::actions::ClientKind;
 use rowel_broker::audit::{self, Reason};
@@ -657,22 +654,11 @@ fn agent_of(store: &Store, id: &str) -> Result<Agent, Failure> {
         .ok_or_else(|| Failure::Failed(format!("no agent {id}")))
 }
 
-/// A device's enrollment key as a member compares it, by the app's rule
-/// (`org::enrollment::fingerprint_of`): SHA-256 of the 32 raw bytes, the
-/// first 16 hex digits in four groups of four, so the digits an admin reads
-/// here are the ones on the device's screen.
+/// A device's enrollment key as a member compares it, by the one rule the
+/// app shows it by (`rowel_core::crypto::key_fingerprint`), so the digits an
+/// admin reads here are the ones on the device's screen.
 fn fingerprint(public_key_b64: &str) -> String {
-    match STANDARD.decode(public_key_b64.trim()) {
-        Ok(bytes) if bytes.len() == 32 => {
-            let digest = hex::encode(Sha256::digest(&bytes));
-            digest.as_bytes()[..16]
-                .chunks(4)
-                .map(|group| String::from_utf8_lossy(group).into_owned())
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
-        _ => "not a key".into(),
-    }
+    rowel_core::crypto::key_fingerprint(public_key_b64).unwrap_or_else(|_| "not a key".into())
 }
 
 fn yes_no(flag: bool) -> String {
@@ -717,6 +703,9 @@ fn print_table(empty: &str, header: &[&str], rows: Vec<Vec<String>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
 
     #[test]
     fn a_fingerprint_is_four_groups_of_the_keys_digest() {
