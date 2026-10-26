@@ -24,6 +24,9 @@ pub mod e2e;
 pub mod env;
 pub mod generator;
 pub mod import;
+// A company's Rowel Server: the sign-in, this device's standing there, and
+// the org lockboxes it hands the member.
+pub mod org;
 // A master password changed on another device: adopting it, or replacing the
 // account's copy.
 pub mod password_sync;

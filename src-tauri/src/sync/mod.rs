@@ -50,6 +50,13 @@ use crate::crypto::Cryptor;
 use crate::error::{Error, Result};
 use crate::state::AppState;
 pub(crate) use account::{sealed_provider, Auth};
+// The PKCE pair every OAuth sign-in here makes, and on desktop the loopback
+// listener the redirect comes back to: the Rowel Server sign-in
+// (`org::connect`) is one more of them, with a code exchange of its own.
+#[cfg(desktop)]
+pub(crate) use account::{bind_loopback, listen_for_code, loopback_redirect_uri};
+#[cfg(any(desktop, test))]
+pub(crate) use account::{challenge, gen_nonce};
 use engine::{LocalVault, SessionVault, SyncOutcome};
 pub(crate) use marker::MarkerKey;
 pub(crate) use provider::Provider;
@@ -271,7 +278,8 @@ pub fn run(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<S
         app: app.clone(),
         cryptor,
     });
-    let local = SessionVault::capture(app, store.provider(), audit_writer_id(app))?;
+    let provider = store.provider();
+    let local = SessionVault::capture(app, provider, audit_writer_id(app))?;
     // Which pack in the account is this vault's, decided before a byte is
     // pulled. A failure here is a sync failure like any other: addressing the
     // wrong pack — or a second one — is the one mistake the merge cannot undo.
@@ -317,7 +325,12 @@ pub fn run(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<S
     if outcome.renamed {
         adopt_name(app, &local);
     }
-    publish_remote_vaults(app, &resolved.id, resolved.packs);
+    // A Rowel Server's other lockboxes are not packs a password restores: they
+    // are added from the server's own Settings section, with the key it hands
+    // this device (`commands::org`), so they are not offered as vaults here.
+    if provider != Provider::RowelServer {
+        publish_remote_vaults(app, &resolved.id, resolved.packs);
+    }
     sweep_shares(app);
     Ok(outcome)
 }

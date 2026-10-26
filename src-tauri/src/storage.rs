@@ -36,6 +36,19 @@ pub const DROPBOX_FILE: &str = "auth/dropbox.swftx";
 // Holds no token (the device's iCloud account is the credential), but it is
 // the one record that the workspace syncs through iCloud.
 pub const ICLOUD_FILE: &str = "auth/icloud.swftx";
+// Names the Rowel Server an org lockbox syncs through and holds no token of
+// its own, as iCloud's names an account: the member session is the install's,
+// sealed under the app key in `SERVERS_FILE`, since one member signs in once
+// for every org lockbox the server hands them.
+pub const ROWEL_SERVER_FILE: &str = "auth/rowel-server.swftx";
+// This install's device enrollment key (`org::enrollment`), sealed under the
+// app key. In the root like the biometric marker: a device enrolls once,
+// whichever lockbox is active, and every server wraps masters to the one key.
+pub const ENROLLMENT_KEY_FILE: &str = "enrollment.key.sealed";
+// The Rowel Servers this install is signed in to, with their member sessions
+// (`org::connections`), sealed under the app key. One file for the install: a
+// session belongs to the member, not to any one lockbox.
+pub const SERVERS_FILE: &str = "servers.sealed";
 // Working space for the sync engine, inside the workspace's own directory (see
 // `sync_scratch_dir`).
 const SYNC_SCRATCH_DIR: &str = "sync-scratch";
@@ -56,7 +69,7 @@ const SYNC_SCRATCH_DIR: &str = "sync-scratch";
 // whatever `-wal`/`-shm` siblings it has (see `db_files`), a sidecar is the one
 // file.
 const VAULT_DB_FILES: [&str; 2] = [DB_FILE, DB_REKEY_BACKUP_FILE];
-const VAULT_SIDECAR_FILES: [&str; 9] = [
+const VAULT_SIDECAR_FILES: [&str; 10] = [
     KDF_SIDECAR_FILE,
     KDF_SIDECAR_REKEY_BACKUP_FILE,
     RETIRED_KEYS_FILE,
@@ -65,6 +78,7 @@ const VAULT_SIDECAR_FILES: [&str; 9] = [
     GDRIVE_FILE,
     DROPBOX_FILE,
     ICLOUD_FILE,
+    ROWEL_SERVER_FILE,
     WRAPPED_KEY_FILE,
 ];
 
@@ -280,20 +294,20 @@ fn move_data_dir(from: &Path, to: &Path, leave: &[PathBuf]) -> Result<Vec<String
         .collect())
 }
 
-/// What a vault the container held of its own is renamed to when the app's
-/// moves in: `<data dir>.stale-<time>`, beside the data dir in the container,
-/// where nothing reads it again — it is there for a recovery by hand, not for
-/// the app, which enumerates the data dir and never the container.
-#[cfg(any(target_os = "ios", test))]
+/// What a file or directory the app will not read again is renamed to:
+/// `<name>.stale-<time>`, beside where it was, where nothing reads it — it is
+/// there for a recovery by hand, not for the app. A vault the iOS container
+/// held of its own when the app's moved in is one; a file sealed under an app
+/// key the device no longer has is another (`org::set_aside_stale`).
 const STALE_SUFFIX: &str = ".stale-";
 
-/// Rename the data dir `to` — the vault the container holds, whole — to a
-/// fresh `<to>.stale-<time>` beside it, and return where it went. One rename,
-/// so there is no moment at which the vault is half in each place: an
-/// interruption leaves it either where it was, to be set aside by the next
-/// launch, or set aside, for the next launch's move to find `to` empty.
-#[cfg(any(target_os = "ios", test))]
-fn set_aside(to: &Path) -> Result<PathBuf> {
+/// Rename `to` — a file, or a directory whole — to a fresh `<to>.stale-<time>`
+/// beside it, and return where it went. One rename, so there is no moment at
+/// which it is half in each place: an interruption leaves it either where it
+/// was, to be set aside next time, or set aside. Never a delete: whatever
+/// decided `to` is no longer the app's may be wrong, and a rename costs
+/// nothing if it was.
+pub(crate) fn set_aside(to: &Path) -> Result<PathBuf> {
     let (parent, name) = match (to.parent(), to.file_name()) {
         (Some(parent), Some(name)) => (parent, name.to_string_lossy()),
         _ => {
@@ -850,7 +864,8 @@ mod tests {
         read_regular_file_capped, remove_if_present, settle_data_dir, Error, BIOMETRIC_FILE,
         DB_FILE, DB_REKEY_BACKUP_FILE, DROPBOX_FILE, GDRIVE_FILE, ICLOUD_FILE, KDF_SIDECAR_FILE,
         KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, RETIRED_KEYS_FILE,
-        RETIRED_KEYS_REKEY_BACKUP_FILE, STALE_SUFFIX, SYNC_SCRATCH_DIR, WRAPPED_KEY_FILE,
+        RETIRED_KEYS_REKEY_BACKUP_FILE, ROWEL_SERVER_FILE, STALE_SUFFIX, SYNC_SCRATCH_DIR,
+        WRAPPED_KEY_FILE,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -923,7 +938,7 @@ mod tests {
     }
 
     // Every file of the set, laid out as a workspace holds them.
-    fn seed_vault(dir: &Path) -> [&'static str; 11] {
+    fn seed_vault(dir: &Path) -> [&'static str; 12] {
         let files = [
             DB_FILE,
             DB_REKEY_BACKUP_FILE,
@@ -935,6 +950,7 @@ mod tests {
             GDRIVE_FILE,
             DROPBOX_FILE,
             ICLOUD_FILE,
+            ROWEL_SERVER_FILE,
             WRAPPED_KEY_FILE,
         ];
         fs::create_dir_all(dir.join("auth")).unwrap();

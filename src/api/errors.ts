@@ -42,6 +42,7 @@ export type BackendErrorKind =
   | 'fileTooLarge'
   | 'fileNotText'
   | 'vaultFull'
+  | 'sealedUnderAnotherKey'
   | 'io'
   | 'serde'
   | 'crypto'
@@ -164,6 +165,8 @@ export const describeError = (error: unknown): string => {
       return t('This file is not text')
     case 'vaultFull':
       return t("This vault's attachments are at their limit ({{limit}})", { limit: '128 MB' })
+    case 'sealedUnderAnotherKey':
+      return t("This lockbox's key was sealed under a different key, so this device cannot open it.")
     default:
       return messageOf(error)
   }

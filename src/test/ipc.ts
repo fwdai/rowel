@@ -95,6 +95,9 @@ export const appStatusDefault = (): AppStatus => ({
   providers: ['googleDrive', 'dropbox'],
   // Off by default, so no suite sees a scan affordance it did not ask for.
   scanSupported: false,
+  // The desktop's answer: a Rowel Server can be connected. A suite about the
+  // phone seeds false.
+  orgConnect: true,
   // The desktop's gate, and what every pre-existing spec asserts by name.
   biometric: { available: false, canEnroll: false, type: 'touch', mode: null },
   // One workspace: the ordinary install, where nothing about workspaces is on
@@ -316,6 +319,21 @@ const DEFAULTS: Record<string, Handler> = {
   agent_grants: () => [],
   agent_revoke_rule: () => undefined,
   agent_end_grant: () => undefined,
+
+  // A Rowel Server: this device's key as a fingerprint, and nothing connected.
+  // A connect answers with the attempt it began; its outcome arrives as
+  // `org:connect` under that id, never through the promise. A spec about a
+  // connection seeds `org_connections` and the lists under it.
+  org_enrollment_fingerprint: () => '1a92 f238 52dc 908d',
+  org_connections: () => [],
+  org_connect: () => 1,
+  org_cancel_connect: () => undefined,
+  org_disconnect: () => undefined,
+  org_devices: () => [],
+  org_approve_device: () => undefined,
+  org_lockboxes: () => [],
+  org_add_lockbox: () => 'w-org',
+  org_refresh_lockbox_key: () => undefined,
 
   // The command line tool: a dev build, with nothing bundled beside it. A
   // spec about the Install button mocks a bundled one.

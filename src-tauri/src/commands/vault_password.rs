@@ -307,7 +307,12 @@ pub async fn workspace_adopt_vault_password(
             Zeroizing::new(key.biometric_material().to_vec())
         }
     };
-    appkey::seal_under(&app, &workspace_id, &app_key, &material);
+    // The move is made: the lockbox opens with the vault password from here
+    // on, so a sealed copy that cannot be written costs the next app unlock
+    // opening it by itself, and is noted rather than failing what was done.
+    if let Err(e) = appkey::seal_under(&app, &workspace_id, &app_key, &material) {
+        log::warn!("lockbox {workspace_id}'s key could not be kept for the next unlock: {e}");
+    }
 
     // The account's copy, re-sealed under the vault password now rather than
     // at the lockbox's next open — best effort, as after a password change:

@@ -8,6 +8,7 @@ import NewWorkspace from './NewWorkspace'
 import InfoTiles from './InfoTiles'
 import RemoteVaults from './RemoteVaults'
 import RestoreFromAccount from './RestoreFromAccount'
+import RowelServer from './RowelServer'
 
 export default function Workspaces() {
   const { t } = useTranslation()
@@ -32,6 +33,7 @@ export default function Workspaces() {
       <SettingsGroup label={t('Cloud sync')}>
         <RestoreFromAccount />
       </SettingsGroup>
+      <RowelServer />
     </>
   )
 }

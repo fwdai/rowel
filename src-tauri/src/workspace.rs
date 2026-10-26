@@ -312,6 +312,17 @@ fn finish_delete(root: &Path, journal: &DeleteJournal) {
     }
 }
 
+/// What deleting workspace `id` comes to (`Registry::without_promoting`),
+/// with an org lockbox never promoted into the root: its master is its
+/// server's, and as the primary's key it would be the app key every other
+/// workspace's key is sealed under. Told by the sidecar, not the registry
+/// record, which is a note beside it.
+pub fn deletion_of(root: &Path, registry: &Registry, id: &str) -> Result<Deletion> {
+    registry.without_promoting(id, |w| {
+        !crate::org::lockboxes::is_org_lockbox_dir(&dir_of(root, &w.id))
+    })
+}
+
 /// Finish or undo a workspace delete that a crash caught between its file moves
 /// and the registry write. Called once per launch, before anything reads the
 /// registry or opens a vault.
@@ -595,6 +606,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -603,6 +615,7 @@ mod tests {
                     item_count: Some(3),
                     color: None,
                     agents: false,
+                    server: None,
                 },
             ],
         };
@@ -649,6 +662,60 @@ mod tests {
         fs::write(wal_of(&dir.join(storage::DB_FILE)), format!("{tag}-wal")).unwrap();
     }
 
+    // An org lockbox is told by its sidecar, never by the registry alone: a
+    // record is a note, the descriptor is the key's own word.
+    fn org_lockbox(root: &Path, id: &str) -> Workspace {
+        let dir = dir_of(root, id);
+        fs::create_dir_all(&dir).unwrap();
+        let kdf = crate::crypto::KdfParams::external("kid", 1)
+            .to_json()
+            .unwrap();
+        fs::write(dir.join(storage::KDF_SIDECAR_FILE), kdf).unwrap();
+        Workspace {
+            id: id.into(),
+            name: Some("Deploy".into()),
+            vault_id: Some(id.into()),
+            item_count: None,
+            color: None,
+            agents: false,
+            server: Some("https://rowel.acme.example".into()),
+        }
+    }
+
+    // An org lockbox is never promoted over a personal one, whatever its place
+    // in the registry; with only org lockboxes left, the primary cannot go.
+    #[test]
+    fn deleting_the_primary_never_promotes_an_org_lockbox() {
+        let root = tmp_root();
+        let mut registry = two_workspaces(&root);
+        registry.workspaces.insert(1, org_lockbox(&root, "0r61"));
+
+        let deletion = deletion_of(&root, &registry, PRIMARY_ID).unwrap();
+        assert_eq!(deletion.promoted.as_deref(), Some("a1b2"));
+        assert_eq!(
+            deletion
+                .registry
+                .workspaces
+                .iter()
+                .map(|w| w.id.as_str())
+                .collect::<Vec<_>>(),
+            ["0r61", PRIMARY_ID]
+        );
+
+        registry.workspaces.retain(|w| w.id != "a1b2");
+        match deletion_of(&root, &registry, PRIMARY_ID) {
+            Err(Error::Other(why)) => {
+                assert!(why.contains("cannot become your main lockbox"), "{why}")
+            }
+            other => panic!("expected the refusal, got {other:?}"),
+        }
+        // Deleting the org lockbox itself is an ordinary delete.
+        assert_eq!(
+            deletion_of(&root, &registry, "0r61").unwrap().promoted,
+            None
+        );
+    }
+
     // The primary, and one workspace that would be promoted in its place.
     fn two_workspaces(root: &Path) -> Registry {
         let registry = Registry {
@@ -661,6 +728,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -669,6 +737,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
             ],
         };
@@ -934,6 +1003,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
                 Workspace {
                     id: "w2".into(),
@@ -942,6 +1012,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
             ],
         };
@@ -985,6 +1056,7 @@ mod tests {
                 item_count: None,
                 color: None,
                 agents: false,
+                server: None,
             }],
         };
         let token = dir_of(&root, "w2").join(Provider::Dropbox.token_file_name());

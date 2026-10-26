@@ -40,6 +40,10 @@ mod hibp;
 mod locale;
 // Backups the OS asks the app to open (the `.rowel`/`.swftx` file associations).
 mod opened;
+// Org lockboxes: a company's Rowel Server as the member's app speaks to it —
+// the sign-in, this device's enrollment key, the sealed record of both, the
+// lockboxes it hands this device and the approvals it routes here.
+mod org;
 mod retired;
 mod save;
 // Local image scanning (card / identity document). `pub` so `examples/scan.rs`
@@ -293,6 +297,18 @@ pub fn run() {
             commands::workspace::workspace_set_agents,
             commands::workspace::workspace_delete,
             commands::vault_password::workspace_adopt_vault_password,
+            // A company's Rowel Server: the sign-in, this device's standing
+            // there, and the org lockboxes it hands the member.
+            commands::org::org_enrollment_fingerprint,
+            commands::org::org_connections,
+            commands::org::org_connect,
+            commands::org::org_cancel_connect,
+            commands::org::org_disconnect,
+            commands::org::org_devices,
+            commands::org::org_approve_device,
+            commands::org::org_lockboxes,
+            commands::org::org_add_lockbox,
+            commands::org::org_refresh_lockbox_key,
             // The browser extension host is desktop only, like its module.
             #[cfg(desktop)]
             commands::browser::browser_status,

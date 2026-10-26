@@ -118,8 +118,9 @@ pub async fn sync_adopt_password(
         }
     }
 
-    let active =
-        super::auth::rekey_open_workspace(&app, &state, current_key, new_key, header).await?;
+    let active = super::auth::rekey_open_workspace(&app, &state, current_key, new_key, header)
+        .await?
+        .workspace_id;
     let unchanged = adopt_beside(&app, &state, &active, password_beside).await;
 
     // The pull now matches this device's descriptor: it merges, and pushes
@@ -301,13 +302,24 @@ async fn adopt_beside(
         .workspaces
         .into_iter()
         .filter(|w| w.id != active)
+        // An org lockbox's key is its server's, not a password's: nothing in
+        // its account is ever under the password being adopted.
+        .filter(|w| {
+            !crate::org::lockboxes::is_org_lockbox_dir(&crate::workspace::dir_of(&root, &w.id))
+        })
         .filter_map(|w| Some((w.id, w.vault_id?)))
         .collect();
     beside.sort_by_key(|(id, _)| id == PRIMARY_ID);
 
     let mut unchanged = Vec::new();
     for (id, vault_id) in beside {
-        let Some(held) = state.keyring.lock().unwrap().get(&id) else {
+        // The app key with it, for the sealed copy to be written under when a
+        // lock clears the ring during the re-key (`appkey::rekeyed`).
+        let (held, app_key) = {
+            let ring = state.keyring.lock().unwrap();
+            (ring.get(&id), ring.app_key())
+        };
+        let Some(held) = held else {
             continue;
         };
         let dir = crate::workspace::dir_of(&root, &id);
@@ -330,8 +342,9 @@ async fn adopt_beside(
                 if id == PRIMARY_ID {
                     appkey::replace_app_key(app, &material);
                     super::auth::restore_enrollment(app, material.clone()).await;
-                } else {
-                    appkey::adopt(app, &id, &material);
+                } else if let Err(e) = appkey::rekeyed(app, &id, app_key, &material) {
+                    // On the new password regardless: its own unlock opens it.
+                    log::warn!("lockbox {id}'s new key could not be kept for the next unlock: {e}");
                 }
                 // Its edits made under the old password go up now, under the
                 // new one, rather than at its next open.
@@ -406,7 +419,7 @@ fn adopt_one(
 // The "two devices" acceptance test of the design, one layer below the
 // commands (they need an `AppHandle`).
 #[cfg(test)]
-mod two_devices;
+pub(crate) mod two_devices;
 
 #[cfg(test)]
 mod tests {

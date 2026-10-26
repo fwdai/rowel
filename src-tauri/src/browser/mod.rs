@@ -387,6 +387,38 @@ pub fn refuse_grant_ask() -> Option<String> {
     CONSENT.refuse_grant()
 }
 
+/// Another decision is on screen: the ask did not go up, and the caller asks
+/// again once that dialog has closed.
+#[derive(Debug)]
+pub struct Busy;
+
+/// A grant ask a Rowel Server routed to this member (`org::approvals`), put
+/// to the person through the one consent slot as the app's own grant asks
+/// are: `emit` puts the dialog up under `id` and the window comes forward,
+/// and the answer arrives through `agent_grant_respond` like any other — a
+/// step-up ask is verified there before its yes counts, since the slot
+/// records `step_up`. Blocks the calling thread for the answer, up to the
+/// slot's minute; an unanswered ask is told apart from a refusal, because
+/// the server decides a timed-out ask for itself and must not be told "no".
+pub fn ask_remote_grant(
+    app: &AppHandle,
+    id: &str,
+    step_up: bool,
+    emit: impl FnOnce(),
+) -> std::result::Result<Verdict, Busy> {
+    let asked = CONSENT.try_ask_with(id, AskKind::Grant { step_up }, || {
+        emit();
+        window::raise(app);
+        Ok::<(), std::convert::Infallible>(())
+    });
+    match asked {
+        Err(NotAsked::Busy) => Err(Busy),
+        Err(NotAsked::Refused(never)) => match never {},
+        Ok(Some(Answer::Grant(answer))) => Ok(Verdict::Answered(answer)),
+        Ok(_) => Ok(Verdict::Unanswered),
+    }
+}
+
 /// Ask the user whether the client holding `key`, which says it is `who`, may
 /// connect: their answer, or `None`. Blocks the calling thread (see
 /// [`Pending::ask`]). The ask is tagged with an id of its own rather than
@@ -800,6 +832,7 @@ impl Host for AppHost {
                         .map(|c| c.visible.clone())
                         .collect(),
                     default_standing_days,
+                    server: None,
                 },
             );
             window::raise(app);

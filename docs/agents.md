@@ -146,6 +146,40 @@ line, or the host, path and methods. **Allow for N days** writes a rule for
 exactly that place. A command in `env` mode always asks unless a rule names its
 full command line, because the command itself can print what it is given.
 
+## Org lockboxes and a Rowel Server
+
+A company that runs a Rowel Server can hand you lockboxes it holds, so that
+its agents can use them while nobody is at a keyboard and you can approve
+what they ask for from your own Rowel. The app's side of that is in Settings
+› Lockboxes › **Rowel Server**:
+
+- **Connect.** Enter the server's address and sign in; the browser opens on
+  the server's sign-in page, which is your company's, and comes back to Rowel.
+  Rowel enrolls this computer as one of your devices under its host name.
+- **A pending device.** A new device is *pending* until one of your already
+  approved devices, or an admin, approves it. Each device shows a short
+  fingerprint of its enrollment key; compare the one on the new device's
+  screen with the one in the list before you tap **Approve**. Until then the
+  server hands the device no keys, so a stolen sign-in alone opens nothing.
+- **Add.** Once approved, the server lists the org lockboxes you may hold;
+  **Add** puts one beside your other lockboxes, synced through the server
+  rather than through your cloud account. It opens with your master password
+  like the rest, has its own agent-access switch, and cannot be renamed or
+  re-keyed from here: its name and its key are the server's. If the server
+  rotates a lockbox's key, your copy follows at its next sync.
+- **Approvals.** While Rowel is unlocked, a request an agent makes at the
+  server for one of your lockboxes reaches you in the same dialog as a local
+  agent's, with the company named. Allow once, for N days or deny, as before;
+  cards and identities take the same second check. Your answer goes back to
+  the server, which keeps the log for its own grants; nothing is written to
+  your Vault Health for them.
+
+What is different about an org lockbox, in one line: the server can open it.
+Its key is not derived from your password; the server minted it and holds a
+copy under its own root key, which is what lets it serve an agent at 3 a.m.
+Rowel says so when you add one. Everything else is unchanged: a client of
+kind `agent` still never receives a value, in any tier.
+
 ## What you will see in Vault Health
 
 Vault Health has an **Agent activity** panel:
@@ -202,6 +236,7 @@ section. In short:
 On a machine with no desktop, the same broker runs from the command line as
 `rowel serve`, unlocked from a terminal or a key file, with standing rules in
 a config file and asks answered by `rowel approve`; see
-[`docs/serve.md`](./serve.md). Not in this release: shared lockboxes with
-server-held keys, approvals from your phone, OAuth token minting, and agents
-in remote browsers.
+[`docs/serve.md`](./serve.md). Not in this release: the Rowel Server itself
+(the app can connect to one; `rowel serve --server` is the next iteration),
+connecting to one from the phone, approvals pushed to a phone, OAuth token
+minting, and agents in remote browsers.
