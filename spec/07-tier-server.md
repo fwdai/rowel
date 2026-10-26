@@ -108,10 +108,20 @@ after a probe that refuses to start when the app answers there, and a
 WebSocket (tokio + tungstenite; TLS from PEM files through `tokio-rustls` or
 plain behind a reverse proxy) where a binary message is one frame and each
 connection is a reader task, a std thread owning the `Connection`, and a
-writer task the lock signals reach through the server's sink. SIGTERM and
-SIGINT seal and exit 0. `generate-password` is refused (the generator's
-settings are the app's). Server mode, tenants, `OrgHost`, workload identity
-and the member and admin APIs below remain I7.
+writer task the lock signals reach through the server's sink. What a
+stranger at the port can cost is bounded before association: 256 open
+connections, a 10 s handshake deadline, the broker's 1 MiB frame cap per
+message, and a queue of four requests per connection past which the reader
+stops taking from the socket. One broker runs per data directory, under an
+exclusive lock on `serve.lock` taken before the password prompt and before
+any socket is bound, so a second instance can never unlink a running one's
+control socket. `--key-fd` is for a descriptor a wrapper hands in (`3<
+file`); a systemd `LoadCredential=` is a file under `$CREDENTIALS_DIRECTORY`
+and is passed with `--key-file`, so the idle lock works under systemd.
+SIGTERM and SIGINT seal and exit 0, also while the idle-lock password prompt
+waits (the prompt runs on a thread of its own). `generate-password` is
+refused (the generator's settings are the app's). Server mode, tenants,
+`OrgHost`, workload identity and the member and admin APIs below remain I7.
 
 **Root key and wrapping.**
 

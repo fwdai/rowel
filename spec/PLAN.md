@@ -297,8 +297,10 @@ or times out. This is the binary the server (I7) and the cloud (I9) run. Spec
 - [ ] Transports: the local socket on the same path scheme as the app, plus a
       `ws://`/`wss://` listener (TLS from files, or plain behind a reverse
       proxy) carrying the same frames (`04`). *Outcome:* as specified, plus
-      the socket probe that refuses to take a running app's socket, and
-      `ROWEL_BROKER` on the client side.
+      the socket probe that refuses to take a running app's socket, a lock
+      file that makes one broker per data directory, ceilings on the
+      WebSocket before association (connections, handshake time, message
+      size, queued requests), and `ROWEL_BROKER` on the client side.
 - [ ] Approvals without a GUI: rules from a config file; an `ask` waits for
       `rowel approve <id>` on the same machine or denies after the timeout;
       every decision an audit row (`03`). *Outcome:* `serve.json` rules; an
