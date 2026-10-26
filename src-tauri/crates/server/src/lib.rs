@@ -30,6 +30,7 @@ pub mod host;
 pub mod identity;
 pub mod lockboxes;
 pub mod members;
+pub mod packs;
 pub mod rootkey;
 pub mod state;
 pub mod store;

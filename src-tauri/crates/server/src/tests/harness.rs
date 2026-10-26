@@ -19,7 +19,7 @@ use crate::config::{
 use crate::identity::testing::FakeIdp;
 use crate::state::AppState;
 use crate::testing::{TempServer, TENANT};
-use crate::{admin, members};
+use crate::{admin, members, packs};
 
 /// The app's loopback listener, as `sync::loopback_redirect_uri` spells it.
 pub(super) const REDIRECT: &str = "http://127.0.0.1:4242/auth/callback";
@@ -92,6 +92,7 @@ impl Api {
         let router = Router::new()
             .merge(members::router())
             .merge(admin::router())
+            .merge(packs::router())
             .with_state(state.clone());
         let task = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();

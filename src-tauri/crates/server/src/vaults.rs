@@ -17,8 +17,9 @@
 //! epoch too: a grant decided in one session settles in no other, whatever
 //! happened in between.
 //!
-//! A frozen lockbox is never unwrapped, and one frozen while open is sealed
-//! at the next request or tick, whichever comes first.
+//! A frozen lockbox is never unwrapped here, and one frozen while open is
+//! sealed at the next request or tick, whichever comes first. (A member's
+//! pull of one opens its file for that pull alone: `packs`.)
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -132,8 +133,10 @@ impl Vault {
             now,
         );
         // Every writer's rows, once: the file may carry rows the mirror has
-        // not seen — a device's, merged while the lockbox was sealed — and
-        // from here on only this server's own chain grows under this lock.
+        // not seen — a device's whose mirroring failed at its push — and from
+        // here on another writer's rows arrive only through a push, which
+        // mirrors them itself (`packs`). The unwrap's own row is new, so this
+        // pass moves the revision too.
         match opened.store.audit_all() {
             Ok(rows) => mirror_rows(state, &self.id, &rows),
             Err(e) => log::warn!("rowel server: lockbox {} log unreadable: {e}", self.id),
@@ -243,12 +246,26 @@ pub fn initialise(held: &mut AgentState, lockbox_on: bool) {
     });
 }
 
+/// Copy `rows` into the audit mirror, and move the lockbox's revision once if
+/// any of them was new there. A row new to the mirror is one the server wrote
+/// into the file since the last pass — a grant's, an association, an unwrap —
+/// and the file a device would pull has changed with it: unless the revision
+/// moves, a device's HEAD still matches, it never pulls the row, and its next
+/// push is taken under a revision that predates it (spec `07`, "every
+/// server-side write bumps the revision"). Moved, the push fails with 412 and
+/// the device pulls and merges first: the compare-and-swap working as designed.
 fn mirror_rows(state: &AppState, lockbox_id: &str, rows: &[rowel_core::store::AuditRecord]) {
     if rows.is_empty() {
         return;
     }
-    if let Err(e) = state.store.mirror_audit(lockbox_id, rows) {
-        log::warn!("rowel server: audit mirror of {lockbox_id}: {e}");
+    match state.store.mirror_audit(lockbox_id, rows) {
+        Ok(0) => {}
+        Ok(_) => {
+            if let Err(e) = state.store.bump_revision(lockbox_id) {
+                log::warn!("rowel server: revision of {lockbox_id}: {e}");
+            }
+        }
+        Err(e) => log::warn!("rowel server: audit mirror of {lockbox_id}: {e}"),
     }
 }
 
