@@ -275,6 +275,23 @@ fn execute(args: ServerAdminArgs) -> Result<(), Failure> {
             );
         }
         ServerCommand::LockboxesFreeze { id, frozen } => {
+            // A running server changes `frozen` only under the lockbox's
+            // vault lock, which seals it in the same step; a row written from
+            // here would skip that lock and let a push in flight land after
+            // the freeze. So only while no server holds the data directory,
+            // and the lock is kept until the row is written.
+            let _offline = match rowel_broker::server::Lock::take(data_dir) {
+                Ok(lock) => lock,
+                Err(rowel_broker::server::LockError::Held) => {
+                    return Err(Failure::Failed(format!(
+                        "a server is running on {}; freeze through its admin API \
+                         (PATCH /v1/admin/lockboxes/{id} {{\"frozen\": {frozen}}}), which waits \
+                         for the writes in flight",
+                        data_dir.display()
+                    )))
+                }
+                Err(e) => return Err(failed(e)),
+            };
             store.set_frozen(&id, frozen).map_err(failed)?;
             println!("{} {id}", if frozen { "froze" } else { "unfroze" });
         }

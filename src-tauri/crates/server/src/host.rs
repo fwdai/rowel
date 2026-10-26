@@ -119,7 +119,7 @@ impl OrgHost {
     /// locks are let go.
     fn bind(&self, client: &Client) -> Result<Bound, Code> {
         let (agent, lockbox) = self.definition(client).ok_or(Code::GrantDenied)?;
-        let vault = self.state.vaults.open(&self.state, &lockbox)?;
+        let vault = self.state.vaults.open(&self.state, &lockbox.id)?;
         if vault.sync_switch(self.writer(), lockbox.agents) {
             self.state
                 .approvals
@@ -449,7 +449,7 @@ impl Host for OrgHost {
         let vault = self
             .state
             .vaults
-            .open(&self.state, &lockbox)
+            .open(&self.state, &lockbox.id)
             .map_err(|_| Code::AssociationFailed)?;
         {
             let session = vault.session();

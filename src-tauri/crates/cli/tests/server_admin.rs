@@ -311,6 +311,7 @@ fn a_server_starts_answers_keeps_its_data_directory_to_itself_and_stops_sealed()
     let mut written = Config::load(&path).unwrap();
     written.listen.http = format!("127.0.0.1:{port}");
     std::fs::write(&path, serde_json::to_string_pretty(&written).unwrap()).unwrap();
+    let lockbox = id(&data, &["lockboxes", "create", "Deploy"]);
 
     let (mut server, said, collecting) = start_server(&data);
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -373,6 +374,12 @@ fn a_server_starts_answers_keeps_its_data_directory_to_itself_and_stops_sealed()
     assert_eq!(second.status.code(), Some(1), "{refused}");
     assert!(refused.contains("another broker"), "{refused}");
 
+    // A freeze from here would skip the running server's vault lock, so it
+    // is refused and pointed at the admin API.
+    let (code, _, said_freeze) = admin(&data, &["lockboxes", "freeze", &lockbox]);
+    assert_eq!(code, 1, "{said_freeze}");
+    assert!(said_freeze.contains("admin API"), "{said_freeze}");
+
     #[cfg(unix)]
     {
         let signalled = Command::new("kill")
@@ -397,4 +404,6 @@ fn a_server_starts_answers_keeps_its_data_directory_to_itself_and_stops_sealed()
         wait_for_exit(&mut server, Duration::from_secs(20));
         collecting.join().unwrap();
     }
+    // With the server stopped, the offline freeze is the admin's to make.
+    ok(&data, &["lockboxes", "freeze", &lockbox]);
 }

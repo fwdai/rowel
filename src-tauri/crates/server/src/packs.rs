@@ -129,9 +129,9 @@ fn frozen() -> Failure {
 fn open_vault(state: &AppState, lockbox: &Lockbox) -> Result<Arc<Vault>, Failure> {
     state
         .vaults
-        .open(state, lockbox)
+        .open(state, &lockbox.id)
         .map_err(|code| match code {
-            // Frozen since the row was read.
+            // Frozen, by the row as it stands under the vault's lock.
             Code::GrantDenied => frozen(),
             _ => Failure::internal(format!("lockbox {} would not open", lockbox.id)),
         })
@@ -203,33 +203,33 @@ async fn get_pack(
     let device = authed.device.as_ref().map(|device| device.id.clone());
     let (bytes, etag) = blocking(move || {
         let scratch = scratch_dir(&state)?;
-        if lockbox.frozen {
-            // Sealed if it was open, as any request meeting a frozen lockbox
-            // leaves it; then opened for this pull alone, outside the vault
-            // cache, which never holds a frozen lockbox's key. The unwrap is
-            // a tenant event rather than a `key_unwrapped` row: a frozen file
-            // is written by nothing, and a row per pull would move its
-            // revision on every device's run. Every unwrap is still on record.
-            state.vaults.seal(&state, &lockbox.id);
-            let opened = lockboxes::open(&state.store, &*state.root, &state.data_dir, &lockbox.id)?;
-            if let Err(e) = state.store.record_event(
-                "key_unwrapped",
-                Some(&member),
-                device.as_deref(),
-                Some(&lockbox.id),
-            ) {
-                log::warn!("rowel server: could not record an unwrap of {id}: {e}");
+        // Frozen or not is the vault's to say, under its lock (`Vaults::
+        // open`), never the row `held` read before it: a freeze between the
+        // two would otherwise send a frozen lockbox down the cached path.
+        match state.vaults.open(&state, &lockbox.id) {
+            Ok(vault) => {
+                let session = vault.session();
+                if let Ok(open) = session.open() {
+                    // Read under the lock the file is written under, so the
+                    // ETag is never newer than the bytes.
+                    let etag = current_etag(&state, &lockbox.id)?;
+                    return Ok((pack_of(&open.opened, &scratch)?, etag));
+                }
+                // Sealed since it was opened: by the idle tick, or a freeze.
+                drop(session);
+                if !is_frozen(&state, &lockbox.id)? {
+                    return Err(sealed());
+                }
             }
-            let etag = current_etag(&state, &lockbox.id)?;
-            return Ok((pack_of(&opened, &scratch)?, etag));
+            Err(Code::GrantDenied) => {}
+            Err(_) => {
+                return Err(Failure::internal(format!(
+                    "lockbox {} would not open",
+                    lockbox.id
+                )))
+            }
         }
-        let vault = open_vault(&state, &lockbox)?;
-        let session = vault.session();
-        let open = session.open().map_err(|_| sealed())?;
-        // Read under the lock the file is written under, so the ETag is
-        // never newer than the bytes.
-        let etag = current_etag(&state, &lockbox.id)?;
-        Ok((pack_of(&open.opened, &scratch)?, etag))
+        frozen_pull(&state, &lockbox.id, &member, device.as_deref(), &scratch)
     })
     .await?;
     Ok((
@@ -241,6 +241,37 @@ async fn get_pack(
         bytes,
     )
         .into_response())
+}
+
+/// A frozen lockbox's pack, opened for this pull alone, outside the vault
+/// cache, which never holds a frozen lockbox's key. The unwrap is a tenant
+/// event rather than a `key_unwrapped` row: a frozen file is written by
+/// nothing, and a row per pull would move its revision on every device's run.
+/// Every unwrap is still on record.
+fn frozen_pull(
+    state: &AppState,
+    id: &str,
+    member: &str,
+    device: Option<&str>,
+    scratch: &std::path::Path,
+) -> Result<(Vec<u8>, String), Failure> {
+    let opened = lockboxes::open(&state.store, &*state.root, &state.data_dir, id)?;
+    if let Err(e) = state
+        .store
+        .record_event("key_unwrapped", Some(member), device, Some(id))
+    {
+        log::warn!("rowel server: could not record an unwrap of {id}: {e}");
+    }
+    let etag = current_etag(state, id)?;
+    Ok((pack_of(&opened, scratch)?, etag))
+}
+
+/// Whether lockbox `id` is frozen, by its row as it stands.
+fn is_frozen(state: &AppState, id: &str) -> Result<bool, Failure> {
+    Ok(state
+        .store
+        .lockbox(id)?
+        .is_some_and(|lockbox| lockbox.frozen))
 }
 
 /// Merge a device's pack into the server's file, as a compare-and-swap on
@@ -291,7 +322,16 @@ fn merge_push(
     let unpacked = pack::unpack(body).map_err(|e| Failure::bad_request(e.to_string()))?;
     let vault = open_vault(state, lockbox)?;
     let session = vault.session();
-    let open = session.open().map_err(|_| sealed())?;
+    // Sealed between the open and this lock: a freeze, which this push must
+    // not outlive, or the idle tick, which the device simply retries.
+    let Ok(open) = session.open() else {
+        drop(session);
+        return Err(if is_frozen(state, &lockbox.id)? {
+            frozen()
+        } else {
+            sealed()
+        });
+    };
     let opened = &open.opened;
     if expected != current_etag(state, &lockbox.id)? {
         return Err(Failure::new(

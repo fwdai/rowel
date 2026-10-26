@@ -256,7 +256,7 @@ pub(super) fn server_copy(state: &AppState, lockbox: &Lockbox) -> lockboxes::Ope
 /// A row an agent's grant writes, the way the host writes it: under the
 /// vault's session lock, mirrored after.
 pub(super) fn agent_writes(state: &AppState, lockbox: &Lockbox) {
-    let vault = state.vaults.open(state, lockbox).unwrap();
+    let vault = state.vaults.open(state, &lockbox.id).unwrap();
     {
         let session = vault.session();
         agents::record(
@@ -480,6 +480,44 @@ async fn a_frozen_lockbox_takes_no_push_and_still_serves_its_pack() {
     assert_eq!(device.head().await, at);
     let server = server_copy(&api.state, &lockbox);
     assert!(server.store.get("gh").unwrap().is_some());
+    assert!(server.store.get("aws").unwrap().is_none());
+}
+
+// The freeze race of review: a freeze must wait for the write that holds the
+// vault and then end every later one, whatever row a request read before it.
+#[tokio::test]
+async fn a_freeze_waits_for_the_write_in_flight_and_no_write_lands_after_it() {
+    let (api, lockbox) = deploy().await;
+    let mut device = Device::join(&api, &lockbox, "pat@acme.example").await;
+    device.save("gh", "GitHub");
+    assert_eq!(device.push().await, [200]);
+    let state = api.state.clone();
+    let vault = state.vaults.open(&state, &lockbox.id).unwrap();
+
+    // A write in flight holds the session lock; the freeze waits for it.
+    let in_flight = vault.session();
+    let freezing = {
+        let (state, id) = (state.clone(), lockbox.id.clone());
+        std::thread::spawn(move || state.vaults.set_frozen(&state, &id, true))
+    };
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(!freezing.is_finished(), "the freeze waits for the write");
+    assert!(!state.store.lockbox(&lockbox.id).unwrap().unwrap().frozen);
+    drop(in_flight);
+    freezing.join().unwrap().unwrap();
+
+    // Sealed in the same section, and refused from the row under the lock.
+    assert!(!vault.is_open());
+    assert!(matches!(
+        state.vaults.open(&state, &lockbox.id),
+        Err(rowel_broker::protocol::Code::GrantDenied)
+    ));
+    // `lockbox` is the row as it was read before the freeze; a push that
+    // read it so is still refused, and nothing reaches the file.
+    assert!(!lockbox.frozen);
+    device.save("aws", "AWS");
+    assert_eq!(device.push().await, [423]);
+    let server = server_copy(&api.state, &lockbox);
     assert!(server.store.get("aws").unwrap().is_none());
 }
 

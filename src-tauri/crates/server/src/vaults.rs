@@ -17,9 +17,15 @@
 //! epoch too: a grant decided in one session settles in no other, whatever
 //! happened in between.
 //!
-//! A frozen lockbox is never unwrapped here, and one frozen while open is
-//! sealed at the next request or tick, whichever comes first. (A member's
-//! pull of one opens its file for that pull alone: `packs`.)
+//! Freezing. A vault's file is open only while its row is not frozen, and
+//! the row's `frozen` changes only under that vault's session lock
+//! ([`Vaults::set_frozen`], which seals in the same section). Every way in,
+//! [`Vaults::open`], reads the row again under the same lock, so whoever
+//! holds an open session holds it for a lockbox that was not frozen when the
+//! lock was taken, and a freeze waits for the write in flight to finish and
+//! then ends every later one: a write never lands after a freeze returned.
+//! (A member's pull of a frozen lockbox opens its file for that pull alone:
+//! `packs`.)
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -34,7 +40,6 @@ use rowel_core::store::SqliteStore;
 
 use crate::lockboxes::{self, Opened};
 use crate::state::{now_ms, AppState};
-use crate::store::Lockbox;
 
 /// A lockbox file open, and the cipher its items are sealed under.
 pub struct Open {
@@ -115,7 +120,23 @@ impl Vault {
     /// Unwrap the master and open the file if the session holds none, under
     /// the session lock the caller holds; the row and the full mirror pass
     /// that every unwrap owes go in the same section.
+    ///
+    /// The row is read here, under the lock, every time: a frozen lockbox is
+    /// sealed if it was open and refused (`GrantDenied`), and a row that
+    /// cannot be read is no licence to serve. Whatever a caller read before
+    /// it took the lock decides nothing.
     fn ensure_open(&self, state: &AppState, session: &mut Session) -> Result<(), Code> {
+        match state.store.lockbox(&self.id) {
+            Ok(Some(row)) if !row.frozen => {}
+            Ok(Some(_)) => {
+                self.seal_under(state, session);
+                return Err(Code::GrantDenied);
+            }
+            Ok(None) | Err(_) => {
+                self.seal_under(state, session);
+                return Err(Code::DatabaseNotOpened);
+            }
+        }
         if session.open.is_some() {
             return Ok(());
         }
@@ -208,7 +229,11 @@ impl Vault {
     /// was open. The asks waiting on it are the caller's to refuse, with the
     /// locks let go.
     fn seal(&self, state: &AppState) -> bool {
-        let mut session = self.session();
+        self.seal_under(state, &mut self.session())
+    }
+
+    /// [`Vault::seal`] under the session lock the caller already holds.
+    fn seal_under(&self, state: &AppState, session: &mut Session) -> bool {
         // The last rows of the session, before the store goes with it.
         if let Ok(store) = session.store() {
             self.mirror_from(state, store);
@@ -287,21 +312,56 @@ impl Vaults {
         self.map().get(id).cloned()
     }
 
-    /// The vault of `lockbox`, open: its master unwrapped on first use. A
-    /// frozen lockbox is refused, and sealed if it was open.
-    pub fn open(&self, state: &AppState, lockbox: &Lockbox) -> Result<Arc<Vault>, Code> {
-        if lockbox.frozen {
-            self.seal(state, &lockbox.id);
-            return Err(Code::GrantDenied);
-        }
-        let vault = self
-            .map()
-            .entry(lockbox.id.clone())
-            .or_insert_with(|| Arc::new(Vault::new(&lockbox.id)))
-            .clone();
+    /// The vault of `id`, created sealed if no request has reached it yet:
+    /// the one object whose session lock every open and every freeze of the
+    /// lockbox take.
+    fn entry(&self, id: &str) -> Arc<Vault> {
+        self.map()
+            .entry(id.to_string())
+            .or_insert_with(|| Arc::new(Vault::new(id)))
+            .clone()
+    }
+
+    /// The vault of lockbox `id`, open: its master unwrapped on first use. A
+    /// frozen lockbox is refused (`GrantDenied`), and sealed if it was open,
+    /// by the row as it stands under the vault's lock (`ensure_open`), never
+    /// by a row the caller read earlier.
+    pub fn open(&self, state: &AppState, id: &str) -> Result<Arc<Vault>, Code> {
+        let vault = self.entry(id);
         vault.touch();
-        vault.ensure_open(state, &mut vault.session())?;
+        let opened = vault.ensure_open(state, &mut vault.session());
+        if let Err(code) = opened {
+            if code == Code::GrantDenied {
+                state.approvals.refuse_lockbox(&state.store, id);
+            }
+            return Err(code);
+        }
         Ok(vault)
+    }
+
+    /// Freeze or thaw lockbox `id`. The row is written under the vault's
+    /// session lock, and a freeze seals in the same section: a request
+    /// writing to the lockbox finishes first, and none starts after this
+    /// returns. The asks waiting on a frozen lockbox are refused once the
+    /// lock is let go, as every seal does.
+    pub fn set_frozen(
+        &self,
+        state: &AppState,
+        id: &str,
+        frozen: bool,
+    ) -> Result<(), crate::store::StoreError> {
+        let vault = self.entry(id);
+        {
+            let mut session = vault.session();
+            state.store.set_frozen(id, frozen)?;
+            if frozen && vault.seal_under(state, &mut session) {
+                log::info!("rowel server: lockbox {id} frozen and sealed");
+            }
+        }
+        if frozen {
+            state.approvals.refuse_lockbox(&state.store, id);
+        }
+        Ok(())
     }
 
     /// Seal the vault of `id` if it is open, and refuse the asks waiting on

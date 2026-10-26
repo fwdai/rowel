@@ -345,11 +345,17 @@ async fn update_lockbox(
     Path(id): Path<String>,
     JsonBody(change): JsonBody<LockboxChange>,
 ) -> Reply<Json<LockboxView>> {
-    let store = &state.store;
-    existing_lockbox(store, &id)?;
+    existing_lockbox(&state.store, &id)?;
     if let Some(frozen) = change.frozen {
-        store.set_frozen(&id, frozen)?;
+        // Through the vault, under its lock (`Vaults::set_frozen`): a push or
+        // a grant in flight finishes first and none lands after this answers.
+        // That lock may be held for a whole merge, so not on this task.
+        let (held, lockbox) = (state.clone(), id.clone());
+        tokio::task::spawn_blocking(move || held.vaults.set_frozen(&held, &lockbox, frozen))
+            .await
+            .map_err(|e| Failure::internal(e.to_string()))??;
     }
+    let store = &state.store;
     if let Some(agents) = change.agents {
         store.set_agents(&id, agents)?;
     }
