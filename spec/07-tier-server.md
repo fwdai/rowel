@@ -236,6 +236,16 @@ app's grant dialog already renders (`events::AskTarget`). A 401 on any member
 call means the session is over: the app refreshes once through the token
 endpoint and retries, and otherwise tells the member to sign in again.
 
+*Transport (review of PR #662).* A server URL is `https`, or `http` to a
+loopback host only (`localhost`, `127.0.0.0/8`, `[::1]`), refused at
+`connections::normalize_url` before a request exists: bearer tokens, wrapped
+masters and packs never cross a network in the clear. The approvals stream is
+framed by the SSE rules: `\r\n`, `\n` or a lone `\r` end a line and an empty
+line ends a frame. Every write to a held member session is one
+read-modify-write under the sidecars lock (`connections::update`), so a
+refresh that rotated a single-use refresh token cannot be undone by a caller
+writing back the copy it read before the round trip.
+
 On the device, an org lockbox is one more non-primary workspace: the app
 unseals the master with its enrollment key, puts it in `appkey::Keyring`, and
 writes the `WRAPPED_KEY_FILE` sidecar under the app key exactly as it does for

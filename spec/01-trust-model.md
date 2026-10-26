@@ -175,8 +175,12 @@ where the 32 bytes come from and who else holds a wrapped copy:
   the workspace-key seal and bound to its own name, so without an unlocked
   vault there is no enrollment key; a file that does not open is never
   replaced by a fresh key (the server holds the old public half), except
-  what deleting the primary leaves behind, which is removed and the member
-  signs in again. The fingerprint a person compares across two screens is
+  what deleting the primary leaves behind. That file, and the sessions
+  beside it, are renamed aside at the next primary unlock and the member
+  signs in again. Renamed, never deleted, and only when the blob is whole
+  but fails its tag: an I/O error or a malformed file says nothing about the
+  key, and even a failed tag is not proof, since to an AEAD corruption in
+  place and a wrong key look the same. The fingerprint a person compares across two screens is
   SHA-256 of the 32 public-key bytes, the first 16 hex digits in four groups
   of four (pinned by a test). Its public half is what a server wraps lockbox
   masters to. Enrollment of a new device is approved from an already-enrolled
