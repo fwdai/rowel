@@ -36,16 +36,96 @@ type Queue = (u64, Sender<&'static [u8]>);
 static CLIENTS: Mutex<Vec<Queue>> = Mutex::new(Vec::new());
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// The listener at `root`'s socket. A socket file a crashed process left
-/// behind is replaced rather than refused; the single-instance guard is what
-/// keeps two live apps from contending for one.
-///
-/// `root` is made if it is missing: the Safari extension's is in the App
-/// Group container (the app's `safari_socket_dir`), which nothing may have
-/// created yet — the system makes it when a signed, entitled process first
-/// asks for it, and an unsigned `tauri dev` build never does. A plain
-/// directory made there serves the same, for the app and for the extension
-/// alike.
+/// The lock file that makes one broker per data directory.
+pub const LOCK_FILE: &str = "broker.lock";
+
+/// Why a data directory cannot be served.
+#[derive(Debug)]
+pub enum LockError {
+    /// Another broker holds the lock: the app or a `rowel serve` is serving
+    /// this data directory now.
+    Held,
+    Io(io::Error),
+}
+
+impl std::fmt::Display for LockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Held => f.write_str(
+                "another broker (the Rowel app or a rowel serve) is serving this data directory",
+            ),
+            Self::Io(e) => write!(f, "could not take the broker lock: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for LockError {}
+
+impl From<io::Error> for LockError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+/// One broker per data directory, whatever kind and whatever it listens on:
+/// an exclusive advisory lock on `broker.lock` in `root`, held for the life
+/// of the process and released by the kernel however the process ends. The
+/// app takes it before it binds the extension's socket; `rowel serve` takes
+/// it before it asks for a password or binds anything. A second process of
+/// either kind is refused here, so neither can replace the other's live
+/// socket on its way to failing, and no two brokers write the same lockbox
+/// under the same install id. It is also what lets [`bind`] replace a socket
+/// file without looking: with the lock held, a file that is there is a dead
+/// process's.
+pub struct Lock {
+    _file: std::fs::File,
+}
+
+impl Lock {
+    pub fn take(root: &Path) -> Result<Self, LockError> {
+        make_root(root)?;
+        let path = root.join(LOCK_FILE);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        match file.try_lock() {
+            Ok(()) => Ok(Self { _file: file }),
+            Err(std::fs::TryLockError::WouldBlock) => Err(LockError::Held),
+            Err(std::fs::TryLockError::Error(e)) => Err(LockError::Io(e)),
+        }
+    }
+}
+
+/// `root`, made owner-only if it is missing: the Safari extension's is in
+/// the App Group container (the app's `safari_socket_dir`), which nothing
+/// may have created yet — the system makes it when a signed, entitled
+/// process first asks for it, and an unsigned `tauri dev` build never does.
+/// A plain directory made there serves the same, for the app and for the
+/// extension alike.
+fn make_root(root: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(root)
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(root)
+}
+
+/// The listener at `root`'s socket. A socket file already there is replaced
+/// rather than refused, which is safe behind [`Lock::take`]: with the lock
+/// held, the file is one a crashed process left behind.
 ///
 /// The socket file is made owner-only after the bind rather than through the
 /// listener's `mode` option, which macOS does not support (the crate answers
@@ -54,14 +134,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// creation — the data directory, or the group container (the system makes
 /// it `0700` as well) — so nothing else could reach the file in it anyway.
 pub fn bind(root: &Path) -> io::Result<Listener> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(root)?;
-    }
+    make_root(root)?;
     let listener = ListenerOptions::new()
         .name(socket_name(root)?)
         .try_overwrite(true)

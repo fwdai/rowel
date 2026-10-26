@@ -35,12 +35,15 @@ credential the unit loads (below). Nothing is served from a sealed lockbox;
 `SIGTERM`, `rowel admin lock` and the idle lock seal it, and every grant
 goes with the seal.
 
-**One broker per data directory.** The broker takes an exclusive lock on
-`serve.lock` in the data directory before it asks for a password or binds a
-socket, and holds it until it exits. A second `rowel serve` on the same
-directory is refused at once, so it can never replace a running broker's
-sockets on its way to failing; a lock a dead process left is released by the
-kernel, so a crash needs no cleanup.
+**One broker per data directory.** The app and `rowel serve` take the same
+exclusive lock, `broker.lock` in the data directory: the app when it binds
+the extension's socket, the broker before it asks for a password or binds
+anything, whatever it listens on. Whichever is second is refused — the
+broker exits saying so, the app logs it and does not serve the extension —
+so neither can replace the other's live socket on its way to failing, and no
+two brokers write the same lockbox under the same install id. The lock is
+held until the process ends and released by the kernel however it ends, so a
+crash needs no cleanup.
 
 ## Installing on a Linux box
 
@@ -143,15 +146,14 @@ broker.
 - `idleLockMs`: seal after this long without a request; `null` never.
   `--idle-lock <minutes>` overrides.
 - `listen.socket`: the data directory's socket, where the extension and the
-  CLI on this box look for the app (`--no-socket` turns it off). Before
-  binding, the broker probes the socket: if the app is serving this data
-  directory, it refuses to start rather than take the socket over.
+  CLI on this box look for the app (`--no-socket` turns it off). The app
+  cannot be serving it: the broker lock above refused one of the two first.
 - `listen.ws`: the WebSocket address, or `null`; `--ws <addr>` overrides.
   `listen.tls`: PEM files for the certificate chain and the private key;
   `null` serves `ws://` in the clear, for a reverse proxy that terminates
   TLS.
 
-The data directory also gets `serve.lock` (the one-broker lock above) and
+The data directory also gets `broker.lock` (the one-broker lock above) and
 `serve.sock` (the control socket below) while the broker runs.
 
 ## Approvals: `rowel approve`
@@ -214,7 +216,10 @@ at most 256 connections are open at once (one past that is closed before
 the handshake, and the agent retries), a handshake has ten seconds to
 finish, a message may carry no more than the broker's 1 MiB frame, and each
 connection has a queue of four requests after which the broker stops
-reading from it until its thread catches up. Put the listener on the
+reading from it until its thread catches up. A connection's place under the
+ceiling belongs to the thread serving it, not the socket: hanging up with
+an ask in flight keeps the place taken until the ask is answered or times
+out, so hanging up and reconnecting is not a way past the ceiling. Put the listener on the
 loopback address or behind a reverse proxy that authenticates, as with any
 service; the ceiling keeps a flood from taking the process down, it does
 not keep a flood from occupying the connections an agent would use.

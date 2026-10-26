@@ -6,11 +6,12 @@
 
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use interprocess::local_socket::{prelude::*, Listener};
 use tauri::AppHandle;
 
-use rowel_broker::server::{bind, serve_stream};
+use rowel_broker::server::{bind, serve_stream, Lock};
 pub use rowel_broker::server::{notify_locked, notify_signals, notify_unlocked};
 
 use super::AppHost;
@@ -22,9 +23,16 @@ use crate::{settings, storage};
 // manifests are gone, so no browser launches a proxy to arrive anyway.
 static STARTED: AtomicBool = AtomicBool::new(false);
 
+// The one-broker lock on the data directory, held from the first bind to the
+// end of the process: a `rowel serve` on the same directory is refused while
+// the app holds it, and the app refuses to listen while one holds it.
+static LOCK: Mutex<Option<Lock>> = Mutex::new(None);
+
 /// Start listening, once. A failure to bind the data-directory socket — the
 /// one Chrome and Firefox reach — is logged and leaves the host off; the next
-/// enable from Settings tries again.
+/// enable from Settings tries again. So is a data directory another broker
+/// is serving: `rowel serve` holds the same lock, and the app does not take
+/// its socket over.
 ///
 /// On macOS a second socket, in the App Group container, serves the Safari
 /// extension (`safari_socket_dir`). It is bound best-effort after the first:
@@ -42,7 +50,12 @@ pub fn start(app: &AppHandle) {
         .spawn(move || {
             let listener = storage::root_dir(&app)
                 .map_err(|e| io::Error::other(e.to_string()))
-                .and_then(|root| bind(&root));
+                .and_then(|root| {
+                    let lock = Lock::take(&root).map_err(io::Error::other)?;
+                    let listener = bind(&root)?;
+                    *LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(lock);
+                    Ok(listener)
+                });
             let listener = match listener {
                 Ok(listener) => listener,
                 Err(e) => {

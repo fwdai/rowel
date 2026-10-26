@@ -731,28 +731,6 @@ fn the_control_socket_lists_and_answers_asks_and_seals() {
     assert!(!client.status().unwrap().unlocked);
 }
 
-#[test]
-fn the_lock_makes_one_broker_per_data_directory() {
-    let data = seeded();
-    let first = control::Guard::take(&data.root).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(data.root.join(control::LOCK_FILE))
-            .unwrap()
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600);
-    }
-    let second = control::Guard::take(&data.root);
-    assert!(
-        matches!(second, Err(control::GuardError::Held)),
-        "a second broker on the same directory is refused while the first holds the lock"
-    );
-    drop(first);
-    control::Guard::take(&data.root).expect("the lock is free once the holder is gone");
-}
-
 // --- the WebSocket ------------------------------------------------------------------
 
 /// One frame out over the WebSocket, and the next binary message in.
@@ -846,6 +824,74 @@ async fn the_websocket_turns_connections_past_the_ceiling_away() {
                 }
                 Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
                 Err(e) => panic!("the slot was not released: {e}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hung_up_connection_keeps_its_slot_until_its_ask_is_answered() {
+    let data = seeded();
+    let host = data.host(&Notices::default());
+    let listener = listen::bind_ws("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(listen::serve_ws_limited(listener, None, host.clone(), 1));
+
+    let asked = host.clone();
+    tokio::task::spawn_blocking(move || {
+        let url = format!("ws://{address}/");
+        // The agent is let in, asks for a grant no rule covers, and hangs up
+        // while the ask waits.
+        let (mut socket, _) = tungstenite::connect(&url).unwrap();
+        let mut channel = Channel::new();
+        let (request, nonce) = channel.exchange_request("rowel-mcp");
+        let reply = roundtrip(&mut socket, &request);
+        channel.accept_exchange(&nonce, &reply).unwrap();
+        let (request, nonce) = channel
+            .seal(
+                "rowel-mcp",
+                "test-associate",
+                json!({ "id": "Claude Code", "key": AGENT_KEY }),
+            )
+            .unwrap();
+        let reply = roundtrip(&mut socket, &request);
+        channel.open("test-associate", &nonce, &reply).unwrap();
+        let (request, _) = channel
+            .seal("rowel-mcp", "request-grant", header_request("then hang up"))
+            .unwrap();
+        socket
+            .send(tungstenite::Message::binary(
+                serde_json::to_vec(&request).unwrap(),
+            ))
+            .unwrap();
+        let id = pending_id(&asked);
+        drop(socket);
+
+        // The socket is gone, the thread is not: the one slot stays taken
+        // for as long as the ask does, so hanging up buys nothing.
+        thread::sleep(Duration::from_millis(200));
+        assert!(
+            tungstenite::connect(&url).is_err(),
+            "a hung-up connection released its slot while its ask waited"
+        );
+        asked
+            .answer(AnswerRequest {
+                id,
+                deny: true,
+                ..AnswerRequest::default()
+            })
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match tungstenite::connect(&url) {
+                Ok((mut next, _)) => {
+                    let _ = next.close(None);
+                    break;
+                }
+                Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+                Err(e) => panic!("the slot was not released once the ask was answered: {e}"),
             }
         }
     })

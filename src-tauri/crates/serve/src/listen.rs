@@ -1,8 +1,9 @@
 //! Where agents and extensions reach the broker: the data directory's socket
 //! — the same path the app would listen on, so the extension and the CLI on
-//! this box find it unchanged — and a WebSocket, plain behind a reverse
-//! proxy or with TLS from PEM files, carrying the same frames (spec `04`:
-//! a binary message is exactly one frame's JSON body).
+//! this box find it unchanged; the broker lock keeps the two from serving
+//! it at once — and a WebSocket, plain behind a reverse proxy or with TLS
+//! from PEM files, carrying the same frames (spec `04`: a binary message is
+//! exactly one frame's JSON body).
 //!
 //! Over the WebSocket each connection is three things: a tokio task reading
 //! messages, a std thread owning the `Connection` and serving requests one
@@ -23,95 +24,33 @@
 
 use std::io;
 use std::net::SocketAddr;
-use std::path::Path;
-use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use interprocess::local_socket::{prelude::*, Listener, Stream};
+use interprocess::local_socket::{prelude::*, Listener};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc as async_mpsc;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
 use rowel_broker::actions::{Connection, Host};
-use rowel_broker::client::Channel;
 use rowel_broker::frame;
 use rowel_broker::server;
-use rowel_broker::socket::socket_name;
 
 use crate::config::Tls;
 use crate::host::HeadlessHost;
 
-/// Why the socket cannot be taken.
-#[derive(Debug)]
-pub enum SocketError {
-    /// Something answers on the socket already: the app serving this data
-    /// directory. `server::bind` would overwrite it, and stealing the app's
-    /// socket must not be possible by accident.
-    Occupied,
-    Io(io::Error),
-}
-
-impl std::fmt::Display for SocketError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Occupied => f.write_str(
-                "the Rowel app is serving this data directory; stop it or point rowel serve at another --data-dir",
-            ),
-            Self::Io(e) => write!(f, "could not listen on the socket: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for SocketError {}
-
-/// How long the probe waits for the app to answer a key exchange.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// Whether something is serving `root`'s socket: a connection that is
-/// accepted and answers a `change-public-keys`, or accepts and stays silent
-/// — a hung app is still the app. A stale socket file refuses the
-/// connection, which is the one case the file may be replaced.
-pub fn socket_occupied(root: &Path) -> io::Result<bool> {
-    let name = socket_name(root)?;
-    let mut stream = match Stream::connect(name) {
-        Ok(stream) => stream,
-        Err(_) => return Ok(false),
-    };
-    let (request, _nonce) = Channel::new().exchange_request("rowel-serve-probe");
-    if frame::write(&mut stream, &serde_json::to_vec(&request)?).is_err() {
-        return Ok(true);
-    }
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let answered = frame::read(&mut stream).is_ok();
-        let _ = sender.send(answered);
-    });
-    // Answered, silent, or hung up: a live listener took the connection
-    // either way. The reader thread is left to end with the stream.
-    let _ = receiver.recv_timeout(PROBE_TIMEOUT);
-    Ok(true)
-}
-
-/// The data directory's socket, after the probe.
-pub fn bind_socket(root: &Path) -> Result<Listener, SocketError> {
-    if socket_occupied(root).map_err(SocketError::Io)? {
-        return Err(SocketError::Occupied);
-    }
-    server::bind(root).map_err(SocketError::Io)
-}
-
-/// Serve `listener` for the life of the process, each connection on a
-/// thread of its own through the broker's loop.
+/// Serve the data directory's socket (bound with `server::bind`, behind the
+/// broker lock) for the life of the process, each connection on a thread of
+/// its own through the broker's loop.
 pub fn serve_socket(listener: Listener, host: HeadlessHost) {
     for incoming in listener.incoming() {
         match incoming {
@@ -149,7 +88,10 @@ pub async fn bind_ws(address: &str) -> io::Result<TcpListener> {
 /// and two tasks, and an unknown client's first request holds its thread for
 /// the whole ask timeout, so without a ceiling whoever can reach the port
 /// could run the process out of threads. Past it a connection is closed
-/// before the handshake and the agent retries.
+/// before the handshake and the agent retries. The slot belongs to the
+/// thread, not the socket: a client that sends a request and hangs up still
+/// holds its slot until that request is answered, so hanging up is not a
+/// way around the ceiling.
 pub const MAX_CONNECTIONS: usize = 256;
 
 /// How long a connection has to finish the TLS and WebSocket handshakes. An
@@ -194,11 +136,8 @@ pub async fn serve_ws_limited(
         let host = host.clone();
         let tls = tls.clone();
         tokio::spawn(async move {
-            // The slot is held for as long as this task runs, handshake and
-            // connection alike.
-            let _slot = slot;
             match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(stream, tls)).await {
-                Ok(Ok(socket)) => connection(socket, host).await,
+                Ok(Ok(socket)) => connection(socket, host, slot).await,
                 Ok(Err(e)) => {
                     log::debug!("rowel serve: WebSocket handshake with {peer} failed: {e}")
                 }
@@ -237,8 +176,9 @@ async fn handshake(
 }
 
 /// One WebSocket connection, served until it closes or the host is
-/// switched off.
-async fn connection<S>(socket: WebSocketStream<S>, host: HeadlessHost)
+/// switched off. `slot` is the connection's place under the ceiling; it goes
+/// to the thread, which may outlive the socket by one request.
+async fn connection<S>(socket: WebSocketStream<S>, host: HeadlessHost, slot: OwnedSemaphorePermit)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -257,6 +197,7 @@ where
 
     let replies = out;
     thread::spawn(move || {
+        let _slot = slot;
         let mut connection = Connection::new(host);
         while let Some(request) = requests.blocking_recv() {
             if !connection.host().enabled() {

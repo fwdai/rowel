@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use zeroize::Zeroizing;
 
-use rowel_broker::socket;
+use rowel_broker::{server, socket};
 use rowel_core::workspace::Registry;
 
 use crate::config::{self, Config};
@@ -119,9 +119,14 @@ fn serve(options: ServeOptions) -> Result<(), Exit> {
     };
     let password_mode = matches!(options.unlock, None | Some(Unlock::Password(_)));
 
-    // One broker per data directory, settled before the password is asked
-    // for and before any socket is bound or replaced.
-    let _guard = control::Guard::take(&root).map_err(failed)?;
+    // One broker per data directory, the app or this one, settled before the
+    // password is asked for and before any socket is bound or replaced.
+    let _lock = server::Lock::take(&root).map_err(|e| match e {
+        server::LockError::Held => Exit::Failed(format!(
+            "{e}; quit it, or point rowel serve at another --data-dir"
+        )),
+        other => failed(other),
+    })?;
 
     let host = HeadlessHost::new(
         &root,
@@ -151,15 +156,15 @@ fn serve(options: ServeOptions) -> Result<(), Exit> {
     host.unlock(opened);
     eprintln!("rowel serve: lockbox {lockbox} unlocked");
 
-    // The data directory's socket, unless told otherwise, probed first.
+    // The data directory's socket, unless told otherwise.
     if config.listen.socket && !options.no_socket {
-        let listener = listen::bind_socket(&root).map_err(failed)?;
+        let listener = server::bind(&root).map_err(failed)?;
         let served = host.clone();
         thread::spawn(move || listen::serve_socket(listener, served));
         eprintln!("rowel serve: listening on the socket in {}", root.display());
     }
 
-    // The control socket, for `rowel approve` and `rowel admin`; the guard
+    // The control socket, for `rowel approve` and `rowel admin`; the lock
     // above is what makes replacing a file there safe.
     let control = control::bind(&root).map_err(failed)?;
     let controlled = host.clone();

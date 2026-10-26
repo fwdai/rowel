@@ -1070,14 +1070,15 @@ outside the data directory, readable by the service user alone — a systemd
 credential, or a descriptor a wrapper hands the process. Over the WebSocket
 the sealed channel is unchanged inside TLS; a client is let in only through
 an answered association, never by reaching the port, and what a stranger at
-the port can cost is bounded (a ceiling on open connections, a handshake
+the port can cost is bounded (a ceiling on open connections, held by the
+thread serving each so hanging up mid-ask releases nothing, a handshake
 deadline, the frame cap on a message, a short request queue per connection
 that stops the reader when full), so a flood occupies connections and
-nothing more. One broker runs per data directory, under an exclusive lock
-taken before any socket is bound, so a second instance cannot unlink the
-first one's control socket and leave it running unreachable; and the broker
-refuses to start on a data directory the app is serving, so it cannot take
-the extension's socket over by accident.
+nothing more. One broker runs per data directory: the app and `rowel serve`
+take the same exclusive lock on it before binding anything, whatever they
+listen on, so neither can unlink the other's live socket and leave it
+running unreachable, and no two brokers write one lockbox under one install
+id.
 
 **Residual risks, stated.**
 

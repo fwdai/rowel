@@ -2850,6 +2850,28 @@ mod server {
     }
 
     #[test]
+    fn the_lock_makes_one_broker_per_data_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data");
+        let first = server::Lock::take(&root).expect("the lock at a fresh root, made for it");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(root.join(server::LOCK_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "owner-only lock file");
+        }
+        assert!(
+            matches!(server::Lock::take(&root), Err(server::LockError::Held)),
+            "a second broker on the same directory is refused while the first holds the lock"
+        );
+        drop(first);
+        server::Lock::take(&root).expect("the lock is free once the holder is gone");
+    }
+
+    #[test]
     fn bind_makes_a_missing_socket_directory_owner_only() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir
