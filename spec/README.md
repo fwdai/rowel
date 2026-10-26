@@ -48,6 +48,11 @@ Read the overview first. Everything else hangs off it.
 
 ## Revision history
 
+- **2026-10-26, review of PR #665.** Device enrollment proves possession of
+  the device key through a challenge bound to the server's URL, and sessions
+  start unbound (`02`); replay records last as long as a token is accepted
+  (`02`); freezing is a transition under the vault lock, file paths come from
+  stored ids, and the app refreshes one caller at a time (`07`).
 - **2026-10-26, I7 built (the Rowel Server, single node; PR #665).** I6
   ticked as merged (PR #662). The server mode is its own crate,
   `rowel-server`, built in this repository by the owner's decision (`00 §4`,

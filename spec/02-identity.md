@@ -163,6 +163,23 @@ docs say so. A proof that fails is `AssociationFailed`; there is no dialog to
 fall back on. Disabling an agent definition ends its clients at their next
 request, through `Host::clients()`.
 
+*Review of PR #665 (enrollment).* A public key is no secret — the device
+list hands every member its devices' keys — so a session is bound to a
+device only by proof of possession, for a new key and a known one alike:
+`POST /v1/members/enroll/challenge {devicePubkey}` seals to the key
+`"rowel enrollment challenge v1\0" ‖ publicUrl ‖ 0x00 ‖ 32 random bytes`,
+and `POST /v1/members/enroll` takes back the 32 bytes as `proof`. The
+context keeps a challenge from ever being a sealed master in disguise (a
+server could otherwise have the app decrypt one for it); the URL, checked by
+the app against the server it is enrolling at, refuses a challenge relayed
+from another server. One live challenge per session, single-use, five
+minutes, held as a hash, compared in constant time. Sessions are created
+unbound; the app enrolls after every sign-in, so a fresh session is never
+left without its device. `publicUrl` must be exactly the address members
+connect to, spelled by the same rule as the app's `normalize_url`. A
+workload token's `jti` is remembered until `exp` plus the leeway
+(`Claims::accepted_until_ms`), the same instant the expiry check uses.
+
 **Delegation proof (❌).** A compact signed statement by a device signing key
 minted beside the X25519 enrollment key when delegation lands (Q7 settled the
 enrollment key itself to one curve in I6; the proof's format stays open):

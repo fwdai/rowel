@@ -369,6 +369,15 @@ directly (`docs/server.md`); the contract is `docs/server-api.md`.
   tokens are stored as hashes; a refresh token is single-use and a reused one
   revokes the session; revoking a device withdraws its sealed masters and
   ends its sessions.
+- *Review of PR #665.* Freezing is a transition under the lockbox's
+  vault lock: `Vaults::set_frozen` writes the row and seals in one section,
+  and every `Vaults::open` reads `frozen` again under that lock, so a write
+  in flight finishes before a freeze returns and none lands after; the
+  offline `rowel admin server lockboxes freeze` refuses while a server holds
+  the data directory. Lockbox file paths are built from the stored row's id,
+  never a request's. The app refreshes a member session one caller at a
+  time per server (`org::connections::refresh_turn`), since the server ends
+  a session whose single-use refresh token is spent twice.
 - *Admin.* `/v1/admin/{members, devices, lockboxes, agents, trust, rules,
   audit/export, events}`, admin role only; a trust policy carries
   `clientKind`. Shapes in `docs/server-api.md`.
