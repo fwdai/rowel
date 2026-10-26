@@ -21,9 +21,12 @@
 #![cfg(not(any(target_os = "android", target_os = "ios")))]
 
 pub mod admin;
+pub mod agent;
 pub mod api;
+pub mod approvals;
 pub mod auth;
 pub mod config;
+pub mod host;
 pub mod identity;
 pub mod lockboxes;
 pub mod members;
@@ -34,3 +37,4 @@ pub mod store;
 pub mod testing;
 #[cfg(test)]
 mod tests;
+pub mod vaults;

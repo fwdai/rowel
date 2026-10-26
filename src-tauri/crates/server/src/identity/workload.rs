@@ -371,9 +371,10 @@ impl Verifier<'_> {
 }
 
 /// The `iss` the token claims, read without checking anything. Good only
-/// for choosing which issuer's keys to check it against: a token lying here
-/// is checked against the keys of the issuer it named and fails there.
-fn unverified_issuer(token: &str) -> Option<String> {
+/// for choosing which issuer's keys — and which trust policies — to check it
+/// against: a token lying here is checked against the keys of the issuer it
+/// named and fails there.
+pub fn unverified_issuer(token: &str) -> Option<String> {
     let payload = token.split('.').nth(1)?;
     let bytes = BASE64_URL_SAFE_NO_PAD.decode(payload).ok()?;
     let claims: Map<String, Value> = serde_json::from_slice(&bytes).ok()?;

@@ -192,6 +192,20 @@ pub trait Host {
     /// `AssociationFailed`, so the client is never told it is in when the next
     /// request will find it is not.
     fn associate(&self, key: &str, who: &Hello) -> Result<Client, Code>;
+    /// [`Host::associate`], told the session key the channel was opened
+    /// with: what the connection calls. A Rowel Server needs it, since a
+    /// workload proof is bound to the channel by that key and a token lifted
+    /// from one channel must fail on every other (`spec/02`); every other
+    /// host asks a person, and the person is the binding, so the default
+    /// lets the key go.
+    fn associate_on_channel(
+        &self,
+        _session_key: &str,
+        key: &str,
+        who: &Hello,
+    ) -> Result<Client, Code> {
+        self.associate(key, who)
+    }
     /// A known client proved itself again (`test-associate`): the host notes
     /// `last_seen_at_ms`. A host with nothing to note need not answer.
     fn client_seen(&self, _key: &str) {}
@@ -386,7 +400,7 @@ impl<H: Host> Connection<H> {
                     return Err(Code::AssociationFailed.into());
                 }
                 let hello = hello_of(message)?;
-                let client = self.host.associate(id_key, &hello)?;
+                let client = self.host.associate_on_channel(key, id_key, &hello)?;
                 let reply = association_reply(hash, &client);
                 self.associated = Some(client);
                 Ok(reply)

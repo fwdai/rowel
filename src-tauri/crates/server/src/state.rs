@@ -7,12 +7,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use tokio::sync::Semaphore;
+
+use crate::approvals::{self, Approvals};
 use crate::config::Config;
 use crate::identity::jwt::{self, Issuers};
 use crate::identity::members::IdpClient;
 use crate::identity::workload::Challenges;
 use crate::rootkey::{FileRootKey, RootKey};
 use crate::store::{self, Store};
+use crate::vaults::Vaults;
 
 /// Why the server could not come up: a named reason, in plain words, for
 /// the operator's terminal.
@@ -44,6 +48,12 @@ pub struct AppState {
     pub challenges: Challenges,
     /// The company's identity provider, when member sign-in is configured.
     pub idp: Option<IdpClient>,
+    /// The org lockboxes open for agents, each with its grants (`vaults`).
+    pub vaults: Vaults,
+    /// The asks waiting on a member's answer, and their routing.
+    pub approvals: Approvals,
+    /// The agent WebSocket's ceiling on connections served at once.
+    pub agent_slots: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -57,6 +67,7 @@ impl AppState {
 
     pub async fn with_config(config: Config, data_dir: &Path) -> Result<Arc<Self>, OpenError> {
         let store = Store::open(&data_dir.join(store::DB_FILE), &config.tenant.name)?;
+        approvals::expire_orphans(&store);
         let root = FileRootKey::load(&config.root_key_file)?;
         let http = jwt::http_client();
         let idp = match &config.members.oidc {
@@ -81,6 +92,9 @@ impl AppState {
             challenges: Challenges::default(),
             http,
             idp,
+            vaults: Vaults::default(),
+            approvals: Approvals::new(),
+            agent_slots: Arc::new(Semaphore::new(rowel_serve::listen::MAX_CONNECTIONS)),
             config,
         }))
     }

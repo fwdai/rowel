@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{future, Sink, SinkExt, Stream, StreamExt};
 use interprocess::local_socket::{prelude::*, Listener};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -175,18 +175,57 @@ async fn handshake(
         .map_err(|e| e.to_string())
 }
 
-/// One WebSocket connection, served until it closes or the host is
-/// switched off. `slot` is the connection's place under the ceiling; it goes
-/// to the thread, which may outlive the socket by one request.
+/// One tokio-tungstenite connection, served through [`serve_connection`]:
+/// a binary message is a frame, text and the control messages are the
+/// library's or nobody's, and a close, a raw frame or an error ends it.
 async fn connection<S>(socket: WebSocketStream<S>, host: HeadlessHost, slot: OwnedSemaphorePermit)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let (mut sink, mut stream) = socket.split();
+    let (sink, stream) = socket.split();
+    let sink = sink.with(|body: Vec<u8>| {
+        future::ready(Ok::<_, tokio_tungstenite::tungstenite::Error>(
+            Message::binary(body),
+        ))
+    });
+    let stream = stream.map(|message| match message {
+        Ok(Message::Binary(body)) => Inbound::Frame(body.to_vec()),
+        Ok(Message::Text(_)) | Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => Inbound::Ignored,
+        Ok(Message::Close(_)) | Ok(Message::Frame(_)) | Err(_) => Inbound::End,
+    });
+    serve_connection(stream, sink, host, Some(slot)).await
+}
+
+/// A message off a WebSocket, as the serving loop reads it, whichever
+/// library read it: one frame's JSON body, something that is not a frame of
+/// ours (text, a ping, a pong), or the end of the connection.
+pub enum Inbound {
+    Frame(Vec<u8>),
+    Ignored,
+    End,
+}
+
+/// One WebSocket connection to `host`, served until it closes or the host is
+/// switched off: `incoming` is the socket's reading half as [`Inbound`]s,
+/// `outgoing` its writing half taking each frame as one binary message. The
+/// same loop serves `rowel serve`'s listener and a Rowel Server's agent
+/// endpoint, so the bounds this module states hold for both. `slot` is the
+/// connection's place under a ceiling, when it is under one; it goes to the
+/// thread, which may outlive the socket by one request.
+pub async fn serve_connection<H, R, W>(
+    mut incoming: R,
+    mut outgoing: W,
+    host: H,
+    slot: Option<OwnedSemaphorePermit>,
+) where
+    H: Host + Send + 'static,
+    R: Stream<Item = Inbound> + Unpin,
+    W: Sink<Vec<u8>> + Unpin + Send + 'static,
+{
     // Replies and signals, to the one writer.
-    let (out, mut outgoing) = async_mpsc::channel::<Vec<u8>>(64);
+    let (out, mut queued) = async_mpsc::channel::<Vec<u8>>(64);
     // Requests, to the one thread, as many as the backlog allows.
-    let (incoming, mut requests) = async_mpsc::channel::<Vec<u8>>(REQUEST_BACKLOG);
+    let (requests_in, mut requests) = async_mpsc::channel::<Vec<u8>>(REQUEST_BACKLOG);
 
     let signals = out.clone();
     let registered = server::register(Box::new(move |message| {
@@ -211,31 +250,29 @@ where
     });
 
     let writer = tokio::spawn(async move {
-        while let Some(body) = outgoing.recv().await {
-            if sink.send(Message::binary(body)).await.is_err() {
+        while let Some(body) = queued.recv().await {
+            if outgoing.send(body).await.is_err() {
                 break;
             }
         }
     });
 
-    while let Some(message) = stream.next().await {
+    while let Some(message) = incoming.next().await {
         match message {
             // Awaited: with the backlog full this is where the reader waits,
             // and the socket goes unread until the thread catches up.
-            Ok(Message::Binary(body)) => {
-                if incoming.send(body.to_vec()).await.is_err() {
+            Inbound::Frame(body) => {
+                if requests_in.send(body).await.is_err() {
                     break;
                 }
             }
-            // A text message is not a frame of ours; pings and pongs are the
-            // library's business.
-            Ok(Message::Text(_)) | Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
-            Ok(Message::Close(_)) | Ok(Message::Frame(_)) | Err(_) => break,
+            Inbound::Ignored => {}
+            Inbound::End => break,
         }
     }
     // Dropping the request sender ends the thread; forgetting the sink ends
     // the signals; the writer ends when the last sender is gone.
-    drop(incoming);
+    drop(requests_in);
     server::forget(registered);
     writer.abort();
 }

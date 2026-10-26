@@ -823,6 +823,20 @@ impl SqliteStore {
             .map_err(Into::into)
     }
 
+    /// The rows of one writer's chain past `after_seq`, in the order
+    /// [`SqliteStore::audit_rows`] reads them: what a copy that already holds
+    /// the chain up to `after_seq` is missing, without reading it all again.
+    pub fn audit_after(&self, writer_id: &str, after_seq: i64) -> Result<Vec<AuditRecord>> {
+        let conn = self.lock()?;
+        let sql = format!(
+            "SELECT {AUDIT_COLS} FROM audit WHERE writer_id = ?1 AND seq > ?2 ORDER BY seq, id, hash"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![writer_id, after_seq], row_to_audit)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     /// Rows stamped at or after `since_ts_ms` whose event is one of `events`,
     /// newest first, at most `limit` of them: what an activity panel shows.
     /// The events are chosen before the limit is applied, so a busy week's
