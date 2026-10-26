@@ -63,6 +63,42 @@ or damaged keychain; anything but "no such item") is stood in for by the file
 for that run, with one line on stderr saying so, so a broken keychain never
 strands an association; the move is tried again next run.
 
+## Reaching a broker
+
+By default every command talks to the app on this machine, over the socket in
+its data directory. Set `ROWEL_BROKER` to reach a broker elsewhere instead —
+a `rowel serve` ([`serve.md`](serve.md)) on a CI runner or a dev VM:
+
+- unset or empty: the app's socket, as today;
+- `ws://host:port[/path]`: a WebSocket to that address, in the clear — for a
+  broker on the same host or behind a reverse proxy that terminates TLS;
+- `wss://host:port[/path]`: the same over TLS. The certificate is verified
+  against the platform's roots; a broker signed by a CA of your own needs
+  `ROWEL_BROKER_CA=<path to a PEM>`, which adds that CA beside them.
+
+Any other value is refused by every command with a message naming the
+variable and the forms it takes. The channel is the same sealed one whichever
+way it goes, and so are the two keys: the broker asks to let each one in the
+first time it sees it, as the app does. `rowel status` says which it tried
+(`app:` or `broker: … at ws://…`).
+
+## `rowel serve`, `rowel approve`, `rowel admin`
+
+The same binary is the broker on a box without the app:
+
+```
+rowel serve [--data-dir <path>] [--lockbox <id>] [--config <path>] [--key-file <path> | --key-fd <n>]
+            [--ws <addr>] [--no-socket] [--idle-lock <minutes>] [--ask-timeout <seconds>]
+rowel approve [<id> [--item <id>] [--days N] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
+rowel admin rules list|add|remove … | agents on|off [--lockbox <id>] | key-file <path> | lock
+```
+
+`serve` unlocks a device-held lockbox from the terminal or a key file and
+serves agents over the socket and a WebSocket under standing rules from a
+config file; `approve` answers the asks it queues; `admin` edits the rules,
+a lockbox's agent access and the key file. All of it is in
+[`serve.md`](serve.md).
+
 ## `rowel status`
 
 One line per fact: whether the app is reachable, whether the vault is open,

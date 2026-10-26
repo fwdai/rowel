@@ -61,9 +61,10 @@ impl Default for GeneratorDefaults {
 }
 
 /// The dialog's default for "allow for N days", and the most it accepts. The
-/// broker's `policy::defaults::DEFAULT_STANDING_DAYS` says the same number;
-/// spelled out here because the broker crate is desktop-only and these
-/// settings load on every platform.
+/// broker's `policy::defaults` says the same numbers (`DEFAULT_STANDING_DAYS`,
+/// `MAX_STANDING_DAYS`, which is what its `settle` clamps a standing answer
+/// to); spelled out here because the broker crate is desktop-only and these
+/// settings load on every platform. A test holds the two pairs together.
 pub const DEFAULT_STANDING_DAYS: u32 = 7;
 pub const MAX_STANDING_DAYS: u32 = 90;
 
@@ -338,6 +339,16 @@ fn merge(base: &Settings, patch: &Value) -> Result<Settings> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The standing-days bounds are spelled out above for the platforms that
+    // do not link the broker; where it is linked, they are the broker's.
+    #[cfg(desktop)]
+    #[test]
+    fn the_standing_days_bounds_are_the_brokers() {
+        use rowel_broker::policy::defaults;
+        assert_eq!(DEFAULT_STANDING_DAYS, defaults::DEFAULT_STANDING_DAYS);
+        assert_eq!(MAX_STANDING_DAYS, defaults::MAX_STANDING_DAYS);
+    }
 
     #[test]
     fn defaults_match_what_a_fresh_install_shows() {

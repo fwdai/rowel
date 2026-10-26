@@ -19,12 +19,14 @@ default-run = "rowel"
 # The app, the Tauri-free vault core it is built on (`crates/core`), the
 # browser extension host without the app around it (`crates/broker`), the
 # library the iOS AutoFill extension links in its place (`crates/autofill`),
-# and the command line that ships beside the app and speaks to it over the
-# broker's channel (`crates/cli`). All are default members, so a bare
-# `cargo test` or `cargo clippy` from here covers every one.
+# the headless broker that serves a lockbox without the app (`crates/serve`),
+# and the command line that ships beside the app, speaks to it over the
+# broker's channel and runs the headless broker (`crates/cli`). All are
+# default members, so a bare `cargo test` or `cargo clippy` from here covers
+# every one.
 [workspace]
-members = ["crates/core", "crates/broker", "crates/autofill", "crates/cli"]
-default-members = [".", "crates/core", "crates/broker", "crates/autofill", "crates/cli"]
+members = ["crates/core", "crates/broker", "crates/autofill", "crates/serve", "crates/cli"]
+default-members = [".", "crates/core", "crates/broker", "crates/autofill", "crates/serve", "crates/cli"]
 
 # Full DWARF debuginfo is most of a multi-GB target dir on macOS: the dev
 # profile keeps it in every crate's .o files under target/debug/deps. Line
@@ -65,13 +67,6 @@ subtle = "2"
 rand = "0.8"
 hex = "0.4"
 base64 = "0.23"
-# 6.0 turns what used to be unconditional into features. `alloc` is the one we
-# need — it is what gates base32 secrets. Deliberately *not* `std`: all it adds
-# over `alloc` is the `*_current` helpers that read the clock themselves, and it
-# names `rand?/thread_rng`, which is enough to drag `rand` 0.10 into Cargo.lock
-# beside the 0.8 this crate uses. `commands::generator` passes the timestamp in
-# instead, which it already had to compute for the window countdown.
-totp-rs = { version = "6", default-features = false, features = ["alloc"] }
 zxcvbn = "3"
 log = "0.4.34"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }

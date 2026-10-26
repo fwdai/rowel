@@ -10,10 +10,15 @@
 //! No Tauri or storage types here: the generator, the importers and the
 //! exporters all read the same value, so the rules live in one place below
 //! them. Hand-parsed rather than through `totp-rs`'s `otpauth` feature, which
-//! would pull a URL/QR dependency tree in for forty lines of work.
+//! would pull a URL/QR dependency tree in for forty lines of work. The code
+//! itself is generated here too ([`code_now`]), so the app's dial, the
+//! extension's `get-totp` and a headless host's `resolve` all derive it the
+//! same way from the same reading of the value.
 
 use std::fmt;
 use std::ops::RangeInclusive;
+use std::time::{SystemTime, UNIX_EPOCH};
+use totp_rs::{Algorithm, Builder, Secret, Totp};
 use url::Url;
 
 /// The generator's defaults, and what a bare seed is understood to mean.
@@ -196,11 +201,129 @@ pub fn to_stored(params: &OtpParams) -> String {
     )
 }
 
+/// The code a stored value is good for now, with the seconds left in its
+/// window and how long that window is — a dial drawn to scale needs both,
+/// and 60-second seeds are not unusual.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtpCode {
+    pub code: String,
+    /// Seconds left in the current window.
+    pub time: u32,
+    /// How long that window is — 30s unless the seed said otherwise.
+    pub period: u32,
+}
+
+/// The current code for a stored `value`, in either spelling.
+pub fn code_now(value: &str) -> Result<OtpCode, OtpError> {
+    code_at(value, unix_now()?)
+}
+
+/// [`code_now`] at `unix_now` seconds since the Unix epoch: the step counter
+/// the code is derived from, and the same reading the window countdown is
+/// measured against.
+pub fn code_at(value: &str, unix_now: u64) -> Result<OtpCode, OtpError> {
+    let params = parse(value)?;
+    let period = params.period;
+    Ok(OtpCode {
+        // `Token`'s Display zero-pads to the configured digit count, which is
+        // exactly the string 5.x's `generate` returned.
+        code: totp(&params)?.generate(unix_now).to_string(),
+        time: (period - unix_now % period) as u32,
+        period: period as u32,
+    })
+}
+
+// The generator for one already-read stored value. The parameters are not
+// optional decoration: an 8-digit or 60-second enrolment generates codes the
+// site refuses if they are ignored.
+fn totp(params: &OtpParams) -> Result<Totp, OtpError> {
+    let secret = Secret::try_from_base32(&params.secret)
+        .map_err(|e| OtpError(format!("invalid otp secret: {e:?}")))?;
+    // ±1 window matches the legacy speakeasy defaults. `build_noncompliant`
+    // skips the RFC secret-length and digit checks, exactly as the old
+    // `new_unchecked` did: stored secrets are whatever the issuer handed the
+    // user, and refusing a short one would lock them out.
+    Ok(Builder::new()
+        .with_algorithm(match params.algorithm {
+            OtpAlgorithm::Sha1 => Algorithm::SHA1,
+            OtpAlgorithm::Sha256 => Algorithm::SHA256,
+            OtpAlgorithm::Sha512 => Algorithm::SHA512,
+        })
+        // `DIGITS` caps the count at 10, so the cast cannot truncate.
+        .with_digits(params.digits as u8)
+        .with_skew(1)
+        .with_step_duration(params.period)
+        .with_secret(secret)
+        .build_noncompliant())
+}
+
+// Seconds since the Unix epoch, the clock every code is read against.
+fn unix_now() -> Result<u64, OtpError> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| OtpError(e.to_string()))?
+        .as_secs())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const SEED: &str = "JBSWY3DPEHPK3PXP";
+
+    // The code has to be the one the secret is currently good for, which is
+    // what the vault's own checker would accept.
+    #[test]
+    fn generates_the_code_for_the_current_step() {
+        let result = code_now(SEED).unwrap();
+        assert_eq!(result.code.len(), 6);
+        assert_eq!(result.period, 30);
+        assert!(result.time >= 1 && result.time <= 30);
+        assert!(totp(&parse(SEED).unwrap())
+            .unwrap()
+            .check(&result.code, unix_now().unwrap())
+            .is_some());
+    }
+
+    // The bug this guards against: the parameters on an enrolment URI were
+    // dropped, so an 8-digit SHA-256 seed generated a 6-digit SHA-1 code the
+    // site would never accept — silently, with no way to tell from the dial.
+    #[test]
+    fn honours_the_parameters_on_an_otpauth_uri() {
+        let uri = "otpauth://totp/Acme:me@acme.io?secret=JBSWY3DPEHPK3PXP\
+                   &digits=8&period=60&algorithm=SHA256";
+        let result = code_now(uri).unwrap();
+        assert_eq!(result.code.len(), 8);
+        assert!(result.code.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(result.period, 60);
+        assert!(result.time >= 1 && result.time <= 60);
+        // A 60s window is a different code from the same seed on 30s, which is
+        // what "the parameters were read" actually means here.
+        assert!(totp(&parse(uri).unwrap())
+            .unwrap()
+            .check(&result.code, unix_now().unwrap())
+            .is_some());
+    }
+
+    // RFC 6238's own vectors (appendix B, the SHA-1 seed `12345678901234567890`),
+    // which pin the derivation itself: the step, the digit count and the
+    // zero-padding, with the window countdown measured off the same reading.
+    #[test]
+    fn derives_the_rfc_6238_vectors() {
+        const RFC_SEED: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+        let eight = format!("otpauth://totp/x?secret={RFC_SEED}&digits=8");
+        assert_eq!(
+            code_at(&eight, 59).unwrap(),
+            OtpCode {
+                code: "94287082".into(),
+                time: 1,
+                period: 30,
+            }
+        );
+        assert_eq!(code_at(&eight, 1_111_111_109).unwrap().code, "07081804");
+        assert_eq!(code_at(RFC_SEED, 59).unwrap().code, "287082");
+        assert_eq!(code_at(RFC_SEED, 60).unwrap().time, 30);
+    }
 
     #[test]
     fn a_bare_secret_takes_the_defaults() {

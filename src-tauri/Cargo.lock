@@ -779,6 +779,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
+name = "chacha20"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2663,7 +2674,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -3422,7 +3433,7 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-traits",
- "rand",
+ "rand 0.8.8",
  "smallvec",
  "zeroize",
 ]
@@ -3987,7 +3998,7 @@ dependencies = [
  "log",
  "p256",
  "passkey-types",
- "rand",
+ "rand 0.8.8",
 ]
 
 [[package]]
@@ -4021,7 +4032,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hmac 0.12.1",
  "indexmap 2.14.2",
- "rand",
+ "rand 0.8.8",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4427,6 +4438,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af"
+dependencies = [
+ "chacha20",
+ "getrandom 0.4.3",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "rand_chacha"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4643,7 +4665,7 @@ dependencies = [
  "objc2-ui-kit",
  "objc2-vision",
  "percent-encoding",
- "rand",
+ "rand 0.8.8",
  "reqwest",
  "ring",
  "rowel-broker",
@@ -4670,7 +4692,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "totp-rs",
  "url",
  "windows 0.62.2",
  "windows-registry 0.100.0",
@@ -4712,7 +4733,7 @@ dependencies = [
  "p256",
  "passkey-authenticator",
  "passkey-types",
- "rand",
+ "rand 0.8.8",
  "rowel-core",
  "serde",
  "serde_json",
@@ -4729,6 +4750,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
+ "chrono",
  "dirs",
  "form_urlencoded",
  "http",
@@ -4738,15 +4760,21 @@ dependencies = [
  "interprocess",
  "keyring",
  "percent-encoding",
- "rand",
+ "rand 0.8.8",
  "reqwest",
  "rowel-broker",
+ "rowel-core",
+ "rowel-serve",
+ "rpassword",
  "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "security-framework",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tungstenite",
  "zeroize",
 ]
 
@@ -4771,7 +4799,7 @@ dependencies = [
  "passkey-client",
  "passkey-types",
  "public-suffix",
- "rand",
+ "rand 0.8.8",
  "ring",
  "rusqlite",
  "rusqlite_migration",
@@ -4782,10 +4810,47 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "totp-rs",
  "url",
  "windows 0.62.2",
  "zeroize",
  "zip 9.0.5",
+]
+
+[[package]]
+name = "rowel-serve"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "hex",
+ "interprocess",
+ "log",
+ "rowel-broker",
+ "rowel-core",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tungstenite",
+ "zeroize",
+]
+
+[[package]]
+name = "rpassword"
+version = "7.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2da316a15f47e3d053de9cb2c439650bd8fa4aaeb9365f2e5f27f492ff73c196"
+dependencies = [
+ "libc",
+ "rtoolbox",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4807,6 +4872,16 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rtoolbox"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a1efe12a1469752d0e6ff5ebec0b6ef4924cc5c4c71046b0ec730040535819d"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6408,6 +6483,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
@@ -6432,6 +6508,18 @@ checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
 dependencies = [
  "rustls",
  "tokio",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
 ]
 
 [[package]]
@@ -6674,6 +6762,25 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.10.3",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "sha1",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "typed-path"

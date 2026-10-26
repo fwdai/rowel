@@ -1,0 +1,70 @@
+[package]
+name = "rowel-serve"
+# Internal to the workspace and never released on its own, like the broker
+# and the CLI that links it.
+version = "0.1.0"
+description = "The broker without the GUI: a headless host over a device-held lockbox, unlocked from a terminal or a key file, serving agents over the local socket and a WebSocket, with approvals answered from the command line"
+authors = ["Alex Chaplinsky"]
+# Permissive like every crate under `crates/`; see `crates/core/Cargo.toml`.
+license = "MIT OR Apache-2.0"
+edition = "2021"
+# Same floor as the app, the core, the broker and the CLI: one toolchain
+# builds the whole workspace.
+rust-version = "1.92"
+publish = false
+
+[lib]
+name = "rowel_serve"
+
+[features]
+# The vault-making and host-driving helpers the crate's own tests and the
+# CLI's integration test share (`testing`). `cfg(test)` alone only reaches
+# this crate's tests, as with the broker's `test-support`.
+test-support = ["rowel-broker/test-support", "dep:tempfile"]
+
+# Desktop only, as the broker's `socket` and the CLI are: on a phone the crate
+# is empty (`src/lib.rs`) and links none of this.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# The grant engine, the lockbox-side functions, the server loop and the
+# sealed channel; the core for the vault itself.
+rowel-core = { path = "../core" }
+rowel-broker = { path = "../broker" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4.34"
+# The one API over the Unix socket and the Windows named pipe, for the
+# broker's socket and the control socket beside it, as the broker binds them.
+interprocess = "2"
+# The lockbox id's digest (`database_hash`, the app's scheme) and the Windows
+# pipe name's.
+sha2 = "0.11"
+hex = "0.4"
+# The password check of a step-up ask compares key material in constant time,
+# as the app's `prove_password` does.
+subtle = "2"
+# The password, the key material and every resolved value are held wiped on
+# drop.
+zeroize = "1"
+# The `updatedAt` stamp a saved login carries, written as the app writes it.
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+# The WebSocket listener (`listen`): tokio for the accept loop and the
+# per-connection reader and writer tasks, `tokio-tungstenite` for the frames,
+# `tokio-rustls` for TLS from PEM files over the ring provider the CLI's own
+# TLS stack uses, so one provider is linked whichever way the broker is
+# reached. `futures-util` splits the socket into its two halves.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "signal", "time"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+# The vault the `test-support` helpers make.
+tempfile = { version = "3", optional = true }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dev-dependencies]
+rowel-broker = { path = "../broker", features = ["test-support"] }
+rowel-core = { path = "../core", features = ["test-support"] }
+tempfile = "3"
+# The blocking client the CLI reaches a broker with, driving the WebSocket
+# listener end to end.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

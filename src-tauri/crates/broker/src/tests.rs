@@ -2662,3 +2662,233 @@ fn the_socket_name_follows_the_root() {
     assert_eq!(format!("{a:?}"), format!("{again:?}"));
     assert_ne!(format!("{a:?}"), format!("{b:?}"));
 }
+
+// --- the server loop and the lock signals --------------------------------------
+
+// Over a TCP pair rather than the local socket: `serve` is a loop over any
+// stream, and the registry a list of sinks, so neither needs the socket file
+// to be exercised.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod server {
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::{Arc, Mutex};
+
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use serde_json::{json, Value};
+
+    use crate::frame;
+    use crate::server;
+    use crate::socket::{socket_name, SOCKET_FILE};
+    use crate::testing::{nonce, Extension, Mock};
+
+    #[test]
+    fn serve_ends_the_connection_once_the_host_is_switched_off() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let served = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let host = Mock::unlocked();
+            host.enabled.set(false);
+            server::serve(stream, host);
+        });
+
+        let mut stream = TcpStream::connect(address).unwrap();
+        let request = json!({ "action": "change-public-keys", "publicKey": "x", "nonce": "y" });
+        frame::write(&mut stream, &serde_json::to_vec(&request).unwrap()).unwrap();
+        // No reply: the other end hangs up instead.
+        assert_eq!(frame::read(&mut stream).unwrap(), None);
+        served.join().unwrap();
+    }
+
+    #[test]
+    fn serve_answers_frames_on_a_stream_until_it_closes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let served = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            server::serve(stream, Mock::unlocked());
+        });
+
+        let mut stream = TcpStream::connect(address).unwrap();
+        let extension = Extension::new();
+        let request = json!({
+            "action": "change-public-keys",
+            "publicKey": extension.public_key(),
+            "nonce": STANDARD.encode(nonce()),
+        });
+        frame::write(&mut stream, &serde_json::to_vec(&request).unwrap()).unwrap();
+        let reply: Value =
+            serde_json::from_slice(&frame::read(&mut stream).unwrap().unwrap()).unwrap();
+        assert_eq!(reply["success"], "true");
+        assert!(reply["publicKey"].is_string());
+
+        drop(stream);
+        served.join().unwrap();
+    }
+
+    // The signal registry is one per process, so the tests that register with it
+    // run one at a time: with both up at once, one's broadcasts would land on the
+    // other's connection, ahead of the frames it is counting.
+    static SIGNAL_TESTS: Mutex<()> = Mutex::new(());
+
+    /// A connection's writing end as the socket's accept loop registers it:
+    /// every signal framed through the one shared handle.
+    fn sink(writer: &Arc<Mutex<TcpStream>>) -> server::Sink {
+        let writer = writer.clone();
+        Box::new(move |message| frame::write(&mut *writer.lock().unwrap(), message))
+    }
+
+    #[test]
+    fn a_lock_signal_reaches_every_connection_and_drops_the_gone_ones() {
+        let _one_at_a_time = SIGNAL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut extension = TcpStream::connect(address).unwrap();
+        let (open, _) = listener.accept().unwrap();
+        let _gone_peer = TcpStream::connect(address).unwrap();
+        let (gone, _) = listener.accept().unwrap();
+        gone.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let open = Arc::new(Mutex::new(open));
+        let gone = Arc::new(Mutex::new(gone));
+        let open_id = server::register(sink(&open));
+        server::register(sink(&gone));
+        server::notify_locked();
+        server::notify_unlocked();
+
+        // In order, on the connection that reads.
+        let signal: Value =
+            serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
+        assert_eq!(signal, json!({ "action": "database-locked" }));
+        let signal: Value =
+            serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
+        assert_eq!(signal, json!({ "action": "database-unlocked" }));
+
+        // The gone one's write failed on its own thread, which let the writer go.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while Arc::strong_count(&gone) > 1 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            Arc::strong_count(&gone),
+            1,
+            "a failed write drops the writer"
+        );
+        assert_eq!(Arc::strong_count(&open), 2, "a live one stays registered");
+
+        // The connection ending lets its writer go too.
+        server::forget(open_id);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while Arc::strong_count(&open) > 1 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(Arc::strong_count(&open), 1, "a forgotten one is let go");
+    }
+
+    #[test]
+    fn a_peer_that_stops_reading_stalls_no_one_else() {
+        let _one_at_a_time = SIGNAL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        // A peer that never reads: its socket buffer fills, then writes block.
+        let _stalled_peer = TcpStream::connect(address).unwrap();
+        let (stalled, _) = listener.accept().unwrap();
+        let mut extension = TcpStream::connect(address).unwrap();
+        let (open, _) = listener.accept().unwrap();
+
+        let stalled_id = server::register(sink(&Arc::new(Mutex::new(stalled))));
+        let open_id = server::register(sink(&Arc::new(Mutex::new(open))));
+        // Far more than a socket buffer holds; every one of these would block a
+        // shared thread on the stalled peer.
+        for _ in 0..4096 {
+            server::notify_locked();
+        }
+        server::notify_unlocked();
+
+        // The reading peer still gets every signal, in order.
+        for _ in 0..4096 {
+            let signal: Value =
+                serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
+            assert_eq!(signal, json!({ "action": "database-locked" }));
+        }
+        let signal: Value =
+            serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
+        assert_eq!(signal, json!({ "action": "database-unlocked" }));
+
+        server::forget(stalled_id);
+        server::forget(open_id);
+    }
+
+    #[test]
+    fn bind_listens_at_the_root_and_takes_over_a_socket_left_behind() {
+        use interprocess::local_socket::{prelude::*, Stream};
+        let dir = tempfile::tempdir().unwrap();
+        let listener = server::bind(dir.path()).expect("a listener at a fresh root");
+        let mut client = Stream::connect(socket_name(dir.path()).unwrap()).unwrap();
+        let mut served = listener.accept().unwrap();
+        frame::write(&mut client, b"{}").unwrap();
+        assert_eq!(
+            frame::read(&mut served).unwrap().as_deref(),
+            Some(&b"{}"[..])
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.path().join(SOCKET_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "owner-only socket file");
+        }
+
+        // A crash leaves the file behind with nobody listening: the next launch
+        // binds over it rather than refusing.
+        std::mem::forget(listener);
+        let again = server::bind(dir.path()).expect("a listener over a stale socket file");
+        drop(again);
+    }
+
+    #[test]
+    fn the_lock_makes_one_broker_per_data_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data");
+        let first = server::Lock::take(&root).expect("the lock at a fresh root, made for it");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(root.join(server::LOCK_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "owner-only lock file");
+        }
+        assert!(
+            matches!(server::Lock::take(&root), Err(server::LockError::Held)),
+            "a second broker on the same directory is refused while the first holds the lock"
+        );
+        drop(first);
+        server::Lock::take(&root).expect("the lock is free once the holder is gone");
+    }
+
+    #[test]
+    fn bind_makes_a_missing_socket_directory_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir
+            .path()
+            .join("Group Containers")
+            .join("group")
+            .join("dev");
+        let listener = server::bind(&root).expect("a listener in a directory not yet made");
+        assert!(root.join(SOCKET_FILE).exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for made in [&root, root.parent().unwrap()] {
+                let mode = std::fs::metadata(made).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o700, "{} is owner-only", made.display());
+            }
+        }
+        drop(listener);
+    }
+}

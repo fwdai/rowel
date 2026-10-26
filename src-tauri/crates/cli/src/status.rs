@@ -12,26 +12,35 @@ use crate::agent::test_associate;
 use crate::keys::{Keys, Role};
 use crate::{transport, CLIENT_ID};
 
-/// Print the report. Exit 0 when the app is reachable, 1 when it is not.
+/// Print the report. Exit 0 when the broker is reachable, 1 when it is not.
 pub fn run() -> i32 {
+    // The first line names what was tried: the app on this machine, or the
+    // broker `ROWEL_BROKER` points at and where. A variable that is not a
+    // broker URL is the reason `connect` gives below, under the broker's name.
+    let (what, at) = match transport::broker() {
+        Ok(Some(broker)) => ("broker:", format!(" at {broker}")),
+        Ok(None) => ("app:", String::new()),
+        Err(_) => ("broker:", String::new()),
+    };
     let mut peer = match transport::connect()
         .map_err(PeerError::from)
         .and_then(|socket| Peer::connect(socket, CLIENT_ID))
     {
         Ok(peer) => {
-            println!("app:          reachable (protocol {})", peer.version());
+            println!("{what:<13} reachable{at} (protocol {})", peer.version());
             Some(peer)
         }
         Err(error) => {
-            println!("app:          not reachable ({error})");
+            println!("{what:<13} not reachable{at} ({error})");
             None
         }
     };
 
     // The hash is refused in the clear while the vault is locked, before
     // anything is unsealed, so the refusal is the answer.
+    let unreachable = format!("unknown ({} not reachable)", what.trim_end_matches(':'));
     let (vault, open) = match peer.as_mut() {
-        None => ("unknown (app not reachable)".to_string(), None),
+        None => (unreachable.clone(), None),
         Some(peer) => match peer.call("get-databasehash", serde_json::json!({})) {
             Ok(_) => ("open".to_string(), Some(true)),
             Err(PeerError::Refused(refused)) if refused.code == Some(Code::DatabaseNotOpened) => {
@@ -65,7 +74,7 @@ pub fn run() -> i32 {
             }
         };
         let known = match (peer.as_mut(), open) {
-            (None, _) => "unknown (app not reachable)".to_string(),
+            (None, _) => unreachable.clone(),
             (Some(_), Some(false)) => "unknown (vault locked)".to_string(),
             (Some(peer), _) => match test_associate(peer, &key) {
                 Ok(()) => format!("let in as \"{}\"", key.name),

@@ -420,8 +420,11 @@ pub mod defaults {
     pub const PERSONAL_FILL_RULE: &str = "personal-fill";
     /// How long a fill or passkey grant under the baseline lives once approved.
     pub const PERSONAL_TTL_MS: i64 = 15 * 60 * 1000;
-    /// The dialog's default for "for N days".
+    /// The dialog's default for "for N days", and the most it accepts: a
+    /// standing answer is clamped to it when the rule is written
+    /// (`agents::settle`).
     pub const DEFAULT_STANDING_DAYS: u32 = 7;
+    pub const MAX_STANDING_DAYS: u32 = 90;
     const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
     /// The Tier 1 baseline the app prepends to a lockbox's own rules when its

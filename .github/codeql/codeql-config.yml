@@ -10,8 +10,17 @@ name: "Rowel CodeQL config"
 # blocks that live inside production `.rs` files (e.g. crypto/vault.rs,
 # commands/audit.rs). Those can't be path-excluded, so the fixtures there kept
 # tripping `rust/hard-coded-cryptographic-value` on every crypto PR.
+#
+# The crates' `testing.rs` modules are test support too (`cfg(test)` or the
+# `test-support` feature, which only dev-dependencies turn on), and leaving
+# them in is worse than noise: build-mode none sends a generic `T: Transport`
+# call to every impl, `testing.rs`'s `impl Transport for Connection<H>`
+# among them, so the CLI's WebSocket client looked like it fed the headless
+# host's data directory and `rust/path-injection` fired on every vault path.
 paths-ignore:
   - '**/tests.rs'
+  - 'src-tauri/**/tests/**'
+  - 'src-tauri/**/testing.rs'
   - 'src/test'
   - '**/*.test.ts'
   - '**/*.test.tsx'

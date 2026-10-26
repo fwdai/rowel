@@ -29,14 +29,19 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
 
-// The protocol's half is the broker crate's, so the app, a headless broker and
-// a server link the same code; it is reached here under the paths it had.
+// The protocol's half, the grant engine and the lockbox-side functions are
+// the broker crate's, so the app, a headless broker and a server link the
+// same code; they are reached here under the paths they had.
+pub use rowel_broker::agents::{
+    client_covered, covered, decide, outcome, resolved, settle, visible_in, Asking, Candidate,
+    GrantAnswer, Lockbox, Locked, Prepared, Verdict,
+};
+pub use rowel_broker::lockbox::{clients_in, env_var, item_by_name, logins_in};
 pub use rowel_broker::socket::{root_dir, socket_name, IDENTIFIER, SOCKET_FILE, SUN_PATH_MAX};
 pub use rowel_broker::{actions, frame, passkeys, protocol};
 
@@ -44,26 +49,21 @@ pub use self::actions::Client;
 use self::actions::{ClientKind, Hello, Host, Login, VisibleRef};
 use self::passkeys::{Assertion, Registration};
 use self::protocol::Code;
-use crate::agents::AgentState;
-use crate::crypto::PayloadCipher;
 use crate::error::Result;
-use crate::models::{Entry, EntryMetaDto, GeneratorOptions, Passkey};
+use crate::models::{EntryMetaDto, GeneratorOptions, Passkey};
 use crate::passkey::store::{PasskeyVault, SessionVault, Stored};
 use crate::passkey::{Ceremony, UserConsent};
 use crate::session::Epoch;
 use crate::state::AppState;
-use crate::store::{SqliteStore, VaultStore};
 use crate::{agents, commands, events, session, settings, storage, window, workspace};
-use rowel_broker::audit::{Draft, Event};
+use rowel_broker::agents::{candidates_in, deny_unasked, reply_for, visible_access};
+use rowel_broker::audit::Event;
 use rowel_broker::grant::{
-    Approval, CandidateItem, Grant, GrantReply, GrantRequest, ItemSelector, Mode, Probe,
-    ResolveContext, State, Target, VisibleItem,
+    Approval, GrantReply, GrantRequest, Mode, ResolveContext, State, Target,
 };
-use rowel_broker::lockbox::{save_failed, save_login_in};
-use rowel_broker::policy::{self, defaults, AgentSelector, Decision, Floors, Limits};
-use rowel_broker::reference::{self, Field, Reference};
+use rowel_broker::lockbox::{mark_seen, save_failed, save_login_in, totp_in, write_clients};
+use rowel_broker::reference::Reference;
 use rowel_broker::Signal;
-use rowel_core::store::EntryMeta;
 
 /// How long an `associate` or a passkey ceremony waits for the user's answer
 /// before it is refused.
@@ -338,16 +338,6 @@ pub struct Pairing {
     pub driven_by_agent: bool,
 }
 
-/// What the user answered a grant ask with: which of the candidates the
-/// dialog listed — the agent may be given that one and no other — and, for
-/// "allow for N days", how many; `None` is this once.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct GrantAnswer {
-    pub item_id: String,
-    pub standing_days: Option<u32>,
-}
-
 /// How a step-up ask proves the person before the answer counts: the OS
 /// biometric prompt where the device gates a secure store with one, the
 /// master password everywhere else (Linux, a Mac without Touch ID).
@@ -465,31 +455,10 @@ impl UserConsent for AskUser {
 
 // --- the extensions let in ------------------------------------------------------
 //
-// A `meta` row of the vault they were let into, sealed with the rest of it.
-// In the vault rather than in `settings.json` for two reasons. The key is the
-// whole credential — the protocol never asks the extension to sign with the
-// private half — so on disk it must be as unreadable as what it opens. And an
-// association is to one vault: the extension keys its own copy by the vault
-// hash, and a workspace the user never let it into must not answer to it.
+// A `meta` row of the vault they were let into, sealed with the rest of it
+// (`rowel_broker::lockbox`, which says why there and not in `settings.json`).
 // Every read and write happens under the session lock, so two approvals
 // cannot each write a list that misses the other's.
-
-const CLIENTS_META: &str = "browser_clients";
-
-pub(crate) fn clients_in(store: &SqliteStore) -> Vec<Client> {
-    store
-        .meta_get(CLIENTS_META)
-        .ok()
-        .flatten()
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_default()
-}
-
-fn write_clients(store: &SqliteStore, clients: &[Client]) -> Result<()> {
-    store
-        .meta_set(CLIENTS_META, &serde_json::to_string(clients)?)
-        .map_err(session::store_err)
-}
 
 /// The clients let into the open vault; none while it is locked.
 pub fn clients(app: &AppHandle) -> Vec<Client> {
@@ -535,19 +504,6 @@ pub fn forget(app: &AppHandle, key: &str) -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// A known client proved itself again: its `last_seen_at_ms`, one write per
-/// connection. A write that fails loses nothing but the timestamp.
-fn mark_seen(store: &SqliteStore, key: &str, now: i64) {
-    let mut clients = clients_in(store);
-    let Some(client) = clients.iter_mut().find(|c| c.key == key) else {
-        return;
-    };
-    client.last_seen_at_ms = Some(now);
-    if let Err(e) = write_clients(store, &clients) {
-        log::warn!("browser host: could not note the client was seen: {e}");
-    }
 }
 
 // --- passkeys ------------------------------------------------------------------
@@ -688,12 +644,7 @@ impl Host for AppHost {
         let state = self.0.state::<AppState>();
         let session = state.session.lock().unwrap();
         let cipher = session.payload_cipher().ok()?;
-        let record = session.store().ok()?.get(id).ok()??;
-        let entry = cipher.unseal(&record.id, &record.payload).ok()?;
-        let otp = entry.otp.as_deref().filter(|otp| !otp.is_empty())?;
-        commands::generator::generate_otp(otp.to_string())
-            .ok()
-            .map(|otp| otp.code)
+        totp_in(session.store().ok()?, &cipher, id)
     }
 
     fn generate_password(&self) -> Option<String> {
@@ -800,7 +751,8 @@ impl Host for AppHost {
         agents::initialise(app);
         let lockbox = workspace::active_id(app);
         let writer = storage::install_id(app);
-        let asking = match self.decide_grant(&lockbox, &writer, client, req)? {
+        let (prepared, epoch) = self.decide_grant(&lockbox, &writer, client, req)?;
+        let asking = match prepared {
             Prepared::Answered(reply) => return Ok(reply),
             Prepared::Ask(asking) => *asking,
         };
@@ -867,12 +819,12 @@ impl Host for AppHost {
                 })
             }
             Err(NotAsked::Refused(reason)) => {
-                return self.deny_unasked(&writer, client, &asking, reason)
+                return self.deny_unasked(&writer, client, epoch, &asking, reason)
             }
             Ok(Some(Answer::Grant(answer))) => Verdict::Answered(answer),
             Ok(_) => Verdict::Unanswered,
         };
-        self.settle_grant(&writer, client, asking, answer)
+        self.settle_grant(&writer, client, epoch, asking, answer)
     }
 
     fn wait_grant(
@@ -1134,14 +1086,16 @@ impl AppHost {
     // session and agents locks (`decide`): a grant already held, the rules,
     // the rate, policy — and the grant itself when policy allows without
     // asking. Whatever was served, the list and the timer follow, and the
-    // extensions are woken for a fill grant an agent now holds.
+    // extensions are woken for a fill grant an agent now holds. The session
+    // it was decided in comes back beside it: the engine knows no sessions,
+    // and an ask settles only in the one that asked.
     fn decide_grant(
         &self,
         lockbox: &str,
         writer: &str,
         client: &Client,
         req: GrantRequest,
-    ) -> std::result::Result<Prepared, Code> {
+    ) -> std::result::Result<(Prepared, Epoch), Code> {
         let app = &self.0;
         let state = app.state::<AppState>();
         let now = agents::now_ms();
@@ -1156,10 +1110,11 @@ impl AppHost {
                 writer,
                 now,
             },
-            epoch,
             lockbox,
             client,
             req,
+            // The app's rules are all in the lockbox; it holds none beside it.
+            &[],
         )?;
         drop(held);
         drop(session);
@@ -1170,36 +1125,25 @@ impl AppHost {
                 server::notify_signals();
             }
         }
-        Ok(prepared)
+        Ok((prepared, epoch))
     }
 
     // A grant decided but never asked about: the switches moved between the
-    // decision and the dialog. No `requested` row — nothing reached the
-    // screen — just the refusal, in the session that decided it.
+    // decision and the dialog. The refusal goes on record in the session
+    // that decided it (`deny_unasked`), and nowhere if that session is gone.
     fn deny_unasked(
         &self,
         writer: &str,
         client: &Client,
+        epoch: Epoch,
         asking: &Asking,
         reason: &str,
     ) -> std::result::Result<GrantReply, Code> {
         let state = self.0.state::<AppState>();
         let now = agents::now_ms();
         let session = state.session.lock().unwrap();
-        if let Ok(store) = session.store_at(asking.epoch) {
-            let clients = clients_in(store);
-            let mut grant = asking.grant.clone();
-            grant.state = State::Denied;
-            agents::record(
-                store,
-                writer,
-                agents::about(
-                    agents::draft(Event::Denied, &client.key, &clients),
-                    &grant,
-                    Some(&format!(r#"{{"reason":"{reason}"}}"#)),
-                ),
-                now,
-            );
+        if let Ok(store) = session.store_at(epoch) {
+            deny_unasked(store, writer, client, asking, reason, now);
         }
         Err(Code::GrantDenied)
     }
@@ -1211,6 +1155,7 @@ impl AppHost {
         &self,
         writer: &str,
         client: &Client,
+        epoch: Epoch,
         asking: Asking,
         verdict: Verdict,
     ) -> std::result::Result<GrantReply, Code> {
@@ -1218,7 +1163,7 @@ impl AppHost {
         let state = app.state::<AppState>();
         let now = agents::now_ms();
         let session = state.session.lock().unwrap();
-        let store = session.store_at(asking.epoch).map_err(|_| {
+        let store = session.store_at(epoch).map_err(|_| {
             log::warn!("browser host: the vault changed hands while the user decided on a grant");
             Code::GrantDenied
         })?;
@@ -1262,314 +1207,7 @@ impl AppHost {
     }
 }
 
-// --- grant requests, between the lock and the ask ---------------------------------
-
-/// What a grant is decided, settled or checked against, under the session
-/// and agents locks: the open store, what the agents lock guards — the
-/// grants held and the switches as the session holds them — and whose log
-/// the rows go to. The caller holds both locks for the whole of it, which is
-/// what makes the check of the switches and the release one critical
-/// section; nothing of the app is in it, so the tests run the same code over
-/// a store of their own.
-struct Locked<'a> {
-    store: &'a SqliteStore,
-    held: &'a mut AgentState,
-    writer: &'a str,
-    now: i64,
-}
-
-/// Everything a grant request decides before anyone is asked: a grant this
-/// client already holds for the place (served), the rules, the rate, policy,
-/// and the grant itself when policy allows without asking (served). Both
-/// releases come after one look at the switches under the same locks.
-///
-/// Two classes of request come through here. A *site* request (`fill`,
-/// `passkey`) names a page and is answered with the login itself, so its
-/// activation is a use. A *secret* request (`header`, `env`) names where a
-/// sidecar will use a value and is answered with nothing but the grant's id:
-/// the value leaves only through `resolve`, which is where its uses are
-/// counted and its `used` rows written. The two never mix in one request,
-/// and `token` is nobody's yet.
-fn decide(
-    ctx: Locked<'_>,
-    epoch: Epoch,
-    lockbox: &str,
-    client: &Client,
-    req: GrantRequest,
-) -> std::result::Result<Prepared, Code> {
-    let Locked {
-        store,
-        held,
-        writer,
-        now,
-    } = ctx;
-    let client_key = client.key.as_str();
-    let clients = clients_in(store);
-    let client_name = agents::client_label(&clients, client_key);
-    let row = |event: Event| agents::draft(event, client_key, &clients);
-    // A refusal before there is a grant to be about: the place and the
-    // mode are still worth the row.
-    let refusal = |event: Event, detail: String| {
-        let mut draft = row(event);
-        draft.target = req.targets.first().map(agents::audit_target_of);
-        draft.mode = req.modes.first().copied();
-        draft.detail = Some(detail);
-        draft
-    };
-    if !well_targeted(&req) {
-        agents::record(
-            store,
-            writer,
-            refusal(Event::Denied, r#"{"reason":"no_target"}"#.into()),
-            now,
-        );
-        return Err(Code::GrantDenied);
-    }
-    let secret = is_secret(&req.modes);
-    // The switches as the session holds them, under the locks and before
-    // either release below. The app's off is the extension's `AgentsDisabled`
-    // and no row; the lockbox's off is a refusal on record.
-    match held.access_on() {
-        Ok(()) => {}
-        Err("lockbox") => {
-            agents::record(
-                store,
-                writer,
-                refusal(Event::Denied, r#"{"reason":"lockbox"}"#.into()),
-                now,
-            );
-            return Err(Code::GrantDenied);
-        }
-        Err(_) => return Err(Code::AgentsDisabled),
-    }
-    let access_epoch = held.access_epoch;
-
-    // What the request could be about. The extension names the page's logins
-    // itself — it has them in hand, since it asked for them. An agent names a
-    // site and, at most, a selector: the candidates are the lockbox's logins
-    // for that site, as the plaintext `url_host` column has them, narrowed by
-    // the selector. A secret request names items, by id or by the slug of
-    // their title, among the kinds that have a field to serve. No payload is
-    // opened to decide a grant.
-    let candidates = if secret {
-        match secret_candidates_in(store, &req.items) {
-            Some(candidates) => candidates,
-            None => {
-                agents::record(
-                    store,
-                    writer,
-                    refusal(Event::Denied, r#"{"reason":"no_candidates"}"#.into()),
-                    now,
-                );
-                held.rate(client_key).record_denial(now);
-                return Err(Code::GrantDenied);
-            }
-        }
-    } else if client.kind == ClientKind::Extension {
-        candidates_in(store, &req.items)
-    } else {
-        let origin = agents::origin_of(&req.targets).unwrap_or_default();
-        site_candidates_in(store, origin, &req.items)
-    };
-    // The concrete places asked for: a page is itself; an HTTP target is one
-    // probe per method it names, or one for any; a command is its line. A
-    // rule has to cover every one of them.
-    let probes: Vec<Probe> = req.targets.iter().flat_map(Target::probes).collect();
-
-    // A grant this client already holds for the place is served, not asked
-    // for again: a username-first sign-in asks for the page's logins twice,
-    // and the second time is the same yes; a sidecar that requests before
-    // every command gets the grant it already has. A fill reuse is a use —
-    // the login is in the reply; an agent's is signalled again, since the
-    // page it is for may be in a tab opened since. A secret reuse releases
-    // nothing and is written nowhere: its uses are `resolve`'s — and it has
-    // to admit every item asked for ([`admits_all`]), where a page's grant
-    // need only admit one of the page's logins.
-    let reusable = held.grants.iter_mut().find(|g| {
-        g.client_key == client_key
-            && g.is_active(now)
-            && req.modes.iter().all(|m| g.modes.contains(m))
-            && probes
-                .iter()
-                .all(|probe| g.targets.iter().any(|t| t.matches(probe)))
-            && if secret {
-                admits_all(&g.items, &candidates)
-            } else {
-                candidates.iter().any(|c| g.items.admits(&c.item))
-            }
-    });
-    if let Some(grant) = reusable {
-        let items = admitted(&candidates, &grant.items);
-        if !secret {
-            grant.use_once(now)?;
-            agents::record(
-                store,
-                writer,
-                agents::about(row(Event::Used), grant, Some(r#"{"reuse":true}"#)),
-                now,
-            );
-        }
-        let grant = grant.clone();
-        queue_fill(held, &clients, client, &grant, &items);
-        return Ok(Prepared::Answered(reply_for(&grant, items)));
-    }
-
-    // The baseline every lockbox with the switch on starts with, then its
-    // own rules — the ones the user wrote by answering "for N days".
-    let mut rules = defaults::personal();
-    rules.extend(agents::live_rules(store, now));
-
-    if held
-        .rate(client_key)
-        .check(&Limits::default(), now)
-        .is_err()
-    {
-        agents::record(
-            store,
-            writer,
-            refusal(Event::RateLimited, r#"{"reason":"rate"}"#.into()),
-            now,
-        );
-        return Err(Code::RateLimited);
-    }
-
-    let items: Vec<CandidateItem> = candidates.iter().map(|c| c.item.clone()).collect();
-    let decision = policy::evaluate(&rules, &req, &items, &probes, &Floors::default());
-    let (terms, rule_id) = match &decision {
-        Decision::Denied(reason) => {
-            let reason = serde_json::to_string(reason).unwrap_or_default();
-            agents::record(
-                store,
-                writer,
-                refusal(Event::Denied, format!(r#"{{"reason":{reason}}}"#)),
-                now,
-            );
-            held.rate(client_key).record_denial(now);
-            return Err(Code::GrantDenied);
-        }
-        Decision::Allow { rule_id, .. } => {
-            (decision.terms().ok_or(Code::GrantDenied)?, rule_id.clone())
-        }
-    };
-    let mut grant = Grant::from_request(lockbox, req, terms, now);
-    // A grant is never wider than the rule that allowed it: what the
-    // winning rule admits among the page's logins is what may be served,
-    // and what the dialog offers.
-    if let Some(rule) = rule_id.and_then(|id| rules.into_iter().find(|r| r.id == id)) {
-        grant.items = ItemSelector::Ids(
-            candidates
-                .iter()
-                .filter(|c| rule.items.admits(&c.item))
-                .map(|c| c.item.id.clone())
-                .collect(),
-        );
-    }
-    let candidates: Vec<Candidate> = candidates
-        .into_iter()
-        .filter(|c| grant.items.admits(&c.item))
-        .collect();
-
-    match grant.approval {
-        // `requested` is written here only for a request that is decided
-        // here; an ask writes its own once the dialog has really gone up,
-        // so a slot that was busy leaves no row behind.
-        Approval::Auto => {
-            agents::record(
-                store,
-                writer,
-                agents::about(row(Event::Requested), &grant, None),
-                now,
-            );
-            grant.state = State::Active;
-            grant.approver = Some("policy".into());
-            activate(store, writer, &row, &mut grant, now)?;
-            let items: Vec<VisibleItem> = candidates.into_iter().map(|c| c.visible).collect();
-            queue_fill(held, &clients, client, &grant, &items);
-            let reply = reply_for(&grant, items);
-            held.grants.push(grant);
-            Ok(Prepared::Answered(reply))
-        }
-        // Not yet on record as an ask: that is written when the dialog goes
-        // up (`request_grant`), which a busy slot never lets it do.
-        Approval::Ask | Approval::StepUp => Ok(Prepared::Ask(Box::new(Asking {
-            epoch,
-            access_epoch,
-            grant,
-            candidates,
-            client_name,
-        }))),
-    }
-}
-
-/// A grant goes active, on record: `granted`, and — for a site grant, whose
-/// reply carries the login — a use counted and written at once. A secret
-/// grant's reply carries nothing, so nothing is counted here: its uses are
-/// `resolve`'s to count, one per value served.
-fn activate(
-    store: &SqliteStore,
-    writer: &str,
-    row: &dyn Fn(Event) -> Draft,
-    grant: &mut Grant,
-    now: i64,
-) -> std::result::Result<(), Code> {
-    let secret = is_secret(&grant.modes);
-    if !secret {
-        grant.use_once(now)?;
-    }
-    agents::record(
-        store,
-        writer,
-        agents::about(row(Event::Granted), grant, None),
-        now,
-    );
-    if !secret {
-        agents::record(
-            store,
-            writer,
-            agents::about(row(Event::Used), grant, None),
-            now,
-        );
-    }
-    Ok(())
-}
-
-/// Whether `selector` admits every one of `candidates`, there being at least
-/// one: what a secret request needs of a held grant, as `policy::evaluate`
-/// needs it of a rule, since a command runs with every item it named or not
-/// at all.
-fn admits_all(selector: &ItemSelector, candidates: &[Candidate]) -> bool {
-    !candidates.is_empty() && candidates.iter().all(|c| selector.admits(&c.item))
-}
-
-/// Whether `modes` are a secret request's ([`Mode::is_secret`]) rather than
-/// a site's. A request mixing the two is refused before this is asked
-/// ([`well_targeted`]).
-fn is_secret(modes: &[Mode]) -> bool {
-    modes.iter().any(|mode| mode.is_secret())
-}
-
-/// Whether every target of `req` is the kind of place every one of its modes
-/// is performed at: an origin for `fill` and `passkey`, an HTTP pattern for
-/// `header`, a command line for `env`. A `token` mode fits nothing, since
-/// nothing serves it yet; a request mixing a site mode with a secret one, or
-/// naming a page for a header, fits nothing either — a grant is never wider
-/// than its request, and such a request has no one shape to be.
-fn well_targeted(req: &GrantRequest) -> bool {
-    let fits = |target: &Target, mode: Mode| {
-        matches!(
-            (target, mode),
-            (Target::Origin(_), Mode::Fill | Mode::Passkey)
-                | (Target::Http { .. }, Mode::Header)
-                | (Target::Command(_), Mode::Env)
-        )
-    };
-    !req.targets.is_empty()
-        && !req.modes.is_empty()
-        && req
-            .targets
-            .iter()
-            .all(|target| req.modes.iter().all(|mode| fits(target, *mode)))
-}
+// --- the grant dialog -------------------------------------------------------------
 
 /// A target as the grant dialog names it: the site of a page, the request
 /// pattern or the command line as the agent wrote it.
@@ -1589,770 +1227,4 @@ fn ask_target(target: &Target) -> events::AskTarget {
         },
         Target::Command(line) => events::AskTarget::Command { line: line.clone() },
     }
-}
-
-/// The user has answered (or not): the grant becomes active for the one
-/// item picked — a standing answer writes its rule first — or denied. The
-/// switches come first, under the same locks as the release, and the epoch
-/// the request was decided under: a yes given while a switch moved is no
-/// yes, and the row names the switch.
-fn settle(
-    ctx: Locked<'_>,
-    client: &Client,
-    asking: Asking,
-    verdict: Verdict,
-) -> std::result::Result<GrantReply, Code> {
-    let Locked {
-        store,
-        held,
-        writer,
-        now,
-    } = ctx;
-    let Asking {
-        access_epoch,
-        mut grant,
-        candidates,
-        ..
-    } = asking;
-    let client_key = client.key.as_str();
-    let clients = clients_in(store);
-    let row = |event: Event| agents::draft(event, client_key, &clients);
-
-    // The ask went up and came down: the request is on record first,
-    // whatever the answer was, as it stood when the user saw it.
-    agents::record(
-        store,
-        writer,
-        agents::about(row(Event::Requested), &grant, None),
-        now,
-    );
-
-    let settled = held
-        .access_since(access_epoch)
-        .and_then(|()| outcome(&verdict, &candidates));
-    // A site request's yes is for the one login picked; a secret request's
-    // is for every item it named, since the command or the request needs
-    // them all at once — the pick is still required to be one of them, so
-    // a stale dialog cannot answer for a request it was not drawn for.
-    let (items, standing_days) = match settled {
-        Ok((_, standing_days)) if is_secret(&grant.modes) => (
-            candidates.iter().map(|c| c.visible.clone()).collect(),
-            standing_days,
-        ),
-        Ok((picked, standing_days)) => (vec![picked.visible.clone()], standing_days),
-        Err(reason) => {
-            grant.state = State::Denied;
-            agents::record(
-                store,
-                writer,
-                agents::about(
-                    row(Event::Denied),
-                    &grant,
-                    Some(&format!(r#"{{"reason":"{reason}"}}"#)),
-                ),
-                now,
-            );
-            held.rate(client_key).record_denial(now);
-            return Err(Code::GrantDenied);
-        }
-    };
-
-    grant.items = ItemSelector::Ids(items.iter().map(|i| i.id.clone()).collect());
-    grant.state = State::Active;
-    grant.approver = Some("user".into());
-    if let Some(days) = standing_days {
-        let days = days.clamp(1, settings::MAX_STANDING_DAYS);
-        let rule = standing_rule(client_key, &grant, days, now);
-        let mut rules = agents::live_rules(store, now);
-        let rule_id = rule.id.clone();
-        rules.push(rule);
-        match agents::write_rules(store, &rules) {
-            Ok(()) => {
-                let mut added = agents::about(
-                    row(Event::RuleAdded),
-                    &grant,
-                    Some(&format!(r#"{{"ruleId":"{rule_id}","days":{days}}}"#)),
-                );
-                added.grant_id = None;
-                added.approval = Some(Approval::Auto);
-                agents::record(store, writer, added, now);
-            }
-            // The fill the user said yes to still goes ahead; only the
-            // memory of it is missing, and the next visit asks again.
-            Err(e) => log::warn!("browser host: could not keep the standing rule: {e}"),
-        }
-    }
-    activate(store, writer, &row, &mut grant, now)?;
-    held.rate(client_key).record_grant(now);
-    queue_fill(held, &clients, client, &grant, &items);
-    let reply = reply_for(&grant, items);
-    held.grants.push(grant);
-    Ok(reply)
-}
-
-/// The rule a "for N days" writes: this client, the items the settled
-/// `grant` admits, where it is for, in its mode. For a fill that is the one
-/// login picked at the site — not the page, since the rule outlives this
-/// visit. For a secret grant it is every item the request named and the
-/// request's own targets, every one of them, so a standing `env` rule names
-/// the full command line and lifts the floor for that line alone, and
-/// answers the whole request next time (`policy::evaluate`). `standing_for`
-/// takes one item and one target, so it is given the first of each and the
-/// whole lists put in their place; a settled grant has at least one of each
-/// ([`well_targeted`], `outcome`), and the fallbacks are only so that this
-/// cannot panic.
-fn standing_rule(client_key: &str, grant: &Grant, days: u32, now: i64) -> policy::Rule {
-    let first_id = match &grant.items {
-        ItemSelector::Ids(ids) => ids.first().cloned().unwrap_or_default(),
-        _ => String::new(),
-    };
-    if !is_secret(&grant.modes) {
-        let origin = agents::origin_of(&grant.targets).unwrap_or_default();
-        return defaults::standing(
-            client_key,
-            &first_id,
-            &agents::site_origin(origin),
-            days,
-            now,
-        );
-    }
-    let mode = grant.modes.first().copied().unwrap_or(Mode::Header);
-    let first = grant
-        .targets
-        .first()
-        .cloned()
-        .unwrap_or(Target::Command(String::new()));
-    let mut rule = defaults::standing_for(client_key, &first_id, first, mode, days, now);
-    rule.items = grant.items.clone();
-    rule.targets = grant.targets.clone();
-    rule
-}
-
-/// Whether a grant of `client`'s is one the extensions are told about: an
-/// agent's fill grant. The extension's own grants need no telling — it holds
-/// the reply — and nothing but a fill is the extension's to perform.
-fn signals_fill(client: &Client, grant: &Grant) -> bool {
-    client.kind != ClientKind::Extension && grant.modes.contains(&Mode::Fill)
-}
-
-/// An agent's fill grant is active: every extension of the lockbox is told,
-/// since the host cannot tell which browser profile has the page open
-/// (`Grant::served_to` settles that at the first fill). The item is the one
-/// the grant admits — the dialog's pick, or the standing rule's one item.
-fn queue_fill(
-    held: &mut AgentState,
-    clients: &[Client],
-    client: &Client,
-    grant: &Grant,
-    items: &[VisibleItem],
-) {
-    let Some(item) = items.first() else {
-        return;
-    };
-    if !signals_fill(client, grant) {
-        return;
-    }
-    let Some(origin) = agents::origin_of(&grant.targets) else {
-        return;
-    };
-    held.signal_extensions(
-        clients,
-        &Signal::FillGrant {
-            grant_id: grant.id.clone(),
-            origin: agents::site_origin(origin),
-            item: item.clone(),
-            auto_submit: false,
-            expires_at_ms: grant.expires_at_ms,
-        },
-    );
-}
-
-/// Whether grant `grant_id` is active and covers `item_id` in `mode` right
-/// now, for the client holding `client_key` — a predicate with a side
-/// effect, on purpose: a yes here is the login or its code about to be
-/// served, so it is a use of the grant, counted on it and written as a
-/// `used` row, and this is the one place the grant is in hand to say so. The
-/// switches come first, under the same locks: a grant still on the list is
-/// not served once the session's switches say no. The targets are not
-/// checked again: the TOTP step comes with no URL, and the grant was
-/// narrowed to its page when it was issued. A grant another client requested
-/// — an agent's, signalled to every extension — is claimed by the first
-/// extension served under it (`Grant::served_to`) and refused to any other.
-fn covered(ctx: Locked<'_>, client_key: &str, grant_id: &str, item_id: &str, mode: Mode) -> bool {
-    covered_via(ctx, client_key, grant_id, item_id, mode, "grantId")
-}
-
-/// [`covered`], with what the `used` row says the grant was found by.
-fn covered_via(
-    ctx: Locked<'_>,
-    client_key: &str,
-    grant_id: &str,
-    item_id: &str,
-    mode: Mode,
-    via: &str,
-) -> bool {
-    let Locked {
-        store,
-        held,
-        writer,
-        now,
-    } = ctx;
-    if held.access_on().is_err() {
-        return false;
-    }
-    let Some(grant) = held.find_mut(grant_id) else {
-        return false;
-    };
-    if !grant.is_active(now) || !grant.modes.contains(&mode) {
-        return false;
-    }
-    if grant.client_key != client_key {
-        match &grant.served_to {
-            None => grant.served_to = Some(client_key.to_string()),
-            Some(served) if served == client_key => {}
-            Some(_) => return false,
-        }
-    }
-    // The item as the grant's selector sees it. Every grant issued here
-    // names ids, which the id alone answers; a wider selector reads the
-    // row's kind and tags, nothing sealed.
-    let item = match &grant.items {
-        ItemSelector::Ids(_) => CandidateItem {
-            id: item_id.to_string(),
-            kind: String::new(),
-            tags: Vec::new(),
-        },
-        _ => match session::meta_dto_of(store, item_id) {
-            Ok(meta) => CandidateItem {
-                id: meta.id,
-                kind: meta.kind,
-                tags: meta.tags,
-            },
-            Err(_) => return false,
-        },
-    };
-    if !grant.items.admits(&item) || grant.use_once(now).is_err() {
-        return false;
-    }
-    let clients = clients_in(store);
-    let mut row = agents::about(
-        agents::draft(Event::Used, &grant.client_key, &clients),
-        grant,
-        Some(&format!(r#"{{"via":"{via}"}}"#)),
-    );
-    row.item_id = Some(item_id.to_string());
-    row.mode = Some(mode);
-    agents::record(store, writer, row, now);
-    true
-}
-
-/// [`covered`] over the grants the client holding `client_key` was issued or
-/// already served under: the first that covers `item_id` counts the use.
-/// What an extension's TOTP step is served under when it names no grant; a
-/// grant nobody has been served under yet is not claimed this way.
-fn client_covered(ctx: Locked<'_>, client_key: &str, item_id: &str, mode: Mode) -> bool {
-    let Locked {
-        store,
-        held,
-        writer,
-        now,
-    } = ctx;
-    let ids: Vec<String> = held
-        .grants
-        .iter()
-        .filter(|g| g.client_key == client_key || g.served_to.as_deref() == Some(client_key))
-        .map(|g| g.id.clone())
-        .collect();
-    ids.iter().any(|id| {
-        let ctx = Locked {
-            store,
-            held: &mut *held,
-            writer,
-            now,
-        };
-        covered_via(ctx, client_key, id, item_id, mode, "client")
-    })
-}
-
-/// The open lockbox as a placeholder may name it: by its id, or by the slug
-/// of its registry name when it has one.
-struct Lockbox {
-    id: String,
-    name: Option<String>,
-}
-
-impl Lockbox {
-    fn is_named(&self, name: &str) -> bool {
-        name == self.id
-            || self
-                .name
-                .as_deref()
-                .is_some_and(|registered| reference::slug(registered) == name)
-    }
-}
-
-/// The value `reference` names, for a sidecar acting under `grant_id` at
-/// `ctx.target` — the whole of `Host::resolve` under the session and agents
-/// locks, over the open store and the grants held. The switches come first,
-/// as at every release. Then the grant by id, anyone's, since the id is the
-/// capability an agent hands a sidecar; it must be in the open lockbox, which
-/// the placeholder must name too, by id or by the registry name's slug. The
-/// item is found by id or by the unique slug of its title; the field must be
-/// one the item's kind has; the grant must cover the item at the target in
-/// the mode the target implies. Only then is the payload unsealed and the
-/// field read, and a field that is absent or empty is a refusal — there is
-/// nothing to serve. A yes is a use, counted and written as a `used` row
-/// that names the sidecar, the field and the one place the value went.
-/// Every no is `GrantDenied` (or `GrantExpired` from `use_once`), whatever
-/// the reason: why a capability did not work is not for whoever holds it.
-fn resolved(
-    ctx: Locked<'_>,
-    cipher: &PayloadCipher,
-    lockbox: &Lockbox,
-    client: &Client,
-    grant_id: &str,
-    reference: &Reference,
-    rctx: &ResolveContext,
-) -> std::result::Result<Zeroizing<String>, Code> {
-    let Locked {
-        store,
-        held,
-        writer,
-        now,
-    } = ctx;
-    held.access_on().map_err(|_| Code::GrantDenied)?;
-    let grant = held.find_mut(grant_id).ok_or(Code::GrantDenied)?;
-    if !grant.is_active(now)
-        || grant.lockbox_id != lockbox.id
-        || !lockbox.is_named(&reference.lockbox)
-    {
-        return Err(Code::GrantDenied);
-    }
-    let metas = store.list().map_err(|_| Code::GrantDenied)?;
-    let meta = item_by_name(&metas, &reference.item).ok_or(Code::GrantDenied)?;
-    if !reference.field.kinds().contains(&meta.kind.as_str()) {
-        return Err(Code::GrantDenied);
-    }
-    let item = CandidateItem {
-        id: meta.id.clone(),
-        kind: meta.kind.clone(),
-        tags: serde_json::from_str(&meta.tags).unwrap_or_default(),
-    };
-    let mode = rctx.target.mode();
-    if !grant.covers(&item, &rctx.target.probe(), mode, now) {
-        return Err(Code::GrantDenied);
-    }
-    let value = store
-        .get(&item.id)
-        .ok()
-        .flatten()
-        .and_then(|record| cipher.unseal(&record.id, &record.payload).ok())
-        .and_then(|entry| field_value(&entry, &reference.field))
-        .ok_or(Code::GrantDenied)?;
-    grant.use_once(now)?;
-    let clients = clients_in(store);
-    let mut row = agents::about(
-        agents::draft(Event::Used, &client.key, &clients),
-        grant,
-        // The field as the placeholder wrote it, JSON-escaped: an env key
-        // may hold a quote or a backslash.
-        Some(&format!(
-            r#"{{"via":"resolve","field":{}}}"#,
-            serde_json::Value::from(reference.field.to_string())
-        )),
-    );
-    row.item_id = Some(item.id);
-    row.mode = Some(mode);
-    row.target = Some(agents::resolve_target_text(&rctx.target));
-    agents::record(store, writer, row, now);
-    Ok(value)
-}
-
-/// The row `name` picks out among `metas`: the one with that id, or else
-/// the one whose title's slug it is. Two items with the same slug name
-/// neither — an agent that wrote `stripe` must not be served whichever of
-/// two Stripes the list happens to put first — and ids always work.
-fn item_by_name<'m>(metas: &'m [EntryMeta], name: &str) -> Option<&'m EntryMeta> {
-    if let Some(meta) = metas.iter().find(|meta| meta.id == name) {
-        return Some(meta);
-    }
-    let mut slugged = metas
-        .iter()
-        .filter(|meta| reference::slug(&meta.title) == name);
-    let first = slugged.next()?;
-    slugged.next().is_none().then_some(first)
-}
-
-/// The secret `field` of `entry`, when it has one that is not empty. An OTP
-/// is the current code, as `get-totp` serves it; a `body.KEY` is that one
-/// variable of an env item's file.
-fn field_value(entry: &Entry, field: &Field) -> Option<Zeroizing<String>> {
-    let value = match field {
-        Field::Password => entry.password.clone(),
-        Field::Otp => entry
-            .otp
-            .as_deref()
-            .filter(|otp| !otp.is_empty())
-            .and_then(|otp| commands::generator::generate_otp(otp.to_string()).ok())
-            .map(|otp| otp.code),
-        Field::ApiKey => entry.api_key.clone(),
-        Field::PrivateKey => entry.private_key.clone(),
-        Field::Number => entry.number.clone(),
-        Field::Cvc => entry.cvc.clone(),
-        Field::Body(key) => entry.body.as_deref().and_then(|body| env_var(body, key)),
-    };
-    value.filter(|value| !value.is_empty()).map(Zeroizing::new)
-}
-
-/// The value of `key` in an env file's `body`, read the way a shell would
-/// read the common cases and no further: blank lines and `#` comments are
-/// skipped, an `export ` prefix is allowed, a value in single or double
-/// quotes is what is between them, an unquoted value ends at a ` #` comment,
-/// and the last assignment of the name wins, as it does for a shell, dotenv
-/// and `docker --env-file`. A tolerant parser rather than a shell: nothing is
-/// expanded, so a value is what was written and never what another variable
-/// held.
-fn env_var(body: &str, key: &str) -> Option<String> {
-    body.lines().rev().find_map(|line| {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            return None;
-        }
-        let line = line.strip_prefix("export ").map_or(line, str::trim_start);
-        let (name, value) = line.split_once('=')?;
-        (name.trim() == key).then(|| env_value(value.trim()))
-    })
-}
-
-/// One env file value, unquoted: what is between a quote and the last of its
-/// kind (a comment may follow), or up to a whitespace-led `#`.
-fn env_value(value: &str) -> String {
-    for quote in ['"', '\''] {
-        if let Some(rest) = value.strip_prefix(quote) {
-            if let Some(end) = rest.rfind(quote) {
-                return rest[..end].to_string();
-            }
-        }
-    }
-    let end = [" #", "\t#"]
-        .iter()
-        .filter_map(|comment| value.find(comment))
-        .min()
-        .unwrap_or(value.len());
-    value[..end].trim_end().to_string()
-}
-
-/// What a grant request came to before anyone was asked: answered already
-/// (served from a grant held, allowed outright by a rule), or waiting on the
-/// user.
-enum Prepared {
-    Answered(GrantReply),
-    // Boxed: an ask carries the whole grant and its candidates, a reply a
-    // fraction of that.
-    Ask(Box<Asking>),
-}
-
-/// A grant policy let through to the dialog, as it waits: the session it was
-/// decided in, the grant as it stands — its targets are where the dialog
-/// says the item would go — and what the dialog was shown.
-struct Asking {
-    epoch: Epoch,
-    /// The switches' epoch it was decided under (`AgentState::access_epoch`):
-    /// a change since, whatever it left the switches at, settles it as a no.
-    access_epoch: u64,
-    grant: Grant,
-    candidates: Vec<Candidate>,
-    client_name: String,
-}
-
-/// How the ask came down: with the user's answer — a pick, or a refusal — or
-/// without one, which is a minute gone by (or a dialog of another kind
-/// answering by mistake).
-enum Verdict {
-    Answered(Option<GrantAnswer>),
-    Unanswered,
-}
-
-/// What the answer comes to: the candidate the user picked and for how many
-/// days, or the reason the `denied` row names.
-fn outcome<'c>(
-    verdict: &Verdict,
-    candidates: &'c [Candidate],
-) -> std::result::Result<(&'c Candidate, Option<u32>), &'static str> {
-    match verdict {
-        Verdict::Answered(Some(answer)) => candidates
-            .iter()
-            .find(|c| c.item.id == answer.item_id)
-            .map(|c| (c, answer.standing_days))
-            .ok_or("item"),
-        Verdict::Answered(None) => Err("user"),
-        Verdict::Unanswered => Err("timeout"),
-    }
-}
-
-/// One of the page's logins, as policy sees it and as the dialog shows it:
-/// nothing sealed in either.
-#[derive(Clone)]
-struct Candidate {
-    item: CandidateItem,
-    visible: VisibleItem,
-}
-
-/// The items `selector` names among the open vault's rows, from the list's
-/// metadata alone — kind, tags, title and username are plaintext columns;
-/// no payload is opened to decide a grant.
-fn candidates_in(store: &SqliteStore, selector: &ItemSelector) -> Vec<Candidate> {
-    let metas = match store.list() {
-        Ok(metas) => metas,
-        Err(e) => {
-            log::warn!("browser host: could not list the vault: {e}");
-            return Vec::new();
-        }
-    };
-    metas
-        .into_iter()
-        .filter_map(|meta| candidate_of(meta, selector))
-        .collect()
-}
-
-/// The lockbox's logins for the site at `origin`, as an agent's request names
-/// them: the rows whose plaintext `url_host` is the origin's host or a parent
-/// of it ([`actions::host_matches`], the same first pass a fill makes), then
-/// what `selector` keeps of those. The column only narrows: what is served
-/// under the grant is still decided by the sealed website at fill time
-/// (`logins_in`). An origin with no host names nothing.
-fn site_candidates_in(
-    store: &SqliteStore,
-    origin: &str,
-    selector: &ItemSelector,
-) -> Vec<Candidate> {
-    let Some(host) = actions::site_host(origin) else {
-        return Vec::new();
-    };
-    let metas = match store.list() {
-        Ok(metas) => metas,
-        Err(e) => {
-            log::warn!("browser host: could not list the vault: {e}");
-            return Vec::new();
-        }
-    };
-    metas
-        .into_iter()
-        .filter(|meta| meta.kind == "login" && actions::host_matches(&host, &meta.url_host))
-        .filter_map(|meta| candidate_of(meta, selector))
-        .collect()
-}
-
-/// The items a secret request names, among the kinds that have a field a
-/// sidecar could be served (`reference::fields_for`): a note or an identity
-/// is never a candidate, whatever the selector says. Ids may be written as
-/// the slug of the item's title, the way a placeholder writes them
-/// ([`item_by_name`]); the candidates carry the ids, so the grant does too.
-/// `None` when a name among `Ids` picks out nothing servable: the command
-/// needs every item it named, so a request for something that is not there
-/// is not answered with the rest.
-fn secret_candidates_in(store: &SqliteStore, selector: &ItemSelector) -> Option<Vec<Candidate>> {
-    let metas = match store.list() {
-        Ok(metas) => metas,
-        Err(e) => {
-            log::warn!("browser host: could not list the vault: {e}");
-            return None;
-        }
-    };
-    let servable = |meta: &EntryMeta| !reference::fields_for(&meta.kind).is_empty();
-    let by_id = match selector {
-        ItemSelector::Ids(names) => ItemSelector::Ids(
-            names
-                .iter()
-                .map(|name| {
-                    item_by_name(&metas, name)
-                        .filter(|meta| servable(meta))
-                        .map(|meta| meta.id.clone())
-                })
-                .collect::<Option<Vec<String>>>()?,
-        ),
-        other => other.clone(),
-    };
-    Some(
-        metas
-            .into_iter()
-            .filter(servable)
-            .filter_map(|meta| candidate_of(meta, &by_id))
-            .collect(),
-    )
-}
-
-/// `meta` as a candidate, if `selector` admits it.
-fn candidate_of(meta: EntryMeta, selector: &ItemSelector) -> Option<Candidate> {
-    let item = CandidateItem {
-        id: meta.id.clone(),
-        kind: meta.kind.clone(),
-        tags: serde_json::from_str(&meta.tags).unwrap_or_default(),
-    };
-    selector.admits(&item).then(|| Candidate {
-        visible: VisibleItem {
-            id: meta.id,
-            title: meta.title,
-            username: meta.username.filter(|u| !u.is_empty()),
-        },
-        item,
-    })
-}
-
-fn admitted(candidates: &[Candidate], selector: &ItemSelector) -> Vec<VisibleItem> {
-    candidates
-        .iter()
-        .filter(|c| selector.admits(&c.item))
-        .map(|c| c.visible.clone())
-        .collect()
-}
-
-fn reply_for(grant: &Grant, items: Vec<VisibleItem>) -> GrantReply {
-    GrantReply {
-        grant_id: grant.id.clone(),
-        state: grant.state,
-        expires_at_ms: Some(grant.expires_at_ms),
-        retry_after_ms: None,
-        uses: grant.uses,
-        items,
-    }
-}
-
-/// The items `client` may ask for by name, in `lockbox`: what its own live
-/// rules admit — the ones that name its key, never the baseline, which names
-/// every client and would make the whole lockbox visible to anyone let in —
-/// and what its own active grants admit. From the list's metadata alone, like
-/// every other decision about a grant: no payload is opened to say what
-/// exists.
-fn visible_in(
-    store: &SqliteStore,
-    held: &AgentState,
-    client: &Client,
-    lockbox: &str,
-    now: i64,
-) -> std::result::Result<Vec<VisibleRef>, Code> {
-    // The switches gate the names as they gate the uses: an agent let in
-    // before the Agents switch, or the lockbox's access, went off learns
-    // nothing more from its standing rules than it could use.
-    visible_access(held)?;
-    let rules = agents::live_rules(store, now);
-    let selectors: Vec<&ItemSelector> = rules
-        .iter()
-        .filter(|rule| matches!(&rule.agents, AgentSelector::Ids(ids) if ids.contains(&client.key)))
-        .map(|rule| &rule.items)
-        .chain(
-            held.grants
-                .iter()
-                .filter(|g| g.client_key == client.key && g.is_active(now))
-                .map(|g| &g.items),
-        )
-        .collect();
-    if selectors.is_empty() {
-        return Ok(Vec::new());
-    }
-    let metas = match store.list() {
-        Ok(metas) => metas,
-        Err(e) => {
-            log::warn!("browser host: could not list the vault: {e}");
-            return Err(Code::DatabaseNotOpened);
-        }
-    };
-    Ok(metas
-        .into_iter()
-        .filter(|meta| {
-            let item = CandidateItem {
-                id: meta.id.clone(),
-                kind: meta.kind.clone(),
-                tags: serde_json::from_str(&meta.tags).unwrap_or_default(),
-            };
-            selectors.iter().any(|selector| selector.admits(&item))
-        })
-        .map(|meta| VisibleRef {
-            reference: format!("rowel://{lockbox}/{}", meta.id),
-            title: meta.title,
-            fields: reference::fields_for(&meta.kind)
-                .iter()
-                .map(|f| f.to_string())
-                .collect(),
-            kind: meta.kind,
-        })
-        .collect())
-}
-
-fn visible_access(held: &AgentState) -> std::result::Result<(), Code> {
-    match held.access_on() {
-        Ok(()) => {}
-        Err("lockbox") => return Err(Code::GrantDenied),
-        Err(_) => return Err(Code::AgentsDisabled),
-    }
-    Ok(())
-}
-
-/// Every login in `store` for the page at `page_url` (whose host is `host`),
-/// secrets unsealed.
-///
-/// Two passes. The plaintext `url_host` column picks the candidates cheaply,
-/// without unsealing a payload per row; but it is not authenticated — anyone
-/// holding the SQLCipher key could re-point a row at another site — so it
-/// only narrows. What decides is the website inside the sealed payload, which
-/// each candidate is checked against once it is open, by the full rule
-/// ([`actions::site_matches`]: host, then scheme and port). A login with no
-/// website is held to the passkey rpId its column was derived from, exactly
-/// as `migrate::build_record` derives it.
-pub(crate) fn logins_in(
-    store: &SqliteStore,
-    cipher: &PayloadCipher,
-    page_url: &str,
-    host: &str,
-) -> Vec<Login> {
-    let metas = match store.list() {
-        Ok(metas) => metas,
-        Err(e) => {
-            log::warn!("browser host: could not list the vault: {e}");
-            return Vec::new();
-        }
-    };
-    let mut logins = Vec::new();
-    for meta in metas
-        .iter()
-        .filter(|m| m.kind == "login" && actions::host_matches(host, &m.url_host))
-    {
-        let Ok(Some(record)) = store.get(&meta.id) else {
-            continue;
-        };
-        let Ok(entry) = cipher.unseal(&record.id, &record.payload) else {
-            log::warn!("browser host: entry {} does not open", meta.id);
-            continue;
-        };
-        let saved = entry
-            .website
-            .as_deref()
-            .filter(|website| !website.trim().is_empty())
-            .or_else(|| {
-                entry
-                    .passkeys
-                    .as_deref()
-                    .and_then(|keys| keys.first())
-                    .map(|key| key.rp_id.as_str())
-            })
-            .unwrap_or_default();
-        if !actions::site_matches(page_url, saved) {
-            continue;
-        }
-        let username = entry.login_name().unwrap_or_default().to_string();
-        let totp = entry
-            .otp
-            .as_deref()
-            .filter(|otp| !otp.is_empty())
-            .and_then(|otp| commands::generator::generate_otp(otp.to_string()).ok())
-            .map(|otp| otp.code);
-        logins.push(Login {
-            id: entry.id.clone(),
-            title: entry.title.clone(),
-            username,
-            password: entry.password.clone().unwrap_or_default(),
-            totp,
-        });
-    }
-    logins
 }

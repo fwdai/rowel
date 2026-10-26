@@ -826,11 +826,12 @@ exposed process than the webview, and it is not ours.
 Desktop only, and off twice over until the user turns it on. This section
 covers what the extension's agent mode, the `rowel` command line and the local
 socket let an agent do with the vault, and what a person sees of it afterwards.
-It describes the free, local tier this build ships. The server tier the spec
-plans (org lockboxes with server-held keys, `rowel serve`, Rowel Server, Rowel
-Cloud, approvals pushed to a phone, OAuth token mode, remote browsers, policy
-as code, workload identity) is not in it, and is named below only where a
-reader would otherwise assume it.
+It describes the free, local tier this build ships, in the app and — since
+`rowel serve` — from the command line on a box without one (see *The headless
+broker* below). The server tier the spec plans (org lockboxes with server-held
+keys, Rowel Server, Rowel Cloud, approvals pushed to a phone, OAuth token mode,
+remote browsers, policy as code, workload identity) is not in it, and is named
+below only where a reader would otherwise assume it.
 
 **The one honest line.** Rowel's promise is that no backend holds the user's
 secrets: a lockbox is sealed under a key derived from the master password and
@@ -1049,6 +1050,36 @@ carries no signature, so whoever holds the lockbox key can rewrite a writer's
 chain whole and recompute it; that is the compromised-OS case below, and not
 something a log inside the lockbox can see.
 
+**The headless broker.** `rowel serve` (`rowel-serve`, linked by the CLI) is
+the same engine, policy, floors, rate limits and audit chain run without the
+app, over a device-held lockbox the operator copied to a box with no desktop,
+unlocked from the terminal or from a key file. Three things differ from the
+app and are stated in [docs/serve.md](./serve.md). The person is a terminal:
+an association or a grant the rules do not settle waits for `rowel approve`
+on the same box, over an owner-only control socket beside the broker's, so
+whoever can answer is already the user the broker runs as — the same trust the
+app's dialog rests on with the residual below; a step-up ask has no
+biometrics and takes the master password instead, derived through the
+lockbox's KDF sidecar and compared in constant time. Unattended means a
+standing `auto` rule in the config file, which serves what it names while the
+broker is unlocked and nobody is there; that is the point of a broker on a CI
+runner, and the broker's own memory then holds the lockbox key for as long as
+it is unlocked, which the idle lock and `SIGTERM` end. The key file is the
+vault's key material and opens the lockbox to whoever reads it; it belongs
+outside the data directory, readable by the service user alone — a systemd
+credential, or a descriptor a wrapper hands the process. Over the WebSocket
+the sealed channel is unchanged inside TLS; a client is let in only through
+an answered association, never by reaching the port, and what a stranger at
+the port can cost is bounded (a ceiling on open connections, held by the
+thread serving each so hanging up mid-ask releases nothing, a handshake
+deadline, the frame cap on a message, a short request queue per connection
+that stops the reader when full), so a flood occupies connections and
+nothing more. One broker runs per data directory: the app and `rowel serve`
+take the same exclusive lock on it before binding anything, whatever they
+listen on, so neither can unlink the other's live socket and leave it
+running unreachable, and no two brokers write one lockbox under one install
+id.
+
 **Residual risks, stated.**
 
 - **Same-user local processes.** A process running as the same OS user can
@@ -1074,9 +1105,12 @@ something a log inside the lockbox can see.
   or a password field's dots, and a page that renders a secret as pixels
   passes the exposure check. Redaction covers text, not pixels. An agent that
   needs vision should submit before the next capture.
-- **The broker's memory.** Applies only to the server tier that is not
-  shipped, where an org lockbox's key would sit in a server's memory while it
-  serves; nothing in this build holds a key anywhere but the unlocked app.
+- **The broker's memory.** The unlocked app holds the lockbox key, and so
+  does an unlocked `rowel serve`, for as long as it runs unattended under a
+  standing rule; a key file holds it on disk. The idle lock, `SIGTERM` and
+  `rowel admin lock` bound the first; file permissions and a service manager's
+  credential handling bound the second. The server tier that is not shipped
+  would hold an org lockbox's escrowed key the same way.
 
 ## iOS AutoFill
 
