@@ -448,6 +448,39 @@ test('an expired grant is forgotten and the page asked for afresh', async () => 
     expect(notifications).toEqual([]);
 });
 
+// A fill the person denied: the host refuses get-logins with GrantDenied.
+// Nothing is returned to the page and nothing remembered, the refusal is not
+// retried — a no is not asked again behind the person's back — and the one
+// notification says so. A held grant refused the same way is forgotten.
+test('a denied fill returns nothing, remembers nothing and notifies once', async () => {
+    const requests: object[] = [];
+    globalThis.kpActions = { GET_LOGINS: 'get-logins' };
+    globalThis.kpErrors = { GRANT_DENIED: 40, GRANT_PENDING: 41, GRANT_EXPIRED: 42 };
+    globalThis.keepassClient.buildRequest = (action, message, nonce, id) => ({ action, message, nonce, id });
+    globalThis.keepassClient.encrypt = data => data;
+    globalThis.keepassClient.incrementedNonce = nonce => nonce;
+    globalThis.keepassClient.sendNativeMessage = async request => {
+        requests.push(request.message);
+        return { errorCode: 40 };
+    };
+    globalThis.keepassClient.handleResponse = () => undefined;
+    globalThis.keepass.clientID = 'test';
+
+    const asked = await grants.sendGetLogins({ id: 1 }, { url: 'https://github.com/login' }, 'nonce');
+    expect(asked).toBeUndefined();
+    expect(requests).toEqual([ { url: 'https://github.com/login', agentMode: 'true' } ]);
+    expect(area.store.rowelGrants).toBeUndefined();
+    expect(notifications).toEqual([ 'agentModeGrantDeniedNotification' ]);
+
+    await grants.rememberGrant('https://github.com', 'g1');
+    const held = await grants.sendGetLogins({ id: 1 }, { url: 'https://github.com/login' }, 'nonce');
+    expect(held).toBeUndefined();
+    expect(requests.at(-1)).toEqual({ url: 'https://github.com/login', grantId: 'g1' });
+    expect(requests).toHaveLength(2);
+    expect(await grants.grantFor('https://github.com')).toBeUndefined();
+    expect(notifications).toEqual([ 'agentModeGrantDeniedNotification', 'agentModeGrantDeniedNotification' ]);
+});
+
 const holdGetLoginsResponse = () => {
     let release;
     let requestStarted;
