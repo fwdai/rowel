@@ -388,7 +388,7 @@ pub async fn workspace_create(
     crate::credential_identities::publish(&app);
     // And open at the app level: sealed under the app key, which the check
     // above proved is in the ring.
-    appkey::adopt(&app, &id, &material);
+    appkey::adopt_or_log(&app, &id, &material);
     Ok(UnlockResult {
         entries: vec![],
         sync_configured: syncing,
@@ -728,7 +728,7 @@ async fn restore_workspace(
     crate::autolock::touch(app);
     crate::session::opened(app);
     crate::credential_identities::publish(app);
-    appkey::adopt(app, &id, &material);
+    appkey::adopt_or_log(app, &id, &material);
     super::autojoin::with_password(app, join);
     Ok(UnlockResult {
         entries,

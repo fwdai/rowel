@@ -548,7 +548,7 @@ fn adopt(
             crate::autolock::touch(app);
             crate::session::opened(app);
             crate::credential_identities::publish(app);
-            crate::appkey::adopt(app, &crate::workspace::active_id(app), &material);
+            crate::appkey::adopt_or_log(app, &crate::workspace::active_id(app), &material);
             take_pending(state);
             Ok(UnlockResult {
                 entries,

@@ -293,7 +293,7 @@ fn join_one(
     // Open at the app level from the start: the password that opened it is the
     // master password, so it joins the ring and — the app key being known —
     // is sealed under it for every unlock after this one.
-    crate::appkey::adopt(app, &id, key.biometric_material());
+    crate::appkey::adopt_or_log(app, &id, key.biometric_material());
     Ok(name)
 }
 

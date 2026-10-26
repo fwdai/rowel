@@ -300,33 +300,164 @@ fn replace_app_key_in(state: &AppState, root: &Path, app_key: &[u8]) {
     }
 }
 
-/// A workspace other than the primary has been opened with its own key: it
-/// joins the ring, and — when the app key is known — its sidecar is written so
-/// the next app unlock opens it too. Without the app key the sidecar waits for
-/// an unlock that has it (see `commands::auth::unlock`).
-pub fn adopt(app: &AppHandle, id: &str, material: &[u8]) {
-    if let Ok(root) = storage::root_dir(app) {
-        adopt_in(&app.state::<AppState>(), &root, id, material);
+/// Whether the next unlock of the main lockbox opens a workspace too: what
+/// [`adopt`] and [`rekeyed`] say they did, for a caller that has to know.
+#[must_use]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Adoption {
+    /// Sealed beside its database under the app key — or the primary, whose
+    /// key the app key is.
+    Sealed,
+    /// Not sealed: no app key was there to seal it under, so the next unlock
+    /// opens it only with its own password. In the ring for this session if
+    /// one is live.
+    Unsealed,
+}
+
+impl Adoption {
+    /// For a workspace with no password of its own — an org lockbox, whose
+    /// key only its server hands over — a key the next unlock will not have
+    /// is a failure, and is said as one rather than reported as done.
+    pub fn required(self) -> Result<()> {
+        match self {
+            Self::Sealed => Ok(()),
+            Self::Unsealed => Err(Error::Other(
+                "the main lockbox is not open, so this lockbox's key could not be kept for the \
+                 next unlock; open the main lockbox and refresh the key"
+                    .into(),
+            )),
+        }
     }
 }
 
-fn adopt_in(state: &AppState, root: &Path, id: &str, material: &[u8]) {
+/// A workspace other than the primary has been opened with its own key: it
+/// joins the ring, and — when the app key is known — its sidecar is written so
+/// the next app unlock opens it too. Without the app key the sidecar waits for
+/// an unlock that has it (see `commands::auth::unlock`), and the answer says
+/// so. `Locked` when no session is live, since nothing joins an empty ring,
+/// and the sidecar's write error when it cannot be written.
+pub fn adopt(app: &AppHandle, id: &str, material: &[u8]) -> Result<Adoption> {
+    adopt_in(
+        &app.state::<AppState>(),
+        &storage::root_dir(app)?,
+        id,
+        material,
+    )
+}
+
+/// [`adopt`] where nothing waits on the outcome — an unlock, a switch, a
+/// create or a restore, whose workspace is open either way and keeps a
+/// password of its own — and a failure is noted rather than returned. A lock
+/// that landed first is not a failure: there is no session to open it in.
+pub fn adopt_or_log(app: &AppHandle, id: &str, material: &[u8]) {
+    match adopt(app, id, material) {
+        Ok(_) | Err(Error::Locked) => {}
+        Err(e) => log::warn!("could not keep workspace {id}'s key for the next unlock: {e}"),
+    }
+}
+
+fn adopt_in(state: &AppState, root: &Path, id: &str, material: &[u8]) -> Result<Adoption> {
     if id == PRIMARY_ID {
+        if !state.session.lock().unwrap().is_live() {
+            return Err(Error::Locked);
+        }
         open_all_in(state, root, material);
-        return;
+        return Ok(Adoption::Sealed);
     }
     let _sidecars = sidecars(state);
     let app_key = {
         let session = state.session.lock().unwrap();
         if !session.is_live() {
-            return;
+            return Err(Error::Locked);
         }
         let mut ring = state.keyring.lock().unwrap();
         ring.insert(id, material);
         ring.app_key()
     };
-    if let Some(app_key) = app_key {
-        seal(root, id, &app_key, material);
+    match app_key {
+        Some(app_key) => {
+            wrap(root, id, &app_key, material)?;
+            Ok(Adoption::Sealed)
+        }
+        None => Ok(Adoption::Unsealed),
+    }
+}
+
+/// Workspace `id`'s database has just been re-keyed onto `material`: the
+/// sealed copy beside it follows, or goes. The rule this keeps is that the
+/// copy holds the key the database is under, or there is none — a copy of
+/// the retired key would hand the next unlock a key that no longer opens the
+/// database, and an org lockbox has no password to fall back on.
+///
+/// Unlike [`adopt`], a live session is not needed: a lock that landed during
+/// the re-key clears the ring, but the database is on the new key either way
+/// and the copy beside it is what the next unlock trusts. It is sealed under
+/// the app key the ring holds, else `app_key`, the one the caller read from
+/// the ring before the re-key began (a lock does not change the app key; a
+/// password change that did is the ring's newer word, and wins). With no app
+/// key at all, or when the write fails, the old copy is removed, and a
+/// removal that fails too is the error. The ring takes the new key when a
+/// session is live. The primary's re-key is [`replace_app_key`]'s.
+pub fn rekeyed(
+    app: &AppHandle,
+    id: &str,
+    app_key: Option<Zeroizing<Vec<u8>>>,
+    material: &[u8],
+) -> Result<Adoption> {
+    rekeyed_in(
+        &app.state::<AppState>(),
+        &storage::root_dir(app)?,
+        id,
+        app_key,
+        material,
+    )
+}
+
+fn rekeyed_in(
+    state: &AppState,
+    root: &Path,
+    id: &str,
+    captured: Option<Zeroizing<Vec<u8>>>,
+    material: &[u8],
+) -> Result<Adoption> {
+    // The primary keeps no sealed copy: its key is the app key, replaced on
+    // purpose and nowhere else.
+    if id == PRIMARY_ID {
+        return Err(Error::Other(
+            "the main lockbox's key is the app key; it is replaced, not sealed".into(),
+        ));
+    }
+    let _sidecars = sidecars(state);
+    let app_key = {
+        let session = state.session.lock().unwrap();
+        let mut ring = state.keyring.lock().unwrap();
+        if session.is_live() {
+            ring.insert(id, material);
+        }
+        ring.app_key().or(captured)
+    };
+    let Some(app_key) = app_key else {
+        remove_obsolete(root, id)?;
+        return Ok(Adoption::Unsealed);
+    };
+    if let Err(e) = wrap(root, id, &app_key, material) {
+        if let Err(removal) = remove_obsolete(root, id) {
+            log::warn!(
+                "workspace {id}'s retired sealed key could not be removed either: {removal}"
+            );
+        }
+        return Err(e);
+    }
+    Ok(Adoption::Sealed)
+}
+
+// The sealed copy of a key the database is no longer under: gone, so the
+// next unlock cannot be handed it. Already absent is the goal reached.
+fn remove_obsolete(root: &Path, id: &str) -> Result<()> {
+    match fs::remove_file(sidecar(root, id)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -339,15 +470,30 @@ fn adopt_in(state: &AppState, root: &Path, id: &str, material: &[u8]) {
 /// app key it is sealed under was proved by the vault password a moment ago —
 /// the sidecar adds nothing an attacker without that key could open. Not over a
 /// *different* app key the ring holds, by the rule every writer here keeps.
-pub fn seal_under(app: &AppHandle, id: &str, app_key: &[u8], material: &[u8]) {
-    if let Ok(root) = storage::root_dir(app) {
-        seal_under_in(&app.state::<AppState>(), &root, id, app_key, material);
-    }
+///
+/// The move is a re-key, so the rule [`rekeyed`] keeps holds here too: a copy
+/// sealed earlier holds the key the lockbox just left, and is removed when the
+/// new one cannot be written in its place — on a failed write, which is the
+/// error, and when the app key changed meanwhile and this stands down.
+pub fn seal_under(app: &AppHandle, id: &str, app_key: &[u8], material: &[u8]) -> Result<()> {
+    seal_under_in(
+        &app.state::<AppState>(),
+        &storage::root_dir(app)?,
+        id,
+        app_key,
+        material,
+    )
 }
 
-fn seal_under_in(state: &AppState, root: &Path, id: &str, app_key: &[u8], material: &[u8]) {
+fn seal_under_in(
+    state: &AppState,
+    root: &Path,
+    id: &str,
+    app_key: &[u8],
+    material: &[u8],
+) -> Result<()> {
     if id == PRIMARY_ID {
-        return;
+        return Ok(());
     }
     let _sidecars = sidecars(state);
     {
@@ -355,14 +501,20 @@ fn seal_under_in(state: &AppState, root: &Path, id: &str, app_key: &[u8], materi
         let mut ring = state.keyring.lock().unwrap();
         if !ring.accepts_app_key(app_key) {
             log::info!("the app key changed while lockbox {id} was being moved; it stands down");
-            return;
+            return remove_obsolete(root, id);
         }
         if session.is_live() {
             ring.insert(PRIMARY_ID, app_key);
             ring.insert(id, material);
         }
     }
-    seal(root, id, app_key, material);
+    if let Err(e) = wrap(root, id, app_key, material) {
+        if let Err(removal) = remove_obsolete(root, id) {
+            log::warn!("lockbox {id}'s retired sealed key could not be removed either: {removal}");
+        }
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// Workspace `id` was deleted: its key leaves the ring. When another workspace
@@ -697,7 +849,10 @@ mod tests {
                     let (state, root) = (state.clone(), root.clone());
                     thread::spawn(move || {
                         replace_app_key_in(&state, &root, NEW_KEY);
-                        adopt_in(&state, &root, "y", Y_KEY);
+                        assert_eq!(
+                            adopt_in(&state, &root, "y", Y_KEY).unwrap(),
+                            Adoption::Sealed
+                        );
                         // A lock: the session and the ring end (`session::lock`).
                         state.session.lock().unwrap().clear();
                         state.keyring.lock().unwrap().clear();
@@ -733,28 +888,124 @@ mod tests {
         let state = live_state(&root);
         state.session.lock().unwrap().clear();
 
-        seal_under_in(&state, &root, "x", OLD_KEY, X_KEY);
+        seal_under_in(&state, &root, "x", OLD_KEY, X_KEY).unwrap();
         assert_eq!(sealed_under(&root, "x", OLD_KEY), X_KEY);
         assert!(state.keyring.lock().unwrap().is_empty());
 
         let root = tmp_root();
         let live = live_state(&root);
-        seal_under_in(&live, &root, "y", OLD_KEY, Y_KEY);
+        seal_under_in(&live, &root, "y", OLD_KEY, Y_KEY).unwrap();
         assert_eq!(sealed_under(&root, "y", OLD_KEY), Y_KEY);
         let ring = live.keyring.lock().unwrap();
         assert_eq!(&**ring.get("y").unwrap(), Y_KEY);
         assert_eq!(&**ring.app_key().unwrap(), OLD_KEY);
     }
 
+    // A move proved under an app key the ring has since replaced writes
+    // nothing — and leaves no sealed copy of the key the lockbox just left.
     #[test]
     fn a_move_proved_under_a_replaced_app_key_writes_nothing() {
         let root = tmp_root();
         let state = live_state(&root);
         state.keyring.lock().unwrap().insert(PRIMARY_ID, NEW_KEY);
+        fs::create_dir_all(workspace::dir_of(&root, "x")).unwrap();
+        wrap(&root, "x", NEW_KEY, b"the key it left").unwrap();
 
-        seal_under_in(&state, &root, "x", OLD_KEY, X_KEY);
+        seal_under_in(&state, &root, "x", OLD_KEY, X_KEY).unwrap();
         assert!(!is_wrapped(&root, "x"));
         assert!(!state.keyring.lock().unwrap().has("x"));
+    }
+
+    // An adopt says what it did: `Locked` with no session, the ring alone
+    // with no app key to seal under, and sealed otherwise. An org lockbox's
+    // flows require the last.
+    #[test]
+    fn an_adopt_says_whether_the_next_unlock_has_the_key() {
+        let root = tmp_root();
+        let state = live_state(&root);
+        assert_eq!(
+            adopt_in(&state, &root, "x", X_KEY).unwrap(),
+            Adoption::Unsealed
+        );
+        assert!(Adoption::Unsealed.required().is_err());
+        assert!(state.keyring.lock().unwrap().has("x"));
+
+        state.keyring.lock().unwrap().insert(PRIMARY_ID, OLD_KEY);
+        assert_eq!(
+            adopt_in(&state, &root, "x", X_KEY).unwrap(),
+            Adoption::Sealed
+        );
+        assert_eq!(sealed_under(&root, "x", OLD_KEY), X_KEY);
+
+        state.session.lock().unwrap().clear();
+        assert!(matches!(
+            adopt_in(&state, &root, "y", Y_KEY),
+            Err(Error::Locked)
+        ));
+        assert!(matches!(
+            adopt_in(&state, &root, PRIMARY_ID, OLD_KEY),
+            Err(Error::Locked)
+        ));
+        assert!(!is_wrapped(&root, "y"));
+    }
+
+    // A sealed copy that cannot be written is the error, never a quiet
+    // success: here the sidecar's path is taken by a directory.
+    #[test]
+    fn a_seal_that_fails_is_reported() {
+        let root = tmp_root();
+        let state = live_state(&root);
+        state.keyring.lock().unwrap().insert(PRIMARY_ID, OLD_KEY);
+        fs::create_dir_all(sidecar(&root, "x").join("in-the-way")).unwrap();
+        assert!(adopt_in(&state, &root, "x", X_KEY).is_err());
+        assert!(rekeyed_in(&state, &root, "x", None, X_KEY).is_err());
+    }
+
+    // After a re-key the sealed copy holds the new key or is gone: written
+    // under the ring's app key, under the one read before the re-key when a
+    // lock cleared the ring meanwhile, and removed when there is no app key
+    // at all, so the key just retired is never handed to the next unlock.
+    #[test]
+    fn after_a_re_key_the_sealed_copy_holds_the_new_key_or_is_gone() {
+        let root = tmp_root();
+        let state = live_state(&root);
+        fs::create_dir_all(workspace::dir_of(&root, "x")).unwrap();
+        state.keyring.lock().unwrap().insert(PRIMARY_ID, OLD_KEY);
+        wrap(&root, "x", OLD_KEY, b"retired").unwrap();
+
+        assert_eq!(
+            rekeyed_in(&state, &root, "x", None, X_KEY).unwrap(),
+            Adoption::Sealed
+        );
+        assert_eq!(sealed_under(&root, "x", OLD_KEY), X_KEY);
+        assert_eq!(&**state.keyring.lock().unwrap().get("x").unwrap(), X_KEY);
+
+        // A lock lands during the next re-key: the ring is empty, but the app
+        // key read before it still seals the copy, and nothing joins the ring.
+        state.session.lock().unwrap().clear();
+        state.keyring.lock().unwrap().clear();
+        assert_eq!(
+            rekeyed_in(
+                &state,
+                &root,
+                "x",
+                Some(Zeroizing::new(OLD_KEY.to_vec())),
+                Y_KEY
+            )
+            .unwrap(),
+            Adoption::Sealed
+        );
+        assert_eq!(sealed_under(&root, "x", OLD_KEY), Y_KEY);
+        assert!(state.keyring.lock().unwrap().is_empty());
+
+        // No app key anywhere: the copy of the retired key goes.
+        assert_eq!(
+            rekeyed_in(&state, &root, "x", None, X_KEY).unwrap(),
+            Adoption::Unsealed
+        );
+        assert!(!is_wrapped(&root, "x"));
+
+        assert!(rekeyed_in(&state, &root, PRIMARY_ID, None, X_KEY).is_err());
     }
 
     #[test]

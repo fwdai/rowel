@@ -337,10 +337,14 @@ pub async fn org_add_lockbox(
         return Err(e);
     }
     // Open at the app level from the start: into the ring, and sealed under
-    // the app key for every unlock after this one.
-    appkey::adopt(&app, &id, &material);
+    // the app key for every unlock after this one. An org lockbox has no
+    // password of its own, so a key that could not be kept is the error —
+    // after the lists are told, since the lockbox is on this device either
+    // way and "Refresh key" is how it is kept once the cause is gone.
+    let kept = appkey::adopt(&app, &id, &material).and_then(appkey::Adoption::required);
     events::workspace_added(&app, &lockbox.name);
     events::org_changed(&app);
+    kept?;
 
     // The first run, off the command thread and under the run claim every
     // run holds: a pack the server already holds is pulled into the copy
@@ -377,12 +381,22 @@ pub async fn org_add_lockbox(
 /// and the sealed copy beside the database written again, which is what
 /// repairs a lockbox whose copy went missing. An older generation, or another
 /// key at the same one, is refused and the local key kept.
+///
+/// Done only when the key is kept: a key that reached neither the ring nor
+/// the sealed copy — the vault locked meanwhile, a write that failed — is the
+/// error, never a quiet success, since the next unlock trusts that copy.
 #[tauri::command]
 pub async fn org_refresh_lockbox_key(
     workspace_id: String,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<()> {
+    // The exclusion every re-key takes (a password change, a sync's
+    // rotation), held from before the listing is read until the key is kept.
+    // The decision is about the database as it stands: taken outside it, a
+    // repair judged against generation N could reinstall N after a rotation
+    // beside it had moved the database to N + 1.
+    let _step = begin_step(&state)?;
     let root = storage::root_dir(&app)?;
     let workspace = lockboxes::org_workspace(&root, &workspace_id)?;
     let (master, kdf) = fetch_master(&app, &workspace).await?;
@@ -390,40 +404,41 @@ pub async fn org_refresh_lockbox_key(
     if lockboxes::key_step(&dir, &kdf)? == lockboxes::KeyStep::Repair {
         let (check_dir, check) = (dir.clone(), master.clone());
         blocking(move || lockboxes::check_opens(&check_dir, &check)).await?;
-        appkey::adopt(&app, &workspace_id, &master);
-        return Ok(());
+        return appkey::adopt(&app, &workspace_id, &master)?.required();
     }
 
-    // A re-key writes the sidecar and the database: the exclusion a password
-    // change takes, and no run beside it.
-    let _step = begin_step(&state)?;
+    // A rotation writes the sidecar and the database, and no run beside it.
     if workspace::active_id(&app) == workspace_id {
         let claim = super::sync::sync_before_rekey(&app).await;
-        rekey_open(&app, &state, master, kdf).await?;
+        let kept = rekey_open(&app, &state, master, kdf).await;
         // The account's pack is still under the epoch just retired; this run
-        // opens it with the retired key and pushes it under the new one.
+        // opens it with the retired key and pushes it under the new one —
+        // whether or not the new key could be kept, since the database is on
+        // it either way.
         drop(claim);
         super::sync::request_run_if_ready(&app, &state);
-        return Ok(());
+        return kept;
     }
-    let held = state
-        .keyring
-        .lock()
-        .unwrap()
-        .get(&workspace_id)
-        .ok_or_else(|| {
-            Error::Other(
-                "this lockbox's previous key is not held on this device, so its copy cannot be \
-                 moved onto the new one; remove the lockbox here and add it again"
-                    .into(),
-            )
-        })?;
+    // The app key with it, for the sealed copy to be written under when a
+    // lock clears the ring during the re-key (`appkey::rekeyed`).
+    let (held, app_key) = {
+        let ring = state.keyring.lock().unwrap();
+        (ring.get(&workspace_id), ring.app_key())
+    };
+    let held = held.ok_or_else(|| {
+        Error::Other(
+            "this lockbox's previous key is not held on this device, so its copy cannot be \
+             moved onto the new one; remove the lockbox here and add it again"
+                .into(),
+        )
+    })?;
     let material = master.clone();
     {
         let (dir, id, kdf) = (dir.clone(), workspace_id.clone(), kdf.clone());
         blocking(move || lockboxes::rekey_closed(&dir, &id, held, master, &kdf)).await?;
     }
-    appkey::adopt(&app, &workspace_id, &material);
+    let kept = appkey::rekeyed(&app, &workspace_id, app_key, &material)
+        .and_then(appkey::Adoption::required);
     // Its copy in the account re-sealed under the new key now, as a password
     // change does for each lockbox it reaches, rather than at its next open.
     match super::sync::claim_or_busy(&state) {
@@ -435,7 +450,7 @@ pub async fn org_refresh_lockbox_key(
             "a sync run is in flight; org lockbox {workspace_id} syncs when it is next opened"
         ),
     }
-    Ok(())
+    kept
 }
 
 /// The open workspace, an org lockbox whose run just found the account's
@@ -488,7 +503,9 @@ async fn fetch_master(
 // The open workspace re-keyed from the session's key onto `master` under the
 // server's descriptor `kdf`: the password change's saga, with the current
 // key read off the session rather than proved by a password, since no
-// password ever made it. The caller holds the setup step.
+// password ever made it. The caller holds the setup step. Done only once the
+// new key is sealed for the next unlock: an org lockbox has no password for
+// that unlock to fall back on.
 async fn rekey_open(
     app: &AppHandle,
     state: &AppState,
@@ -509,6 +526,7 @@ async fn rekey_open(
         VaultKey::from_material(master, true),
         kdf,
     )
-    .await
-    .map(|_| ())
+    .await?
+    .adoption
+    .required()
 }

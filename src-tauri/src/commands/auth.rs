@@ -120,7 +120,7 @@ pub async fn unlock(
             if let Some(app_key) = &app_key {
                 appkey::open_all(&app, app_key);
             }
-            appkey::adopt(&app, &active, &material);
+            appkey::adopt_or_log(&app, &active, &material);
             if let Some(password) = join {
                 super::autojoin::with_password(&app, password);
             }
@@ -411,8 +411,9 @@ pub async fn change_master_password(
     // the session entirely — and off the main thread, since Argon2id is the
     // single most expensive thing this app does.
     let (current_key, new_key, params) = derive_both(&app, current, new).await?;
-    let active =
-        rekey_open_workspace(&app, &state, current_key, new_key, params.to_json()?).await?;
+    let active = rekey_open_workspace(&app, &state, current_key, new_key, params.to_json()?)
+        .await?
+        .workspace_id;
 
     let unchanged = rekey_beside(&app, &state, &root, &active, current_beside, new_beside).await;
 
@@ -437,13 +438,23 @@ pub async fn change_master_password(
 /// the change is on disk (or rolled back). Then the ring takes the new key,
 /// the token file is re-sealed under it, and — for the primary — the
 /// biometric enrollment is re-stored. The caller holds the setup step.
+///
+/// The sealed copy beside a non-primary workspace's database follows the
+/// re-key whether or not the session survived it (`appkey::rekeyed`), and a
+/// copy that cannot be written is the error, returned once everything else
+/// is done: the change itself is committed by then, and the caller is told
+/// that the next unlock will not have the new key rather than told nothing.
 pub(crate) async fn rekey_open_workspace(
     app: &AppHandle,
     state: &AppState,
     current_key: VaultKey,
     new_key: VaultKey,
     params_json: String,
-) -> Result<String> {
+) -> Result<Rekeyed> {
+    // Read before the saga, so the sealed copy can be written under it even
+    // when a lock clears the ring while the database is being re-keyed: a
+    // lock does not change the app key.
+    let app_key = state.keyring.lock().unwrap().app_key();
     // Resolved before anything is taken out of the session, so a path that
     // cannot be resolved leaves the vault open and unchanged.
     let (paths, workspace_id) = auth::RekeyPaths::resolve_with_id(app, state)?;
@@ -528,12 +539,15 @@ pub(crate) async fn rekey_open_workspace(
     // is resealed under it. The primary's is the one replacement of an app key
     // made on purpose; every other route into the ring refuses to overwrite
     // one, so a slower proof of the old password cannot undo this. A lock that
-    // won while the saga ran has cleared the ring, and neither writes to it.
-    if primary {
+    // won while the saga ran has cleared the ring, and neither writes to it —
+    // but another workspace's sealed copy is still written, under the app key
+    // read before the saga, since the database is on the new key regardless.
+    let sealed = if primary {
         appkey::replace_app_key(app, &new_material);
+        Ok(appkey::Adoption::Sealed)
     } else {
-        appkey::adopt(app, &workspace_id, &new_material);
-    }
+        appkey::rekeyed(app, &workspace_id, app_key, &new_material)
+    };
 
     // Re-encrypt the Drive token file under the new key if present (sync parity).
     // After the adopt and best-effort on purpose: the password change is already
@@ -552,7 +566,22 @@ pub(crate) async fn rekey_open_workspace(
     if primary {
         restore_enrollment(app, new_material).await;
     }
-    Ok(workspace_id)
+    let adoption = sealed.map_err(|e| {
+        Error::Other(format!(
+            "the new key is in use, but could not be kept for the next unlock: {e}"
+        ))
+    })?;
+    Ok(Rekeyed {
+        workspace_id,
+        adoption,
+    })
+}
+
+/// What a re-key of the open workspace came to: which workspace, and whether
+/// the next unlock of the main lockbox has its new key (`appkey::Adoption`).
+pub(crate) struct Rekeyed {
+    pub workspace_id: String,
+    pub adoption: appkey::Adoption,
 }
 
 // The biometric-stored key is the app key, and a change of the primary's key
@@ -641,7 +670,12 @@ async fn rekey_beside(
         // no thing to hold a mutex across. A lock that lands afterwards makes
         // the copy stale, and the writes back into the ring stand down on their
         // own (`appkey`); the change on disk is the user's either way.
-        let held = state.keyring.lock().unwrap().get(&id);
+        // The app key with it, for the sealed copy to be written under when a
+        // lock clears the ring during the re-key (`appkey::rekeyed`).
+        let (held, app_key) = {
+            let ring = state.keyring.lock().unwrap();
+            (ring.get(&id), ring.app_key())
+        };
         let (current, new) = (current.clone(), new.clone());
         let (rekeyed, workspace_id) = (dir.clone(), id.clone());
         match blocking(move || rekey_one(&rekeyed, &workspace_id, held, &current, &new)).await {
@@ -649,8 +683,11 @@ async fn rekey_beside(
                 if id == PRIMARY_ID {
                     appkey::replace_app_key(app, &material);
                     restore_enrollment(app, material.clone()).await;
-                } else {
-                    appkey::adopt(app, &id, &material);
+                } else if let Err(e) = appkey::rekeyed(app, &id, app_key, &material) {
+                    // On the new password regardless: its own unlock opens it.
+                    log::warn!(
+                        "workspace {id}'s new key could not be kept for the next unlock: {e}"
+                    );
                 }
                 super::sync::sync_rekeyed(app, &dir, &id, &material).await;
             }
