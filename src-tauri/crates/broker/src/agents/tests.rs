@@ -80,6 +80,62 @@ fn the_state_expires_what_is_due_and_keeps_it_an_hour() {
     assert!(state.find_mut("b").is_some());
 }
 
+// Listing the grants is a read that needs the truth now, so a grant past
+// its window ends there — through the one expiry path, with its `ended` row
+// and its sign-out — and the timer that fires later has nothing left to
+// write. A use meanwhile is refused and flips nothing.
+#[test]
+fn listing_expires_a_grant_with_its_row_and_signal_exactly_once() {
+    let (_dir, store, _cipher) = crate::testing::vault();
+    store
+        .meta_set(
+            CLIENTS_META,
+            &serde_json::to_string(&[client("Work Chrome", "ext", ClientKind::Extension)]).unwrap(),
+        )
+        .unwrap();
+    let mut held = AgentState::default();
+    held.grants.push(active("g1", 0, 1_000));
+    assert_eq!(
+        held.find_mut("g1").unwrap().use_once(1_000),
+        Err(crate::protocol::Code::GrantExpired)
+    );
+    assert_eq!(held.find_mut("g1").unwrap().state, State::Active);
+
+    let list = |held: &mut AgentState, now| {
+        list_grants_in(Locked {
+            store: &store,
+            held,
+            writer: "dev",
+            now,
+        })
+    };
+    let (rows, expired) = list(&mut held, 1_000);
+    assert!(expired);
+    assert_eq!(rows[0].state, State::Expired);
+    let ended_rows = store.audit_rows("dev").unwrap();
+    assert_eq!(ended_rows.len(), 1);
+    assert_eq!(ended_rows[0].event, "ended");
+    assert_eq!(
+        ended_rows[0].detail.as_deref(),
+        Some(r#"{"reason":"expired"}"#)
+    );
+    assert_eq!(
+        held.signals.get("ext"),
+        Some(&vec![Signal::GrantEnded {
+            grant_id: "g1".into(),
+            origins: vec!["https://github.com".into()],
+        }])
+    );
+
+    assert!(
+        !expire_due(Some(&store), &mut held, "dev", 2_000),
+        "the timer"
+    );
+    assert!(!list(&mut held, 2_000).1, "a second listing");
+    assert_eq!(store.audit_rows("dev").unwrap().len(), 1);
+    assert_eq!(held.signals.get("ext").map(Vec::len), Some(1));
+}
+
 // A seal forgets everything the session held — the grants, the rates,
 // the switches as it read them — and moves the epoch, so what decided
 // under the session settles no more.

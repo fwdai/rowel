@@ -177,7 +177,9 @@ pub fn ended(
 /// Flip every grant whose window has closed, with the row and the signal
 /// each flip owes ([`ended`]): what the host's timer does when it fires, and
 /// what a read of a grant's state does first, so the state it reads is the
-/// one the log says. Whether anything flipped.
+/// one the log says. The one way a grant leaves `Active` by time. Whether
+/// anything flipped: the host then wakes the extensions for the signals and
+/// re-arms its timer, with the locks let go.
 pub fn expire_due(
     store: Option<&SqliteStore>,
     held: &mut AgentState,
@@ -338,15 +340,23 @@ pub fn list_rules_in(store: &SqliteStore, now: i64) -> Vec<RuleRow> {
 }
 
 /// Every grant still held: the active ones, and the ones that ended within
-/// the last hour.
-pub fn list_grants_in(store: &SqliteStore, held: &mut AgentState, now: i64) -> Vec<GrantRow> {
+/// the last hour — and whether listing them expired any, which the host
+/// follows up as it does its timer's firing.
+pub fn list_grants_in(ctx: Locked<'_>) -> (Vec<GrantRow>, bool) {
+    let Locked {
+        store,
+        held,
+        writer,
+        now,
+    } = ctx;
     let clients = clients_in(store);
     let titles = titles_in(store);
     // What the list says should be what is true now, not what was true when
-    // the timer last fired.
-    held.expire_due(now);
+    // the timer last fired — and a grant it shows as over has its row.
+    let expired = expire_due(Some(store), held, writer, now);
     held.prune(now);
-    held.grants
+    let rows = held
+        .grants
         .iter()
         .map(|grant| {
             let item_id = single_id(&grant.items);
@@ -364,5 +374,6 @@ pub fn list_grants_in(store: &SqliteStore, held: &mut AgentState, now: i64) -> V
                 uses: grant.uses,
             }
         })
-        .collect()
+        .collect();
+    (rows, expired)
 }

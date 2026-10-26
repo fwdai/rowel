@@ -346,6 +346,39 @@ fn a_config_auto_rule_issues_a_header_grant_without_an_ask() {
     );
 }
 
+// A grant whose window closed is ended by the first read of it, through the
+// engine's one expiry path, with its `ended` row; the tick after it finds
+// nothing left to write.
+#[test]
+fn an_expired_grant_has_one_ended_row_whoever_sees_it_first() {
+    let data = seeded();
+    config_with(
+        &data,
+        vec![Rule {
+            ttl_ms: 200,
+            ..stripe_rule(AGENT_KEY, Approval::Auto)
+        }],
+    );
+    let host = data.host(&Notices::default());
+    let mut agent = peer(&host, AGENT_KEY);
+    let reply = agent
+        .call("request-grant", header_request("check the balance"))
+        .unwrap();
+    assert_eq!(reply["state"], "active");
+    thread::sleep(Duration::from_millis(300));
+
+    let status = agent
+        .call("grant-status", json!({ "grantId": reply["grantId"] }))
+        .unwrap();
+    assert_eq!(status["state"], "expired");
+    let rows = data.rows();
+    assert_eq!(events(&rows), ["requested", "granted", "ended"]);
+    assert_eq!(rows[2].1.as_deref(), Some(r#"{"reason":"expired"}"#));
+
+    host.tick();
+    assert_eq!(data.rows().len(), 3, "the tick has nothing left to end");
+}
+
 #[test]
 fn a_request_no_rule_covers_asks_and_approve_activates_it() {
     let data = seeded();

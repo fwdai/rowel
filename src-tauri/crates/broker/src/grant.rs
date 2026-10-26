@@ -453,10 +453,13 @@ impl Grant {
     /// Count one use: a fill served, a placeholder resolved, an assertion
     /// signed. The last allowed use flips the grant to `Spent`. A grant that
     /// is used up or past its window refuses with `GrantExpired`; one that
-    /// was never, or is no longer, allowed refuses with `GrantDenied`.
+    /// was never, or is no longer, allowed refuses with `GrantDenied`. One
+    /// past its window is refused and left `Active`: a grant leaves `Active`
+    /// by time only through the host's expiry (`agents::expire_due`), which
+    /// writes the `ended` row and the sign-out the flip owes.
     pub fn use_once(&mut self, now_ms: i64) -> Result<(), Code> {
-        self.expire_if_due(now_ms);
         match self.state {
+            State::Active if self.is_due(now_ms) => return Err(Code::GrantExpired),
             State::Active => {}
             State::Spent | State::Expired => return Err(Code::GrantExpired),
             State::Pending | State::Revoked | State::Denied => return Err(Code::GrantDenied),
@@ -471,15 +474,10 @@ impl Grant {
         Ok(())
     }
 
-    /// Flip an `Active` grant whose window has closed to `Expired`. True
-    /// when this call did the flipping, so a host sweeping its grants knows
-    /// which ones to write an `ended` row for.
-    pub fn expire_if_due(&mut self, now_ms: i64) -> bool {
-        if self.state == State::Active && now_ms >= self.expires_at_ms {
-            self.state = State::Expired;
-            return true;
-        }
-        false
+    /// Whether this grant is `Active` and its window has closed: what the
+    /// host's expiry flips, with its row, and what a use refuses meanwhile.
+    pub fn is_due(&self, now_ms: i64) -> bool {
+        self.state == State::Active && now_ms >= self.expires_at_ms
     }
 }
 
@@ -793,12 +791,18 @@ mod tests {
         assert_eq!((grant.state, grant.uses), (State::Active, 5));
     }
 
+    // Refused, and not flipped: leaving `Active` by time is the host's
+    // expiry's alone, since the flip owes a row and a sign-out.
     #[test]
-    fn a_use_past_the_window_expires_the_grant_and_refuses() {
+    fn a_use_past_the_window_is_refused_and_flips_nothing() {
         let mut grant = active(0, 1_000, None);
         assert_eq!(grant.use_once(1_000), Err(Code::GrantExpired));
-        assert_eq!(grant.state, State::Expired);
-        assert_eq!(grant.use_once(5), Err(Code::GrantExpired), "and stays so");
+        assert_eq!((grant.state, grant.uses), (State::Active, 0));
+        assert_eq!(
+            grant.use_once(5_000),
+            Err(Code::GrantExpired),
+            "and stays so"
+        );
     }
 
     #[test]
@@ -816,19 +820,20 @@ mod tests {
     }
 
     #[test]
-    fn expire_if_due_flips_once_and_only_an_active_grant() {
-        let mut grant = active(0, 1_000, None);
-        assert!(!grant.expire_if_due(999));
-        assert!(grant.expire_if_due(1_000));
-        assert_eq!(grant.state, State::Expired);
-        assert!(!grant.expire_if_due(2_000), "already flipped");
-
-        let mut spent = Grant {
-            state: State::Spent,
-            ..active(0, 1_000, Some(1))
-        };
-        assert!(!spent.expire_if_due(5_000));
-        assert_eq!(spent.state, State::Spent);
+    fn only_an_active_grant_past_its_window_is_due() {
+        let grant = active(0, 1_000, None);
+        assert!(!grant.is_due(999));
+        assert!(grant.is_due(1_000));
+        for state in [State::Spent, State::Expired, State::Revoked, State::Pending] {
+            assert!(
+                !Grant {
+                    state,
+                    ..grant.clone()
+                }
+                .is_due(5_000),
+                "{state:?}"
+            );
+        }
     }
 
     #[test]

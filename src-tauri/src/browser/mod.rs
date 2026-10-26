@@ -895,9 +895,7 @@ impl Host for AppHost {
             (reply_for(grant, items), flipped)
         };
         if flipped {
-            events::agents_changed(app);
-            agents::rearm(app);
-            server::notify_signals();
+            agents::grants_changed(app);
         }
         Ok(reply)
     }
@@ -987,9 +985,7 @@ impl Host for AppHost {
                 now,
             );
         }
-        events::agents_changed(app);
-        agents::rearm(app);
-        server::notify_signals();
+        agents::grants_changed(app);
     }
 
     // The one reply that carries a value to something other than an
