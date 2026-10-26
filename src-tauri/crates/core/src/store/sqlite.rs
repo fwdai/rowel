@@ -513,6 +513,15 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Test seam: take back [`Self::refuse_audit_writes`], so a test can
+    /// watch the same request go through once the log takes rows again.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn allow_audit_writes(&self) -> Result<()> {
+        self.lock()?
+            .execute_batch("DROP TRIGGER IF EXISTS refuse_audit;")?;
+        Ok(())
+    }
+
     /// Fetch one row's metadata by id **including tombstones**, unlike
     /// [`VaultStore::list`] which hides them. Save, restore, favorite and purge
     /// all report back the row they just wrote, and restore and purge act on

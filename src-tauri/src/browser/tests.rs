@@ -616,6 +616,86 @@ fn a_log_that_will_not_write_releases_nothing_and_still_ends_grants() {
     assert!(rows(&store).is_empty(), "the log took nothing");
 }
 
+// A use the log will not take is no use: every grant refused for it is left
+// exactly as it was — not counted, not spent at its one use, not claimed by
+// the extension that asked under an agent's grant — and once the log takes
+// rows again the same requests go through, each once.
+#[test]
+fn a_use_whose_row_will_not_write_leaves_the_grant_as_it_was() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    seed(
+        &store,
+        &cipher,
+        &api_key("stripe", "Stripe", Some("sk_live_x")),
+    );
+    let_in(&store, &[extension(), agent(), sidecar()]);
+    let now = 1_000;
+    let mut held = ready();
+    let once = |grant: Grant| Grant {
+        max_uses: Some(1),
+        ..grant
+    };
+    held.grants.push(once(active_grant("gh", now)));
+    held.grants.push(Grant {
+        client_key: "agent".into(),
+        ..active_grant("gh", now)
+    });
+    held.grants.push(once(header_grant(&["stripe"], now)));
+    let (own, agents_fill, header) = (
+        held.grants[0].id.clone(),
+        held.grants[1].id.clone(),
+        held.grants[2].id.clone(),
+    );
+    let before = held.grants.clone();
+    let fill = |held: &mut AgentState, id: &str| {
+        covered(locked(&store, held, now), "ext", id, "gh", Mode::Fill)
+    };
+    let stripe_key = |held: &mut AgentState| {
+        resolve(
+            &store,
+            &cipher,
+            held,
+            now,
+            &header,
+            "rowel://default/stripe/apiKey",
+            &call("GET", "api.stripe.com"),
+        )
+        .map(|value| value.to_string())
+    };
+
+    store.refuse_audit_writes().unwrap();
+    assert_eq!(fill(&mut held, &own), Err(Code::AuditUnavailable));
+    assert_eq!(fill(&mut held, &agents_fill), Err(Code::AuditUnavailable));
+    assert_eq!(
+        client_covered(locked(&store, &mut held, now), "ext", "gh", Mode::Fill),
+        Err(Code::AuditUnavailable)
+    );
+    assert_eq!(stripe_key(&mut held), Err(Code::AuditUnavailable));
+    assert!(matches!(
+        decided(&store, &mut held, now),
+        Err(Code::AuditUnavailable)
+    ));
+    assert_eq!(held.grants, before, "no grant moved");
+    assert!(rows(&store).is_empty());
+
+    store.allow_audit_writes().unwrap();
+    assert_eq!(fill(&mut held, &own), Ok(true));
+    assert_eq!(fill(&mut held, &own), Ok(false), "its one use is spent");
+    assert_eq!(held.grants[0].state, State::Spent);
+    assert_eq!(fill(&mut held, &agents_fill), Ok(true));
+    assert_eq!(held.grants[1].served_to.as_deref(), Some("ext"));
+    assert_eq!(held.grants[1].uses, 1);
+    assert_eq!(stripe_key(&mut held).as_deref(), Ok("sk_live_x"));
+    assert_eq!(stripe_key(&mut held), Err(Code::GrantDenied));
+    assert_eq!(held.grants[2].state, State::Spent);
+    let used = rows(&store)
+        .into_iter()
+        .filter(|(event, _)| event == "used")
+        .count();
+    assert_eq!(used, 3, "one row per use, and only for the uses made");
+}
+
 // `grant_covers` — the login or its code about to be served under a grant
 // in hand — is a release like any other: the lockbox's access going off
 // ends the grant in the same section as the change, and the switches the

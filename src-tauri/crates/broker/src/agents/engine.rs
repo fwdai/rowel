@@ -237,11 +237,12 @@ pub fn decide(
     if let Some(grant) = reusable {
         let items = admitted(&candidates, &grant.items);
         if !secret {
-            grant.use_once(now)?;
-            record(
+            use_grant(
                 store,
                 writer,
-                about(row(Event::Used), grant, Some(r#"{"reuse":true}"#)),
+                grant,
+                None,
+                |counted| about(row(Event::Used), counted, Some(r#"{"reuse":true}"#)),
                 now,
             )?;
         }
@@ -369,7 +370,9 @@ pub fn deny_unasked(
 /// reply carries the login — a use counted and written at once. A secret
 /// grant's reply carries nothing, so nothing is counted here: its uses are
 /// `resolve`'s to count, one per value served. A row that will not write is
-/// `AuditUnavailable`, and the caller keeps nothing of the grant.
+/// `AuditUnavailable`, and the caller keeps nothing of the grant: it is not
+/// among the grants held until this has returned, and a failure drops it, so
+/// what this did to it is dropped too.
 fn activate(
     store: &SqliteStore,
     writer: &str,
@@ -377,14 +380,40 @@ fn activate(
     grant: &mut Grant,
     now: i64,
 ) -> Result<(), Code> {
-    let secret = is_secret(&grant.modes);
-    if !secret {
-        grant.use_once(now)?;
-    }
     record(store, writer, about(row(Event::Granted), grant, None), now)?;
-    if !secret {
-        record(store, writer, about(row(Event::Used), grant, None), now)?;
+    if !is_secret(&grant.modes) {
+        use_grant(
+            store,
+            writer,
+            grant,
+            None,
+            |counted| about(row(Event::Used), counted, None),
+            now,
+        )?;
     }
+    Ok(())
+}
+
+/// Count one use of `grant` — and claim it for `claim`, the extension served
+/// under another client's grant — write the `used` row `row` builds from the
+/// counted copy, and only then keep the copy: a row that will not write
+/// leaves the grant exactly as it was, so a use the log does not hold never
+/// spends, counts or claims anything. Every use of a grant goes through here.
+fn use_grant(
+    store: &SqliteStore,
+    writer: &str,
+    grant: &mut Grant,
+    claim: Option<&str>,
+    row: impl FnOnce(&Grant) -> Draft,
+    now: i64,
+) -> Result<(), Code> {
+    let mut counted = grant.clone();
+    counted.use_once(now)?;
+    if let Some(client_key) = claim {
+        counted.served_to = Some(client_key.to_string());
+    }
+    record(store, writer, row(&counted), now)?;
+    *grant = counted;
     Ok(())
 }
 
@@ -650,13 +679,12 @@ fn covered_via(
     if !grant.is_active(now) || !grant.modes.contains(&mode) {
         return Ok(false);
     }
-    if grant.client_key != client_key {
-        match &grant.served_to {
-            None => grant.served_to = Some(client_key.to_string()),
-            Some(served) if served == client_key => {}
-            Some(_) => return Ok(false),
-        }
-    }
+    let claim = match &grant.served_to {
+        _ if grant.client_key == client_key => None,
+        None => Some(client_key),
+        Some(served) if served == client_key => None,
+        Some(_) => return Ok(false),
+    };
     // The item as the grant's selector sees it. Every grant issued here
     // names ids, which the id alone answers; a wider selector reads the
     // row's kind and tags, nothing sealed.
@@ -671,19 +699,32 @@ fn covered_via(
             _ => return Ok(false),
         },
     };
-    if !grant.items.admits(&item) || grant.use_once(now).is_err() {
+    if !grant.items.admits(&item) {
         return Ok(false);
     }
     let clients = clients_in(store);
-    let mut row = about(
-        draft(Event::Used, &grant.client_key, &clients),
+    let used = use_grant(
+        store,
+        writer,
         grant,
-        Some(&format!(r#"{{"via":"{via}"}}"#)),
+        claim,
+        |counted| {
+            let mut row = about(
+                draft(Event::Used, &counted.client_key, &clients),
+                counted,
+                Some(&format!(r#"{{"via":"{via}"}}"#)),
+            );
+            row.item_id = Some(item_id.to_string());
+            row.mode = Some(mode);
+            row
+        },
+        now,
     );
-    row.item_id = Some(item_id.to_string());
-    row.mode = Some(mode);
-    record(store, writer, row, now)?;
-    Ok(true)
+    // A use refused is a no; a use the log would not take is a refusal.
+    match used {
+        Err(Code::AuditUnavailable) => Err(Code::AuditUnavailable),
+        used => Ok(used.is_ok()),
+    }
 }
 
 /// [`covered`] over the grants the client holding `client_key` was issued or
@@ -777,22 +818,30 @@ pub fn resolved(
         .and_then(|record| cipher.unseal(&record.id, &record.payload).ok())
         .and_then(|entry| field_value(&entry, &reference.field))
         .ok_or(Code::GrantDenied)?;
-    grant.use_once(now)?;
     let clients = clients_in(store);
-    let mut row = about(
-        draft(Event::Used, &client.key, &clients),
+    use_grant(
+        store,
+        writer,
         grant,
-        // The field as the placeholder wrote it, JSON-escaped: an env key
-        // may hold a quote or a backslash.
-        Some(&format!(
-            r#"{{"via":"resolve","field":{}}}"#,
-            serde_json::Value::from(reference.field.to_string())
-        )),
-    );
-    row.item_id = Some(item.id);
-    row.mode = Some(mode);
-    row.target = Some(resolve_target_text(&rctx.target));
-    record(store, writer, row, now)?;
+        None,
+        |counted| {
+            let mut row = about(
+                draft(Event::Used, &client.key, &clients),
+                counted,
+                // The field as the placeholder wrote it, JSON-escaped: an env
+                // key may hold a quote or a backslash.
+                Some(&format!(
+                    r#"{{"via":"resolve","field":{}}}"#,
+                    serde_json::Value::from(reference.field.to_string())
+                )),
+            );
+            row.item_id = Some(item.id);
+            row.mode = Some(mode);
+            row.target = Some(resolve_target_text(&rctx.target));
+            row
+        },
+        now,
+    )?;
     Ok(value)
 }
 
