@@ -828,10 +828,13 @@ covers what the extension's agent mode, the `rowel` command line and the local
 socket let an agent do with the vault, and what a person sees of it afterwards.
 It describes the free, local tier this build ships, in the app and — since
 `rowel serve` — from the command line on a box without one (see *The headless
-broker* below). The server tier the spec plans (org lockboxes with server-held
-keys, Rowel Server, Rowel Cloud, approvals pushed to a phone, OAuth token mode,
-remote browsers, policy as code, workload identity) is not in it, and is named
-below only where a reader would otherwise assume it.
+broker* below). The single-node Rowel Server (`rowel serve --server`: org
+lockboxes with server-held keys, members, workload identity for agents,
+approvals routed to members' apps) is in it too, in *The Rowel Server* below.
+What the spec plans beyond it (Rowel Cloud, approvals pushed to a phone,
+rotation and offboarding at the server, OAuth token mode, remote browsers,
+policy as code) is not, and is named only where a reader would otherwise
+assume it.
 
 **The one honest line.** Rowel's promise is that no backend holds the user's
 secrets: a lockbox is sealed under a key derived from the master password and
@@ -846,7 +849,8 @@ product already has one, at the lockbox:
   cloud account the user owns, and no server can read it. A server-held *org
   lockbox*, whose key is escrowed to a company's Rowel Server so that it can
   act while nobody is present, is one the app can hold and answer approvals
-  for (*Org lockboxes* below); the server itself is not in this build.
+  for (*Org lockboxes* below), and one a company's server opens to serve its
+  agents (*The Rowel Server* below).
   Nothing on the device serves an agent while the vault is locked or the
   person is away.
 - **Whether agents may use it.** Every lockbox has an agent-access switch,
@@ -1117,8 +1121,8 @@ id.
 **Org lockboxes.** The app's half of the server tier is in this build: it
 can sign in to a company's Rowel Server, hold the org lockboxes the server
 hands its member, and answer the approvals the server routes to them
-(`org`, `commands::org`, [docs/agents.md](./agents.md#org-lockboxes-and-a-rowel-server));
-the server itself is not. An org lockbox's master is not derived from the
+(`org`, `commands::org`, [docs/agents.md](./agents.md#org-lockboxes-and-a-rowel-server)).
+An org lockbox's master is not derived from the
 master password: the server minted it, holds a copy wrapped under its own
 root key — so the server can open the lockbox, which is the point and is said
 in the UI — and hands each enrolled device a copy sealed to that device's
@@ -1144,6 +1148,53 @@ the password-change saga on the server's new master (the old epoch retired,
 so older packs still open), followed on each device at its next sync or on
 demand; a device the server revokes is handed no new master and keeps only
 the copy it has, which the next rotation leaves behind.
+
+**The Rowel Server.** `rowel serve --server` (`rowel-server`,
+[docs/server.md](./server.md)) is the other half: one process and one data
+directory, holding a company's org lockboxes as SQLCipher files and a
+metadata database beside them. What it can read, it can read by design: every
+org lockbox, since it holds each master wrapped under its root key (a
+32-byte key file, HKDF'd per tenant, AES-GCM with the lockbox id as
+associated data). It never sees a member's personal lockboxes, which never
+leave their devices. What bounds it:
+
+- **Keys at rest and in memory.** A master is unwrapped on first use, written
+  as a `key_unwrapped` row, and wiped again after ten idle minutes, on a
+  freeze and on `SIGTERM`; a quiet server holds no plaintext key. The root key
+  file is the whole of the escrow: whoever reads it and the data directory
+  reads every org lockbox, which is why the operator is told to keep it
+  apart, owner-only, and backed up separately. A compromised server host is
+  the compromised-OS case of this document, for a company's org lockboxes.
+- **Agents prove who they are, nobody vouches for them.** An agent associates
+  only with a workload token (GitHub Actions OIDC, or a token file) verified
+  against the issuer's keys, whose audience is bound to the SHA-256 of the
+  channel's session key, so a token lifted from one connection fails on every
+  other; a platform that cannot set the audience falls back to a challenge
+  nonce, a ten-minute lifetime cap and a `jti` replay record, and the replay
+  record runs for every token. Its claims must match an admin's trust policy,
+  which names the agent definition and the one client kind it admits; there
+  is no dialog to fall back on. A sidecar proves its own identity, and the
+  separation from the agent is only as strong as the platform's identities:
+  an agent and a sidecar in one CI job share one token issuer and claims.
+- **Members and devices.** Members sign in through the company's identity
+  provider, which the server fronts as the app's OAuth server; a verified
+  email is required. A device is handed a lockbox master, sealed to its
+  enrollment key, only once another device of the member or an admin approved
+  it; revoking it withdraws its sealed masters and ends its sessions. Access
+  tokens are stored only as hashes; a refresh token is single-use, and a
+  reused one ends the session.
+- **Decisions.** The server runs the app's grant engine over the lockbox's
+  rules and the tenant's. An ask waits for an approver's answer from an
+  approved device, first answer wins, and runs out at its deadline as a
+  denial; no passkey is ever signed and no form filled from a server-held
+  lockbox (spec Q5). Every decision is a chained row inside the lockbox and in
+  the server's export.
+- **Sync.** A device's push is opened and merged, never stored as sent, and
+  only under the lockbox's current key descriptor; every server-side write
+  moves the revision, so a device's compare-and-swap catches up before it
+  overwrites anything.
+- **Transport.** Plain HTTP only to a loopback address; otherwise TLS, from
+  the server's own PEM files or a reverse proxy in front of it.
 
 ## iOS AutoFill
 
@@ -1277,5 +1328,7 @@ versioned descriptor in a sidecar beside the vault; PBKDF2 remains only to read
 what older formats wrote. An agent gets none of this to hold: it asks for a
 grant, a person or a standing rule answers, the extension or a sidecar uses
 the credential at the edge, and every decision and use is a chained row in the
-lockbox's own audit log. Every lockbox in this build is device-held; a server
-that could act for an agent while nobody is present is not part of it.
+lockbox's own audit log. Every lockbox a person makes is device-held; the one
+kind a server can open, the org lockbox a company's Rowel Server holds so it
+can act for an agent while nobody is present, is labelled as such wherever it
+appears.
