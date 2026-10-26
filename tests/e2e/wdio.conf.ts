@@ -25,7 +25,13 @@ const APP_BINARY =
 
 const VITE_PORT = process.env.E2E_VITE_PORT ?? "1420";
 
-const TEST_DB_DIR = path.join(os.tmpdir(), `rowel-e2e-${Date.now()}`);
+// Named in the environment so the spec workers, which load this file again
+// in processes of their own, find the same directory the launcher made: the
+// agent helper reaches the app's broker socket in it (helpers/agent.ts).
+const TEST_DB_DIR = (process.env.ROWEL_E2E_DB_DIR ??= path.join(
+  os.tmpdir(),
+  `rowel-e2e-${Date.now()}`,
+));
 
 const SPECS_DIR = path.join(__dirname, "specs");
 

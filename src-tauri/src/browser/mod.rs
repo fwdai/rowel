@@ -1227,6 +1227,31 @@ impl AppHost {
     }
 }
 
+// --- the browsers' manifests --------------------------------------------------------
+
+/// Register the host with this machine's browsers (`manifest::install`) — but
+/// not from an e2e run, a debug build over a throwaway data directory, whose
+/// manifest would take the browsers' registration over from the Rowel
+/// installed on the machine running the suite.
+pub fn register_host(root: &Path, compat: bool) {
+    if !e2e_run() {
+        manifest::install(root, compat);
+    }
+}
+
+/// Take the registration back (`manifest::remove`), with the same exception.
+pub fn unregister_host(root: &Path) {
+    if !e2e_run() {
+        manifest::remove(root);
+    }
+}
+
+// A debug build with `ROWEL_E2E=1`: `tauri dev` is a debug build too, so the
+// variable is what tells the suite's run from a developer's.
+fn e2e_run() -> bool {
+    cfg!(debug_assertions) && std::env::var("ROWEL_E2E").as_deref() == Ok("1")
+}
+
 // --- the grant dialog -------------------------------------------------------------
 
 /// A target as the grant dialog names it: the site of a page, the request
