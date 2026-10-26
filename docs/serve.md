@@ -61,8 +61,8 @@ must be on, as in the app.
    `workspaces/<id>` in it beside `workspaces.json`. The install id file
    travels with it, so the audit chain the device started continues on the
    box; the vault is served as it was copied — the broker does not sync.
-3. Install the CLI binary (`rowel-cli`, from the release, or
-   `cargo build -p rowel-cli`), reached as `rowel` below.
+3. Install the command line tool ([below](#installing-the-command-line-tool)),
+   reached as `rowel` from here on.
 4. Unlock and serve:
 
    ```bash
@@ -70,6 +70,49 @@ must be on, as in the app.
    ```
 
    The lines on stderr say which lockbox is open and where it listens.
+
+## Installing the command line tool
+
+`rowel serve` is the command line tool the app bundles. On a box without the
+app, download its archive from the
+[release](https://github.com/fwdai/rowel/releases) of the version you run:
+
+| Archive | For |
+| --- | --- |
+| `rowel-<version>-x86_64-unknown-linux-gnu.tar.gz` | Linux on x86_64 with glibc 2.35 or later: Ubuntu 22.04, Debian 13, Fedora 36 and later |
+| `rowel-<version>-aarch64-unknown-linux-gnu.tar.gz` | Linux on arm64, the same |
+| `rowel-<version>-universal-apple-darwin.zip` | macOS on Apple silicon and Intel, signed and notarized |
+| `rowel-<version>-x86_64-pc-windows-msvc.zip` | Windows on x64, not code-signed |
+
+Each holds one file, `rowel` (`rowel.exe` on Windows). Check it against the
+release's `SHA256SUMS`, then put it on the `PATH`:
+
+```bash
+VERSION=1.1.0 TARGET=x86_64-unknown-linux-gnu
+BASE=https://github.com/fwdai/rowel/releases/download/v$VERSION
+curl -fLO "$BASE/rowel-$VERSION-$TARGET.tar.gz"
+curl -fLO "$BASE/SHA256SUMS"
+grep " rowel-$VERSION-$TARGET.tar.gz\$" SHA256SUMS | sha256sum --check
+tar -xzf "rowel-$VERSION-$TARGET.tar.gz"
+install -m 0755 rowel ~/.local/bin/rowel     # or: sudo install -m 0755 rowel /usr/local/bin/
+rowel --help
+```
+
+Every archive also has a build provenance attestation:
+`gh attestation verify rowel-$VERSION-$TARGET.tar.gz --repo fwdai/rowel`.
+
+- **macOS**: `shasum -a 256 --check` in place of `sha256sum --check`, and
+  `unzip` in place of `tar`. A browser marks what it downloads as
+  quarantined; the binary is notarized, so Gatekeeper lets it run after
+  checking that online. On a box that cannot reach Apple, clear the mark
+  instead: `xattr -d com.apple.quarantine rowel`.
+- **Windows**: compare `(Get-FileHash rowel-<version>-x86_64-pc-windows-msvc.zip).Hash`
+  with its line in `SHA256SUMS` (the case differs), unzip it, and put
+  `rowel.exe` in a folder on your `PATH`. It is not code-signed, so
+  SmartScreen may warn the first time.
+- **From source**: `cargo build --release -p rowel-cli --manifest-path
+  src-tauri/Cargo.toml` writes `src-tauri/target/release/rowel-cli`; install
+  it as `rowel`.
 
 ## Unlock modes
 

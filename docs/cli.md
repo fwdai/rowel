@@ -47,7 +47,7 @@ desktop launcher started does not read your shell's `PATH` (a macOS app gets
 started from a terminal.
 
 Without the app — a CI runner, a server — download the standalone archive
-from the release instead ([`serve.md`](serve.md#install)).
+from the release instead ([`serve.md`](serve.md#installing-the-command-line-tool)).
 
 ## Placeholders
 
