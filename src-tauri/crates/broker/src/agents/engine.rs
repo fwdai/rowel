@@ -15,15 +15,15 @@ use crate::grant::{
     Approval, CandidateItem, Grant, GrantReply, GrantRequest, ItemSelector, Mode, Probe,
     ResolveContext, State, Target, VisibleItem,
 };
-use crate::lockbox::{clients_in, field_value, item_by_name, live_rules, write_rules};
+use crate::lockbox::{clients_in, field_value, item_by_name, live_rules, write_rules_in};
 use crate::policy::{self, defaults, AgentSelector, Decision, Floors, Limits};
 use crate::protocol::Code;
 use crate::reference::{self, Reference};
 use crate::signal::Signal;
 
 use super::audit::{
-    about, audit_target_of, client_label, draft, note, origin_of, record, resolve_target_text,
-    site_origin,
+    about, audit_target_of, client_label, draft, note, origin_of, record, record_with,
+    resolve_target_text, site_origin,
 };
 use super::state::AgentState;
 
@@ -527,31 +527,22 @@ pub fn settle(
     if let Some(days) = standing_days {
         let days = days.clamp(1, defaults::MAX_STANDING_DAYS);
         let rule = standing_rule(client_key, &grant, days, now);
-        let kept = live_rules(store, now);
-        let rule_id = rule.id.clone();
-        let mut rules = kept.clone();
+        let mut added = about(
+            row(Event::RuleAdded),
+            &grant,
+            Some(&format!(r#"{{"ruleId":"{}","days":{days}}}"#, rule.id)),
+        );
+        added.grant_id = None;
+        added.approval = Some(Approval::Auto);
+        let mut rules = live_rules(store, now);
         rules.push(rule);
-        match write_rules(store, &rules) {
-            Ok(()) => {
-                let mut added = about(
-                    row(Event::RuleAdded),
-                    &grant,
-                    Some(&format!(r#"{{"ruleId":"{rule_id}","days":{days}}}"#)),
-                );
-                added.grant_id = None;
-                added.approval = Some(Approval::Auto);
-                // A rule is a release to come: one the log does not hold is
-                // taken back, and the yes it came with goes with it.
-                if let Err(code) = record(store, writer, added, now) {
-                    if let Err(e) = write_rules(store, &kept) {
-                        log::warn!("browser host: could not take the standing rule back: {e}");
-                    }
-                    return Err(code);
-                }
-            }
-            // The fill the user said yes to still goes ahead; only the
-            // memory of it is missing, and the next visit asks again.
-            Err(e) => log::warn!("browser host: could not keep the standing rule: {e}"),
+        // A rule is a release to come, so it is stored only with its row, in
+        // one transaction: one that will not commit leaves neither. The yes
+        // it came with is not the rule's to refuse — its own rows below
+        // decide that, and fail closed as well — so it still goes ahead,
+        // only without the memory of it, and the next visit asks again.
+        if record_with(store, writer, added, now, |tx| write_rules_in(tx, &rules)).is_err() {
+            log::warn!("browser host: the standing rule was not kept");
         }
     }
     activate(store, writer, &row, &mut grant, now)?;

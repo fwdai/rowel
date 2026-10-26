@@ -326,6 +326,24 @@ impl DerefMut for Conn<'_> {
     }
 }
 
+/// The writes that may go into [`SqliteStore::commit_with_audit`]'s
+/// transaction, beside its audit row: only these, each the same SQL as the
+/// store's own method of that name, run on the transaction's connection —
+/// the store's lock is already held, and taking it again would deadlock.
+pub struct StoreTx<'c>(&'c Connection);
+
+impl StoreTx<'_> {
+    /// [`VaultStore::upsert`], inside the transaction.
+    pub fn upsert(&self, rec: &Record) -> Result<()> {
+        upsert_on(self.0, rec)
+    }
+
+    /// [`VaultStore::meta_set`], inside the transaction.
+    pub fn meta_set(&self, key: &str, value: &str) -> Result<()> {
+        meta_set_on(self.0, key, value)
+    }
+}
+
 impl SqliteStore {
     /// Open (creating if absent) an encrypted DB at `path`, keyed by the raw
     /// `key` bytes. The key is used directly (no passphrase KDF); the caller
@@ -798,22 +816,33 @@ impl SqliteStore {
     /// writers of one chain a loud failure rather than a fork. Only a merge
     /// stores a fork, when the other side arrives from a peer.
     pub fn audit_insert(&self, rec: &AuditRecord) -> Result<()> {
-        let written = self.lock()?.execute(
-            &format!(
-                "INSERT INTO audit ({AUDIT_COLS})
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                        ?17, ?18, ?19
-                 WHERE NOT EXISTS (SELECT 1 FROM audit WHERE writer_id = ?2 AND seq = ?3)"
-            ),
-            audit_params(rec),
-        )?;
-        if written == 0 {
-            return Err(StoreError::Other(format!(
-                "audit: {} already holds seq {}",
-                rec.writer_id, rec.seq
-            )));
-        }
-        Ok(())
+        audit_insert_on(&*self.lock()?, rec)
+    }
+
+    /// Apply `write` and append the audit row `row` in one transaction, under
+    /// one hold of the connection: both are kept or neither is. For a write a
+    /// release stands on — a passkey stored, a standing rule — whose row is
+    /// the record of it: a row that will not go in rolls the write back, so
+    /// the vault never holds what the log does not.
+    ///
+    /// `row` comes chained (see [`Self::audit_insert`]): its `seq` and
+    /// `prev_hash` were read from the chain's newest row before this call, and
+    /// stay right only while nobody else extends the chain in between — which
+    /// every host guarantees by holding its session lock across both. A row
+    /// whose `seq` was taken meanwhile is refused here, and the write with it.
+    pub fn commit_with_audit<T>(
+        &self,
+        row: &AuditRecord,
+        write: impl FnOnce(&StoreTx<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        // Returning early drops the transaction uncommitted, which rolls back
+        // whatever `write` had done.
+        let written = write(&StoreTx(&tx))?;
+        audit_insert_on(&tx, row)?;
+        tx.commit()?;
+        Ok(written)
     }
 
     /// The newest row of one writer's chain — its `seq` and `hash`, which is
@@ -1038,6 +1067,81 @@ fn checkpoint_truncate(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+// The SQL of `upsert`, `meta_set` and `audit_insert`, over a connection the
+// caller already holds: the store's methods run them on their own hold of
+// it, `commit_with_audit` on its transaction's.
+
+fn upsert_on(conn: &Connection, rec: &Record) -> Result<()> {
+    let now = now_ms();
+    // created_at is set only on insert; updated_at is always stamped to now.
+    // `favorite` is deliberately absent from the update set: the star is not
+    // part of the entry the editor round-trips, so an ordinary save must
+    // leave whatever `set_favorite` last wrote alone. `has_passkey` is the
+    // opposite case and IS updated: it is derived from the payload being
+    // written, so a save that drops the last passkey has to clear it.
+    conn.execute(
+        &format!(
+            "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+             ON CONFLICT(id) DO UPDATE SET
+               kind=excluded.kind, title=excluded.title, tags=excluded.tags,
+               url_host=excluded.url_host, updated_at=excluded.updated_at,
+               deleted_at=excluded.deleted_at, payload=excluded.payload,
+               card_brand=excluded.card_brand, has_passkey=excluded.has_passkey,
+               file_name=excluded.file_name, var_count=excluded.var_count,
+               username=excluded.username, doc_type=excluded.doc_type,
+               doc_country=excluded.doc_country"
+        ),
+        params![
+            rec.id,
+            rec.kind,
+            rec.title,
+            rec.tags,
+            rec.url_host,
+            if rec.created_at == 0 {
+                now
+            } else {
+                rec.created_at
+            },
+            now,
+            rec.deleted_at,
+            rec.payload,
+            rec.card_brand,
+            rec.favorite,
+            rec.has_passkey,
+            rec.file_name,
+            rec.var_count,
+            rec.username,
+            rec.doc_type,
+            rec.doc_country,
+        ],
+    )?;
+    Ok(())
+}
+
+fn meta_set_on(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(META_UPSERT, params![key, value])?;
+    Ok(())
+}
+
+fn audit_insert_on(conn: &Connection, rec: &AuditRecord) -> Result<()> {
+    let written = conn.execute(
+        &format!(
+            "INSERT INTO audit ({AUDIT_COLS})
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                    ?17, ?18, ?19
+             WHERE NOT EXISTS (SELECT 1 FROM audit WHERE writer_id = ?2 AND seq = ?3)"
+        ),
+        audit_params(rec),
+    )?;
+    if written == 0 {
+        return Err(StoreError::Other(format!(
+            "audit: {} already holds seq {}",
+            rec.writer_id, rec.seq
+        )));
+    }
+    Ok(())
+}
+
 impl VaultStore for SqliteStore {
     fn meta_get(&self, key: &str) -> Result<Option<String>> {
         Ok(self
@@ -1049,8 +1153,7 @@ impl VaultStore for SqliteStore {
     }
 
     fn meta_set(&self, key: &str, value: &str) -> Result<()> {
-        self.lock()?.execute(META_UPSERT, params![key, value])?;
-        Ok(())
+        meta_set_on(&*self.lock()?, key, value)
     }
 
     fn meta_set_many(&self, pairs: &[(&str, &str)]) -> Result<()> {
@@ -1099,51 +1202,7 @@ impl VaultStore for SqliteStore {
     }
 
     fn upsert(&self, rec: &Record) -> Result<()> {
-        let now = now_ms();
-        let conn = self.lock()?;
-        // created_at is set only on insert; updated_at is always stamped to now.
-        // `favorite` is deliberately absent from the update set: the star is not
-        // part of the entry the editor round-trips, so an ordinary save must
-        // leave whatever `set_favorite` last wrote alone. `has_passkey` is the
-        // opposite case and IS updated: it is derived from the payload being
-        // written, so a save that drops the last passkey has to clear it.
-        conn.execute(
-            &format!(
-                "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
-                 ON CONFLICT(id) DO UPDATE SET
-                   kind=excluded.kind, title=excluded.title, tags=excluded.tags,
-                   url_host=excluded.url_host, updated_at=excluded.updated_at,
-                   deleted_at=excluded.deleted_at, payload=excluded.payload,
-                   card_brand=excluded.card_brand, has_passkey=excluded.has_passkey,
-                   file_name=excluded.file_name, var_count=excluded.var_count,
-                   username=excluded.username, doc_type=excluded.doc_type,
-                   doc_country=excluded.doc_country"
-            ),
-            params![
-                rec.id,
-                rec.kind,
-                rec.title,
-                rec.tags,
-                rec.url_host,
-                if rec.created_at == 0 {
-                    now
-                } else {
-                    rec.created_at
-                },
-                now,
-                rec.deleted_at,
-                rec.payload,
-                rec.card_brand,
-                rec.favorite,
-                rec.has_passkey,
-                rec.file_name,
-                rec.var_count,
-                rec.username,
-                rec.doc_type,
-                rec.doc_country,
-            ],
-        )?;
-        Ok(())
+        upsert_on(&*self.lock()?, rec)
     }
 
     // The entry's live attachments go with it, in the same step: the reconcile

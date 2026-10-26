@@ -14,6 +14,7 @@ use rowel_broker::grant::{Approval, ItemSelector, Mode, Target};
 use rowel_broker::policy::{AgentSelector, Rule};
 use rowel_broker::protocol::Code;
 use rowel_broker::testing::Extension;
+use rowel_core::store::VaultStore;
 use rowel_core::workspace;
 
 use crate::approvals::{Answer, AskKind};
@@ -736,6 +737,82 @@ fn the_extensions_fill_and_the_refusals_it_handles() {
     );
     let hash = extension.send(&mut connection, "get-databasehash", json!({}));
     assert_eq!(hash["hash"].as_str().unwrap().len(), 64);
+}
+
+// A passkey registration stands on its `used` row: with the log refusing
+// rows, the site is told `AuditUnavailable` and the login it would have gone
+// on keeps no credential the site never received.
+#[test]
+fn a_passkey_whose_row_will_not_write_is_not_kept() {
+    let data = seeded();
+    let opened = data.open();
+    testing::seed_login(
+        &opened,
+        "site",
+        "Example",
+        "https://example.com",
+        "alice",
+        "pw",
+    );
+    testing::let_in(
+        &opened,
+        &[testing::client(
+            "Chrome",
+            "ext-key",
+            ClientKind::Extension,
+            "browser",
+        )],
+    );
+    let before = opened.store.get("site").unwrap().unwrap().payload;
+    let entries = opened.store.list().unwrap().len();
+    opened.store.refuse_audit_writes().unwrap();
+    drop(opened);
+    let host = data.host(&Notices::default());
+    let registered = {
+        let host = host.clone();
+        thread::spawn(move || {
+            let mut extension = Extension::new();
+            let mut connection = Connection::new(host);
+            extension.exchange(&mut connection);
+            extension.send(
+                &mut connection,
+                "test-associate",
+                json!({ "id": "Chrome", "key": "ext-key" }),
+            );
+            let options = json!({
+                "challenge": "c2l4dGVlbi1ieXRlcy1jaGFsbGVuZ2U",
+                "rp": { "id": "example.com", "name": "Example" },
+                "user": { "id": "dXNlci1hbGljZQ", "name": "alice", "displayName": "Alice" },
+                "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
+            });
+            extension.send(
+                &mut connection,
+                "passkeys-register",
+                json!({
+                    "publicKey": options,
+                    "origin": "https://example.com",
+                    "keys": [{ "id": "Chrome", "key": "ext-key" }],
+                }),
+            )
+        })
+    };
+    let id = pending_id(&host);
+    assert!(matches!(host.pending()[0].kind, AskKind::Passkey { .. }));
+    host.answer(AnswerRequest {
+        id,
+        ..AnswerRequest::default()
+    })
+    .unwrap();
+    let reply = registered.join().unwrap();
+    assert_eq!(reply["response"]["errorCode"], Code::AuditUnavailable as u8);
+    let store = data.open().store;
+    assert_eq!(store.get("site").unwrap().unwrap().payload, before);
+    assert_eq!(
+        store.list().unwrap().len(),
+        entries,
+        "nor on a login of its own"
+    );
+    assert!(data.rows().is_empty());
 }
 
 // --- the control socket -----------------------------------------------------------------

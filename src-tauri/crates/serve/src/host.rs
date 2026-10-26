@@ -42,7 +42,7 @@ use rowel_broker::grant::{
 use rowel_broker::lockbox::{
     clients_in, logins_in, mark_seen, save_failed, save_login_in, totp_in, write_clients,
 };
-use rowel_broker::passkeys::{self, Assertion, Registration};
+use rowel_broker::passkeys::{self, Assertion, CeremonyLog, Registration};
 use rowel_broker::protocol::Code;
 use rowel_broker::reference::Reference;
 use rowel_broker::server;
@@ -629,46 +629,15 @@ impl HeadlessHost {
 
     // --- passkeys ------------------------------------------------------------------
 
-    /// What a passkey ceremony leaves on the log, as the app writes it: a
-    /// `used` row for one that went through, `denied` for one refused, in
-    /// the session the ceremony began in — and the outcome as it may go
-    /// out, which for one that went through is only once its row is in.
-    fn passkey_row(
-        &self,
-        epoch: u64,
-        client: &Client,
-        origin: &str,
-        outcome: Result<Value, Code>,
-    ) -> Result<Value, Code> {
-        let event = match &outcome {
-            Ok(_) => Event::Used,
-            Err(Code::PasskeyRequestCanceled) => Event::Denied,
-            Err(_) => return outcome,
-        };
-        let session = self.session();
-        let Ok(store) = session.store_at(epoch) else {
-            return outcome.and(Err(Code::DatabaseNotOpened));
-        };
-        let mut row = agents::draft(event, &client.key, &clients_in(store));
-        row.mode = Some(Mode::Passkey);
-        row.target = Some(agents::site_origin(origin));
-        row.approval = Some(Approval::Ask);
-        if event == Event::Used {
-            row.approver = Some("user".into());
-            agents::record(store, &self.0.writer_id, row, now_ms())?;
-        } else {
-            row.detail = Some(r#"{"reason":"user"}"#.into());
-            agents::note(store, &self.0.writer_id, row, now_ms());
-        }
-        outcome
-    }
-
-    fn open_vault(&self) -> Result<OpenVault, Code> {
+    /// The open lockbox for a ceremony `client` runs for the page at
+    /// `origin`.
+    fn open_vault(&self, client: &Client, origin: &str) -> Result<OpenVault, Code> {
         let session = self.session();
         session.store()?;
         Ok(OpenVault {
             host: self.clone(),
             epoch: session.epoch,
+            log: CeremonyLog::new(&self.0.writer_id, client, origin),
         })
     }
 }
@@ -676,9 +645,11 @@ impl HeadlessHost {
 /// The open lockbox's passkeys, reached one operation at a time under the
 /// session lock and pinned to the session the ceremony began in, as the
 /// app's `OpenVault` is: a seal while the person decides fails the write.
+/// Every write commits with the ceremony's `used` row ([`CeremonyLog`]).
 struct OpenVault {
     host: HeadlessHost,
     epoch: u64,
+    log: CeremonyLog,
 }
 
 impl OpenVault {
@@ -689,7 +660,14 @@ impl OpenVault {
             .as_ref()
             .filter(|_| session.epoch == self.epoch)
             .ok_or(rowel_core::error::Error::Locked)?;
-        op(&SessionVault::new(&opened.store, &opened.cipher))
+        self.log.vault(&opened.store, &opened.cipher, op)
+    }
+
+    /// The ceremony's `outcome` as it may go out, and what it leaves on the
+    /// log, in the session it began in (`CeremonyLog::settle`).
+    fn settle(&self, outcome: Result<Value, Code>) -> Result<Value, Code> {
+        let session = self.host.session();
+        self.log.settle(session.store_at(self.epoch).ok(), outcome)
     }
 }
 
@@ -877,30 +855,26 @@ impl Host for HeadlessHost {
 
     fn passkey_register(&self, client: &Client, registration: Registration) -> Result<Value, Code> {
         self.touch();
-        let vault = self.open_vault()?;
-        let epoch = vault.epoch;
-        let origin = registration.origin.clone();
+        let vault = self.open_vault(client, &registration.origin)?;
         let consent = AskUser {
             host: self.clone(),
-            origin: origin.clone(),
+            origin: registration.origin.clone(),
             client: client.clone(),
         };
-        let outcome = passkeys::register(vault, consent, registration);
-        self.passkey_row(epoch, client, &origin, outcome)
+        let outcome = passkeys::register(&vault, consent, registration);
+        vault.settle(outcome)
     }
 
     fn passkey_get(&self, client: &Client, assertion: Assertion) -> Result<Value, Code> {
         self.touch();
-        let vault = self.open_vault()?;
-        let epoch = vault.epoch;
-        let origin = assertion.origin.clone();
+        let vault = self.open_vault(client, &assertion.origin)?;
         let consent = AskUser {
             host: self.clone(),
-            origin: origin.clone(),
+            origin: assertion.origin.clone(),
             client: client.clone(),
         };
-        let outcome = passkeys::assert(vault, consent, assertion);
-        self.passkey_row(epoch, client, &origin, outcome)
+        let outcome = passkeys::assert(&vault, consent, assertion);
+        vault.settle(outcome)
     }
 
     fn lock(&self) {

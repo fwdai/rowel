@@ -67,7 +67,7 @@ use crate::signal::Signal;
 
 pub use audit::{
     about, actor_kind, audit_target, audit_target_of, client_label, draft, note, origin_of, record,
-    resolve_target_text, single_id, site_origin, target_text,
+    record_with, resolve_target_text, single_id, site_origin, target_text,
 };
 use audit::{first_mode, rule_client};
 pub use engine::{

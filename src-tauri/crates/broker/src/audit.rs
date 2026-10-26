@@ -175,8 +175,20 @@ impl<'a, S: AuditSink> Writer<'a, S> {
     /// the last row's plus one (the first is 1), `prev_hash` the last row's
     /// hash (zeros for the first), `hash` over both and the row.
     pub fn record(&self, draft: Draft, ts_ms: i64) -> Result<AuditRecord, Error> {
+        let record = self.chain(draft, ts_ms)?;
+        self.sink.insert(&record)?;
+        Ok(record)
+    }
+
+    /// [`Writer::record`] without the write: the row as it would go on, for
+    /// a caller that inserts it itself, in one transaction with the write it
+    /// stands on (`SqliteStore::commit_with_audit`). The chain's head is read
+    /// now and the row goes in later, so the caller holds the lock every
+    /// writer of this chain records under across both — a host's session
+    /// lock — or the insert finds its `seq` taken and refuses it.
+    pub fn chain(&self, draft: Draft, ts_ms: i64) -> Result<AuditRecord, Error> {
         let head = self.sink.last(&self.writer_id)?;
-        self.record_after(draft, ts_ms, head)
+        self.chained_after(draft, ts_ms, head)
     }
 
     /// [`Writer::record`] chained onto `head` — the `(seq, hash)` of the row
@@ -184,6 +196,17 @@ impl<'a, S: AuditSink> Writer<'a, S> {
     /// case only: a chain retention took whole, whose next row must carry on
     /// from the row that went (see [`prune`]) rather than start over at 1.
     fn record_after(
+        &self,
+        draft: Draft,
+        ts_ms: i64,
+        head: Option<(i64, [u8; 32])>,
+    ) -> Result<AuditRecord, Error> {
+        let record = self.chained_after(draft, ts_ms, head)?;
+        self.sink.insert(&record)?;
+        Ok(record)
+    }
+
+    fn chained_after(
         &self,
         draft: Draft,
         ts_ms: i64,
@@ -224,7 +247,6 @@ impl<'a, S: AuditSink> Writer<'a, S> {
             detail: draft.detail,
         };
         record.hash = hash_of(&record)?;
-        self.sink.insert(&record)?;
         Ok(record)
     }
 }

@@ -20,7 +20,7 @@ use rowel_broker::grant::{
     Approval, CandidateItem, CreatedBy, Grant, GrantRequest, ItemSelector, Mode, ResolveContext,
     ResolveTarget, State, Target, Terms, VisibleItem,
 };
-use rowel_broker::lockbox::{live_rules, write_rules};
+use rowel_broker::lockbox::{live_rules, rules_in, write_rules};
 use rowel_broker::policy::{defaults, Limits};
 use rowel_broker::reference::{fields_for, Reference};
 use rowel_broker::testing::{seed, vault};
@@ -522,7 +522,7 @@ fn an_auto_release_requires_the_switches_the_session_holds() {
 
 // The log fails closed. With the lockbox's log refusing every row, nothing
 // is released, each refusal `AuditUnavailable`: a dialog's yes (and the
-// standing rule it came with, which is taken back), a standing rule's yes,
+// standing rule it came with, which is never kept), a standing rule's yes,
 // the reuse of a grant held, a fill or TOTP check under one, a resolve. What
 // only restricts still happens: an expiry ends its grant and queues the
 // sign-out, and the lockbox's access going off ends the rest.
@@ -694,6 +694,43 @@ fn a_use_whose_row_will_not_write_leaves_the_grant_as_it_was() {
         .filter(|(event, _)| event == "used")
         .count();
     assert_eq!(used, 3, "one row per use, and only for the uses made");
+}
+
+// A standing answer's rule is a release to come, stored only with its
+// `rule_added` row: with the log refusing rows there is neither, and no
+// rule is left over to allow the next request on its own.
+#[test]
+fn a_standing_rule_whose_row_will_not_write_is_not_kept() {
+    let (_dir, store, cipher) = vault();
+    seed(&store, &cipher, &github_login("gh"));
+    let_in(&store, &[extension()]);
+    let now = 1_000;
+    let mut held = ready();
+    let asking = asked(&store, &mut held, now);
+    store.refuse_audit_writes().unwrap();
+    let settled = settle(
+        locked(&store, &mut held, now),
+        &extension(),
+        asking,
+        yes("gh"),
+    );
+    assert!(matches!(settled, Err(Code::AuditUnavailable)));
+    assert!(rules_in(&store).is_empty(), "no rule, live or not");
+    assert!(held.grants.is_empty());
+    assert!(rows(&store).is_empty());
+
+    store.allow_audit_writes().unwrap();
+    let asking = asked(&store, &mut held, now);
+    settle(
+        locked(&store, &mut held, now),
+        &extension(),
+        asking,
+        yes("gh"),
+    )
+    .unwrap();
+    assert_eq!(rules_in(&store).len(), 1);
+    let events: Vec<String> = rows(&store).into_iter().map(|(event, _)| event).collect();
+    assert_eq!(events, ["requested", "rule_added", "granted", "used"]);
 }
 
 // `grant_covers` — the login or its code about to be served under a grant

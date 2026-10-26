@@ -2,7 +2,7 @@
 //! share for a target, a client and a mode. Nothing secret goes in a row: the
 //! target is reduced to scheme, host and path before it is written.
 
-use rowel_core::store::SqliteStore;
+use rowel_core::store::{Result as StoreResult, SqliteStore, StoreTx};
 
 use crate::actions::{clamp, Client, ClientKind};
 use crate::audit::{ActorKind, Draft, Event, Writer};
@@ -59,6 +59,33 @@ pub fn record(store: &SqliteStore, writer_id: &str, draft: Draft, now_ms: i64) -
     Writer::new(writer_id, store)
         .record(draft, now_ms)
         .map(drop)
+        .map_err(|e| {
+            log::warn!("agents: could not write the audit row, so nothing is released: {e}");
+            Code::AuditUnavailable
+        })
+}
+
+/// [`record`], for a release that writes the store too — a passkey saved, a
+/// standing rule — in one transaction with its row
+/// (`SqliteStore::commit_with_audit`): both commit or neither does, so the
+/// vault never keeps what the log does not hold. Either half failing is
+/// `AuditUnavailable`, since either way the row is not in, and nothing of
+/// `write` is left behind.
+pub fn record_with<T>(
+    store: &SqliteStore,
+    writer_id: &str,
+    draft: Draft,
+    now_ms: i64,
+    write: impl FnOnce(&StoreTx<'_>) -> StoreResult<T>,
+) -> Result<T, Code> {
+    Writer::new(writer_id, store)
+        .chain(draft, now_ms)
+        .map_err(|e| e.to_string())
+        .and_then(|row| {
+            store
+                .commit_with_audit(&row, write)
+                .map_err(|e| e.to_string())
+        })
         .map_err(|e| {
             log::warn!("agents: could not write the audit row, so nothing is released: {e}");
             Code::AuditUnavailable

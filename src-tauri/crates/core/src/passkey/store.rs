@@ -15,7 +15,7 @@ use passkey_types::webauthn::PublicKeyCredentialDescriptor;
 use crate::crypto::PayloadCipher;
 use crate::error::{store_err, Error, Result};
 use crate::models::{Entry, Passkey};
-use crate::store::{migrate, VaultStore};
+use crate::store::{migrate, Record, Result as StoreResult, VaultStore};
 
 use super::key;
 
@@ -65,11 +65,30 @@ impl<V: PasskeyVault + ?Sized> PasskeyVault for &V {
 pub struct SessionVault<'a> {
     store: &'a (dyn VaultStore + Sync),
     cipher: &'a PayloadCipher,
+    commit: Option<&'a Commit<'a>>,
 }
+
+/// How a [`SessionVault`] writes a sealed record instead of upserting it
+/// itself (see [`SessionVault::committing_through`]).
+pub type Commit<'a> = dyn Fn(&Record) -> StoreResult<()> + Sync + 'a;
 
 impl<'a> SessionVault<'a> {
     pub fn new(store: &'a (dyn VaultStore + Sync), cipher: &'a PayloadCipher) -> Self {
-        Self { store, cipher }
+        Self {
+            store,
+            cipher,
+            commit: None,
+        }
+    }
+
+    /// This vault, writing every record it seals through `commit` rather than
+    /// upserting it: how a host makes a ceremony's write commit together with
+    /// the audit row the ceremony stands on, in one transaction.
+    pub fn committing_through(self, commit: &'a Commit<'a>) -> Self {
+        Self {
+            commit: Some(commit),
+            ..self
+        }
     }
 
     // Every live login, unsealed. There is no rp_id column, so a lookup costs
@@ -89,9 +108,12 @@ impl<'a> SessionVault<'a> {
 
     fn save(&self, entry: &Entry) -> Result<()> {
         let payload = self.cipher.seal(entry)?;
-        self.store
-            .upsert(&migrate::build_record(entry, payload)?)
-            .map_err(store_err)
+        let record = migrate::build_record(entry, payload)?;
+        match self.commit {
+            Some(commit) => commit(&record),
+            None => self.store.upsert(&record),
+        }
+        .map_err(store_err)
     }
 }
 
