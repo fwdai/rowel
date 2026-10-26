@@ -10,9 +10,15 @@
 //   - zips with `zip` rather than `tar -a`, which only writes a zip with BSD tar;
 //   - drops the manifest `key` from the Chromium store zip: the Chrome Web
 //     Store refuses uploads that carry one. build/chromium/ keeps it, so an
-//     unpacked build has the pinned extension ID.
+//     unpacked build has the pinned extension ID;
+//   - the version has one home, rowel/manifest.json: the templates in dist/
+//     carry none, and every manifest written gets it from there.
 //
 // Output: build/chromium/, build/firefox/, build/rowel_<version>_<browser>.zip
+//
+// `node rowel-build.js --source <chromium|firefox>` (`npm run debug:…`)
+// builds nothing: it writes that browser's manifest into rowel/, for loading
+// the source folder unpacked, keeping the version it had.
 
 const fs = require('fs');
 const path = require('path');
@@ -36,30 +42,48 @@ const zip = (dir, file) => {
 };
 
 const version = readJson(path.join(SOURCE, 'manifest.json')).version;
-fs.rmSync(OUT, { recursive: true, force: true });
 
-for (const [ browser, manifestFile ] of Object.entries(BROWSERS)) {
-    console.log(`Rowel: creating extension package for ${browser}`);
-    const dir = path.join(OUT, browser);
-    fs.cpSync(SOURCE, dir, { recursive: true, filter: (src) => !SKIP.has(src) });
+// A browser's manifest: its template with the version in it, where the
+// template's upstream had it, after the name. Chromium also gets
+// `version_name`, which it shows in place of the version.
+const manifestFor = (browser) => {
+    const { manifest_version, name, ...rest } = readJson(BROWSERS[browser]);
+    const named = browser === 'chromium' ? { version_name: version } : {};
+    return { manifest_version, name, version, ...named, ...rest };
+};
 
-    const manifest = readJson(manifestFile);
-    manifest.version = version;
-    if (Object.hasOwn(manifest, 'version_name')) {
-        manifest.version_name = version;
+const build = () => {
+    fs.rmSync(OUT, { recursive: true, force: true });
+    for (const browser of Object.keys(BROWSERS)) {
+        console.log(`Rowel: creating extension package for ${browser}`);
+        const dir = path.join(OUT, browser);
+        fs.cpSync(SOURCE, dir, { recursive: true, filter: (src) => !SKIP.has(src) });
+
+        const manifest = manifestFor(browser);
+        writeJson(path.join(dir, 'manifest.json'), manifest);
+
+        const zipFile = path.join(OUT, `rowel_${version}_${browser}.zip`);
+        if (manifest.key) {
+            const store = path.join(OUT, `.store-${browser}`);
+            fs.cpSync(dir, store, { recursive: true });
+            delete manifest.key;
+            writeJson(path.join(store, 'manifest.json'), manifest);
+            zip(store, zipFile);
+            fs.rmSync(store, { recursive: true, force: true });
+        } else {
+            zip(dir, zipFile);
+        }
+        console.log(`  ${dir}/ (unpacked), ${zipFile}`);
     }
-    writeJson(path.join(dir, 'manifest.json'), manifest);
+};
 
-    const zipFile = path.join(OUT, `rowel_${version}_${browser}.zip`);
-    if (manifest.key) {
-        const store = path.join(OUT, `.store-${browser}`);
-        fs.cpSync(dir, store, { recursive: true });
-        delete manifest.key;
-        writeJson(path.join(store, 'manifest.json'), manifest);
-        zip(store, zipFile);
-        fs.rmSync(store, { recursive: true, force: true });
-    } else {
-        zip(dir, zipFile);
+const source = process.argv.indexOf('--source');
+if (source === -1) {
+    build();
+} else {
+    const browser = process.argv[source + 1];
+    if (!Object.hasOwn(BROWSERS, browser)) {
+        throw new Error(`--source takes ${Object.keys(BROWSERS).join(' or ')}`);
     }
-    console.log(`  ${dir}/ (unpacked), ${zipFile}`);
+    writeJson(path.join(SOURCE, 'manifest.json'), manifestFor(browser));
 }

@@ -33,6 +33,12 @@ const firefox = readJson(join(BUILD, 'firefox', 'manifest.json'))
 const store = zippedManifest(join(BUILD, `rowel_${chromium.version}_chromium.zip`))
 const firefoxZip = zippedManifest(join(BUILD, `rowel_${firefox.version}_firefox.zip`))
 
+// The version's one home is the source manifest (extension/rowel-build.js).
+const { version } = readJson('extension/rowel/manifest.json')
+check(
+  chromium.version === version && chromium.version_name === version && firefox.version === version,
+  `Chromium and Firefox builds are version ${version}, the source manifest's`
+)
 check(
   chromium.key && chromiumId(chromium.key) === CHROMIUM_ID,
   `unpacked Chromium build pins ID ${CHROMIUM_ID}`
