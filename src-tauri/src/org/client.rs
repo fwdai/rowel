@@ -91,7 +91,9 @@ impl std::fmt::Debug for Session {
     }
 }
 
-/// Who the session belongs to, and whose server it is.
+/// Who the session belongs to, and whose server it is. The sign-in that
+/// asks is desktop's (`org::connect`), so a phone has no use for it yet.
+#[cfg(any(desktop, test))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Me {
@@ -99,6 +101,7 @@ pub(crate) struct Me {
     pub tenant: Tenant,
 }
 
+#[cfg(any(desktop, test))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Member {
@@ -108,6 +111,7 @@ pub(crate) struct Member {
     pub name: Option<String>,
 }
 
+#[cfg(any(desktop, test))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Tenant {
@@ -127,6 +131,7 @@ pub(crate) enum DeviceState {
 /// What an enrollment comes back with: the device's id at the server, and
 /// its standing — pending, until another device of the member or an admin
 /// approves it.
+#[cfg(any(desktop, test))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Enrolled {
@@ -234,6 +239,7 @@ impl ServerClient {
     /// Where to send the browser: the server's authorization page for this
     /// app, redirecting to `redirect_uri` with `state` and a code bound to
     /// the PKCE verifier behind `code_challenge` (`sync::challenge`).
+    #[cfg(any(desktop, test))]
     pub(crate) fn authorize_url(
         &self,
         redirect_uri: &str,
@@ -254,6 +260,7 @@ impl ServerClient {
 
     /// Redeem the `code` the redirect carried, proving the `verifier` whose
     /// challenge the authorization request sent.
+    #[cfg(any(desktop, test))]
     pub(crate) async fn token(
         &self,
         code: &str,
@@ -292,12 +299,14 @@ impl ServerClient {
         json(resp).await
     }
 
+    #[cfg(any(desktop, test))]
     pub(crate) async fn me(&self) -> Result<Me> {
         json(self.get("/v1/members/me")?.send().await.map_err(other)?).await
     }
 
     /// Enroll this device under `device_name` with its enrollment public key
     /// (`EnrollmentKey::public_key_b64`). The device comes back pending.
+    #[cfg(any(desktop, test))]
     pub(crate) async fn enroll(
         &self,
         device_pubkey_b64: &str,

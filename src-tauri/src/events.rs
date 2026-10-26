@@ -4,7 +4,7 @@
 //! catalogue the frontend subscribes to can be read in one place, and so no
 //! caller can invent a third spelling of `{ error }`.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::models::EntryMetaDto;
@@ -289,7 +289,10 @@ pub fn browser_clients(app: &AppHandle) {
 /// one place the value goes, shown verbatim so the person can read what the
 /// child process will be.
 #[cfg(desktop)]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+// Read back only from a Rowel Server's approval (`org::client`), which a
+// phone does not take yet.
+#[cfg_attr(any(desktop, test), derive(serde::Deserialize))]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AskTarget {
     Origin {

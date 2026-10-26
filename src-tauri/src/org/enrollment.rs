@@ -55,6 +55,7 @@ impl EnrollmentKey {
     }
 
     /// The public half, as the server stores it and as `enroll` sends it.
+    #[cfg(any(desktop, test))]
     pub(crate) fn public_key_b64(&self) -> String {
         STANDARD.encode(self.0.public_key().as_bytes())
     }

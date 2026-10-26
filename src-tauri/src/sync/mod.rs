@@ -55,6 +55,7 @@ pub(crate) use account::{sealed_provider, Auth};
 // (`org::connect`) is one more of them, with a code exchange of its own.
 #[cfg(desktop)]
 pub(crate) use account::{bind_loopback, listen_for_code, loopback_redirect_uri};
+#[cfg(any(desktop, test))]
 pub(crate) use account::{challenge, gen_nonce};
 use engine::{LocalVault, SessionVault, SyncOutcome};
 pub(crate) use marker::MarkerKey;
