@@ -136,9 +136,15 @@ pub fn open(store: &Store, root: &dyn RootKey, data_dir: &Path, id: &str) -> Res
     let lockbox = store
         .lockbox(id)?
         .ok_or_else(|| Error::NotFound(id.into()))?;
-    let master = master_of(store, root, id)?;
+    // Every path from here is built from the stored row's id, which the
+    // server minted, never from the caller's string: an id that reached this
+    // function from a request names a row, and only the row names a file.
+    let master = master_of(store, root, &lockbox.id)?;
     let key = VaultKey::from_material(master, true);
-    let vault = SqliteStore::open(&dir_of(data_dir, id).join(DB_FILE), &*key.sqlcipher_key())?;
+    let vault = SqliteStore::open(
+        &dir_of(data_dir, &lockbox.id).join(DB_FILE),
+        &*key.sqlcipher_key(),
+    )?;
     Ok(Opened {
         store: vault,
         key,

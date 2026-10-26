@@ -210,17 +210,17 @@ async fn get_pack(
             // a tenant event rather than a `key_unwrapped` row: a frozen file
             // is written by nothing, and a row per pull would move its
             // revision on every device's run. Every unwrap is still on record.
-            state.vaults.seal(&state, &id);
-            let opened = lockboxes::open(&state.store, &*state.root, &state.data_dir, &id)?;
+            state.vaults.seal(&state, &lockbox.id);
+            let opened = lockboxes::open(&state.store, &*state.root, &state.data_dir, &lockbox.id)?;
             if let Err(e) = state.store.record_event(
                 "key_unwrapped",
                 Some(&member),
                 device.as_deref(),
-                Some(&id),
+                Some(&lockbox.id),
             ) {
                 log::warn!("rowel server: could not record an unwrap of {id}: {e}");
             }
-            let etag = current_etag(&state, &id)?;
+            let etag = current_etag(&state, &lockbox.id)?;
             return Ok((pack_of(&opened, &scratch)?, etag));
         }
         let vault = open_vault(&state, &lockbox)?;
@@ -228,7 +228,7 @@ async fn get_pack(
         let open = session.open().map_err(|_| sealed())?;
         // Read under the lock the file is written under, so the ETag is
         // never newer than the bytes.
-        let etag = current_etag(&state, &id)?;
+        let etag = current_etag(&state, &lockbox.id)?;
         Ok((pack_of(&open.opened, &scratch)?, etag))
     })
     .await?;
