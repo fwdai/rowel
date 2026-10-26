@@ -116,7 +116,12 @@ Every release is built in GitHub Actions and ships with supply-chain evidence:
 
   (works for the `.dmg`, `-setup.exe`, `.deb`, `.rpm` and `.AppImage`
   assets — point it at whichever you downloaded, versioned name or not: the
-  version-free copies are the same bytes and are attested as well).
+  version-free copies are the same bytes and are attested as well — and for
+  the standalone command line tool archives and the browser extension zips).
+
+- **Checksums** — `SHA256SUMS` lists the command line tool archives and the
+  extension zips, for checking a download where `gh` is not at hand
+  ([`docs/serve.md`](docs/serve.md#installing-the-command-line-tool)).
 
   Releases up to and including `v1.0.0-alpha.6` were built before the project
   moved from `swiftyapp/swifty` to `fwdai/rowel`, so their provenance names the
