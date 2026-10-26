@@ -207,12 +207,12 @@ answers it:
 
 ```
 rowel serve: [a1b2c3d4…] Claude Code (agent) asks to use "Stripe (live)" in header mode at GET api.stripe.com/v1/* — reason: deploy
-             answer with: rowel approve a1b2c3d4… [--item <id>] [--days N] | rowel approve a1b2c3d4… --deny
+             answer with: rowel approve a1b2c3d4… [--item <id>] [--days N | --run] | rowel approve a1b2c3d4… --deny
 ```
 
 ```
 rowel approve [--data-dir <path>]                              # list what is waiting, one line per ask
-rowel approve <id> [--item <id>] [--days N]                    # allow a grant: the item (needed when several match), for N days
+rowel approve <id> [--item <id>] [--days N | --run]            # allow a grant: the item (needed when several match), for N days or this run
 rowel approve <id> [--name <name>]                             # let a client in, under a name (default: the platform's label)
 rowel approve <id> [--account <n>]                             # a passkey ceremony, as account n (default 0)
 rowel approve <id> --deny
@@ -220,6 +220,9 @@ rowel approve <id> --deny
 
 A grant ask marked stepped up prompts for the master password. `--days N`
 writes a standing rule into the lockbox, as the app's "for N days" does.
+`--run` is the app's "for this run", offered (`[--days N | --run]`) only when
+the request named a run: further requests the agent marks as the same run are
+served under the grant for at most 8 hours.
 Every decision is an audit row in the lockbox: `requested`, `granted`,
 `denied` with `user`, `timeout`, `lockbox` or `no_rule`, `used` for every
 value a sidecar is served.

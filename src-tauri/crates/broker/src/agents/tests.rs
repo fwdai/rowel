@@ -5,6 +5,7 @@ use crate::grant::{
     Approval, CreatedBy, GrantRequest, ItemSelector, Mode, ResolveTarget, Target, Terms,
 };
 use crate::lockbox::CLIENTS_META;
+use crate::policy::defaults;
 use rowel_core::store::VaultStore;
 
 fn active(id: &str, now_ms: i64, ttl_ms: i64) -> Grant {
@@ -406,6 +407,228 @@ fn a_standing_rule_is_for_the_sites_origin() {
         "http://localhost:8080"
     );
     assert_eq!(site_origin("not a url?x=1"), "not a url");
+}
+
+// --- this run ---------------------------------------------------------------------
+
+const RUN_PAGE: &str = "https://github.com/login";
+
+/// A store with GitHub's login and two agents let in, and the switches on.
+fn run_setup() -> (tempfile::TempDir, SqliteStore, AgentState) {
+    let (dir, store, cipher) = crate::testing::vault();
+    crate::testing::seed(
+        &store,
+        &cipher,
+        &rowel_core::models::Entry {
+            id: "gh".into(),
+            kind: "login".into(),
+            title: "GitHub".into(),
+            website: Some("https://github.com".into()),
+            username: Some("octocat".into()),
+            password: Some("hunter2".into()),
+            ..Default::default()
+        },
+    );
+    store
+        .meta_set(
+            CLIENTS_META,
+            &serde_json::to_string(&[
+                client("Claude Code", "agent", ClientKind::Agent),
+                client("Codex", "other", ClientKind::Agent),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+    let mut held = AgentState::default();
+    held.initialise(AccessState {
+        enabled: true,
+        lockbox_on: true,
+    });
+    (dir, store, held)
+}
+
+fn run_request(client_key: &str, run_id: Option<&str>) -> GrantRequest {
+    GrantRequest {
+        client_key: client_key.into(),
+        agent_id: None,
+        acting_for: None,
+        items: ItemSelector::Lockbox,
+        targets: vec![Target::Origin(RUN_PAGE.into())],
+        modes: vec![Mode::Fill],
+        run_id: run_id.map(str::to_string),
+        reason: None,
+    }
+}
+
+fn run_decided(
+    store: &SqliteStore,
+    held: &mut AgentState,
+    client_key: &str,
+    run_id: Option<&str>,
+    now: i64,
+) -> Prepared {
+    let who = client(client_key, client_key, ClientKind::Agent);
+    decide(
+        Locked {
+            store,
+            held,
+            writer: "dev",
+            now,
+        },
+        "lb",
+        &who,
+        run_request(client_key, run_id),
+        &[],
+    )
+    .unwrap_or_else(|code| panic!("decided: {code:?}"))
+}
+
+fn run_settled(
+    store: &SqliteStore,
+    held: &mut AgentState,
+    run_id: Option<&str>,
+    answer: GrantAnswer,
+    now: i64,
+) -> std::result::Result<crate::grant::GrantReply, crate::protocol::Code> {
+    let asking = match run_decided(store, held, "agent", run_id, now) {
+        Prepared::Ask(asking) => *asking,
+        Prepared::Answered(_) => panic!("the baseline asks"),
+    };
+    settle(
+        Locked {
+            store,
+            held,
+            writer: "dev",
+            now,
+        },
+        &client("agent", "agent", ClientKind::Agent),
+        asking,
+        Verdict::Answered(Some(answer)),
+    )
+}
+
+fn for_run() -> GrantAnswer {
+    GrantAnswer {
+        item_id: "gh".into(),
+        standing_days: None,
+        for_run: true,
+    }
+}
+
+/// Whether `prepared` was served from the grant `id` already held.
+fn served_from(prepared: &Prepared, id: &str) -> bool {
+    matches!(prepared, Prepared::Answered(reply) if reply.grant_id == id)
+}
+
+// A yes for the run serves further requests of the same client marked with
+// the same run, past the once window and up to the run's cap, each a use on
+// the log — and nothing else: not another run, not a request naming none,
+// not another client naming the same run, not past the cap.
+#[test]
+fn a_yes_for_the_run_covers_that_run_of_that_client_until_the_cap() {
+    let (_dir, store, mut held) = run_setup();
+    let now = 1_000_000;
+    let reply = run_settled(&store, &mut held, Some("run-1"), for_run(), now).unwrap();
+    assert_eq!(reply.state, State::Active);
+    assert_eq!(
+        reply.expires_at_ms,
+        Some(now + defaults::RUN_TTL_MS),
+        "the run's cap, not the rule's window"
+    );
+    let grant = held.find_mut(&reply.grant_id).unwrap().clone();
+    assert!(grant.for_run);
+    assert_eq!(grant.run_id.as_deref(), Some("run-1"));
+    let rows = store.audit_rows("dev").unwrap();
+    let granted = rows.iter().find(|row| row.event == "granted").unwrap();
+    assert_eq!(granted.detail.as_deref(), Some(r#"{"for":"run"}"#));
+    assert_eq!(granted.run_id.as_deref(), Some("run-1"));
+
+    let later = now + defaults::PERSONAL_TTL_MS + 60_000;
+    let again = run_decided(&store, &mut held, "agent", Some("run-1"), later);
+    assert!(served_from(&again, &reply.grant_id), "the same run, later");
+    let reuse = store.audit_rows("dev").unwrap().pop().unwrap();
+    assert_eq!(
+        (reuse.event.as_str(), reuse.detail.as_deref()),
+        ("used", Some(r#"{"reuse":true}"#))
+    );
+
+    for (key, run) in [
+        ("agent", Some("run-2")),
+        ("agent", None),
+        ("other", Some("run-1")),
+    ] {
+        let asked = run_decided(&store, &mut held, key, run, later);
+        assert!(
+            matches!(asked, Prepared::Ask(_)),
+            "{key} with {run:?} is asked again"
+        );
+    }
+
+    let capped = now + defaults::RUN_TTL_MS;
+    let past = run_decided(&store, &mut held, "agent", Some("run-1"), capped);
+    assert!(matches!(past, Prepared::Ask(_)), "the cap ends the run");
+}
+
+// A once yes is unchanged by runs: its window bounds it, whatever run a
+// later request names.
+#[test]
+fn a_once_yes_is_reused_inside_its_window_whatever_the_run() {
+    let (_dir, store, mut held) = run_setup();
+    let now = 1_000_000;
+    let once = GrantAnswer {
+        for_run: false,
+        ..for_run()
+    };
+    let reply = run_settled(&store, &mut held, Some("run-1"), once, now).unwrap();
+    assert_eq!(reply.expires_at_ms, Some(now + defaults::PERSONAL_TTL_MS));
+    assert!(!held.find_mut(&reply.grant_id).unwrap().for_run);
+    let other_run = run_decided(&store, &mut held, "agent", Some("run-2"), now + 1);
+    assert!(served_from(&other_run, &reply.grant_id));
+}
+
+// The dialog offers the run only for a request that named one, and never
+// beside days; an answer that does either anyway is a refusal on record.
+#[test]
+fn a_yes_for_a_run_the_request_did_not_name_is_refused() {
+    let (_dir, store, mut held) = run_setup();
+    assert_eq!(
+        run_settled(&store, &mut held, None, for_run(), 1_000),
+        Err(crate::protocol::Code::GrantDenied)
+    );
+    let both = GrantAnswer {
+        standing_days: Some(7),
+        ..for_run()
+    };
+    assert_eq!(
+        run_settled(&store, &mut held, Some("run-1"), both, 2_000),
+        Err(crate::protocol::Code::GrantDenied)
+    );
+    let denials: Vec<Option<String>> = store
+        .audit_rows("dev")
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.event == "denied")
+        .map(|row| row.detail)
+        .collect();
+    assert_eq!(
+        denials,
+        [
+            Some(r#"{"reason":"run"}"#.to_string()),
+            Some(r#"{"reason":"answer"}"#.to_string())
+        ]
+    );
+    assert!(live_rules(&store, 2_000).is_empty(), "no rule was written");
+    assert!(held.grants.is_empty());
+}
+
+// An answer from before *this run* reads as once.
+#[test]
+fn an_answer_without_for_run_reads_as_once() {
+    let answer: GrantAnswer =
+        serde_json::from_str(r#"{"itemId":"gh","standingDays":null}"#).unwrap();
+    assert_eq!(answer.lasting(), Ok(Lasting::Once));
+    let days: GrantAnswer = serde_json::from_str(r#"{"itemId":"gh","standingDays":3}"#).unwrap();
+    assert_eq!(days.lasting(), Ok(Lasting::Days(3)));
 }
 
 // A key the lockbox never named is shown by its ends, as Settings does.

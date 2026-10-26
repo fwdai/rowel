@@ -72,8 +72,8 @@ pub use audit::{
 use audit::{first_mode, rule_client};
 pub use engine::{
     candidates_in, client_covered, covered, decide, deny_unasked, outcome, reply_for, resolved,
-    settle, visible_access, visible_in, Asking, Candidate, GrantAnswer, Lockbox, Locked, Prepared,
-    Verdict,
+    settle, visible_access, visible_in, Asking, Candidate, GrantAnswer, Lasting, Lockbox, Locked,
+    Prepared, Verdict,
 };
 pub use state::{now_ms, AccessState, AgentState, RETAIN_ENDED_MS};
 

@@ -909,7 +909,10 @@ in this mode until this time. The extension names the page's logins; policy
 (`rowel_broker::policy`) decides deny-by-default against the baseline rule,
 which lets any client *ask* to fill any login of the lockbox for a 15-minute
 window, and against the lockbox's own standing rules; and the app's dialog
-asks the person, who allows once, allows for N days, or denies. Allowing for
+asks the person, who allows once, allows for the agent's run, allows for N
+days, or denies. Allowing for the run lets further requests carrying the same
+run id through for at most 8 hours; the run id is the agent's own word, so
+the cap, not the id, is what bounds an agent that lies about it. Allowing for
 N days writes a standing rule for that client, that login and that site, kept
 sealed in the lockbox's `meta` (`agent_rules`) and device-local like the
 extension associations, since it names a client key that exists only on this

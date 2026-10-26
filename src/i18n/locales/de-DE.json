@@ -774,6 +774,8 @@
   "It would fill the login through the browser extension, as you would yourself.": "Sie würden über die Browsererweiterung ausgefüllt, so wie du es selbst tun würdest.",
   "Untitled": "Unbenannt",
   "Allow once": "Einmal erlauben",
+  "Allow for this run": "Für diesen Lauf erlauben",
+  "Allowing for this run lets through what this client marks as the same run, without asking, for at most {{hours}} hours. The client decides what a run is, so the hours are the limit.": "Für diesen Lauf zu erlauben lässt ohne Nachfrage durch, was dieser Client als denselben Lauf kennzeichnet, höchstens {{hours}} Stunden lang. Was ein Lauf ist, entscheidet der Client – die Grenze sind daher die Stunden.",
   "Allow for 1 day": "Für 1 Tag erlauben",
   "Allow for {{days}} days": "Für {{days}} Tage erlauben",
   "Days": "Tage",

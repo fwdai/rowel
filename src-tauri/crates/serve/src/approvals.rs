@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use rowel_broker::actions::{ClientKind, Hello};
 use rowel_broker::agents::{now_ms, GrantAnswer};
 use rowel_broker::grant::{Mode, VisibleItem};
+use rowel_broker::policy::defaults;
 
 /// An ask as `rowel approve` lists it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,8 +38,10 @@ pub enum AskKind {
     /// A client wants in under `key`, saying it is `hello`.
     Associate { key: String, hello: Hello },
     /// A client wants a grant: `targets` already in words
-    /// (`agents::target_text`), `candidates` the items it could be for, and
-    /// `step_up` whether the yes takes the master password.
+    /// (`agents::target_text`), `candidates` the items it could be for,
+    /// `step_up` whether the yes takes the master password, and `run`
+    /// whether the request named a run, which is what makes *this run*
+    /// (`rowel approve --run`) an answer to it.
     Grant {
         client_name: String,
         client_kind: ClientKind,
@@ -47,6 +50,8 @@ pub enum AskKind {
         reason: Option<String>,
         candidates: Vec<VisibleItem>,
         step_up: bool,
+        #[serde(default)]
+        run: bool,
     },
     /// A page asks for a passkey ceremony through `client_name`: `accounts`
     /// are the names a sign-in could be as, empty for a registration.
@@ -64,7 +69,7 @@ pub enum AskKind {
 pub enum Answer {
     /// The name given to the client.
     Pairing(Option<String>),
-    /// The item the agent may use, and for how many days.
+    /// The item the agent may use, and for how long.
     Grant(Option<GrantAnswer>),
     /// The account picked for a passkey ceremony.
     Account(Option<usize>),
@@ -256,7 +261,12 @@ pub fn announce(ask: &PendingAsk) -> String {
     let id = &ask.id;
     let answer = match &ask.kind {
         AskKind::Associate { .. } => format!("rowel approve {id} [--name <name>]"),
-        AskKind::Grant { .. } => format!("rowel approve {id} [--item <id>] [--days N]"),
+        AskKind::Grant { run: false, .. } => {
+            format!("rowel approve {id} [--item <id>] [--days N]")
+        }
+        AskKind::Grant { run: true, .. } => {
+            format!("rowel approve {id} [--item <id>] [--days N | --run]")
+        }
         AskKind::Passkey { .. } => format!("rowel approve {id} [--account <n>]"),
     };
     format!(
@@ -285,6 +295,7 @@ pub fn summary(ask: &PendingAsk) -> String {
             reason,
             candidates,
             step_up,
+            run,
         } => {
             let items = candidates
                 .iter()
@@ -305,8 +316,16 @@ pub fn summary(ask: &PendingAsk) -> String {
             } else {
                 ""
             };
+            let run_note = if *run {
+                format!(
+                    " (--run allows what it marks as the same run, for at most {} hours)",
+                    defaults::RUN_HOURS
+                )
+            } else {
+                String::new()
+            };
             format!(
-                "{client_name} ({}) asks to use {items} in {} mode at {}{reason}{step_up_note}",
+                "{client_name} ({}) asks to use {items} in {} mode at {}{reason}{step_up_note}{run_note}",
                 kind_word(*client_kind),
                 mode.as_str(),
                 targets.join("; "),

@@ -24,8 +24,9 @@ const TITLE_ID = 'agent-grant-title'
  * command (env). The dialog names who asks and where — and, for an agent,
  * its own reason as text and, for a fill, the sign-out that follows when it
  * is done — offers the items when the policy admits more than one (the first
- * picked), and takes one of three answers: once, for N days — which writes a
- * standing rule — or no. As with the other two consent dialogs the answer
+ * picked), and takes one of its answers: once, for this run — offered only
+ * when the request named one — for N days, which writes a standing rule, or
+ * no. As with the other two consent dialogs the answer
  * goes straight back to Rust, which is holding the client's request open for
  * it; Escape, the backdrop and the window's close count as a refusal; nothing
  * is awaited, and the dialog leaves on Rust's own clock. A step-up ask adds
@@ -49,9 +50,14 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
     const secret = reply && needsPassword ? password : undefined
     agentGrantRespond(ask.id, reply, secret).catch(() => {})
   }
-  const once = () => answer({ itemId, standingDays: null })
+  const once = () => answer({ itemId, standingDays: null, forRun: false })
+  const forRun = () => answer({ itemId, standingDays: null, forRun: true })
   const standing = () =>
-    answer({ itemId, standingDays: clampDays(days, ask.defaultStandingDays) })
+    answer({
+      itemId,
+      standingDays: clampDays(days, ask.defaultStandingDays),
+      forRun: false
+    })
   const deny = () => answer(null)
   const picked = ask.candidates.find(candidate => candidate.id === itemId)
   const canAllow = !!picked && (!needsPassword || password.length > 0)
@@ -147,7 +153,9 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
           days={days}
           onDays={setDays}
           disabled={!canAllow}
+          runHours={ask.runHours}
           onOnce={once}
+          onRun={forRun}
           onStanding={standing}
           onDeny={deny}
         />

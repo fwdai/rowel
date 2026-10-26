@@ -484,6 +484,92 @@ fn a_request_no_rule_covers_asks_and_approve_activates_it() {
     assert_eq!(events(&data.rows()), ["requested", "granted", "used"]);
 }
 
+// `rowel approve --run` answers for the run the request named: the next
+// request of that run is served under the same grant without an ask, and
+// one of another run is asked again. An ask whose request named no run is
+// not answered for one, and `--run` beside `--days` is no answer at all.
+#[test]
+fn approve_for_the_run_serves_that_run_and_asks_any_other() {
+    let data = seeded();
+    let notices = Notices::default();
+    let host = data.host(&notices);
+    let ask = |request: Value| {
+        let host = host.clone();
+        thread::spawn(move || peer(&host, AGENT_KEY).call("request-grant", request))
+    };
+    let asked = ask(header_request("deploy"));
+    let id = pending_id(&host);
+    assert!(matches!(
+        host.pending()[0].kind,
+        AskKind::Grant { run: true, .. }
+    ));
+    let line = notices.lines().last().unwrap().clone();
+    assert!(line.contains("[--days N | --run]"), "{line}");
+    assert_eq!(
+        host.answer(AnswerRequest {
+            id: id.clone(),
+            run: true,
+            days: Some(7),
+            ..AnswerRequest::default()
+        }),
+        Err("--run or --days, not both".into())
+    );
+    host.answer(AnswerRequest {
+        id,
+        run: true,
+        ..AnswerRequest::default()
+    })
+    .unwrap();
+    let reply = asked.join().unwrap().unwrap();
+    assert_eq!(reply["state"], "active");
+
+    let mut agent = peer(&host, AGENT_KEY);
+    let again = agent
+        .call("request-grant", header_request("deploy again"))
+        .unwrap();
+    assert_eq!(again["grantId"], reply["grantId"], "the same run");
+    assert!(host.pending().is_empty());
+
+    let mut other_run = header_request("another run");
+    other_run["runId"] = "run-9".into();
+    let elsewhere = ask(other_run);
+    let id = pending_id(&host);
+    host.answer(AnswerRequest {
+        id,
+        deny: true,
+        ..AnswerRequest::default()
+    })
+    .unwrap();
+    assert_eq!(
+        refused(elsewhere.join().unwrap().unwrap_err()),
+        Code::GrantDenied
+    );
+
+    let mut no_run = header_request("no run");
+    no_run.as_object_mut().unwrap().remove("runId");
+    let nameless = ask(no_run);
+    let id = pending_id(&host);
+    assert!(matches!(
+        host.pending()[0].kind,
+        AskKind::Grant { run: false, .. }
+    ));
+    assert!(host
+        .answer(AnswerRequest {
+            id: id.clone(),
+            run: true,
+            ..AnswerRequest::default()
+        })
+        .unwrap_err()
+        .contains("named no run"));
+    host.answer(AnswerRequest {
+        id,
+        deny: true,
+        ..AnswerRequest::default()
+    })
+    .unwrap();
+    assert!(nameless.join().unwrap().is_err());
+}
+
 #[test]
 fn a_deny_and_a_timed_out_ask_are_refused_with_their_reasons() {
     let data = seeded();

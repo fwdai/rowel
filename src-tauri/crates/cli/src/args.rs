@@ -37,7 +37,7 @@ usage: rowel-cli <command>
                                       the headless broker: serve a lockbox to agents on a box without the app
   serve --server --data-dir <path> [--config <path>]
                                       a Rowel Server: org lockboxes for a company's members and agents
-  approve [<id> [--item <id>] [--days N] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
+  approve [<id> [--item <id>] [--days N | --run] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
                                       list what a running broker is waiting on, or answer one ask
   admin rules list | rules add --agent <key|any> --items <lockbox|id,id|tag:<t>|kind:<k>> --mode <fill|passkey|header|env>
                    --target <origin | \"[METHODS ]host/path\" | command line> [--approval auto|ask|step_up]
@@ -233,6 +233,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
                     "--name" => approve.name = Some(value_of(&arg, &mut args)?),
                     "--account" => approve.account = Some(number_of(&arg, &mut args)?),
                     "--deny" => approve.deny = true,
+                    "--run" => approve.run = true,
                     other if other.starts_with('-') => return Err(unexpected(other)),
                     id if approve.id.is_none() => approve.id = Some(id.to_string()),
                     other => return Err(unexpected(other)),
@@ -243,7 +244,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
                     || approve.days.is_some()
                     || approve.name.is_some()
                     || approve.account.is_some()
-                    || approve.deny)
+                    || approve.deny
+                    || approve.run)
             {
                 return Err(Usage("approve needs the ask's id before its answer".into()));
             }
@@ -722,8 +724,18 @@ mod tests {
                 name: Some("Codex".into()),
                 account: Some(1),
                 deny: true,
+                run: false,
             }))
         );
+        assert_eq!(
+            parsed("approve a1b2 --run"),
+            Ok(Command::Approve(ApproveArgs {
+                id: Some("a1b2".into()),
+                run: true,
+                ..ApproveArgs::default()
+            }))
+        );
+        assert!(parsed("approve --run").is_err(), "an answer needs its ask");
         let admin = |command| {
             Ok(Command::Admin(AdminArgs {
                 data_dir: None,

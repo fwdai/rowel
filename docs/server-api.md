@@ -243,7 +243,9 @@ approval.
 ```
 
 `answer` is `rowel_broker::agents::GrantAnswer` — the item picked and, for a
-standing grant, for how many days — or `null` to refuse. Reply 204. An
+standing grant, for how many days; `forRun` (optional, default `false`) is
+Tier 1's "for this run", which the app does not offer for a routed ask — or
+`null` to refuse. Reply 204. An
 approval the person left unanswered posts nothing: the server's own deadline
 decides, and it must not be told "no". First answer wins; a late one may be
 refused with any 4xx, which the app logs and does not retry. The server's

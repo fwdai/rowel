@@ -95,8 +95,37 @@ describe('the agent grant dialog', () => {
 
     await userEvent.click(screen.getByTestId('agent-grant-once'))
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-7', answer: { itemId: 'gh1', standingDays: null } }
+      { id: 'ask-7', answer: { itemId: 'gh1', standingDays: null, forRun: false } }
     ])
+  })
+
+  // "This run" is offered only when the request named a run, says no more
+  // than the run's own word and the hours that bound it, and answers with
+  // `forRun` — never beside days.
+  it('offers this run only for a request that named one, and answers for the run', async () => {
+    await ask()
+    expect(screen.queryByTestId('agent-grant-run')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('agent-grant-run-note')).not.toBeInTheDocument()
+
+    act(() =>
+      emitEvent(EVENTS.agentGrant, {
+        ...ASK,
+        id: 'ask-run',
+        clientName: 'Claude Code',
+        clientKind: 'agent',
+        runHours: 8
+      })
+    )
+    await userEvent.click(await screen.findByTestId('agent-grant-run'))
+    expect(calls('agent_grant_respond')).toEqual([
+      { id: 'ask-run', answer: { itemId: 'gh1', standingDays: null, forRun: true } }
+    ])
+
+    act(() => emitEvent(EVENTS.agentGrant, { ...HEADER_ASK, id: 'ask-run-2', runHours: 8 }))
+    expect(await screen.findByTestId('agent-grant-run')).toHaveTextContent('Allow for this run')
+    expect(screen.getByTestId('agent-grant-run-note')).toHaveTextContent(
+      'what this client marks as the same run, without asking, for at most 8 hours'
+    )
   })
 
   // A header ask names the API as the agent wrote it, methods first, and
@@ -116,7 +145,7 @@ describe('the agent grant dialog', () => {
 
     await userEvent.click(screen.getByTestId('agent-grant-once'))
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-h', answer: { itemId: 'stripe', standingDays: null } }
+      { id: 'ask-h', answer: { itemId: 'stripe', standingDays: null, forRun: false } }
     ])
   })
 
@@ -147,8 +176,8 @@ describe('the agent grant dialog', () => {
     await userEvent.click(await screen.findByTestId('agent-grant-deny'))
 
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-e', answer: { itemId: 'ci', standingDays: null } },
-      { id: 'ask-e2', answer: { itemId: 'ci', standingDays: 90 } },
+      { id: 'ask-e', answer: { itemId: 'ci', standingDays: null, forRun: false } },
+      { id: 'ask-e2', answer: { itemId: 'ci', standingDays: 90, forRun: false } },
       { id: 'ask-e3', answer: null }
     ])
   })
@@ -177,7 +206,7 @@ describe('the agent grant dialog', () => {
 
     await userEvent.click(screen.getByTestId('agent-grant-once'))
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-e4', answer: { itemId: 'ci', standingDays: null } }
+      { id: 'ask-e4', answer: { itemId: 'ci', standingDays: null, forRun: false } }
     ])
   })
 
@@ -200,7 +229,7 @@ describe('the agent grant dialog', () => {
     await userEvent.click(screen.getByTestId('agent-grant-once'))
 
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-1', answer: { itemId: 'gh1', standingDays: null } }
+      { id: 'ask-1', answer: { itemId: 'gh1', standingDays: null, forRun: false } }
     ])
     expect(screen.queryByTestId('agent-grant-dialog')).not.toBeInTheDocument()
     expect(useUi.getState().consentAsk).toBeNull()
@@ -222,7 +251,7 @@ describe('the agent grant dialog', () => {
     await userEvent.click(screen.getByTestId('agent-grant-standing'))
 
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-1', answer: { itemId: 'gh2', standingDays: 90 } }
+      { id: 'ask-1', answer: { itemId: 'gh2', standingDays: 90, forRun: false } }
     ])
   })
 
@@ -237,7 +266,7 @@ describe('the agent grant dialog', () => {
 
     await userEvent.click(screen.getByTestId('agent-grant-standing'))
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-1', answer: { itemId: 'gh1', standingDays: 1 } }
+      { id: 'ask-1', answer: { itemId: 'gh1', standingDays: 1, forRun: false } }
     ])
   })
 
@@ -257,7 +286,7 @@ describe('the agent grant dialog', () => {
 
     await userEvent.click(screen.getByTestId('agent-grant-once'))
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-2', answer: { itemId: 'gh1', standingDays: null } }
+      { id: 'ask-2', answer: { itemId: 'gh1', standingDays: null, forRun: false } }
     ])
   })
 
@@ -272,7 +301,7 @@ describe('the agent grant dialog', () => {
     await userEvent.click(screen.getByTestId('agent-grant-once'))
 
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-3', answer: { itemId: 'gh1', standingDays: null }, password: 'hunter2' }
+      { id: 'ask-3', answer: { itemId: 'gh1', standingDays: null, forRun: false }, password: 'hunter2' }
     ])
   })
 
@@ -283,7 +312,7 @@ describe('the agent grant dialog', () => {
 
     await userEvent.click(screen.getByTestId('agent-grant-once'))
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-4', answer: { itemId: 'gh1', standingDays: null } }
+      { id: 'ask-4', answer: { itemId: 'gh1', standingDays: null, forRun: false } }
     ])
   })
 
@@ -294,7 +323,7 @@ describe('the agent grant dialog', () => {
 
     await userEvent.click(screen.getByTestId('agent-grant-once'))
     expect(calls('agent_grant_respond')).toEqual([
-      { id: 'ask-5', answer: { itemId: 'gh1', standingDays: null } }
+      { id: 'ask-5', answer: { itemId: 'gh1', standingDays: null, forRun: false } }
     ])
 
     // An extension asking to connect takes the place of a grant dialog left

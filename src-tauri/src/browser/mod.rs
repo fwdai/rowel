@@ -62,6 +62,7 @@ use rowel_broker::grant::{
     Approval, GrantReply, GrantRequest, Mode, ResolveContext, State, Target,
 };
 use rowel_broker::lockbox::{mark_seen, save_failed, save_login_in, totp_in, write_clients};
+use rowel_broker::policy::defaults;
 use rowel_broker::reference::Reference;
 use rowel_broker::Signal;
 
@@ -840,6 +841,7 @@ impl Host for AppHost {
                         .map(|c| c.visible.clone())
                         .collect(),
                     default_standing_days,
+                    run_hours: asking.grant.run_id.is_some().then_some(defaults::RUN_HOURS),
                     server: None,
                 },
             );

@@ -400,6 +400,7 @@ fn yes(item_id: &str) -> Verdict {
     Verdict::Answered(Some(GrantAnswer {
         item_id: item_id.into(),
         standing_days: Some(7),
+        for_run: false,
     }))
 }
 
@@ -1210,9 +1211,9 @@ fn the_answer_names_the_item_picked_or_why_not() {
     };
     let candidates = [candidate("gh"), candidate("gh2")];
 
-    let (picked, days) = outcome(&yes("gh2"), &candidates).expect("picked");
+    let (picked, lasting) = outcome(&yes("gh2"), &candidates).expect("picked");
     assert_eq!(picked.item.id, "gh2");
-    assert_eq!(days, Some(7));
+    assert_eq!(lasting, rowel_broker::agents::Lasting::Days(7));
     assert_eq!(outcome(&yes("nope"), &candidates).err(), Some("item"));
     assert_eq!(
         outcome(&Verdict::Answered(None), &candidates).err(),
@@ -1350,6 +1351,7 @@ fn an_agents_fill_grant_is_signalled_to_the_extensions_and_not_to_the_agent() {
         Verdict::Answered(Some(GrantAnswer {
             item_id: "gh".into(),
             standing_days: None,
+            for_run: false,
         })),
     )
     .expect("the yes stands");
@@ -2489,6 +2491,7 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
             Verdict::Answered(Some(GrantAnswer {
                 item_id: "nope".into(),
                 standing_days: None,
+                for_run: false,
             })),
         ),
         Err(Code::GrantDenied)
@@ -2507,6 +2510,7 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
         Verdict::Answered(Some(GrantAnswer {
             item_id: "ci2".into(),
             standing_days: None,
+            for_run: false,
         })),
     )
     .expect("the yes stands");

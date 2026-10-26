@@ -7,8 +7,11 @@ import { inputClass } from '@/components/elements/formStyles'
 import { clampDays } from './days'
 
 /**
- * The three answers: this once, for N days (which writes a rule for this
- * client, this item and this place, in this mode), or no. `days` is editable
+ * The answers: this once; for this run, when the request named one (`runHours`
+ * is then the most it lasts); for N days (which writes a rule for this
+ * client, this item and this place, in this mode); or no. The run is the
+ * client's own word, so its note promises no more than what the client marks
+ * as the same run, for at most the hours. `days` is editable
  * in place; the field commits a clamped value when it loses focus, and the
  * standing button clamps again on the way out, so Rust is never sent a length
  * it would refuse. The note under the days says what the rule would let
@@ -21,7 +24,9 @@ export default function Choices({
   days,
   onDays,
   disabled,
+  runHours,
   onOnce,
+  onRun,
   onStanding,
   onDeny
 }: {
@@ -32,7 +37,10 @@ export default function Choices({
   onDays: (days: number) => void
   /** A yes is not available yet — a step-up ask with no password typed. */
   disabled: boolean
+  /** Set when the request named a run: the most a yes for it lasts. */
+  runHours?: number
   onOnce: () => void
+  onRun: () => void
   onStanding: () => void
   onDeny: () => void
 }) {
@@ -67,6 +75,17 @@ export default function Choices({
         <Button size="md" onClick={onOnce} disabled={disabled} testid="agent-grant-once">
           {t('Allow once')}
         </Button>
+        {runHours !== undefined && (
+          <Button
+            variant="ghost"
+            size="md"
+            onClick={onRun}
+            disabled={disabled}
+            testid="agent-grant-run"
+          >
+            {t('Allow for this run')}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="md"
@@ -95,6 +114,14 @@ export default function Choices({
           className={cx(inputClass, 'w-20')}
         />
       </label>
+      {runHours !== undefined && (
+        <p className="text-sm text-text2" data-testid="agent-grant-run-note">
+          {t(
+            'Allowing for this run lets through what this client marks as the same run, without asking, for at most {{hours}} hours. The client decides what a run is, so the hours are the limit.',
+            { hours: runHours }
+          )}
+        </p>
+      )}
       <p className="text-sm text-text2" data-testid="agent-grant-standing-note">
         {note}
       </p>

@@ -164,6 +164,11 @@ pub struct AnswerRequest {
     pub account: Option<usize>,
     #[serde(default)]
     pub deny: bool,
+    /// *This run*: the yes covers further requests the client marks as the
+    /// same run, up to the run's cap. Only for an ask whose request named a
+    /// run, and never with `days`.
+    #[serde(default)]
+    pub run: bool,
     /// The master password, for a step-up ask. Wiped after use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<Zeroizing<String>>,
@@ -472,11 +477,18 @@ impl HeadlessHost {
             AskKind::Grant {
                 candidates,
                 step_up,
+                run,
                 ..
             } => {
                 if request.deny {
                     Answer::Grant(None)
                 } else {
+                    if request.run && !run {
+                        return Err("the request named no run: --run is not an answer to it".into());
+                    }
+                    if request.run && request.days.is_some() {
+                        return Err("--run or --days, not both".into());
+                    }
                     let item_id = match (&request.item, candidates.as_slice()) {
                         (Some(item), _) => item.clone(),
                         (None, [only]) => only.id.clone(),
@@ -493,6 +505,7 @@ impl HeadlessHost {
                     Answer::Grant(Some(agents::GrantAnswer {
                         item_id,
                         standing_days: request.days,
+                        for_run: request.run,
                     }))
                 }
             }
@@ -910,6 +923,7 @@ impl Host for HeadlessHost {
                 .map(|c| c.visible.clone())
                 .collect::<Vec<VisibleItem>>(),
             step_up,
+            run: asking.grant.run_id.is_some(),
         };
         let timeout = self.ask_timeout();
         // Queued under the agents lock, as the app queues under its slot: a

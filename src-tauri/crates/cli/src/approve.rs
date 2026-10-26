@@ -22,6 +22,8 @@ pub struct ApproveArgs {
     pub name: Option<String>,
     pub account: Option<usize>,
     pub deny: bool,
+    /// *This run*: the yes covers what the agent marks as the same run.
+    pub run: bool,
 }
 
 pub fn run(args: ApproveArgs) -> i32 {
@@ -76,6 +78,7 @@ pub fn run(args: ApproveArgs) -> i32 {
         name: args.name,
         account: args.account,
         deny: args.deny,
+        run: args.run,
         password,
     };
     match client.answer(answer) {
