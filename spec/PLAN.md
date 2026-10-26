@@ -462,7 +462,7 @@ above that were ticked but not delivered, two correctness bugs and the
 distribution gaps. They land as four PRs; Tier 1 is ready for outside testers
 when A, B and C are merged.
 
-- [ ] **PR A, security and correctness** (branch `fix/agent-hardening`): the
+- [ ] **PR A, security and correctness** *(in review: #666)*: the
       redactor at a constant lag (no prefix oracle); one expiry path that always
       writes `ended` and signs out, with a 30 s wall-clock recheck; the audit
       fails closed (`AuditUnavailable` = 47); the proxy forwards only what a
@@ -470,9 +470,26 @@ when A, B and C are merged.
 - [ ] **PR B, distribution:** the Windows *Install command line tool* path,
       the AppImage link, standalone CLI tarballs (Linux x86_64 and arm64),
       extension zips attached to releases, `docs/releasing.md`.
+      *(in review: #667)* *Outcome:* on Windows the tool is copied to
+      `%LOCALAPPDATA%\app.rowel.desktop\bin\rowel.exe` and that folder goes on
+      the user's PATH (the bundled folder holds the app's own `Rowel.exe`); an
+      AppImage keeps a copy in the app's local data directory; both refresh at
+      startup; *Remove* undoes either. Standalone archives for macOS
+      (notarized), Windows and Linux x86_64/arm64 (glibc ≥ 2.35) with
+      `SHA256SUMS`; Chromium and Firefox zips attached; the extension version
+      lives only in its source manifest; CLI, broker and core tests run on
+      macOS and Windows CI; `--help` exits 0.
 - [ ] **PR C, plan gaps:** *this run* in the grant dialog, the denied-fill
       fixture, the `tests/e2e` dialog spec, the untranslated agent strings,
-      `rowel serve --install-host`.
+      `rowel serve --install-host`. *(in review: #668, stacked on #666)*
+      *Outcome:* a run grant (`Grant.for_run`) serves only requests carrying
+      its own `run_id` from the same client, capped at 8 h, offered only when
+      the request has a run id; every locale complete and tested; an expired
+      grant answers `GrantExpired`; exposure reports only from the grant's
+      holder or the served extension, once; `rowel serve` writes under its own
+      `serve_writer_id`; manifests and relay in `rowel_broker::{manifest,
+      relay}`, `rowel native-host`, `rowel serve --install-host` /
+      `--uninstall-host` on macOS and Linux.
 - [ ] **PR D, open-core boundary:** remove `crates/server`, `rowel admin
       server`, the `--server` wiring and `docs/server.md` from the public
       repository; they live in the private `fwdai/rowel-server` (one package,

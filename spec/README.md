@@ -171,6 +171,12 @@ Read the overview first. Everything else hangs off it.
   `AuditUnavailable` (`09`), the proxy forwarding only what a grant covers
   (`05`). The server mode moved to the private `fwdai/rowel-server` (`00 §4`,
   Q1).
+- **2026-10-27, PRs B and C.** PR B (#667): the CLI on the PATH on Windows
+  and from an AppImage, standalone CLI archives and extension zips in releases
+  (`06`). PR C (#668): the run grant and its 8 h cap (`03`); exposure reports
+  only from a grant's holder, `GrantExpired` on an expired grant (`04`); the
+  shared manifest and relay, `rowel native-host`, `rowel serve
+  --install-host`, the broker's own writer id (`06`).
 
 ## Relationship to the other docs
 

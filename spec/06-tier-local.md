@@ -146,7 +146,10 @@ survives it. Lock order: workspace_lock → session → agents; slot → agents;
 never agents → slot; never session → workspace_lock. **One install id per process**: the audit writer id is
 minted once into an owner-only file and held in `AppState` behind a
 `OnceLock`, so concurrent first uses agree and a write failure still leaves
-one id for the process.
+one id for the process. `rowel serve` writes under its own `serve_writer_id`
+(PR C), never the `install_id` a copied data directory brings from the
+device, so the box and the device never extend one chain; both ids come from
+`rowel_core::layout::kept_id`.
 
 **As built in I2.** An agent's `request-grant` runs the same three phases as
 the extension's `agentMode` fill, with the client record (kind, name) in
@@ -266,7 +269,22 @@ mode later the Rowel Server), `approve` and `admin rules|agents|key-file|lock`
 (`07`, `docs/serve.md`), and since I5 every client command reaches a broker
 elsewhere when `ROWEL_BROKER=ws://…|wss://…` is set, with `ROWEL_BROKER_CA`
 for a CA of one's own (`04`). The desktop app is not split into a UI plus this daemon: it embeds
-the same crates and is the broker itself (Q26).
+the same crates and is the broker itself (Q26). *As built in PR B (#667):* on
+Windows the bundled folder holds the app's own `Rowel.exe`, so *Install*
+copies the tool to `%LOCALAPPDATA%\app.rowel.desktop\bin\rowel.exe` and puts
+that folder on the user's PATH (HKCU, `WM_SETTINGCHANGE`); an AppImage keeps a
+copy in the app's local data directory and links `~/.local/bin/rowel` to it;
+both copies refresh at startup; *Remove* (`cli_uninstall`) undoes either; the
+row shows the bundled path everywhere. A foreign read of the CLI's keys
+prompts only on macOS (the keychain), not in Windows Credential Manager. The
+release also carries the CLI on its own (macOS notarized zip, Windows zip,
+Linux x86_64 and arm64 tarballs at glibc ≥ 2.35) with `SHA256SUMS`. *As built
+in PR C (#668):* the native-messaging manifests and the stdio↔socket relay
+live in `rowel_broker::{manifest, relay}`, shared by the app and
+`rowel native-host`; `rowel serve --install-host` writes an owner-only
+launcher in its data directory and a manifest per installed browser (macOS,
+Linux; refused on Windows, where only the app writes the registry), and
+`--uninstall-host` removes them.
 
 **Extension (🟡).** `extension/rowel/background/grants.js` (new), changes in
 `client.js` (`onNativeMessage` routes `rowel-signal`), `page.js` (hide UI in

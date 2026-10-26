@@ -270,7 +270,19 @@ the server's database per tenant.
 "for this run", and "for N days" (7 by default). The last writes a `Rule` with
 `agents: Ids([client_key])`, `items: Ids([item])`, `targets: [the origin]`,
 `approval: Auto`. Settings › Browser & agents lists rules and active grants with
-revoke; Vault Health shows standing rules older than 30 days.
+revoke; Vault Health shows standing rules older than 30 days. *As built in
+PR C (#668):* "for this run" is a grant with `for_run` set
+(`Grant::serves_run`): it is reused only for a request from the same client,
+item, target and mode carrying the grant's own `run_id`, and it lasts
+`RUN_TTL_MS` (8 h) — between a once grant (15 min) and the shortest standing
+rule (1 day). The run id is agent-minted and untrusted, so it only narrows
+what the grant serves; the cap bounds an agent that keeps one id forever. The
+dialog offers it only when the request carries a run id and never for a
+server-routed ask; a run answer without a run id, or with days, is refused;
+`GrantAnswer.forRun` defaults to false; the `granted` row carries
+`{"for":"run"}`; `rowel approve <id> --run` answers it on the headless
+broker. The CLI mints a run id per process, so a run is in practice one
+`rowel mcp` session.
 
 **Approval in Tier 1: block, like `associate`.** `AppHost::request_grant` runs
 policy under the session lock, releases it, and asks through

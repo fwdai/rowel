@@ -238,7 +238,11 @@ carries content.
   only if the grant covers that login.
 - `report-exposure { grantId }`: the content script found a filled secret
   showing in the page's text; the host ends the grant and writes an `exposed`
-  audit row.
+  audit row. *As built in PR C:* only the grant's holder or the extension
+  served under it may report (`agents::report_exposure_in`, shared by every
+  host), and a report on a grant already ended changes nothing. A grant that
+  is over answers `get-logins`/`get-totp` with `GrantExpired` to a client
+  entitled to it, which the extension's retry acts on.
 - `get-signals` as above.
 
 **Transports.**
