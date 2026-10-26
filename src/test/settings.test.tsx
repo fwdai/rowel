@@ -1554,9 +1554,6 @@ describe('Settings › workspaces › list', () => {
 
     expect(screen.getByText('On this device · 2')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-row-default')).toHaveTextContent('Open now')
-    // Which one is primary is said outright: a rename would otherwise hide it.
-    expect(screen.getByTestId('workspace-primary-default')).toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-primary-w2')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-switch-default')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-row-w2')).not.toHaveTextContent('Open now')
     expect(screen.getByTestId('workspace-row-w2')).toHaveTextContent('12 items · Google Drive')
@@ -1816,10 +1813,8 @@ describe('Settings › workspaces › new', () => {
     await userEvent.type(screen.getByTestId('workspace-new-name'), 'Family')
     await userEvent.type(screen.getByTestId('workspace-new-password'), 'wrong{Enter}')
 
-    // Named: the password wanted is the primary's, which need not be the open
-    // workspace's.
     expect(await screen.findByTestId('workspace-new-error')).toHaveTextContent(
-      'That is not the master password of Personal.'
+      'Incorrect Master Password'
     )
     expect(calls('workspace_create')).toHaveLength(1)
   })

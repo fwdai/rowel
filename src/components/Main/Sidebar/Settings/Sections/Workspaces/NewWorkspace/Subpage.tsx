@@ -1,10 +1,10 @@
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createWorkspace, lockSettings, selectWorkspaces, useApp } from '@/store'
-import { describeError, errorKind } from '@/api/errors'
+import { describeError } from '@/api/errors'
 import { providerName } from '@/api/provider'
 import { syncProvider } from '@/api/sync'
-import { PRIMARY_WORKSPACE, workspaceLabel } from '@/lib/workspace'
+import { workspaceLabel } from '@/lib/workspace'
 import { firstUnusedColor, type WorkspaceColor } from '@/lib/workspaceColor'
 import { cx } from '@/utils/cx'
 import Field from '@/components/elements/Field'
@@ -42,10 +42,6 @@ export default function NewWorkspaceSubpage() {
   const label = name.trim()
   const taken = workspaces.map(workspace => workspaceLabel(workspace, t))
   const ready = !!label && !nameTaken(label, taken) && !!password
-  // Whose password seals the new vault: the device's master password is the
-  // primary workspace's, and that workspace is not always the open one.
-  const primary = workspaces.find(workspace => workspace.id === PRIMARY_WORKSPACE)
-  const primaryName = primary ? workspaceLabel(primary, t) : t('Personal')
 
   // The fields are read once here and held while busy, so what is created is
   // exactly what is on screen.
@@ -58,13 +54,7 @@ export default function NewWorkspaceSubpage() {
       await createWorkspace(label, password, color)
     } catch (err: unknown) {
       setBusy(false)
-      // Named, because the password wanted is the primary's — which may not
-      // be the open workspace's, nor the one the user thinks of as "master".
-      setError(
-        errorKind(err) === 'invalidPassword'
-          ? t('That is not the master password of {{name}}.', { name: primaryName })
-          : describeError(err) || t('Something went wrong')
-      )
+      setError(describeError(err) || t('Something went wrong'))
     } finally {
       lockSettings(false)
     }
@@ -122,11 +112,7 @@ export default function NewWorkspaceSubpage() {
               {error}
             </Note>
           )}
-          <Note>
-            {t('Sealed with the master password of {{name}}, the primary lockbox on this device.', {
-              name: primaryName
-            })}
-          </Note>
+          <Note>{t('The new lockbox is sealed with your existing master password.')}</Note>
         </Field>
       </div>
     </SubpageFrame>

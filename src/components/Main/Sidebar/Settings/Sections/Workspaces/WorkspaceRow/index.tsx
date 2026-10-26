@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { Workspace } from '@/api/types'
-import { PRIMARY_WORKSPACE, workspaceLabel } from '@/lib/workspace'
+import { workspaceLabel } from '@/lib/workspace'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
 import Chip from '@/components/elements/Chip'
@@ -41,13 +41,6 @@ export default function WorkspaceRow({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate text-base font-medium text-text">{label}</span>
-            {/* The primary is the workspace whose master password is the
-                device's — the one a new workspace is sealed with and the one
-                Touch ID enrols — and nothing else on the row says which that
-                is once it has been renamed. */}
-            {workspace.id === PRIMARY_WORKSPACE && (
-              <Chip testid={`workspace-primary-${workspace.id}`}>{t('Primary')}</Chip>
-            )}
             {current && (
               <Chip tone="good" dot>
                 {t('Open now')}
