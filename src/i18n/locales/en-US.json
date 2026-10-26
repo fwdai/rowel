@@ -823,6 +823,7 @@
   "Installed as {{path}}. Coding agents connect through its MCP server. If your terminal does not find rowel, add {{dir}} to your PATH.": "Installed as {{path}}. Coding agents connect through its MCP server. If your terminal does not find rowel, add {{dir}} to your PATH.",
   "Puts the rowel command on your PATH, so coding agents can connect through its MCP server.": "Puts the rowel command on your PATH, so coding agents can connect through its MCP server.",
   "The command line tool ships with the packaged app; this build has none beside it.": "The command line tool ships with the packaged app; this build has none beside it.",
+  "Use this full path in an agent's MCP config:": "Use this full path in an agent's MCP config:",
   "Agent activity": "Agent activity",
   "No agent activity in the last 7 days": "No agent activity in the last 7 days",
   "Show all {{total}}": "Show all {{total}}",

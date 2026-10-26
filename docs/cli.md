@@ -6,9 +6,48 @@ sealed channel the browser extension uses, as two clients: an *agent* (`rowel
 mcp`), which can ask for grants and nothing else, and a *sidecar* (`rowel run`,
 `rowel redact`, `rowel hook post`), the one client that can resolve a secret
 under a grant — into one command's environment, or out of a stream, never to
-the agent. On macOS and Linux, Settings › General › Command line tool installs
-a `rowel` symlink to it on your `PATH`; on Windows the row shows the bundled
-path to add yourself. Below, `rowel` stands for whichever name you have.
+the agent. Settings › General › Command line tool puts it on your `PATH` as
+`rowel` and shows its full path ([Installing](#installing)). Below, `rowel`
+stands for whichever name you have.
+
+## Installing
+
+The app bundles the tool; **Install** in Settings › General › Command line
+tool makes it `rowel`:
+
+- **macOS, and Linux from a `.deb` or `.rpm`**: a symlink named `rowel` to
+  the bundled `rowel-cli`, in `/usr/local/bin` when you can write there, else
+  in `~/.local/bin` (made if missing). The link follows the app through an
+  update. A `rowel` there that is not a link to a `rowel-cli` is left alone
+  and the install refused. When the folder is not on the `PATH` a new
+  terminal gets (on macOS `/etc/paths`, which lists `/usr/local/bin` but not
+  `~/.local/bin`), the row says to add it.
+- **Linux from an AppImage**: the bundled binary is inside the image's mount,
+  which is gone when the app quits, so at every start the app copies it to
+  `~/.local/share/app.rowel.desktop/bin/rowel-cli` (only when it changed),
+  and the link points at that copy.
+- **Windows**: the folder that holds the bundled `rowel-cli.exe` also holds
+  the app's own `rowel.exe`, so it cannot go on the `PATH`. Rowel copies the
+  tool to `%LOCALAPPDATA%\app.rowel.desktop\bin\rowel.exe` and adds that
+  folder to your user `PATH` (`HKEY_CURRENT_USER\Environment`), then tells
+  Windows the environment changed: terminals opened after that find
+  `rowel`, ones already open do not. At every start the app refreshes the
+  copy when an update brought a new one, moving aside a copy an agent is
+  still running.
+
+**Remove** takes the link, or the `PATH` entry and the copy, away again.
+Uninstalling the app on Windows does not edit your `PATH`: remove the tool
+first, or delete the entry afterwards.
+
+The row shows the full path of the tool, with a copy button: the `rowel` on
+your `PATH` once it is installed, the bundled binary before. An MCP config
+should name the tool by that path. An agent the Dock, the Start menu or a
+desktop launcher started does not read your shell's `PATH` (a macOS app gets
+`/usr/bin:/bin:/usr/sbin:/sbin`), so a bare `rowel` is found only by an agent
+started from a terminal.
+
+Without the app — a CI runner, a server — download the standalone archive
+from the release instead ([`serve.md`](serve.md#install)).
 
 ## Placeholders
 
@@ -452,17 +491,19 @@ connected to this app. A fresh profile an automation tool launches has none:
 install the extension in the profile the agent uses and let it connect first.
 When the grant ends, session end signs that profile out of the site's domain.
 
-Claude Code:
+Claude Code (here `/usr/local/bin/rowel` stands for the path Settings ›
+General › Command line tool shows, written out in full — these files do not
+expand `~`):
 
 ```bash
-claude mcp add rowel -- rowel mcp
+claude mcp add rowel -- /usr/local/bin/rowel mcp
 ```
 
 Codex, in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.rowel]
-command = "rowel"
+command = "/usr/local/bin/rowel"
 args = ["mcp"]
 ```
 
@@ -471,10 +512,12 @@ Cursor, in `.cursor/mcp.json` (project) or `~/.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "rowel": { "command": "rowel", "args": ["mcp"] }
+    "rowel": { "command": "/usr/local/bin/rowel", "args": ["mcp"] }
   }
 }
 ```
 
-On Windows, or without the symlink, replace `rowel` with the full path
-Settings › General › Command line tool shows.
+A bare `rowel` works only for an agent started from a terminal whose `PATH`
+has it; see [Installing](#installing). A Windows path needs each backslash
+doubled in JSON and in a double-quoted TOML string, or forward slashes in its
+place.

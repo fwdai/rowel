@@ -67,22 +67,33 @@ off, or a lockbox's agent access off, ends every active grant.
 ## Coding agents
 
 Install the command line tool from Settings › General › **Command line tool**.
-On macOS and Linux **Install** links it onto your `PATH` as `rowel`; on Windows
-the row shows the bundled path, which you use in place of `rowel` below.
+**Install** puts it on your `PATH` as `rowel`. On macOS and Linux that is a
+link in `/usr/local/bin` when you can write there, else in `~/.local/bin`; the
+row tells you when that folder is not on your `PATH`, which on macOS it is not
+unless your shell profile adds it. On Windows Rowel keeps a copy named
+`rowel.exe` in a folder of its own and adds that folder to your user `PATH`;
+terminals opened after that find it. **Remove** takes it off again.
 
-`rowel mcp` is a stdio MCP server. Connect it to your agent:
+The row also shows the tool's full path, with a button that copies it. Use
+that path in an MCP config. An agent started from the Dock, the Start menu or
+a desktop launcher does not read your shell's `PATH` (a macOS app gets only
+`/usr/bin:/bin:/usr/sbin:/sbin`), so a bare `rowel` is found only by an agent
+started from a terminal that has it on its `PATH`.
+
+`rowel mcp` is a stdio MCP server. Connect it to your agent; below,
+`/usr/local/bin/rowel` stands for the path the row shows.
 
 Claude Code:
 
 ```bash
-claude mcp add rowel -- rowel mcp
+claude mcp add rowel -- /usr/local/bin/rowel mcp
 ```
 
 Codex, in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.rowel]
-command = "rowel"
+command = "/usr/local/bin/rowel"
 args = ["mcp"]
 ```
 
@@ -91,10 +102,15 @@ Cursor, in `.cursor/mcp.json` (project) or `~/.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "rowel": { "command": "rowel", "args": ["mcp"] }
+    "rowel": { "command": "/usr/local/bin/rowel", "args": ["mcp"] }
   }
 }
 ```
+
+Write the path out in full: these files do not expand `~`. A Windows path,
+such as `C:\Users\you\AppData\Local\app.rowel.desktop\bin\rowel.exe`, needs
+each backslash doubled in JSON and in a double-quoted TOML string, or forward
+slashes in its place.
 
 The first tool call asks Rowel to let the agent in, as a browser extension
 does: Rowel shows a dialog naming the kind of client and the platform, and you

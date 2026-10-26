@@ -1,101 +1,81 @@
-//! The command line tool shipped beside the app (`rowel-cli`, the
-//! `src-tauri/crates/cli` crate): where it is, and the `rowel` link on the
-//! PATH that Settings › General offers to make for it.
-//!
-//! A release bundle carries the binary as a Tauri sidecar, beside the app's
-//! own executable (`MacOS/rowel-cli` in the `.app`, the install directory on
-//! Windows and Linux); a dev build finds whatever `cargo build -p rowel-cli`
-//! left in the same `target/debug`. Nothing here runs it — the tool speaks to
-//! the app over the extension host's socket like any other client — so all
-//! this module decides is paths: pure functions over directories handed in,
-//! so the tests run them over a temporary tree.
+//! The `rowel` symlink on macOS and Linux: pure functions over the
+//! directories handed in, so the tests run them over a temporary tree.
 
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
-
-/// The sidecar's file name, as Tauri strips the target triple off it.
-#[cfg(windows)]
-pub const BINARY: &str = "rowel-cli.exe";
-#[cfg(not(windows))]
-pub const BINARY: &str = "rowel-cli";
+use super::{CliStatus, BINARY};
 
 /// The name the tool goes by on the PATH. The app's own binary is `rowel`
 /// too, but it is never on the PATH: the link points at the sidecar.
 pub const LINK: &str = "rowel";
 
-/// The tool as Settings shows it: the binary beside the app when there is
-/// one, the link to it on the PATH when one is in place, and where a link
-/// would go (or is).
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct CliStatus {
-    pub bundled: Option<String>,
-    pub installed: Option<String>,
-    pub install_dir: Option<String>,
-}
-
-/// The tool as this process finds it: beside its own executable, linked from
-/// one of the user's bin directories.
-pub fn status() -> CliStatus {
-    let bundled = std::env::current_exe()
-        .ok()
-        .and_then(|exe| bundled_beside(&exe));
-    let dirs = link_dirs();
-    status_in(bundled.as_deref(), &dirs)
-}
-
-/// Put the `rowel` link in place and say how things stand after.
-pub fn install() -> io::Result<CliStatus> {
-    let exe = std::env::current_exe()?;
-    let bundled = bundled_beside(&exe).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "the command line tool is not bundled with this build",
-        )
-    })?;
-    let dirs = link_dirs();
-    install_in(&dirs, &bundled)?;
-    Ok(status_in(Some(&bundled), &dirs))
-}
-
-/// The sidecar beside the executable `exe`, when it is there.
-pub fn bundled_beside(exe: &Path) -> Option<PathBuf> {
-    let binary = exe.parent()?.join(BINARY);
-    binary.is_file().then_some(binary)
-}
-
-/// [`status`] over what was found: `bundled`, and the directories a link may
-/// be in.
-pub fn status_in(bundled: Option<&Path>, dirs: &[PathBuf]) -> CliStatus {
+/// The status over what was found: `bundled`, the directories a link may be
+/// in, and the directories on the PATH a new terminal gets.
+pub fn status_in(bundled: Option<&Path>, dirs: &[PathBuf], path: &[PathBuf]) -> CliStatus {
     let installed = bundled.and_then(|bundled| installed_in(dirs, bundled));
     let install_dir = installed
         .as_deref()
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .or_else(|| install_dir(dirs));
+    let on_path = install_dir
+        .as_deref()
+        .is_some_and(|dir| path.iter().any(|entry| same_file(entry, dir)));
     CliStatus {
         bundled: bundled.map(|p| p.to_string_lossy().into_owned()),
         installed: installed.map(|p| p.to_string_lossy().into_owned()),
         install_dir: install_dir.map(|p| p.to_string_lossy().into_owned()),
+        on_path,
     }
 }
 
 /// The directories a `rowel` link may live in, most preferred first: the
 /// system's `/usr/local/bin`, which is on every shell's PATH, then the user's
 /// own `~/.local/bin`, which the XDG base directory spec puts there and which
-/// needs no privilege to write. None on Windows, where there is no link to
-/// make: the user adds the bundled binary's folder to PATH.
+/// needs no privilege to write — but which is on macOS's PATH only when the
+/// user's shell profile puts it there.
 pub fn link_dirs() -> Vec<PathBuf> {
-    if cfg!(windows) {
-        return Vec::new();
-    }
     let mut dirs = vec![PathBuf::from("/usr/local/bin")];
     if let Some(home) = dirs::home_dir() {
         dirs.push(home.join(".local").join("bin"));
     }
     dirs
+}
+
+/// The directories on the PATH a terminal opened now starts with. On macOS
+/// that is `/etc/paths` and `/etc/paths.d`, which every login shell reads
+/// through `path_helper` — the app's own PATH is launchd's, which has neither
+/// bin directory. On Linux the app inherits the session's PATH, which is the
+/// one the user's terminals get.
+#[cfg(target_os = "macos")]
+pub fn default_path() -> Vec<PathBuf> {
+    let mut files = vec![PathBuf::from("/etc/paths")];
+    if let Ok(entries) = std::fs::read_dir("/etc/paths.d") {
+        files.extend(entries.flatten().map(|entry| entry.path()));
+    }
+    files
+        .iter()
+        .filter_map(|file| std::fs::read_to_string(file).ok())
+        .flat_map(|text| paths_in(&text))
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn default_path() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_default()
+}
+
+/// The directories a `path_helper` file lists, one a line.
+#[cfg(any(target_os = "macos", test))]
+fn paths_in(text: &str) -> Vec<PathBuf> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// The `rowel` link to `bundled` among `dirs`, if one of them holds it. A
@@ -126,8 +106,8 @@ pub fn install_dir(dirs: &[PathBuf]) -> Option<PathBuf> {
 pub fn install_in(dirs: &[PathBuf], bundled: &Path) -> io::Result<PathBuf> {
     let dir = install_dir(dirs).ok_or_else(|| {
         io::Error::new(
-            io::ErrorKind::Unsupported,
-            "there is no directory to link the command line tool into on this platform; add the bundled binary's folder to PATH",
+            io::ErrorKind::NotFound,
+            "there is no home directory to link the command line tool into",
         )
     })?;
     make_bin_dir(&dir)?;
@@ -146,8 +126,19 @@ pub fn install_in(dirs: &[PathBuf], bundled: &Path) -> io::Result<PathBuf> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    symlink(bundled, &link)?;
+    std::os::unix::fs::symlink(bundled, &link)?;
     Ok(link)
+}
+
+/// Remove every `rowel` link among `dirs` that points at `bundled`. Any
+/// other `rowel` is not ours and stays.
+pub fn uninstall_in(dirs: &[PathBuf], bundled: &Path) -> io::Result<()> {
+    for link in dirs.iter().map(|dir| dir.join(LINK)) {
+        if std::fs::read_link(&link).is_ok_and(|target| same_file(&target, bundled)) {
+            std::fs::remove_file(&link)?;
+        }
+    }
+    Ok(())
 }
 
 /// Whether the link at `link` is one of ours: it points at a `rowel-cli`,
@@ -163,7 +154,6 @@ fn same_file(a: &Path, b: &Path) -> bool {
     a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
 
-#[cfg(unix)]
 fn writable(dir: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let Ok(path) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
@@ -173,12 +163,6 @@ fn writable(dir: &Path) -> bool {
     dir.is_dir() && unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0
 }
 
-#[cfg(not(unix))]
-fn writable(dir: &Path) -> bool {
-    dir.is_dir()
-}
-
-#[cfg(unix)]
 fn make_bin_dir(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new()
@@ -187,29 +171,9 @@ fn make_bin_dir(dir: &Path) -> io::Result<()> {
         .create(dir)
 }
 
-#[cfg(not(unix))]
-fn make_bin_dir(dir: &Path) -> io::Result<()> {
-    std::fs::create_dir_all(dir)
-}
-
-#[cfg(unix)]
-fn symlink(target: &Path, link: &Path) -> io::Result<()> {
-    std::os::unix::fs::symlink(target, link)
-}
-
-// Windows has symlinks, but making one takes a privilege most users do not
-// hold, and `link_dirs` offers no directory there anyway: this is never
-// reached, and says so rather than guessing at a privilege.
-#[cfg(not(unix))]
-fn symlink(_target: &Path, _link: &Path) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "add the bundled binary's folder to PATH",
-    ))
-}
-
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
+    use super::super::bundled_beside;
     use super::*;
 
     fn tree() -> (tempfile::TempDir, PathBuf, Vec<PathBuf>) {
@@ -232,11 +196,12 @@ mod tests {
         let exe = app.join("rowel");
         assert_eq!(bundled_beside(&exe), None);
         assert_eq!(
-            status_in(None, &dirs),
+            status_in(None, &dirs, &[]),
             CliStatus {
                 bundled: None,
                 installed: None,
                 install_dir: Some(dirs[1].to_string_lossy().into_owned()),
+                on_path: false,
             },
             "nowhere exists yet, so the user's own directory is where a link would go"
         );
@@ -262,12 +227,17 @@ mod tests {
         );
         assert_eq!(std::fs::read_link(&link).unwrap(), bundled);
         assert!(dirs[1].is_dir());
-        let status = status_in(Some(&bundled), &dirs);
+        let status = status_in(Some(&bundled), &dirs, &dirs[..1]);
         assert_eq!(status.installed.as_deref(), Some(link.to_str().unwrap()));
         assert_eq!(
             status.install_dir.as_deref(),
             Some(dirs[1].to_str().unwrap())
         );
+        assert!(
+            !status.on_path,
+            "the user's own directory, which this PATH lacks"
+        );
+        assert!(status_in(Some(&bundled), &dirs, &dirs).on_path);
 
         // The system directory appears: it is preferred from now on, and the
         // link there replaces an older one of ours, pointing at the tool of
@@ -324,5 +294,33 @@ mod tests {
         let link = install_in(&dirs, &bundled).unwrap();
         assert_eq!(link, dirs[1].join(LINK));
         std::fs::set_permissions(&dirs[0], std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // Remove takes away the links to this tool and nothing else of the name.
+    #[test]
+    fn uninstall_removes_only_links_to_the_tool() {
+        let (_dir, app, dirs) = tree();
+        let bundled = app.join(BINARY);
+        std::fs::write(&bundled, "cli").unwrap();
+        let link = install_in(&dirs, &bundled).unwrap();
+        std::fs::create_dir_all(&dirs[0]).unwrap();
+        std::os::unix::fs::symlink(app.join("someone-elses-rowel"), dirs[0].join(LINK)).unwrap();
+
+        uninstall_in(&dirs, &bundled).unwrap();
+        assert!(std::fs::symlink_metadata(&link).is_err());
+        assert_eq!(
+            std::fs::read_link(dirs[0].join(LINK)).unwrap(),
+            app.join("someone-elses-rowel")
+        );
+        assert_eq!(status_in(Some(&bundled), &dirs, &[]).installed, None);
+        uninstall_in(&dirs, &bundled).unwrap();
+    }
+
+    #[test]
+    fn a_path_helper_file_is_one_directory_a_line() {
+        assert_eq!(
+            paths_in("/usr/local/bin\n/usr/bin\n\n  /opt/homebrew/bin  \n"),
+            ["/usr/local/bin", "/usr/bin", "/opt/homebrew/bin"].map(PathBuf::from)
+        );
     }
 }

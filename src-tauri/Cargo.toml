@@ -247,12 +247,15 @@ objc2-authentication-services = { version = "0.3", default-features = false, fea
 # `Win32_Security*` + `Win32_System_Threading` build the owner-only DACL for
 # plaintext exports, and `Win32_Storage_FileSystem` is the `CreateFileW` that
 # takes it at creation (`crates/core/src/owner_only.rs`).
-windows = { version = "0.62", features = ["Security_Credentials", "Security_Credentials_UI", "Security_Cryptography_Core", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Threading", "Media_Ocr", "Graphics_Imaging", "Storage", "Storage_Streams"] }
+# `Win32_UI_WindowsAndMessaging` is the `WM_SETTINGCHANGE` broadcast that
+# tells Explorer the user's PATH changed (`cli::user_path`).
+windows = { version = "0.62", features = ["Security_Credentials", "Security_Credentials_UI", "Security_Cryptography_Core", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Media_Ocr", "Graphics_Imaging", "Storage", "Storage_Streams"] }
 # Credential Manager storage. It holds only the Hello-wrapped blob — Credential
 # Manager itself has no biometric gate (see `secure_store::GateMode::HelloKey`).
 keyring = { version = "3", features = ["windows-native"] }
 # Where a browser looks for a native messaging host on Windows is a registry
-# key, not a file (`browser::manifest`).
+# key, not a file (`browser::manifest`); so is the user's PATH the command
+# line tool goes on (`cli::user_path`).
 windows-registry = "0.100"
 
 [dev-dependencies]

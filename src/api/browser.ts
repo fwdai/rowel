@@ -358,22 +358,28 @@ export const auditVerify = (): Promise<AuditVerification> => call('audit_verify'
 
 /**
  * The command line tool (`rowel-cli`) as Rust finds it: `bundled` is the
- * binary beside the app when this build ships one (a release does; a dev
- * build only after `cargo build -p rowel-cli`), `installed` the `rowel` link
- * to it on the PATH when one is in place, `installDir` where a link goes or
- * is. Desktop only.
+ * binary agents can be pointed at when this build ships one (a release does;
+ * a dev build only after `cargo build -p rowel-cli`) — beside the app, or for
+ * an AppImage the copy the app keeps out of its mount; `installed` the
+ * `rowel` command on the PATH when one is in place (a link on macOS and
+ * Linux, a copy on Windows); `installDir` where it goes or is, and `onPath`
+ * whether that directory is on the PATH a new terminal gets. Desktop only.
  */
 export interface CliStatus {
   bundled: string | null
   installed: string | null
   installDir: string | null
+  onPath: boolean
 }
 
 export const cliStatus = (): Promise<CliStatus> => call('cli_status')
 
 /**
- * Link the bundled tool into the PATH as `rowel`. Rust refuses with the
- * reason when nothing is bundled, when the name is taken by something that is
- * not a link of ours, or on Windows, where the folder goes on PATH by hand.
+ * Put the bundled tool on the PATH as `rowel`. Rust refuses with the reason
+ * when nothing is bundled, or when the name is taken by something that is not
+ * ours.
  */
 export const cliInstall = (): Promise<CliStatus> => call('cli_install')
+
+/** Take `rowel` off the PATH again; whatever else has the name stays. */
+export const cliUninstall = (): Promise<CliStatus> => call('cli_uninstall')

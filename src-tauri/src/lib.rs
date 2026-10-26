@@ -182,6 +182,13 @@ pub fn run() {
             // manifests again is idempotent, and one another host owns is
             // left alone (`manifest::install`). A manifest from before Rowel
             // had a host name of its own is rewritten or taken back here too.
+            // The command line tool's copies follow the app's own: an
+            // AppImage's out of the mount, an update's onto the PATH. Off the
+            // main thread, since a copy is the whole binary.
+            #[cfg(desktop)]
+            if let Ok(local_data) = commands::cli::local_data(app.handle()) {
+                std::thread::spawn(move || cli::refresh(&local_data));
+            }
             #[cfg(desktop)]
             {
                 let host = settings::current(app.handle()).browser;
@@ -351,6 +358,8 @@ pub fn run() {
             commands::cli::cli_status,
             #[cfg(desktop)]
             commands::cli::cli_install,
+            #[cfg(desktop)]
+            commands::cli::cli_uninstall,
             // E2E-only vault reset. `generate_handler!` honours per-command
             // attributes, so in a release build the match arm — and with it the
             // only reference to the (also cfg'd-out) module — simply is not

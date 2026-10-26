@@ -2523,6 +2523,8 @@ describe('Settings sub-pages', () => {
 describe('Settings › General › command line tool', () => {
   const BUNDLED = '/Applications/Rowel.app/Contents/MacOS/rowel-cli'
   const LINK = '/usr/local/bin/rowel'
+  const bundled = { bundled: BUNDLED, installed: null, installDir: '/usr/local/bin', onPath: true }
+  const linked = { ...bundled, installed: LINK }
 
   it('says the tool ships with the packaged app when none is bundled', async () => {
     await open()
@@ -2530,13 +2532,15 @@ describe('Settings › General › command line tool', () => {
       'ships with the packaged app'
     )
     expect(screen.queryByTestId('settings-cli-install')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('settings-cli-path')).not.toBeInTheDocument()
   })
 
   it('offers Install for a bundled tool, and shows where it went', async () => {
-    mockCommand('cli_status', () => ({ bundled: BUNDLED, installed: null, installDir: '/usr/local/bin' }))
-    mockCommand('cli_install', () => ({ bundled: BUNDLED, installed: LINK, installDir: '/usr/local/bin' }))
+    mockCommand('cli_status', () => bundled)
+    mockCommand('cli_install', () => linked)
     await open()
     expect(await screen.findByTestId('settings-cli-bundled')).toHaveTextContent('rowel command')
+    expect(screen.getByTestId('settings-cli-path')).toHaveTextContent(BUNDLED)
 
     await userEvent.click(screen.getByTestId('settings-cli-install'))
 
@@ -2544,18 +2548,52 @@ describe('Settings › General › command line tool', () => {
     expect(await screen.findByTestId('settings-cli-installed')).toHaveTextContent(
       `Installed as ${LINK}`
     )
+    expect(screen.getByTestId('settings-cli-installed')).not.toHaveTextContent('to your PATH')
+    expect(screen.getByTestId('settings-cli-path')).toHaveTextContent(LINK)
     expect(screen.queryByTestId('settings-cli-install')).not.toBeInTheDocument()
   })
 
-  it('shows the path of a tool already on the PATH', async () => {
-    mockCommand('cli_status', () => ({ bundled: BUNDLED, installed: LINK, installDir: '/usr/local/bin' }))
+  // The path an agent's MCP config names is there to copy on every platform,
+  // Windows's backslashes and all.
+  it('copies the full path for an MCP config', async () => {
+    const exe = 'C:\\Users\\ada\\AppData\\Local\\Rowel\\rowel-cli.exe'
+    mockCommand('cli_status', () => ({ ...bundled, bundled: exe, installDir: null }))
+    await open()
+    await userEvent.click(await screen.findByTestId('settings-cli-copy'))
+    await waitFor(() =>
+      expect(calls('copy_to_clipboard')).toContainEqual(expect.objectContaining({ value: exe }))
+    )
+  })
+
+  it('says to add a directory that is not on the PATH', async () => {
+    const own = '/Users/ada/.local/bin'
+    mockCommand('cli_status', () => ({
+      ...bundled,
+      installed: `${own}/rowel`,
+      installDir: own,
+      onPath: false
+    }))
+    await open()
+    expect(await screen.findByTestId('settings-cli-installed')).toHaveTextContent(
+      `add ${own} to your PATH`
+    )
+  })
+
+  it('removes the command again', async () => {
+    mockCommand('cli_status', () => linked)
+    mockCommand('cli_uninstall', () => bundled)
     await open()
     expect(await screen.findByTestId('settings-cli-installed')).toHaveTextContent(LINK)
-    expect(screen.queryByTestId('settings-cli-install')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-cli-uninstall'))
+
+    expect(calls('cli_uninstall')).toHaveLength(1)
+    expect(await screen.findByTestId('settings-cli-bundled')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-cli-install')).toBeEnabled()
   })
 
   it('reports an install Rust refused and keeps the button', async () => {
-    mockCommand('cli_status', () => ({ bundled: BUNDLED, installed: null, installDir: '/usr/local/bin' }))
+    mockCommand('cli_status', () => bundled)
     mockCommand('cli_install', () =>
       Promise.reject({ kind: 'other', message: '/usr/local/bin/rowel exists and is not a link' })
     )

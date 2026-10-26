@@ -823,6 +823,7 @@
   "Installed as {{path}}. Coding agents connect through its MCP server. If your terminal does not find rowel, add {{dir}} to your PATH.": "Installiert als {{path}}. Coding-Agenten verbinden sich über seinen MCP-Server. Findet dein Terminal rowel nicht, füge {{dir}} deinem PATH hinzu.",
   "Puts the rowel command on your PATH, so coding agents can connect through its MCP server.": "Legt den Befehl rowel in deinen PATH, damit Coding-Agenten sich über seinen MCP-Server verbinden können.",
   "The command line tool ships with the packaged app; this build has none beside it.": "Das Befehlszeilenwerkzeug wird mit der paketierten App ausgeliefert; dieser Build hat keines dabei.",
+  "Use this full path in an agent's MCP config:": "Diesen vollständigen Pfad in der MCP-Konfiguration eines Agenten verwenden:",
   "Agent activity": "Agenten-Aktivität",
   "No agent activity in the last 7 days": "Keine Agenten-Aktivität in den letzten 7 Tagen",
   "Show all {{total}}": "Alle {{total}} anzeigen",
