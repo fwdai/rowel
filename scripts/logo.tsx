@@ -1,31 +1,30 @@
-// Bakes the rail mark into src/assets/images/logo.svg as a plain vector path:
+// Bakes the brand logo into src/assets/images/logo.svg as a plain vector path:
 // real geometry that any tool can open, edit and scale, with no SVG filter to
-// rasterize or drop. The rail renders this same file (Brand.tsx), and it is
-// the mark to use in READMEs, stores and decks. Run with `bun run logo`.
+// rasterize or drop. The rail, the empty states and the privacy screen render
+// this same file, the browser extension's monochrome toolbar sets are inked
+// from it (scripts/extension-icons.mjs), and it is the mark to use in READMEs,
+// stores and decks. Run with `bun run logo`.
 //
-// The mascot's body is primitive shapes softened live by a blur + alpha
-// threshold filter (see AsteriskBody). Here that filter is reproduced
-// numerically from the same geometry: rasterize the union, blur it with the
-// same sigma, and trace where coverage crosses the same threshold. The traced
-// outline is then fitted with cubic Béziers. Output is 96×96 (the lock-screen
-// mascot's size) in the light-theme brand ink.
+// The logo is the lock-screen mascot's body, faceless and a touch slimmer
+// (LOGO in asteriskGeometry.ts). The mascot is primitive shapes softened live
+// by a blur + alpha threshold filter (see AsteriskBody). Here that filter is
+// reproduced numerically from the same geometry: rasterize the union, blur it
+// with the same sigma, and trace where coverage crosses the same threshold.
+// The traced outline is then fitted with cubic Béziers. Output is 96×96 (the
+// lock-screen mascot's size) in the light-theme brand ink.
 //
-// Flags: `--freed=dot|head` overrides the mark's freed-spike shape and
-// `--out=<path>` the destination, for exporting a variant to compare.
+// Flags: `--hub=<radius>` and `--spike=<width>` override LOGO, and
+// `--out=<path>` the destination, for trying a proportion before settling it
+// in the geometry.
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import fitCurve from 'fit-curve'
 import {
   CENTER,
-  DOT_DISTANCE,
-  DOT_RADIUS,
-  HEAD,
-  MARK,
+  LOGO,
   SOFTEN,
   SPIKE,
-  SPIKE_ANGLES,
-  dotCenter,
-  type Freed
+  SPIKE_ANGLES
 } from '@/components/elements/asteriskGeometry'
 
 const flag = (name: string) =>
@@ -33,7 +32,8 @@ const flag = (name: string) =>
 
 const SIZE = 96
 const INK = '#34373e' // --c-brand, light theme
-const FREED = (flag('freed') as Freed | undefined) ?? MARK.freed
+const HUB = Number(flag('hub') ?? LOGO.hub)
+const WIDTH = Number(flag('spike') ?? LOGO.spike)
 const OUT = resolve(
   flag('out') ?? resolve(import.meta.dir, '../src/assets/images/logo.svg')
 )
@@ -81,16 +81,6 @@ function insideSpike(x: number, y: number, angle: number, width: number) {
   return Math.abs(ux) <= spikeHalfWidth(uy)
 }
 
-// The rounded spike-head slab, upright at DOT_DISTANCE in the spike frame.
-function insideHead(x: number, y: number, angle: number, width: number) {
-  const { ux, uy } = toSpikeFrame(x, y, angle, width)
-  const hx = Math.abs(ux) - (HEAD.width / 2 - HEAD.radius)
-  const hy = Math.abs(uy - (CENTER - DOT_DISTANCE)) - (HEAD.height / 2 - HEAD.radius)
-  const qx = Math.max(hx, 0)
-  const qy = Math.max(hy, 0)
-  return Math.hypot(qx, qy) <= HEAD.radius
-}
-
 const insideCircle = (x: number, y: number, cx: number, cy: number, r: number) =>
   (x - cx) ** 2 + (y - cy) ** 2 <= r * r
 
@@ -98,19 +88,14 @@ const insideCircle = (x: number, y: number, cx: number, cy: number, r: number) =
 /* The filter, numerically.                                                  */
 
 function coverage(): Float32Array {
-  const spikes = SPIKE_ANGLES.filter(a => a !== MARK.dot)
-  const dot = dotCenter(MARK.dot)
   const grid = new Float32Array(N * N)
   for (let j = 0; j < N; j++) {
     const y = (j + 0.5) / PX
     for (let i = 0; i < N; i++) {
       const x = (i + 0.5) / PX
       const inside =
-        insideCircle(x, y, CENTER, CENTER, MARK.hub) ||
-        (FREED === 'dot'
-          ? insideCircle(x, y, dot.x, dot.y, DOT_RADIUS)
-          : insideHead(x, y, MARK.dot, MARK.spike)) ||
-        spikes.some(a => insideSpike(x, y, a, MARK.spike))
+        insideCircle(x, y, CENTER, CENTER, HUB) ||
+        SPIKE_ANGLES.some(a => insideSpike(x, y, a, WIDTH))
       if (inside) grid[j * N + i] = 1
     }
   }
@@ -173,9 +158,9 @@ function sample(field: Float32Array, x: number, y: number): number {
 /* ------------------------------------------------------------------------ */
 /* Tracing and fitting.                                                      */
 
-// Both the body and the dot are star-shaped about their own centers (every
-// ray from the center leaves the shape exactly once), so the outline is the
-// first threshold crossing along each ray. Returns points in angular order.
+// The body is star-shaped about its center (every ray from the center leaves
+// the shape exactly once), so the outline is the first threshold crossing
+// along each ray. Returns points in angular order.
 function traceLoop(
   field: Float32Array,
   threshold: number,
@@ -231,39 +216,19 @@ function loopToPath(points: Point[], startAt: number, maxError: number) {
 const threshold = -SOFTEN.offset / SOFTEN.slope
 const field = gaussianBlur(coverage(), SOFTEN.blur)
 
-// Start the body seam ~20° past the top spike's axis: on its straight edge.
+// Start the seam ~20° past the top spike's axis: on its straight edge.
 const body = loopToPath(
   traceLoop(field, threshold, CENTER, CENTER, 1440),
   20 / 360,
   0.005
 )
 
-// The freed piece is traced about its own center. A dot comes out a
-// near-perfect circle, grown by the filter, so it stays a circle at its
-// measured radius; the head slab is fitted like the body, seam on a long side.
-const dot = dotCenter(MARK.dot)
-const freedLoop = traceLoop(field, threshold, dot.x, dot.y, 360)
-let freedSvg: string
-let freedNote: string
-if (FREED === 'dot') {
-  const r =
-    freedLoop.reduce((acc, [x, y]) => acc + Math.hypot(x - dot.x, y - dot.y), 0) /
-    freedLoop.length
-  freedSvg = `<circle cx="${fmt(dot.x)}" cy="${fmt(dot.y)}" r="${fmt(r)}"/>`
-  freedNote = `dot r=${fmt(r)}`
-} else {
-  const head = loopToPath(freedLoop, (MARK.dot + 90) / 360, 0.005)
-  freedSvg = `<path d="${head.d}"/>`
-  freedNote = `head ${head.segments} curves`
-}
-
 const svg =
   `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" viewBox="0 0 64 64" fill="${INK}" aria-label="Rowel">\n` +
   `  <path d="${body.d}"/>\n` +
-  `  ${freedSvg}\n` +
   `</svg>\n`
 
 writeFileSync(OUT, svg)
 console.log(
-  `wrote ${OUT} (body ${body.segments} curves, ${freedNote}, ${svg.length} bytes)`
+  `wrote ${OUT} (hub ${HUB}, spike ${WIDTH}, ${body.segments} curves, ${svg.length} bytes)`
 )

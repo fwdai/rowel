@@ -1,9 +1,9 @@
 // Geometry of the brand asterisk, shared by the AsteriskBody component (the
 // lock-screen mascot's body, drawn live and softened by an SVG filter) and
-// scripts/logo.tsx (which bakes the same softened outline, in the rail mark's
-// variant, into the plain vector path at src/assets/images/logo.svg that the
-// rail and everything outside the app display). Change the shape here and
-// only here, then `bun run logo`.
+// scripts/logo.tsx (which bakes the same softened outline, in the logo's
+// slimmer variant, into the plain vector path at src/assets/images/logo.svg
+// that the rail and everything outside the app display). Change the shape
+// here and only here, then `bun run logo` and `bun run extension:icons`.
 //
 // A masked character, the secret you can't read. Drawn in a 64-unit box
 // centered at 32: a round hub and six flared spikes at 60° whose tips reach
@@ -42,29 +42,13 @@ export const spikeTransform = (angle: number, width: number) =>
     ? ` translate(${CENTER} 0) scale(${width} 1) translate(${-CENTER} 0)`
     : '')
 
-// The freed spike's dot: as wide as a spike head, floated a little past the
-// spike-tip circle (tips reach 29; the dot's outer edge reaches 31) so it
-// reads as clearly let go of the body. Set against an 11 hub that leaves a
-// 6-unit gap; the soften filter needs at least 4 or it bridges them.
-export const DOT_RADIUS = 7
-export const DOT_DISTANCE = 24
-
-// What the freed spike becomes. `dot`: a plain circle. `head`: a heavily
-// rounded slab a little bigger than a spike head, so the freed piece reads as
-// the tip that came off rather than a plain period. It's sized up so that,
-// even this rounded (and after the soften filter rounds it further), a hint
-// of straight edge survives; a 16×12 slab at radius 5 already reads as a
-// circle. Drawn upright in the spike's frame at DOT_DISTANCE and placed with
-// the spike transform, so it inherits the slimming and points along the freed
-// spike's axis.
-export type Freed = 'dot' | 'head'
-export const HEAD = { width: 17, height: 13, radius: 5.5 }
-
-export const dotCenter = (angle: number) => {
+// A point `distance` from the center along a spike's axis, for anchoring
+// things to the body (the empty state's badge sits on a spike head).
+export const pointOnSpike = (angle: number, distance: number) => {
   const rad = (angle * Math.PI) / 180
   return {
-    x: +(CENTER + Math.sin(rad) * DOT_DISTANCE).toFixed(2),
-    y: +(CENTER - Math.cos(rad) * DOT_DISTANCE).toFixed(2)
+    x: +(CENTER + Math.sin(rad) * distance).toFixed(2),
+    y: +(CENTER - Math.cos(rad) * distance).toFixed(2)
   }
 }
 
@@ -75,12 +59,12 @@ export const dotCenter = (angle: number) => {
 // cannot fillet, and grows edges by about 0.3 units.
 export const SOFTEN = { blur: 1.8, slope: 30, offset: -13 }
 
-// The rail mark's variant of the body: the lower-right spike set free as a
-// rounded head, and, with no face to carry, a trimmed hub and slimmer spikes
-// so the notches open and it still reads as an asterisk at rail size.
-export const MARK: { dot: number; hub: number; spike: number; freed: Freed } = {
-  dot: 120,
-  hub: 11,
-  spike: 0.85,
-  freed: 'head'
-}
+// The logo's variant of the body (src/assets/images/logo.svg, baked by
+// `bun run logo`): the mascot with all six spikes and no face, so it goes
+// slimmer than the lock screen's to open the notches, but keeps enough hub
+// to read as the same character.
+export const LOGO = { hub: 13, spike: 0.8 }
+
+// The character-size glyph's variant (AsteriskGlyph): a trimmed hub and
+// slimmer spikes so the notches stay open at ten pixels.
+export const MARK = { hub: 11, spike: 0.85 }

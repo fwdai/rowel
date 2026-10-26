@@ -4,9 +4,9 @@
 // The files are upstream's under Rowel's names (icons/rowel*.png and rowel.svg
 // for keepassxc*; see extension/upstream-map.json), so an upstream sync only
 // ever conflicts on the pixels. Two sources:
-//   - the app icon (the mark on its light tile) for the extension icons, the
-//     in-page field icon and the colored toolbar set;
-//   - the bare mark, inked per toolbar theme, for the monochrome sets.
+//   - the app icon's vector twin (the logo on its light tile) for the
+//     extension icons, the in-page field icon and the colored toolbar set;
+//   - the bare logo, inked per toolbar theme, for the monochrome sets.
 // The toolbar state badges (lock, cross, bang, the "update" sparkle) are lifted
 // from upstream's own SVGs and laid over the Rowel art, so the script is
 // idempotent and picks up upstream badge changes when re-run after a sync.
@@ -15,7 +15,7 @@ import { copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFile
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const TILE = 'src-tauri/icons/asterisq.svg'
+const TILE = 'src-tauri/icons/rowel.svg'
 const MARK = 'src/assets/images/logo.svg'
 const ICONS = 'extension/rowel/icons'
 const TOOLBAR = join(ICONS, 'toolbar')

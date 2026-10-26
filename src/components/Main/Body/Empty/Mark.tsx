@@ -1,5 +1,5 @@
 import Logo from '@/assets/images/logo.svg?react'
-import { CENTER, MARK, dotCenter } from '@/components/elements/asteriskGeometry'
+import { CENTER, pointOnSpike } from '@/components/elements/asteriskGeometry'
 import type { Glyph } from '@/kinds'
 
 interface Props {
@@ -8,11 +8,11 @@ interface Props {
   badge?: Glyph
 }
 
-// The badge sits where the mark's freed head is — the one piece the asterisk
-// let go of — so a view's symbol reads as what the mark is holding out rather
-// than a sticker on top of it. Read off the geometry, so it follows the head
-// if the mark is ever re-baked.
-const head = dotCenter(MARK.dot)
+// The badge sits on the lower-right spike's head, cutting into the mark the
+// way a system badge cuts into an app icon, so a view's symbol reads as
+// something the mark holds rather than a sticker on top of it. Read off the
+// geometry, so it follows the spike if the mark is ever re-baked.
+const head = pointOnSpike(120, 24)
 const BADGE_AT = {
   left: `${(head.x / (CENTER * 2)) * 100}%`,
   top: `${(head.y / (CENTER * 2)) * 100}%`
