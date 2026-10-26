@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use zeroize::Zeroizing;
 
-use rowel_broker::actions::{Client, Hello, Host, Login, VisibleRef};
+use rowel_broker::actions::{Client, ClientKind, Hello, Host, Login, VisibleRef};
 use rowel_broker::agents::{
     self, candidates_in, client_covered, covered, decide, deny_unasked, end_grant_in, expire_due,
     reply_for, resolved, settle, visible_in, Asking, GrantEnd, Locked, Prepared, Verdict,
@@ -161,9 +161,18 @@ impl OrgHost {
         })
     }
 
-    /// The trust policies for the issuer the token names, each beside the
-    /// definition it resolves to.
-    fn policies_for(&self, token: &str) -> Option<(Vec<TrustPolicy>, Vec<String>)> {
+    /// The trust policies for the issuer the token names that admit a
+    /// client of `kind`, each beside the definition it resolves to. Only
+    /// those are candidates, so a token that matches an agent's policy alone
+    /// is refused when it says it is a sidecar, and the other way round:
+    /// which kind a client is decides what it may do (a sidecar resolves
+    /// values, an agent never does), so the kind is the policy's to grant,
+    /// not the client's to claim.
+    fn policies_for(
+        &self,
+        token: &str,
+        kind: ClientKind,
+    ) -> Option<(Vec<TrustPolicy>, Vec<String>)> {
         let issuer = workload::unverified_issuer(token)?;
         let stored = match self.state.store.trust_policies_for_issuer(&issuer) {
             Ok(stored) => stored,
@@ -175,6 +184,7 @@ impl OrgHost {
         Some(
             stored
                 .into_iter()
+                .filter(|p| p.kind == kind)
                 .map(|p| {
                     (
                         TrustPolicy {
@@ -373,7 +383,8 @@ impl Host for OrgHost {
 
     // A proof or nothing: the server never falls back to asking a person.
     // The token is verified against the trust policies for the issuer it
-    // names, bound to `session_key`, noted in the replay cache, and the
+    // names that admit the kind the client says it is, bound to
+    // `session_key`, noted in the replay cache, and the
     // policy it matched names the definition the client becomes. Why a
     // proof failed goes to the server's log, never to the client.
     fn associate_on_channel(
@@ -384,7 +395,7 @@ impl Host for OrgHost {
     ) -> Result<Client, Code> {
         let proof = who.proof.as_ref().ok_or(Code::AssociationFailed)?;
         let (policies, agent_ids) = self
-            .policies_for(&proof.token)
+            .policies_for(&proof.token, who.kind)
             .ok_or(Code::AssociationFailed)?;
         let audience = self.state.tenant_audience().map_err(|e| {
             log::warn!("rowel server: the tenant row is unreadable: {e}");

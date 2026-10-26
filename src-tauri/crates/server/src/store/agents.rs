@@ -38,11 +38,30 @@ pub struct TrustPolicy {
     /// bare one and the challenge nonce binds the token to the channel
     /// instead (`docs/server-api.md`, "Verification").
     pub fixed_audience: bool,
+    /// The one kind of client a token matching this policy may associate
+    /// as: `agent` or `sidecar` (spec `05`, Tier 2: a sidecar proves an
+    /// identity of its own). A token that matches only an agent's policy
+    /// cannot become that agent's sidecar, and the other way round.
+    #[serde(rename = "clientKind")]
+    pub kind: ClientKind,
     pub created_at_ms: i64,
 }
 
+/// `kind` if a trust policy may admit it. A browser extension is never let
+/// in by a workload token: it is a person's, and reaches a server through an
+/// enrollment code (I11), so a policy naming it could only be a mistake.
+pub fn workload_kind(kind: ClientKind) -> std::result::Result<ClientKind, &'static str> {
+    match kind {
+        ClientKind::Agent | ClientKind::Sidecar => Ok(kind),
+        ClientKind::Extension => {
+            Err("a trust policy admits an agent or a sidecar, never an extension")
+        }
+    }
+}
+
 const AGENT_COLUMNS: &str = "id, name, lockbox_id, enabled, created_at_ms";
-const POLICY_COLUMNS: &str = "id, agent_id, issuer, claims, fixed_audience, created_at_ms";
+const POLICY_COLUMNS: &str =
+    "id, agent_id, issuer, claims, fixed_audience, client_kind, created_at_ms";
 const CLIENT_COLUMNS: &str = "key, agent_id, name, kind, platform, created_at_ms, last_seen_at_ms";
 
 fn read_agent(row: &Row<'_>) -> rusqlite::Result<Agent> {
@@ -63,17 +82,22 @@ fn read_policy(row: &Row<'_>) -> rusqlite::Result<TrustPolicy> {
         issuer: row.get("issuer")?,
         claims: serde_json::from_str(&claims).map_err(json_column)?,
         fixed_audience: row.get("fixed_audience")?,
+        kind: read_kind(row, "client_kind")?,
         created_at_ms: row.get("created_at_ms")?,
     })
 }
 
+fn read_kind(row: &Row<'_>, column: &str) -> rusqlite::Result<ClientKind> {
+    let kind: String = row.get(column)?;
+    serde_json::from_value(serde_json::Value::String(kind)).map_err(json_column)
+}
+
 fn read_client(row: &Row<'_>) -> rusqlite::Result<Client> {
-    let kind: String = row.get("kind")?;
     Ok(Client {
         key: row.get("key")?,
         agent_id: Some(row.get("agent_id")?),
         name: row.get("name")?,
-        kind: serde_json::from_value(serde_json::Value::String(kind)).map_err(json_column)?,
+        kind: read_kind(row, "kind")?,
         platform: row.get("platform")?,
         created_at_ms: row.get("created_at_ms")?,
         last_seen_at_ms: row.get("last_seen_at_ms")?,
@@ -174,6 +198,7 @@ impl Store {
         issuer: &str,
         claims: BTreeMap<String, String>,
         fixed_audience: bool,
+        kind: ClientKind,
     ) -> Result<TrustPolicy> {
         let policy = TrustPolicy {
             id: random_hex_id(),
@@ -181,17 +206,19 @@ impl Store {
             issuer: issuer.into(),
             claims,
             fixed_audience,
+            kind: workload_kind(kind).map_err(|e| StoreError::Other(e.into()))?,
             created_at_ms: now_ms(),
         };
         self.conn().execute(
-            "INSERT INTO trust_policies (id, agent_id, issuer, claims, fixed_audience, created_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO trust_policies (id, agent_id, issuer, claims, fixed_audience, client_kind, created_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 policy.id,
                 policy.agent_id,
                 policy.issuer,
                 serde_json::to_string(&policy.claims)?,
                 policy.fixed_audience,
+                kind_text(policy.kind)?,
                 policy.created_at_ms
             ],
         )?;

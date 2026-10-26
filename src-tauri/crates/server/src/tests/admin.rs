@@ -239,15 +239,43 @@ async fn an_admin_keeps_lockboxes_agents_trust_and_rules() {
     let trust_id = json(trust).await["id"].as_str().unwrap().to_string();
     let everyone = call(
         Method::POST,
-        trust_path,
+        trust_path.clone(),
         Some(json!({ "issuer": "https://token.actions.githubusercontent.com", "claims": {} })),
     )
     .await;
     assert_eq!(everyone.status().as_u16(), 400);
 
+    // The sidecar's own identity, and an extension, which no workload
+    // token becomes.
+    let sidecar = call(
+        Method::POST,
+        trust_path.clone(),
+        Some(json!({
+            "issuer": "https://token.actions.githubusercontent.com",
+            "claims": { "repository": "acme/deploy", "job_workflow_ref": "acme/proxy" },
+            "clientKind": "sidecar",
+        })),
+    )
+    .await;
+    assert_eq!(sidecar.status().as_u16(), 201);
+    assert_eq!(json(sidecar).await["clientKind"], "sidecar");
+    let extension = call(
+        Method::POST,
+        trust_path,
+        Some(json!({
+            "issuer": "https://token.actions.githubusercontent.com",
+            "claims": { "repository": "acme/deploy" },
+            "clientKind": "extension",
+        })),
+    )
+    .await;
+    assert_eq!(extension.status().as_u16(), 400);
+
     let agents = json(call(Method::GET, "/v1/admin/agents".into(), None).await).await;
     assert_eq!(agents[0]["trust"][0]["id"], trust_id);
     assert_eq!(agents[0]["trust"][0]["claims"]["repository"], "acme/deploy");
+    assert_eq!(agents[0]["trust"][0]["clientKind"], "agent");
+    assert_eq!(agents[0]["trust"][1]["clientKind"], "sidecar");
 
     let renamed = json(
         call(
@@ -260,7 +288,7 @@ async fn an_admin_keeps_lockboxes_agents_trust_and_rules() {
     .await;
     assert_eq!(renamed["name"], "deploy-bot");
     assert_eq!(renamed["enabled"], false);
-    assert_eq!(renamed["trust"].as_array().unwrap().len(), 1);
+    assert_eq!(renamed["trust"].as_array().unwrap().len(), 2);
 
     let untrust = format!("/v1/admin/trust/{trust_id}");
     assert_eq!(
@@ -356,6 +384,7 @@ async fn an_admin_keeps_lockboxes_agents_trust_and_rules() {
             "lockbox_member_set",
             "lockbox_member_removed",
             "agent_added",
+            "trust_added",
             "trust_added",
             "agent_updated",
             "trust_removed",

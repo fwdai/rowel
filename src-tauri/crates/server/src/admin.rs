@@ -18,6 +18,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use rowel_broker::actions::ClientKind;
 use rowel_broker::grant::CreatedBy;
 use rowel_broker::policy::Rule;
 use rowel_core::store::AuditRecord;
@@ -28,8 +29,8 @@ use crate::lockboxes;
 use crate::state::{now_ms, AppState};
 use crate::store::events::ServerEvent;
 use crate::store::{
-    Agent, AuditFilter, Device, DeviceState, Lockbox, LockboxMember, LockboxRole, Member, Role,
-    Store, TrustPolicy, SERVER_ADMIN,
+    workload_kind, Agent, AuditFilter, Device, DeviceState, Lockbox, LockboxMember, LockboxRole,
+    Member, Role, Store, TrustPolicy, SERVER_ADMIN,
 };
 
 /// How many events one `GET /v1/admin/events` returns when it does not
@@ -526,6 +527,15 @@ struct NewTrust {
     claims: BTreeMap<String, String>,
     #[serde(default)]
     fixed_audience: bool,
+    /// What a matching token may associate as. An agent unless said
+    /// otherwise; not `ClientKind`'s own default, which is the extension a
+    /// policy never admits.
+    #[serde(default = "agent_kind")]
+    client_kind: ClientKind,
+}
+
+fn agent_kind() -> ClientKind {
+    ClientKind::Agent
 }
 
 async fn add_trust(
@@ -552,15 +562,21 @@ async fn add_trust(
             "a trust policy names at least one claim to match",
         ));
     }
+    let kind = workload_kind(body.client_kind).map_err(Failure::bad_request)?;
     let policy =
         state
             .store
-            .add_trust_policy(&agent_id, &issuer, body.claims, body.fixed_audience)?;
+            .add_trust_policy(&agent_id, &issuer, body.claims, body.fixed_audience, kind)?;
     admin.record(
         &state.store,
         "trust_added",
         None,
-        json!({ "trustId": policy.id, "agentId": agent_id, "issuer": policy.issuer }),
+        json!({
+            "trustId": policy.id,
+            "agentId": agent_id,
+            "issuer": policy.issuer,
+            "clientKind": policy.kind,
+        }),
     )?;
     Ok((StatusCode::CREATED, Json(policy)))
 }

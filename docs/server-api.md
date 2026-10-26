@@ -214,37 +214,66 @@ pack resource. The device runs the full sync engine unchanged; only the
 remote is new.
 
 ```
-HEAD /v1/lockboxes/{id}/pack           → 200, ETag (+ Content-Length)     | 404
-GET  /v1/lockboxes/{id}/pack           → 200, bytes, ETag                 | 404
+HEAD /v1/lockboxes/{id}/pack           → 200, ETag, Content-Length        | 403, 404
+GET  /v1/lockboxes/{id}/pack           → 200, bytes, ETag                 | 403, 404
 PUT  /v1/lockboxes/{id}/pack
      If-None-Match: *                   → 200, ETag   create              | 412 exists
-     If-Match: "<etag>"                 → 200, ETag   update              | 412 moved, 404 gone
+     If-Match: "<etag>"                 → 200, ETag   update              | 412 moved, 404 gone,
+                                                                            409, 400, 423, 413
      neither                            → 428
+DELETE                                  → 405
 ```
 
+- **Who.** The member must hold the lockbox, in any role, and call from an
+  approved device of theirs: a pending or revoked device, or a session that
+  never enrolled one, is a 403, since it holds no master and even the
+  ciphertext tells size and timing. A lockbox the member does not hold is a
+  404, exactly as one that does not exist, so nobody learns of a lockbox
+  they were not given.
 - **The ETag is the revision**, compared verbatim, quotes included. The
-  device never reads it; it only hands it back. A 404 on `GET` or `HEAD` is
-  a lockbox with no pack yet (or none at all); the first push creates it.
+  device never reads it; it only hands it back. `HEAD` is `GET` without the
+  body, so its `Content-Length` is the pack's. A server that makes a
+  lockbox's file only at the first push answers 404 to `GET` and `HEAD`
+  until then, and the first push creates it; the Rowel Server makes the
+  file with the lockbox, so every lockbox it lists has a pack and an ETag,
+  and a 404 there is only a lockbox that does not exist for the caller.
 - **The PUT is a compare-and-swap.** `If-None-Match: *` creates and fails
-  with 412 if a pack exists; `If-Match` updates and fails with 412 unless
-  the ETag is the current one; an `If-None-Match` carrying anything but `*`
-  is a 400. **A PUT with neither precondition is refused** (428): the device
-  never sends one, and a server must never take one, because a blind PUT
-  would put a device's copy over a write it never merged. On 412 the sync
-  run fails with its retry message and the next run pulls and merges.
+  with 412 if a pack exists (always, at the Rowel Server; the device's next
+  run then finds the pack, pulls, merges and updates); `If-Match` updates
+  and fails with 412 unless the ETag is the current one; an `If-None-Match`
+  carrying anything but `*` is a 400. **A PUT with neither precondition is
+  refused** (428): the device never sends one, and a server must never take
+  one, because a blind PUT would put a device's copy over a write it never
+  merged. On 412 the sync run fails with its retry message and the next run
+  pulls and merges. A body over `MAX_PACK_BYTES` is a 413.
 - **The server merges; it does not store.** A pack is sealed under the
   lockbox master the server holds, so on `PUT` it opens the pack as a
   second device would, merges it into its own copy (last-writer-wins per
-  entry, tombstones, attachments, audit rows as a union) and answers with
-  the new revision; on `GET` it serves a pack of its current state. The
-  server is the merge authority, which is what lets an agent's write (a
-  `save_login` under a grant) and two devices' pushes interleave. **Every
-  server-side write bumps the revision**, an agent's included, so a device
-  holding the old one fails its CAS and merges first.
+  entry, tombstones, attachments, audit rows as a union; the pushed name is
+  ignored, since an org lockbox is named at the server) and answers with
+  the new revision, a new one for every accepted push even when the merge
+  changed nothing; on `GET` it serves a pack of its current state. The
+  server is the merge authority, which is what lets an agent's writes (the
+  rows its grants log) and two devices' pushes interleave. **Every
+  server-side write bumps the revision**, an agent's and an unwrap of the
+  lockbox's key included, so a device holding the old one fails its CAS and
+  merges first. The revision a `PUT` answers with names the server's merged
+  state, which is not always the pack pushed (a row of it may have lost to
+  one the server held): a device learns what that revision holds by
+  pulling it, as the engine does at the start of every run.
+- **What a PUT is refused for, after the precondition.** A body that is not
+  a pack, or one that does not open under the lockbox's key, is a 400. A
+  pack under any descriptor but the lockbox's current one is a 409 ("this
+  pack is under another key generation; refresh the lockbox key"): until
+  rotation keeps retired generations at the server, it can open no other,
+  and the device re-keys to the listing's generation before it pushes
+  again. A pack written by a newer app than the server reads is a 409 too.
+- **A frozen lockbox** takes no push (423 Locked) and is still served to
+  `GET` and `HEAD`: its members already hold the master and a copy, so
+  withholding the pack would take nothing from them and fail every sync
+  run. Serving it writes nothing into it.
 - A device never deletes an org lockbox; a `DELETE` is refused on the device
-  and should be 405 at the server. A rotation leaves the stored pack as the
-  last device pushed it, under the old descriptor, until a device re-keys
-  it and pushes.
+  and is 405 at the server.
 
 ## Agent API ❌ (being built; the shapes here are final)
 
@@ -296,7 +325,11 @@ its `jti` goes into a replay cache for that window. The replay cache runs for
 every verifier regardless. The claims are then matched to a **trust policy**
 — `{ issuer, claims: { repository: "acme/deploy", ref: "refs/heads/main",
 workflow: "release.yml" } }`, exact match per claim, glob where an admin
-allows it — which names the agent definition the client becomes.
+allows it — which names the agent definition the client becomes. Only the
+policies whose `clientKind` is the `hello`'s `kind` are candidates: a policy
+admits an `agent` or a `sidecar`, never both, so a sidecar (the one kind that
+receives values) proves an identity of its own, and a token that matches
+only the agent's policy is refused when it says `sidecar`.
 
 **Reply.** The usual association reply, `{ "hash", "id", "brokerCapabilities",
 "clientId" }`; the stored client carries `agentId`, the definition it
@@ -380,7 +413,8 @@ GET    /v1/admin/agents                 → [Agent]
 POST   /v1/admin/agents                 { name, lockboxId }    → 201 Agent
 PATCH  /v1/admin/agents/{id}            { name?, enabled? }    → Agent
 DELETE /v1/admin/agents/{id}            → 204   (its trust policies and clients go with it)
-POST   /v1/admin/agents/{id}/trust      { issuer, claims: { "<claim>": "<pattern>" }, fixedAudience? }
+POST   /v1/admin/agents/{id}/trust      { issuer, claims: { "<claim>": "<pattern>" }, fixedAudience?,
+                                          clientKind?: agent|sidecar }
                                         → 201 TrustPolicy
 DELETE /v1/admin/trust/{id}             → 204
 ```
@@ -390,12 +424,15 @@ DELETE /v1/admin/trust/{id}             → 204
   "createdAtMs": 1700000000000,
   "trust": [ { "id": "t1", "agentId": "a1", "issuer": "https://token.actions.githubusercontent.com",
                "claims": { "repository": "acme/deploy", "ref": "refs/heads/main" },
-               "fixedAudience": false, "createdAtMs": 1700000000000 } ] }
+               "fixedAudience": false, "clientKind": "agent", "createdAtMs": 1700000000000 } ] }
 ```
 
 A trust policy names at least one claim: one with none would admit every
 token the issuer mints. `fixedAudience` (default `false`) is for a platform
-that cannot set a token's audience (see "Verification"). An agent switched
+that cannot set a token's audience (see "Verification"). `clientKind`
+(default `agent`) is what a matching token may associate as; `sidecar` is a
+policy for the sidecar that resolves values for the agent, matched to the
+sidecar's own workload identity, and `extension` is a 400. An agent switched
 off is refused at its clients' next request.
 
 ### Rules ✅

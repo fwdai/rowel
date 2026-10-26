@@ -23,10 +23,11 @@ fn migration_list() -> Vec<M<'static>> {
         // generation. The audit mirror is keyed as a lockbox's own chain is,
         // per writer and sequence, so a row mirrored twice is one row.
         //
-        // The schema has shipped in no build yet, so a table added while the
-        // first server iteration is being built (`server_events`) goes into
-        // this first migration rather than a second one; from the first
-        // release on, the rule at the top of this file holds.
+        // The schema has shipped in no build yet, so a table or a column
+        // added while the first server iteration is being built
+        // (`server_events`, `trust_policies.client_kind`) goes into this
+        // first migration rather than a second one; from the first release
+        // on, the rule at the top of this file holds.
         M::up(
             "CREATE TABLE tenant (
                id            TEXT PRIMARY KEY,
@@ -108,6 +109,7 @@ fn migration_list() -> Vec<M<'static>> {
                issuer         TEXT NOT NULL,
                claims         TEXT NOT NULL,
                fixed_audience INTEGER NOT NULL DEFAULT 0,
+               client_kind    TEXT NOT NULL DEFAULT 'agent',
                created_at_ms  INTEGER NOT NULL
              );
              CREATE INDEX trust_policies_issuer ON trust_policies(issuer);

@@ -1,14 +1,21 @@
-//! `rowel admin server` over the built binary and a temporary data
-//! directory: a server set up from nothing to a lockbox with a holder, an
-//! agent with a trust policy, a rule, and an empty audit mirror that exports
-//! nothing and verifies. Unlike `tests/serve.rs` this runs everywhere: no
-//! client key of the CLI's is involved, so the OS secure store is never
-//! touched.
+//! `rowel admin server` and `rowel serve --server` over the built binary and
+//! a temporary data directory: a server set up from nothing to a lockbox
+//! with a holder, an agent with a trust policy for itself and one for its
+//! sidecar, a rule, and an empty audit mirror that exports nothing and
+//! verifies; then the server itself started, answering on its port, alone
+//! on its data directory, and stopped. Unlike `tests/serve.rs` this runs
+//! everywhere: no client key of the CLI's is involved, so the OS secure
+//! store is never touched.
 
 #![cfg(not(any(target_os = "android", target_os = "ios")))]
 
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use rowel_server::config::{self, Config};
 
@@ -141,10 +148,25 @@ fn a_server_is_set_up_from_nothing_through_the_admin_commands() {
             "ref=glob:refs/heads/*",
         ],
     );
+    let sidecar = id(
+        &data,
+        &[
+            "trust",
+            "add",
+            "--agent",
+            &agent,
+            "--issuer",
+            "https://token.actions.githubusercontent.com",
+            "--claim",
+            "job_workflow_ref=acme/ci/.github/workflows/rowel-proxy.yml@refs/heads/main",
+            "--sidecar",
+        ],
+    );
     let agents = ok(&data, &["agents", "list"]);
     assert!(
         agents.contains(&agent)
-            && agents.contains(&policy)
+            && agents.contains(&format!("trust {policy}  agent  "))
+            && agents.contains(&format!("trust {sidecar}  sidecar  "))
             && agents.contains("repository=acme/api")
             && agents.contains("ref=glob:refs/heads/*"),
         "{agents}"
@@ -198,4 +220,181 @@ fn a_data_directory_without_a_server_is_not_made_into_one() {
     assert_eq!(code, 1, "{err}");
     assert!(err.contains("run rowel admin server init first"), "{err}");
     assert!(!data.join("server.db").exists());
+}
+
+/// `rowel serve --server --data-dir <data>`, its stderr collected as it
+/// comes so the pipe never fills; the collecting thread ends at the
+/// process's exit.
+fn start_server(data: &Path) -> (Child, Arc<Mutex<String>>, JoinHandle<()>) {
+    let mut child = Command::new(BIN)
+        .args(["serve", "--server", "--data-dir"])
+        .arg(data)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", data.parent().unwrap())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let said = Arc::new(Mutex::new(String::new()));
+    let mut stderr = child.stderr.take().unwrap();
+    let heard = said.clone();
+    let collecting = std::thread::spawn(move || {
+        let mut chunk = [0u8; 1024];
+        while let Ok(n) = stderr.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            heard
+                .lock()
+                .unwrap()
+                .push_str(&String::from_utf8_lossy(&chunk[..n]));
+        }
+    });
+    (child, said, collecting)
+}
+
+/// One `GET` over plain HTTP/1.1: the status and the body.
+fn get(port: u16, path: &str) -> std::io::Result<(u16, String)> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    )?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    let status = response
+        .split(' ')
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .unwrap_or(0);
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body.to_string())
+        .unwrap_or_default();
+    Ok((status, body))
+}
+
+fn wait_for_exit(child: &mut Child, within: Duration) -> std::process::ExitStatus {
+    let deadline = Instant::now() + within;
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the server did not exit within {within:?}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn a_server_starts_answers_keeps_its_data_directory_to_itself_and_stops_sealed() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().join("data");
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let public_url = format!("http://127.0.0.1:{port}");
+    ok(
+        &data,
+        &["init", "--tenant", "Acme", "--public-url", &public_url],
+    );
+    // `init` writes the default listener; this one listens where the URL
+    // says.
+    let path = config::path_in(&data);
+    let mut written = Config::load(&path).unwrap();
+    written.listen.http = format!("127.0.0.1:{port}");
+    std::fs::write(&path, serde_json::to_string_pretty(&written).unwrap()).unwrap();
+
+    let (mut server, said, collecting) = start_server(&data);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Ok((200, body)) = get(port, "/v1/health") {
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&body).unwrap(),
+                serde_json::json!({ "ok": true })
+            );
+            break;
+        }
+        if let Some(status) = server.try_wait().unwrap() {
+            panic!("the server exited with {status}: {}", said.lock().unwrap());
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no health answer: {}",
+            said.lock().unwrap()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        said.lock().unwrap().contains(&format!(
+            "rowel serve --server: listening on http://127.0.0.1:{port}"
+        )),
+        "{}",
+        said.lock().unwrap()
+    );
+
+    // The agent's challenge, unauthenticated.
+    let (status, body) = get(port, "/v1/agent/challenge").unwrap();
+    assert_eq!(status, 200, "{body}");
+    let challenge: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        challenge["nonce"].as_str().is_some_and(|n| !n.is_empty()),
+        "{body}"
+    );
+    assert!(
+        challenge["audience"]
+            .as_str()
+            .unwrap()
+            .starts_with("rowel:"),
+        "{body}"
+    );
+    // A member call without a bearer.
+    assert_eq!(get(port, "/v1/members/me").unwrap().0, 401);
+
+    // A second server on the same data directory is refused while the first
+    // runs.
+    let second = Command::new(BIN)
+        .args(["serve", "--server", "--data-dir"])
+        .arg(&data)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", temp.path())
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let refused = String::from_utf8_lossy(&second.stderr);
+    assert_eq!(second.status.code(), Some(1), "{refused}");
+    assert!(refused.contains("another broker"), "{refused}");
+
+    #[cfg(unix)]
+    {
+        let signalled = Command::new("kill")
+            .args(["-TERM", &server.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(signalled.success());
+        let status = wait_for_exit(&mut server, Duration::from_secs(20));
+        collecting.join().unwrap();
+        assert_eq!(status.code(), Some(0), "{}", said.lock().unwrap());
+        assert!(
+            said.lock()
+                .unwrap()
+                .contains("rowel serve --server: sealed, exiting"),
+            "{}",
+            said.lock().unwrap()
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        server.kill().unwrap();
+        wait_for_exit(&mut server, Duration::from_secs(20));
+        collecting.join().unwrap();
+    }
 }

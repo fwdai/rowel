@@ -81,7 +81,15 @@ place) and `--config <path>` when `server.json` is not in the data directory.
    ```
 
 5. **Run it**: `rowel serve --server --data-dir /var/lib/rowel`, under
-   systemd and behind a reverse proxy as below.
+   systemd and behind a reverse proxy as below. It refuses a data directory
+   `init` never made into a server, and a second process on the same one —
+   another server, or `rowel serve` — exits 1 while the first runs. It
+   says `listening on http(s)://<address>` on stderr, warns when it serves
+   plain http to anything but this machine, and answers `GET /v1/health`
+   with `{"ok":true}` and nothing else, without a sign-in, for a load
+   balancer or a monitor. SIGTERM or Ctrl-C stops it: open connections get
+   five seconds, every open lockbox is sealed and its master wiped, and it
+   exits 0 after `sealed, exiting`.
 
 6. **Put items in the lockbox** from the app: in Rowel, Settings ›
    Lockboxes › **Rowel Server**, connect to `https://rowel.acme.example`,
@@ -253,11 +261,19 @@ whose tokens count, and the claims every one of them must carry.
 
 ```
 rowel admin server agents add <name> --lockbox <id>
-rowel admin server agents list                        # each with its trust policies
+rowel admin server agents list                        # each with its trust policies and the kind each admits
 rowel admin server agents enable|disable|remove <id>
-rowel admin server trust add --agent <id> --issuer <url> --claim <name>=<pattern> [--claim …] [--fixed-audience]
+rowel admin server trust add --agent <id> --issuer <url> --claim <name>=<pattern> [--claim …] [--fixed-audience] [--sidecar]
 rowel admin server trust remove <id>
 ```
+
+A trust policy admits one kind of client. Without `--sidecar` a matching
+token becomes the **agent**, which asks for grants and never gets a value;
+with it, the agent's **sidecar** (`rowel proxy`, `rowel run`), the one kind
+that resolves a placeholder into the value. A token is checked only against
+the policies of the kind its client says it is, so a token that matches the
+agent's policy alone cannot associate as the sidecar. Give each the claims
+of its own workload; see [A sidecar with its own identity](#a-sidecar-with-its-own-identity).
 
 A claim's pattern is exact unless it begins with `glob:`, where `*` matches
 any run of characters (`ref=glob:refs/heads/release/*`). A claim that is not
@@ -284,6 +300,10 @@ removes its trust policies and the clients it became.
 ```bash
 rowel admin server agents add "api deploy" --lockbox <lockbox id> --data-dir /var/lib/rowel   # prints the agent id
 rowel admin server trust add --agent <agent id> \
+    --issuer https://token.actions.githubusercontent.com \
+    --claim repository=acme/api --claim ref=refs/heads/main --data-dir /var/lib/rowel
+# The proxy runs in the same job, so it carries the same token: see below.
+rowel admin server trust add --agent <agent id> --sidecar \
     --issuer https://token.actions.githubusercontent.com \
     --claim repository=acme/api --claim ref=refs/heads/main --data-dir /var/lib/rowel
 rowel admin server lockboxes agents on <lockbox id> --data-dir /var/lib/rowel
@@ -317,6 +337,37 @@ baseline is asked of the lockbox's approvers, in their Rowel apps, and the
 job waits for the tap or the timeout. How the CLI gets and binds the token
 is in [`cli.md`](cli.md#proving-identity-to-a-rowel-server); the proxy and
 `rowel run` in [`cli.md`](cli.md#rowel-proxy).
+
+### A sidecar with its own identity
+
+The agent is what a prompt injection reaches, and the sidecar is what holds
+values, so the split between them is worth as much as the platform's ability
+to tell them apart. The server can only go by the token: whatever runs under
+the sidecar's platform identity can associate as the sidecar.
+
+- **Kubernetes.** Every container in a pod shares the pod's service account
+  and gets the same projected token, so a sidecar container beside the
+  agent cannot have an identity of its own. Run the proxy as its own
+  Deployment under its own service account, reached by the agent over the
+  pod network (a Service), and write the sidecar's policy on that account
+  (`--claim sub=system:serviceaccount:deploy:rowel-proxy --sidecar
+  --fixed-audience`) and the agent's on the agent's.
+- **GitHub Actions.** Every step of a job gets the same token. A proxy in a
+  job of its own — a reusable workflow, whose token's `job_workflow_ref`
+  names it (`--claim job_workflow_ref=acme/ci/.github/workflows/rowel-proxy.yml@refs/heads/main
+  --sidecar`) — has an identity of its own, but it must run where the
+  agent's job can reach it over the network, which on GitHub's hosted
+  runners it cannot; it takes self-hosted runners on one network.
+
+**What is left when they share an identity.** When the agent and the sidecar
+run in the same job or the same pod under the same platform identity, as in
+the job above, the platform cannot tell them apart, and neither can the
+server: the agent could associate as the sidecar and resolve values itself.
+The two policies then admit the same tokens, and the separation is only as
+strong as the platform's identities. What still holds is everything after
+association: a value is released only under a grant the rules or a member
+allowed, for the item, place and mode it names, and every release is in the
+audit log.
 
 ## Rules
 

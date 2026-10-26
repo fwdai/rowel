@@ -8,6 +8,7 @@ use std::thread;
 
 use serde_json::json;
 
+use rowel_broker::actions::ClientKind;
 use rowel_broker::agents::GrantAnswer;
 use rowel_broker::grant::Approval as Gate;
 use rowel_broker::protocol::Code;
@@ -59,6 +60,35 @@ fn a_token_is_good_once_and_on_its_own_channel_only() {
     let lifted = associate(&mut second, "run-key-3", &hello("agent", Some(&token)));
     assert_eq!(refused(lifted.unwrap_err()), Code::AssociationFailed);
     assert!(org.state.store.client("run-key-3").unwrap().is_none());
+}
+
+// Each attempt has a channel and a token of its own: a token that verified
+// is spent in the replay cache whether or not a policy then matched it.
+#[test]
+fn a_trust_policy_admits_only_the_kind_it_names() {
+    let org = Org::new(ASK_TIMEOUT_MS);
+    let attempt = |id_key: &str, kind: &str, sidecar_token: bool| {
+        let mut peer = org.connect();
+        let token = if sidecar_token {
+            org.sidecar_token(&peer.public_key())
+        } else {
+            org.token(&peer.public_key())
+        };
+        associate(&mut peer, id_key, &hello(kind, Some(&token)))
+    };
+    // The deploy job's token matches the agent's policy alone.
+    let outcome = attempt("deploy-as-sidecar", "sidecar", false);
+    assert_eq!(refused(outcome.unwrap_err()), Code::AssociationFailed);
+    attempt("deploy-as-agent", "agent", false).unwrap();
+    // The proxy job's token matches the sidecar's policy, and the agent's
+    // too (it is the same workflow run), so it may be either.
+    attempt("proxy-as-sidecar", "sidecar", true).unwrap();
+    attempt("proxy-as-agent", "agent", true).unwrap();
+
+    let kind = |key: &str| org.state.store.client(key).unwrap().map(|c| c.kind);
+    assert_eq!(kind("deploy-as-sidecar"), None);
+    assert_eq!(kind("deploy-as-agent"), Some(ClientKind::Agent));
+    assert_eq!(kind("proxy-as-sidecar"), Some(ClientKind::Sidecar));
 }
 
 #[test]

@@ -439,19 +439,45 @@ fn agents_their_trust_policies_and_clients_round_trip() {
             "https://token.actions.githubusercontent.com",
             claims.clone(),
             false,
+            ClientKind::Agent,
         )
         .unwrap();
     assert_eq!(policy.claims, claims);
+    assert_eq!(policy.kind, ClientKind::Agent);
+    // The sidecar's own identity: the same issuer, its own claims, its kind
+    // kept.
+    let sidecar = store
+        .add_trust_policy(
+            &agent.id,
+            "https://token.actions.githubusercontent.com",
+            BTreeMap::from([("job_workflow_ref".to_string(), "acme/proxy".to_string())]),
+            true,
+            ClientKind::Sidecar,
+        )
+        .unwrap();
+    assert_eq!(sidecar.kind, ClientKind::Sidecar);
     assert_eq!(
         store.trust_policies_of(&agent.id).unwrap(),
-        vec![policy.clone()]
+        vec![policy.clone(), sidecar.clone()]
     );
     assert_eq!(
         store
             .trust_policies_for_issuer("https://token.actions.githubusercontent.com")
             .unwrap(),
-        vec![policy.clone()]
+        vec![policy.clone(), sidecar.clone()]
     );
+    let extension = store.add_trust_policy(
+        &agent.id,
+        "https://token.actions.githubusercontent.com",
+        claims.clone(),
+        false,
+        ClientKind::Extension,
+    );
+    assert!(
+        matches!(&extension, Err(StoreError::Other(e)) if e.contains("never an extension")),
+        "{extension:?}"
+    );
+    store.remove_trust_policy(&sidecar.id).unwrap();
     assert_eq!(
         store
             .trust_policies_for_issuer("https://elsewhere")

@@ -32,6 +32,7 @@ pub mod lockboxes;
 pub mod members;
 pub mod packs;
 pub mod rootkey;
+pub mod run;
 pub mod state;
 pub mod store;
 #[cfg(any(test, feature = "test-support"))]

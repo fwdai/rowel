@@ -65,7 +65,7 @@ mod sessions;
 #[cfg(test)]
 mod tests;
 
-pub use agents::{Agent, TrustPolicy};
+pub use agents::{workload_kind, Agent, TrustPolicy};
 pub use audit::AuditFilter;
 pub use lockboxes::{Lockbox, LockboxMember, LockboxRole};
 pub use members::{Device, DeviceState, Member, Role, Tenant};

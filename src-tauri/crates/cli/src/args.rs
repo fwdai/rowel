@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
+use rowel_broker::actions::ClientKind;
 use rowel_server::store::AuditFilter;
 
 use crate::admin::{AdminArgs, AdminCommand, RuleAdd};
@@ -34,6 +35,8 @@ usage: rowel-cli <command>
   serve [--data-dir <path>] [--lockbox <id>] [--config <path>] [--key-file <path> | --key-fd <n>]
         [--ws <addr>] [--no-socket] [--idle-lock <minutes>] [--ask-timeout <seconds>]
                                       the headless broker: serve a lockbox to agents on a box without the app
+  serve --server --data-dir <path> [--config <path>]
+                                      a Rowel Server: org lockboxes for a company's members and agents
   approve [<id> [--item <id>] [--days N] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
                                       list what a running broker is waiting on, or answer one ask
   admin rules list | rules add --agent <key|any> --items <lockbox|id,id|tag:<t>|kind:<k>> --mode <fill|passkey|header|env>
@@ -49,7 +52,8 @@ usage: rowel-cli <command>
         lockboxes agents on|off <id> | lockboxes members add <lockbox> <email|id> --role reader|approver|admin
         lockboxes members remove <lockbox> <email|id> | lockboxes members list <lockbox>
         agents add <name> --lockbox <id> | agents list | agents enable|disable|remove <id>
-        trust add --agent <id> --issuer <url> --claim <name>=<pattern>… [--fixed-audience] | trust remove <id>
+        trust add --agent <id> --issuer <url> --claim <name>=<pattern>… [--fixed-audience] [--sidecar]
+        trust remove <id>
         rules add <admin rules add's flags, --agent <agent id|any>> [--lockbox <id>] | rules list | rules remove <id>
         audit export [--since <time>] [--until <time>] [--lockbox <id>] [--actor <id>] | audit verify
                                       a Rowel Server's members, devices, lockboxes, agents, rules and audit
@@ -206,11 +210,15 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
                     "--ask-timeout" => {
                         serve.ask_timeout_seconds = Some(number_of(&arg, &mut args)?)
                     }
+                    "--server" => serve.server = true,
                     other => return Err(unexpected(other)),
                 }
             }
             if serve.key_file.is_some() && serve.key_fd.is_some() {
                 return Err(Usage("serve takes --key-file or --key-fd, not both".into()));
+            }
+            if serve.server {
+                server_mode(&serve)?;
             }
             Ok(Command::Serve(serve))
         }
@@ -305,6 +313,35 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
     }
 }
 
+/// What `serve --server` may be given: a data directory, which it must be
+/// since a server has no conventional location, and a config. Every other
+/// flag is the headless broker's — a lockbox to unlock, how to unlock it,
+/// where its socket and WebSocket are, its idle lock and ask timeout — and
+/// is a mistake here rather than something passed over, since the operator
+/// who wrote it expected it to do something.
+fn server_mode(serve: &ServeArgs) -> Result<(), Usage> {
+    let headless = [
+        ("--lockbox", serve.lockbox.is_some()),
+        ("--key-file", serve.key_file.is_some()),
+        ("--key-fd", serve.key_fd.is_some()),
+        ("--ws", serve.ws.is_some()),
+        ("--no-socket", serve.no_socket),
+        ("--idle-lock", serve.idle_lock_minutes.is_some()),
+        ("--ask-timeout", serve.ask_timeout_seconds.is_some()),
+    ];
+    if let Some((flag, _)) = headless.iter().find(|(_, given)| *given) {
+        return Err(Usage(format!(
+            "{flag} is the headless broker's; serve --server takes --data-dir and --config, and the rest from server.json"
+        )));
+    }
+    if serve.data_dir.is_none() {
+        return Err(Usage(
+            "serve --server needs --data-dir <path>: a server has no conventional place".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// `rowel admin server …`: the words name the subcommand and its operands;
 /// the flags are gathered first and each subcommand takes the ones it reads,
 /// so a flag left over — misspelt, or another subcommand's — is a mistake
@@ -314,7 +351,7 @@ fn admin_server(mut args: impl Iterator<Item = String>) -> Result<Command, Usage
     let mut words = Vec::new();
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--admin" | "--fixed-audience" => flags.0.push((arg, None)),
+            "--admin" | "--fixed-audience" | "--sidecar" => flags.0.push((arg, None)),
             flag if flag.starts_with("--") => {
                 let value = value_of(flag, &mut args)?;
                 flags.0.push((arg, Some(value)));
@@ -401,6 +438,11 @@ fn admin_server(mut args: impl Iterator<Item = String>) -> Result<Command, Usage
             issuer: issuer_of(flags.required("--issuer", "trust add needs --issuer <url>")?)?,
             claims: claims_of(flags.all("--claim"))?,
             fixed_audience: flags.switch("--fixed-audience"),
+            kind: if flags.switch("--sidecar") {
+                ClientKind::Sidecar
+            } else {
+                ClientKind::Agent
+            },
         },
         ["trust", "remove", policy] => ServerCommand::TrustRemove { id: id(policy) },
         ["rules", "add"] => ServerCommand::RulesAdd {
@@ -648,6 +690,16 @@ mod tests {
                 no_socket: true,
                 idle_lock_minutes: Some(10),
                 ask_timeout_seconds: Some(90),
+                server: false,
+            }))
+        );
+        assert_eq!(
+            parsed("serve --server --data-dir /var/lib/rowel --config /etc/rowel/server.json"),
+            Ok(Command::Serve(ServeArgs {
+                server: true,
+                data_dir: Some(PathBuf::from("/var/lib/rowel")),
+                config: Some(PathBuf::from("/etc/rowel/server.json")),
+                ..ServeArgs::default()
             }))
         );
         assert_eq!(
@@ -848,6 +900,20 @@ mod tests {
                     ("ref".to_string(), "glob:refs/heads/*".to_string()),
                 ]),
                 fixed_audience: true,
+                kind: ClientKind::Agent,
+            })
+        );
+        assert_eq!(
+            at("trust add --agent a1 --issuer https://token.actions.githubusercontent.com --claim job_workflow_ref=acme/ci/.github/workflows/proxy.yml@refs/heads/main --sidecar"),
+            server(ServerCommand::TrustAdd {
+                agent: "a1".into(),
+                issuer: "https://token.actions.githubusercontent.com".into(),
+                claims: BTreeMap::from([(
+                    "job_workflow_ref".to_string(),
+                    "acme/ci/.github/workflows/proxy.yml@refs/heads/main".to_string()
+                )]),
+                fixed_audience: false,
+                kind: ClientKind::Sidecar,
             })
         );
         assert_eq!(
@@ -914,6 +980,38 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unexpected argument '--name'"));
+    }
+
+    #[test]
+    fn a_server_takes_a_data_directory_and_none_of_the_headless_brokers_flags() {
+        let error = |line: &str| parsed(line).unwrap_err().to_string();
+        assert!(
+            error("serve --server").contains("serve --server needs --data-dir"),
+            "{}",
+            error("serve --server")
+        );
+        for flag in [
+            "--lockbox lb",
+            "--key-file /k",
+            "--key-fd 3",
+            "--ws 127.0.0.1:7401",
+            "--no-socket",
+            "--idle-lock 10",
+            "--ask-timeout 90",
+        ] {
+            let name = flag.split_whitespace().next().unwrap();
+            for line in [
+                format!("serve --server --data-dir /d {flag}"),
+                format!("serve {flag} --data-dir /d --server"),
+            ] {
+                let message = error(&line);
+                assert!(
+                    message.starts_with(&format!("rowel-cli: {name} is the headless broker's")),
+                    "{line}: {message}"
+                );
+            }
+        }
+        assert!(parsed("admin server trust add --agent a --issuer https://i --claim a=b --sidecar x --data-dir /d").is_err());
     }
 
     #[test]

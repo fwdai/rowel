@@ -16,6 +16,7 @@ use base64::Engine;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use rowel_broker::actions::ClientKind;
 use rowel_broker::audit::{self, Reason};
 use rowel_broker::grant::CreatedBy;
 use rowel_core::store::AuditRecord;
@@ -104,6 +105,9 @@ pub enum ServerCommand {
         issuer: String,
         claims: BTreeMap<String, String>,
         fixed_audience: bool,
+        /// What a matching token may associate as: the agent, or with
+        /// `--sidecar` the sidecar that resolves values for it.
+        kind: ClientKind,
     },
     TrustRemove {
         id: String,
@@ -363,8 +367,13 @@ fn execute(args: ServerAdminArgs) -> Result<(), Failure> {
                     } else {
                         ""
                     };
+                    let kind = match policy.kind {
+                        ClientKind::Agent => "agent",
+                        ClientKind::Sidecar => "sidecar",
+                        ClientKind::Extension => "extension",
+                    };
                     println!(
-                        "    trust {}  {}  {claims}{audience}",
+                        "    trust {}  {kind}  {}  {claims}{audience}",
                         policy.id, policy.issuer
                     );
                 }
@@ -383,10 +392,11 @@ fn execute(args: ServerAdminArgs) -> Result<(), Failure> {
             issuer,
             claims,
             fixed_audience,
+            kind,
         } => {
             let agent = agent_of(&store, &agent)?;
             let policy = store
-                .add_trust_policy(&agent.id, &issuer, claims, fixed_audience)
+                .add_trust_policy(&agent.id, &issuer, claims, fixed_audience, kind)
                 .map_err(failed)?;
             println!("{}", policy.id);
         }

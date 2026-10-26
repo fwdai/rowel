@@ -1,7 +1,8 @@
 //! A tenant with one org lockbox for agents: `agents` on, an API key and a
-//! login sealed in it, an agent definition bound to it with a GitHub-shaped
-//! trust policy at the fake issuer, an approver and a reader each with an
-//! approved device. The host is driven as the broker's connection drives
+//! login sealed in it, an agent definition bound to it with two GitHub-shaped
+//! trust policies at the fake issuer — the deploy workflow as the agent, and
+//! the proxy's own reusable workflow as its sidecar — an approver and a
+//! reader each with an approved device. The host is driven as the broker's connection drives
 //! it, in-process, through the CLI's own peer.
 
 use std::collections::BTreeMap;
@@ -10,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
-use rowel_broker::actions::Connection;
+use rowel_broker::actions::{ClientKind, Connection};
 use rowel_broker::client::{Peer, PeerError};
 use rowel_broker::grant::{Approval as Gate, CreatedBy, ItemSelector, Mode, Target};
 use rowel_broker::policy::{AgentSelector, Rule};
@@ -70,7 +71,22 @@ impl Org {
 
         let agent = store.add_agent("release-bot", &lockbox.id).unwrap();
         store
-            .add_trust_policy(&agent.id, idp.issuer(), deploy_policy(), false)
+            .add_trust_policy(
+                &agent.id,
+                idp.issuer(),
+                deploy_policy(),
+                false,
+                ClientKind::Agent,
+            )
+            .unwrap();
+        store
+            .add_trust_policy(
+                &agent.id,
+                idp.issuer(),
+                sidecar_policy(),
+                false,
+                ClientKind::Sidecar,
+            )
             .unwrap();
         let approver = server.member("ana@acme.example", Role::Member);
         let (approver_device, _) = server.approved_device(&approver);
@@ -106,8 +122,20 @@ impl Org {
 
     /// A token bound to the channel opened with `session_key`.
     pub fn token(&self, session_key: &str) -> String {
+        self.bound_token(deploy_claims(), session_key)
+    }
+
+    /// A token for the proxy's job, bound to the channel opened with
+    /// `session_key`.
+    pub fn sidecar_token(&self, session_key: &str) -> String {
+        self.bound_token(sidecar_claims(), session_key)
+    }
+
+    fn bound_token(&self, claims: Map<String, Value>, session_key: &str) -> String {
         let tenant = self.state.tenant_audience().unwrap();
-        self.token_for(&expected_audience(&tenant, session_key).unwrap())
+        let audience = expected_audience(&tenant, session_key).unwrap();
+        let now = now_ms() / 1000;
+        self.idp.mint(claims, &audience, now, now + 600)
     }
 
     /// A channel to a fresh host, keys exchanged, nobody let in yet.
@@ -115,10 +143,14 @@ impl Org {
         Peer::connect(Connection::new(self.host()), "rowel-cli").unwrap()
     }
 
-    /// A channel let in as `kind` under `id_key`, with a token minted for it.
+    /// A channel let in as `kind` under `id_key`, with a token of that
+    /// kind's workload minted for it.
     pub fn associated(&self, id_key: &str, kind: &str) -> AgentPeer {
         let mut peer = self.connect();
-        let token = self.token(&peer.public_key());
+        let token = match kind {
+            "sidecar" => self.sidecar_token(&peer.public_key()),
+            _ => self.token(&peer.public_key()),
+        };
         associate(&mut peer, id_key, &hello(kind, Some(&token))).unwrap();
         peer
     }
@@ -259,6 +291,23 @@ fn deploy_policy() -> BTreeMap<String, String> {
 
 pub(super) fn deploy_claims() -> Map<String, Value> {
     FakeIdp::github_claims("acme/deploy", "refs/heads/main", "release.yml")
+}
+
+/// The reusable workflow the proxy's job runs, which is what tells its
+/// token apart from the deploy job's in the same run.
+const PROXY_WORKFLOW: &str = "acme/deploy/.github/workflows/rowel-proxy.yml@refs/heads/main";
+
+fn sidecar_policy() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("repository".to_string(), "acme/deploy".to_string()),
+        ("job_workflow_ref".to_string(), PROXY_WORKFLOW.to_string()),
+    ])
+}
+
+fn sidecar_claims() -> Map<String, Value> {
+    let mut claims = deploy_claims();
+    claims.insert("job_workflow_ref".into(), json!(PROXY_WORKFLOW));
+    claims
 }
 
 /// What the CLI says it is, with `token` as its proof when there is one.
