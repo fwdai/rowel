@@ -71,6 +71,15 @@ pub struct Workspace {
     /// reads back as it was.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agents: bool,
+    /// The Rowel Server an org lockbox came from, as the URL the member
+    /// signed in against: what names the install-level session the lockbox
+    /// syncs under, since its own token file only says *that* it syncs
+    /// through a server. `None` for a lockbox the user holds themselves.
+    ///
+    /// Device-local like the colour: the pack says nothing about where it was
+    /// pulled from, and another device learns the server by signing in to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,6 +101,7 @@ impl Default for Registry {
                 item_count: None,
                 color: None,
                 agents: false,
+                server: None,
             }],
         }
     }
@@ -184,6 +194,22 @@ impl Registry {
     /// `active` is kept pointing at a workspace that still exists, and under
     /// whatever id it answers to afterwards.
     pub fn without(&self, id: &str) -> Result<Deletion> {
+        self.without_promoting(id, |_| true)
+    }
+
+    /// [`Registry::without`], with the survivors `may_lead` refuses passed
+    /// over for the promotion: the first survivor it admits moves into the
+    /// root. The primary's key is the app key every other workspace's key is
+    /// sealed under, so a workspace whose key someone else holds — an org
+    /// lockbox, whose master its server escrows — must never become it, or
+    /// that server would hold the key to everything on the device. Deleting
+    /// the primary is refused outright when no survivor may lead, before
+    /// anything is removed.
+    pub fn without_promoting(
+        &self,
+        id: &str,
+        may_lead: impl Fn(&Workspace) -> bool,
+    ) -> Result<Deletion> {
         if !self.contains(id) {
             return Err(Error::NotFound);
         }
@@ -197,13 +223,24 @@ impl Registry {
             .filter(|w| w.id != id)
             .cloned()
             .collect();
+        let promoted_at = if id == PRIMARY_ID {
+            Some(workspaces.iter().position(may_lead).ok_or_else(|| {
+                Error::Other(
+                    "an org lockbox cannot become your main lockbox; create or restore a \
+                     personal one first"
+                        .into(),
+                )
+            })?)
+        } else {
+            None
+        };
         // Before `active` is resolved: the promoted workspace answers to its
         // new id from here on, and `active` may be naming it.
-        let promoted = (id == PRIMARY_ID)
-            .then(|| std::mem::replace(&mut workspaces[0].id, PRIMARY_ID.to_string()));
+        let promoted =
+            promoted_at.map(|at| std::mem::replace(&mut workspaces[at].id, PRIMARY_ID.to_string()));
 
         let active = if self.active == id {
-            workspaces[0].id.clone()
+            workspaces[promoted_at.unwrap_or(0)].id.clone()
         } else if promoted.as_deref() == Some(self.active.as_str()) {
             PRIMARY_ID.to_string()
         } else {
@@ -271,6 +308,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -279,6 +317,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
             ],
         };
@@ -384,6 +423,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -392,6 +432,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
             ],
         };
@@ -418,6 +459,7 @@ mod tests {
                 item_count: None,
                 color: None,
                 agents: false,
+                server: None,
             }],
         }
         .save(&root)
@@ -448,6 +490,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
                 Workspace {
                     id: "a1b2".into(),
@@ -456,6 +499,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
                 Workspace {
                     id: "c3d4".into(),
@@ -464,6 +508,7 @@ mod tests {
                     item_count: None,
                     color: None,
                     agents: false,
+                    server: None,
                 },
             ],
         }
@@ -505,10 +550,50 @@ mod tests {
                 item_count: None,
                 color: None,
                 agents: false,
+                server: None,
             }
         );
         // The one that was not promoted is untouched, and still second.
         assert_eq!(deletion.registry.workspaces[1].id, "c3d4");
+    }
+
+    // A survivor the caller rules out of leading is passed over for the next
+    // one, which takes the root and `active` with it; the one passed over
+    // keeps its id and its place.
+    #[test]
+    fn a_survivor_that_may_not_lead_is_passed_over_for_the_next() {
+        let deletion = three(PRIMARY_ID)
+            .without_promoting(PRIMARY_ID, |w| w.id != "a1b2")
+            .unwrap();
+
+        assert_eq!(deletion.promoted.as_deref(), Some("c3d4"));
+        assert_eq!(deletion.registry.active, PRIMARY_ID);
+        assert_eq!(
+            deletion
+                .registry
+                .workspaces
+                .iter()
+                .map(|w| w.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a1b2", PRIMARY_ID]
+        );
+        // The rule only ever decides a promotion: another delete ignores it.
+        let deletion = three(PRIMARY_ID)
+            .without_promoting("c3d4", |_| false)
+            .unwrap();
+        assert_eq!(deletion.promoted, None);
+    }
+
+    // Nothing that may lead is left to take the root: the primary stays, and
+    // the refusal says what to do about it.
+    #[test]
+    fn deleting_the_primary_is_refused_when_no_survivor_may_lead() {
+        match three(PRIMARY_ID).without_promoting(PRIMARY_ID, |_| false) {
+            Err(Error::Other(why)) => {
+                assert!(why.contains("cannot become your main lockbox"), "{why}")
+            }
+            other => panic!("expected the refusal, got {other:?}"),
+        }
     }
 
     // The next unlock resolves `active`, so it may never name a workspace that

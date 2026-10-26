@@ -272,6 +272,12 @@ export interface Workspace {
    * which reads as off.
    */
   agents?: boolean
+  /**
+   * The Rowel Server an org lockbox came from, as the URL the member signed in
+   * against. Kept on this device only; absent for a lockbox the user holds
+   * themselves.
+   */
+  server?: string
 }
 
 // Which biometry this device gates with, straight from the OS (Apple reads

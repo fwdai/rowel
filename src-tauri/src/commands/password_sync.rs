@@ -301,6 +301,11 @@ async fn adopt_beside(
         .workspaces
         .into_iter()
         .filter(|w| w.id != active)
+        // An org lockbox's key is its server's, not a password's: nothing in
+        // its account is ever under the password being adopted.
+        .filter(|w| {
+            !crate::org::lockboxes::is_org_lockbox_dir(&crate::workspace::dir_of(&root, &w.id))
+        })
         .filter_map(|w| Some((w.id, w.vault_id?)))
         .collect();
     beside.sort_by_key(|(id, _)| id == PRIMARY_ID);
@@ -406,7 +411,7 @@ fn adopt_one(
 // The "two devices" acceptance test of the design, one layer below the
 // commands (they need an `AppHandle`).
 #[cfg(test)]
-mod two_devices;
+pub(crate) mod two_devices;
 
 #[cfg(test)]
 mod tests {

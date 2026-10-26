@@ -67,6 +67,10 @@ subtle = "2"
 rand = "0.8"
 hex = "0.4"
 base64 = "0.23"
+# The device enrollment key (`org::enrollment`): X25519, the curve the
+# broker's sealed channel already uses, with `seal` for the sealed boxes a
+# Rowel Server wraps an org lockbox's master in for each enrolled device.
+crypto_box = { version = "0.9", features = ["seal"] }
 zxcvbn = "3"
 log = "0.4.34"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
@@ -124,6 +128,10 @@ dirs = "7"
 # Windows named pipe the extension's proxy process reaches the app through.
 rowel-broker = { path = "crates/broker" }
 interprocess = "2"
+# The name this device enrolls under at a Rowel Server (`org::connect`): the
+# machine's host name, which is what a member recognises in a device list.
+# Already in the locked graph; the phone's enrollment names itself elsewhere.
+gethostname = "1"
 
 # Passkeys through the extension (`browser::passkeys`), where the host is the
 # WebAuthn client: tokio's current-thread runtime drives the authenticator's
@@ -251,8 +259,13 @@ windows-registry = "0.100"
 # The core's test seams (`MemoryVault`, `set_user_version`) for the app's tests.
 rowel-core = { path = "crates/core", features = ["test-support"] }
 # The CredentialStore/UserValidationMethod traits are async, so the tests need
-# a runtime; `rt` (current-thread) + `macros` is the whole of it.
-tokio = { version = "1", features = ["rt", "macros"] }
+# a runtime: `rt` (current-thread) + `macros`. `net` and `sync` are for the
+# in-process Rowel Server the org tests run against (`org::fake_server`): a
+# listener, and the broadcast channel its approvals stream fans out over.
+tokio = { version = "1", features = ["rt", "macros", "net", "sync"] }
+# That fake server's router. Already in the locked graph under the WebDriver
+# plugin; it never ships in the app.
+axum = "0.8"
 # Writes the `.1pux` archives the import tests read; the codec is the one the
 # core reads them with.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }

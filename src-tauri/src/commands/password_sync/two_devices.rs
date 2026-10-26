@@ -68,22 +68,34 @@ fn copy(key: &VaultKey) -> VaultKey {
 }
 
 /// One lockbox on one device: its directory, the key its session holds, and
-/// its open store.
-struct Device {
+/// its open store. Crate-visible so the org lockbox tests can run the same
+/// devices against a Rowel Server (`org::tests`).
+pub(crate) struct Device {
     dir: TempDir,
-    id: &'static str,
+    pub(crate) id: &'static str,
     vault: String,
-    key: VaultKey,
+    pub(crate) key: VaultKey,
     store: Option<SqliteStore>,
 }
 
 impl Device {
     /// A new lockbox under `password` and descriptor `params_json`.
     fn create(id: &'static str, vault: &str, password: &str, params_json: &str) -> Self {
+        Self::with_key(id, vault, derive(password, params_json), params_json)
+    }
+
+    /// A new lockbox opened by `key`, whatever minted it — a password through
+    /// [`derive`], or a Rowel Server's master handed over at enrollment — with
+    /// the descriptor that names that key in the sidecar.
+    pub(crate) fn with_key(
+        id: &'static str,
+        vault: &str,
+        key: VaultKey,
+        params_json: &str,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         storage::atomic_write_file(&dir.path().join(storage::KDF_SIDECAR_FILE), params_json)
             .unwrap();
-        let key = derive(password, params_json);
         let store =
             SqliteStore::open(&dir.path().join(storage::DB_FILE), &*key.sqlcipher_key()).unwrap();
         // The id its pack is addressed by, as a first run settles it.
@@ -118,23 +130,23 @@ impl Device {
         })
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         self.dir.path()
     }
 
-    fn store(&self) -> &SqliteStore {
+    pub(crate) fn store(&self) -> &SqliteStore {
         self.store.as_ref().unwrap()
     }
 
-    fn sidecar(&self) -> String {
+    pub(crate) fn sidecar(&self) -> String {
         fs::read_to_string(self.path().join(storage::KDF_SIDECAR_FILE)).unwrap()
     }
 
-    fn gen(&self) -> u32 {
+    pub(crate) fn gen(&self) -> u32 {
         KdfParams::from_json(&self.sidecar()).unwrap().gen()
     }
 
-    fn retired(&self) -> Vec<String> {
+    pub(crate) fn retired(&self) -> Vec<String> {
         retired::load(self.path(), &self.key, self.id)
             .into_iter()
             .map(|r| r.kdf)
@@ -145,7 +157,7 @@ impl Device {
         storage::sync_scratch_dir_in(self.path())
     }
 
-    fn write(&self, id: &str, title: &str) {
+    pub(crate) fn write(&self, id: &str, title: &str) {
         let entry = Entry {
             id: id.into(),
             title: title.into(),
@@ -157,7 +169,7 @@ impl Device {
             .unwrap();
     }
 
-    fn title(&self, id: &str) -> Option<String> {
+    pub(crate) fn title(&self, id: &str) -> Option<String> {
         let record = self.store().get(id).unwrap()?;
         Some(
             self.key
@@ -168,31 +180,36 @@ impl Device {
         )
     }
 
-    fn digest(&self) -> [u8; 32] {
+    pub(crate) fn digest(&self) -> [u8; 32] {
         self.store().state_digest().unwrap()
     }
 
-    /// One run against the account, as `sync::run` makes it: the marker keys
-    /// of the current epoch and of every retired one.
-    fn sync(&self, account: &FakeStore) -> Result<SyncOutcome> {
-        self.sync_at(account, NOW)
-    }
-
-    /// [`Device::sync`] as of `now_ms`, for what a run a year on reclaims.
-    fn sync_at(&self, account: &FakeStore, now_ms: i64) -> Result<SyncOutcome> {
+    /// This device's pack in the account behind `store`, as `sync::run`
+    /// addresses it: honouring a deletion marker under the current epoch's
+    /// key and under every retired one.
+    pub(crate) fn remote<S: crate::sync::VaultStore>(&self, store: S) -> PackRemote<S> {
         let mut marker_keys = vec![self.key.delete_marker_key()];
         marker_keys.extend(
             retired::load(self.path(), &self.key, self.id)
                 .iter()
                 .map(|r| r.key().delete_marker_key()),
         );
-        let remote = PackRemote::new(account, self.vault.clone(), marker_keys);
-        engine::sync(&remote, self, now_ms, || Ok(()))
+        PackRemote::new(store, self.vault.clone(), marker_keys)
+    }
+
+    /// One run against the account, as `sync::run` makes it.
+    fn sync(&self, account: &FakeStore) -> Result<SyncOutcome> {
+        self.sync_at(account, NOW)
+    }
+
+    /// [`Device::sync`] as of `now_ms`, for what a run a year on reclaims.
+    fn sync_at(&self, account: &FakeStore, now_ms: i64) -> Result<SyncOutcome> {
+        engine::sync(&self.remote(account), self, now_ms, || Ok(()))
     }
 
     /// The saga a password change (or an adopt) runs on the open workspace —
     /// `rekey_open_workspace` minus the session around it.
-    fn rekey(&mut self, new_key: VaultKey, params_json: &str) {
+    pub(crate) fn rekey(&mut self, new_key: VaultKey, params_json: &str) {
         let store = self.store.take().unwrap();
         let (key, store) = auth::rekey(
             store,

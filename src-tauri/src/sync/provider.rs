@@ -23,26 +23,43 @@ pub enum Provider {
     /// own: Apple devices only, and only a build signed with the iCloud
     /// entitlements ([`Provider::supported`]).
     ICloud,
+    /// A company's Rowel Server, holding an org lockbox's pack and the key
+    /// that opens it. No sign-in of the workspace's own either: the member
+    /// signs in to the server once per install (`org::connections`), and the
+    /// token file only names which server the lockbox came from.
+    RowelServer,
 }
 
 impl Provider {
     /// Every provider, in the order a workspace's token files are looked for
     /// and the order the pickers offer them.
-    pub const ALL: [Provider; 3] = [Provider::GoogleDrive, Provider::Dropbox, Provider::ICloud];
+    pub const ALL: [Provider; 4] = [
+        Provider::GoogleDrive,
+        Provider::Dropbox,
+        Provider::ICloud,
+        Provider::RowelServer,
+    ];
 
-    /// The providers this build can connect: every one but those the platform
-    /// rules out ([`Provider::supported`]). What `app_status` tells the
-    /// frontend to offer.
+    /// The providers this build can connect from the account pickers: every
+    /// one but those the platform rules out ([`Provider::supported`]), and
+    /// never the Rowel Server — an org lockbox is connected from Settings ›
+    /// Lockboxes › Rowel Server, where the member signs in and picks the
+    /// lockboxes the server offers; it is not an account a vault of the
+    /// user's own is pushed into. What `app_status` tells the frontend to
+    /// offer.
     pub fn available() -> Vec<Provider> {
-        Self::ALL.into_iter().filter(|p| p.supported()).collect()
+        Self::ALL
+            .into_iter()
+            .filter(|p| p.supported() && *p != Provider::RowelServer)
+            .collect()
     }
 
-    /// Whether this build can sync through the provider at all. Google and
-    /// Dropbox are HTTP and work everywhere; iCloud needs Apple's CloudKit
-    /// and a binary signed for it.
+    /// Whether this build can sync through the provider at all. Google,
+    /// Dropbox and the Rowel Server are HTTP and work everywhere; iCloud needs
+    /// Apple's CloudKit and a binary signed for it.
     pub fn supported(self) -> bool {
         match self {
-            Provider::GoogleDrive | Provider::Dropbox => true,
+            Provider::GoogleDrive | Provider::Dropbox | Provider::RowelServer => true,
             Provider::ICloud => icloud::supported(),
         }
     }
@@ -60,17 +77,20 @@ impl Provider {
             Provider::GoogleDrive => "Google Drive",
             Provider::Dropbox => "Dropbox",
             Provider::ICloud => "iCloud",
+            Provider::RowelServer => "Rowel Server",
         }
     }
 
     /// The account, as a sentence names it: "this Google account…". Not
     /// [`Provider::display_name`]: a Google sign-in is to a Google account, of
-    /// which Drive is one service, and the existing copy says so.
+    /// which Drive is one service, and the existing copy says so. A Rowel
+    /// Server is both the product and the account.
     pub fn account_name(self) -> &'static str {
         match self {
             Provider::GoogleDrive => "Google",
             Provider::Dropbox => "Dropbox",
             Provider::ICloud => "iCloud",
+            Provider::RowelServer => "Rowel Server",
         }
     }
 
@@ -78,10 +98,14 @@ impl Provider {
     /// a path inside it: `Rowel` on Drive, `Apps/Rowel` in Dropbox, where an
     /// App folder app lives under `Apps/`. iCloud has no folder the user can
     /// open — the packs are CloudKit records — so its adapter never looks a
-    /// packs folder up and no copy names one; the root's name stands in.
+    /// packs folder up and no copy names one; the root's name stands in. A
+    /// Rowel Server has no folders at all — a pack is a resource under its
+    /// lockbox — and the same stand-in applies.
     pub fn packs_root_label(self) -> &'static str {
         match self {
-            Provider::GoogleDrive | Provider::ICloud => super::layout::ROOT_FOLDER,
+            Provider::GoogleDrive | Provider::ICloud | Provider::RowelServer => {
+                super::layout::ROOT_FOLDER
+            }
             Provider::Dropbox => dropbox::APP_FOLDER,
         }
     }
@@ -92,22 +116,26 @@ impl Provider {
     ///
     /// iCloud's holds no token — the device's account is the credential — but
     /// the file is still what says "this workspace syncs through iCloud", and
-    /// every rule about connecting, disconnecting and re-sealing reads it.
+    /// every rule about connecting, disconnecting and re-sealing reads it. The
+    /// Rowel Server's holds the server's URL and no token, for the same reason.
     pub fn token_file_name(self) -> &'static str {
         match self {
             Provider::GoogleDrive => storage::GDRIVE_FILE,
             Provider::Dropbox => storage::DROPBOX_FILE,
             Provider::ICloud => storage::ICLOUD_FILE,
+            Provider::RowelServer => storage::ROWEL_SERVER_FILE,
         }
     }
 
     /// The OAuth client the provider's sign-in and token refresh talk to, or
-    /// `None` for a provider that has no sign-in of its own (iCloud).
+    /// `None` for a provider whose workspaces have no sign-in of their own:
+    /// iCloud, and the Rowel Server, whose sign-in is the install's
+    /// (`org::client`), not a workspace's.
     pub fn oauth(self) -> Option<&'static OAuthConfig> {
         match self {
             Provider::GoogleDrive => Some(&gdrive::OAUTH),
             Provider::Dropbox => Some(&dropbox::OAUTH),
-            Provider::ICloud => None,
+            Provider::ICloud | Provider::RowelServer => None,
         }
     }
 }
@@ -125,6 +153,10 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(Provider::Dropbox).unwrap(), "dropbox");
         assert_eq!(serde_json::to_value(Provider::ICloud).unwrap(), "iCloud");
+        assert_eq!(
+            serde_json::to_value(Provider::RowelServer).unwrap(),
+            "rowelServer"
+        );
     }
 
     // Google's file keeps the name it had before there was a choice, so an
@@ -134,6 +166,10 @@ mod tests {
         assert_eq!(Provider::GoogleDrive.token_file_name(), "auth/gdrive.swftx");
         assert_eq!(Provider::Dropbox.token_file_name(), "auth/dropbox.swftx");
         assert_eq!(Provider::ICloud.token_file_name(), "auth/icloud.swftx");
+        assert_eq!(
+            Provider::RowelServer.token_file_name(),
+            "auth/rowel-server.swftx"
+        );
     }
 
     #[test]
@@ -141,25 +177,36 @@ mod tests {
         for provider in Provider::ALL {
             match provider.oauth() {
                 Some(config) => assert_eq!(config.provider, provider),
-                None => assert_eq!(provider, Provider::ICloud),
+                None => assert!(matches!(provider, Provider::ICloud | Provider::RowelServer)),
             }
         }
     }
 
-    // iCloud is the one provider without a browser sign-in; the HTTP ones work
-    // on every platform.
+    // iCloud and the Rowel Server are the providers without a browser sign-in
+    // of the workspace's own; the HTTP ones work on every platform.
     #[test]
-    fn only_icloud_skips_oauth() {
+    fn only_icloud_and_the_server_skip_oauth() {
         assert!(Provider::GoogleDrive.signs_in_with_oauth());
         assert!(Provider::Dropbox.signs_in_with_oauth());
         assert!(!Provider::ICloud.signs_in_with_oauth());
+        assert!(!Provider::RowelServer.signs_in_with_oauth());
         assert!(Provider::GoogleDrive.supported());
         assert!(Provider::Dropbox.supported());
+        assert!(Provider::RowelServer.supported());
         let available = Provider::available();
         assert!(available.starts_with(&[Provider::GoogleDrive, Provider::Dropbox]));
         assert_eq!(
             available.contains(&Provider::ICloud),
             Provider::ICloud.supported()
         );
+    }
+
+    // The server is a provider for every rule that reads a token file, and
+    // never one the account pickers offer: an org lockbox is connected from
+    // its own Settings section, not pushed into like a drive.
+    #[test]
+    fn the_server_is_looked_up_but_never_offered() {
+        assert!(Provider::ALL.contains(&Provider::RowelServer));
+        assert!(!Provider::available().contains(&Provider::RowelServer));
     }
 }

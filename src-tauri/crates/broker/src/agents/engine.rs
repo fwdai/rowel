@@ -3,7 +3,7 @@
 //! grant covers a fill, what a placeholder resolves to, and what an agent may
 //! see. All of it under [`Locked`], which the host takes before calling in.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use rowel_core::crypto::PayloadCipher;
@@ -43,8 +43,11 @@ pub struct Locked<'a> {
 
 /// What the user answered a grant ask with: which of the candidates the
 /// dialog listed — the agent may be given that one and no other — and, for
-/// "allow for N days", how many; `None` is this once.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+/// "allow for N days", how many; `None` is this once. Serialized too: an
+/// answer given on a member's device travels to the Rowel Server in this
+/// shape (`POST /v1/approvals/{id}`), so the dialog's answer and the wire's
+/// are one struct.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GrantAnswer {
     pub item_id: String,

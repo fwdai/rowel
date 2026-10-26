@@ -114,6 +114,7 @@ fn the_registry_names_the_workspace_that_is_opened() {
         item_count: None,
         color: None,
         agents: false,
+        server: None,
     };
     Registry {
         active: "w2".into(),
@@ -142,6 +143,7 @@ fn a_workspace_with_no_sealed_key_is_locked() {
         item_count: None,
         color: None,
         agents: false,
+        server: None,
     });
     registry.active = "w2".into();
     registry.save(&root).unwrap();
