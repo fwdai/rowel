@@ -16,7 +16,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
@@ -34,6 +33,7 @@ use crate::storage;
 use crate::store::{
     identity, vault_digest, Attachment, AuditRecord, Record, SqliteStore, StoreError, VaultStore,
 };
+use rowel_core::sync::snapshot::{self, SnapshotError};
 // The broker — and the audit writer with it — is linked on desktop only (see
 // `Cargo.toml`): the rows travel, merge and age out everywhere, since that is
 // the store's doing, but only a desktop build has a chain of its own to note
@@ -829,23 +829,20 @@ pub(crate) fn records_from_snapshot(
     key: &[u8],
     scratch_dir: &Path,
 ) -> Result<Snapshot> {
-    fs::create_dir_all(scratch_dir)?;
-    let scratch = Scratch(scratch_dir.join(scratch_name("remote")));
-    fs::write(&scratch.0, snapshot)?;
-
-    let store = SqliteStore::open(&scratch.0, key).map_err(|e| match e {
+    let contents = snapshot::read(snapshot, key, scratch_dir).map_err(|e| match e {
         // A schema this build has never seen is "update the app", never
         // "your remote vault is damaged" and never "wrong password".
-        StoreError::SchemaNewer => Error::VaultTooNew,
-        _ => Error::Other("Remote vault file is invalid".into()),
+        SnapshotError::SchemaNewer => Error::VaultTooNew,
+        SnapshotError::Invalid => Error::Other("Remote vault file is invalid".into()),
+        SnapshotError::Io(e) => Error::Io(e),
+        SnapshotError::Store(e) => store_err(e),
     })?;
-    let (name, name_ms) = identity::vault_name(&store).map_err(store_err)?;
     Ok(Snapshot {
-        records: store.export_for_sync().map_err(store_err)?,
-        attachments: store.export_attachments_for_sync().map_err(store_err)?,
-        audit: store.audit_all().map_err(store_err)?,
-        name,
-        name_ms,
+        records: contents.records,
+        attachments: contents.attachments,
+        audit: contents.audit,
+        name: contents.name,
+        name_ms: contents.name_ms,
         opened_under_retired: false,
     })
 }
@@ -877,31 +874,12 @@ fn note_push(store: &SqliteStore, revision: &str, at_ms: i64) -> Result<()> {
         .map_err(store_err)
 }
 
-// Unique per call: a scheduled run and a manual one must not share a path.
-fn scratch_name(role: &str) -> String {
-    static N: AtomicU64 = AtomicU64::new(0);
-    format!(
-        "rowel-sync-{role}-{}-{}.db",
-        std::process::id(),
-        N.fetch_add(1, Ordering::SeqCst)
-    )
-}
-
-// Removes the scratch database and its WAL/SHM siblings however we return.
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        storage::remove_db_files(&self.0);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::crypto::KdfParams;
     use crate::store::{state_digest, AttachmentMeta};
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Mutex;
 
     // The key every device in these tests holds unless it says otherwise, and

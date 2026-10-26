@@ -29,4 +29,7 @@ pub mod passkey;
 // exporter may write instead.
 pub mod ssh;
 pub mod store;
+// The `.rowel` pack and the reader of the snapshot inside one: the halves of
+// the sync exchange a server runs too.
+pub mod sync;
 pub mod workspace;

@@ -455,9 +455,10 @@ pub fn write_kdf_sidecar(app: &AppHandle, json: &str) -> Result<()> {
 }
 
 // Remove a SQLite database and its WAL/SHM siblings, ignoring whatever is
-// already absent. Both callers (the pack scratch snapshot, the failed-restore
-// rollback) must leave no *half* a database behind: a stale `-wal` beside a
-// missing or recreated main file is its own corruption, not a clean slate.
+// already absent. The failed-restore rollback must leave no *half* a database
+// behind: a stale `-wal` beside a missing or recreated main file is its own
+// corruption, not a clean slate. (The sync scratch files have the same guard
+// of their own in `rowel_core::sync`.)
 pub fn remove_db_files(path: &Path) {
     for file in db_files(path) {
         let _ = fs::remove_file(file);
