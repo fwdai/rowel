@@ -138,7 +138,12 @@ are in the database, where `rowel admin server rules` puts them.
   only (`localhost`, `127.0.0.0/8`, `[::1]`): the app refuses anything else
   before it sends a request, so a server offering it could not be reached.
   Normalized on load (lower case, no default port, no trailing slash).
-  Default `http://127.0.0.1:7402`.
+  Default `http://127.0.0.1:7402`. It must be exactly the address members
+  connect the app to, because enrollment proves it: every enrollment
+  challenge names this URL, and the app answers only one naming the server
+  it signed in to (`docs/server-api.md`, "Member API"). A server members
+  reach under another name, or behind a proxy whose address is not this one,
+  enrolls no device.
 - `listen.http`: the one listener, `host:port`, for every API and the agent
   WebSocket together. Default `127.0.0.1:7402`.
 - `listen.tls`: `{ "cert": "<PEM chain>", "key": "<PEM key>" }` to serve TLS

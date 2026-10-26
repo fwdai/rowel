@@ -74,7 +74,7 @@ impl Signed {
     fn enroll(server: &FakeServer, name: &str) -> Self {
         let (client, session) = Self::sign_in(server);
         let key = EnrollmentKey::generate();
-        let enrolled = block_on(client.enroll(&key.public_key_b64(), name)).unwrap();
+        let enrolled = block_on(client.enroll(&key, name)).unwrap();
         assert_eq!(enrolled.state, DeviceState::Pending);
         let mut connection = Connection {
             url: client.base_url().to_string(),
@@ -225,6 +225,51 @@ fn a_rotated_session_survives_a_later_change_to_the_record() {
         block_on(resolver.as_member(&server.url, |client| async move { client.me().await }))
             .is_ok()
     );
+}
+
+// (a''') The enrollment proves the key to the server this app is enrolling
+// at. A challenge naming another server — one a server this app also signs
+// in to relayed from it — is refused here, before an answer goes back that
+// could be passed off as this device's there.
+#[test]
+fn a_challenge_for_another_server_is_refused_before_any_proof_is_sent() {
+    let server = FakeServer::start();
+    server.seal_challenges_for("https://rowel.elsewhere.example");
+    let (client, _) = Signed::sign_in(&server);
+    match block_on(client.enroll(&EnrollmentKey::generate(), "Pat's Mac")) {
+        Err(Error::Crypto(why)) => assert!(why.contains("another server"), "{why}"),
+        other => panic!("another server's challenge must be refused, got {other:?}"),
+    }
+    assert_eq!(server.challenges_held(), 1, "issued, and never answered");
+    assert!(block_on(client.devices()).unwrap().is_empty());
+}
+
+// (a'''') A sign-in on an install whose device is already approved: the
+// enrollment every sign-in runs is handed the same device back, approved, and
+// the new session is that device's, so the listing seals it the master.
+#[test]
+fn signing_in_again_binds_the_new_session_to_the_approved_device() {
+    let server = FakeServer::start();
+    let pat = Signed::approved(&server, "Pat's Mac");
+    let lockbox = server.create_lockbox("Deploy");
+
+    let (client, _) = Signed::sign_in(&server);
+    let unbound = block_on(client.lockboxes()).unwrap();
+    assert!(
+        unbound[0].wrapped_master.is_none(),
+        "no device until it enrolls"
+    );
+    let again = block_on(client.enroll(&pat.key, "Pat's Mac")).unwrap();
+    assert_eq!(again.device_id, pat.device_id);
+    assert_eq!(again.state, DeviceState::Approved);
+    assert_eq!(block_on(client.devices()).unwrap().len(), 1);
+
+    let listed = block_on(client.lockboxes()).unwrap();
+    let master = pat
+        .key
+        .unseal_master(listed[0].wrapped_master.as_deref().unwrap())
+        .unwrap();
+    assert_eq!(master, server.master_of(&lockbox));
 }
 
 // (b) A new device is pending, is handed nothing, and is approved from a

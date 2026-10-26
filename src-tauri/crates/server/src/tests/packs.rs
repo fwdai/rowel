@@ -8,9 +8,9 @@ use std::path::PathBuf;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use crypto_box::SecretKey;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG, IF_MATCH, IF_NONE_MATCH};
 use reqwest::{Method, RequestBuilder, Response};
-use serde_json::json;
 use tempfile::TempDir;
 use zeroize::Zeroizing;
 
@@ -50,18 +50,11 @@ fn holder(api: &Api, lockbox: &Lockbox, email: &str) -> Member {
     member
 }
 
-/// A session signed in as `email` and bound to the device enrolled under
-/// `public_key`, as the app's session is once it has enrolled.
-async fn device_session(api: &Api, email: &str, public_key: &str) -> String {
+/// A session signed in as `email` and bound to the device whose secret key
+/// is `secret`, as the app's session is once it has enrolled.
+async fn device_session(api: &Api, email: &str, secret: &SecretKey) -> String {
     let tokens = api.sign_in(email).await;
-    let enrolled = api
-        .call(
-            Method::POST,
-            "/v1/members/enroll",
-            Some(&tokens.access),
-            Some(json!({ "devicePubkey": public_key, "deviceName": "Pat's laptop" })),
-        )
-        .await;
+    let enrolled = api.enroll(&tokens.access, secret).await;
     assert_eq!(enrolled.status().as_u16(), 200);
     tokens.access
 }
@@ -98,8 +91,8 @@ impl Device {
     /// id) and pulled once.
     pub async fn join(api: &Api, lockbox: &Lockbox, email: &str) -> Self {
         let member = holder(api, lockbox, email);
-        let (device, secret) = api.server.approved_device(&member);
-        let access = device_session(api, email, &device.public_key).await;
+        let (_, secret) = api.server.approved_device(&member);
+        let access = device_session(api, email, &secret).await;
         let listing = json(
             api.call(Method::GET, "/v1/members/me/lockboxes", Some(&access), None)
                 .await,
@@ -447,12 +440,12 @@ async fn only_an_approved_device_of_a_holder_reaches_a_pack() {
     let device = Device::join(&api, &lockbox, "pat@acme.example").await;
     let pat = holder(&api, &lockbox, "pat@acme.example");
 
-    let (pending, _) = api.server.pending_device(&pat);
-    let from_pending = device_session(&api, "pat@acme.example", &pending.public_key).await;
+    let (_, pending) = api.server.pending_device(&pat);
+    let from_pending = device_session(&api, "pat@acme.example", &pending).await;
     let unenrolled = api.sign_in("pat@acme.example").await.access;
     let sam = api.server.member("sam@acme.example", Role::Member);
-    let (sams, _) = api.server.approved_device(&sam);
-    let non_member = device_session(&api, "sam@acme.example", &sams.public_key).await;
+    let (_, sams) = api.server.approved_device(&sam);
+    let non_member = device_session(&api, "sam@acme.example", &sams).await;
 
     for method in [Method::HEAD, Method::GET, Method::PUT] {
         let ask = |access: &str, id: &str| {

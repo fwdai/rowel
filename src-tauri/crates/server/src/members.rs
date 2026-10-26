@@ -29,6 +29,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use zeroize::Zeroizing;
 
+use rowel_core::crypto::ENROLL_CHALLENGE_CONTEXT;
+
 use crate::api::{Failure, JsonBody};
 use crate::auth::Authed;
 use crate::config::Config;
@@ -51,6 +53,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/v1/members/auth/callback", get(callback))
         .route("/v1/members/auth/token", post(token))
         .route("/v1/members/me", get(me))
+        .route("/v1/members/enroll/challenge", post(enroll_challenge))
         .route("/v1/members/enroll", post(enroll))
         .route("/v1/members/me/devices", get(devices))
         .route("/v1/members/devices/{id}/approve", post(approve))
@@ -380,7 +383,7 @@ async fn token(
                 Ok(None) => return oauth_error(StatusCode::BAD_REQUEST, "invalid_grant"),
                 Err(e) => return Failure::internal(e).into_response(),
             };
-            state.store.create_session(&member_id, None, ttl)
+            state.store.create_session(&member_id, ttl)
         }
         Some("refresh_token") => {
             let Some(refresh) = field("refresh_token") else {
@@ -433,45 +436,99 @@ async fn me(
     })))
 }
 
+/// The device public key a request names, as the base64 the store keys
+/// devices and challenges by, so the challenge and the enrollment agree on
+/// one spelling. Checked here rather than when a master is first sealed to
+/// it, which would fail the member's listing long after the enrollment that
+/// caused it.
+fn device_public_key(given: Option<String>) -> Result<String, Failure> {
+    let given = given.ok_or_else(|| Failure::bad_request("devicePubkey is required"))?;
+    STANDARD
+        .decode(given.trim())
+        .ok()
+        .filter(|bytes| bytes.len() == 32)
+        .map(|bytes| STANDARD.encode(bytes))
+        .ok_or_else(|| {
+            Failure::bad_request("devicePubkey must be an X25519 public key: 32 bytes of base64")
+        })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EnrollChallenge {
+    device_pubkey: Option<String>,
+}
+
+/// A challenge for the calling session to prove it holds the secret half of
+/// `devicePubkey`: random bytes sealed to that key, behind the context the
+/// app checks for (`ENROLL_CHALLENGE_CONTEXT`) and this server's public URL,
+/// a NUL ending it. X25519 signs nothing, so opening what was sealed to the
+/// key is the proof `enroll` asks for. The URL is what keeps that proof
+/// from being run through another server: the app answers only a challenge
+/// that names the server it is enrolling at, so a server it was talked into
+/// signing in to cannot relay this one's challenge and hand the answer back.
+async fn enroll_challenge(
+    State(state): State<Arc<AppState>>,
+    authed: Authed,
+    JsonBody(body): JsonBody<EnrollChallenge>,
+) -> Result<Json<serde_json::Value>, Failure> {
+    let public_key = device_public_key(body.device_pubkey)?;
+    let secret = state
+        .store
+        .issue_enroll_challenge(&authed.session.id, &public_key)?;
+    let server_url = state.config.public_url.as_bytes();
+    let mut plaintext = Zeroizing::new(Vec::with_capacity(
+        ENROLL_CHALLENGE_CONTEXT.len() + server_url.len() + 1 + secret.len(),
+    ));
+    plaintext.extend_from_slice(ENROLL_CHALLENGE_CONTEXT);
+    plaintext.extend_from_slice(server_url);
+    plaintext.push(0);
+    plaintext.extend_from_slice(&*secret);
+    let challenge = lockboxes::seal_to(&public_key, &plaintext)?;
+    Ok(Json(json!({ "challenge": challenge })))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Enroll {
     device_pubkey: Option<String>,
     device_name: Option<String>,
+    proof: Option<String>,
 }
 
-/// Enroll the calling app's device, pending, and bind the session to it:
-/// from now on the listing seals masters to this device, once approved.
+/// Enroll the calling app's device and bind the session to it: from now on
+/// the listing seals masters to this device, once approved. Only with the
+/// proof that the caller holds the device's key (`enroll_challenge`), for a
+/// new key and a known one alike: every session of the member can read the
+/// public keys of their devices, so a key alone would let an unapproved
+/// install take an approved device's place.
 async fn enroll(
     State(state): State<Arc<AppState>>,
     authed: Authed,
     JsonBody(body): JsonBody<Enroll>,
 ) -> Result<Json<serde_json::Value>, Failure> {
-    let public_key = body
-        .device_pubkey
-        .ok_or_else(|| Failure::bad_request("devicePubkey is required"))?;
+    let public_key = device_public_key(body.device_pubkey)?;
     let name = body
         .device_name
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
         .ok_or_else(|| Failure::bad_request("deviceName is required"))?;
-    // Checked here rather than when a master is first sealed to it, which
-    // would fail the member's listing long after the enrollment that
-    // caused it.
-    let is_x25519 = STANDARD
-        .decode(public_key.trim())
-        .is_ok_and(|bytes| bytes.len() == 32);
-    if !is_x25519 {
-        return Err(Failure::bad_request(
-            "devicePubkey must be an X25519 public key: 32 bytes of base64",
-        ));
-    }
+    // A proof that is missing or not base64 still spends the challenge: it
+    // is an answer, and a wrong one.
+    let proof = Zeroizing::new(
+        body.proof
+            .and_then(|proof| STANDARD.decode(proof.trim()).ok())
+            .unwrap_or_default(),
+    );
     let device = state
         .store
-        .enroll_device(&authed.member.id, &name, &public_key)?;
-    state
-        .store
-        .bind_session_device(&authed.session.id, &device.id)?;
+        .enroll_proven_device(&authed.session, &name, &public_key, &proof)?
+        .ok_or_else(|| {
+            Failure::forbidden(
+                "enrolling a device takes proof that this app holds its key: \
+                 ask /v1/members/enroll/challenge for a challenge and send what it opens to",
+            )
+        })?;
     state.store.record_event(
         "device_enrolled",
         Some(&authed.member.id),

@@ -2,8 +2,6 @@
 //! lockboxes, agents with their trust policies, rules, members and their
 //! devices, the audit export and the tenant's events.
 
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use reqwest::Method;
 use serde_json::{json, Value};
 
@@ -453,17 +451,7 @@ async fn an_admin_adds_approves_and_offboards_members() {
     // Sam's first device is let in by the admin.
     let sam = api.sign_in("sam@acme.example").await;
     let secret = crypto_box::SecretKey::generate(&mut rand::thread_rng());
-    let public = STANDARD.encode(secret.public_key().as_bytes());
-    let enrolled = json(
-        api.call(
-            Method::POST,
-            "/v1/members/enroll",
-            Some(&sam.access),
-            Some(json!({ "devicePubkey": public, "deviceName": "Sam's laptop" })),
-        )
-        .await,
-    )
-    .await;
+    let enrolled = json(api.enroll(&sam.access, &secret).await).await;
     let device_id = enrolled["deviceId"].as_str().unwrap().to_string();
     let devices = json(call(Method::GET, format!("{sam_path}/devices"), None).await).await;
     assert_eq!(devices[0]["state"], "pending");

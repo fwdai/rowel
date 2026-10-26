@@ -23,9 +23,13 @@ fn migration_list() -> Vec<M<'static>> {
         // generation. The audit mirror is keyed as a lockbox's own chain is,
         // per writer and sequence, so a row mirrored twice is one row.
         //
+        // An enrollment challenge is held as the SHA-256 of its secret, like
+        // a token, under the session and the public key it was issued for.
+        //
         // The schema has shipped in no build yet, so a table or a column
         // added while the first server iteration is being built
-        // (`server_events`, `trust_policies.client_kind`) goes into this
+        // (`server_events`, `trust_policies.client_kind`, `enroll_challenges`)
+        // goes into this
         // first migration rather than a second one; from the first release
         // on, the rule at the top of this file holds.
         M::up(
@@ -65,6 +69,12 @@ fn migration_list() -> Vec<M<'static>> {
                revoked_at_ms        INTEGER
              );
              CREATE INDEX sessions_spent_refresh ON sessions(spent_refresh_hash);
+             CREATE TABLE enroll_challenges (
+               session_id    TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+               public_key    TEXT NOT NULL,
+               secret_hash   TEXT NOT NULL,
+               expires_at_ms INTEGER NOT NULL
+             );
              CREATE TABLE auth_codes (
                code_hash      TEXT PRIMARY KEY,
                member_id      TEXT NOT NULL REFERENCES members(id),

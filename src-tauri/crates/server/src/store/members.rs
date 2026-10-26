@@ -1,11 +1,19 @@
-//! The tenant, its members and their devices.
+//! The tenant, its members and their devices, and the challenges a session
+//! answers to enroll one.
 
 use rusqlite::{params, OptionalExtension, Row};
 use serde::Serialize;
+use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
 
 use rowel_core::crypto::random_hex_id;
 
-use super::{collect, now_ms, text_column, Result, Store, StoreError};
+use super::sessions::Session;
+use super::{collect, now_ms, sha256_hex, text_column, Result, Store, StoreError};
+
+/// How long an enrollment challenge waits for its proof. The app answers
+/// within a second of asking; past this the challenge is refused and swept.
+pub const ENROLL_CHALLENGE_TTL_MS: i64 = 5 * 60 * 1000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -189,6 +197,11 @@ impl Store {
     /// same member is the same device — an app that lost its record and
     /// signed in again — and gets its existing row back, approval and all,
     /// rather than a second pending one.
+    ///
+    /// That is only sound because the caller has proved possession of the
+    /// key's secret half ([`Store::enroll_proven_device`]): the public half is
+    /// on the member's device list, and handing back an approved row to
+    /// whoever names it would hand them the approval with it.
     pub fn enroll_device(&self, member_id: &str, name: &str, public_key: &str) -> Result<Device> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -228,6 +241,135 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(device)
+    }
+
+    /// A challenge for `session_id` to prove it holds the secret half of
+    /// `public_key`: 32 random bytes for the caller to seal to the key, held
+    /// here only as their SHA-256 and for [`ENROLL_CHALLENGE_TTL_MS`]. A new
+    /// one for the same session and key replaces the last. Challenges past
+    /// their time are swept on the way, as codes are.
+    pub fn issue_enroll_challenge(
+        &self,
+        session_id: &str,
+        public_key: &str,
+    ) -> Result<Zeroizing<[u8; 32]>> {
+        self.issue_enroll_challenge_at(session_id, public_key, now_ms())
+    }
+
+    pub fn issue_enroll_challenge_at(
+        &self,
+        session_id: &str,
+        public_key: &str,
+        now_ms: i64,
+    ) -> Result<Zeroizing<[u8; 32]>> {
+        let mut secret = Zeroizing::new([0u8; 32]);
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut *secret);
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM enroll_challenges WHERE expires_at_ms <= ?1",
+            params![now_ms],
+        )?;
+        // One live challenge per session, the latest: a session enrolls one
+        // device, and asking again replaces the last one, so the table is
+        // bounded by the sessions rather than by the keys a member names.
+        tx.execute(
+            "INSERT OR REPLACE INTO enroll_challenges
+               (session_id, public_key, secret_hash, expires_at_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                session_id,
+                public_key,
+                sha256_hex(&*secret),
+                now_ms + ENROLL_CHALLENGE_TTL_MS
+            ],
+        )?;
+        tx.commit()?;
+        Ok(secret)
+    }
+
+    /// Enroll `public_key` for the session's member and bind the session to
+    /// the device, when `proof` is the secret of the live challenge issued to
+    /// this session for this key; `None`, with nothing enrolled or bound,
+    /// otherwise. This is the one way a session comes to stand for a device:
+    /// a public key is no secret, so a session that only names one has
+    /// proved nothing, and binding it would hand it that device's masters
+    /// and its say over approvals.
+    pub fn enroll_proven_device(
+        &self,
+        session: &Session,
+        name: &str,
+        public_key: &str,
+        proof: &[u8],
+    ) -> Result<Option<Device>> {
+        if !self.spend_enroll_challenge(&session.id, public_key, proof)? {
+            return Ok(None);
+        }
+        let device = self.enroll_device(&session.member_id, name, public_key)?;
+        self.bind_session_device(&session.id, &device.id)?;
+        Ok(Some(device))
+    }
+
+    /// A session of `device`'s member, bound to it the one way a session is
+    /// bound ([`Store::enroll_proven_device`]), for a test that drives no
+    /// HTTP. The challenge is answered with the secret the store issued
+    /// rather than one opened under the device's key, so this proves nothing
+    /// and exists only under `cfg(test)`; a test of enrollment itself goes
+    /// through the member API (`tests::harness::Api::enroll`).
+    #[cfg(test)]
+    pub(crate) fn create_bound_session_at(
+        &self,
+        device: &Device,
+        access_ttl_ms: i64,
+        now_ms: i64,
+    ) -> Result<super::sessions::Issued> {
+        let (session, access, refresh) =
+            self.create_session_at(&device.member_id, access_ttl_ms, now_ms)?;
+        let secret = self.issue_enroll_challenge(&session.id, &device.public_key)?;
+        let bound = self
+            .enroll_proven_device(&session, &device.name, &device.public_key, &*secret)?
+            .ok_or_else(|| StoreError::Other("the challenge just issued did not answer".into()))?;
+        let session = Session {
+            device_id: Some(bound.id),
+            ..session
+        };
+        Ok((session, access, refresh))
+    }
+
+    /// Whether `proof` answers the challenge held for `session_id` and
+    /// `public_key`: hashed to the stored SHA-256 and compared in constant
+    /// time, within its time. The challenge is deleted whether or not it
+    /// does, so a wrong answer costs a new challenge rather than leaving
+    /// this one for another try.
+    fn spend_enroll_challenge(
+        &self,
+        session_id: &str,
+        public_key: &str,
+        proof: &[u8],
+    ) -> Result<bool> {
+        let now = now_ms();
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let held = tx
+            .query_row(
+                "SELECT secret_hash, expires_at_ms FROM enroll_challenges
+                 WHERE session_id = ?1 AND public_key = ?2",
+                params![session_id, public_key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        // Any answer spends the session's challenge, right or wrong, for
+        // whichever key it names.
+        tx.execute(
+            "DELETE FROM enroll_challenges WHERE session_id = ?1",
+            params![session_id],
+        )?;
+        tx.commit()?;
+        let Some((secret_hash, expires_at_ms)) = held else {
+            return Ok(false);
+        };
+        let answered = bool::from(sha256_hex(proof).as_bytes().ct_eq(secret_hash.as_bytes()));
+        Ok(answered && expires_at_ms > now)
     }
 
     pub fn device(&self, id: &str) -> Result<Option<Device>> {

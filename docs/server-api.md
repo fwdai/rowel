@@ -99,15 +99,59 @@ session that enrolled a device stays bound to that device across refreshes.
 `name` is optional. The app calls this once at sign-in and keeps the answer
 in the connection record.
 
+### `POST /v1/members/enroll/challenge` ✅
+
+```json
+{ "devicePubkey": "<X25519 enrollment public key, base64>" }
+```
+
+Reply 200 `{ "challenge": "<crypto_box sealed box to devicePubkey, base64>" }`.
+An enrollment proves that the app holds the secret half of the key it
+enrolls; X25519 signs nothing, so the proof is opening a box sealed to the
+key. The box holds, in order:
+
+```
+ENROLL_CHALLENGE_CONTEXT   30 bytes: "rowel enrollment challenge v1" and a NUL (rowel_core::crypto)
+publicUrl                  the server's public URL, normalized, as UTF-8
+0x00
+secret                     32 random bytes
+```
+
+The app answers only a challenge with that context in front, so a wrapped
+master, 32 bytes sealed to the same key, can never be passed off as a
+challenge and handed back in the clear. And it answers only one whose URL is
+the one it is enrolling at, spelled as `connections::normalize_url` spells
+it (the server's `normalize_public_url` spells every address the same way).
+Any other URL is refused before a proof is sent, so a server the member also
+signs in to cannot relay this one's challenge to the app and enroll here as
+the member's device with the answer. A server's `publicUrl` must therefore be
+exactly the address its members connect to. The challenge is issued to this
+session for this key, lives five minutes, and is held by the server only as
+the SHA-256 of the 32 bytes, one per session: asking again, for any key, replaces it. A
+`devicePubkey` that is not 32 bytes of base64 is a 400.
+
 ### `POST /v1/members/enroll` ✅
 
 ```json
-{ "devicePubkey": "<X25519 enrollment public key, base64>", "deviceName": "Pat's MacBook" }
+{ "devicePubkey": "<X25519 enrollment public key, base64>", "deviceName": "Pat's MacBook",
+  "proof": "<the 32 bytes the challenge opened to, base64>" }
 ```
 
-Reply 200 `{ "deviceId": "…", "state": "pending" }`. The device comes back
-pending, and the session that enrolled it is from now on that device's. A
-missing field is a 400.
+Reply 200 `{ "deviceId": "…", "state": "pending" }`. The session that
+enrolled the device is from now on that device's, and no session is a
+device's any other way. A key the member enrolled before is the same device
+and comes back as it stands, approved or not, so the app enrolls after every
+sign-in, new install or not, and a renewed session picks its device and its
+approval back up.
+
+That is why the proof is required every time, for a new key and a known one
+alike: every device's public key is on the member's device list, and without
+it any session of the member could enroll under an approved device's key and
+be handed that device's masters. A `proof` that is missing, or that is not
+the secret of the live challenge issued to **this session for this key**, is
+a 403, and nothing is enrolled or bound. The challenge is spent by any
+answer, right or wrong, so a refused enrollment asks for a new one. A missing
+`devicePubkey` or `deviceName` is a 400.
 
 ### `GET /v1/members/me/devices` ✅
 

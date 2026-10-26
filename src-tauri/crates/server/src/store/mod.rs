@@ -68,7 +68,7 @@ mod tests;
 pub use agents::{workload_kind, Agent, TrustPolicy};
 pub use audit::AuditFilter;
 pub use lockboxes::{Lockbox, LockboxMember, LockboxRole};
-pub use members::{Device, DeviceState, Member, Role, Tenant};
+pub use members::{Device, DeviceState, Member, Role, Tenant, ENROLL_CHALLENGE_TTL_MS};
 pub use policy::{PendingApproval, PendingState, SERVER_ADMIN};
 pub use sessions::{Session, AUTH_CODE_TTL_MS};
 

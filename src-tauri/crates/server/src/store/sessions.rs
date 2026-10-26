@@ -62,21 +62,17 @@ pub fn pkce_challenge(verifier: &str) -> String {
 }
 
 impl Store {
-    /// A new session for `member_id`, bound to `device_id` if the sign-in
-    /// already knows one; the access token good for `access_ttl_ms`.
-    pub fn create_session(
-        &self,
-        member_id: &str,
-        device_id: Option<&str>,
-        access_ttl_ms: i64,
-    ) -> Result<Issued> {
-        self.create_session_at(member_id, device_id, access_ttl_ms, now_ms())
+    /// A new session for `member_id`, the access token good for
+    /// `access_ttl_ms`. It stands for no device: a session comes to be a
+    /// device's only by proving it holds the device's key
+    /// ([`Store::enroll_proven_device`]), never by being created as one.
+    pub fn create_session(&self, member_id: &str, access_ttl_ms: i64) -> Result<Issued> {
+        self.create_session_at(member_id, access_ttl_ms, now_ms())
     }
 
     pub fn create_session_at(
         &self,
         member_id: &str,
-        device_id: Option<&str>,
         access_ttl_ms: i64,
         now_ms: i64,
     ) -> Result<Issued> {
@@ -85,18 +81,17 @@ impl Store {
         let session = Session {
             id: random_hex_id(),
             member_id: member_id.into(),
-            device_id: device_id.map(String::from),
+            device_id: None,
             access_expires_at_ms: now_ms + access_ttl_ms,
             created_at_ms: now_ms,
         };
         self.conn().execute(
-            "INSERT INTO sessions (id, member_id, device_id, access_hash, refresh_hash,
+            "INSERT INTO sessions (id, member_id, access_hash, refresh_hash,
                                    access_expires_at_ms, created_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 session.id,
                 session.member_id,
-                session.device_id,
                 sha256_hex(access.as_bytes()),
                 sha256_hex(refresh.as_bytes()),
                 session.access_expires_at_ms,
@@ -192,8 +187,10 @@ impl Store {
     }
 
     /// From now on the session is `device_id`'s: what an enrollment under it
-    /// does, so the listing knows which device to seal masters to.
-    pub fn bind_session_device(&self, session_id: &str, device_id: &str) -> Result<()> {
+    /// does, so the listing knows which device to seal masters to. Reached
+    /// only through [`Store::enroll_proven_device`], once the session has
+    /// proved it holds the device's key.
+    pub(super) fn bind_session_device(&self, session_id: &str, device_id: &str) -> Result<()> {
         self.one_row_changed(
             self.conn().execute(
                 "UPDATE sessions SET device_id = ?1 WHERE id = ?2",

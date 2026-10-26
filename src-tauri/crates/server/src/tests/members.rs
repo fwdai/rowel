@@ -9,10 +9,10 @@ use reqwest::Method;
 use serde_json::json;
 
 use super::harness::{
-    challenge, code_of, json, param, tokens_of, Api, APP_STATE, REDIRECT, VERIFIER,
+    challenge, code_of, json, param, public_key_of, tokens_of, Api, APP_STATE, REDIRECT, VERIFIER,
 };
 use crate::rootkey::RootKey;
-use crate::store::{LockboxRole, Role};
+use crate::store::{DeviceState, LockboxRole, Role, ENROLL_CHALLENGE_TTL_MS};
 
 #[tokio::test]
 async fn a_member_signs_in_through_the_idp_and_the_bearer_reaches_me() {
@@ -226,15 +226,8 @@ async fn a_pending_device_gets_no_master_until_an_approved_device_approves_it() 
     // The new device enrolls and comes back pending.
     let new = api.sign_in("pat@acme.example").await;
     let new_secret = SecretKey::generate(&mut rand::thread_rng());
-    let new_public = STANDARD.encode(new_secret.public_key().as_bytes());
-    let enrolled = api
-        .call(
-            Method::POST,
-            "/v1/members/enroll",
-            Some(&new.access),
-            Some(json!({ "devicePubkey": new_public, "deviceName": "Pat's laptop" })),
-        )
-        .await;
+    let new_public = public_key_of(&new_secret);
+    let enrolled = api.enroll(&new.access, &new_secret).await;
     assert_eq!(enrolled.status().as_u16(), 200);
     let enrolled = json(enrolled).await;
     assert_eq!(enrolled["state"], "pending");
@@ -289,18 +282,9 @@ async fn a_pending_device_gets_no_master_until_an_approved_device_approves_it() 
 
     // The member's other device, already approved, signs in as itself (the
     // same key enrolled again is the same device) and approves the new one.
-    let (old_device, _old_secret) = api.server.approved_device(&pat);
+    let (old_device, old_secret) = api.server.approved_device(&pat);
     let old = api.sign_in("pat@acme.example").await;
-    let again = json(
-        api.call(
-            Method::POST,
-            "/v1/members/enroll",
-            Some(&old.access),
-            Some(json!({ "devicePubkey": old_device.public_key, "deviceName": "Pat's desktop" })),
-        )
-        .await,
-    )
-    .await;
+    let again = json(api.enroll(&old.access, &old_secret).await).await;
     assert_eq!(again["deviceId"], old_device.id);
     assert_eq!(again["state"], "approved");
 
@@ -364,4 +348,218 @@ async fn a_pending_device_gets_no_master_until_an_approved_device_approves_it() 
         .collect();
     assert!(events.contains(&("device_enrolled".into(), Some(new_id.clone()))));
     assert!(events.contains(&("device_approved".into(), Some(new_id))));
+}
+
+/// The attack the proof is for: an install of the member's that nobody
+/// approved reads an approved device's public key off the list and enrolls
+/// under it, to be handed that device's masters and approve itself.
+#[tokio::test]
+async fn naming_an_approved_devices_key_without_its_secret_binds_nothing() {
+    let api = Api::start().await;
+    let pat = api.server.member("pat@acme.example", Role::Member);
+    let lockbox = api.server.lockbox("Deploy");
+    api.server
+        .store
+        .add_lockbox_member(&lockbox.id, &pat.id, LockboxRole::Reader)
+        .unwrap();
+    let (approved, _) = api.server.approved_device(&pat);
+
+    let intruder = api.sign_in("pat@acme.example").await;
+    let own = SecretKey::generate(&mut rand::thread_rng());
+    let enrolled = json(api.enroll(&intruder.access, &own).await).await;
+    assert_eq!(enrolled["state"], "pending");
+    let own_id = enrolled["deviceId"].as_str().unwrap().to_string();
+
+    let devices = json(
+        api.call(
+            Method::GET,
+            "/v1/members/me/devices",
+            Some(&intruder.access),
+            None,
+        )
+        .await,
+    )
+    .await;
+    let listed = devices
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|device| device["state"] == "approved")
+        .unwrap()["publicKey"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(listed, approved.public_key);
+
+    // A challenge for the listed key is handed out, but it opens only under
+    // the approved device's secret. Whatever the intruder sends instead —
+    // nothing, the proof for its own key, bytes of its own making — is no
+    // answer.
+    let own_proof = api.open_challenge(
+        &own,
+        &api.enroll_challenge(&intruder.access, &public_key_of(&own))
+            .await,
+    );
+    let zeros = STANDARD.encode([0u8; 32]);
+    for proof in [None, Some(own_proof.as_str()), Some(zeros.as_str())] {
+        api.enroll_challenge(&intruder.access, &listed).await;
+        let refused = api.enroll_with(&intruder.access, &listed, proof).await;
+        assert_eq!(refused.status().as_u16(), 403, "{proof:?}");
+    }
+
+    // Nothing moved: the session is still its own pending device's, the
+    // listing carries no master, and that device approves nothing.
+    let session = api
+        .state
+        .store
+        .session_by_access(&intruder.access)
+        .unwrap()
+        .unwrap();
+    assert_eq!(session.device_id.as_deref(), Some(own_id.as_str()));
+    let listing = json(
+        api.call(
+            Method::GET,
+            "/v1/members/me/lockboxes",
+            Some(&intruder.access),
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert!(listing[0].get("wrappedMaster").is_none());
+    let approve = api
+        .call(
+            Method::POST,
+            &format!("/v1/members/devices/{own_id}/approve"),
+            Some(&intruder.access),
+            None,
+        )
+        .await;
+    assert_eq!(approve.status().as_u16(), 403);
+    let own_row = api.state.store.device(&own_id).unwrap().unwrap();
+    assert_eq!(own_row.state, DeviceState::Pending);
+}
+
+#[tokio::test]
+async fn only_a_live_challenge_of_this_session_for_this_key_is_an_answer() {
+    let api = Api::start().await;
+    let pat = api.server.member("pat@acme.example", Role::Member);
+    let first = api.sign_in("pat@acme.example").await;
+    let other = api.sign_in("pat@acme.example").await;
+    let key = SecretKey::generate(&mut rand::thread_rng());
+    let public = public_key_of(&key);
+    let store = &api.state.store;
+    let refused = |reply: reqwest::Response| assert_eq!(reply.status().as_u16(), 403);
+
+    // The proof for another key.
+    let elsewhere = SecretKey::generate(&mut rand::thread_rng());
+    let elsewhere_public = public_key_of(&elsewhere);
+    let for_elsewhere = api.open_challenge(
+        &elsewhere,
+        &api.enroll_challenge(&first.access, &elsewhere_public).await,
+    );
+    api.enroll_challenge(&first.access, &public).await;
+    refused(
+        api.enroll_with(&first.access, &public, Some(&for_elsewhere))
+            .await,
+    );
+
+    // The proof for a challenge issued to the member's other session.
+    let to_other = api.open_challenge(&key, &api.enroll_challenge(&other.access, &public).await);
+    api.enroll_challenge(&first.access, &public).await;
+    refused(
+        api.enroll_with(&first.access, &public, Some(&to_other))
+            .await,
+    );
+
+    // A challenge past its time.
+    let session = store.session_by_access(&first.access).unwrap().unwrap();
+    let stale = store
+        .issue_enroll_challenge_at(
+            &session.id,
+            &public,
+            crate::state::now_ms() - ENROLL_CHALLENGE_TTL_MS - 1,
+        )
+        .unwrap();
+    refused(
+        api.enroll_with(&first.access, &public, Some(&STANDARD.encode(*stale)))
+            .await,
+    );
+
+    assert_eq!(store.devices_of(&pat.id).unwrap(), vec![]);
+    let session = store.session_by_access(&first.access).unwrap().unwrap();
+    assert_eq!(session.device_id, None);
+
+    // The right proof enrolls, once.
+    let proof = api.open_challenge(&key, &api.enroll_challenge(&first.access, &public).await);
+    let enrolled = api.enroll_with(&first.access, &public, Some(&proof)).await;
+    assert_eq!(enrolled.status().as_u16(), 200);
+    refused(api.enroll_with(&first.access, &public, Some(&proof)).await);
+    // The other session's challenge was its own all along, and still answers
+    // for it.
+    let theirs = api
+        .enroll_with(&other.access, &public, Some(&to_other))
+        .await;
+    assert_eq!(theirs.status().as_u16(), 200);
+    assert_eq!(store.devices_of(&pat.id).unwrap().len(), 1);
+
+    // A challenge is for a key, asked for under a bearer.
+    for body in [json!({}), json!({ "devicePubkey": "c2hvcnQ=" })] {
+        let reply = api
+            .call(
+                Method::POST,
+                "/v1/members/enroll/challenge",
+                Some(&first.access),
+                Some(body),
+            )
+            .await;
+        assert_eq!(reply.status().as_u16(), 400);
+    }
+    let anonymous = api
+        .call(
+            Method::POST,
+            "/v1/members/enroll/challenge",
+            None,
+            Some(json!({ "devicePubkey": public })),
+        )
+        .await;
+    assert_eq!(anonymous.status().as_u16(), 401);
+}
+
+#[tokio::test]
+async fn an_approved_device_signing_in_again_proves_its_key_and_is_itself_again() {
+    let api = Api::start().await;
+    let pat = api.server.member("pat@acme.example", Role::Member);
+    let lockbox = api.server.lockbox("Deploy");
+    api.server
+        .store
+        .add_lockbox_member(&lockbox.id, &pat.id, LockboxRole::Reader)
+        .unwrap();
+    let (device, secret) = api.server.approved_device(&pat);
+
+    let fresh = api.sign_in("pat@acme.example").await;
+    let again = json(api.enroll(&fresh.access, &secret).await).await;
+    assert_eq!(again["deviceId"], device.id);
+    assert_eq!(again["state"], "approved");
+    let session = api
+        .state
+        .store
+        .session_by_access(&fresh.access)
+        .unwrap()
+        .unwrap();
+    assert_eq!(session.device_id.as_deref(), Some(device.id.as_str()));
+    let listing = json(
+        api.call(
+            Method::GET,
+            "/v1/members/me/lockboxes",
+            Some(&fresh.access),
+            None,
+        )
+        .await,
+    )
+    .await;
+    let sealed = STANDARD
+        .decode(listing[0]["wrappedMaster"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(secret.unseal(&sealed).unwrap().len(), 32);
 }

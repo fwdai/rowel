@@ -118,17 +118,17 @@ fn an_ask_reaches_the_approvers_stream_and_its_answer_lands_once() {
     let org = Org::new(ASK_TIMEOUT_MS);
     let address = serve(&org);
     let store = &org.state.store;
-    let session_of = |member: &str, device: &str| {
+    let session_of = |device: &crate::store::Device| {
         store
-            .create_session(member, Some(device), 3_600_000)
+            .create_bound_session_at(device, 3_600_000, crate::state::now_ms())
             .unwrap()
             .1
             .to_string()
     };
-    let approver = session_of(&org.approver.0.id, &org.approver.1.id);
-    let reader = session_of(&org.reader.0.id, &org.reader.1.id);
+    let approver = session_of(&org.approver.1);
+    let reader = session_of(&org.reader.1);
     let (pending_device, _) = org.server.pending_device(&org.approver.0);
-    let unapproved = session_of(&org.approver.0.id, &pending_device.id);
+    let unapproved = session_of(&pending_device);
 
     let asked = {
         let mut agent = org.associated("run-key-1", "agent");

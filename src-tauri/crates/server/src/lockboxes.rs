@@ -45,7 +45,7 @@ pub enum Error {
     DevicePublicKey,
     #[error("the master is sealed only to an approved device")]
     DeviceNotApproved,
-    #[error("sealing the master to the device failed")]
+    #[error("sealing to the device's enrollment key failed")]
     Seal,
 }
 
@@ -184,15 +184,16 @@ pub fn wrap_for_device(
     Ok(sealed)
 }
 
-/// `master` sealed to the enrollment public key `public_key_b64`.
-fn seal_to(public_key_b64: &str, master: &[u8]) -> Result<String> {
+/// `plaintext` sealed to the enrollment public key `public_key_b64`: a
+/// master, or an enrollment challenge (`members::enroll_challenge`).
+pub(crate) fn seal_to(public_key_b64: &str, plaintext: &[u8]) -> Result<String> {
     let bytes: [u8; 32] = STANDARD
         .decode(public_key_b64.trim())
         .map_err(|_| Error::DevicePublicKey)?
         .try_into()
         .map_err(|_| Error::DevicePublicKey)?;
     let sealed = crypto_box::PublicKey::from(bytes)
-        .seal(&mut rand::thread_rng(), master)
+        .seal(&mut rand::thread_rng(), plaintext)
         .map_err(|_| Error::Seal)?;
     Ok(STANDARD.encode(sealed))
 }

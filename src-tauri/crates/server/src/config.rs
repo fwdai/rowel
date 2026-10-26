@@ -339,6 +339,35 @@ mod tests {
         ));
     }
 
+    // An enrollment challenge names the public URL, and the app answers only
+    // one naming the URL it connected to as `org::connections::normalize_url`
+    // spells it. The app does not link this crate, so the two spellings are
+    // pinned by the same cases on both sides (`a_server_url_has_one_spelling`
+    // there): change one and the other must change with it.
+    #[test]
+    fn the_public_url_is_spelled_as_the_app_spells_a_server_url() {
+        for (given, expected) in [
+            ("https://Rowel.Example.com/", "https://rowel.example.com"),
+            (
+                "https://rowel.example.com:443/",
+                "https://rowel.example.com",
+            ),
+            ("http://127.0.0.1:8080", "http://127.0.0.1:8080"),
+            ("http://LocalHost:80/", "http://localhost"),
+            ("http://[::1]:8080/", "http://[::1]:8080"),
+            (
+                " https://rowel.example.com/rowel/ ",
+                "https://rowel.example.com/rowel",
+            ),
+            (
+                "https://rowel.example.com/rowel?x=1#frag",
+                "https://rowel.example.com/rowel",
+            ),
+        ] {
+            assert_eq!(normalize_public_url(given).unwrap(), expected, "{given}");
+        }
+    }
+
     #[test]
     fn a_plaintext_public_url_off_this_machine_names_the_field() {
         let error = load(r#"{ "rootKeyFile": "k", "publicUrl": "http://rowel.acme.example" }"#)

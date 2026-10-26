@@ -5,11 +5,13 @@
 use std::sync::Arc;
 
 use axum::Router;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
+use crypto_box::SecretKey;
 use reqwest::header::LOCATION;
 use reqwest::{Method, Response};
-use serde_json::Value;
+use rowel_core::crypto::ENROLL_CHALLENGE_CONTEXT;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
@@ -209,6 +211,63 @@ impl Api {
         }
         request.send().await.unwrap()
     }
+
+    /// A challenge issued to `access` for `public_key`, sealed as it comes.
+    pub async fn enroll_challenge(&self, access: &str, public_key: &str) -> String {
+        let reply = self
+            .call(
+                Method::POST,
+                "/v1/members/enroll/challenge",
+                Some(access),
+                Some(json!({ "devicePubkey": public_key })),
+            )
+            .await;
+        assert_eq!(reply.status().as_u16(), 200);
+        json(reply).await["challenge"].as_str().unwrap().into()
+    }
+
+    /// The enrollment of `public_key` under `access`, with `proof` as sent.
+    pub async fn enroll_with(
+        &self,
+        access: &str,
+        public_key: &str,
+        proof: Option<&str>,
+    ) -> Response {
+        let mut body = json!({ "devicePubkey": public_key, "deviceName": "Pat's laptop" });
+        if let Some(proof) = proof {
+            body["proof"] = proof.into();
+        }
+        self.call(Method::POST, "/v1/members/enroll", Some(access), Some(body))
+            .await
+    }
+
+    /// `secret`'s device enrolled under `access` as the app enrolls one: a
+    /// challenge for its public key, opened with the secret, and what it
+    /// opened to sent as the proof.
+    pub async fn enroll(&self, access: &str, secret: &SecretKey) -> Response {
+        let public_key = public_key_of(secret);
+        let sealed = self.enroll_challenge(access, &public_key).await;
+        let proof = self.open_challenge(secret, &sealed);
+        self.enroll_with(access, &public_key, Some(&proof)).await
+    }
+
+    /// The proof `secret` gives for `sealed`, as the app checks a challenge
+    /// before answering it: the context, then this server's URL and a NUL,
+    /// then the 32 bytes that are the answer, in base64.
+    pub fn open_challenge(&self, secret: &SecretKey, sealed: &str) -> String {
+        let opened = secret.unseal(&STANDARD.decode(sealed).unwrap()).unwrap();
+        let expected = [ENROLL_CHALLENGE_CONTEXT, self.url.as_bytes(), &[0]].concat();
+        let challenge = opened
+            .strip_prefix(expected.as_slice())
+            .expect("a challenge names this server");
+        assert_eq!(challenge.len(), 32);
+        STANDARD.encode(challenge)
+    }
+}
+
+/// The base64 public key of `secret`, as the app sends it.
+pub(super) fn public_key_of(secret: &SecretKey) -> String {
+    STANDARD.encode(secret.public_key().as_bytes())
 }
 
 pub(super) fn location(response: &Response) -> String {

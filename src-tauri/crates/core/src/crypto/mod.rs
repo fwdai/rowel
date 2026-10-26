@@ -113,6 +113,15 @@ pub fn key_fingerprint_bytes(public_key: &[u8; 32]) -> String {
         .join(" ")
 }
 
+/// What a Rowel Server's enrollment challenge opens to first, ahead of the
+/// server's URL, a NUL and its 32 random bytes (`docs/server-api.md`). A
+/// device's enrollment key opens a challenge only with these in front, and a
+/// wrapped master — 32 bytes sealed to the same key — never has them, so no
+/// server can pass a master off as a challenge and have the device hand it
+/// back in the clear. The server seals it and the app checks
+/// it, which is why it lives here.
+pub const ENROLL_CHALLENGE_CONTEXT: &[u8] = b"rowel enrollment challenge v1\0";
+
 /// Derive a 32-byte subkey from `ikm` (an Argon2id master key) for the given
 /// `info` label via HKDF-SHA256. One master yields the SQLCipher key and the
 /// payload key as independent subkeys (distinct `info`), so a single KDF pass

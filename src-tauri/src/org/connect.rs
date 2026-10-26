@@ -101,29 +101,23 @@ fn sign_in(app: &AppHandle, url: &str, attempt: u64) -> Result<()> {
     let client = ServerClient::with_session(url, &session.access_token)?;
     let me = block_on(client.me())?;
 
-    // This device is enrolled once per server and member: a sign-in that
-    // renews a session keeps the device the first one enrolled, and so its
-    // approval. Another member signing in on the same install is another
-    // member's device.
-    let (root, app_key) = connections::app_root_and_key(app)?;
-    let held = connections::find(&root, &app_key, url)?
-        .filter(|c| c.member_id == me.member.id && c.device_id.is_some());
-    let (device_id, device_state) = match held {
-        Some(connection) => (connection.device_id, connection.device_state),
-        None => {
-            let key = enrollment::load_or_create_for(app)?;
-            let enrolled = block_on(client.enroll(&key.public_key_b64(), &device_name()))?;
-            (Some(enrolled.device_id), Some(enrolled.state))
-        }
-    };
+    // Every sign-in enrolls, proving this install's key, held connection or
+    // not: a session stands for a device only once an enrollment under it
+    // has proved the key, so one that skipped it would be handed no master
+    // and could answer no approval. The server hands back the device this
+    // key enrolled as before — the same member's same device, approved if it
+    // was — so a renewed sign-in keeps its approval. Another member signing
+    // in on the same install is another member's device.
+    let key = enrollment::load_or_create_for(app)?;
+    let enrolled = block_on(client.enroll(&key, &device_name()))?;
     let mut connection = Connection {
         url: url.to_string(),
         tenant_name: me.tenant.name,
         member_id: me.member.id,
         member_email: me.member.email,
         member_name: me.member.name,
-        device_id,
-        device_state,
+        device_id: Some(enrolled.device_id),
+        device_state: Some(enrolled.state),
         access_token: String::new(),
         refresh_token: None,
         expires_at_ms: 0,
@@ -131,7 +125,7 @@ fn sign_in(app: &AppHandle, url: &str, attempt: u64) -> Result<()> {
     connection.adopt(session, chrono::Utc::now().timestamp_millis());
     // Nothing of a disowned flow is kept, device included: the server will
     // list it until an admin removes it, but this install holds no session
-    // for it and the next sign-in enrolls afresh.
+    // for it, and the next sign-in enrolls the same key and is handed it back.
     if cancelled() {
         return Err(Error::Cancelled);
     }

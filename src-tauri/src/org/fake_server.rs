@@ -3,8 +3,9 @@
 //! (`sync::providers::rowel`), over in-memory state, on a loopback port.
 //!
 //! Faithful where the contract has teeth — PKCE is verified, a bearer is
-//! required, a pending device is handed no master, the pack `PUT` is a
-//! compare-and-swap — and short everywhere else: one tenant, one member, an
+//! required, an enrollment proves it holds the device's key, a pending device
+//! is handed no master, the pack `PUT` is a compare-and-swap — and short
+//! everywhere else: one tenant, one member, an
 //! authorization page that redirects straight back with a code instead of
 //! sending anyone to an identity provider. The helpers at the bottom are the
 //! admin and the agent: they mint lockboxes, rotate masters, approve a first
@@ -20,13 +21,15 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 use super::client::{
-    Device, DeviceState, Enrolled, Lockbox, Me, Member, Session, Tenant, CLIENT_ID,
+    Device, DeviceState, EnrollChallenge, Enrolled, Lockbox, Me, Member, Session, Tenant, CLIENT_ID,
 };
 use super::enrollment::seal_to;
-use crate::crypto::{random_hex_id, KdfParams};
+use crate::crypto::{random_hex_id, KdfParams, ENROLL_CHALLENGE_CONTEXT};
 use crate::sync::challenge;
 
 /// One sign-in: the two tokens it holds, and the device it was bound to by
@@ -36,6 +39,19 @@ struct Grant {
     refresh: String,
     device: Option<String>,
 }
+
+/// An enrollment challenge handed out and not yet answered: the session it
+/// was issued to (by its access token, which is how this server tells
+/// sessions apart), the key it is for, and the secret sealed to that key.
+struct Challenge {
+    access: String,
+    public_key: String,
+    secret: Zeroizing<[u8; 32]>,
+    expires_at_ms: i64,
+}
+
+/// How long a challenge counts, as at the server.
+const CHALLENGE_TTL_MS: i64 = 5 * 60 * 1000;
 
 struct LockboxRecord {
     id: String,
@@ -54,6 +70,10 @@ struct LockboxRecord {
 struct Inner {
     codes: HashMap<String, String>,
     grants: Vec<Grant>,
+    /// The URL a challenge names: this server's own, as the real one seals
+    /// its public URL, unless a test has it name another.
+    challenge_url: String,
+    challenges: Vec<Challenge>,
     devices: Vec<Device>,
     lockboxes: Vec<LockboxRecord>,
     #[cfg(desktop)]
@@ -92,7 +112,10 @@ impl FakeServer {
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let shared = Arc::new(Shared {
-            state: Mutex::default(),
+            state: Mutex::new(Inner {
+                challenge_url: url.clone(),
+                ..Inner::default()
+            }),
             #[cfg(desktop)]
             approvals: tokio::sync::broadcast::channel(64).0,
         });
@@ -106,6 +129,19 @@ impl FakeServer {
 
     fn state(&self) -> MutexGuard<'_, Inner> {
         self.shared.state.lock().unwrap()
+    }
+
+    /// From now on, seal challenges naming `url` rather than this server: a
+    /// server relaying another one's challenge.
+    pub(crate) fn seal_challenges_for(&self, url: &str) {
+        self.state().challenge_url = url.into();
+    }
+
+    /// How many challenges are waiting for an answer. Any enrollment under
+    /// the session a challenge was issued to spends it, so one still here is
+    /// one nobody answered.
+    pub(crate) fn challenges_held(&self) -> usize {
+        self.state().challenges.len()
     }
 
     /// The admin creates a lockbox: a random master, an `External`
@@ -214,6 +250,7 @@ fn router(shared: Arc<Shared>) -> Router {
         .route("/v1/members/auth/authorize", get(authorize))
         .route("/v1/members/auth/token", post(token))
         .route("/v1/members/me", get(me))
+        .route("/v1/members/enroll/challenge", post(enroll_challenge))
         .route("/v1/members/enroll", post(enroll))
         .route("/v1/members/me/devices", get(devices))
         .route("/v1/members/devices/{id}/approve", post(approve_device))
@@ -336,6 +373,53 @@ async fn me(State(shared): App, headers: HeaderMap) -> Result<Json<Me>, StatusCo
     }))
 }
 
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// A challenge for the bearer's session to prove it holds the secret half
+/// of `devicePubkey`: the context, the server's URL and a NUL, and 32 random
+/// bytes, sealed to the key as the server seals one. Another for the same
+/// session and key replaces it.
+async fn enroll_challenge(
+    State(shared): App,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<EnrollChallenge>, StatusCode> {
+    let mut state = shared.state.lock().unwrap();
+    let access = grant(&state, &headers)?.access.clone();
+    let public_key = body
+        .get("devicePubkey")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?
+        .to_string();
+    let mut secret = Zeroizing::new([0u8; 32]);
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut *secret);
+    let challenge = seal_to(
+        &public_key,
+        &Zeroizing::new(
+            [
+                ENROLL_CHALLENGE_CONTEXT,
+                state.challenge_url.as_bytes(),
+                &[0],
+                &*secret,
+            ]
+            .concat(),
+        ),
+    )
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    state
+        .challenges
+        .retain(|c| c.access != access || c.public_key != public_key);
+    state.challenges.push(Challenge {
+        access,
+        public_key,
+        secret,
+        expires_at_ms: now_ms() + CHALLENGE_TTL_MS,
+    });
+    Ok(Json(EnrollChallenge { challenge }))
+}
+
 async fn enroll(
     State(shared): App,
     headers: HeaderMap,
@@ -349,18 +433,45 @@ async fn enroll(
             .map(String::from)
             .ok_or(StatusCode::BAD_REQUEST)
     };
-    let device = Device {
-        id: random_hex_id(),
-        name: field("deviceName")?,
-        state: DeviceState::Pending,
-        public_key: field("devicePubkey")?,
-        created_at_ms: chrono::Utc::now().timestamp_millis(),
+    let name = field("deviceName")?;
+    let public_key = field("devicePubkey")?;
+    // The challenge issued to this session for this key is spent by any
+    // answer, and only its own secret, within its time, is the right one.
+    let held = state
+        .challenges
+        .iter()
+        .position(|c| c.access == access && c.public_key == public_key)
+        .map(|at| state.challenges.remove(at));
+    let proof = field("proof")
+        .ok()
+        .and_then(|proof| STANDARD.decode(proof).ok())
+        .unwrap_or_default();
+    let proven = held
+        .is_some_and(|c| c.expires_at_ms > now_ms() && bool::from(c.secret[..].ct_eq(&proof[..])));
+    if !proven {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    // There is one member here, so a key enrolled before is this member's
+    // device, handed back as it stands — approved stays approved — as the
+    // server's store hands it back.
+    let device = match state.devices.iter().find(|d| d.public_key == public_key) {
+        Some(device) => device.clone(),
+        None => {
+            let device = Device {
+                id: random_hex_id(),
+                name,
+                state: DeviceState::Pending,
+                public_key,
+                created_at_ms: now_ms(),
+            };
+            state.devices.push(device.clone());
+            device
+        }
     };
     let enrolled = Enrolled {
-        device_id: device.id.clone(),
+        device_id: device.id,
         state: device.state,
     };
-    state.devices.push(device);
     let held = state
         .grants
         .iter_mut()

@@ -168,7 +168,7 @@ fn a_revoked_device_loses_the_masters_sealed_to_it() {
         .put_device_master(&lockbox.id, &device.id, 1, "sealed")
         .unwrap();
     let (_, access, _) = store
-        .create_session(&pat.id, Some(&device.id), 60_000)
+        .create_bound_session_at(&device, 60_000, now_ms())
         .unwrap();
     store.revoke_device(&device.id).unwrap();
     assert_eq!(store.device_master(&lockbox.id, &device.id).unwrap(), None);
@@ -183,9 +183,7 @@ fn a_session_is_found_by_its_access_token_while_it_lives() {
     let server = TempServer::new();
     let store = &server.store;
     let pat = server.member("pat@acme.example", Role::Member);
-    let (session, access, _refresh) = store
-        .create_session_at(&pat.id, None, 1_000, 10_000)
-        .unwrap();
+    let (session, access, _refresh) = store.create_session_at(&pat.id, 1_000, 10_000).unwrap();
     assert_eq!(session.member_id, pat.id);
     assert_eq!(session.device_id, None);
     assert_eq!(session.access_expires_at_ms, 11_000);
@@ -197,7 +195,13 @@ fn a_session_is_found_by_its_access_token_while_it_lives() {
     assert_eq!(store.session_by_access_at("other", 10_500).unwrap(), None);
 
     let (device, _) = server.approved_device(&pat);
-    store.bind_session_device(&session.id, &device.id).unwrap();
+    let secret = store
+        .issue_enroll_challenge(&session.id, &device.public_key)
+        .unwrap();
+    store
+        .enroll_proven_device(&session, "MacBook", &device.public_key, &*secret)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         store
             .session_by_access_at(&access, 10_500)
@@ -213,13 +217,41 @@ fn a_session_is_found_by_its_access_token_while_it_lives() {
 }
 
 #[test]
+fn an_enrollment_challenge_is_spent_by_any_answer_and_binds_only_on_the_right_one() {
+    let server = TempServer::new();
+    let store = &server.store;
+    let pat = server.member("pat@acme.example", Role::Member);
+    let (device, _) = server.approved_device(&pat);
+    let key = &device.public_key;
+    let (session, access, _) = store.create_session(&pat.id, 60_000).unwrap();
+    let bound = || store.session_by_access(&access).unwrap().unwrap().device_id;
+
+    // A wrong answer burns the challenge: the right one after it is too late.
+    let secret = store.issue_enroll_challenge(&session.id, key).unwrap();
+    let enroll = |proof: &[u8]| store.enroll_proven_device(&session, "MacBook", key, proof);
+    assert_eq!(enroll(&[0; 32]).unwrap(), None);
+    assert_eq!(enroll(&*secret).unwrap(), None);
+    // As does its time running out.
+    let stale = store
+        .issue_enroll_challenge_at(&session.id, key, now_ms() - ENROLL_CHALLENGE_TTL_MS - 1)
+        .unwrap();
+    assert_eq!(enroll(&*stale).unwrap(), None);
+    assert_eq!(bound(), None);
+
+    let secret = store.issue_enroll_challenge(&session.id, key).unwrap();
+    assert_eq!(enroll(&*secret).unwrap(), Some(device.clone()));
+    assert_eq!(bound(), Some(device.id));
+    assert_eq!(enroll(&*secret).unwrap(), None, "single use");
+}
+
+#[test]
 fn a_refresh_token_is_single_use_and_its_reuse_ends_the_session() {
     let server = TempServer::new();
     let store = &server.store;
     let pat = server.member("pat@acme.example", Role::Member);
     let (device, _) = server.approved_device(&pat);
     let (session, access, refresh) = store
-        .create_session_at(&pat.id, Some(&device.id), 1_000, 10_000)
+        .create_bound_session_at(&device, 1_000, 10_000)
         .unwrap();
 
     let (refreshed, access2, refresh2) = store
