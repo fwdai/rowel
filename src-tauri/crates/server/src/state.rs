@@ -84,7 +84,11 @@ impl AppState {
             None => None,
         };
         Ok(Arc::new(Self {
-            writer_id: rowel_serve::install_id_in(data_dir),
+            // A server's data directory is its own, never a device's copy,
+            // so it keeps the one id file it has always had.
+            writer_id: rowel_core::layout::kept_id(
+                &data_dir.join(rowel_core::layout::INSTALL_ID_FILE),
+            ),
             data_dir: data_dir.to_path_buf(),
             store,
             root: Box::new(root),

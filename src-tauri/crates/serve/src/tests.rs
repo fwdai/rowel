@@ -220,16 +220,47 @@ fn an_interrupted_password_change_refuses_to_open() {
     ));
 }
 
+// The broker writes under an id of its own, minted once and kept
+// owner-only, never the device's `install_id` that came with the copied data
+// directory — which it leaves as it found it.
 #[test]
-fn the_install_id_is_minted_once_and_read_back() {
-    let data = DataDir::new();
-    let id = crate::install_id_in(&data.root);
+fn the_brokers_writer_id_is_its_own_minted_once_and_owner_only() {
+    use rowel_core::layout::{INSTALL_ID_FILE, SERVE_WRITER_ID_FILE};
+    let data = seeded();
+    let device = "0123456789abcdef0123456789abcdef";
+    std::fs::write(data.root.join(INSTALL_ID_FILE), device).unwrap();
+
+    let id = crate::writer_id_in(&data.root);
     assert_eq!(id.len(), 32);
-    assert_eq!(crate::install_id_in(&data.root), id);
+    assert_ne!(id, device);
+    assert_eq!(crate::writer_id_in(&data.root), id, "read back");
     assert_eq!(
-        std::fs::read_to_string(data.root.join(crate::INSTALL_ID_FILE)).unwrap(),
+        std::fs::read_to_string(data.root.join(SERVE_WRITER_ID_FILE)).unwrap(),
         id
     );
+    assert_eq!(
+        std::fs::read_to_string(data.root.join(INSTALL_ID_FILE)).unwrap(),
+        device
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(data.root.join(SERVE_WRITER_ID_FILE))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    // And it is what the broker's rows are written under.
+    config_with(&data, vec![stripe_rule(AGENT_KEY, Approval::Auto)]);
+    let host = data.host(&Notices::default());
+    peer(&host, AGENT_KEY)
+        .call("request-grant", header_request("deploy"))
+        .unwrap();
+    let store = data.open().store;
+    assert_eq!(store.audit_rows(&id).unwrap().len(), 2);
+    assert!(store.audit_rows(device).unwrap().is_empty());
 }
 
 // --- association ------------------------------------------------------------------

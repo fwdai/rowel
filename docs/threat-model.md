@@ -1046,7 +1046,10 @@ whole contents, never trusted to its stored `hash`), never last-writer-wins
 and never tombstoned, so devices converge on the union of their logs and no
 device removes another's rows through sync. A copy altered behind an
 unchanged `hash` is therefore kept beside the original on every device rather
-than taken for it, and verification names it as altered everywhere. A forked chain — two rows at one writer's `seq`, as when an app
+than taken for it, and verification names it as altered everywhere. `rowel
+serve`, which runs on a copy of a device's data directory, writes under an id
+of its own (`serve_writer_id`, minted beside the copied `install_id`), so the
+broker and the device it was copied from never extend one chain. A forked chain — two rows at one writer's `seq`, as when an app
 folder copied to a second machine carries its install id — is kept whole on
 every device rather than each keeping its own side, so the digests agree and
 verification names the fork at the same `seq` everywhere; the pack's

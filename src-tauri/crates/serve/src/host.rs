@@ -201,7 +201,7 @@ impl HeadlessHost {
                 name,
             },
             lockbox_dir: workspace::dir_of(root, lockbox_id),
-            writer_id: crate::install_id_in(root),
+            writer_id: crate::writer_id_in(root),
             session: Mutex::new(Session {
                 opened: None,
                 epoch: 0,

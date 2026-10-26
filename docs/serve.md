@@ -41,7 +41,7 @@ the extension's socket, the broker before it asks for a password or binds
 anything, whatever it listens on. Whichever is second is refused — the
 broker exits saying so, the app logs it and does not serve the extension —
 so neither can replace the other's live socket on its way to failing, and no
-two brokers write the same lockbox under the same install id. The lock is
+two brokers write the same lockbox at once. The lock is
 held until the process ends and released by the kernel however it ends, so a
 crash needs no cleanup.
 
@@ -58,9 +58,13 @@ must be on, as in the app.
    `~/Library/Application Support/app.rowel.desktop`, on Linux
    `~/.local/share/app.rowel.desktop` (a debug build's is the `dev`
    subdirectory). The primary lockbox *is* the directory; another lockbox is
-   `workspaces/<id>` in it beside `workspaces.json`. The install id file
-   travels with it, so the audit chain the device started continues on the
-   box; the vault is served as it was copied — the broker does not sync.
+   `workspaces/<id>` in it beside `workspaces.json`. The device's
+   `install_id` file travels with it and is left alone: the broker writes its
+   audit rows under an id of its own, minted on its first run into
+   `serve_writer_id` (owner-only), so the device's chain and the box's never
+   fork. Copying a box's data directory on to another box carries that file
+   too; delete `serve_writer_id` from the copy so the new box mints its own.
+   The vault is served as it was copied — the broker does not sync.
 3. Install the command line tool ([below](#installing-the-command-line-tool)),
    reached as `rowel` from here on.
 4. Unlock and serve:
