@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroizing;
 
 use crate::appkey;
-use crate::crypto::{KdfParams, VaultKey};
+use crate::crypto::VaultKey;
 use crate::error::{Error, Result};
 use crate::org::client::DeviceState;
 use crate::org::connections::{self, Connection, SessionResolver};
@@ -121,9 +121,15 @@ pub async fn org_connections(app: AppHandle) -> Result<Vec<OrgConnection>> {
                         // In place, over the record as it stands now: the
                         // listing above may have refreshed the session, and
                         // the copy read before it holds the tokens it retired.
-                        connection = resolver
-                            .update(&connection.url, |held| held.device_state = Some(state))?;
-                        changed = true;
+                        // And only onto the same member's same device: a
+                        // sign-in that replaced this one meanwhile is not the
+                        // device this listing was about, and keeps its own.
+                        let expect = connections::Expect::sign_in(&connection);
+                        let updated = resolver.update(&connection.url, &expect, |held| {
+                            held.device_state = Some(state)
+                        })?;
+                        changed |= matches!(updated, connections::Updated::Changed(_));
+                        connection = updated.into_record();
                     }
                 }
                 Err(e) => log::info!(
@@ -362,13 +368,15 @@ pub async fn org_add_lockbox(
     Ok(id)
 }
 
-/// Fetch workspace `workspace_id`'s master from its server again. A listing
-/// at a later key generation than the sidecar's is a rotation: the local
-/// copy is re-keyed onto the new master exactly as a password change
-/// re-keys it, retiring the old epoch so older packs still open. The same
-/// generation is the key handed over once more — into the ring, and the
-/// sealed copy beside the database written again, which is what repairs a
-/// lockbox whose copy went missing.
+/// Fetch workspace `workspace_id`'s master from its server again
+/// (`lockboxes::key_step` decides what it is). A listing at a later key
+/// generation than the sidecar's is a rotation: the local copy is re-keyed
+/// onto the new master exactly as a password change re-keys it, retiring the
+/// old epoch so older packs still open. The same descriptor is the key
+/// handed over once more — checked against the database, then into the ring,
+/// and the sealed copy beside the database written again, which is what
+/// repairs a lockbox whose copy went missing. An older generation, or another
+/// key at the same one, is refused and the local key kept.
 #[tauri::command]
 pub async fn org_refresh_lockbox_key(
     workspace_id: String,
@@ -379,7 +387,9 @@ pub async fn org_refresh_lockbox_key(
     let workspace = lockboxes::org_workspace(&root, &workspace_id)?;
     let (master, kdf) = fetch_master(&app, &workspace).await?;
     let dir = workspace::dir_of(&root, &workspace_id);
-    if KdfParams::from_json(&kdf)?.gen() <= lockboxes::local_gen(&dir)? {
+    if lockboxes::key_step(&dir, &kdf)? == lockboxes::KeyStep::Repair {
+        let (check_dir, check) = (dir.clone(), master.clone());
+        blocking(move || lockboxes::check_opens(&check_dir, &check)).await?;
         appkey::adopt(&app, &workspace_id, &master);
         return Ok(());
     }
@@ -441,7 +451,7 @@ pub(super) fn rotate_open_lockbox(app: &AppHandle) -> Result<()> {
     let id = workspace::active_id(app);
     let workspace = lockboxes::org_workspace(&root, &id)?;
     let (master, kdf) = tauri::async_runtime::block_on(fetch_master(app, &workspace))?;
-    if KdfParams::from_json(&kdf)?.gen() <= lockboxes::local_gen(&workspace::dir_of(&root, &id))? {
+    if lockboxes::key_step(&workspace::dir_of(&root, &id), &kdf)? != lockboxes::KeyStep::Rotate {
         return Err(Error::Other(
             "the Rowel Server holds no newer key for this lockbox".into(),
         ));

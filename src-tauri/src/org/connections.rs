@@ -165,28 +165,124 @@ pub(crate) fn load(root: &Path, app_key: &[u8]) -> Result<Vec<Connection>> {
     Ok(serde_json::from_slice(&json)?)
 }
 
-/// Change the connection to the server at `url` in place: `change` runs over
-/// the record as the file holds it now, and the result is written back as
-/// one step. The one way a held connection is ever written, so two writers
-/// — a refresh rotating the tokens, a listing noting the device's standing —
-/// never put a snapshot of theirs over the other's write. The record as it
-/// now stands comes back.
+/// Which record a change was worked out from, and so the only record it may
+/// land on. A change is computed from a copy read before a round trip, and a
+/// sign-in can replace the record at the same URL while that round trip is
+/// out — another member, another device, or the same member signing in
+/// again. A URL alone cannot tell those apart, so every write names what it
+/// expects to find. No `Debug`: a session's expectation holds a refresh
+/// token.
+#[derive(Clone)]
+pub(crate) enum Expect {
+    /// The same member with the same device: what a note about the device's
+    /// standing needs, since the listing it came from was about that device.
+    SignIn {
+        member_id: String,
+        device_id: Option<String>,
+    },
+    /// That sign-in still under the session it was read under: what a
+    /// refresh needs, since its answer replaces the very refresh token it
+    /// spent. A newer session in its place — a re-sign-in, or a refresh that
+    /// finished first — is not one this answer may overwrite.
+    Session {
+        member_id: String,
+        device_id: Option<String>,
+        refresh_token: Option<String>,
+    },
+}
+
+impl Expect {
+    pub(crate) fn sign_in(of: &Connection) -> Self {
+        Self::SignIn {
+            member_id: of.member_id.clone(),
+            device_id: of.device_id.clone(),
+        }
+    }
+
+    pub(crate) fn session(of: &Connection) -> Self {
+        Self::Session {
+            member_id: of.member_id.clone(),
+            device_id: of.device_id.clone(),
+            refresh_token: of.refresh_token.clone(),
+        }
+    }
+
+    fn holds(&self, held: &Connection) -> bool {
+        match self {
+            Self::SignIn {
+                member_id,
+                device_id,
+            } => held.member_id == *member_id && held.device_id == *device_id,
+            Self::Session {
+                member_id,
+                device_id,
+                refresh_token,
+            } => {
+                held.member_id == *member_id
+                    && held.device_id == *device_id
+                    && held.refresh_token == *refresh_token
+            }
+        }
+    }
+}
+
+/// What an [`update`] came to, with the record as it now stands either way.
+#[derive(Debug)]
+pub(crate) enum Updated {
+    /// The record was the one expected, and the change is written.
+    Changed(Connection),
+    /// Another sign-in or session holds the URL now; nothing was written.
+    Superseded(Connection),
+}
+
+impl Updated {
+    pub(crate) fn into_record(self) -> Connection {
+        match self {
+            Self::Changed(record) | Self::Superseded(record) => record,
+        }
+    }
+}
+
+/// Change the connection to the server at `url` in place, if it is still
+/// the one `expect` names: `change` runs over the record as the file holds
+/// it now, and the result is written back as one step. The one way a held
+/// connection is ever written, so two writers — a refresh rotating the
+/// tokens, a listing noting the device's standing — never put a snapshot of
+/// theirs over the other's write, and neither lands on a sign-in that
+/// replaced the one it was worked out from.
 pub(crate) fn update(
     root: &Path,
     app_key: &[u8],
     url: &str,
+    expect: &Expect,
     change: impl FnOnce(&mut Connection),
-) -> Result<Connection> {
-    let url = normalize_url(url)?;
+) -> Result<Updated> {
     let mut connections = load(root, app_key)?;
+    let updated = update_in(&mut connections, url, expect, change)?;
+    if matches!(updated, Updated::Changed(_)) {
+        save(root, app_key, &connections)?;
+    }
+    Ok(updated)
+}
+
+// The compare-and-set itself, over the list wherever it is held: the sealed
+// file's and the tests' memory decide alike.
+fn update_in(
+    connections: &mut [Connection],
+    url: &str,
+    expect: &Expect,
+    change: impl FnOnce(&mut Connection),
+) -> Result<Updated> {
+    let url = normalize_url(url)?;
     let held = connections
         .iter_mut()
         .find(|c| c.url == url)
         .ok_or_else(|| not_signed_in(&url))?;
+    if !expect.holds(held) {
+        return Ok(Updated::Superseded(held.clone()));
+    }
     change(held);
-    let changed = held.clone();
-    save(root, app_key, &connections)?;
-    Ok(changed)
+    Ok(Updated::Changed(held.clone()))
 }
 
 fn not_signed_in(url: &str) -> Error {
@@ -307,41 +403,37 @@ impl SessionResolver {
         found.ok_or_else(|| not_signed_in(&url))
     }
 
-    /// [`update`] on the connection to `url`: the one way a held connection
-    /// is written, as one read-modify-write under the sidecars lock.
+    /// [`update`] on the connection to `url`, if it is still the one `expect`
+    /// names: the one way a held connection is written, as one
+    /// compare-and-set under the sidecars lock.
     pub(crate) fn update(
         &self,
         url: &str,
+        expect: &Expect,
         change: impl FnOnce(&mut Connection),
-    ) -> Result<Connection> {
+    ) -> Result<Updated> {
         match self {
             Self::App(app) => {
                 use tauri::Manager;
                 let state = app.state::<crate::state::AppState>();
                 let _sidecars = state.sidecars.lock().unwrap();
                 let (root, app_key) = app_root_and_key(app)?;
-                update(&root, &app_key, url, change)
+                update(&root, &app_key, url, expect, change)
             }
             #[cfg(test)]
-            Self::Memory(held) => {
-                let url = normalize_url(url)?;
-                let mut held = held.lock().unwrap();
-                let slot = held
-                    .iter_mut()
-                    .find(|c| c.url == url)
-                    .ok_or_else(|| not_signed_in(&url))?;
-                change(slot);
-                Ok(slot.clone())
-            }
+            Self::Memory(held) => update_in(&mut held.lock().unwrap(), url, expect, change),
         }
     }
 
     /// A fresh session for the server at `url` from the refresh token its
-    /// connection holds, taken on over the record as it stands when the
-    /// token endpoint has answered — not over the copy read before the round
-    /// trip, which another writer may have moved on from meanwhile — and
-    /// handed back. What a 401 asks for. Without a refresh token the session
-    /// is simply over.
+    /// connection holds: what a 401 asks for. The answer is taken on only by
+    /// the record it was asked for — the same member and device under the
+    /// refresh token just spent — checked when the token endpoint has
+    /// answered, not when the request went out. A record that moved on
+    /// meanwhile (a re-sign-in, another member, a refresh that finished
+    /// first) keeps what it has, this answer is dropped, and the record as it
+    /// stands is handed back for the caller to retry under. Without a refresh
+    /// token the session is simply over.
     pub(crate) async fn refresh(&self, url: &str) -> Result<Connection> {
         let connection = self.connection(url)?;
         let refresh_token = connection.refresh_token.clone().ok_or_else(|| {
@@ -350,11 +442,21 @@ impl SessionResolver {
                 connection.url
             ))
         })?;
+        let expect = Expect::session(&connection);
         let fresh = ServerClient::new(&connection.url)?
             .refresh(&refresh_token)
             .await?;
         let now_ms = chrono::Utc::now().timestamp_millis();
-        self.update(url, |held| held.adopt(fresh, now_ms))
+        match self.update(url, &expect, |held| held.adopt(fresh, now_ms))? {
+            Updated::Changed(record) => Ok(record),
+            Updated::Superseded(record) => {
+                log::info!(
+                    "a newer session at {} replaced the one being refreshed; its answer is dropped",
+                    record.url
+                );
+                Ok(record)
+            }
+        }
     }
 
     /// `call` as the member signed in to `url`, and once more under a
@@ -468,16 +570,31 @@ pub(crate) mod tests {
     #[test]
     fn an_update_changes_the_record_in_place() {
         let root = tempfile::tempdir().unwrap();
-        upsert(root.path(), APP_KEY, connection("https://a.example", "a1")).unwrap();
-        let rotated = update(root.path(), APP_KEY, "https://A.example/", |c| {
-            c.refresh_token = Some("rotated".into());
-        })
+        let first = connection("https://a.example", "a1");
+        upsert(root.path(), APP_KEY, first.clone()).unwrap();
+        let rotated = update(
+            root.path(),
+            APP_KEY,
+            "https://A.example/",
+            &Expect::session(&first),
+            |c| c.refresh_token = Some("rotated".into()),
+        )
         .unwrap();
+        let Updated::Changed(rotated) = rotated else {
+            panic!("the expected session was there")
+        };
         assert_eq!(rotated.refresh_token.as_deref(), Some("rotated"));
-        let noted = update(root.path(), APP_KEY, "https://a.example", |c| {
-            c.device_state = Some(DeviceState::Pending);
-        })
-        .unwrap();
+        // Noted against the sign-in, not the session: the rotation above is
+        // the same member's same device, so the note still lands.
+        let noted = update(
+            root.path(),
+            APP_KEY,
+            "https://a.example",
+            &Expect::sign_in(&first),
+            |c| c.device_state = Some(DeviceState::Pending),
+        )
+        .unwrap()
+        .into_record();
         assert_eq!(noted.refresh_token.as_deref(), Some("rotated"));
         assert_eq!(noted.device_state, Some(DeviceState::Pending));
         assert_eq!(
@@ -486,7 +603,69 @@ pub(crate) mod tests {
                 .unwrap(),
             noted
         );
-        assert!(update(root.path(), APP_KEY, "https://b.example", |_| {}).is_err());
+        assert!(update(
+            root.path(),
+            APP_KEY,
+            "https://b.example",
+            &Expect::sign_in(&first),
+            |_| {}
+        )
+        .is_err());
+    }
+
+    // A change worked out from one sign-in never lands on another at the
+    // same URL: not a refresh's answer once the session it spent is gone,
+    // and not a note about a device once another member or device holds it.
+    #[test]
+    fn a_change_from_a_replaced_sign_in_lands_nowhere() {
+        let root = tempfile::tempdir().unwrap();
+        let old = connection("https://a.example", "old");
+        upsert(root.path(), APP_KEY, old.clone()).unwrap();
+        // While a refresh is out, the member signs in as someone else.
+        let mut new = connection("https://a.example", "new");
+        new.member_id = "m2".into();
+        new.device_id = Some("d2".into());
+        upsert(root.path(), APP_KEY, new.clone()).unwrap();
+
+        let answered = update(
+            root.path(),
+            APP_KEY,
+            "https://a.example",
+            &Expect::session(&old),
+            |c| c.access_token = "old-refreshed".into(),
+        )
+        .unwrap();
+        assert!(matches!(&answered, Updated::Superseded(held) if held == &new));
+        let noted = update(
+            root.path(),
+            APP_KEY,
+            "https://a.example",
+            &Expect::sign_in(&old),
+            |c| c.device_state = Some(DeviceState::Revoked),
+        )
+        .unwrap();
+        assert!(matches!(noted, Updated::Superseded(_)));
+        assert_eq!(
+            find(root.path(), APP_KEY, "https://a.example").unwrap(),
+            Some(new.clone()),
+            "the new sign-in is untouched"
+        );
+
+        // The same member signing in again on the same device is a new
+        // session too: a refresh of the old one may not overwrite it.
+        let mut again = old.clone();
+        again.access_token = "again".into();
+        again.refresh_token = Some("again-refresh".into());
+        upsert(root.path(), APP_KEY, again.clone()).unwrap();
+        let answered = update(
+            root.path(),
+            APP_KEY,
+            "https://a.example",
+            &Expect::session(&old),
+            |c| c.access_token = "old-refreshed".into(),
+        )
+        .unwrap();
+        assert!(matches!(answered, Updated::Superseded(held) if held == again));
     }
 
     #[test]
@@ -586,7 +765,9 @@ pub(crate) mod tests {
         let held = resolver.connection("https://A.example/").unwrap();
         assert_eq!(held.access_token, "a1");
         resolver
-            .update("https://a.example", |c| c.access_token = "a2".into())
+            .update("https://a.example", &Expect::sign_in(&held), |c| {
+                c.access_token = "a2".into()
+            })
             .unwrap();
         assert_eq!(
             resolver
@@ -597,7 +778,9 @@ pub(crate) mod tests {
         );
         for unknown in [
             resolver.connection("https://b.example").err(),
-            resolver.update("https://b.example", |_| {}).err(),
+            resolver
+                .update("https://b.example", &Expect::sign_in(&held), |_| {})
+                .err(),
         ] {
             match unknown {
                 Some(Error::Other(why)) => assert!(why.contains("not signed in"), "{why}"),

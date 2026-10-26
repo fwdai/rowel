@@ -23,7 +23,7 @@ use super::{connections, enrollment};
 use crate::crypto::{KdfParams, VaultKey};
 use crate::error::{Error, Result};
 use crate::session::store_err;
-use crate::store::{identity, SqliteStore};
+use crate::store::{identity, SqliteStore, StoreError};
 use crate::sync::{self, Provider, Tokens};
 use crate::workspace::{self, Registry, Workspace};
 use crate::{auth, storage};
@@ -38,11 +38,72 @@ pub(crate) fn is_org_lockbox_dir(dir: &Path) -> bool {
         .is_some_and(|params| params.is_external())
 }
 
-/// The key generation the sidecar in `dir` names: what a listing's is
-/// compared with to tell a rotation from the same key handed over again.
+/// The key generation the sidecar in `dir` names.
+#[cfg(test)]
 pub(crate) fn local_gen(dir: &Path) -> Result<u32> {
     let json = std::fs::read_to_string(dir.join(storage::KDF_SIDECAR_FILE))?;
     Ok(KdfParams::from_json(&json)?.gen())
+}
+
+/// What a key the server lists is to the lockbox in `dir`, decided here for
+/// every caller so none can treat one generation as another.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum KeyStep {
+    /// A later generation: a rotation, and the local copy is re-keyed onto
+    /// it through the re-key saga, retiring the epoch it was on.
+    Rotate,
+    /// The key the lockbox already has, handed over again: the ring and the
+    /// sealed copy beside the database may take it, once it has been seen to
+    /// open the database ([`check_opens`]).
+    Repair,
+}
+
+/// Compare the descriptor `kdf` a listing carries with the lockbox's own in
+/// `dir`. A later generation is a rotation. The same generation is a repair
+/// only when the descriptor is the very string the lockbox holds, since the
+/// sync engine compares them byte for byte and a different `kid` at the same
+/// generation is a different key. An earlier generation is refused: a stale
+/// or rolled-back listing, whose master would replace the one the database is
+/// under without re-keying it, and leave the next unlock unable to open it.
+pub(crate) fn key_step(dir: &Path, kdf: &str) -> Result<KeyStep> {
+    let held = std::fs::read_to_string(dir.join(storage::KDF_SIDECAR_FILE))?;
+    let local = KdfParams::from_json(&held)?.gen();
+    let offered = KdfParams::from_json(kdf)?.gen();
+    match offered.cmp(&local) {
+        std::cmp::Ordering::Greater => Ok(KeyStep::Rotate),
+        std::cmp::Ordering::Equal if kdf == held => Ok(KeyStep::Repair),
+        std::cmp::Ordering::Equal => Err(Error::Other(format!(
+            "the Rowel Server lists another key at this lockbox's generation ({local}); the \
+             local key is kept"
+        ))),
+        std::cmp::Ordering::Less => Err(Error::Other(format!(
+            "the Rowel Server lists an older key for this lockbox (generation {offered}, where \
+             this device is at {local}); the local key is kept"
+        ))),
+    }
+}
+
+/// Whether `master` is the key the database in `dir` is under, before it is
+/// written anywhere a later unlock would trust it: a repaired sidecar that
+/// does not open the database is a lockbox that no longer opens. A database
+/// that is not there is refused too, rather than opened into being. Blocking.
+pub(crate) fn check_opens(dir: &Path, master: &[u8]) -> Result<()> {
+    let path = dir.join(storage::DB_FILE);
+    if !path.exists() {
+        return Err(Error::Other(
+            "this lockbox has no database here to check the key against".into(),
+        ));
+    }
+    let key = VaultKey::from_material(Zeroizing::new(master.to_vec()), true);
+    match SqliteStore::open(&path, &*key.sqlcipher_key()) {
+        Ok(_) => Ok(()),
+        Err(StoreError::WrongKey) => Err(Error::Other(
+            "the key the Rowel Server handed over does not open this lockbox; the local key is \
+             kept"
+                .into(),
+        )),
+        Err(e) => Err(store_err(e)),
+    }
 }
 
 /// Workspace `id` of the registry at `root`, which has to be an org lockbox:
@@ -245,6 +306,66 @@ mod tests {
         KdfParams::external(format!("kid-{gen}"), gen)
             .to_json()
             .unwrap()
+    }
+
+    // One generation is never taken for another: later rotates, the same
+    // descriptor repairs, and an older one — or another key at the same
+    // generation — is refused with the local key kept.
+    #[test]
+    fn a_listed_key_is_a_rotation_a_repair_or_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("ws");
+        let gen2 = descriptor(2);
+        install(
+            &dir,
+            master(2),
+            &gen2,
+            "lb-1",
+            "Deploy",
+            "https://a.example",
+            NOW,
+        )
+        .unwrap();
+
+        assert_eq!(key_step(&dir, &descriptor(3)).unwrap(), KeyStep::Rotate);
+        assert_eq!(key_step(&dir, &gen2).unwrap(), KeyStep::Repair);
+        let other_kid = KdfParams::external("kid-other", 2).to_json().unwrap();
+        match key_step(&dir, &other_kid) {
+            Err(Error::Other(why)) => assert!(why.contains("another key"), "{why}"),
+            other => panic!("another key at the same generation is refused, got {other:?}"),
+        }
+        match key_step(&dir, &descriptor(1)) {
+            Err(Error::Other(why)) => assert!(why.contains("older key"), "{why}"),
+            other => panic!("an older generation is refused, got {other:?}"),
+        }
+        assert_eq!(local_gen(&dir).unwrap(), 2, "nothing was written");
+    }
+
+    // A repaired key is checked against the database before anything trusts
+    // it, and a database that is not there is not opened into being.
+    #[test]
+    fn a_repair_is_checked_against_the_database() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("ws");
+        install(
+            &dir,
+            master(2),
+            &descriptor(2),
+            "lb-1",
+            "Deploy",
+            "https://a.example",
+            NOW,
+        )
+        .unwrap();
+        assert!(check_opens(&dir, &master(2)).is_ok());
+        match check_opens(&dir, &master(9)) {
+            Err(Error::Other(why)) => assert!(why.contains("does not open"), "{why}"),
+            other => panic!("another master is refused, got {other:?}"),
+        }
+        let empty = root.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert!(check_opens(&empty, &master(2)).is_err());
+        assert!(!empty.join(storage::DB_FILE).exists());
     }
 
     // The files an added org lockbox is made of, as the next unlock and the

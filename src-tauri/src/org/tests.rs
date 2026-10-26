@@ -202,11 +202,18 @@ fn a_rotated_session_survives_a_later_change_to_the_record() {
             .unwrap();
     assert_eq!(listed.len(), 1, "served under the refreshed session");
 
+    // Noted against the snapshot read before the refresh, as
+    // `org_connections` notes it: the same member's same device, so it lands.
     let noted = resolver
-        .update(&server.url, |held| {
-            held.device_state = Some(DeviceState::Approved)
-        })
+        .update(
+            &server.url,
+            &crate::org::connections::Expect::sign_in(&before),
+            |held| held.device_state = Some(DeviceState::Approved),
+        )
         .unwrap();
+    let crate::org::connections::Updated::Changed(noted) = noted else {
+        panic!("the refresh was this sign-in's own, so the note lands")
+    };
     assert_eq!(noted.device_state, Some(DeviceState::Approved));
     assert_ne!(noted.access_token, before.access_token);
     assert_ne!(
