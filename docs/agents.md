@@ -134,7 +134,9 @@ slug; the exact rules and the field names per kind are in
   `http://127.0.0.1:7400/https/api.stripe.com`. The agent sends the
   placeholder where the key would go and the grant id in an `X-Rowel-Grant`
   header; the proxy swaps in the value, forwards over TLS and scrubs it from
-  the response. See [`rowel proxy`](./cli.md#rowel-proxy).
+  the response. A request with no placeholder is refused, never forwarded:
+  the proxy carries only what a grant covers. See
+  [`rowel proxy`](./cli.md#rowel-proxy).
 - **Hooks**: with `rowel hook pre` and `rowel hook post` configured as the
   agent's shell hooks, a command the agent writes as `STRIPE_KEY=rowel://… cmd`
   is rewritten into the `rowel run` form before it runs, and a command whose

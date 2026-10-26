@@ -10,7 +10,11 @@
 //! proxy with a local CA is not offered (Q15). The proxy listens on the
 //! loopback address only: it holds the sidecar key, and must not be
 //! reachable from the network. Placeholders are swapped in headers and in a
-//! JSON or form body, never in the URL, which lands in logs upstream.
+//! JSON or form body, never in the URL, which lands in logs upstream. A
+//! request with none is refused, never forwarded: the resolve is what checks
+//! the grant covers the host, path and method, so the proxy carries only
+//! what a live grant covers, and is no open forwarder for whatever names a
+//! grant id.
 //!
 //! The proxy follows no redirect. The grant was checked for the host, path
 //! and method the agent asked for; a hop the upstream chose was not, and a
@@ -309,7 +313,7 @@ async fn relay(
             )
         })?
         .to_string();
-    take_token(state, &grant)?;
+    let counted = take_token(state, &grant, false)?;
 
     let body = Limited::new(body, MAX_BODY)
         .collect()
@@ -345,7 +349,21 @@ async fn relay(
         }
         all
     });
+    // A request with nothing to put in is refused, not forwarded: what is
+    // checked against the grant is a resolve, so a request that resolves
+    // nothing would go anywhere under any id at all. The agent can call such
+    // an API itself; the proxy is for putting a credential in.
+    if references.is_empty() {
+        return Err(Refusal::new(
+            StatusCode::BAD_REQUEST,
+            "no_placeholder",
+            "the request carries no rowel:// placeholder: the proxy forwards only a request it puts a value in, so call this API directly",
+        ));
+    }
     let released = resolve_all(state, &grant, &upstream, &parts.method, references).await?;
+    if !counted {
+        take_token(state, &grant, true)?;
+    }
     let values: Vec<(String, Zeroizing<String>)> = released
         .iter()
         .map(|(reference, value)| (reference.to_string(), value.clone()))
@@ -487,14 +505,24 @@ fn bad_gateway(error: reqwest::Error) -> Refusal {
     )
 }
 
-/// One token from the grant's bucket, or 429 saying when one is back.
-fn take_token(state: &State, grant: &str) -> Result<(), Refusal> {
+/// One token from the grant's bucket, or 429 saying when one is back, and
+/// whether one was taken. A bucket is made only for a grant id the host has
+/// `accepted` — one a placeholder just resolved under — so an id the caller
+/// made up never takes a place in the map. Before the resolve, a grant with
+/// no bucket yet takes nothing, and its first token is taken once the
+/// resolve has proved it real; a grant that has one is held to it before
+/// anything is resolved under it again.
+fn take_token(state: &State, grant: &str, accepted: bool) -> Result<bool, Refusal> {
     let mut buckets = state.buckets.lock().unwrap_or_else(|e| e.into_inner());
-    let bucket = buckets
-        .entry(grant.to_string())
-        .or_insert_with(Bucket::full);
+    let bucket = match buckets.get_mut(grant) {
+        Some(bucket) => bucket,
+        None if accepted => buckets
+            .entry(grant.to_string())
+            .or_insert_with(Bucket::full),
+        None => return Ok(false),
+    };
     match bucket.take(Instant::now()) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(true),
         Err(secs) => Err(Refusal {
             retry_after_secs: Some(secs),
             ..Refusal::new(
@@ -543,9 +571,6 @@ async fn resolve_all(
     method: &Method,
     references: Vec<Reference>,
 ) -> Result<Vec<(Reference, Zeroizing<String>)>, Refusal> {
-    if references.is_empty() {
-        return Ok(Vec::new());
-    }
     let ctx = ResolveContext {
         target: ResolveTarget::Http {
             host: upstream.host.clone(),
@@ -1088,6 +1113,7 @@ mod end_to_end {
 
     struct Proxy {
         harness: Harness,
+        state: Arc<State>,
         base: String,
         upstream: SocketAddr,
         seen: Seen,
@@ -1105,9 +1131,10 @@ mod end_to_end {
         let state = Arc::new(State::new(sidecar_of(&harness), true).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(serve(listener, state));
+        tokio::spawn(serve(listener, state.clone()));
         Proxy {
             harness,
+            state,
             base,
             upstream,
             seen,
@@ -1149,6 +1176,13 @@ mod end_to_end {
 
         fn uses(&self) -> u32 {
             self.harness.host().host().grants.borrow()[GRANT].uses
+        }
+
+        /// The grant ids the proxy keeps a bucket for.
+        fn buckets(&self) -> Vec<String> {
+            let mut ids: Vec<String> = self.state.buckets.lock().unwrap().keys().cloned().collect();
+            ids.sort();
+            ids
         }
 
         /// The last request the upstream saw.
@@ -1235,6 +1269,7 @@ mod end_to_end {
             .client
             .post(proxy.url("/v1/charges"))
             .header(CONTENT_TYPE, "text/plain")
+            .header("authorization", format!("Bearer {REF}"))
             .header(GRANT_HEADER, GRANT)
             .body(REF)
             .send()
@@ -1242,7 +1277,8 @@ mod end_to_end {
             .unwrap();
         let seen: Value = serde_json::from_str(&plain.text().await.unwrap()).unwrap();
         assert_eq!(seen["body"], REF, "a text body is not touched");
-        assert_eq!(proxy.uses(), 2);
+        assert_eq!(proxy.last_seen()["body"], REF);
+        assert_eq!(proxy.uses(), 3, "the header's one use");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1299,6 +1335,32 @@ mod end_to_end {
         assert_eq!(proxy.uses(), 0);
     }
 
+    // A request with nothing to put in is not forwarded, whatever grant it
+    // names: nothing is resolved, the upstream sees nothing, and no bucket
+    // is made for the id.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_request_with_no_placeholder_is_refused_not_forwarded() {
+        let proxy = proxy(granting_stripe).await;
+        for grant in [GRANT, "made-up"] {
+            let response = proxy
+                .client
+                .post(proxy.url("/v1/charges"))
+                .header(CONTENT_TYPE, "application/json")
+                .header("authorization", "Bearer sk_typed_by_hand")
+                .header(GRANT_HEADER, grant)
+                .body(r#"{"n":1}"#)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{grant}");
+            let body: Value = response.json().await.unwrap();
+            assert_eq!(body["error"], "no_placeholder");
+        }
+        assert!(proxy.seen.lock().unwrap().is_empty(), "nothing went out");
+        assert_eq!(proxy.uses(), 0);
+        assert!(proxy.buckets().is_empty());
+    }
+
     // A host whose log will not take the `used` row releases nothing, and
     // the proxy says it is the host's trouble, not a grant that does not
     // cover: 503, and nothing goes out.
@@ -1322,42 +1384,69 @@ mod end_to_end {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_sixty_first_request_in_a_minute_is_rate_limited() {
-        let proxy = proxy(granting_stripe).await;
-        for n in 1..=RATE_PER_MINUTE {
-            let response = proxy
+        let proxy = proxy(|host| {
+            granting_stripe(host).granting_at(
+                "grant-2",
+                "stripe",
+                Mode::Header,
+                Target::Http {
+                    host: host.into(),
+                    path: "/*".into(),
+                    methods: vec![],
+                },
+            )
+        })
+        .await;
+        let call = |grant: &str| {
+            proxy
                 .client
                 .get(proxy.url("/v1/balance"))
-                .header(GRANT_HEADER, GRANT)
+                .header("authorization", format!("Bearer {REF}"))
+                .header(GRANT_HEADER, grant.to_string())
                 .send()
-                .await
-                .unwrap();
+        };
+        for n in 1..=RATE_PER_MINUTE {
+            let response = call(GRANT).await.unwrap();
             assert_eq!(response.status(), StatusCode::OK, "request {n}");
         }
-        let response = proxy
-            .client
-            .get(proxy.url("/v1/balance"))
-            .header(GRANT_HEADER, GRANT)
-            .send()
-            .await
-            .unwrap();
+        let response = call(GRANT).await.unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(response.headers().get("retry-after").unwrap(), "1");
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["error"], "rate_limited");
+        assert_eq!(
+            proxy.uses(),
+            RATE_PER_MINUTE,
+            "a limited request resolves nothing"
+        );
 
-        let other = proxy
-            .client
-            .get(proxy.url("/v1/balance"))
-            .header(GRANT_HEADER, "another-grant")
-            .send()
-            .await
-            .unwrap();
+        let other = call("grant-2").await.unwrap();
         assert_eq!(other.status(), StatusCode::OK, "buckets are per grant");
+
+        // An id the host does not accept is refused and takes no place in
+        // the map, however many are made up.
+        for n in 0..5 {
+            let made_up = call(&format!("made-up-{n}")).await.unwrap();
+            assert_eq!(made_up.status(), StatusCode::FORBIDDEN);
+        }
+        assert_eq!(proxy.buckets(), [GRANT.to_string(), "grant-2".to_string()]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn http_is_refused_without_the_flag_and_a_dead_upstream_is_a_bad_gateway() {
-        let proxy = proxy(granting_stripe).await;
+        let proxy = proxy(|host| {
+            granting_stripe(host).granting_at(
+                "dead",
+                "stripe",
+                Mode::Header,
+                Target::Http {
+                    host: "127.0.0.1:1".into(),
+                    path: "/*".into(),
+                    methods: vec![],
+                },
+            )
+        })
+        .await;
         let strict_harness = known_sidecar(granting_stripe(&proxy.upstream.to_string()));
         let state_without_http = Arc::new(State::new(sidecar_of(&strict_harness), false).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1375,7 +1464,8 @@ mod end_to_end {
         let response = proxy
             .client
             .get(format!("{}/http/127.0.0.1:1/v1", proxy.base))
-            .header(GRANT_HEADER, GRANT)
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, "dead")
             .send()
             .await
             .unwrap();
