@@ -175,6 +175,23 @@ jobs:
         working-directory: src-tauri
         run: cargo build --locked
 
+      # Linux runs the whole workspace's tests in the crypto-compat job. Here
+      # run the crates with code only these runners reach — the CLI's
+      # keychain and Credential Manager backends and its Windows paths, the
+      # core's and the broker's platform code — and the app's `cli` module,
+      # whose copy of the tool is replaced under a running binary on Windows.
+      # None of these tests touches the real secure store: the one that
+      # would (`crates/cli/tests/serve.rs`) is ignored off Linux.
+      # bash, not the Windows default pwsh, which fails a step only on its
+      # last command's exit code.
+      - name: Test the CLI, broker and core
+        if: matrix.os != 'ubuntu-latest'
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          cargo test --locked -p rowel-core -p rowel-broker -p rowel-cli
+          cargo test --locked -p rowel --lib cli::
+
   ios:
     # Everything about the iOS app that a hosted runner can check without an
     # Apple developer identity: the crate cross-compiles, the frontend bundles
