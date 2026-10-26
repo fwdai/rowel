@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentGrantAsk, AssociateAsk, PasskeyAsk } from './browser'
+import type { OrgConnectStatus } from './org'
 import type { RemotePack } from './setup'
 import type { SyncStatus } from './sync'
 import type { EntryMeta } from './types'
@@ -99,6 +100,19 @@ export interface EventPayloads {
    * agents re-reads both lists; no payload. Desktop only.
    */
   'agents:changed': void
+  /**
+   * A sign-in to a Rowel Server, as it goes: the browser is open, the member
+   * is signed in and this device enrolled, or it failed. The command that
+   * started it resolves as soon as the browser is up, so this is the only
+   * route the outcome has. Desktop only.
+   */
+  'org:connect': OrgConnectStatus
+  /**
+   * Connections, devices or lockboxes changed on the Rust side — a device was
+   * approved from elsewhere, the server listed a new lockbox, a sign-in
+   * expired. Settings › Lockboxes re-reads what it has on screen; no payload.
+   */
+  'org:changed': void
 }
 
 export type EventName = keyof EventPayloads
@@ -129,7 +143,9 @@ export const EVENTS: { [K in EventName as Camel<K>]: K } = {
   browserClients: 'browser:clients',
   agentGrant: 'agent:grant',
   agentGrantClosed: 'agent:grant:closed',
-  agentsChanged: 'agents:changed'
+  agentsChanged: 'agents:changed',
+  orgConnect: 'org:connect',
+  orgChanged: 'org:changed'
 }
 
 // Typed wrapper over Tauri's `listen`.

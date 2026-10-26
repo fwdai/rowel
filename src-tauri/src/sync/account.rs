@@ -218,7 +218,7 @@ impl Credentials {
 
     /// Address the redirect at the loopback listener bound to `port`.
     fn with_loopback(mut self, port: u16) -> Self {
-        self.redirect_uri = format!("http://{HOST}:{port}{CALLBACK}");
+        self.redirect_uri = loopback_redirect_uri(port);
         self
     }
 }
@@ -707,7 +707,7 @@ fn sign_in_cancelled() -> Error {
 /// first of its registered ports that is free — one already taken by another
 /// app is skipped rather than shared.
 #[cfg(desktop)]
-fn bind_loopback(ports: &[u16]) -> Result<TcpListener> {
+pub(crate) fn bind_loopback(ports: &[u16]) -> Result<TcpListener> {
     if ports.is_empty() {
         return TcpListener::bind((HOST, 0)).map_err(other);
     }
@@ -737,6 +737,15 @@ pub fn device_account_tokens(provider: Provider) -> Result<Tokens> {
                 "{} is connected by signing in, not from the device",
                 provider.display_name()
             )));
+        }
+        // Its token file is written by the org lockbox flow, which knows the
+        // server; the device has no account of its own to name here.
+        Provider::RowelServer => {
+            return Err(Error::Other(
+                "a Rowel Server lockbox is connected from Settings › Lockboxes, not from the \
+                 device"
+                    .into(),
+            ));
         }
     };
     Ok(Tokens {
@@ -867,6 +876,15 @@ impl Auth {
         match self {
             Auth::Sealed { app, .. } => sealed_provider(app),
             Auth::Pending { tokens, .. } => tokens.lock().unwrap().provider,
+        }
+    }
+
+    /// The app both arms carry, for an adapter whose credentials are not in
+    /// the tokens at all but in the install's own sealed files (the Rowel
+    /// Server's member session, `org::connections`).
+    pub fn app(&self) -> &AppHandle {
+        match self {
+            Auth::Sealed { app, .. } | Auth::Pending { app, .. } => app,
         }
     }
 
@@ -1047,17 +1065,27 @@ async fn post_token(
 
 // 48 random bytes, url-safe: within the 43-128 characters PKCE allows a
 // verifier, and more than enough for the `state` nonce.
-fn gen_nonce() -> String {
+/// A fresh PKCE verifier or `state` nonce: 48 random bytes, base64url.
+pub(crate) fn gen_nonce() -> String {
     let mut bytes = [0u8; 48];
     rand::thread_rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn challenge(verifier: &str) -> String {
+/// The S256 code challenge of `verifier`, as RFC 7636 spells it.
+pub(crate) fn challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
 // --- loopback listener (desktop) ---
+
+/// `http://127.0.0.1:<port>/auth/callback`: the redirect a listener on `port`
+/// answers at, which is what every loopback sign-in registers with its
+/// authorization request.
+#[cfg(desktop)]
+pub(crate) fn loopback_redirect_uri(port: u16) -> String {
+    format!("http://{HOST}:{port}{CALLBACK}")
+}
 
 // Block until the browser hits the callback, returning the auth code — or
 // until `CONSENT_TIMEOUT` passes with no answer, which is an error like any
@@ -1070,8 +1098,12 @@ fn challenge(verifier: &str) -> String {
 // answer (a favicon request, a speculative connection that sends nothing), so
 // anything that is not this request's answer — another path, or a callback
 // that does not echo our `state` — is answered 404 and the wait goes on.
+//
+// Crate-visible for the one other loopback sign-in, the Rowel Server's
+// (`org::connect`), which binds its own listener and exchanges its own code
+// but waits for the redirect exactly as a provider's consent does.
 #[cfg(desktop)]
-fn listen_for_code(
+pub(crate) fn listen_for_code(
     listener: &TcpListener,
     state: &str,
     provider: Provider,

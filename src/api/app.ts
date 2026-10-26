@@ -85,6 +85,13 @@ export interface AppStatus {
    * Windows without an OCR language pack, where the UI offers no scanning.
    */
   scanSupported: boolean
+  /**
+   * Whether this build can connect to a Rowel Server: the sign-in comes back
+   * through the browser, which the desktop listens for and the phone cannot
+   * yet. Settings › Lockboxes draws the whole Rowel Server section from this,
+   * as the pickers draw from `providers`, rather than guessing at the platform.
+   */
+  orgConnect: boolean
   biometric: {
     /** Enrolled *and* usable right now. */
     available: boolean

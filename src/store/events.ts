@@ -23,6 +23,7 @@ import {
   browserClientsChanged,
   agentsChanged
 } from './ui'
+import { orgChanged, orgConnectReported } from './org'
 import { t } from '@/i18n'
 import { providerName } from '@/api/provider'
 import { syncProvider } from '@/api/sync'
@@ -94,7 +95,9 @@ export const subscribeToEvents = (): (() => void) => {
     // That ask refused behind the dialog's back (a switch went off): close it.
     on(EVENTS.agentGrantClosed, payload => closeGrantAsk(payload.id)),
     // A rule or a grant came or went: Settings › Browser & agents re-reads.
-    on(EVENTS.agentsChanged, () => agentsChanged())
+    on(EVENTS.agentsChanged, () => agentsChanged()),
+    on(EVENTS.orgConnect, orgConnectReported),
+    on(EVENTS.orgChanged, () => orgChanged())
   ]
 
   return () => {

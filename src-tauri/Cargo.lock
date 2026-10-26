@@ -164,7 +164,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "134c52ddac6d63c576bef8168db10c83c49c26444ecbc68060fef078925a901c"
 dependencies = [
  "base64ct",
- "blake2",
+ "blake2 0.11.0",
  "cpufeatures 0.3.1",
  "password-hash",
 ]
@@ -513,6 +513,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "blake2"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -1128,6 +1137,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16182b4f39a82ec8a6851155cc4c0cda3065bb1db33651726a29e1951de0f009"
 dependencies = [
  "aead 0.5.2",
+ "blake2 0.10.6",
  "crypto_secretbox",
  "curve25519-dalek",
  "salsa20",
@@ -4645,11 +4655,14 @@ dependencies = [
 name = "rowel"
 version = "1.1.0"
 dependencies = [
+ "axum",
  "base64 0.23.1",
  "block2",
  "chrono",
+ "crypto_box",
  "dirs",
  "futures-util",
+ "gethostname",
  "hex",
  "image",
  "interprocess",

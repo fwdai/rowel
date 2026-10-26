@@ -11,6 +11,12 @@
 //!   `.swftx` vaults derive with. The byte-compatible *legacy* read path lives
 //!   in [`super::Cryptor`] and is untouched by this module.
 //!
+//! A third descriptor, [`KdfParams::External`], derives nothing: it names a
+//! master a Rowel Server holds for an org lockbox. It exists so the sidecar
+//! and every pack header keep one shape whoever minted the key, and so the
+//! generation bookkeeping of a re-key works the same for a master the server
+//! rotates as for a password the user changes.
+//!
 //! This is a self-contained primitive: it turns password bytes into ≥32 bytes
 //! of key material suitable as HKDF input. Splitting that output into the
 //! SQLCipher and payload subkeys (HKDF) is done by the store integration, not
@@ -95,6 +101,14 @@ pub enum KdfParams {
         /// base64(salt).
         salt: String,
     },
+    /// A master no password derives: an org lockbox's 32 random bytes, minted
+    /// by a Rowel Server and handed to each enrolled device wrapped to its
+    /// enrollment key. `kid` names the key at the server, so a rotation is a
+    /// new `kid` as well as the next `gen`; the generation means what
+    /// Argon2id's does, and is always written, since no descriptor of this
+    /// shape predates the field.
+    #[serde(rename = "external")]
+    External { kid: String, gen: u32 },
 }
 
 impl KdfParams {
@@ -121,17 +135,37 @@ impl KdfParams {
         }
     }
 
+    /// The descriptor of a master a Rowel Server holds under `kid`, at key
+    /// generation `gen` (see [`KdfParams::External`]).
+    pub fn external(kid: impl Into<String>, gen: u32) -> Self {
+        Self::External {
+            kid: kid.into(),
+            gen,
+        }
+    }
+
+    /// Whether the master is held by a server rather than derived here.
+    pub fn is_external(&self) -> bool {
+        matches!(self, Self::External { .. })
+    }
+
     /// The key generation this descriptor carries (0 when it has none).
     pub fn gen(&self) -> u32 {
         match self {
-            Self::Argon2id { gen, .. } => *gen,
+            Self::Argon2id { gen, .. } | Self::External { gen, .. } => *gen,
             Self::Pbkdf2Sha512 { .. } => 0,
         }
     }
 
-    /// The descriptor for the next re-key of the same lockbox: default
-    /// Argon2id costs, a fresh salt, and the generation one past this one.
+    /// The descriptor for the next re-key of the same lockbox, at the
+    /// generation one past this one: default Argon2id costs and a fresh salt
+    /// for a password-derived key, a fresh `kid` for a server-held one, since
+    /// a rotation there is a new key under a new name.
     pub fn next_generation(&self) -> Self {
+        let gen = self.gen().saturating_add(1);
+        if self.is_external() {
+            return Self::external(super::random_hex_id(), gen);
+        }
         match Self::default_argon2id() {
             Self::Argon2id {
                 m_cost,
@@ -144,7 +178,7 @@ impl KdfParams {
                 t_cost,
                 p_cost,
                 salt,
-                gen: self.gen().saturating_add(1),
+                gen,
             },
             other => other,
         }
@@ -158,11 +192,13 @@ impl KdfParams {
         }
     }
 
-    /// The `algo` tag as stored (`"argon2id"` / `"pbkdf2-sha512"`).
+    /// The `algo` tag as stored (`"argon2id"` / `"pbkdf2-sha512"` /
+    /// `"external"`).
     pub fn algo(&self) -> &'static str {
         match self {
             Self::Argon2id { .. } => "argon2id",
             Self::Pbkdf2Sha512 { .. } => "pbkdf2-sha512",
+            Self::External { .. } => "external",
         }
     }
 
@@ -184,7 +220,9 @@ impl KdfParams {
 
     /// Refuse costs outside what this build is prepared to pay. Zero and
     /// below-minimum values are left to the primitives, which reject them
-    /// with their own message; this is the ceiling they do not have.
+    /// with their own message; this is the ceiling they do not have. An
+    /// external descriptor costs nothing to hold, so there is nothing to
+    /// bound.
     pub fn validate(&self) -> Result<()> {
         let too_costly = match self {
             Self::Argon2id {
@@ -194,6 +232,7 @@ impl KdfParams {
                 ..
             } => *m_cost > MAX_M_COST || *t_cost > MAX_T_COST || *p_cost > MAX_P_COST,
             Self::Pbkdf2Sha512 { iterations, .. } => *iterations > MAX_PBKDF2_ITERATIONS,
+            Self::External { .. } => false,
         };
         if too_costly {
             return Err(Error::Crypto(
@@ -219,12 +258,21 @@ pub fn random_salt() -> Vec<u8> {
 ///
 /// The output is zeroized on drop. `password` is treated as opaque input bytes:
 /// callers feed the master password directly for Argon2id.
+///
+/// Refuses an [`KdfParams::External`] descriptor: no password derives that
+/// master, and every path that asks for one (an unlock, a restore, a join)
+/// has to go to the server that holds it instead.
 pub fn derive(password: &[u8], params: &KdfParams) -> Result<Zeroizing<Vec<u8>>> {
     // Checked here as well as at parse time: a descriptor can be built in
     // code, and this is the one place the cost is actually paid.
     params.validate()?;
     let mut out = Zeroizing::new(vec![0u8; KEY_LEN]);
     match params {
+        KdfParams::External { .. } => {
+            return Err(Error::Crypto(
+                "this lockbox's key is held by a Rowel Server, not derived from a password".into(),
+            ));
+        }
         KdfParams::Argon2id {
             m_cost,
             t_cost,
@@ -397,6 +445,53 @@ mod tests {
             KdfParams::pbkdf2_sha512(SALT_A, 1).next_generation().gen(),
             1
         );
+    }
+
+    // The server's descriptor is stored verbatim on every device and compared
+    // as a string by the sync engine, so a parse and re-serialize has to give
+    // the exact bytes back — generation zero included, which Argon2id omits.
+    #[test]
+    fn external_round_trips_byte_for_byte_with_its_generation() {
+        for (json, gen) in [
+            (r#"{"algo":"external","kid":"0123abcd","gen":0}"#, 0),
+            (r#"{"algo":"external","kid":"0123abcd","gen":4}"#, 4),
+        ] {
+            let parsed = KdfParams::from_json(json).unwrap();
+            assert_eq!(parsed, KdfParams::external("0123abcd", gen));
+            assert!(parsed.is_external());
+            assert_eq!(parsed.algo(), "external");
+            assert_eq!(parsed.gen(), gen);
+            assert_eq!(parsed.to_json().unwrap(), json);
+        }
+        assert!(!KdfParams::argon2id(SALT_A, 256, 1, 1).is_external());
+    }
+
+    // No password derives a server-held master: asking is an error that says
+    // where the key is, never a key.
+    #[test]
+    fn external_refuses_to_derive() {
+        match derive(b"pw", &KdfParams::external("kid", 1)) {
+            Err(Error::Crypto(why)) => assert!(why.contains("Rowel Server"), "{why}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    // A rotation at the server is a new key under a new name at the next
+    // generation, as a password change is a new salt at the next one.
+    #[test]
+    fn external_next_generation_bumps_gen_and_changes_kid() {
+        let first = KdfParams::external("k1", 2);
+        let second = first.next_generation();
+        match &second {
+            KdfParams::External { kid, gen } => {
+                assert_ne!(kid, "k1");
+                assert_eq!(kid.len(), 32, "a fresh 16-byte hex id");
+                assert_eq!(*gen, 3);
+            }
+            other => panic!("next_generation must stay external, got {other:?}"),
+        }
+        assert!(second.validate().is_ok());
+        assert_ne!(second.next_generation(), second);
     }
 
     // The generation is not an input to the derivation: a descriptor that

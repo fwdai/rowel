@@ -91,6 +91,14 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
         >
           {title}
         </h2>
+        {/* An ask a Rowel Server routed here: the agent is the company's,
+            and this app is the member's approval device for it. Said before
+            anything else, since who is asking changes what the yes means. */}
+        {ask.server && (
+          <p className="mt-1.5 text-sm text-text2" data-testid="agent-grant-server">
+            {t('Asked through {{server}}', { server: ask.server })}
+          </p>
+        )}
         <Target ask={ask} />
         {/* The agent's own words, shown as text and nothing more: a reason is
             for the user to weigh, never for the app to act on. */}
@@ -99,7 +107,10 @@ export default function GrantDialog({ ask }: { ask: AgentGrantAsk }) {
             {t('Its reason: “{{reason}}”', { reason: ask.reason })}
           </p>
         )}
-        {ask.endsSession && (
+        {/* The sign-out is this device's browser's, and a server's grant fills
+            nothing here, so the notice would warn of a sign-out that never
+            comes. */}
+        {ask.endsSession && !ask.server && (
           <p className="mt-3 text-sm text-text2" data-testid="agent-grant-ends-session">
             {t('When this grant ends, {{appName}} will sign the browser that filled it out of {{origin}} and the rest of its site.', {
               origin: target

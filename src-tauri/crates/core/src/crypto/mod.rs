@@ -154,13 +154,24 @@ pub fn seal_workspace_key(app_key: &[u8], id: &str, material: &[u8]) -> Result<S
     Ok(STANDARD.encode(seal_aead(&*key, id.as_bytes(), material)?))
 }
 
-/// Reverse of [`seal_workspace_key`]. Fails on a sidecar that will not decode,
-/// and on one sealed under an app key other than `app_key` — which is what a
-/// sidecar left behind by a deleted primary is.
+/// Reverse of [`seal_workspace_key`], with two failures told apart. A sidecar
+/// that will not decode, or is too short to hold a nonce and a tag, is
+/// [`Error::Crypto`]: malformed, and nothing about the key is known from it.
+/// One that is whole but fails its tag under `app_key` — or under `id`,
+/// since the id is in the tag — is [`Error::SealedUnderAnotherKey`], which
+/// is what a sidecar left behind by a deleted primary is, and the one
+/// verdict a caller may remove a file on.
 pub fn open_workspace_key(app_key: &[u8], id: &str, sealed: &str) -> Result<Zeroizing<Vec<u8>>> {
     let key = Zeroizing::new(hkdf_subkey(app_key, INFO_WORKSPACE_WRAP));
     let blob = STANDARD.decode(sealed.trim()).map_err(err)?;
-    unseal_aead(&*key, id.as_bytes(), &blob).map(Zeroizing::new)
+    if blob.len() < IV_LEN + TAG_LEN {
+        return Err(Error::Crypto("payload too short".into()));
+    }
+    // With the length checked, the key a fixed 32 bytes and the nonce a
+    // fixed 16, the one thing left to fail inside is the tag.
+    unseal_aead(&*key, id.as_bytes(), &blob)
+        .map(Zeroizing::new)
+        .map_err(|_| Error::SealedUnderAnotherKey)
 }
 
 fn err<E: std::fmt::Display>(e: E) -> Error {

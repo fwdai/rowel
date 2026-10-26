@@ -293,6 +293,21 @@ pub fn lock(app: &AppHandle) -> bool {
     true
 }
 
+/// What follows every open of a session — a password or biometric unlock, a
+/// switch to a workspace the ring holds, a create or a restore: a browser
+/// extension waiting on the vault is told, and the approvals the member's
+/// Rowel Servers route here start arriving (`org::approvals`). The twin of
+/// [`sealed`], and the one place either of those is started.
+pub fn opened(app: &AppHandle) {
+    #[cfg(desktop)]
+    {
+        crate::browser::server::notify_unlocked();
+        crate::org::approvals::start(app);
+    }
+    #[cfg(not(desktop))]
+    let _ = app;
+}
+
 /// What follows every clear of a session, however it was ended — here, or by
 /// a workspace switch that clears and repoints in one step. A secret copied
 /// out of the vault does not outlive the vault being open, and the idle timer
@@ -304,9 +319,14 @@ pub fn sealed(app: &AppHandle) {
     #[cfg(desktop)]
     crate::browser::server::notify_locked();
     // And every grant an agent held goes with the session: nothing is served
-    // from a locked vault, and the next lockbox open is not this one's.
+    // from a locked vault, and the next lockbox open is not this one's. The
+    // asks a Rowel Server routes here stop with it; the one up on screen is
+    // refused by the clear below like any grant ask.
     #[cfg(desktop)]
-    crate::agents::clear(app);
+    {
+        crate::org::approvals::stop();
+        crate::agents::clear(app);
+    }
 }
 
 // Defined in the core, where the passkey store needs it too; the commands
