@@ -57,12 +57,13 @@ user's, which is the point, but sites may ban automation by terms. Rowel
 should not pretend otherwise: the grant dialog can carry a one-line notice for
 item tags the user marks `financial`.
 
-**Q7. Delegation proof format.** *Decide at phase 2.*
-Custom signed statement inside the sealed channel (spec default) vs OAuth
-token exchange (RFC 8693) with an `act` claim. The custom format ships first;
-interoperability with IdPs comes when a customer needs the server to accept
-tokens their IdP minted. Also: whether the enrollment key is one X25519 key
-used for sealing and a derived Ed25519 for signing, or two keys.
+**Q7. Delegation proof format.** *Half settled.* ✅ *The enrollment key is
+one X25519 key (I6, `01`):* it only opens sealed boxes; a separate signing
+key is minted beside it when delegation ships, never derived from it. Still
+open: custom signed statement inside the sealed channel (spec default) vs
+OAuth token exchange (RFC 8693) with an `act` claim. The custom format ships
+first; interoperability with IdPs comes when a customer needs the server to
+accept tokens their IdP minted.
 
 **Q8. Workload identity breadth.** *Decide per customer.*
 Generic OIDC covers GitHub Actions, GitLab, Kubernetes with OIDC discovery,

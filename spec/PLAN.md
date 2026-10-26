@@ -264,7 +264,7 @@ closes the free product. Spec `09`, `11 §2 PR 5 and PR 8`.
 
 ---
 
-## I5 — `rowel serve`: the broker without the GUI  `[ ]`  *(in review: PR #659, branch `feat/agent-serve`, on `main`)*
+## I5 — `rowel serve`: the broker without the GUI  `[x]`  *(merged: PR #659)*
 
 **Deliverable.** The same crates run as a headless broker on a developer's VM,
 a CI runner or a Linux box without a desktop: a device-held lockbox is unlocked
@@ -273,7 +273,7 @@ a WebSocket, standing rules serve them, and an `ask` is answered from a terminal
 or times out. This is the binary the server (I7) and the cloud (I9) run. Spec
 `06` (reuse), `07` (precursor to `OrgHost`).
 
-- [ ] Move TOTP code generation (the `totp()` builder behind
+- [x] Move TOTP code generation (the `totp()` builder behind
       `commands::generator::generate_otp`, and the `totp-rs` dependency) into
       `rowel_core::otp`, route the app's command through it, then move
       `logins_in` and the TOTP lookup into `rowel_broker::lockbox` beside
@@ -282,72 +282,90 @@ or times out. This is the binary the server (I7) and the cloud (I9) run. Spec
       to `rowel_broker::agents` and the socket serve loop to
       `rowel_broker::server`, so the headless host runs the app's code
       rather than a copy (`06`).
-- [ ] `rowel-serve` library crate with `HeadlessHost: Host` over
+- [x] `rowel-serve` library crate with `HeadlessHost: Host` over
       `SqliteStore` + `PayloadCipher`, built on the shared functions from I0;
       the broker test-suite runs against it. *Outcome:* `rowel-serve` with
       `HeadlessHost`; its tests drive `Connection<HeadlessHost>` over a real
       temp vault through the broker's test extension and peer (associate,
       auto rule, ask → approve → resolve, deny, timeout, switch off, step-up
       password, seal, key file, WebSocket, control socket).
-- [ ] Unlock: password prompt on a TTY, or key material from a `0600` key file
+- [x] Unlock: password prompt on a TTY, or key material from a `0600` key file
       or a file descriptor; lock on `SIGTERM`; idle auto-lock. *Outcome:* as
       specified; the key file is written by `rowel admin key-file`; an idle
       lock reopens from a key file, re-prompts in password mode and is
       refused with `--key-fd`.
-- [ ] Transports: the local socket on the same path scheme as the app, plus a
+- [x] Transports: the local socket on the same path scheme as the app, plus a
       `ws://`/`wss://` listener (TLS from files, or plain behind a reverse
       proxy) carrying the same frames (`04`). *Outcome:* as specified, plus
       a lock file the app and the broker both take, so one broker serves a
       data directory, ceilings on the WebSocket before association
       (connections, handshake time, message size, queued requests), and
       `ROWEL_BROKER` on the client side.
-- [ ] Approvals without a GUI: rules from a config file; an `ask` waits for
+- [x] Approvals without a GUI: rules from a config file; an `ask` waits for
       `rowel approve <id>` on the same machine or denies after the timeout;
       every decision an audit row (`03`). *Outcome:* `serve.json` rules; an
       approvals queue with a control socket; associations and passkey
       ceremonies are asks too; step-up by master password; 120 s default.
-- [ ] `rowel admin rules` to list, add and remove rules in the config; schema
+- [x] `rowel admin rules` to list, add and remove rules in the config; schema
       documented. *Outcome:* plus `admin agents on|off`, `admin key-file`,
       `admin lock`; schema in `docs/serve.md`.
-- [ ] Optional: `rowel serve --install-host` writes the native-messaging
+- [x] Optional: `rowel serve --install-host` writes the native-messaging
       manifest so a browser on that box can use the extension against it.
       *Not built in I5.*
-- [ ] Integration test: `rowel serve` + `rowel mcp` + `rowel proxy` in a
+- [x] Integration test: `rowel serve` + `rowel mcp` + `rowel proxy` in a
       container, standing rules, one `ask` answered by `rowel approve`.
       *Outcome:* `crates/cli/tests/serve.rs` over the built binary and a temp
       data directory; runs where the CLI's keys are files (Linux), ignored on
       macOS and Windows, whose secure store a test must not touch.
-- [ ] **Acceptance:** on a Linux VM without a GUI a coding agent gets a header
+- [x] **Acceptance:** on a Linux VM without a GUI a coding agent gets a header
       grant under a standing rule and an env grant after a TTY approval; the
       app's extension connects to the same broker when the host manifest is
       installed.
 
 ---
 
-## I6 — Org lockboxes and enrollment in the app  `[ ]`
+## I6 — Org lockboxes and enrollment in the app  `[ ]`  *(in review: PR #662, branch `feat/agent-org-lockboxes`, on `main`)*
 
 **Deliverable.** The desktop and iOS apps can hold a lockbox whose key came from
 a server, sync it through that server, and answer that server's approval
 requests in the same dialog. No visible change for users without a server. Spec
 `01` (keying), `02` (enrollment), `07` (member API, `Provider::RowelServer`).
 
-*Decide first:* Q7 (one curve or two for the enrollment key).
+*Decide first:* Q7 (one curve or two for the enrollment key). *Settled: one
+X25519 key; a signing key is minted beside it when delegation lands.*
 
 - [ ] `KdfParams::External { kid, gen }`: serde, `validate`, `derive` refuses,
       `next_generation`; unlock resolves the master from `Keyring` or the server
-      and refuses clearly otherwise (`01`).
+      and refuses clearly otherwise (`01`). *Outcome:* as specified; the
+      server is asked only on a gesture (`org_refresh_lockbox_key`, which also
+      adopts a rotation), never during an unlock. A password typed for an org
+      lockbox, a master-password change from inside one, and promoting one to
+      primary are refused; the password-change saga skips org lockboxes.
 - [ ] Device enrollment key generated once and kept under the app key; shown
-      with a fingerprint in Settings (`01`, `02`).
+      with a fingerprint in Settings (`01`, `02`). *Outcome:*
+      `enrollment.key.sealed` in the root; the member session once per install
+      beside it (`servers.sealed`); both re-sealed by a password change and
+      purged when stale after a primary deletion.
 - [ ] `Provider::RowelServer`: `VaultStore` over the pack endpoints with ETag
-      compare-and-swap; member session in `Tokens` (`07`).
+      compare-and-swap; member session in `Tokens` (`07`). *Outcome:* the
+      token file names the server only; the session is resolved from the
+      install's sealed file; never in the account pickers.
 - [ ] Settings › Lockboxes › *Connect to a Rowel Server*: sign in, enroll
       (pending until approved), list org lockboxes, add one as a workspace with
-      the `External` sidecar and `WRAPPED_KEY_FILE` (`07`).
-- [ ] Approve another device of mine from Settings (`02`).
+      the `External` sidecar and `WRAPPED_KEY_FILE` (`07`). *Outcome:* the
+      app signs in against the server as its OAuth2 authorization server
+      (PKCE, loopback); desktop only in I6, the phone's deep-link twin later.
+- [ ] Approve another device of mine from Settings (`02`). *Outcome:* with
+      the pending device's fingerprint quoted in the confirmation.
 - [ ] Approvals stream client (SSE or long poll) feeding `GrantDialog`; push
-      token registration stubbed for I10 (`03 §4`).
+      token registration stubbed for I10 (`03 §4`). *Outcome:* SSE, one
+      thread per approved connection while the vault is open, through the
+      consent slot with the tenant named; no push stub yet.
 - [ ] Tests against a fake server (in-process `axum`): add, sync, re-key,
-      approve; unlock paths with and without a wrapped master.
+      approve; unlock paths with and without a wrapped master. *Outcome:*
+      `org::fake_server` + `org::tests` (sign-in, enrollment, two devices
+      converging with a stale PUT, rotation, approvals loop, stale-file
+      reseal); the frontend's `org.test.tsx`.
 - [ ] **Acceptance:** against the fake server the app adds an org lockbox,
       edits an item on two devices and converges, answers an approval, and
       survives a master rotation; a vault holding an `External` lockbox still

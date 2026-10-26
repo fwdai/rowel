@@ -150,25 +150,40 @@ where the 32 bytes come from and who else holds a wrapped copy:
                                        non-primary workspace today
 ```
 
-- Add `KdfParams::External { kid: String, gen: u32 }` (`crypto/kdf.rs`,
-  serialised as `{"algo":"external","kid":"…","gen":n}`): the master is not
-  password-derived; obtain it from the broker named `kid`. `derive` returns
-  `Error::Crypto` for it; `validate` accepts it; `next_generation` mints a new
-  `kid` with `gen + 1`. `commands/auth.rs::unlock` on a workspace whose sidecar
-  is `External` looks for the wrapped master (`Keyring`, else the server) instead
-  of running Argon2id, and refuses with a clear message when neither is there.
-  The sidecar and every pack header carry the descriptor verbatim, so
-  `sync::engine::decode_pack`'s string comparison of headers keeps working
+- `KdfParams::External { kid: String, gen: u32 }` (✅ I6, `crypto/kdf.rs`,
+  serialised as `{"algo":"external","kid":"…","gen":n}`, `gen` always
+  written since no descriptor of this shape predates the field): the master
+  is not password-derived; obtain it from the broker named `kid`. `derive`
+  returns `Error::Crypto` for it; `validate` accepts it; `next_generation`
+  mints a fresh `kid` with `gen + 1`. An org lockbox is always a non-primary
+  workspace, so an unlock opens it from `Keyring` / its `WRAPPED_KEY_FILE`
+  sidecar like any other; a password typed for it is refused with a message
+  naming the server, and a device whose sidecar is missing (or whose listing
+  shows a higher `gen`) fetches the wrapped master again with
+  `org_refresh_lockbox_key` — the server is asked on a gesture, never during
+  an unlock. The sidecar and every pack header carry the descriptor verbatim,
+  so `sync::engine::decode_pack`'s string comparison of headers keeps working
   across devices (every device stores the server's exact descriptor string).
 - `VaultKey::from_material(material, true)` already constructs an Argon2-shaped
   key from raw 32 bytes; an org lockbox's unwrapped master goes through it. No
   change to `SqliteStore`, `PayloadCipher`, packs or merge.
-- **Device enrollment key (❌).** Each install generates an X25519 keypair once
-  (`crypto_box::SecretKey::generate`), stored under the app key beside the
-  other workspace keys. Its public half is what a server wraps lockbox masters
-  to. Enrollment of a new device is approved from an already-enrolled device
-  or by an admin (`02`), so a stolen single sign-on session alone does not
-  yield wrapped masters.
+- **Device enrollment key (✅ I6, `org::enrollment`).** Each install
+  generates one X25519 keypair once (`crypto_box::SecretKey::generate`) —
+  one curve, one job (Q7): it only ever opens sealed boxes and signs nothing;
+  a signing key is minted beside it when delegation lands. The secret lives
+  in the root-level `enrollment.key.sealed`, sealed under the app key with
+  the workspace-key seal and bound to its own name, so without an unlocked
+  vault there is no enrollment key; a file that does not open is never
+  replaced by a fresh key (the server holds the old public half), except
+  what deleting the primary leaves behind, which is removed and the member
+  signs in again. The fingerprint a person compares across two screens is
+  SHA-256 of the 32 public-key bytes, the first 16 hex digits in four groups
+  of four (pinned by a test). Its public half is what a server wraps lockbox
+  masters to. Enrollment of a new device is approved from an already-enrolled
+  device or by an admin (`02`), so a stolen single sign-on session alone does
+  not yield wrapped masters. The member session that sign-in produced lives
+  once per install beside it (`servers.sealed`, same seal); a master-password
+  change re-seals both under the new app key.
 - **Rotation of an org lockbox master.** Reuse the password-change saga
   (`commands/auth.rs::rekey_open_workspace`, `retired.rs`): re-key SQLCipher,
   re-seal payloads, retire the old epoch (its `External` descriptor string and

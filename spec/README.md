@@ -48,6 +48,16 @@ Read the overview first. Everything else hangs off it.
 
 ## Revision history
 
+- **2026-10-26, I6 built (org lockboxes in the app).** I5 ticked as merged
+  (PR #659). Settled the enrollment key to one X25519 curve (Q7, half) and
+  the sign-in model: the Rowel Server is the OAuth2 authorization server the
+  app talks to, the IdP stays behind it, enrollment is a bearer call (`02`).
+  The member session is held once per install in `servers.sealed` beside the
+  enrollment key rather than in each lockbox's token file (`01`, `07`). The
+  member API is recorded as built — `auth/authorize`, `auth/token`, `me`,
+  the listing carrying `etag` and `wrappedMaster`, PUT preconditions, the SSE
+  framing and keepalive — and the device half of the pack endpoints (`07`).
+  Desktop ships the connect flow; the phone's is a later iteration.
 - **2026-10-24, first draft**, written against commit `5cb64c36`.
 - **2026-10-24, review against the code and the platforms.** Verified the
   seams the spec leans on (`browser/{actions,server,mod}.rs`, `appkey.rs`,

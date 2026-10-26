@@ -190,17 +190,51 @@ cases (agent write during a device push, two devices and one agent, a device
 offline past the tombstone TTL) get a test matrix on the `two_devices.rs`
 harness with the server as a third party (Q19).
 
-**Member API (❌).**
+*As built in I6* (`sync/providers/rowel`, the device half): `Provider::
+RowelServer` is in `Provider::ALL` (its token file is `auth/rowel-server.swftx`)
+but never in `Provider::available()` — an org lockbox is added from Settings
+› Lockboxes › Rowel Server, not from the account pickers, since there is no
+password to restore it under. The adapter's listing is `GET
+/v1/members/me/lockboxes` filtered to the lockboxes that carry an `etag`
+(a pack-less lockbox is created by the first push); the handle is the lockbox
+id, the name `layout::vault_file_name(id)`, the revision the ETag verbatim.
+`create` is `PUT` with `If-None-Match: *`, `update` is `PUT` with `If-Match:
+<etag>`; a 412 fails the run with the retry message, as Dropbox's
+compare-and-swap does, and the next run pulls and merges. The server must
+refuse a `PUT` that carries neither precondition. `delete` is refused on a
+device: an org lockbox is removed at the server. Rotation on the device: a
+listing whose `gen` is above the local sidecar's re-keys the local copy to
+the new master through the existing re-key saga, retiring the old epoch so a
+pack pushed under it still opens (`opened_under_retired`).
+
+**Member API (🟡 the app's side is built in I6, `src-tauri/src/org/client.rs`
+is the contract; the server implements it in I7).** camelCase JSON, except
+the token endpoint, which is RFC 6749's and keeps its snake_case.
 
 ```
-  POST /v1/members/enroll         { oidc_id_token, device_pubkey, device_name }  → device_id (pending)
-  GET  /v1/members/me/devices     → [ { id, name, state: pending|approved|revoked } ]
+  GET  /v1/members/auth/authorize ?response_type=code&client_id=rowel-app&redirect_uri&state
+                                  &code_challenge&code_challenge_method=S256
+                                  the server sends the browser through the company IdP and back
+  POST /v1/members/auth/token     form: grant_type=authorization_code|refresh_token, code,
+                                  code_verifier, redirect_uri | refresh_token, client_id
+                                  → { access_token, refresh_token?, expires_in?, token_type }
+  GET  /v1/members/me             → { member: { id, email, name? }, tenant: { name } }
+  POST /v1/members/enroll         { devicePubkey, deviceName }  → { deviceId, state }   (pending)
+  GET  /v1/members/me/devices     → [ { id, name, state: pending|approved|revoked, publicKey, createdAtMs } ]
   POST /v1/members/devices/{id}/approve      from an approved device of the same member, or an admin
-  GET  /v1/members/me/lockboxes   → [ { id, name, kdf: External descriptor,
-                                        wrapped_master (sealed box to this device; approved devices only) } ]
-  GET  /v1/members/me/approvals/stream   (SSE)  → pending asks for this member
-  POST /v1/approvals/{id}         { answer: GrantAnswer }
+  GET  /v1/members/me/lockboxes   → [ { id, name, kdf: "<External descriptor JSON, verbatim>",
+                                        wrappedMaster?: "<sealed box to this device, base64>"  (approved devices only),
+                                        etag?: "<current pack revision>"  (absent until a device pushed one) } ]
+  GET  /v1/members/me/approvals/stream   SSE: `event: approval` + `data: <Approval>`; a `:` keepalive
+                                         comment at least every 30 s (the app's loop wakes on it)
+  POST /v1/approvals/{id}         { answer: GrantAnswer | null }
 ```
+
+`Approval { id, lockboxId, lockboxName, agentName, mode, targets, candidates:
+[VisibleItem], reason?, stepUp, expiresAtMs }`, `targets` in the shape the
+app's grant dialog already renders (`events::AskTarget`). A 401 on any member
+call means the session is over: the app refreshes once through the token
+endpoint and retries, and otherwise tells the member to sign in again.
 
 On the device, an org lockbox is one more non-primary workspace: the app
 unseals the master with its enrollment key, puts it in `appkey::Keyring`, and
@@ -208,7 +242,23 @@ writes the `WRAPPED_KEY_FILE` sidecar under the app key exactly as it does for
 any other workspace, with the server's `External` descriptor as the KDF sidecar.
 From then on it opens with `VaultKey::from_material` whenever the vault is
 unlocked. The master password still gates everything: without an unlocked
-vault neither the app key nor the enrollment key is available.
+vault neither the app key nor the enrollment key is available. *As built in
+I6:* the member session is held **once per install**, not per lockbox — in
+`servers.sealed` beside the enrollment key, sealed under the app key
+(`org::connections`), since the session is the member's and two sealed copies
+of one refreshable token would drift apart on the first rotation; an org
+lockbox's own token file holds `Tokens { provider: RowelServer, account:
+Some(server url) }` and nothing else, as iCloud's holds only the account, and
+the sync adapter looks the session up by that name. The vault id of an org
+lockbox *is* the server's lockbox id. The registry's `Workspace.server` names
+the server, so Settings can say which lockboxes are org lockboxes while they
+are locked. The app is the member's approval device on desktop: one stream
+per connection with an approved device, started when the vault becomes live
+and stopped on lock; each approval goes to the consent slot as a grant ask
+carrying the tenant's name and no session end, the person is verified for a
+step-up as for a local ask, and the answer is posted back; a timeout posts
+nothing and the server's own deadline decides. The server's log is the
+record of its grants; the device writes no local audit row for them.
 
 **Agent and admin API (❌).**
 

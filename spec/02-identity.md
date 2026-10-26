@@ -140,9 +140,9 @@ records them; it never trusts them for authorization.
   "refs/heads/main", workflow: "release.yml" } }`. Exact match per claim, with
   glob allowed on values an admin marks as such.
 
-**Delegation proof (❌).** A compact signed statement by the enrolled device
-key (Ed25519 derived alongside the X25519 enrollment key, or a sealed-box MAC
-if we keep one curve; open question):
+**Delegation proof (❌).** A compact signed statement by a device signing key
+minted beside the X25519 enrollment key when delegation lands (Q7 settled the
+enrollment key itself to one curve in I6; the proof's format stays open):
 
 ```
   { v: 1, device: <device_id>, agent: <agent_id or client key>,
@@ -155,14 +155,28 @@ user is the principal. The format deliberately stays inside the sealed channel
 for v1; converging on OAuth token exchange with an `act` claim (RFC 8693) is a
 later interoperability step, not a v1 requirement.
 
-**Device enrollment (❌, Tier 2).** A member signs in through the company's
-identity provider and the app submits its enrollment public key (`01`). The
-new device is *pending* until an already-enrolled device of the same member,
-or an admin, approves it; only then does the server return wrapped lockbox
-masters to it. A stolen single sign-on session therefore cannot mint a device
-that reads org lockboxes. The first device of a member is approved by an
-admin or by an invitation code the admin issued. Every enrollment and approval
-is an audit row.
+**Device enrollment (🟡 app side built in I6; the server is I7).** A member
+signs in and the app submits its enrollment public key (`01`). The new device
+is *pending* until an already-enrolled device of the same member, or an
+admin, approves it; only then does the server return wrapped lockbox masters
+to it. A stolen single sign-on session therefore cannot mint a device that
+reads org lockboxes. The first device of a member is approved by an admin or
+by an invitation code the admin issued. Every enrollment and approval is an
+audit row.
+
+*As built in I6* (`src-tauri/src/org`): the app never talks to the company's
+identity provider itself. The Rowel Server is the OAuth2 authorization server
+the app signs in against — authorization code with PKCE, the public client id
+`rowel-app`, a loopback redirect, the same flow the cloud providers use — and
+federates to the IdP on its own side (I7), so one flow in the app covers every
+company and the server keeps the IdP tokens that SCIM and offboarding need
+(I10). Enrollment is then a bearer call, `POST /v1/members/enroll
+{devicePubkey, deviceName}` → `{deviceId, state}`; approval is `POST
+/v1/members/devices/{id}/approve` from an approved device of the same member,
+after the member compared the pending device's fingerprint (`01`) in
+Settings; `GET /v1/members/me/devices` lists them with their public keys so
+every device computes the same fingerprint. Desktop ships the connect flow;
+the phone's deep-link twin of the sign-in is a later iteration.
 
 **Revocation.** `Host::clients()` is consulted on every request today
 (`Connection::associated` is re-checked against the open lockbox's list). The

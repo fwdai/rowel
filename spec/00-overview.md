@@ -141,7 +141,8 @@ lives in the server and its operation, as Bitwarden and Tailscale show.
  │ AppHost ✅ │  │ mcp, hook, │  │ HeadlessHost ✅ · OrgHost ❌ (org lockbox) │
  │ dialog ✅  │  │ run, proxy,│  │ workload identity verifiers ❌           │
  │ Settings ✅│  │ redact (I3)│  │ config rules ✅ · approval router ❌     │
- └───┬───────┘  └────────────┘  │ pack endpoints = Remote for devices ❌   │
+ └───┬───────┘  └────────────┘  │ pack endpoints = Remote for devices 🟡   │
+                                 │   (device side ✅ I6, server ❌ I7)       │
      │                          └──────────────────────────────────────────┘
  ┌───┴─────────────────────────┐
  │ browser extension (fork) ✅  │   gains: agent mode, grant-driven fill,
