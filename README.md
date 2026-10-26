@@ -83,7 +83,7 @@ Down the road there may be a paid option for professional teams that need extra 
 - Vault Health: strength scoring, reused-password checks, and an optional private breach check that never sends your password
 - Browser autofill and passkeys for Chrome, Edge, Brave, Vivaldi and Firefox, plus Safari on macOS ([details](docs/browser-extension.md)). Passkeys are on by default from extension 0.1.1; an earlier install turns them on in the extension's options
 - iOS AutoFill for passwords and passkeys, unlocked with Face ID (passkeys need iOS 17 or later)
-- Agents: Claude Code, Codex, Cursor and agentic browsers use your logins and API keys through grants you approve, never holding the value, with a readable audit log in Vault Health ([details](docs/agents.md))
+- Agents: Claude Code, Codex, Cursor and agentic browsers use your logins and API keys through grants you approve, with a readable audit log in Vault Health ([details](docs/agents.md)). The agent itself never receives the value; a command you approve to run with a key does, so approve only command lines you would run yourself
 - Touch ID, Face ID or Windows Hello unlock
 - Locks itself when you're inactive and clears copied secrets from the clipboard
 - Export to CSV, FIDO CXF, or Bitwarden-compatible JSON, plus encrypted backups

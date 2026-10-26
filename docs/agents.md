@@ -246,8 +246,11 @@ section. In short:
   the browser can use the session like any logged-in user.
 - **Same-user processes.** Another program running as you can lift the
   extension's or the command line tool's keys and ask in their name; the
-  dialog and the rules still decide what it gets. On macOS and Windows the
-  keys live in the OS secure store, where a foreign read prompts you.
+  dialog and the rules still decide what it gets. On macOS the command line
+  tool's keys are keychain items, and another program reading them makes
+  macOS prompt you; Windows's Credential Manager hands them to any program
+  running as you without asking, and on Linux they are files readable by you
+  ([details](./cli.md#the-two-keys)).
 
 On a machine with no desktop, the same broker runs from the command line as
 `rowel serve`, unlocked from a terminal or a key file, with standing rules in

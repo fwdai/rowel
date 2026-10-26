@@ -73,7 +73,8 @@ Rowel's dialog (or a standing rule they wrote by answering "for N days").
 ## The two keys
 
 The first tool call of `rowel mcp` creates this machine's **agent key**; the
-first `rowel run` or `rowel proxy` request creates the **sidecar key**. Each
+first request of `rowel run`, `rowel redact`, `rowel hook post` or `rowel
+proxy` creates the **sidecar key**. Each
 record is the public key and the name the app gave the client, and each asks
 the app to let it in once — Rowel shows the dialog and you give the client a
 name. Two keys because the host refuses `resolve` to any client that is not a
@@ -91,16 +92,28 @@ Where they live:
 
 The key is only a public one, but it is the credential: whoever presents it
 is this client. The secure store is not gated by Touch ID or Hello — the CLI
-runs unattended — but it has what a file lacks: the store's own access
-control, under which another program reading the item makes the OS prompt
-you. A same-user process can still lift it (`spec/10` Q9); grants, floors,
+runs unattended — and what it adds over a file differs by platform:
+
+- **macOS**: the keychain item's access list names the `rowel-cli` that made
+  it, so another program reading it makes macOS prompt you first.
+- **Windows**: Credential Manager has no per-program access list: any
+  program running as you reads the entry without a prompt. What it adds is
+  encryption at rest under your Windows account, which a file under your
+  profile lacks.
+- **Linux**: a file readable by you alone, as above.
+
+So a same-user process can lift the key on every platform, without being
+asked on Windows and Linux (`spec/10` Q9); grants, floors,
 full-command-line targets and the rate limits bound what a lifted key buys.
 
 A key written as a file by an earlier release is moved into the store the
-first time it is read, and the file removed. A store that refuses (a locked
-or damaged keychain; anything but "no such item") is stood in for by the file
-for that run, with one line on stderr saying so, so a broken keychain never
-strands an association; the move is tried again next run.
+first time it is read, and the file is overwritten with a one-line note,
+`rowel-cli: this key is kept in <store>`, so that a later run whose store
+cannot be read reports an error instead of minting a second key over the
+first. A store that refuses (a locked or damaged keychain; anything but "no
+such item") is stood in for by the file for that run, with one line on stderr
+saying so, so a broken keychain never strands an association; the move is
+tried again next run.
 
 ## Reaching a broker
 
