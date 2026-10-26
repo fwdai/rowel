@@ -242,9 +242,20 @@ loopback host only (`localhost`, `127.0.0.0/8`, `[::1]`), refused at
 masters and packs never cross a network in the clear. The approvals stream is
 framed by the SSE rules: `\r\n`, `\n` or a lone `\r` end a line and an empty
 line ends a frame. Every write to a held member session is one
-read-modify-write under the sidecars lock (`connections::update`), so a
-refresh that rotated a single-use refresh token cannot be undone by a caller
-writing back the copy it read before the round trip.
+compare-and-set under the sidecars lock (`connections::update` with an
+`Expect`): a refresh's answer lands only on the same member and device still
+under the refresh token it spent, and a note about the device's standing only
+on the same member and device. A refresh that rotated a single-use token
+cannot be undone by a caller writing back an older copy, and neither write
+can land on a replacement sign-in at the same URL.
+
+*Key generations on the device.* `lockboxes::key_step` decides what a listed
+key is, for every caller: a later generation is a rotation and re-keys the
+local copy; the byte-identical descriptor is a repair, and the master is
+checked against the database before the ring or the sealed copy take it; an
+older generation, or another `kid` at the same one, is refused and the local
+key kept, since adopting it without a re-key leaves a database the next
+unlock cannot open.
 
 On the device, an org lockbox is one more non-primary workspace: the app
 unseals the master with its enrollment key, puts it in `appkey::Keyring`, and
