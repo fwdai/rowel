@@ -224,16 +224,48 @@ pub enum GrantEnd {
 /// heard of it. A grant that had already ended is left as it ended, and is
 /// still found.
 pub fn end_grant_in(ctx: Locked<'_>, id: &str, owner: Option<&str>, detail: &str) -> GrantEnd {
+    end_held(
+        ctx,
+        id,
+        |g| owner.is_none_or(|key| g.client_key == key),
+        Event::Revoked,
+        detail,
+    )
+}
+
+/// The page showed what was filled under grant `id`, as `reporter` saw it:
+/// the grant ends now with an `exposed` row and every extension signs out of
+/// the site. Only the client the grant is for, or the extension that was
+/// served under it, may say so — the one that filled is the one whose page
+/// it is, and any other client of the lockbox could otherwise end any grant
+/// it has heard the id of. A report on a grant already over changes nothing:
+/// the first one wrote the row and sent the sign-out.
+pub fn report_exposure_in(ctx: Locked<'_>, id: &str, reporter: &str) -> GrantEnd {
+    end_held(
+        ctx,
+        id,
+        |g| g.client_key == reporter || g.served_to.as_deref() == Some(reporter),
+        Event::Exposed,
+        r#"{"reason":"exposure"}"#,
+    )
+}
+
+/// End grant `id` early if `may_end` lets the caller, through [`ended`]: the
+/// one path an early end takes, whoever asks for it.
+fn end_held(
+    ctx: Locked<'_>,
+    id: &str,
+    may_end: impl Fn(&Grant) -> bool,
+    event: Event,
+    detail: &str,
+) -> GrantEnd {
     let Locked {
         store,
         held,
         writer,
         now,
     } = ctx;
-    let Some(grant) = held
-        .find_mut(id)
-        .filter(|g| owner.is_none_or(|key| g.client_key == key))
-    else {
+    let Some(grant) = held.find_mut(id).filter(|g| may_end(g)) else {
         return GrantEnd::NotFound;
     };
     if !matches!(grant.state, State::Active | State::Pending) {
@@ -241,15 +273,7 @@ pub fn end_grant_in(ctx: Locked<'_>, id: &str, owner: Option<&str>, detail: &str
     }
     grant.state = State::Revoked;
     let grant = grant.clone();
-    ended(
-        Some(store),
-        held,
-        writer,
-        &grant,
-        Event::Revoked,
-        detail,
-        now,
-    );
+    ended(Some(store), held, writer, &grant, event, detail, now);
     GrantEnd::Ended
 }
 

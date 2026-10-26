@@ -409,6 +409,139 @@ fn a_standing_rule_is_for_the_sites_origin() {
     assert_eq!(site_origin("not a url?x=1"), "not a url");
 }
 
+// --- covered ---------------------------------------------------------------------
+
+// A grant the extension may be served under that is over — its window
+// closed, before the timer flipped it or after — is `GrantExpired`, so the
+// extension asks afresh; a revoked one, or one another extension claimed, is
+// a plain no. A TOTP step naming no grant passes an expired one by.
+#[test]
+fn covered_says_expired_of_a_grant_that_is_over_for_whoever_may_use_it() {
+    let (_dir, store, _cipher) = crate::testing::vault();
+    let mut held = AgentState::default();
+    held.initialise(AccessState {
+        enabled: true,
+        lockbox_on: true,
+    });
+    held.grants.push(active("g1", 0, 1_000));
+    let check = |held: &mut AgentState, key: &str, now| {
+        covered(
+            Locked {
+                store: &store,
+                held,
+                writer: "dev",
+                now,
+            },
+            key,
+            "g1",
+            "gh",
+            Mode::Fill,
+        )
+    };
+
+    assert_eq!(check(&mut held, "ext", 500), Ok(true));
+    assert_eq!(
+        check(&mut held, "ext", 1_000),
+        Err(crate::protocol::Code::GrantExpired),
+        "due"
+    );
+    assert!(expire_due(Some(&store), &mut held, "dev", 1_000));
+    assert_eq!(
+        check(&mut held, "ext", 1_000),
+        Err(crate::protocol::Code::GrantExpired),
+        "flipped"
+    );
+    let by_client = client_covered(
+        Locked {
+            store: &store,
+            held: &mut held,
+            writer: "dev",
+            now: 1_000,
+        },
+        "ext",
+        "gh",
+        Mode::Fill,
+    );
+    assert_eq!(by_client, Ok(false));
+
+    let grant = held.find_mut("g1").unwrap();
+    grant.client_key = "agent".into();
+    grant.served_to = Some("ext2".into());
+    assert_eq!(check(&mut held, "ext", 1_000), Ok(false), "another's");
+    held.find_mut("g1").unwrap().state = State::Revoked;
+    assert_eq!(check(&mut held, "ext2", 1_000), Ok(false), "revoked");
+}
+
+// --- exposure ---------------------------------------------------------------------
+
+// A page that showed what was filled ends the grant — but only as reported
+// by the client the grant is for or the extension served under it, and only
+// once: a stranger who has heard the id ends nothing, and a second report
+// writes no second row and sends no second sign-out.
+#[test]
+fn an_exposure_ends_a_grant_once_and_only_for_its_holder_or_server() {
+    let (_dir, store, _cipher) = crate::testing::vault();
+    store
+        .meta_set(
+            CLIENTS_META,
+            &serde_json::to_string(&[
+                client("Work Chrome", "ext", ClientKind::Extension),
+                client("Home Firefox", "ext2", ClientKind::Extension),
+                client("Claude Code", "agent", ClientKind::Agent),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+    let mut held = AgentState::default();
+    held.grants.push(Grant {
+        client_key: "agent".into(),
+        served_to: Some("ext".into()),
+        ..active("g1", 0, 1_000)
+    });
+    held.grants.push(active("g2", 0, 1_000));
+    let report = |held: &mut AgentState, id: &str, reporter: &str| {
+        report_exposure_in(
+            Locked {
+                store: &store,
+                held,
+                writer: "dev",
+                now: 5,
+            },
+            id,
+            reporter,
+        )
+    };
+
+    assert_eq!(report(&mut held, "g1", "ext2"), GrantEnd::NotFound);
+    assert_eq!(report(&mut held, "g9", "ext"), GrantEnd::NotFound);
+    assert_eq!(held.find_mut("g1").unwrap().state, State::Active);
+    assert!(store.audit_rows("dev").unwrap().is_empty());
+    assert!(held.signals.is_empty());
+
+    assert_eq!(report(&mut held, "g1", "ext"), GrantEnd::Ended, "served to");
+    assert_eq!(held.find_mut("g1").unwrap().state, State::Revoked);
+    let rows = store.audit_rows("dev").unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].event, "exposed");
+    assert_eq!(rows[0].detail.as_deref(), Some(r#"{"reason":"exposure"}"#));
+    assert_eq!(held.signals.get("ext2").map(Vec::len), Some(1));
+
+    assert_eq!(report(&mut held, "g1", "agent"), GrantEnd::AlreadyOver);
+    assert_eq!(store.audit_rows("dev").unwrap().len(), 1, "no second row");
+    assert_eq!(
+        held.signals.get("ext2").map(Vec::len),
+        Some(1),
+        "no second sign-out"
+    );
+
+    assert_eq!(
+        report(&mut held, "g2", "ext"),
+        GrantEnd::Ended,
+        "its holder"
+    );
+    assert_eq!(store.audit_rows("dev").unwrap().len(), 2);
+}
+
 // --- this run ---------------------------------------------------------------------
 
 const RUN_PAGE: &str = "https://github.com/login";

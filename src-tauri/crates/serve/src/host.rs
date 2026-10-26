@@ -32,13 +32,12 @@ use zeroize::Zeroizing;
 use rowel_broker::actions::{Client, ClientKind, Hello, Host, Login, VisibleRef};
 use rowel_broker::agents::{
     self, candidates_in, change_under_locks, client_covered, covered, decide, deny_unasked,
-    end_grant_in, expire_due, now_ms, reply_for, resolved, settle, target_text, visible_access,
-    visible_in, AccessState, AgentState, Asking, GrantEnd, Locked, Prepared, Verdict,
+    end_grant_in, expire_due, now_ms, reply_for, report_exposure_in, resolved, settle, target_text,
+    visible_access, visible_in, AccessState, AgentState, Asking, GrantEnd, Locked, Prepared,
+    Verdict,
 };
 use rowel_broker::audit::Event;
-use rowel_broker::grant::{
-    Approval, GrantReply, GrantRequest, Mode, ResolveContext, State, VisibleItem,
-};
+use rowel_broker::grant::{Approval, GrantReply, GrantRequest, Mode, ResolveContext, VisibleItem};
 use rowel_broker::lockbox::{
     clients_in, logins_in, mark_seen, save_failed, save_login_in, totp_in, write_clients,
 };
@@ -1054,32 +1053,34 @@ impl Host for HeadlessHost {
     }
 
     // The page showed what was filled: the grant ends now, the log says
-    // why, and every extension signs out of the site.
-    fn report_exposure(&self, _client: &Client, grant_id: &str) {
+    // why, and every extension signs out of the site — when the reporter is
+    // the grant's client or the extension served under it, and once.
+    fn report_exposure(&self, client: &Client, grant_id: &str) {
         self.touch();
-        let now = now_ms();
-        {
+        let end = {
             let session = self.session();
-            let mut held = self.agents();
-            let Some(grant) = held.find_mut(grant_id) else {
-                log::debug!("rowel serve: exposure reported for an unknown grant {grant_id}");
+            let Ok(store) = session.store() else {
                 return;
             };
-            if matches!(grant.state, State::Active | State::Pending) {
-                grant.state = State::Revoked;
+            let mut held = self.agents();
+            report_exposure_in(
+                Locked {
+                    store,
+                    held: &mut held,
+                    writer: &self.0.writer_id,
+                    now: now_ms(),
+                },
+                grant_id,
+                &client.key,
+            )
+        };
+        match end {
+            GrantEnd::Ended => server::notify_signals(),
+            GrantEnd::AlreadyOver => {}
+            GrantEnd::NotFound => {
+                log::debug!("rowel serve: exposure reported for {grant_id}, not the reporter's")
             }
-            let grant = grant.clone();
-            agents::ended(
-                session.store().ok(),
-                &mut held,
-                &self.0.writer_id,
-                &grant,
-                Event::Exposed,
-                r#"{"reason":"exposure"}"#,
-                now,
-            );
         }
-        server::notify_signals();
     }
 
     // The one reply that carries a value to something other than an

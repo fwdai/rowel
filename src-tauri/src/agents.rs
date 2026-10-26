@@ -14,8 +14,8 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 pub use rowel_broker::agents::{
-    change_under_locks, draft, ended, expire_due, note, now_ms, site_origin, AccessState,
-    AgentState, GrantRow, RuleRow,
+    change_under_locks, draft, expire_due, note, now_ms, site_origin, AccessState, AgentState,
+    GrantRow, RuleRow,
 };
 use rowel_broker::agents::{
     end_grant_in, list_grants_in, list_rules_in, revoke_rule_in, GrantEnd, Locked,

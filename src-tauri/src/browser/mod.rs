@@ -56,7 +56,9 @@ use crate::passkey::{Ceremony, UserConsent};
 use crate::session::Epoch;
 use crate::state::AppState;
 use crate::{agents, commands, events, session, settings, storage, window, workspace};
-use rowel_broker::agents::{candidates_in, deny_unasked, reply_for, visible_access};
+use rowel_broker::agents::{
+    candidates_in, deny_unasked, reply_for, report_exposure_in, visible_access, GrantEnd,
+};
 use rowel_broker::audit::Event;
 use rowel_broker::grant::{
     Approval, GrantReply, GrantRequest, Mode, ResolveContext, State, Target,
@@ -977,36 +979,39 @@ impl Host for AppHost {
 
     // The page showed what was filled: the grant ends now, whatever was left
     // of its window, the log says why, and every extension signs out of the
-    // site. Whoever reports it: the exposure is a fact about the page, not a
-    // claim on the grant.
-    fn report_exposure(&self, _client: &Client, grant_id: &str) {
+    // site — when the reporter is the grant's client or the extension served
+    // under it, and once (`report_exposure_in`). With the vault locked there
+    // is no grant left to end.
+    fn report_exposure(&self, client: &Client, grant_id: &str) {
         let app = &self.0;
         agents::initialise(app);
         let writer = storage::install_id(app);
         let state = app.state::<AppState>();
         let now = agents::now_ms();
-        {
+        let end = {
             let session = state.session.lock().unwrap();
-            let mut held = state.agents.lock().unwrap();
-            let Some(grant) = held.find_mut(grant_id) else {
-                log::debug!("browser host: exposure reported for an unknown grant {grant_id}");
+            let Ok(store) = session.store() else {
                 return;
             };
-            if matches!(grant.state, State::Active | State::Pending) {
-                grant.state = State::Revoked;
+            let mut held = state.agents.lock().unwrap();
+            report_exposure_in(
+                Locked {
+                    store,
+                    held: &mut held,
+                    writer: &writer,
+                    now,
+                },
+                grant_id,
+                &client.key,
+            )
+        };
+        match end {
+            GrantEnd::Ended => agents::grants_changed(app),
+            GrantEnd::AlreadyOver => {}
+            GrantEnd::NotFound => {
+                log::debug!("browser host: exposure reported for {grant_id}, not the reporter's")
             }
-            let grant = grant.clone();
-            agents::ended(
-                session.store().ok(),
-                &mut held,
-                &writer,
-                &grant,
-                Event::Exposed,
-                r#"{"reason":"exposure"}"#,
-                now,
-            );
         }
-        agents::grants_changed(app);
     }
 
     // The one reply that carries a value to something other than an

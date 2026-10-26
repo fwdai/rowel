@@ -688,6 +688,10 @@ fn queue_fill(
 /// narrowed to its page when it was issued. A grant another client requested
 /// — an agent's, signalled to every extension — is claimed by the first
 /// extension served under it (`Grant::served_to`) and refused to any other.
+/// A grant this client may be served under that is over by time or by use
+/// is `GrantExpired`, not a no: the extension forgets it and asks afresh,
+/// where a refusal leaves it nothing to do but give up — and that the window
+/// closed is no secret from whoever holds the id.
 pub fn covered(
     ctx: Locked<'_>,
     client_key: &str,
@@ -719,15 +723,25 @@ fn covered_via(
     let Some(grant) = held.find_mut(grant_id) else {
         return Ok(false);
     };
-    if !grant.is_active(now) || !grant.modes.contains(&mode) {
+    // Who may be served under it: the client it was issued to, the
+    // extension that claimed it, or — an agent's not yet claimed — any.
+    let entitled = grant.client_key == client_key
+        || grant
+            .served_to
+            .as_deref()
+            .is_none_or(|served| served == client_key);
+    if !entitled || !grant.modes.contains(&mode) {
         return Ok(false);
     }
-    let claim = match &grant.served_to {
-        _ if grant.client_key == client_key => None,
-        None => Some(client_key),
-        Some(served) if served == client_key => None,
-        Some(_) => return Ok(false),
-    };
+    if grant.is_due(now) || matches!(grant.state, State::Spent | State::Expired) {
+        return Err(Code::GrantExpired);
+    }
+    if !grant.is_active(now) {
+        return Ok(false);
+    }
+    // An agent's grant not yet claimed is claimed by this use — on the
+    // counted copy, so a use the log does not take claims nothing.
+    let claim = (grant.client_key != client_key && grant.served_to.is_none()).then_some(client_key);
     // The item as the grant's selector sees it. Every grant issued here
     // names ids, which the id alone answers; a wider selector reads the
     // row's kind and tags, nothing sealed.
@@ -773,7 +787,8 @@ fn covered_via(
 /// [`covered`] over the grants the client holding `client_key` was issued or
 /// already served under: the first that covers `item_id` counts the use.
 /// What an extension's TOTP step is served under when it names no grant; a
-/// grant nobody has been served under yet is not claimed this way.
+/// grant nobody has been served under yet is not claimed this way, and one
+/// that is over is passed by, so it cannot answer for a live one after it.
 pub fn client_covered(
     ctx: Locked<'_>,
     client_key: &str,
@@ -790,6 +805,7 @@ pub fn client_covered(
         .grants
         .iter()
         .filter(|g| g.client_key == client_key || g.served_to.as_deref() == Some(client_key))
+        .filter(|g| g.is_active(now))
         .map(|g| g.id.clone())
         .collect();
     for id in &ids {

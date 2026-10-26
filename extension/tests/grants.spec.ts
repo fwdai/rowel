@@ -418,6 +418,36 @@ test('a login served under a grant marks the grant served here', async () => {
     expect(area.store.rowelGrants['https://github.com']).toEqual({ grantId: 'g1', expiresAt: now + grants.GRANT_TTL_MS, served: true });
 });
 
+// A grant the host says is over (GrantExpired) is forgotten and the page
+// asked for afresh, once: the second request carries agentMode instead of
+// the grant, and the new grant it is served under is the one remembered.
+test('an expired grant is forgotten and the page asked for afresh', async () => {
+    await grants.rememberGrant('https://github.com', 'g1');
+    const requests: object[] = [];
+    globalThis.kpActions = { GET_LOGINS: 'get-logins' };
+    globalThis.kpErrors = { GRANT_DENIED: 40, GRANT_PENDING: 41, GRANT_EXPIRED: 42 };
+    globalThis.keepassClient.buildRequest = (action, message, nonce, id) => ({ action, message, nonce, id });
+    globalThis.keepassClient.encrypt = data => data;
+    globalThis.keepassClient.incrementedNonce = nonce => nonce;
+    globalThis.keepassClient.sendNativeMessage = async request => {
+        requests.push(request.message);
+        return requests.length === 1 ? { errorCode: 42 } : { served: true, grantId: 'g2' };
+    };
+    globalThis.keepassClient.handleResponse = response =>
+        (response.served ? { entries: [ {} ], grantId: response.grantId } : undefined);
+    globalThis.keepass.clientID = 'test';
+
+    const reply = await grants.sendGetLogins({ id: 1 }, { url: 'https://github.com/login' }, 'nonce');
+
+    expect(requests).toEqual([
+        { url: 'https://github.com/login', grantId: 'g1' },
+        { url: 'https://github.com/login', agentMode: 'true' }
+    ]);
+    expect(reply).toEqual({ entries: [ {} ], grantId: 'g2' });
+    expect(area.store.rowelGrants['https://github.com']).toEqual({ grantId: 'g2', expiresAt: now + grants.GRANT_TTL_MS, served: true });
+    expect(notifications).toEqual([]);
+});
+
 const holdGetLoginsResponse = () => {
     let release;
     let requestStarted;

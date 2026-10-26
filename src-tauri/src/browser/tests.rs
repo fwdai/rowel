@@ -682,7 +682,13 @@ fn a_use_whose_row_will_not_write_leaves_the_grant_as_it_was() {
 
     store.allow_audit_writes().unwrap();
     assert_eq!(fill(&mut held, &own), Ok(true));
-    assert_eq!(fill(&mut held, &own), Ok(false), "its one use is spent");
+    // Spent at its one use: over, which its holder is told, so the
+    // extension forgets it and asks afresh.
+    assert_eq!(
+        fill(&mut held, &own),
+        Err(Code::GrantExpired),
+        "its one use is spent"
+    );
     assert_eq!(held.grants[0].state, State::Spent);
     assert_eq!(fill(&mut held, &agents_fill), Ok(true));
     assert_eq!(held.grants[1].served_to.as_deref(), Some("ext"));

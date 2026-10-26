@@ -464,15 +464,24 @@ impl Host for Mock {
         let Some(grant) = grants.get_mut(grant_id) else {
             return Ok(false);
         };
-        if grant.state != State::Active || grant.item != item_id || grant.mode != mode {
+        let entitled = grant.client_key == client.key
+            || grant
+                .served_to
+                .as_deref()
+                .is_none_or(|served| served == client.key);
+        if !entitled || grant.item != item_id || grant.mode != mode {
             return Ok(false);
         }
-        if grant.client_key != client.key {
-            match &grant.served_to {
-                None => grant.served_to = Some(client.key.clone()),
-                Some(served) if *served == client.key => {}
-                Some(_) => return Ok(false),
-            }
+        // Over, for one who may be served under it: said so, as the real
+        // host says it, so the extension asks afresh.
+        if matches!(grant.state, State::Expired | State::Spent) {
+            return Err(Code::GrantExpired);
+        }
+        if grant.state != State::Active {
+            return Ok(false);
+        }
+        if grant.client_key != client.key && grant.served_to.is_none() {
+            grant.served_to = Some(client.key.clone());
         }
         if self.audit_fails.get() {
             return Err(Code::AuditUnavailable);

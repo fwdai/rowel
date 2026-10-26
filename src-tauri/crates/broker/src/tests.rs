@@ -9,7 +9,7 @@ use crate::actions::{Client, ClientKind, Connection, Hello, Host, Login, Proof, 
 use crate::client::{Peer, PeerError};
 use crate::frame;
 use crate::grant::{
-    GrantReply, GrantRequest, ItemSelector, Mode, ResolveContext, Target, VisibleItem,
+    GrantReply, GrantRequest, ItemSelector, Mode, ResolveContext, State, Target, VisibleItem,
 };
 use crate::lockbox::save_login_in;
 use crate::passkeys::{Assertion, Registration};
@@ -967,6 +967,60 @@ fn in_agent_mode_a_site_without_logins_asks_nobody() {
     );
     assert_eq!(error_code(&response), Code::NoLoginsFound as u8);
     assert!(connection.host().grant_requests.borrow().is_empty());
+}
+
+// A grant the extension holds that is over is answered `GrantExpired`, the
+// code its retry is for: it forgets the grant and asks afresh. One it was
+// never entitled to stays `GrantDenied`, whatever its state.
+#[test]
+fn an_expired_grant_is_said_to_be_expired() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        logins: two_logins(),
+        ..Mock::unlocked()
+            .known("Chrome", "id-key")
+            .granting("g1", "gh", Mode::Fill)
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+    connection
+        .host()
+        .grants
+        .borrow_mut()
+        .get_mut("g1")
+        .unwrap()
+        .state = State::Expired;
+
+    let expired = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&expired), Code::GrantExpired as u8);
+    let totp = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&totp), Code::GrantExpired as u8);
+
+    connection
+        .host()
+        .grants
+        .borrow_mut()
+        .get_mut("g1")
+        .unwrap()
+        .served_to = Some("another-extension".into());
+    let theirs = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&theirs), Code::GrantDenied as u8);
 }
 
 #[test]
