@@ -97,15 +97,20 @@ pub fn key_fingerprint(public_key_b64: &str) -> Result<String> {
     let bytes = STANDARD
         .decode(public_key_b64.trim())
         .map_err(|e| Error::Crypto(format!("a device public key is base64: {e}")))?;
-    if bytes.len() != 32 {
-        return Err(Error::Crypto("a device public key is 32 bytes".into()));
-    }
-    let digest = hex::encode(sha2::Sha256::digest(&bytes));
-    Ok(digest.as_bytes()[..16]
+    let bytes: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| Error::Crypto("a device public key is 32 bytes".into()))?;
+    Ok(key_fingerprint_bytes(&bytes))
+}
+
+/// [`key_fingerprint`] of the raw key, for the device that holds it.
+pub fn key_fingerprint_bytes(public_key: &[u8; 32]) -> String {
+    let digest = hex::encode(sha2::Sha256::digest(public_key));
+    digest.as_bytes()[..16]
         .chunks(4)
         .map(|group| std::str::from_utf8(group).expect("hex is ASCII"))
         .collect::<Vec<_>>()
-        .join(" "))
+        .join(" ")
 }
 
 /// Derive a 32-byte subkey from `ikm` (an Argon2id master key) for the given

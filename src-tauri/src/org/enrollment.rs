@@ -61,7 +61,7 @@ impl EnrollmentKey {
 
     /// The public key as a person compares it ([`fingerprint_of`]).
     pub(crate) fn fingerprint(&self) -> String {
-        fingerprint_of(&self.public_key_b64()).expect("an X25519 public key is 32 bytes")
+        crypto::key_fingerprint_bytes(self.0.public_key().as_bytes())
     }
 
     /// The master inside a sealed box the server wrapped to this key
