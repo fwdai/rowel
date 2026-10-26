@@ -891,5 +891,6 @@
   "Refresh key": "Обновить ключ",
   "Add": "Добавить",
   "Disconnect from {{tenant}}?": "Отключиться от {{tenant}}?",
-  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Ячейки организации, которые уже есть на этом устройстве, останутся, но перестанут синхронизироваться. При повторном подключении это устройство нужно будет одобрить снова."
+  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Ячейки организации, которые уже есть на этом устройстве, останутся, но перестанут синхронизироваться. При повторном подключении это устройство нужно будет одобрить снова.",
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "Ключ этой ячейки запечатан другим ключом, поэтому это устройство не может её открыть."
 }

@@ -891,5 +891,6 @@
   "Refresh key": "Odśwież klucz",
   "Add": "Dodaj",
   "Disconnect from {{tenant}}?": "Rozłączyć z {{tenant}}?",
-  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Skrytki organizacji, które już są na tym urządzeniu, zostają, ale przestają się synchronizować. Po ponownym połączeniu to urządzenie trzeba będzie znów zatwierdzić."
+  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Skrytki organizacji, które już są na tym urządzeniu, zostają, ale przestają się synchronizować. Po ponownym połączeniu to urządzenie trzeba będzie znów zatwierdzić.",
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "Klucz tej skrytki został zapieczętowany innym kluczem, więc to urządzenie nie może jej otworzyć."
 }

@@ -880,5 +880,6 @@
   "Refresh key": "Actualiser la clé",
   "Add": "Ajouter",
   "Disconnect from {{tenant}}?": "Se déconnecter de {{tenant}} ?",
-  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Les coffrets d’organisation déjà sur cet appareil restent, mais cessent de se synchroniser. Cet appareil devra être approuvé à nouveau si vous vous reconnectez."
+  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Les coffrets d’organisation déjà sur cet appareil restent, mais cessent de se synchroniser. Cet appareil devra être approuvé à nouveau si vous vous reconnectez.",
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "La clé de ce coffret a été scellée sous une autre clé : cet appareil ne peut donc pas l’ouvrir."
 }

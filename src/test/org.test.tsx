@@ -9,7 +9,7 @@ import type { AgentGrantAsk } from '@/api/browser'
 import type { OrgConnection, OrgDevice, OrgLockbox } from '@/api/org'
 import { providerName } from '@/api/provider'
 import { subscribeToEvents } from '@/store/events'
-import { calls, clearCalls, mockCommand } from './ipc'
+import { calls, clearCalls, mockCommand, mockCommandOnce } from './ipc'
 import { emitEvent } from './events'
 import { resetStores, seedApp } from './utils'
 
@@ -77,7 +77,7 @@ describe('Settings › Lockboxes › Rowel Server', () => {
     expect(screen.queryByTestId('org-connect')).not.toBeInTheDocument()
 
     mockCommand('org_connections', () => [CONNECTION])
-    act(() => emitEvent(EVENTS.orgConnect, { url: SERVER, status: 'done' }))
+    act(() => emitEvent(EVENTS.orgConnect, { url: SERVER, attempt: 1, status: 'done' }))
 
     const card = await screen.findByTestId('org-connection-rowel.acme.example')
     expect(card).toHaveTextContent('Acme')
@@ -93,6 +93,7 @@ describe('Settings › Lockboxes › Rowel Server', () => {
     act(() =>
       emitEvent(EVENTS.orgConnect, {
         url: SERVER,
+        attempt: 1,
         status: 'error',
         error: 'the server refused the sign-in'
       })
@@ -105,13 +106,62 @@ describe('Settings › Lockboxes › Rowel Server', () => {
     expect(screen.getByTestId('org-connect')).toBeInTheDocument()
   })
 
-  it('cancels a sign-in still out with the browser', async () => {
+  // A cancel ends the attempt here and now. Its last word — the failure Rust
+  // may already have had on its way — is nobody's, so it is not shown.
+  it('cancels a sign-in still out with the browser, and ignores what it says afterwards', async () => {
     await openLockboxes()
     await connect()
     await userEvent.click(screen.getByTestId('org-connect-cancel'))
 
     expect(calls('org_cancel_connect')).toHaveLength(1)
     expect(screen.queryByTestId('org-connect-waiting')).not.toBeInTheDocument()
+
+    act(() =>
+      emitEvent(EVENTS.orgConnect, { url: SERVER, attempt: 1, status: 'error', error: 'cancelled' })
+    )
+
+    expect(screen.queryByTestId('org-connect-error')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('org-connect-waiting')).not.toBeInTheDocument()
+    expect(screen.getByTestId('org-connect')).toBeInTheDocument()
+  })
+
+  // A newer press replaces the attempt: the older one's error does not
+  // interrupt the wait, and only the newer one's `done` lists the connection.
+  it('reports only the live attempt once a newer connect began', async () => {
+    mockCommandOnce('org_connect', () => 1)
+    mockCommandOnce('org_connect', () => 2)
+    await openLockboxes()
+    await connect()
+    await userEvent.click(screen.getByTestId('org-connect-cancel'))
+    await userEvent.click(screen.getByTestId('org-connect'))
+
+    expect(calls('org_connect')).toEqual([{ url: SERVER }, { url: SERVER }])
+    expect(screen.getByTestId('org-connect-waiting')).toBeInTheDocument()
+
+    act(() =>
+      emitEvent(EVENTS.orgConnect, { url: SERVER, attempt: 1, status: 'error', error: 'too late' })
+    )
+    expect(screen.queryByTestId('org-connect-error')).not.toBeInTheDocument()
+    expect(screen.getByTestId('org-connect-waiting')).toBeInTheDocument()
+
+    mockCommand('org_connections', () => [CONNECTION])
+    act(() => emitEvent(EVENTS.orgConnect, { url: SERVER, attempt: 2, status: 'done' }))
+
+    expect(await screen.findByTestId('org-connection-rowel.acme.example')).toHaveTextContent('Acme')
+    expect(screen.queryByTestId('org-connect-waiting')).not.toBeInTheDocument()
+  })
+
+  // The sign-in comes back through the browser, which the phone cannot listen
+  // for yet: the probe says so, and the whole group stays off the screen.
+  it('draws nothing of it when the build cannot connect to a server', async () => {
+    seedApp({ orgConnect: false })
+    await openLockboxes()
+
+    expect(screen.getByText('Cloud sync')).toBeInTheDocument()
+    expect(screen.queryByTestId('org-fingerprint-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('org-connect-row')).not.toBeInTheDocument()
+    expect(calls('org_connections')).toEqual([])
+    expect(calls('org_enrollment_fingerprint')).toEqual([])
   })
 
   // A device still waiting says who it waits on and shows the key they will

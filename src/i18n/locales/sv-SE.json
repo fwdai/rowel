@@ -863,5 +863,6 @@
   "Refresh key": "Hämta nyckeln igen",
   "Add": "Lägg till",
   "Disconnect from {{tenant}}?": "Koppla från {{tenant}}?",
-  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Organisationens bankfack som redan finns på den här enheten blir kvar, men slutar synkas. Den här enheten behöver godkännas igen om du ansluter på nytt."
+  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Organisationens bankfack som redan finns på den här enheten blir kvar, men slutar synkas. Den här enheten behöver godkännas igen om du ansluter på nytt.",
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "Det här bankfackets nyckel förseglades under en annan nyckel, så den här enheten kan inte öppna det."
 }

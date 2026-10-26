@@ -877,5 +877,6 @@
   "Refresh key": "Atualizar chave",
   "Add": "Adicionar",
   "Disconnect from {{tenant}}?": "Desconectar de {{tenant}}?",
-  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Os compartimentos da organização que já estão neste dispositivo ficam, mas param de sincronizar. Este dispositivo precisará ser aprovado de novo se você reconectar."
+  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Os compartimentos da organização que já estão neste dispositivo ficam, mas param de sincronizar. Este dispositivo precisará ser aprovado de novo se você reconectar.",
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "A chave deste compartimento foi selada com outra chave, então este dispositivo não consegue abri-lo."
 }

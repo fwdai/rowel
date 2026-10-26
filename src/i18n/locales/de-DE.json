@@ -891,5 +891,6 @@
   "Refresh key": "Schlüssel erneuern",
   "Add": "Hinzufügen",
   "Disconnect from {{tenant}}?": "Verbindung zu {{tenant}} trennen?",
-  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Org-Schließfächer, die schon auf diesem Gerät sind, bleiben, synchronisieren aber nicht mehr. Beim erneuten Verbinden muss dieses Gerät wieder freigegeben werden."
+  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Org-Schließfächer, die schon auf diesem Gerät sind, bleiben, synchronisieren aber nicht mehr. Beim erneuten Verbinden muss dieses Gerät wieder freigegeben werden.",
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "Der Schlüssel dieses Schließfachs wurde unter einem anderen Schlüssel versiegelt, dieses Gerät kann es also nicht öffnen."
 }

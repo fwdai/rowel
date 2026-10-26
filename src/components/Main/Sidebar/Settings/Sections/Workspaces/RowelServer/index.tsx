@@ -1,49 +1,15 @@
-import { useEffect, useState } from 'react'
-import { orgEnrollmentFingerprint } from '@/api/org'
-import { providerName } from '@/api/provider'
-import { loadOrgConnections, useOrg } from '@/store'
-import SettingsGroup from '@/components/elements/SettingsGroup'
-import FingerprintRow from './FingerprintRow'
-import ConnectRow from './ConnectRow'
-import ConnectionCard from './ConnectionCard'
+import { useApp } from '@/store'
+import Group from './Group'
 
 /**
- * Settings › Lockboxes › Rowel Server: this device's enrollment key, the way
- * to connect to a company's server, and one card per server connected — its
- * devices to approve and its lockboxes to add. The wide modal and the phone's
- * pane both draw this, through the section they share.
- *
- * The fingerprint is read once here and handed down: the key row shows it,
- * and a connection still waiting for approval shows it again beside the
- * sentence that says who compares it.
+ * Settings › Lockboxes › Rowel Server, where the build offers it. The sign-in
+ * comes back through the browser, which only the desktop listens for yet, and
+ * the probe says so (`AppStatus.orgConnect`): the phone draws nothing here —
+ * not a fingerprint, not a URL field — rather than a flow Rust would refuse.
+ * The wide modal and the phone's pane both draw this through the section they
+ * share, so the one gate serves both.
  */
 export default function RowelServer() {
-  const connections = useOrg(state => state.connections)
-  const [fingerprint, setFingerprint] = useState<string | null>(null)
-
-  useEffect(() => {
-    void loadOrgConnections()
-  }, [])
-
-  useEffect(() => {
-    let live = true
-    orgEnrollmentFingerprint()
-      .then(value => {
-        if (live) setFingerprint(value)
-      })
-      .catch(() => {})
-    return () => {
-      live = false
-    }
-  }, [])
-
-  return (
-    <SettingsGroup label={providerName('rowelServer')}>
-      <FingerprintRow fingerprint={fingerprint} />
-      <ConnectRow />
-      {connections?.map(connection => (
-        <ConnectionCard key={connection.url} connection={connection} fingerprint={fingerprint} />
-      ))}
-    </SettingsGroup>
-  )
+  const offered = useApp(state => state.status?.orgConnect ?? false)
+  return offered ? <Group /> : null
 }

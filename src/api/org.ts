@@ -44,10 +44,14 @@ export interface OrgLockbox {
 /**
  * How a connect is going, as `org:connect` reports it. The command itself
  * resolves the moment the browser is open; the sign-in finishes out there, so
- * the outcome can only arrive as an event.
+ * the outcome can only arrive as an event. `attempt` is the id `orgConnect`
+ * resolved with, so the store can tell the live attempt's news from a late
+ * word of one it has cancelled or replaced — Rust emits nothing for those,
+ * but what was already on its way still lands.
  */
 export interface OrgConnectStatus {
   url: string
+  attempt: number
   status: 'pending' | 'done' | 'error'
   error?: string
 }
@@ -62,9 +66,10 @@ export const orgConnections = (): Promise<OrgConnection[]> => call('org_connecti
 
 /**
  * Sign in to the server at `url` in the browser and enroll this device.
- * Returns once the browser is open; `org:connect` says how it ended.
+ * Resolves, once the browser is open, with the id of the attempt it began;
+ * `org:connect` says how that attempt ended.
  */
-export const orgConnect = (url: string): Promise<void> => call('org_connect', { url })
+export const orgConnect = (url: string): Promise<number> => call('org_connect', { url })
 
 /** Give up on a sign-in still out with the browser. */
 export const orgCancelConnect = (): Promise<void> => call('org_cancel_connect')

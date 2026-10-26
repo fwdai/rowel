@@ -891,5 +891,6 @@
   "Refresh key": "Refresh key",
   "Add": "Add",
   "Disconnect from {{tenant}}?": "Disconnect from {{tenant}}?",
-  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect."
+  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.",
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "This lockbox's key was sealed under a different key, so this device cannot open it."
 }

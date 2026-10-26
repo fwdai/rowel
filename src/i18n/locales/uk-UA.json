@@ -891,5 +891,6 @@
   "Refresh key": "Оновити ключ",
   "Add": "Додати",
   "Disconnect from {{tenant}}?": "Відключитися від {{tenant}}?",
-  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Комірки організації, які вже є на цьому пристрої, залишаться, але перестануть синхронізуватися. Якщо підключитеся знову, цей пристрій доведеться схвалити ще раз."
+  "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Комірки організації, які вже є на цьому пристрої, залишаться, але перестануть синхронізуватися. Якщо підключитеся знову, цей пристрій доведеться схвалити ще раз.",
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "Ключ цієї комірки запечатано іншим ключем, тому цей пристрій не може її відкрити."
 }
