@@ -1091,8 +1091,9 @@ id.
 - **Same-user local processes.** A process running as the same OS user can
   lift the extension's association key from the browser profile, or the CLI's
   two keys from where they live (the login keychain on macOS, Credential
-  Manager on Windows, owner-only files elsewhere), and present it. The secure
-  store makes a foreign read prompt the user; a file does not. Grants,
+  Manager on Windows, owner-only files elsewhere), and present it. Only the
+  macOS keychain makes a foreign read prompt the user; Credential Manager
+  hands the entry to any process of the user's, as a file does. Grants,
   approval modes, the floors, full-command-line targets and the rate limits
   bound what a lifted key buys; they do not remove it. A lifted *agent* key
   buys the right to ask; a lifted *sidecar* key plus a live grant id buys what
