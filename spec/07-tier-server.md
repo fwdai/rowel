@@ -255,7 +255,14 @@ local copy; the byte-identical descriptor is a repair, and the master is
 checked against the database before the ring or the sealed copy take it; an
 older generation, or another `kid` at the same one, is refused and the local
 key kept, since adopting it without a re-key leaves a database the next
-unlock cannot open.
+unlock cannot open. `org_refresh_lockbox_key` takes the re-key exclusion
+before it reads the listing and holds it until the key is kept, so a repair
+cannot reinstall a generation a rotation beside it has moved past. A key is
+kept only when checked: `appkey::adopt` is fallible (`Locked`, the write
+error, or whether the copy was sealed), an org lockbox's flows require it
+sealed since nothing else opens it, and `appkey::rekeyed` — the one way any
+re-key keeps its new key — leaves the sealed copy holding the database's key
+or removes it, never the key just retired.
 
 On the device, an org lockbox is one more non-primary workspace: the app
 unseals the master with its enrollment key, puts it in `appkey::Keyring`, and
