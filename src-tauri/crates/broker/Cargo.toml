@@ -59,9 +59,12 @@ tempfile = { version = "3", optional = true }
 dirs = "7"
 interprocess = "2"
 
-# The Windows pipe's name carries a digest of the data directory (`socket_name`).
+# The Windows pipe's name carries a digest of the data directory (`socket_name`),
+# and where a browser looks for a native messaging host there is a registry
+# key, not a file (`manifest`).
 [target.'cfg(windows)'.dependencies]
 hex = "0.4"
+windows-registry = "0.100"
 
 [dev-dependencies]
 # The core's test seams (`MemoryVault`) for the `Mock` host.

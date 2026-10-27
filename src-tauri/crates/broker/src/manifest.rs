@@ -1,7 +1,7 @@
-//! The native messaging manifests: how a browser finds this host.
+//! The native messaging manifests: how a browser finds a broker.
 //!
 //! Each browser looks for a JSON file named after the host in a directory of
-//! its own — or, on Windows, for a registry value naming such a file. Rowel
+//! its own — or, on Windows, for a registry value naming such a file. The app
 //! registers under two names. Its own, for the Rowel extension, is written
 //! whenever the host is on. KeePassXC's is written too while the compatibility
 //! setting is, so the stock KeePassXC-Browser extension, which asks for that
@@ -9,6 +9,12 @@
 //! a KeePassXC install on the same machine has a manifest at the very same
 //! place, and it is left alone — Rowel neither overwrites another host's
 //! registration nor removes it, and reports the clash instead.
+//!
+//! `rowel serve --install-host` registers the Rowel extension's name too, on a
+//! box without the app ([`SERVE`]), under a description of its own: the app's
+//! manifest and the broker's are each other's "another host", so neither
+//! replaces nor removes the other's, whichever was written first. The relay a
+//! manifest names is [`crate::relay`], whichever binary runs it.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -27,18 +33,32 @@ pub struct NativeHost {
     firefox_extensions: &'static [&'static str],
 }
 
-/// Rowel's own name, for the Rowel extension.
+/// The Rowel extension's host name, and the extensions it lets in: the id the
+/// key pinned in the extension's manifest derives (unpacked builds), then the
+/// Chrome Web Store's. Edge Add-ons assigns one of its own on listing; that
+/// goes here too.
+const ROWEL_NAME: &str = "app.rowel.browser";
+const ROWEL_ORIGINS: &[&str] = &[
+    "chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/",
+    "chrome-extension://aajfpjaphnegnekpggjnocmgbhkabeke/",
+];
+const ROWEL_FIREFOX: &[&str] = &["browser@rowel.app"];
+
+/// The app's registration of Rowel's own name, for the Rowel extension.
 pub const ROWEL: NativeHost = NativeHost {
-    name: "app.rowel.browser",
+    name: ROWEL_NAME,
     description: "Rowel — fills logins through the Rowel extension",
-    // The id the key pinned in the extension's manifest derives (unpacked
-    // builds), then the Chrome Web Store's. Edge Add-ons assigns one of its
-    // own on listing; that goes here too.
-    chromium_origins: &[
-        "chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/",
-        "chrome-extension://aajfpjaphnegnekpggjnocmgbhkabeke/",
-    ],
-    firefox_extensions: &["browser@rowel.app"],
+    chromium_origins: ROWEL_ORIGINS,
+    firefox_extensions: ROWEL_FIREFOX,
+};
+
+/// `rowel serve`'s registration of the same name, for the same extension, on
+/// a box the app may not be on.
+pub const SERVE: NativeHost = NativeHost {
+    name: ROWEL_NAME,
+    description: "Rowel serve — fills logins through the Rowel extension from a headless broker",
+    chromium_origins: ROWEL_ORIGINS,
+    firefox_extensions: ROWEL_FIREFOX,
 };
 
 /// KeePassXC's name, for the stock KeePassXC-Browser extension.
@@ -56,12 +76,13 @@ pub const KEEPASSXC: NativeHost = NativeHost {
     firefox_extensions: &["keepassxc-browser@keepassxc.org"],
 };
 
+/// The names the app registers under.
 pub const HOSTS: &[NativeHost] = &[ROWEL, KEEPASSXC];
 
-/// Whether `arg` is the id of a Firefox extension either manifest lets in,
+/// Whether `arg` is the id of a Firefox extension any manifest here lets in,
 /// which is what Firefox passes the host it launches.
 pub fn is_firefox_extension(arg: &str) -> bool {
-    HOSTS
+    [ROWEL, KEEPASSXC, SERVE]
         .iter()
         .any(|host| host.firefox_extensions.contains(&arg))
 }
@@ -72,6 +93,7 @@ pub enum Family {
     Firefox,
 }
 
+#[derive(Debug)]
 pub struct Browser {
     pub id: &'static str,
     pub label: &'static str,
@@ -79,9 +101,9 @@ pub struct Browser {
     // Where the browser keeps its profile, under the platform's app-support
     // directory; the manifest goes in `NativeMessagingHosts` beneath it. On
     // Windows the same name is the browser's key under `HKCU\Software`.
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg_attr(all(windows, not(test)), allow(dead_code))]
     mac: &'static str,
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg_attr(all(windows, not(test)), allow(dead_code))]
     linux: &'static str,
     #[cfg_attr(not(windows), allow(dead_code))]
     windows: &'static str,
@@ -239,7 +261,9 @@ impl Places for System<'_> {
     }
 }
 
-fn found(
+/// What the manifest in place under `host`'s name for `browser` is to `host`
+/// with its executable at `exe`, if there is one.
+pub fn found(
     places: &impl Places,
     host: &NativeHost,
     browser: &Browser,
@@ -251,58 +275,113 @@ fn found(
         .map(|text| classify(host, &text, exe))
 }
 
-/// Write Rowel's manifest for every browser that seems to be here, and
-/// KeePassXC's name as well while `compat` is on — or, while it is off, take
-/// back one of ours under that name. A place another host holds is left alone.
-pub fn install(root: &Path, compat: bool) {
-    install_in(&System(root), host_path().as_deref(), compat);
+/// What registering or unregistering did at one place: what a command line
+/// prints, and what the app logs when it failed.
+#[derive(Debug)]
+pub struct Outcome {
+    pub browser: &'static Browser,
+    pub host: &'static str,
+    pub change: Change,
 }
 
-pub fn install_in(places: &impl Places, exe: Option<&Path>, compat: bool) {
+#[derive(Debug)]
+pub enum Change {
+    Written,
+    Removed,
+    /// Another host holds the place, and keeps it.
+    LeftAlone,
+    Failed(io::Error),
+}
+
+/// The app's registration: Rowel's manifest for every browser that seems to
+/// be here, and KeePassXC's name as well while `compat` is on — or, while it
+/// is off, take back one of ours under that name. A place another host holds
+/// is left alone.
+pub fn install(root: &Path, compat: bool) {
+    let hosts = [(&ROWEL, true), (&KEEPASSXC, compat)];
+    log_failures(&install_in(&System(root), host_path().as_deref(), &hosts));
+}
+
+/// Register each of `hosts` that is wanted, for every browser that seems to
+/// be here, naming `exe`, and take back one of ours that is not wanted. A
+/// place another host holds is left alone, and said to be when it was wanted.
+pub fn install_in(
+    places: &impl Places,
+    exe: Option<&Path>,
+    hosts: &[(&'static NativeHost, bool)],
+) -> Vec<Outcome> {
     let Some(exe) = exe else {
-        return;
+        return Vec::new();
     };
+    let mut outcomes = Vec::new();
     for browser in BROWSERS {
         let detected = places.detected(browser);
-        for (host, wanted) in [(&ROWEL, true), (&KEEPASSXC, compat)] {
-            let result = match found(places, host, browser, Some(exe)) {
+        for &(host, wanted) in hosts {
+            let (change, result) = match found(places, host, browser, Some(exe)) {
+                Some(Found::Foreign) if wanted && detected => (Change::LeftAlone, Ok(())),
                 Some(Found::Foreign) => continue,
-                _ if wanted && detected => {
-                    places.install(host, browser, &manifest(host, browser.family, exe))
-                }
-                Some(_) if !wanted => places.remove(host, browser),
+                _ if wanted && detected => (
+                    Change::Written,
+                    places.install(host, browser, &manifest(host, browser.family, exe)),
+                ),
+                Some(_) if !wanted => (Change::Removed, places.remove(host, browser)),
                 _ => continue,
             };
-            if let Err(e) = result {
-                log::warn!(
-                    "browser host: could not update {} for {}: {e}",
-                    host.name,
-                    browser.label
-                );
-            }
+            outcomes.push(Outcome {
+                browser,
+                host: host.name,
+                change: result.map_or_else(Change::Failed, |()| change),
+            });
         }
     }
+    outcomes
 }
 
-/// Remove every manifest of ours, under either name, whether or not its
-/// browser is still here. Another host's stays.
+/// The app's unregistering: every manifest of the app's, under either name,
+/// whether or not its browser is still here. Another host's stays.
 pub fn remove(root: &Path) {
-    remove_in(&System(root), host_path().as_deref());
+    let hosts = [&ROWEL, &KEEPASSXC];
+    log_failures(&remove_in(&System(root), host_path().as_deref(), &hosts));
 }
 
-pub fn remove_in(places: &impl Places, exe: Option<&Path>) {
+/// Take back every manifest of `hosts`' from every browser, whether or not it
+/// is still here. Another host's stays.
+pub fn remove_in(
+    places: &impl Places,
+    exe: Option<&Path>,
+    hosts: &[&'static NativeHost],
+) -> Vec<Outcome> {
+    let mut outcomes = Vec::new();
     for browser in BROWSERS {
-        for host in HOSTS {
-            if found(places, host, browser, exe) == Some(Found::Foreign) {
-                continue;
-            }
-            if let Err(e) = places.remove(host, browser) {
-                log::warn!(
-                    "browser host: could not remove {} from {}: {e}",
-                    host.name,
-                    browser.label
-                );
-            }
+        for &host in hosts {
+            let change = match found(places, host, browser, exe) {
+                Some(Found::Foreign) => continue,
+                None => match places.remove(host, browser) {
+                    Ok(()) => continue,
+                    Err(e) => Change::Failed(e),
+                },
+                Some(_) => places
+                    .remove(host, browser)
+                    .map_or_else(Change::Failed, |()| Change::Removed),
+            };
+            outcomes.push(Outcome {
+                browser,
+                host: host.name,
+                change,
+            });
+        }
+    }
+    outcomes
+}
+
+fn log_failures(outcomes: &[Outcome]) {
+    for outcome in outcomes {
+        if let Change::Failed(e) = &outcome.change {
+            log::warn!(
+                "browser host: could not update {} for {}: {e}",
+                outcome.host,
+                outcome.browser.label
+            );
         }
     }
 }
@@ -358,6 +437,30 @@ pub fn remove_unless_named(legacy: &Path, named: Option<&str>) -> io::Result<()>
     remove_file(legacy)
 }
 
+/// Where `browser` reads `host`'s manifest on macOS (`mac`) or Linux, under
+/// the user's `home` and config directory (`$XDG_CONFIG_HOME`): Chrome and
+/// its kin under their own profile directory, Firefox under Mozilla's.
+#[cfg(any(not(windows), test))]
+pub fn unix_manifest_path(
+    mac: bool,
+    home: &Path,
+    config: &Path,
+    host: &NativeHost,
+    browser: &Browser,
+) -> PathBuf {
+    let dir = if mac {
+        home.join("Library/Application Support")
+            .join(browser.mac)
+            .join("NativeMessagingHosts")
+    } else {
+        match browser.family {
+            Family::Firefox => home.join(browser.linux).join("native-messaging-hosts"),
+            Family::Chromium => config.join(browser.linux).join("NativeMessagingHosts"),
+        }
+    };
+    dir.join(format!("{}.json", host.name))
+}
+
 #[cfg(not(windows))]
 mod platform {
     use super::{remove_file, Browser, Family, NativeHost};
@@ -383,22 +486,15 @@ mod platform {
     }
 
     fn manifest_path(host: &NativeHost, browser: &Browser) -> Option<PathBuf> {
-        let dir = if cfg!(target_os = "macos") {
-            dirs::home_dir()?
-                .join("Library/Application Support")
-                .join(browser.mac)
-                .join("NativeMessagingHosts")
-        } else {
-            match browser.family {
-                Family::Firefox => dirs::home_dir()?
-                    .join(browser.linux)
-                    .join("native-messaging-hosts"),
-                Family::Chromium => dirs::config_dir()?
-                    .join(browser.linux)
-                    .join("NativeMessagingHosts"),
-            }
-        };
-        Some(dir.join(format!("{}.json", host.name)))
+        let home = dirs::home_dir()?;
+        let config = dirs::config_dir().unwrap_or_else(|| home.join(".config"));
+        Some(super::unix_manifest_path(
+            cfg!(target_os = "macos"),
+            &home,
+            &config,
+            host,
+            browser,
+        ))
     }
 
     pub fn detected(browser: &Browser) -> bool {
@@ -510,3 +606,6 @@ mod platform {
         remove_legacy(root, browser)
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -13,6 +13,7 @@ const Tests = {
 const AgentCards = {
     ON: '#agent-on-results',
     RETRIEVE: '#agent-retrieve-results',
+    DENIED: '#agent-denied-results',
     SCAN: '#agent-scan-results',
     EXPOSURE: '#agent-exposure-results',
     FAILURE: '#agent-failure-results',
@@ -198,6 +199,40 @@ async function testRetrievesWithoutAutoRetrieve() {
     await kpxc.initCredentialFields();
     kpxcAssert(browserStub.sentFor('retrieve_credentials').length, 0, card, 'With agent mode off, autoRetrieveCredentials off still means no request');
     kpxcAssert($('#agent-password').value, '', card, 'With agent mode off nothing is filled');
+    hide('agent-login');
+}
+
+// A denied fill: the person said no in Rowel's dialog, so the background's
+// get-logins came back refused (GrantDenied, which background/grants.js turns
+// into its notification) and retrieve_credentials answers with no entries.
+// The page gets nothing — no value, no code, no handoff to the next load —
+// and agent mode still shows it no UI: no icons, no autocomplete, no login
+// popup, no "no logins" banner. Nothing was filled, so nothing is scanned for.
+async function testDeniedFill() {
+    const card = AgentCards.DENIED;
+    reset(true);
+    kpxc.databaseState = DatabaseState.UNLOCKED;
+    browserStub.replies.retrieve_credentials = [];
+    show('agent-login');
+
+    await kpxc.initCredentialFields();
+    kpxcAssert(browserStub.sentFor('retrieve_credentials').length, 1, card, 'The page asked for its logins once');
+    kpxcAssert(kpxc.credentials.length, 0, card, 'No credentials were handed to the page');
+    kpxcAssert($('#agent-username').value, '', card, 'The username is not filled');
+    kpxcAssert($('#agent-password').value, '', card, 'The password is not filled');
+    kpxcAssert($('#agent-otp').value, '', card, 'The code is not filled');
+    kpxcAssert(browserStub.sentFor('get_totp').length, 0, card, 'No code is asked for');
+    kpxcAssert(browserStub.sentFor('agent_mode_set_filled').length, 0, card, 'No handoff is stored for the next load');
+    kpxcAssert(iconCount(), 0, card, 'No username, password or TOTP icons are created');
+    kpxcAssert(injectedWrappers().length, 0, card, 'Nothing is injected into the page');
+    kpxcAssert(kpxcUserAutocomplete.autocompleteList.length, 0, card, 'No autocomplete is attached');
+    kpxcAssert(browserStub.sentFor('popup_login').length, 0, card, 'No login popup is offered');
+
+    // The agent types on regardless: the page's own text is not an exposure
+    $('#agent-username').value = 'alice';
+    $('#agent-login-echo').textContent = 'Signing in as alice';
+    await wait(kpxcAgentMode.RESCAN_DELAY_MS * 3);
+    kpxcAssert(browserStub.sentFor('report_exposure').length, 0, card, 'Nothing was filled, so no exposure is reported');
     hide('agent-login');
 }
 
@@ -440,6 +475,7 @@ async function testAgentModeOff() {
     for (const run of [
         testAgentModeOn,
         testRetrievesWithoutAutoRetrieve,
+        testDeniedFill,
         testScanAndClear,
         testExposureAfterFill,
         testClearOnFailure,

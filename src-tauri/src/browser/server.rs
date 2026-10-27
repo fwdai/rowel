@@ -9,12 +9,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use interprocess::local_socket::{prelude::*, Listener};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
+use rowel_broker::hub::Hub;
 use rowel_broker::server::{bind, serve_stream, Lock};
-pub use rowel_broker::server::{notify_locked, notify_signals, notify_unlocked};
 
 use super::AppHost;
+use crate::state::AppState;
 use crate::{settings, storage};
 
 // One set of listeners per process (the data-directory socket, and on macOS
@@ -28,6 +29,12 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 // the app holds it, and the app refuses to listen while one holds it.
 static LOCK: Mutex<Option<Lock>> = Mutex::new(None);
 
+/// The app's connections to the extensions and agents, for the lock signals
+/// and the wake-ups the app raises (`AppState::hub`).
+pub fn hub(app: &AppHandle) -> &Hub {
+    &app.state::<AppState>().inner().hub
+}
+
 /// Start listening, once. A failure to bind the data-directory socket — the
 /// one Chrome and Firefox reach — is logged and leaves the host off; the next
 /// enable from Settings tries again. So is a data directory another broker
@@ -38,8 +45,8 @@ static LOCK: Mutex<Option<Lock>> = Mutex::new(None);
 /// extension (`safari_socket_dir`). It is bound best-effort after the first:
 /// failing there says only that the Safari extension is unavailable, and
 /// Chrome and Firefox are served all the same. The two listeners feed the
-/// same connections: each accepted stream is registered for the lock signals
-/// and served exactly alike.
+/// same connections: each accepted stream is registered on the app's one
+/// [`hub`] and served exactly alike.
 pub fn start(app: &AppHandle) {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;

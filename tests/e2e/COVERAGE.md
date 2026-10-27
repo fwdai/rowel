@@ -64,6 +64,7 @@ runs one app process against one data dir, so nothing may depend on file order.
 | Theme and date format | PR 4 | `settings-theme-light` / `-dark` (asserted on `<html data-theme>`), `settings-date-format-trigger` then `settings-date-format-<pattern>` (asserted through the persisted `dateFormat`). `settings-theme-system` resolves against the OS, so the suite leaves it alone. |
 | Sync indicator reports a local-only vault | PR 4 | `sync-indicator`; the chip is mounted in every state, so with no provider configured `sync-indicator.spec.ts` asserts `data-tone="local"` rather than an absence. The tone, not the label — the label is localised. A connected reading is not e2e-able (see below). |
 | Copy toast | PR 4 | `copy-toast` — raised only by a copy whose control is gone (the generator's "Use & copy"), mounted only while `ui.copied` holds (2s), so it is absent at rest; assert *visibility* either way. Controls that stay on screen confirm in place with `copied-mark` |
+| Agent grant dialog | PR C | `agent-grant.spec.ts`: an agent client on the app's broker socket (`helpers/agent.ts`, the extension's tweetnacl over native messaging frames) is let in through `browser-associate-allow`, then asks to log in; `agent-grant-title` / `-reason` / `-ends-session`, `agent-grant-once` approves, `agent-grant-deny` refuses (`GrantDenied`), `agent-grant-run` and `-run-note` only for a request with a run id; `agent-grant-standing` and `-days` are there. The switches go on through `window.__e2eAgents`; an e2e run writes no browser manifests. |
 
 ---
 

@@ -8,14 +8,12 @@ import enUS from '@/i18n/locales/en-US.json'
  * missing there still renders — it just renders untranslatable, invisible to
  * every other locale. This is the producer-side check for that.
  *
- * The translated locales are expected to be complete. The gate below is looser
- * than that on purpose: it fails only when a key has *no* translation in any of
- * the nine, so a PR that adds a key and translates it into some of them can
- * still land. Tightening it to per-locale parity is a one-line change — drop
- * the `every` in favour of a per-locale filter. The per-run coverage line says
- * how far each locale has drifted meanwhile. A pluralised key only counts as
+ * Every translated locale is complete: a key en-US has and a locale lacks
+ * renders in English there, which nobody using that locale asked for, so a PR
+ * that adds a key translates it into all nine. A pluralised key only counts as
  * translated once the locale carries every plural category that language needs,
- * because a lone `_one` still falls back to English at every other count.
+ * because a lone `_one` still falls back to English at every other count — and
+ * only those: zh-CN carries `_other` alone.
  *
  * Any key a locale does carry has to keep en-US's placeholders, or the
  * interpolation silently drops a value.
@@ -141,7 +139,7 @@ describe('i18n', () => {
     expect(mismatched).toEqual([])
   })
 
-  it('has a translation for every en-US key in at least one locale', () => {
+  it('has a translation for every en-US key in every locale', () => {
     const units = [...new Set(Object.keys(catalogue).map(unit))]
     const carried = translated.map(([path, locale]) => {
       const name = localeName(path)
@@ -157,7 +155,9 @@ describe('i18n', () => {
       carried.map(locale => `${locale.name} ${percent(locale)}%`).join(', ')
     console.info(coverage)
 
-    const untranslated = units.filter(key => carried.every(locale => !locale.units.has(key)))
+    const untranslated = carried.flatMap(locale =>
+      units.filter(key => !locale.units.has(key)).map(key => `${locale.name}: ${JSON.stringify(key)}`)
+    )
 
     expect(untranslated, coverage).toEqual([])
   })

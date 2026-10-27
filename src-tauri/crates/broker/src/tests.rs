@@ -9,8 +9,9 @@ use crate::actions::{Client, ClientKind, Connection, Hello, Host, Login, Proof, 
 use crate::client::{Peer, PeerError};
 use crate::frame;
 use crate::grant::{
-    GrantReply, GrantRequest, ItemSelector, Mode, ResolveContext, Target, VisibleItem,
+    GrantReply, GrantRequest, ItemSelector, Mode, ResolveContext, State, Target, VisibleItem,
 };
+use crate::hub::Hub;
 use crate::lockbox::save_login_in;
 use crate::passkeys::{Assertion, Registration};
 use crate::protocol::{increment, Code, NONCE_LEN, VERSION};
@@ -439,6 +440,9 @@ struct Recording {
 impl Host for Recording {
     fn enabled(&self) -> bool {
         self.inner.enabled()
+    }
+    fn hub(&self) -> &Hub {
+        self.inner.hub()
     }
     fn database_hash(&self) -> Option<String> {
         self.inner.database_hash()
@@ -967,6 +971,60 @@ fn in_agent_mode_a_site_without_logins_asks_nobody() {
     );
     assert_eq!(error_code(&response), Code::NoLoginsFound as u8);
     assert!(connection.host().grant_requests.borrow().is_empty());
+}
+
+// A grant the extension holds that is over is answered `GrantExpired`, the
+// code its retry is for: it forgets the grant and asks afresh. One it was
+// never entitled to stays `GrantDenied`, whatever its state.
+#[test]
+fn an_expired_grant_is_said_to_be_expired() {
+    let mut extension = Extension::new();
+    let mut connection = Connection::new(Mock {
+        logins: two_logins(),
+        ..Mock::unlocked()
+            .known("Chrome", "id-key")
+            .granting("g1", "gh", Mode::Fill)
+    });
+    extension.exchange(&mut connection);
+    extension.send(
+        &mut connection,
+        "test-associate",
+        json!({ "id": "Chrome", "key": "id-key" }),
+    );
+    connection
+        .host()
+        .grants
+        .borrow_mut()
+        .get_mut("g1")
+        .unwrap()
+        .state = State::Expired;
+
+    let expired = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&expired), Code::GrantExpired as u8);
+    let totp = extension.send(
+        &mut connection,
+        "get-totp",
+        json!({ "uuid": "gh", "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&totp), Code::GrantExpired as u8);
+
+    connection
+        .host()
+        .grants
+        .borrow_mut()
+        .get_mut("g1")
+        .unwrap()
+        .served_to = Some("another-extension".into());
+    let theirs = extension.send(
+        &mut connection,
+        "get-logins",
+        json!({ "url": GH_LOGIN, "grantId": "g1" }),
+    );
+    assert_eq!(error_code(&theirs), Code::GrantDenied as u8);
 }
 
 #[test]
@@ -2883,8 +2941,8 @@ fn the_socket_name_follows_the_root() {
 // --- the server loop and the lock signals --------------------------------------
 
 // Over a TCP pair rather than the local socket: `serve` is a loop over any
-// stream, and the registry a list of sinks, so neither needs the socket file
-// to be exercised.
+// stream, and a hub a list of sinks, so neither needs the socket file to be
+// exercised.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod server {
     use std::net::{TcpListener, TcpStream};
@@ -2894,7 +2952,9 @@ mod server {
     use serde_json::{json, Value};
 
     use crate::frame;
+    use crate::hub::{self, Hub, Sink};
     use crate::server;
+    use crate::signal::ROWEL_SIGNAL;
     use crate::socket::socket_name;
     #[cfg(unix)]
     use crate::socket::SOCKET_FILE;
@@ -2945,35 +3005,36 @@ mod server {
         served.join().unwrap();
     }
 
-    // The signal registry is one per process, so the tests that register with it
-    // run one at a time: with both up at once, one's broadcasts would land on the
-    // other's connection, ahead of the frames it is counting.
-    static SIGNAL_TESTS: Mutex<()> = Mutex::new(());
-
     /// A connection's writing end as the socket's accept loop registers it:
     /// every signal framed through the one shared handle.
-    fn sink(writer: &Arc<Mutex<TcpStream>>) -> server::Sink {
+    fn sink(writer: &Arc<Mutex<TcpStream>>) -> Sink {
         let writer = writer.clone();
         Box::new(move |message| frame::write(&mut *writer.lock().unwrap(), message))
     }
 
+    /// Both ends of one loopback connection: what the host writes to, and
+    /// what the client reads from.
+    fn connected(listener: &TcpListener) -> (Arc<Mutex<TcpStream>>, TcpStream) {
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (served, _) = listener.accept().unwrap();
+        (Arc::new(Mutex::new(served)), client)
+    }
+
     #[test]
     fn a_lock_signal_reaches_every_connection_and_drops_the_gone_ones() {
-        let _one_at_a_time = SIGNAL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let hub = Hub::default();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let mut extension = TcpStream::connect(address).unwrap();
-        let (open, _) = listener.accept().unwrap();
-        let _gone_peer = TcpStream::connect(address).unwrap();
-        let (gone, _) = listener.accept().unwrap();
-        gone.shutdown(std::net::Shutdown::Write).unwrap();
+        let (open, mut extension) = connected(&listener);
+        let (gone, _gone_peer) = connected(&listener);
+        gone.lock()
+            .unwrap()
+            .shutdown(std::net::Shutdown::Write)
+            .unwrap();
 
-        let open = Arc::new(Mutex::new(open));
-        let gone = Arc::new(Mutex::new(gone));
-        let open_id = server::register(sink(&open));
-        server::register(sink(&gone));
-        server::notify_locked();
-        server::notify_unlocked();
+        let open_id = hub.register(sink(&open));
+        hub.register(sink(&gone));
+        hub.notify_locked();
+        hub.notify_unlocked();
 
         // In order, on the connection that reads.
         let signal: Value =
@@ -2996,7 +3057,7 @@ mod server {
         assert_eq!(Arc::strong_count(&open), 2, "a live one stays registered");
 
         // The connection ending lets its writer go too.
-        server::forget(open_id);
+        hub.forget(open_id);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while Arc::strong_count(&open) > 1 && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -3006,23 +3067,20 @@ mod server {
 
     #[test]
     fn a_peer_that_stops_reading_stalls_no_one_else() {
-        let _one_at_a_time = SIGNAL_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let hub = Hub::default();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
         // A peer that never reads: its socket buffer fills, then writes block.
-        let _stalled_peer = TcpStream::connect(address).unwrap();
-        let (stalled, _) = listener.accept().unwrap();
-        let mut extension = TcpStream::connect(address).unwrap();
-        let (open, _) = listener.accept().unwrap();
+        let (stalled, _stalled_peer) = connected(&listener);
+        let (open, mut extension) = connected(&listener);
 
-        let stalled_id = server::register(sink(&Arc::new(Mutex::new(stalled))));
-        let open_id = server::register(sink(&Arc::new(Mutex::new(open))));
+        let stalled_id = hub.register(sink(&stalled));
+        let open_id = hub.register(sink(&open));
         // Far more than a socket buffer holds; every one of these would block a
         // shared thread on the stalled peer.
         for _ in 0..4096 {
-            server::notify_locked();
+            hub.notify_locked();
         }
-        server::notify_unlocked();
+        hub.notify_unlocked();
 
         // The reading peer still gets every signal, in order.
         for _ in 0..4096 {
@@ -3034,8 +3092,38 @@ mod server {
             serde_json::from_slice(&frame::read(&mut extension).unwrap().unwrap()).unwrap();
         assert_eq!(signal, json!({ "action": "database-unlocked" }));
 
-        server::forget(stalled_id);
-        server::forget(open_id);
+        hub.forget(stalled_id);
+        hub.forget(open_id);
+    }
+
+    #[test]
+    fn a_signal_reaches_the_connections_of_the_host_that_raised_it_and_no_other() {
+        let (sealed, other) = (Hub::default(), Hub::default());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let (sealed_end, mut sealed_extension) = connected(&listener);
+        let (other_end, mut other_extension) = connected(&listener);
+        sealed.register(sink(&sealed_end));
+        other.register(sink(&other_end));
+
+        sealed.notify_locked();
+        other.notify_signals();
+
+        // Each connection's first frame is its own host's signal: had the
+        // lock crossed over, the other connection would read it first.
+        let first = frame::read(&mut sealed_extension).unwrap().unwrap();
+        assert_eq!(first, hub::LOCKED);
+        let first = frame::read(&mut other_extension).unwrap().unwrap();
+        assert_eq!(first, ROWEL_SIGNAL);
+
+        // And nothing more on either: the signal raised on the other hub
+        // reached only its own connection.
+        for extension in [&mut sealed_extension, &mut other_extension] {
+            extension
+                .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+                .unwrap();
+            let more = frame::read(extension);
+            assert!(more.is_err(), "no other host's signal arrives: {more:?}");
+        }
     }
 
     #[test]

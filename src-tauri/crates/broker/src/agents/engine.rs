@@ -42,16 +42,44 @@ pub struct Locked<'a> {
 }
 
 /// What the user answered a grant ask with: which of the candidates the
-/// dialog listed — the agent may be given that one and no other — and, for
-/// "allow for N days", how many; `None` is this once. Serialized too: an
-/// answer given on a member's device travels to the Rowel Server in this
-/// shape (`POST /v1/approvals/{id}`), so the dialog's answer and the wire's
-/// are one struct.
+/// dialog listed — the agent may be given that one and no other — and how
+/// long the yes lasts: for "allow for N days", how many; for "allow for this
+/// run", `for_run`; neither is this once. Serialized too: an answer given on
+/// a member's device travels to the Rowel Server in this shape (`POST
+/// /v1/approvals/{id}`), so the dialog's answer and the wire's are one
+/// struct, and an answer from before *this run* still reads.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GrantAnswer {
     pub item_id: String,
     pub standing_days: Option<u32>,
+    #[serde(default)]
+    pub for_run: bool,
+}
+
+/// How long a yes lasts, as the answer says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lasting {
+    /// The rule's own window (`policy::defaults::PERSONAL_TTL_MS`).
+    Once,
+    /// Further requests of the same run, up to the run's cap
+    /// (`policy::defaults::RUN_TTL_MS`).
+    Run,
+    /// A standing rule for this many days, besides the grant.
+    Days(u32),
+}
+
+impl GrantAnswer {
+    /// The answer's length, or the reason the `denied` row names: an answer
+    /// both for a run and for days is one no dialog gives.
+    pub fn lasting(&self) -> Result<Lasting, &'static str> {
+        match (self.standing_days, self.for_run) {
+            (None, false) => Ok(Lasting::Once),
+            (None, true) => Ok(Lasting::Run),
+            (Some(days), false) => Ok(Lasting::Days(days)),
+            (Some(_), true) => Err("answer"),
+        }
+    }
 }
 
 /// What a grant request came to before anyone was asked: answered already
@@ -220,10 +248,12 @@ pub fn decide(
     // page it is for may be in a tab opened since. A secret reuse releases
     // nothing and is written nowhere: its uses are `resolve`'s — and it has
     // to admit every item asked for ([`admits_all`]), where a page's grant
-    // need only admit one of the page's logins.
+    // need only admit one of the page's logins. A grant answered for a run
+    // serves that run alone ([`Grant::serves_run`]).
     let reusable = held.grants.iter_mut().find(|g| {
         g.client_key == client_key
             && g.is_active(now)
+            && g.serves_run(req.run_id.as_deref())
             && req.modes.iter().all(|m| g.modes.contains(m))
             && probes
                 .iter()
@@ -321,7 +351,7 @@ pub fn decide(
             );
             grant.state = State::Active;
             grant.approver = Some("policy".into());
-            activate(store, writer, &row, &mut grant, now)?;
+            activate(store, writer, &row, &mut grant, None, now)?;
             let items: Vec<VisibleItem> = candidates.into_iter().map(|c| c.visible).collect();
             queue_fill(held, &clients, client, &grant, &items);
             let reply = reply_for(&grant, items);
@@ -369,18 +399,24 @@ pub fn deny_unasked(
 /// A grant goes active, on record: `granted`, and — for a site grant, whose
 /// reply carries the login — a use counted and written at once. A secret
 /// grant's reply carries nothing, so nothing is counted here: its uses are
-/// `resolve`'s to count, one per value served. A row that will not write is
-/// `AuditUnavailable`, and the caller keeps nothing of the grant: it is not
-/// among the grants held until this has returned, and a failure drops it, so
-/// what this did to it is dropped too.
+/// `resolve`'s to count, one per value served. `detail` goes on the `granted`
+/// row. A row that will not write is `AuditUnavailable`, and the caller keeps
+/// nothing of the grant: it is not among the grants held until this has
+/// returned, and a failure drops it, so what this did to it is dropped too.
 fn activate(
     store: &SqliteStore,
     writer: &str,
     row: &dyn Fn(Event) -> Draft,
     grant: &mut Grant,
+    detail: Option<&str>,
     now: i64,
 ) -> Result<(), Code> {
-    record(store, writer, about(row(Event::Granted), grant, None), now)?;
+    record(
+        store,
+        writer,
+        about(row(Event::Granted), grant, detail),
+        now,
+    )?;
     if !is_secret(&grant.modes) {
         use_grant(
             store,
@@ -456,7 +492,8 @@ fn well_targeted(req: &GrantRequest) -> bool {
 }
 
 /// The user has answered (or not): the grant becomes active for the one
-/// item picked — a standing answer writes its rule first — or denied. The
+/// item picked — a standing answer writes its rule first, a yes for the run
+/// lasts until the run's cap — or denied. The
 /// switches come first, under the same locks as the release, and the epoch
 /// the request was decided under: a yes given while a switch moved is no
 /// yes, and the row names the switch.
@@ -491,19 +528,26 @@ pub fn settle(
         now,
     );
 
+    // A yes for the run is only for a request that named one: the dialog
+    // offers it for no other, and a grant for a run of none would serve
+    // nothing again anyway ([`Grant::serves_run`]).
     let settled = held
         .access_since(access_epoch)
-        .and_then(|()| outcome(&verdict, &candidates));
+        .and_then(|()| outcome(&verdict, &candidates))
+        .and_then(|(picked, lasting)| match lasting {
+            Lasting::Run if grant.run_id.is_none() => Err("run"),
+            _ => Ok((picked, lasting)),
+        });
     // A site request's yes is for the one login picked; a secret request's
     // is for every item it named, since the command or the request needs
     // them all at once — the pick is still required to be one of them, so
     // a stale dialog cannot answer for a request it was not drawn for.
-    let (items, standing_days) = match settled {
-        Ok((_, standing_days)) if is_secret(&grant.modes) => (
+    let (items, lasting) = match settled {
+        Ok((_, lasting)) if is_secret(&grant.modes) => (
             candidates.iter().map(|c| c.visible.clone()).collect(),
-            standing_days,
+            lasting,
         ),
-        Ok((picked, standing_days)) => (vec![picked.visible.clone()], standing_days),
+        Ok((picked, lasting)) => (vec![picked.visible.clone()], lasting),
         Err(reason) => {
             grant.state = State::Denied;
             note(
@@ -524,7 +568,15 @@ pub fn settle(
     grant.items = ItemSelector::Ids(items.iter().map(|i| i.id.clone()).collect());
     grant.state = State::Active;
     grant.approver = Some("user".into());
-    if let Some(days) = standing_days {
+    // A yes for the run outlives the rule's window up to the run's cap, from
+    // the moment it was given, and the `granted` row says it was for the run.
+    let mut granted = None;
+    if lasting == Lasting::Run {
+        grant.for_run = true;
+        grant.expires_at_ms = now.saturating_add(defaults::RUN_TTL_MS);
+        granted = Some(r#"{"for":"run"}"#);
+    }
+    if let Lasting::Days(days) = lasting {
         let days = days.clamp(1, defaults::MAX_STANDING_DAYS);
         let rule = standing_rule(client_key, &grant, days, now);
         let mut added = about(
@@ -545,7 +597,7 @@ pub fn settle(
             log::warn!("browser host: the standing rule was not kept");
         }
     }
-    activate(store, writer, &row, &mut grant, now)?;
+    activate(store, writer, &row, &mut grant, granted, now)?;
     held.rate(client_key).record_grant(now);
     queue_fill(held, &clients, client, &grant, &items);
     let reply = reply_for(&grant, items);
@@ -636,6 +688,10 @@ fn queue_fill(
 /// narrowed to its page when it was issued. A grant another client requested
 /// — an agent's, signalled to every extension — is claimed by the first
 /// extension served under it (`Grant::served_to`) and refused to any other.
+/// A grant this client may be served under that is over by time or by use
+/// is `GrantExpired`, not a no: the extension forgets it and asks afresh,
+/// where a refusal leaves it nothing to do but give up — and that the window
+/// closed is no secret from whoever holds the id.
 pub fn covered(
     ctx: Locked<'_>,
     client_key: &str,
@@ -667,15 +723,25 @@ fn covered_via(
     let Some(grant) = held.find_mut(grant_id) else {
         return Ok(false);
     };
-    if !grant.is_active(now) || !grant.modes.contains(&mode) {
+    // Who may be served under it: the client it was issued to, the
+    // extension that claimed it, or — an agent's not yet claimed — any.
+    let entitled = grant.client_key == client_key
+        || grant
+            .served_to
+            .as_deref()
+            .is_none_or(|served| served == client_key);
+    if !entitled || !grant.modes.contains(&mode) {
         return Ok(false);
     }
-    let claim = match &grant.served_to {
-        _ if grant.client_key == client_key => None,
-        None => Some(client_key),
-        Some(served) if served == client_key => None,
-        Some(_) => return Ok(false),
-    };
+    if grant.is_due(now) || matches!(grant.state, State::Spent | State::Expired) {
+        return Err(Code::GrantExpired);
+    }
+    if !grant.is_active(now) {
+        return Ok(false);
+    }
+    // An agent's grant not yet claimed is claimed by this use — on the
+    // counted copy, so a use the log does not take claims nothing.
+    let claim = (grant.client_key != client_key && grant.served_to.is_none()).then_some(client_key);
     // The item as the grant's selector sees it. Every grant issued here
     // names ids, which the id alone answers; a wider selector reads the
     // row's kind and tags, nothing sealed.
@@ -721,7 +787,8 @@ fn covered_via(
 /// [`covered`] over the grants the client holding `client_key` was issued or
 /// already served under: the first that covers `item_id` counts the use.
 /// What an extension's TOTP step is served under when it names no grant; a
-/// grant nobody has been served under yet is not claimed this way.
+/// grant nobody has been served under yet is not claimed this way, and one
+/// that is over is passed by, so it cannot answer for a live one after it.
 pub fn client_covered(
     ctx: Locked<'_>,
     client_key: &str,
@@ -738,6 +805,7 @@ pub fn client_covered(
         .grants
         .iter()
         .filter(|g| g.client_key == client_key || g.served_to.as_deref() == Some(client_key))
+        .filter(|g| g.is_active(now))
         .map(|g| g.id.clone())
         .collect();
     for id in &ids {
@@ -836,18 +904,20 @@ pub fn resolved(
     Ok(value)
 }
 
-/// What the answer comes to: the candidate the user picked and for how many
-/// days, or the reason the `denied` row names.
+/// What the answer comes to: the candidate the user picked and for how long,
+/// or the reason the `denied` row names.
 pub fn outcome<'c>(
     verdict: &Verdict,
     candidates: &'c [Candidate],
-) -> Result<(&'c Candidate, Option<u32>), &'static str> {
+) -> Result<(&'c Candidate, Lasting), &'static str> {
     match verdict {
-        Verdict::Answered(Some(answer)) => candidates
-            .iter()
-            .find(|c| c.item.id == answer.item_id)
-            .map(|c| (c, answer.standing_days))
-            .ok_or("item"),
+        Verdict::Answered(Some(answer)) => {
+            let picked = candidates
+                .iter()
+                .find(|c| c.item.id == answer.item_id)
+                .ok_or("item")?;
+            Ok((picked, answer.lasting()?))
+        }
         Verdict::Answered(None) => Err("user"),
         Verdict::Unanswered => Err("timeout"),
     }

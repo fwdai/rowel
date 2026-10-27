@@ -36,29 +36,11 @@ pub use host::HeadlessHost;
 pub use run::{run, PasswordPrompt, ServeOptions};
 pub use unlock::Unlock;
 
-/// This install's own id, on the root of the data directory: the audit
-/// log's writer id, as the app keeps it under the same name
-/// (`storage::INSTALL_ID_FILE`), so a data directory copied from a laptop
-/// keeps writing the one chain that install started.
-pub const INSTALL_ID_FILE: &str = "install_id";
-
-/// The id kept at `root`, or a fresh one — 16 random bytes, hex — written
-/// there owner-only; when the write fails, just minted, and the caller's
-/// one copy per process is what makes it stick ([`HeadlessHost`] reads it
-/// once). A one-function duplicate of the app's `storage::install_id_in`,
-/// which is behind Tauri: the two must agree on the file and its shape, and
-/// do.
-pub fn install_id_in(root: &Path) -> String {
-    let path = root.join(INSTALL_ID_FILE);
-    if let Ok(id) = std::fs::read_to_string(&path) {
-        let id = id.trim();
-        if !id.is_empty() {
-            return id.to_string();
-        }
-    }
-    let id = rowel_core::crypto::random_hex_id();
-    if let Err(e) = rowel_core::atomic::atomic_write_private(&path, id.as_bytes()) {
-        log::warn!("rowel serve: could not keep the install id: {e}");
-    }
-    id
+/// The broker's audit writer id for the data directory at `root`, minted
+/// the first time and kept owner-only in its own file
+/// (`layout::SERVE_WRITER_ID_FILE`), never the app's `install_id`: the data
+/// directory is a copy of a device's, and the device keeps writing its own
+/// chain. [`HeadlessHost`] reads it once per process.
+pub fn writer_id_in(root: &Path) -> String {
+    rowel_core::layout::kept_id(&root.join(rowel_core::layout::SERVE_WRITER_ID_FILE))
 }

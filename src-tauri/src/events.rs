@@ -317,7 +317,10 @@ pub enum AskTarget {
 /// browser that filled, whichever client asked for it, and no other mode
 /// signs anything out. `verify` says what a step-up ask takes before the
 /// answer counts: a biometric prompt, or the master password where the
-/// device has none. The answer comes back through
+/// device has none. `run_hours` is there when the request named a run: the
+/// dialog offers *this run*, which covers further requests the client marks
+/// as the same run for at most that many hours — the run id is the client's
+/// own word, so the hours are the bound. The answer comes back through
 /// `commands::browser::agent_grant_respond`, naming `id`, so a dialog left up
 /// past this ask cannot answer the next. `server` names the company whose
 /// Rowel Server routed the ask here (`org::approvals`), so the dialog can say
@@ -339,6 +342,8 @@ pub struct AgentGrantAsk<'a> {
     pub verify: Option<&'static str>,
     pub candidates: Vec<rowel_broker::grant::VisibleItem>,
     pub default_standing_days: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_hours: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server: Option<&'a str>,
 }

@@ -19,6 +19,7 @@ use serde_json::{json, Map, Value};
 use zeroize::Zeroizing;
 
 use super::grant::{GrantReply, GrantRequest, ItemSelector, Mode, ResolveContext, State, Target};
+use super::hub::Hub;
 use super::passkeys::{self, Assertion, Registration};
 use super::protocol::{self, str_of, Code, Session};
 use super::reference::Reference;
@@ -178,6 +179,11 @@ pub trait Host {
     /// turning it off in Settings ends the connections that are up, not only
     /// the ones to come.
     fn enabled(&self) -> bool;
+    /// The connections this host is served on, which its clear signals
+    /// reach: every serving loop registers there, and only there, so a signal
+    /// one host raises never reaches another host's connections in the same
+    /// process.
+    fn hub(&self) -> &Hub;
     /// A stable digest of the open vault, or `None` while locked. The
     /// extension keys its associations by it, so each workspace is its own.
     fn database_hash(&self) -> Option<String>;

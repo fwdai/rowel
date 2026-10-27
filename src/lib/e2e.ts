@@ -4,7 +4,7 @@ import type { AppStatus, Settings } from '@/api/app'
 /**
  * Dev-only bridge to the backend's `e2e_reset` and `set_settings` commands, so
  * a spec can put the vault and the preferences into a known state between
- * tests.
+ * tests, and to the switches an agent's ask needs.
  *
  * Zero production footprint: the only caller guards on `import.meta.env.DEV`
  * and imports this module dynamically, so Vite folds the branch to `false` and
@@ -23,6 +23,7 @@ declare global {
   interface Window {
     __e2eReset?: (mode: E2EResetMode, password?: string) => Promise<void>
     __e2eSettings?: (patch?: Partial<Settings>) => Promise<Settings>
+    __e2eAgents?: () => Promise<void>
   }
 }
 
@@ -37,4 +38,13 @@ export function installE2EBridge(): void {
     patch
       ? invoke<Settings>('set_settings', { patch })
       : invoke<AppStatus>('app_status').then(status => status.settings)
+
+  // The three switches an agent's ask needs, as their Settings rows flip
+  // them: the extension host listening, the Agents switch, and the open
+  // primary lockbox's agent access.
+  window.__e2eAgents = async () => {
+    await invoke('browser_set_enabled', { enabled: true })
+    await invoke('browser_set_agents_enabled', { enabled: true })
+    await invoke('workspace_set_agents', { id: 'default', enabled: true })
+  }
 }

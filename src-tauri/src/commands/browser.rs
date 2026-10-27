@@ -63,10 +63,10 @@ pub fn browser_set_enabled(enabled: bool, app: AppHandle) -> Result<BrowserStatu
     let root = storage::root_dir(&app)?;
     let host = save(&app, |host| host.enabled = enabled)?;
     if enabled {
-        manifest::install(&root, host.keepassxc_compat);
+        browser::register_host(&root, host.keepassxc_compat);
         browser::server::start(&app);
     } else {
-        manifest::remove(&root);
+        browser::unregister_host(&root);
     }
     status(&app)
 }
@@ -79,7 +79,7 @@ pub fn browser_set_keepassxc_compat(enabled: bool, app: AppHandle) -> Result<Bro
     let root = storage::root_dir(&app)?;
     let host = save(&app, |host| host.keepassxc_compat = enabled)?;
     if host.enabled {
-        manifest::install(&root, host.keepassxc_compat);
+        browser::register_host(&root, host.keepassxc_compat);
     }
     status(&app)
 }
@@ -138,7 +138,8 @@ pub fn browser_passkey_respond(id: String, allow: bool, account: Option<usize>) 
 }
 
 /// The user's answer to the grant ask up under `id`: the item the agent may
-/// use and, for "allow for N days", how many — or `null` to refuse. For a
+/// use and how long — for "allow for N days", how many; for "allow for this
+/// run", `forRun` — or `null` to refuse. For a
 /// step-up ask a yes counts only once the person is verified: the biometric
 /// prompt where the device has one, else the master `password`, checked
 /// against the key the open lockbox is unlocked with. A verification that

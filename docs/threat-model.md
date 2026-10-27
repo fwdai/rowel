@@ -909,7 +909,10 @@ in this mode until this time. The extension names the page's logins; policy
 (`rowel_broker::policy`) decides deny-by-default against the baseline rule,
 which lets any client *ask* to fill any login of the lockbox for a 15-minute
 window, and against the lockbox's own standing rules; and the app's dialog
-asks the person, who allows once, allows for N days, or denies. Allowing for
+asks the person, who allows once, allows for the agent's run, allows for N
+days, or denies. Allowing for the run lets further requests carrying the same
+run id through for at most 8 hours; the run id is the agent's own word, so
+the cap, not the id, is what bounds an agent that lies about it. Allowing for
 N days writes a standing rule for that client, that login and that site, kept
 sealed in the lockbox's `meta` (`agent_rules`) and device-local like the
 extension associations, since it names a client key that exists only on this
@@ -1043,7 +1046,10 @@ whole contents, never trusted to its stored `hash`), never last-writer-wins
 and never tombstoned, so devices converge on the union of their logs and no
 device removes another's rows through sync. A copy altered behind an
 unchanged `hash` is therefore kept beside the original on every device rather
-than taken for it, and verification names it as altered everywhere. A forked chain — two rows at one writer's `seq`, as when an app
+than taken for it, and verification names it as altered everywhere. `rowel
+serve`, which runs on a copy of a device's data directory, writes under an id
+of its own (`serve_writer_id`, minted beside the copied `install_id`), so the
+broker and the device it was copied from never extend one chain. A forked chain — two rows at one writer's `seq`, as when an app
 folder copied to a second machine carries its install id — is kept whole on
 every device rather than each keeping its own side, so the digests agree and
 verification names the fork at the same `seq` everywhere; the pack's

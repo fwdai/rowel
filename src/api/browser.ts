@@ -204,6 +204,13 @@ export interface AgentGrantAsk {
   candidates: GrantCandidate[]
   defaultStandingDays: number
   /**
+   * Present when the request named a run: the dialog offers "for this run",
+   * which lets further requests the client marks as the same run through for
+   * at most this many hours. The run is the client's own word, so the hours
+   * are what bound it.
+   */
+  runHours?: number
+  /**
    * The tenant's name when the ask was routed here by a Rowel Server rather
    * than put by a local client: the agent runs against an org lockbox, and
    * this app is the member's approval device. Nothing is filled here, so no
@@ -213,13 +220,15 @@ export interface AgentGrantAsk {
 }
 
 /**
- * The yes to a grant ask: which candidate, and — for "allow for N days" — how
- * many, which writes a standing rule for this client, this login and this
- * site. `null` days is this once.
+ * The yes to a grant ask: which candidate, and how long it lasts — for "allow
+ * for N days", how many, which writes a standing rule for this client, this
+ * login and this site; for "allow for this run", `forRun`. Neither is this
+ * once.
  */
 export interface GrantAnswer {
   itemId: string
   standingDays: number | null
+  forRun: boolean
 }
 
 /**

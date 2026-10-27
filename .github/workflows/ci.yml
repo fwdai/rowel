@@ -186,13 +186,15 @@ jobs:
       # runner anyway. None of these tests touches the real secure store: the
       # one that would (`crates/cli/tests/serve.rs`) is ignored off Linux.
       # bash, not the Windows default pwsh, which fails a step only on its
-      # last command's exit code.
+      # last command's exit code. `--no-fail-fast`: these runners are the only
+      # place these platforms' tests run, so one failing crate must not hide
+      # the others' results.
       - name: Test the CLI, broker and core
         if: matrix.os != 'ubuntu-latest'
         working-directory: src-tauri
         shell: bash
         run: |
-          cargo test --locked -p rowel-core -p rowel-broker -p rowel-cli
+          cargo test --locked --no-fail-fast -p rowel-core -p rowel-broker -p rowel-cli
           if [ "$RUNNER_OS" = "macOS" ]; then
             cargo test --locked -p rowel --lib cli::
           fi

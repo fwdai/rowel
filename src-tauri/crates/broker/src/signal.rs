@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::grant::VisibleItem;
 
-/// The clear, content-free wake-up `server::signal` pushes beside
-/// `database-locked`; the extension answers it with a sealed `get-signals`.
+/// The clear, content-free wake-up a host's [`Hub`](crate::hub::Hub) pushes
+/// beside `database-locked`; the extension answers it with a sealed
+/// `get-signals`.
 pub const ROWEL_SIGNAL: &[u8] = br#"{"action":"rowel-signal"}"#;
 
 /// One queued signal, tagged by `signal` on the wire (`fill-grant`,

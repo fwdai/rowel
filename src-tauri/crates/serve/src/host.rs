@@ -32,20 +32,19 @@ use zeroize::Zeroizing;
 use rowel_broker::actions::{Client, ClientKind, Hello, Host, Login, VisibleRef};
 use rowel_broker::agents::{
     self, candidates_in, change_under_locks, client_covered, covered, decide, deny_unasked,
-    end_grant_in, expire_due, now_ms, reply_for, resolved, settle, target_text, visible_access,
-    visible_in, AccessState, AgentState, Asking, GrantEnd, Locked, Prepared, Verdict,
+    end_grant_in, expire_due, now_ms, reply_for, report_exposure_in, resolved, settle, target_text,
+    visible_access, visible_in, AccessState, AgentState, Asking, GrantEnd, Locked, Prepared,
+    Verdict,
 };
 use rowel_broker::audit::Event;
-use rowel_broker::grant::{
-    Approval, GrantReply, GrantRequest, Mode, ResolveContext, State, VisibleItem,
-};
+use rowel_broker::grant::{Approval, GrantReply, GrantRequest, Mode, ResolveContext, VisibleItem};
+use rowel_broker::hub::Hub;
 use rowel_broker::lockbox::{
     clients_in, logins_in, mark_seen, save_failed, save_login_in, totp_in, write_clients,
 };
 use rowel_broker::passkeys::{self, Assertion, CeremonyLog, Registration};
 use rowel_broker::protocol::Code;
 use rowel_broker::reference::Reference;
-use rowel_broker::server;
 use rowel_broker::Signal;
 use rowel_core::error::Result as CoreResult;
 use rowel_core::models::Passkey;
@@ -132,6 +131,9 @@ struct Shared {
     key_file: Option<PathBuf>,
     /// When the last request came in, for the idle lock.
     last_used_ms: AtomicI64,
+    /// The connections serving this lockbox, which its seals, unlocks and
+    /// wake-ups reach, and no other host's.
+    hub: Hub,
 }
 
 /// The headless broker as a `Host`. Cheap to clone: every connection holds
@@ -164,6 +166,11 @@ pub struct AnswerRequest {
     pub account: Option<usize>,
     #[serde(default)]
     pub deny: bool,
+    /// *This run*: the yes covers further requests the client marks as the
+    /// same run, up to the run's cap. Only for an ask whose request named a
+    /// run, and never with `days`.
+    #[serde(default)]
+    pub run: bool,
     /// The master password, for a step-up ask. Wiped after use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<Zeroizing<String>>,
@@ -197,7 +204,7 @@ impl HeadlessHost {
                 name,
             },
             lockbox_dir: workspace::dir_of(root, lockbox_id),
-            writer_id: crate::install_id_in(root),
+            writer_id: crate::writer_id_in(root),
             session: Mutex::new(Session {
                 opened: None,
                 epoch: 0,
@@ -213,6 +220,7 @@ impl HeadlessHost {
             }),
             key_file,
             last_used_ms: AtomicI64::new(now_ms()),
+            hub: Hub::default(),
         })))
     }
 
@@ -256,7 +264,7 @@ impl HeadlessHost {
             session.epoch += 1;
         }
         self.touch();
-        server::notify_unlocked();
+        self.0.hub.notify_unlocked();
     }
 
     /// Seal the lockbox: nothing is served until the next unlock, every grant
@@ -276,7 +284,7 @@ impl HeadlessHost {
         };
         self.0.approvals.refuse_all();
         if was_open {
-            server::notify_locked();
+            self.0.hub.notify_locked();
         }
         was_open
     }
@@ -373,7 +381,7 @@ impl HeadlessHost {
         };
         if changed {
             self.0.approvals.refuse_grants();
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
     }
 
@@ -411,7 +419,7 @@ impl HeadlessHost {
             flipped || pruned
         };
         if changed {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         self.refresh();
         let idle = self.settings().idle_lock();
@@ -472,11 +480,18 @@ impl HeadlessHost {
             AskKind::Grant {
                 candidates,
                 step_up,
+                run,
                 ..
             } => {
                 if request.deny {
                     Answer::Grant(None)
                 } else {
+                    if request.run && !run {
+                        return Err("the request named no run: --run is not an answer to it".into());
+                    }
+                    if request.run && request.days.is_some() {
+                        return Err("--run or --days, not both".into());
+                    }
                     let item_id = match (&request.item, candidates.as_slice()) {
                         (Some(item), _) => item.clone(),
                         (None, [only]) => only.id.clone(),
@@ -493,6 +508,7 @@ impl HeadlessHost {
                     Answer::Grant(Some(agents::GrantAnswer {
                         item_id,
                         standing_days: request.days,
+                        for_run: request.run,
                     }))
                 }
             }
@@ -570,7 +586,7 @@ impl HeadlessHost {
         drop(held);
         drop(session);
         if matches!(prepared, Prepared::Answered(_)) && client.kind != ClientKind::Extension {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         Ok((prepared, epoch))
     }
@@ -622,7 +638,7 @@ impl HeadlessHost {
         drop(held);
         drop(session);
         if client.kind != ClientKind::Extension {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         Ok(reply)
     }
@@ -726,6 +742,10 @@ impl UserConsent for AskUser {
 impl Host for HeadlessHost {
     fn enabled(&self) -> bool {
         true
+    }
+
+    fn hub(&self) -> &Hub {
+        &self.0.hub
     }
 
     // The lockbox id digested, the app's scheme, so an extension's
@@ -910,6 +930,7 @@ impl Host for HeadlessHost {
                 .map(|c| c.visible.clone())
                 .collect::<Vec<VisibleItem>>(),
             step_up,
+            run: asking.grant.run_id.is_some(),
         };
         let timeout = self.ask_timeout();
         // Queued under the agents lock, as the app queues under its slot: a
@@ -961,7 +982,7 @@ impl Host for HeadlessHost {
             (reply_for(grant, items), flipped)
         };
         if flipped {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         Ok(reply)
     }
@@ -986,7 +1007,7 @@ impl Host for HeadlessHost {
             }
         };
         if ended {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         Ok(())
     }
@@ -1040,32 +1061,34 @@ impl Host for HeadlessHost {
     }
 
     // The page showed what was filled: the grant ends now, the log says
-    // why, and every extension signs out of the site.
-    fn report_exposure(&self, _client: &Client, grant_id: &str) {
+    // why, and every extension signs out of the site — when the reporter is
+    // the grant's client or the extension served under it, and once.
+    fn report_exposure(&self, client: &Client, grant_id: &str) {
         self.touch();
-        let now = now_ms();
-        {
+        let end = {
             let session = self.session();
-            let mut held = self.agents();
-            let Some(grant) = held.find_mut(grant_id) else {
-                log::debug!("rowel serve: exposure reported for an unknown grant {grant_id}");
+            let Ok(store) = session.store() else {
                 return;
             };
-            if matches!(grant.state, State::Active | State::Pending) {
-                grant.state = State::Revoked;
+            let mut held = self.agents();
+            report_exposure_in(
+                Locked {
+                    store,
+                    held: &mut held,
+                    writer: &self.0.writer_id,
+                    now: now_ms(),
+                },
+                grant_id,
+                &client.key,
+            )
+        };
+        match end {
+            GrantEnd::Ended => self.0.hub.notify_signals(),
+            GrantEnd::AlreadyOver => {}
+            GrantEnd::NotFound => {
+                log::debug!("rowel serve: exposure reported for {grant_id}, not the reporter's")
             }
-            let grant = grant.clone();
-            agents::ended(
-                session.store().ok(),
-                &mut held,
-                &self.0.writer_id,
-                &grant,
-                Event::Exposed,
-                r#"{"reason":"exposure"}"#,
-                now,
-            );
         }
-        server::notify_signals();
     }
 
     // The one reply that carries a value to something other than an

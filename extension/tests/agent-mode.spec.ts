@@ -35,6 +35,10 @@ test.describe('Agent mode content script tests', () => {
         await verifyResults('agent-retrieve-results');
     });
 
+    test('Denied fill: the page gets nothing filled and no UI', async () => {
+        await verifyResults('agent-denied-results');
+    });
+
     test('Exposure scan finds the secret in text and fields, clear empties them', async () => {
         await verifyResults('agent-scan-results');
     });

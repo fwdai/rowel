@@ -35,7 +35,8 @@ use rowel_broker::agents::{
     reply_for, resolved, settle, visible_in, Asking, GrantEnd, Locked, Prepared, Verdict,
 };
 use rowel_broker::audit::Event;
-use rowel_broker::grant::{GrantReply, GrantRequest, Mode, ResolveContext, State};
+use rowel_broker::grant::{GrantReply, GrantRequest, Mode, ResolveContext};
+use rowel_broker::hub::Hub;
 use rowel_broker::passkeys::{Assertion, Registration};
 use rowel_broker::protocol::Code;
 use rowel_broker::reference::{self, Reference};
@@ -60,6 +61,12 @@ pub struct OrgHost {
     runtime: Handle,
     /// The tenant id digested, read once: it never changes.
     hash: Option<String>,
+    /// The connection this host was made for, and no other. The server is
+    /// never locked as a whole and raises no clear signal, so nothing goes
+    /// out through it yet; a hub shared wider than one connection would be
+    /// one lockbox's, so that its seal reaches its own agents and no other
+    /// lockbox's.
+    hub: Hub,
 }
 
 /// What a client's request is about: its definition, the definition's
@@ -95,6 +102,7 @@ impl OrgHost {
             state,
             runtime,
             hash,
+            hub: Hub::default(),
         }
     }
 
@@ -342,6 +350,10 @@ pub fn tick(state: &AppState, now: i64) {
 impl Host for OrgHost {
     fn enabled(&self) -> bool {
         true
+    }
+
+    fn hub(&self) -> &Hub {
+        &self.hub
     }
 
     // The tenant's digest: the server is never locked as a whole, and an
@@ -632,27 +644,20 @@ impl Host for OrgHost {
     }
 
     // The page showed what was filled: the grant ends now and the log says
-    // why.
+    // why — when the reporter is the grant's client or the extension served
+    // under it, and once.
     fn report_exposure(&self, client: &Client, grant_id: &str) {
         let _ = self.with_bound(client, |bound| {
             let session = bound.vault.session();
+            let store = session.store()?;
             let mut held = bound.vault.agents();
-            let Some(grant) = held.find_mut(grant_id) else {
-                return Ok(());
+            let ctx = Locked {
+                store,
+                held: &mut held,
+                writer: self.writer(),
+                now: now_ms(),
             };
-            if matches!(grant.state, State::Active | State::Pending) {
-                grant.state = State::Revoked;
-            }
-            let grant = grant.clone();
-            agents::ended(
-                session.store().ok(),
-                &mut held,
-                self.writer(),
-                &grant,
-                Event::Exposed,
-                r#"{"reason":"exposure"}"#,
-                now_ms(),
-            );
+            agents::report_exposure_in(ctx, grant_id, &client.key);
             Ok(())
         });
     }

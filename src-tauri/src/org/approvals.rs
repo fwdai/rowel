@@ -276,6 +276,8 @@ fn ask_person(app: &AppHandle, stop: &AtomicBool, tenant: &str, approval: &Appro
             verify,
             candidates: approval.candidates.clone(),
             default_standing_days,
+            // *This run* is Tier 1's: a routed ask is not offered it.
+            run_hours: None,
             server: Some(tenant),
         };
         match browser::ask_remote_grant(app, &id, step_up, || events::agent_grant(app, ask)) {

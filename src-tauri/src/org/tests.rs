@@ -595,6 +595,7 @@ fn an_approval_streams_to_the_member_and_the_answer_is_recorded() {
     let yes = GrantAnswer {
         item_id: "stripe".into(),
         standing_days: Some(7),
+        for_run: false,
     };
     block_on(pat.client.answer("ap-1", Some(yes.clone()))).unwrap();
     block_on(pat.client.answer("ap-2", None)).unwrap();
@@ -643,6 +644,7 @@ fn the_approvals_loop_posts_what_the_person_decides_and_stops_when_told() {
     let yes = GrantAnswer {
         item_id: "stripe".into(),
         standing_days: None,
+        for_run: false,
     };
     let loop_thread = {
         let (url, stop, asked, yes) =

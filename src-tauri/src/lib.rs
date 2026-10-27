@@ -73,10 +73,10 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // A browser launched this binary as its native messaging host: relay its
-    // stdio to the running app and never build a window (see `browser::proxy`).
+    // stdio to the running app and never build a window (`rowel_broker::relay`).
     #[cfg(desktop)]
-    if browser::proxy::launched_by_browser(std::env::args().skip(1)) {
-        std::process::exit(browser::proxy::run());
+    if rowel_broker::relay::launched_by_browser(std::env::args().skip(1)) {
+        std::process::exit(rowel_broker::relay::run(browser::root_dir()));
     }
 
     // Before anything else: on mobile Tauri builds a reqwest client while
@@ -180,7 +180,7 @@ pub fn run() {
             // from launch, so a browser that starts before the vault is
             // unlocked finds the app and can ask for the unlock. Writing the
             // manifests again is idempotent, and one another host owns is
-            // left alone (`manifest::install`). A manifest from before Rowel
+            // left alone (`browser::register_host`). A manifest from before Rowel
             // had a host name of its own is rewritten or taken back here too.
             // The command line tool's copies follow the app's own: an
             // AppImage's out of the mount, an update's onto the PATH. Off the
@@ -193,7 +193,7 @@ pub fn run() {
             {
                 let host = settings::current(app.handle()).browser;
                 if host.enabled {
-                    browser::manifest::install(&root, host.keepassxc_compat);
+                    browser::register_host(&root, host.keepassxc_compat);
                     browser::server::start(app.handle());
                 }
             }

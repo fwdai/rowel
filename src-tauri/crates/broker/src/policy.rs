@@ -420,6 +420,14 @@ pub mod defaults {
     pub const PERSONAL_FILL_RULE: &str = "personal-fill";
     /// How long a fill or passkey grant under the baseline lives once approved.
     pub const PERSONAL_TTL_MS: i64 = 15 * 60 * 1000;
+    /// The most a grant answered *for this run* lives, in hours: a working
+    /// day. A run id is the agent's own word (`spec/02`), so an agent that
+    /// keeps sending one id is held to this and nothing longer. It sits
+    /// between the two other answers — longer than a once's window, shorter
+    /// than the shortest standing rule (one day) — so the dialog's choices
+    /// stay in order of how much they let through.
+    pub const RUN_HOURS: u32 = 8;
+    pub const RUN_TTL_MS: i64 = RUN_HOURS as i64 * 60 * 60 * 1000;
     /// The dialog's default for "for N days", and the most it accepts: a
     /// standing answer is clamped to it when the rule is written
     /// (`agents::settle`).

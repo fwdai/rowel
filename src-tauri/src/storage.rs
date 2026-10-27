@@ -23,10 +23,9 @@ pub const LOCKOUT_SIDECAR_FILE: &str = "vault.lock.json";
 // User preferences (theme, locale, auto-lock, …). Plaintext and readable while
 // locked by design: the shell has to know what to draw before the vault opens.
 pub const SETTINGS_FILE: &str = "settings.json";
-// This install's own id (see `install_id`): the audit log's writer id, which
-// a workspace id cannot be — every install's primary lockbox is `default`.
+// This install's own id (see `install_id`): the audit log's writer id.
 #[cfg(desktop)]
-pub const INSTALL_ID_FILE: &str = "install_id";
+pub use rowel_core::layout::INSTALL_ID_FILE;
 // The sealed account a workspace syncs through, one file per provider and at
 // most one of them present (see `sync::Provider::token_file_name`). Google's
 // keeps the name it had before there was a choice, so an existing install is
@@ -598,18 +597,7 @@ pub(crate) fn install_id_once(
 /// fails, just minted: the caller's cell is what makes it stick.
 #[cfg(desktop)]
 pub(crate) fn install_id_in(root: &Path) -> String {
-    let path = root.join(INSTALL_ID_FILE);
-    if let Ok(id) = fs::read_to_string(&path) {
-        let id = id.trim();
-        if !id.is_empty() {
-            return id.to_string();
-        }
-    }
-    let id = crate::crypto::random_hex_id();
-    if let Err(e) = atomic_write_private(&path, id.as_bytes()) {
-        log::warn!("storage: could not keep the install id: {e}");
-    }
-    id
+    rowel_core::layout::kept_id(&root.join(INSTALL_ID_FILE))
 }
 
 // The failed-unlock backoff state JSON, or `None` when absent (no failed

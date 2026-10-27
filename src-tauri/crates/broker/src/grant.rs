@@ -395,6 +395,14 @@ pub struct Grant {
     /// being spent by the first fill. Absent on a grant stored before I2.
     #[serde(default)]
     pub served_to: Option<String>,
+    /// Answered *for this run*: a further request is served under this grant
+    /// only when it carries the grant's own `run_id`, and the window is the
+    /// run's cap (`policy::defaults::RUN_TTL_MS`) rather than the rule's. The
+    /// run id is the agent's own word, so it narrows what the grant serves and
+    /// never widens it; the cap is what bounds an agent that keeps one run id
+    /// forever. Absent on a grant from before *this run*.
+    #[serde(default)]
+    pub for_run: bool,
 }
 
 impl Grant {
@@ -429,7 +437,16 @@ impl Grant {
             created_by: terms.created_by,
             state: State::Pending,
             served_to: None,
+            for_run: false,
         }
+    }
+
+    /// Whether a further request carrying `run_id` may be served under this
+    /// grant, as far as runs go: any request, for a grant answered once —
+    /// its short window is the bound — and only one of the grant's own run
+    /// for a grant answered for the run.
+    pub fn serves_run(&self, run_id: Option<&str>) -> bool {
+        !self.for_run || run_id.is_some_and(|run| self.run_id.as_deref() == Some(run))
     }
 
     /// `Active`, inside its window, and not used up.
@@ -851,6 +868,34 @@ mod tests {
             ..grant
         };
         assert!(!targetless.covers(&gh, &page, Mode::Fill, 10));
+    }
+
+    #[test]
+    fn a_grant_for_a_run_serves_only_that_run() {
+        let once = active(0, 1_000, None);
+        assert!(once.serves_run(None));
+        assert!(once.serves_run(Some("any")));
+
+        let run = Grant {
+            run_id: Some("r1".into()),
+            for_run: true,
+            ..once.clone()
+        };
+        assert!(run.serves_run(Some("r1")));
+        assert!(!run.serves_run(Some("r2")), "another run");
+        assert!(!run.serves_run(None), "no run at all");
+        // A grant for a run that named none serves nothing again, rather
+        // than every request that names none.
+        let nameless = Grant {
+            run_id: None,
+            ..run
+        };
+        assert!(!nameless.serves_run(None));
+
+        // A grant stored before runs reads back as answered once.
+        let mut stored = serde_json::to_value(&once).unwrap();
+        stored.as_object_mut().unwrap().remove("forRun");
+        assert!(!serde_json::from_value::<Grant>(stored).unwrap().for_run);
     }
 
     #[test]

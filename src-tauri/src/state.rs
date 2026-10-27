@@ -288,6 +288,11 @@ pub struct AppState {
     /// process with one id.
     #[cfg(desktop)]
     pub install_id: std::sync::OnceLock<String>,
+    /// The browser host's connections, which the lock signals and the
+    /// agents' wake-ups reach (`browser::server::hub`): one for the app, fed
+    /// by both of its listeners.
+    #[cfg(desktop)]
+    pub hub: rowel_broker::hub::Hub,
 }
 
 impl AppState {
@@ -339,6 +344,8 @@ impl Default for AppState {
             agent_expiry: crate::timer::Timer::spawn(),
             #[cfg(desktop)]
             install_id: std::sync::OnceLock::new(),
+            #[cfg(desktop)]
+            hub: rowel_broker::hub::Hub::default(),
         }
     }
 }

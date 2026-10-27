@@ -4821,6 +4821,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "url",
+ "windows-registry 0.100.0",
  "zeroize",
 ]
 

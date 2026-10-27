@@ -2,12 +2,11 @@ use std::sync::Mutex;
 
 use serde_json::{json, Map, Value};
 
-use super::manifest::{self, Family, KEEPASSXC, ROWEL};
 use super::protocol::str_of;
 use super::protocol::Code;
 use super::{
     client_covered, clients_in, covered, decide, env_var, frame, group_container, group_socket_dir,
-    item_by_name, outcome, proxy, resolved, settle, visible_in, Answer, AskKind, Asking, Candidate,
+    item_by_name, outcome, resolved, settle, visible_in, Answer, AskKind, Asking, Candidate,
     Client, ClientKind, GrantAnswer, Lockbox, Locked, NotAsked, Pending, Prepared,
     SafariSocketError, StepUp, Verdict, IDENTIFIER, SUN_PATH_MAX,
 };
@@ -400,6 +399,7 @@ fn yes(item_id: &str) -> Verdict {
     Verdict::Answered(Some(GrantAnswer {
         item_id: item_id.into(),
         standing_days: Some(7),
+        for_run: false,
     }))
 }
 
@@ -681,7 +681,13 @@ fn a_use_whose_row_will_not_write_leaves_the_grant_as_it_was() {
 
     store.allow_audit_writes().unwrap();
     assert_eq!(fill(&mut held, &own), Ok(true));
-    assert_eq!(fill(&mut held, &own), Ok(false), "its one use is spent");
+    // Spent at its one use: over, which its holder is told, so the
+    // extension forgets it and asks afresh.
+    assert_eq!(
+        fill(&mut held, &own),
+        Err(Code::GrantExpired),
+        "its one use is spent"
+    );
     assert_eq!(held.grants[0].state, State::Spent);
     assert_eq!(fill(&mut held, &agents_fill), Ok(true));
     assert_eq!(held.grants[1].served_to.as_deref(), Some("ext"));
@@ -1210,9 +1216,9 @@ fn the_answer_names_the_item_picked_or_why_not() {
     };
     let candidates = [candidate("gh"), candidate("gh2")];
 
-    let (picked, days) = outcome(&yes("gh2"), &candidates).expect("picked");
+    let (picked, lasting) = outcome(&yes("gh2"), &candidates).expect("picked");
     assert_eq!(picked.item.id, "gh2");
-    assert_eq!(days, Some(7));
+    assert_eq!(lasting, rowel_broker::agents::Lasting::Days(7));
     assert_eq!(outcome(&yes("nope"), &candidates).err(), Some("item"));
     assert_eq!(
         outcome(&Verdict::Answered(None), &candidates).err(),
@@ -1350,6 +1356,7 @@ fn an_agents_fill_grant_is_signalled_to_the_extensions_and_not_to_the_agent() {
         Verdict::Answered(Some(GrantAnswer {
             item_id: "gh".into(),
             standing_days: None,
+            for_run: false,
         })),
     )
     .expect("the yes stands");
@@ -2489,6 +2496,7 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
             Verdict::Answered(Some(GrantAnswer {
                 item_id: "nope".into(),
                 standing_days: None,
+                for_run: false,
             })),
         ),
         Err(Code::GrantDenied)
@@ -2507,6 +2515,7 @@ fn a_yes_to_a_two_item_env_ask_covers_both_and_for_days_names_both() {
         Verdict::Answered(Some(GrantAnswer {
             item_id: "ci2".into(),
             standing_days: None,
+            for_run: false,
         })),
     )
     .expect("the yes stands");
@@ -2893,25 +2902,6 @@ fn the_safari_extension_agrees_on_the_group_the_socket_and_the_cap() {
     assert!(framing.contains("maxLength = 1024 * 1024"));
 }
 
-#[test]
-fn a_browser_launch_is_told_by_what_it_puts_on_the_command_line() {
-    fn launched(list: &[&str]) -> bool {
-        proxy::launched_by_browser(list.iter().map(|s| s.to_string()))
-    }
-    assert!(launched(&[
-        "chrome-extension://oboonakemofpalcgghocfoadofidjkkk/"
-    ]));
-    assert!(launched(&["chrome-extension://abc/", "--parent-window=0"]));
-    assert!(launched(&[
-        "/path/manifest.json",
-        "keepassxc-browser@keepassxc.org"
-    ]));
-    assert!(launched(&["/path/manifest.json", "browser@rowel.app"]));
-    assert!(!launched(&["/path/manifest.json", "other@example.org"]));
-    assert!(!launched(&[]));
-    assert!(!launched(&["/Users/me/backup.rowel"]));
-}
-
 // --- manifests ---------------------------------------------------------------
 
 #[test]
@@ -2921,314 +2911,6 @@ fn the_identifier_is_the_one_tauri_builds_with() {
 }
 
 #[test]
-fn rowels_manifest_names_its_own_host_and_extension() {
-    let exe = std::path::Path::new("/Applications/Rowel.app/Contents/MacOS/rowel");
-    let chromium: Value =
-        serde_json::from_str(&manifest::manifest(&ROWEL, Family::Chromium, exe)).unwrap();
-    assert_eq!(chromium["name"], "app.rowel.browser");
-    assert_eq!(chromium["type"], "stdio");
-    assert_eq!(chromium["path"], exe.to_string_lossy().as_ref());
-    assert_eq!(
-        chromium["allowed_origins"],
-        json!([
-            "chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/",
-            "chrome-extension://aajfpjaphnegnekpggjnocmgbhkabeke/"
-        ])
-    );
-    assert!(chromium.get("allowed_extensions").is_none());
-
-    let firefox: Value =
-        serde_json::from_str(&manifest::manifest(&ROWEL, Family::Firefox, exe)).unwrap();
-    assert_eq!(firefox["name"], "app.rowel.browser");
-    assert_eq!(firefox["allowed_extensions"], json!(["browser@rowel.app"]));
-    assert!(firefox.get("allowed_origins").is_none());
-}
-
-#[test]
-fn the_compatibility_manifest_names_keepassxcs_host_and_the_stock_extension() {
-    let exe = std::path::Path::new("/Applications/Rowel.app/Contents/MacOS/rowel");
-    let chromium: Value =
-        serde_json::from_str(&manifest::manifest(&KEEPASSXC, Family::Chromium, exe)).unwrap();
-    assert_eq!(chromium["name"], "org.keepassxc.keepassxc_browser");
-    assert_eq!(chromium["path"], exe.to_string_lossy().as_ref());
-    assert_eq!(
-        chromium["allowed_origins"],
-        json!([
-            "chrome-extension://oboonakemofpalcgghocfoadofidjkkk/",
-            "chrome-extension://pdffhmdngciaglkoonimfcmckehcpafo/"
-        ])
-    );
-    assert!(chromium.get("allowed_extensions").is_none());
-
-    let firefox: Value =
-        serde_json::from_str(&manifest::manifest(&KEEPASSXC, Family::Firefox, exe)).unwrap();
-    assert_eq!(
-        firefox["allowed_extensions"],
-        json!(["keepassxc-browser@keepassxc.org"])
-    );
-    assert!(firefox.get("allowed_origins").is_none());
-}
-
-#[test]
-fn a_manifest_in_place_is_told_apart_from_keepassxcs_own() {
-    use manifest::{classify, Found};
-    let exe = std::path::Path::new("/Applications/Rowel.app/Contents/MacOS/rowel");
-    let ours = manifest::manifest(&KEEPASSXC, Family::Chromium, exe);
-    assert_eq!(classify(&KEEPASSXC, &ours, exe), Found::Current);
-
-    let moved = std::path::Path::new("/opt/rowel/rowel");
-    assert_eq!(classify(&KEEPASSXC, &ours, moved), Found::Stale);
-
-    assert_eq!(classify(&KEEPASSXC, &keepassxcs_own(), exe), Found::Foreign);
-    assert_eq!(classify(&KEEPASSXC, "not json", exe), Found::Foreign);
-
-    let rowel = manifest::manifest(&ROWEL, Family::Chromium, exe);
-    assert_eq!(classify(&ROWEL, &rowel, exe), Found::Current);
-}
-
-// The places a browser reads manifests from, as a directory: one folder per
-// browser, a `<host name>.json` in each. Browsers not `present` are not here.
-struct Places {
-    dir: tempfile::TempDir,
-    present: Vec<&'static str>,
-}
-
-impl Places {
-    fn new(present: &[&'static str]) -> Self {
-        Places {
-            dir: tempfile::tempdir().unwrap(),
-            present: present.to_vec(),
-        }
-    }
-
-    fn path(&self, host: &manifest::NativeHost, browser: &str) -> std::path::PathBuf {
-        self.dir
-            .path()
-            .join(browser)
-            .join(format!("{}.json", host.name))
-    }
-
-    fn read(&self, host: &manifest::NativeHost, browser: &str) -> Option<String> {
-        std::fs::read_to_string(self.path(host, browser)).ok()
-    }
-
-    fn put(&self, host: &manifest::NativeHost, browser: &str, text: &str) {
-        let path = self.path(host, browser);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, text).unwrap();
-    }
-
-    fn status(&self, exe: &std::path::Path, compat: bool, browser: &str) -> manifest::Status {
-        manifest::status_in(self, Some(exe), compat)
-            .into_iter()
-            .find(|status| status.id == browser)
-            .unwrap()
-    }
-}
-
-impl manifest::Places for Places {
-    fn detected(&self, browser: &manifest::Browser) -> bool {
-        self.present.contains(&browser.id)
-    }
-
-    fn existing(&self, host: &manifest::NativeHost, browser: &manifest::Browser) -> Option<String> {
-        self.read(host, browser.id)
-    }
-
-    fn install(
-        &self,
-        host: &manifest::NativeHost,
-        browser: &manifest::Browser,
-        manifest: &str,
-    ) -> std::io::Result<()> {
-        self.put(host, browser.id, manifest);
-        Ok(())
-    }
-
-    fn remove(
-        &self,
-        host: &manifest::NativeHost,
-        browser: &manifest::Browser,
-    ) -> std::io::Result<()> {
-        match std::fs::remove_file(self.path(host, browser.id)) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            other => other,
-        }
-    }
-}
-
-fn keepassxcs_own() -> String {
-    json!({
-        "name": KEEPASSXC.name,
-        "description": "KeePassXC integration with native messaging support",
-        "path": "/Applications/KeePassXC.app/Contents/MacOS/keepassxc-proxy",
-        "type": "stdio",
-        "allowed_origins": ["chrome-extension://oboonakemofpalcgghocfoadofidjkkk/"]
-    })
-    .to_string()
-}
-
-const EXE: &str = "/Applications/Rowel.app/Contents/MacOS/rowel";
-
-#[test]
-fn install_writes_both_names_with_compatibility_on() {
-    let exe = std::path::Path::new(EXE);
-    let places = Places::new(&["chrome", "firefox"]);
-
-    manifest::install_in(&places, Some(exe), true);
-
-    for (browser, family) in [("chrome", Family::Chromium), ("firefox", Family::Firefox)] {
-        assert_eq!(
-            places.read(&ROWEL, browser),
-            Some(manifest::manifest(&ROWEL, family, exe))
-        );
-        assert_eq!(
-            places.read(&KEEPASSXC, browser),
-            Some(manifest::manifest(&KEEPASSXC, family, exe))
-        );
-        let status = places.status(exe, true, browser);
-        assert!(status.installed);
-        assert!(!status.conflict);
-    }
-    // A browser not on this machine is not registered with.
-    assert_eq!(places.read(&ROWEL, "edge"), None);
-    assert!(!places.status(exe, true, "edge").installed);
-}
-
-#[test]
-fn install_writes_only_rowels_name_with_compatibility_off() {
-    let exe = std::path::Path::new(EXE);
-    let places = Places::new(&["chrome"]);
-
-    manifest::install_in(&places, Some(exe), false);
-
-    assert!(places.read(&ROWEL, "chrome").is_some());
-    assert_eq!(places.read(&KEEPASSXC, "chrome"), None);
-    assert!(places.status(exe, false, "chrome").installed);
-}
-
-#[test]
-fn turning_compatibility_off_takes_back_only_the_keepassxc_manifest() {
-    let exe = std::path::Path::new(EXE);
-    let places = Places::new(&["chrome"]);
-    manifest::install_in(&places, Some(exe), true);
-
-    manifest::install_in(&places, Some(exe), false);
-
-    assert!(places.read(&ROWEL, "chrome").is_some());
-    assert_eq!(places.read(&KEEPASSXC, "chrome"), None);
-}
-
-// The layout from before Rowel had a name of its own: one manifest, under
-// KeePassXC's name, for an executable since moved. It is rewritten with
-// compatibility on and taken back with it off, never left pointing at nothing.
-#[test]
-fn a_manifest_from_before_the_rename_is_rewritten_or_taken_back() {
-    let exe = std::path::Path::new(EXE);
-    let old = manifest::manifest(
-        &KEEPASSXC,
-        Family::Chromium,
-        std::path::Path::new("/opt/rowel/rowel"),
-    );
-
-    let places = Places::new(&["chrome"]);
-    places.put(&KEEPASSXC, "chrome", &old);
-    manifest::install_in(&places, Some(exe), true);
-    assert_eq!(
-        places.read(&KEEPASSXC, "chrome"),
-        Some(manifest::manifest(&KEEPASSXC, Family::Chromium, exe))
-    );
-
-    let places = Places::new(&["chrome"]);
-    places.put(&KEEPASSXC, "chrome", &old);
-    manifest::install_in(&places, Some(exe), false);
-    assert_eq!(places.read(&KEEPASSXC, "chrome"), None);
-    assert!(places.read(&ROWEL, "chrome").is_some());
-}
-
-#[test]
-fn keepassxcs_own_manifest_is_left_alone_and_reported_only_with_compatibility_on() {
-    let exe = std::path::Path::new(EXE);
-    let places = Places::new(&["chrome"]);
-    places.put(&KEEPASSXC, "chrome", &keepassxcs_own());
-
-    manifest::install_in(&places, Some(exe), true);
-    assert_eq!(places.read(&KEEPASSXC, "chrome"), Some(keepassxcs_own()));
-    let status = places.status(exe, true, "chrome");
-    // Rowel's own extension still reaches it: the clash is KeePassXC-Browser's.
-    assert!(status.installed);
-    assert!(status.conflict);
-
-    manifest::install_in(&places, Some(exe), false);
-    assert_eq!(places.read(&KEEPASSXC, "chrome"), Some(keepassxcs_own()));
-    assert!(!places.status(exe, false, "chrome").conflict);
-
-    manifest::remove_in(&places, Some(exe));
-    assert_eq!(places.read(&KEEPASSXC, "chrome"), Some(keepassxcs_own()));
-}
-
-#[test]
-fn remove_takes_back_both_names_from_every_browser() {
-    let exe = std::path::Path::new(EXE);
-    let mut places = Places::new(&["chrome", "firefox"]);
-    manifest::install_in(&places, Some(exe), true);
-    // Written while the browser was here; it has gone since.
-    places.present.clear();
-
-    manifest::remove_in(&places, Some(exe));
-
-    for browser in ["chrome", "firefox"] {
-        assert_eq!(places.read(&ROWEL, browser), None);
-        assert_eq!(places.read(&KEEPASSXC, browser), None);
-        assert!(!places.status(exe, true, browser).installed);
-    }
-}
-
-// Windows' flat manifest from before the rename, `<data>/browser/<id>.json`:
-// kept while KeePassXC's registry value names it — however that value spells
-// the path — and deleted once the value names anything else, or is gone.
-#[test]
-fn the_legacy_windows_manifest_goes_only_once_the_registry_stops_naming_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let legacy = dir.path().join("browser").join("chrome.json");
-    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-    std::fs::write(&legacy, "{}").unwrap();
-    let spelled = legacy.to_string_lossy().into_owned();
-
-    for named in [
-        spelled.clone(),
-        spelled.to_uppercase(),
-        spelled.replace('/', "\\"),
-        format!("{spelled}\\"),
-    ] {
-        manifest::remove_unless_named(&legacy, Some(&named)).unwrap();
-        assert!(
-            legacy.exists(),
-            "deleted while the registry named it as {named}"
-        );
-    }
-
-    let rewritten = dir
-        .path()
-        .join("browser")
-        .join("chrome")
-        .join(format!("{}.json", KEEPASSXC.name));
-    manifest::remove_unless_named(&legacy, Some(&rewritten.to_string_lossy())).unwrap();
-    assert!(!legacy.exists());
-
-    // Already gone, and no key left: nothing to do, and no error.
-    manifest::remove_unless_named(&legacy, None).unwrap();
-
-    std::fs::write(&legacy, "{}").unwrap();
-    manifest::remove_unless_named(&legacy, None).unwrap();
-    assert!(!legacy.exists());
-}
-
-#[test]
-fn every_browser_has_a_place_on_every_platform() {
-    for browser in manifest::BROWSERS {
-        assert!(!browser.id.is_empty());
-        assert!(!browser.label.is_empty());
-    }
+fn a_missing_field_reads_as_empty() {
     assert_eq!(str_of(&Map::new(), "missing"), "");
 }

@@ -41,7 +41,7 @@ the extension's socket, the broker before it asks for a password or binds
 anything, whatever it listens on. Whichever is second is refused — the
 broker exits saying so, the app logs it and does not serve the extension —
 so neither can replace the other's live socket on its way to failing, and no
-two brokers write the same lockbox under the same install id. The lock is
+two brokers write the same lockbox at once. The lock is
 held until the process ends and released by the kernel however it ends, so a
 crash needs no cleanup.
 
@@ -58,9 +58,13 @@ must be on, as in the app.
    `~/Library/Application Support/app.rowel.desktop`, on Linux
    `~/.local/share/app.rowel.desktop` (a debug build's is the `dev`
    subdirectory). The primary lockbox *is* the directory; another lockbox is
-   `workspaces/<id>` in it beside `workspaces.json`. The install id file
-   travels with it, so the audit chain the device started continues on the
-   box; the vault is served as it was copied — the broker does not sync.
+   `workspaces/<id>` in it beside `workspaces.json`. The device's
+   `install_id` file travels with it and is left alone: the broker writes its
+   audit rows under an id of its own, minted on its first run into
+   `serve_writer_id` (owner-only), so the device's chain and the box's never
+   fork. Copying a box's data directory on to another box carries that file
+   too; delete `serve_writer_id` from the copy so the new box mints its own.
+   The vault is served as it was copied — the broker does not sync.
 3. Install the command line tool ([below](#installing-the-command-line-tool)),
    reached as `rowel` from here on.
 4. Unlock and serve:
@@ -207,12 +211,12 @@ answers it:
 
 ```
 rowel serve: [a1b2c3d4…] Claude Code (agent) asks to use "Stripe (live)" in header mode at GET api.stripe.com/v1/* — reason: deploy
-             answer with: rowel approve a1b2c3d4… [--item <id>] [--days N] | rowel approve a1b2c3d4… --deny
+             answer with: rowel approve a1b2c3d4… [--item <id>] [--days N | --run] | rowel approve a1b2c3d4… --deny
 ```
 
 ```
 rowel approve [--data-dir <path>]                              # list what is waiting, one line per ask
-rowel approve <id> [--item <id>] [--days N]                    # allow a grant: the item (needed when several match), for N days
+rowel approve <id> [--item <id>] [--days N | --run]            # allow a grant: the item (needed when several match), for N days or this run
 rowel approve <id> [--name <name>]                             # let a client in, under a name (default: the platform's label)
 rowel approve <id> [--account <n>]                             # a passkey ceremony, as account n (default 0)
 rowel approve <id> --deny
@@ -220,6 +224,9 @@ rowel approve <id> --deny
 
 A grant ask marked stepped up prompts for the master password. `--days N`
 writes a standing rule into the lockbox, as the app's "for N days" does.
+`--run` is the app's "for this run", offered (`[--days N | --run]`) only when
+the request named a run: further requests the agent marks as the same run are
+served under the grant for at most 8 hours.
 Every decision is an audit row in the lockbox: `requested`, `granted`,
 `denied` with `user`, `timeout`, `lockbox` or `no_rule`, `used` for every
 value a sidecar is served.
@@ -266,6 +273,44 @@ out, so hanging up and reconnecting is not a way past the ceiling. Put the liste
 loopback address or behind a reverse proxy that authenticates, as with any
 service; the ceiling keeps a flood from taking the process down, it does
 not keep a flood from occupying the connections an agent would use.
+
+## The browser extension on the box
+
+The broker serves the same socket the app does, so the Rowel extension in a
+browser on the box can fill from it — once the browser can find it. A
+browser finds a native messaging host by a manifest in a directory of its
+own, which the app writes for itself; on a box without the app, the broker
+writes it:
+
+```bash
+rowel serve --install-host [--data-dir /srv/rowel]     # register, then exit
+rowel serve --uninstall-host [--data-dir /srv/rowel]   # take it back
+```
+
+`--install-host` writes `native-host` into the data directory — a launcher,
+executable by you alone, that runs `rowel native-host --data-dir <dir>`, the
+relay between the browser's stdio and the broker's socket — and a manifest
+naming it, `app.rowel.browser.json`, for every browser that has run here:
+Chrome, Chromium, Edge, Brave and Vivaldi under their own directories
+(`~/.config/<browser>/NativeMessagingHosts/` on Linux, `~/Library/Application
+Support/<browser>/NativeMessagingHosts/` on macOS) and Firefox under
+Mozilla's (`~/.mozilla/native-messaging-hosts/`, `~/Library/Application
+Support/Mozilla/NativeMessagingHosts/`). The manifest lets in the Rowel
+extension's ids and nothing else. Start the browser and install the
+extension first, so its directory exists; then run `--install-host`, and
+again after moving the binary or the data directory. It serves nothing and
+takes only `--data-dir`; `rowel serve` itself is started as usual, and the
+extension connects while it runs.
+
+A manifest the app wrote (or another program) under the same name is left
+alone and reported, and the app leaves the broker's alone in turn: on a
+machine with both, whichever registered first is the one the browser
+launches. Both relays reach the socket in the app's data directory, which is
+`rowel serve`'s default, so either works there; a broker on another
+`--data-dir` needs its own. Windows is not supported: browsers find a host
+there through the registry, and the app registers itself. A browser
+installed as a Snap or a Flatpak may not be allowed to launch a host outside
+its sandbox.
 
 ## A systemd unit
 

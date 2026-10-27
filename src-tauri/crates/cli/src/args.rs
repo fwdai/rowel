@@ -35,9 +35,12 @@ usage: rowel-cli <command>
   serve [--data-dir <path>] [--lockbox <id>] [--config <path>] [--key-file <path> | --key-fd <n>]
         [--ws <addr>] [--no-socket] [--idle-lock <minutes>] [--ask-timeout <seconds>]
                                       the headless broker: serve a lockbox to agents on a box without the app
+  serve --install-host | --uninstall-host [--data-dir <path>]
+                                      register the extension's native messaging host with this box's browsers, or take it back
+  native-host [--data-dir <path>]     the relay a browser launches to reach the broker (what --install-host registers)
   serve --server --data-dir <path> [--config <path>]
                                       a Rowel Server: org lockboxes for a company's members and agents
-  approve [<id> [--item <id>] [--days N] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
+  approve [<id> [--item <id>] [--days N | --run] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
                                       list what a running broker is waiting on, or answer one ask
   admin rules list | rules add --agent <key|any> --items <lockbox|id,id|tag:<t>|kind:<k>> --mode <fill|passkey|header|env>
                    --target <origin | \"[METHODS ]host/path\" | command line> [--approval auto|ask|step_up]
@@ -78,6 +81,9 @@ pub enum Command {
     },
     Proxy(ProxyArgs),
     Serve(ServeArgs),
+    NativeHost {
+        data_dir: Option<PathBuf>,
+    },
     Approve(ApproveArgs),
     Admin(AdminArgs),
     AdminServer(ServerAdminArgs),
@@ -210,16 +216,34 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
                         serve.ask_timeout_seconds = Some(number_of(&arg, &mut args)?)
                     }
                     "--server" => serve.server = true,
+                    "--install-host" => serve.install_host = true,
+                    "--uninstall-host" => serve.uninstall_host = true,
                     other => return Err(unexpected(other)),
                 }
             }
             if serve.key_file.is_some() && serve.key_fd.is_some() {
                 return Err(Usage("serve takes --key-file or --key-fd, not both".into()));
             }
+            if serve.install_host || serve.uninstall_host {
+                host_mode(&serve)?;
+            }
             if serve.server {
                 server_mode(&serve)?;
             }
             Ok(Command::Serve(serve))
+        }
+        // The relay a browser launches: the data directory the launcher
+        // names, then whatever the browser adds (`relay::is_browser_arg`).
+        Some("native-host") => {
+            let mut data_dir = None;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--data-dir" => data_dir = Some(PathBuf::from(value_of(&arg, &mut args)?)),
+                    browser if rowel_broker::relay::is_browser_arg(browser) => {}
+                    other => return Err(unexpected(other)),
+                }
+            }
+            Ok(Command::NativeHost { data_dir })
         }
         Some("approve") => {
             let mut approve = ApproveArgs::default();
@@ -233,6 +257,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
                     "--name" => approve.name = Some(value_of(&arg, &mut args)?),
                     "--account" => approve.account = Some(number_of(&arg, &mut args)?),
                     "--deny" => approve.deny = true,
+                    "--run" => approve.run = true,
                     other if other.starts_with('-') => return Err(unexpected(other)),
                     id if approve.id.is_none() => approve.id = Some(id.to_string()),
                     other => return Err(unexpected(other)),
@@ -243,7 +268,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
                     || approve.days.is_some()
                     || approve.name.is_some()
                     || approve.account.is_some()
-                    || approve.deny)
+                    || approve.deny
+                    || approve.run)
             {
                 return Err(Usage("approve needs the ask's id before its answer".into()));
             }
@@ -310,6 +336,34 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, Usage> {
         Some(other) => Err(Usage(format!("unknown command '{other}'"))),
         None => Err(Usage("a command is needed".into())),
     }
+}
+
+/// What `serve --install-host` and `--uninstall-host` may be given: one of
+/// them, and the data directory whose broker the browsers are to reach.
+/// Registering serves nothing, so every other flag is a mistake.
+fn host_mode(serve: &ServeArgs) -> Result<(), Usage> {
+    if serve.install_host && serve.uninstall_host {
+        return Err(Usage(
+            "serve takes --install-host or --uninstall-host, not both".into(),
+        ));
+    }
+    let serving = [
+        ("--server", serve.server),
+        ("--lockbox", serve.lockbox.is_some()),
+        ("--config", serve.config.is_some()),
+        ("--key-file", serve.key_file.is_some()),
+        ("--key-fd", serve.key_fd.is_some()),
+        ("--ws", serve.ws.is_some()),
+        ("--no-socket", serve.no_socket),
+        ("--idle-lock", serve.idle_lock_minutes.is_some()),
+        ("--ask-timeout", serve.ask_timeout_seconds.is_some()),
+    ];
+    if let Some((flag, _)) = serving.iter().find(|(_, given)| *given) {
+        return Err(Usage(format!(
+            "{flag} is for serving; --install-host and --uninstall-host take --data-dir alone"
+        )));
+    }
+    Ok(())
 }
 
 /// What `serve --server` may be given: a data directory, which it must be
@@ -689,7 +743,7 @@ mod tests {
                 no_socket: true,
                 idle_lock_minutes: Some(10),
                 ask_timeout_seconds: Some(90),
-                server: false,
+                ..ServeArgs::default()
             }))
         );
         assert_eq!(
@@ -701,6 +755,45 @@ mod tests {
                 ..ServeArgs::default()
             }))
         );
+        assert_eq!(
+            parsed("serve --install-host --data-dir /srv/rowel"),
+            Ok(Command::Serve(ServeArgs {
+                install_host: true,
+                data_dir: Some(PathBuf::from("/srv/rowel")),
+                ..ServeArgs::default()
+            }))
+        );
+        assert_eq!(
+            parsed("serve --uninstall-host"),
+            Ok(Command::Serve(ServeArgs {
+                uninstall_host: true,
+                ..ServeArgs::default()
+            }))
+        );
+        for mistake in [
+            "serve --install-host --uninstall-host",
+            "serve --install-host --key-file /k",
+            "serve --uninstall-host --server --data-dir /d",
+        ] {
+            assert!(parsed(mistake).is_err(), "{mistake}");
+        }
+        // The relay, as the launcher runs it with Chrome's arguments and
+        // with Firefox's; anything else is a mistake.
+        let relay = |data_dir: Option<&str>| {
+            Ok(Command::NativeHost {
+                data_dir: data_dir.map(PathBuf::from),
+            })
+        };
+        assert_eq!(
+            parsed("native-host --data-dir /srv/rowel chrome-extension://dimghkhcdfaokfingegmgbnpnpcoeofj/ --parent-window=0"),
+            relay(Some("/srv/rowel"))
+        );
+        assert_eq!(
+            parsed("native-host --data-dir /srv/rowel /home/me/.mozilla/native-messaging-hosts/app.rowel.browser.json browser@rowel.app"),
+            relay(Some("/srv/rowel"))
+        );
+        assert_eq!(parsed("native-host"), relay(None));
+        assert!(parsed("native-host --lockbox lb").is_err());
         assert_eq!(
             parsed("serve --key-fd 3"),
             Ok(Command::Serve(ServeArgs {
@@ -722,8 +815,18 @@ mod tests {
                 name: Some("Codex".into()),
                 account: Some(1),
                 deny: true,
+                run: false,
             }))
         );
+        assert_eq!(
+            parsed("approve a1b2 --run"),
+            Ok(Command::Approve(ApproveArgs {
+                id: Some("a1b2".into()),
+                run: true,
+                ..ApproveArgs::default()
+            }))
+        );
+        assert!(parsed("approve --run").is_err(), "an answer needs its ask");
         let admin = |command| {
             Ok(Command::Admin(AdminArgs {
                 data_dir: None,

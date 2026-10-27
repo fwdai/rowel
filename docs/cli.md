@@ -173,7 +173,8 @@ The same binary is the broker on a box without the app:
 ```
 rowel serve [--data-dir <path>] [--lockbox <id>] [--config <path>] [--key-file <path> | --key-fd <n>]
             [--ws <addr>] [--no-socket] [--idle-lock <minutes>] [--ask-timeout <seconds>]
-rowel approve [<id> [--item <id>] [--days N] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
+rowel serve --install-host | --uninstall-host [--data-dir <path>]
+rowel approve [<id> [--item <id>] [--days N | --run] [--name <name>] [--account <n>] [--deny]] [--data-dir <path>]
 rowel admin rules list|add|remove … | agents on|off [--lockbox <id>] | key-file <path> | lock
 ```
 

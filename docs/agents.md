@@ -43,6 +43,12 @@ fill and, when an agent asked for it, the agent and its reason. You answer:
 - **Allow once**: fills this login on this site now, and for the rest of the
   same sign-in within the grant's 15 minutes (the TOTP step, a username-first
   second page, a retry).
+- **Allow for this run** (offered only when an agent's request names a run;
+  every request from the `rowel` command does, and for `rowel mcp` the run is
+  the agent's session): the same, and further requests the agent marks as the
+  same run are allowed without asking, for at most 8 hours. The agent decides
+  what a run is, so the 8 hours are the limit; ending the grant in Settings
+  ends it sooner.
 - **Allow for N days**: the same, and writes a standing rule for this client,
   this login and this site, so the next visit fills without asking until the
   rule ends. The default N is set in Settings › Browser & agents (**Default

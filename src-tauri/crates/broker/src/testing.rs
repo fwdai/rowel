@@ -14,6 +14,7 @@ use zeroize::Zeroizing;
 use crate::actions::{Client, ClientKind, Connection, Hello, Host, Login, VisibleRef};
 use crate::client::{Channel, ChannelError, Transport};
 use crate::grant::{GrantReply, GrantRequest, Mode, ResolveContext, State, Target, VisibleItem};
+use crate::hub::Hub;
 use crate::passkeys::{self, Assertion, Registration};
 use crate::protocol::{Code, NONCE_LEN, VERSION};
 use crate::reference::Reference;
@@ -77,6 +78,8 @@ pub struct Mock {
     /// The log will not take a row: every use a grant would allow is
     /// refused with `AuditUnavailable`, as the real host refuses it.
     pub audit_fails: Cell<bool>,
+    /// The connections serving this host, and no other.
+    pub hub: Hub,
 }
 
 pub type Save = (Option<String>, String, String, String, String);
@@ -168,6 +171,7 @@ impl Mock {
             signals: RefCell::new(HashMap::new()),
             exposures: RefCell::new(Vec::new()),
             audit_fails: Cell::new(false),
+            hub: Hub::default(),
         }
     }
 
@@ -309,6 +313,9 @@ pub fn login(id: &str, title: &str, username: &str, password: &str, totp: Option
 impl Host for Mock {
     fn enabled(&self) -> bool {
         self.enabled.get()
+    }
+    fn hub(&self) -> &Hub {
+        &self.hub
     }
     fn database_hash(&self) -> Option<String> {
         (!self.locked.get()).then(|| "abc123".to_string())
@@ -464,15 +471,24 @@ impl Host for Mock {
         let Some(grant) = grants.get_mut(grant_id) else {
             return Ok(false);
         };
-        if grant.state != State::Active || grant.item != item_id || grant.mode != mode {
+        let entitled = grant.client_key == client.key
+            || grant
+                .served_to
+                .as_deref()
+                .is_none_or(|served| served == client.key);
+        if !entitled || grant.item != item_id || grant.mode != mode {
             return Ok(false);
         }
-        if grant.client_key != client.key {
-            match &grant.served_to {
-                None => grant.served_to = Some(client.key.clone()),
-                Some(served) if *served == client.key => {}
-                Some(_) => return Ok(false),
-            }
+        // Over, for one who may be served under it: said so, as the real
+        // host says it, so the extension asks afresh.
+        if matches!(grant.state, State::Expired | State::Spent) {
+            return Err(Code::GrantExpired);
+        }
+        if grant.state != State::Active {
+            return Ok(false);
+        }
+        if grant.client_key != client.key && grant.served_to.is_none() {
+            grant.served_to = Some(client.key.clone());
         }
         if self.audit_fails.get() {
             return Err(Code::AuditUnavailable);

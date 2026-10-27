@@ -774,6 +774,8 @@
   "It would fill the login through the browser extension, as you would yourself.": "It would fill the login through the browser extension, as you would yourself.",
   "Untitled": "Untitled",
   "Allow once": "Allow once",
+  "Allow for this run": "Allow for this run",
+  "Allowing for this run lets through what this client marks as the same run, without asking, for at most {{hours}} hours. The client decides what a run is, so the hours are the limit.": "Allowing for this run lets through what this client marks as the same run, without asking, for at most {{hours}} hours. The client decides what a run is, so the hours are the limit.",
   "Allow for 1 day": "Allow for 1 day",
   "Allow for {{days}} days": "Allow for {{days}} days",
   "Days": "Days",

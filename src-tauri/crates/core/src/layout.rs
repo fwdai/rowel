@@ -43,6 +43,35 @@ pub const RETIRED_KEYS_FILE: &str = "vault.retired.sealed";
 /// a list nothing on this device can open.
 pub const RETIRED_KEYS_REKEY_BACKUP_FILE: &str = "vault.retired.sealed.rekey-backup";
 
+/// The app's own id on the data directory's root: its audit log's writer id
+/// (`storage::install_id`), which a workspace id cannot be — every install's
+/// primary lockbox is `default`.
+pub const INSTALL_ID_FILE: &str = "install_id";
+/// `rowel serve`'s writer id, beside the app's and never the same file: a
+/// data directory copied from a device brings the device's `install_id` with
+/// it, and a broker writing under that id would extend the device's chain
+/// from a second place — a fork no verifier can tell from tampering.
+pub const SERVE_WRITER_ID_FILE: &str = "serve_writer_id";
+
+/// The id kept at `path`, or a fresh one — 16 random bytes, hex — written
+/// there owner-only; an empty file, which a torn write leaves, mints afresh.
+/// When the write fails the id is just minted and the failure logged: the
+/// caller's one copy per process is what makes it stick, so every row of the
+/// process still chains under one writer.
+pub fn kept_id(path: &Path) -> String {
+    if let Ok(id) = std::fs::read_to_string(path) {
+        let id = id.trim();
+        if !id.is_empty() {
+            return id.to_string();
+        }
+    }
+    let id = crate::crypto::random_hex_id();
+    if let Err(e) = crate::atomic::atomic_write_private(path, id.as_bytes()) {
+        log::warn!("could not keep the writer id at {}: {e}", path.display());
+    }
+    id
+}
+
 /// Dev builds share the prod identifier, so isolate their data in a subdir
 /// to avoid mutating the real vault while iterating.
 pub fn dev_subdir(dir: PathBuf) -> PathBuf {
