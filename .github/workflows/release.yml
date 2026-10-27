@@ -163,6 +163,13 @@ jobs:
               cp src-tauri/target/release/rowel-cli src-tauri/binaries/rowel-cli-x86_64-unknown-linux-gnu
               ;;
             windows-latest)
+              # Git Bash puts its own MSYS perl first on PATH, and that perl
+              # lacks the modules OpenSSL's Configure needs (the vendored
+              # OpenSSL behind rusqlite's sqlcipher). openssl-src takes
+              # OPENSSL_SRC_PERL over PATH, so hand it the runner's Strawberry
+              # Perl, the one pwsh steps (and tauri-action) find.
+              export OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe
+              test -x "$OPENSSL_SRC_PERL" || { echo "::error::no Strawberry Perl at $OPENSSL_SRC_PERL"; exit 1; }
               cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml
               cp src-tauri/target/release/rowel-cli.exe src-tauri/binaries/rowel-cli-x86_64-pc-windows-msvc.exe
               ;;
