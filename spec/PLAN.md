@@ -120,11 +120,11 @@ site for N days. No new clients, no CLI yet. Spec `01` (agent-access flag),
       limits and deny-by-default (`03`).
 - [x] `rowel_broker::audit::Writer` and the `audit` table migration in core;
       rows written for every grant event (`09`, not yet synced or shown).
-- [ ] `Answer::Grant` in the consent slot; `agent_grant` event;
+- [x] `Answer::Grant` in the consent slot; `agent_grant` event;
       `BrowserConsent/GrantDialog/` with once · this run · N days · deny, item
       picker, step-up via biometrics or master password (`03`, `06`).
       *Audit 2026-10-27:* built except *this run*, which the dialog never
-      offered; it lands in PR C.
+      offered; built in PR C (#668): the run grant, capped at 8 h.
 - [x] Rules and standing grants as sealed `meta` JSON; Settings › Browser &
       agents lists rules and active grants with revoke (`03`, `06`).
 - [x] `settings.browser.agents.enabled` (default off) gating all of the above.
@@ -134,10 +134,10 @@ site for N days. No new clients, no CLI yet. Spec `01` (agent-access flag),
 - [x] Host: in agent mode a fill runs the grant flow (policy → ask → serve the
       one admitted item); outside agent mode behaviour is unchanged.
 - [x] Grant expiry via `timer::Timer` armed to the earliest deadline.
-- [ ] Tests: broker protocol tests through `Mock`; Playwright fixture page for
+- [x] Tests: broker protocol tests through `Mock`; Playwright fixture page for
       approved fill, denied fill, exposure; e2e spec for the dialog.
       *Audit 2026-10-27:* the denied-fill fixture and the `tests/e2e` dialog
-      spec were never written (the dialog has a Vitest test only); PR C.
+      spec were never written (the dialog had a Vitest test only); both built in PR C (#668).
 - [x] Threat model: one paragraph noting that agent mode makes fills ask
       (`01`, full rewrite comes in I4).
 - [x] **Acceptance:** with agent mode on, reaching a login page in an agentic
@@ -313,9 +313,9 @@ or times out. This is the binary the server (I7) and the cloud (I9) run. Spec
 - [x] `rowel admin rules` to list, add and remove rules in the config; schema
       documented. *Outcome:* plus `admin agents on|off`, `admin key-file`,
       `admin lock`; schema in `docs/serve.md`.
-- [ ] Optional: `rowel serve --install-host` writes the native-messaging
+- [x] Optional: `rowel serve --install-host` writes the native-messaging
       manifest so a browser on that box can use the extension against it.
-      *Not built in I5; the owner chose to build it in PR C (2026-10-27).*
+      *Not built in I5; built in PR C (#668), with `rowel native-host` and the relay shared in `rowel_broker::relay`.*
 - [x] Integration test: `rowel serve` + `rowel mcp` + `rowel proxy` in a
       container, standing rules, one `ask` answered by `rowel approve`.
       *Outcome:* `crates/cli/tests/serve.rs` over the built binary and a temp
@@ -325,7 +325,7 @@ or times out. This is the binary the server (I7) and the cloud (I9) run. Spec
       grant under a standing rule and an env grant after a TTY approval; the
       app's extension connects to the same broker when the host manifest is
       installed. *Audit 2026-10-27:* the agent half holds; the extension half
-      waits on `--install-host` (PR C) and a standalone CLI artifact (PR B).
+      is now possible (`--install-host`, #668; standalone CLI archives, #667) and is the owner's run on a real VM.
 
 ---
 
@@ -467,10 +467,10 @@ when A, B and C are merged.
       writes `ended` and signs out, with a 30 s wall-clock recheck; the audit
       fails closed (`AuditUnavailable` = 47); the proxy forwards only what a
       grant covers (`05`, `06`, `09`).
-- [ ] **PR B, distribution:** the Windows *Install command line tool* path,
+- [x] **PR B, distribution** *(merged: #667)*: the Windows *Install command line tool* path,
       the AppImage link, standalone CLI tarballs (Linux x86_64 and arm64),
       extension zips attached to releases, `docs/releasing.md`.
-      *(in review: #667)* *Outcome:* on Windows the tool is copied to
+      *Outcome:* on Windows the tool is copied to
       `%LOCALAPPDATA%\app.rowel.desktop\bin\rowel.exe` and that folder goes on
       the user's PATH (the bundled folder holds the app's own `Rowel.exe`); an
       AppImage keeps a copy in the app's local data directory; both refresh at
@@ -479,9 +479,9 @@ when A, B and C are merged.
       `SHA256SUMS`; Chromium and Firefox zips attached; the extension version
       lives only in its source manifest; CLI, broker and core tests run on
       macOS and Windows CI; `--help` exits 0.
-- [ ] **PR C, plan gaps:** *this run* in the grant dialog, the denied-fill
+- [x] **PR C, plan gaps** *(merged: #668; also: a host's signals reach only its own connections, `rowel_broker::hub::Hub`)*: *this run* in the grant dialog, the denied-fill
       fixture, the `tests/e2e` dialog spec, the untranslated agent strings,
-      `rowel serve --install-host`. *(in review: #668, stacked on #666)*
+      `rowel serve --install-host`.
       *Outcome:* a run grant (`Grant.for_run`) serves only requests carrying
       its own `run_id` from the same client, capped at 8 h, offered only when
       the request has a run id; every locale complete and tested; an expired
@@ -490,7 +490,7 @@ when A, B and C are merged.
       `serve_writer_id`; manifests and relay in `rowel_broker::{manifest,
       relay}`, `rowel native-host`, `rowel serve --install-host` /
       `--uninstall-host` on macOS and Linux.
-- [ ] **PR D, open-core boundary** *(in review: #669; the server is `fwdai/rowel-server`, pinned at 59f1df3c)*: remove `crates/server`, `rowel admin
+- [x] **PR D, open-core boundary** *(merged: #669; the server is `fwdai/rowel-server`, pinned at 59f1df3c)*: remove `crates/server`, `rowel admin
       server`, the `--server` wiring and `docs/server.md` from the public
       repository; they live in the private `fwdai/rowel-server` (one package,
       binary `rowel-server serve` / `rowel-server admin`, public crates pinned by

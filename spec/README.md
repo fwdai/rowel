@@ -183,6 +183,10 @@ Read the overview first. Everything else hangs off it.
   bucket once it has refilled (`05`, `09`). PR D (#669) removes the server
   mode from the public repository; the spec names `rowel-server serve` and
   `rowel-server admin` throughout (`00 §4`, `07`, `08`, Q1, Q19, Q21).
+- **2026-10-27, Tier 1 follow-ups merged.** PRs B (#667), C (#668) and D
+  (#669) ticked; the I1 and I5 items the audit reopened ticked again as built
+  in C; a host's signals scoped to its own connections (`rowel_broker::hub`);
+  #656's agent-driven mark recorded in `05 §2`.
 
 ## Relationship to the other docs
 

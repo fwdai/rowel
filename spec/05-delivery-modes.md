@@ -42,6 +42,12 @@ Agent mode is both explicit and implicit: explicit when an agent client
 requests `fill`; implicit when the user switches it on in the extension for a
 browser profile an agent uses. Reliable *detection* of an agentic browser
 without its cooperation is an open question; the toggle is the simple answer.
+*As built in #656:* the toggle alone sits in the browser the agent drives, so
+the agent could switch it off. Rowel therefore also holds the fact itself:
+Settings › Browser & agents marks a paired extension as driven by an agent
+(`Client::driven_by_agent`). A marked extension is served logins and TOTP
+codes only under a grant it holds or was served under, whatever its own toggle
+says, and nothing at all while Agents is off.
 
 ## 3. Passkey, in detail
 
