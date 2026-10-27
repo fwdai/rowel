@@ -8,13 +8,6 @@ and the browser extension's packages. This doc covers the one-time setup and
 the per-release procedure. iOS is a separate workflow: see
 [releasing-ios.md](releasing-ios.md).
 
-> **Before the next release: merge PR D.** The command line tool still links
-> `rowel-server` (`crates/server`, `rowel admin server`, `rowel serve
-> --server`), which is leaving this repository for the private
-> `fwdai/rowel-server`. Every binary this workflow builds would ship it, and
-> the standalone archives would publish it. Do not run *Release* until that
-> removal is on `main`.
-
 ## Overview
 
 ```
