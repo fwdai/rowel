@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { useUi } from '@/store'
+import { useLayout } from '@/hooks/useLayout'
 import { cx } from '@/utils/cx'
 import ActiveTag from './ActiveTag'
 import { onCopyKey } from './copyKeys'
@@ -64,6 +65,8 @@ export default function ListColumn({
 }: Props) {
   const view = useUi(state => state.view)
   const health = view === 'health'
+  // Rows are picked in batches on the wide shell only (see List/Manager).
+  const batch = useLayout() === 'wide'
   const onKeyDown = useListKeys()
   const title = useListTitle()
 
@@ -104,7 +107,12 @@ export default function ListColumn({
           is a hero with its own buttons, and inside `role="listbox"` those are
           neither options nor reachable as controls. */}
       <div className={cx('min-h-0 flex-1 overflow-y-auto', scroller)}>
-        <div role="listbox" aria-label={title} onKeyDown={onCopyKey}>
+        <div
+          role="listbox"
+          aria-label={title}
+          aria-multiselectable={(batch && !health) || undefined}
+          onKeyDown={onCopyKey}
+        >
           <List />
         </div>
         {footer}

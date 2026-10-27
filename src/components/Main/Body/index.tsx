@@ -1,7 +1,8 @@
-import { useVault } from '@/store'
+import { useVault, selectBatch } from '@/store'
 import { cx } from '@/utils/cx'
 import ListColumn from './ListColumn'
 import SortMenu from './List/SortMenu'
+import BatchBar from './Batch'
 import DetailPane from './DetailPane'
 
 // The two content panes to the right of the rail: list column + detail pane.
@@ -10,6 +11,7 @@ import DetailPane from './DetailPane'
 // compete with, or navigate away from, an unsaved draft.
 export default function Body() {
   const writing = useVault(state => state.editing || !!state.creating)
+  const batch = useVault(selectBatch)
 
   return (
     <>
@@ -20,11 +22,14 @@ export default function Body() {
         data-testid="list-column"
         inert={writing || undefined}
         className={cx(
-          'flex min-h-0 w-[348px] flex-none border-r border-line',
+          'relative flex min-h-0 w-[348px] flex-none border-r border-line',
           writing && 'opacity-60'
         )}
       >
-        <ListColumn actions={<SortMenu />} />
+        {/* While the batch bar floats over the column's foot, the list keeps
+            its last rows scrollable out from under it. */}
+        <ListColumn actions={<SortMenu />} scroller={batch ? 'pb-14' : undefined} />
+        <BatchBar />
       </div>
       <DetailPane />
     </>

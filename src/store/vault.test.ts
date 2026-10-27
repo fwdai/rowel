@@ -21,7 +21,10 @@ import {
   setupAccountPending,
   initialApp,
   setFilterType,
-  lockVault
+  lockVault,
+  togglePicked,
+  pickAll,
+  keepPicked
 } from './index'
 
 const meta = (id: string, title = id): EntryMeta =>
@@ -139,6 +142,41 @@ describe('selection', () => {
 
     expect(useVault.getState().editing).toBe(false)
     expect(current()).toBeNull()
+  })
+
+  // Everything that acts on the open entry (⌘E, the copy chords, a dropped
+  // file) reads it through `selectCurrent`, so a batch opens nothing.
+  it('has no current entry while a batch is picked', () => {
+    setEntries([meta('a'), meta('b')])
+    setCurrentEntry('a')
+    togglePicked('b', ['a', 'b'])
+
+    expect([...useVault.getState().picked]).toEqual(['a', 'b'])
+    expect(current()).toBeNull()
+  })
+
+  // `keepPicked` is what the list calls with the rows it shows: a batch never
+  // holds a row out of sight, and never stays up with fewer than two.
+  it('holds a batch to the rows shown, settling to a selection when one is left', () => {
+    setEntries([meta('a'), meta('b'), meta('c')])
+    pickAll(['a', 'b', 'c'])
+
+    keepPicked(['a', 'c'])
+    expect([...useVault.getState().picked].sort()).toEqual(['a', 'c'])
+
+    keepPicked(['c'])
+    expect(useVault.getState().picked.size).toBe(0)
+    expect(current()?.id).toBe('c')
+  })
+
+  it('opens nothing when a batch has no row left in view', () => {
+    setEntries([meta('a'), meta('b')])
+    pickAll(['a', 'b'])
+
+    keepPicked([])
+
+    expect(useVault.getState().picked.size).toBe(0)
+    expect(useVault.getState().currentId).toBeNull()
   })
 })
 

@@ -895,5 +895,18 @@
   "Add": "Ekle",
   "Disconnect from {{tenant}}?": "{{tenant}} bağlantısı kesilsin mi?",
   "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Bu cihazda zaten bulunan kuruluş kutuları kalır ama eşitlenmeyi bırakır. Yeniden bağlanırsanız bu cihazın yeniden onaylanması gerekir.",
-  "This lockbox's key was sealed under a different key, so this device cannot open it.": "Bu kutunun anahtarı başka bir anahtarla mühürlenmiş; bu cihaz onu açamaz."
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "Bu kutunun anahtarı başka bir anahtarla mühürlenmiş; bu cihaz onu açamaz.",
+  "{{count}} selected_one": "{{count}} seçili",
+  "{{count}} selected_other": "{{count}} seçili",
+  "{{count}} items selected_one": "{{count}} kayıt seçildi",
+  "{{count}} items selected_other": "{{count}} kayıt seçildi",
+  "Archive {{count}} items?_one": "{{count}} kayıt arşivlensin mi?",
+  "Archive {{count}} items?_other": "{{count}} kayıt arşivlensin mi?",
+  "Some items could not be changed. Please try again.": "Bazı kayıtlar değiştirilemedi. Lütfen tekrar deneyin.",
+  "add or remove": "ekle veya çıkar",
+  "select a range": "aralık seç",
+  "select all": "tümünü seç",
+  "archive": "arşivle",
+  "delete forever": "kalıcı olarak sil",
+  "deselect": "seçimi kaldır"
 }

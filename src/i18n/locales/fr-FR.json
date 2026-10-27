@@ -909,5 +909,21 @@
   "Add": "Ajouter",
   "Disconnect from {{tenant}}?": "Se déconnecter de {{tenant}} ?",
   "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Les coffrets d’organisation déjà sur cet appareil restent, mais cessent de se synchroniser. Cet appareil devra être approuvé à nouveau si vous vous reconnectez.",
-  "This lockbox's key was sealed under a different key, so this device cannot open it.": "La clé de ce coffret a été scellée sous une autre clé : cet appareil ne peut donc pas l’ouvrir."
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "La clé de ce coffret a été scellée sous une autre clé : cet appareil ne peut donc pas l’ouvrir.",
+  "{{count}} selected_one": "{{count}} sélectionné",
+  "{{count}} selected_many": "{{count}} sélectionnés",
+  "{{count}} selected_other": "{{count}} sélectionnés",
+  "{{count}} items selected_one": "{{count}} élément sélectionné",
+  "{{count}} items selected_many": "{{count}} d’éléments sélectionnés",
+  "{{count}} items selected_other": "{{count}} éléments sélectionnés",
+  "Archive {{count}} items?_one": "Archiver {{count}} élément ?",
+  "Archive {{count}} items?_many": "Archiver {{count}} d’éléments ?",
+  "Archive {{count}} items?_other": "Archiver {{count}} éléments ?",
+  "Some items could not be changed. Please try again.": "Certains éléments n’ont pas pu être modifiés. Veuillez réessayer.",
+  "add or remove": "ajouter ou retirer",
+  "select a range": "sélectionner une plage",
+  "select all": "tout sélectionner",
+  "archive": "archiver",
+  "delete forever": "supprimer définitivement",
+  "deselect": "désélectionner"
 }

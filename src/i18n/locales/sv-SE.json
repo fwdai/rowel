@@ -895,5 +895,18 @@
   "Add": "Lägg till",
   "Disconnect from {{tenant}}?": "Koppla från {{tenant}}?",
   "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Organisationens bankfack som redan finns på den här enheten blir kvar, men slutar synkas. Den här enheten behöver godkännas igen om du ansluter på nytt.",
-  "This lockbox's key was sealed under a different key, so this device cannot open it.": "Det här bankfackets nyckel förseglades under en annan nyckel, så den här enheten kan inte öppna det."
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "Det här bankfackets nyckel förseglades under en annan nyckel, så den här enheten kan inte öppna det.",
+  "{{count}} selected_one": "{{count}} markerad",
+  "{{count}} selected_other": "{{count}} markerade",
+  "{{count}} items selected_one": "{{count}} objekt markerat",
+  "{{count}} items selected_other": "{{count}} objekt markerade",
+  "Archive {{count}} items?_one": "Arkivera {{count}} objekt?",
+  "Archive {{count}} items?_other": "Arkivera {{count}} objekt?",
+  "Some items could not be changed. Please try again.": "Vissa objekt kunde inte ändras. Försök igen.",
+  "add or remove": "lägg till eller ta bort",
+  "select a range": "markera ett intervall",
+  "select all": "markera alla",
+  "archive": "arkivera",
+  "delete forever": "radera för alltid",
+  "deselect": "avmarkera"
 }

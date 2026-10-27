@@ -27,8 +27,18 @@ export interface VaultState {
   // Tombstones, as the Archive view lists them. Not part of the unlock payload,
   // so this stays empty until the Archive is opened.
   archive: EntryMeta[]
-  /** The selected row, by id across live rows and tombstones alike. */
+  /**
+   * The selected row, by id across live rows and tombstones alike. While a
+   * batch is picked it is only where the keyboard sits: nothing is open.
+   */
   currentId: string | null
+  /**
+   * The rows picked for a batch action (⌘-click, ⇧-click, ⌘A): two or more,
+   * or none at all — one row picked is just the selection.
+   */
+  picked: ReadonlySet<string>
+  /** Where a ⇧ range grows from, once it is not the selection itself. */
+  anchor: string | null
   /** The selected row is open in the editor. */
   editing: boolean
   /** The kind of a new entry being drafted, or null when none is. */
@@ -46,10 +56,14 @@ export interface VaultState {
   revision: number
 }
 
+const NONE: ReadonlySet<string> = new Set()
+
 export const initialVault: VaultState = {
   items: [],
   archive: [],
   currentId: null,
+  picked: NONE,
+  anchor: null,
   editing: false,
   creating: null,
   prefill: null,
@@ -68,24 +82,114 @@ const findEntry = (state: Pick<VaultState, 'items' | 'archive'>, id: string | nu
 
 // The selection is an id, so the row it names is always the current one: a
 // merge that renamed it shows the new title, one that dropped it shows nothing.
+// A batch has no current entry, so everything that acts on the open one — ⌘E,
+// the copy chords, a dropped file, the palette — stands down while it is up.
 export const selectCurrent = (state: VaultState): EntryMeta | null =>
-  findEntry(state, state.currentId)
+  selectBatch(state) ? null : findEntry(state, state.currentId)
+
+/**
+ * A batch is up. The one test of it, for every surface that changes with it —
+ * the bar, the detail pane, the list's padding, the phone's push — so none can
+ * think a batch is up while another has let it go.
+ */
+export const selectBatch = (state: VaultState): boolean => state.picked.size > 0
 
 export const useCurrentEntry = () => useVault(selectCurrent)
 
 // --- selection and drafting ----------------------------------------------------
 
-const NOTHING_OPEN = { currentId: null, editing: false, creating: null, prefill: null }
+const NO_BATCH = { picked: NONE, anchor: null }
+
+const NOTHING_OPEN = { currentId: null, editing: false, creating: null, prefill: null, ...NO_BATCH }
 
 export const setNoEntry = () => useVault.setState(NOTHING_OPEN)
 
 // Also what a save lands on: selecting the row just written is the same state
 // change as selecting any other row.
 export const setCurrentEntry = (id: string) =>
-  useVault.setState({ currentId: id, creating: null, editing: false })
+  useVault.setState({ currentId: id, creating: null, editing: false, ...NO_BATCH })
 
 export const newEntry = (type: EntryType, prefill?: Record<string, string>) =>
-  useVault.setState({ creating: type, editing: false, currentId: null, prefill: prefill ?? null })
+  useVault.setState({
+    creating: type,
+    editing: false,
+    currentId: null,
+    prefill: prefill ?? null,
+    ...NO_BATCH
+  })
+
+// --- batch selection -----------------------------------------------------------
+
+// Finder's grammar, which every desktop list shares. Each takes `order`, the
+// rows as the list draws them: a range is a run of what is on screen, and a
+// selection a query has hidden is never swept into a batch.
+
+// What is picked before this gesture: the batch, or else the open row.
+const pickedIn = (state: VaultState, order: readonly string[]): string[] =>
+  order.filter(id => (selectBatch(state) ? state.picked.has(id) : id === state.currentId))
+
+// Two rows or more are a batch, with the keyboard on `cursor`; one is simply
+// that row selected; none is nothing open.
+const settle = (picked: Set<string>, cursor: string, anchor: string | null) => {
+  if (picked.size > 1) return { picked, currentId: cursor, anchor, editing: false, creating: null }
+  const [only] = picked
+  return only ? { currentId: only, editing: false, creating: null, ...NO_BATCH } : NOTHING_OPEN
+}
+
+/** ⌘-click: put a row into the batch, or take it out. */
+export const togglePicked = (id: string, order: readonly string[]) =>
+  useVault.setState(state => {
+    const picked = new Set(pickedIn(state, order))
+    if (!picked.delete(id)) picked.add(id)
+    return settle(picked, id, id)
+  })
+
+/**
+ * ⇧-click and ⇧↑↓: every row from the anchor to `id`. With `add` (⌘⇧-click)
+ * the run joins what is already picked instead of replacing it. The anchor
+ * stays put, so a second ⇧-click re-draws the run from the same row.
+ */
+export const pickRange = (id: string, order: readonly string[], add = false) =>
+  useVault.setState(state => {
+    const anchor = state.anchor ?? state.currentId
+    const from = anchor === null ? -1 : order.indexOf(anchor)
+    const to = order.indexOf(id)
+    if (from === -1 || to === -1) return settle(new Set([id]), id, null)
+    const run = order.slice(Math.min(from, to), Math.max(from, to) + 1)
+    return settle(new Set([...(add ? pickedIn(state, order) : []), ...run]), id, anchor)
+  })
+
+/** ⌘A: every row the list shows. The keyboard stays where it was. */
+export const pickAll = (order: readonly string[]) =>
+  useVault.setState(state => {
+    if (order.length === 0) return {}
+    const { currentId } = state
+    const cursor = currentId !== null && order.includes(currentId) ? currentId : order[0]
+    return settle(new Set(order), cursor, state.anchor)
+  })
+
+/**
+ * Hold the batch to the rows the list shows, whatever took the others out of
+ * view: a query, a filter, a sync that unstarred or retagged them, a delete.
+ * The list calls it each time what it shows changes (List/Manager), so a batch
+ * is always a pick out of what is on screen — one row left is simply
+ * selected, none is nothing open.
+ */
+export const keepPicked = (order: readonly string[]) =>
+  useVault.setState(state => {
+    const kept = new Set(order.filter(id => state.picked.has(id)))
+    if (kept.size === state.picked.size) return {}
+    const { currentId, anchor } = state
+    const cursor = currentId !== null && order.includes(currentId) ? currentId : [...kept][0]
+    return settle(kept, cursor, anchor !== null && order.includes(anchor) ? anchor : null)
+  })
+
+/**
+ * End the batch (Esc, the bar's close) on the row the keyboard is on, opening
+ * it: the list keeps its place rather than dropping back to nothing.
+ */
+export const clearPicked = () =>
+  useVault.setState(state => (selectBatch(state) ? NO_BATCH : {}))
 
 export const setPrefill = (prefill: Record<string, string>) => useVault.setState({ prefill })
 export const clearPrefill = () => useVault.setState({ prefill: null })
@@ -117,6 +221,7 @@ export const startEntry = (type: EntryType, prefill?: Record<string, string>) =>
 // A selection the incoming rows no longer have is dropped, and the edit with
 // it: an edit is an edit *of* the selection, and the phone (whose form is a
 // whole screen) would otherwise draw a form with no subject and no way back.
+// A batch is held to what the list then shows by the list itself (`keepPicked`).
 export const setEntries = (items: EntryMeta[]) =>
   useVault.setState(state => {
     const kept = findEntry({ items, archive: state.archive }, state.currentId) !== null
@@ -148,12 +253,29 @@ const buildEntry = (draft: EntryDraft): Entry =>
     ? ({ ...draft, updatedAt: now() } as Entry)
     : ({ ...draft, id: crypto.randomUUID(), createdAt: now(), updatedAt: now() } as Entry)
 
-// Insert or replace one metadata row in the list, keeping it a fresh array.
-const upsert = (items: EntryMeta[], meta: EntryMeta): EntryMeta[] => {
-  const index = items.findIndex(e => e.id === meta.id)
-  return index === -1
-    ? [...items, meta]
-    : items.map((item, i) => (i === index ? meta : item))
+// Insert or replace metadata rows in the list, keeping it a fresh array.
+const upsert = (items: EntryMeta[], ...metas: EntryMeta[]): EntryMeta[] => {
+  const fresh = new Map(metas.map(meta => [meta.id, meta]))
+  const known = new Set(items.map(item => item.id))
+  return [
+    ...items.map(item => fresh.get(item.id) ?? item),
+    ...metas.filter(meta => !known.has(meta.id))
+  ]
+}
+
+// The core takes one row per command, so a batch is that many calls at once.
+// What lands is applied whatever else fails — those rows really did change —
+// and the first failure is thrown after, for the caller to report.
+const each = async <T>(ids: readonly string[], op: (id: string) => Promise<T>) => {
+  const results = await Promise.allSettled(ids.map(id => op(id)))
+  const failure = results.find(result => result.status === 'rejected')
+  return {
+    done: new Set(ids.filter((_, i) => results[i].status === 'fulfilled')),
+    values: results.flatMap(result => (result.status === 'fulfilled' ? [result.value] : [])),
+    rethrow: () => {
+      if (failure) throw failure.reason
+    }
+  }
 }
 
 export const saveEntry = async (draft: EntryDraft) => {
@@ -196,15 +318,20 @@ export const saveTags = async (entry: Entry, tags: string[]) => {
   scheduleSync()
 }
 
-// What the UI calls "Archive": the backend op is a tombstone, so the row only
-// leaves All Items — `loadArchive` still lists it.
-export const deleteEntry = async (id: string) => {
-  await deleteEntryCmd(id)
-  setEntries(useVault.getState().items.filter(e => e.id !== id))
-  setNoEntry()
-  scheduleSync()
-  void runAudit()
+// What the UI calls "Archive": the backend op is a tombstone, so the rows only
+// leave All Items — `loadArchive` still lists them.
+export const deleteEntries = async (ids: readonly string[]) => {
+  const { done, rethrow } = await each(ids, deleteEntryCmd)
+  if (done.size) {
+    setEntries(useVault.getState().items.filter(e => !done.has(e.id)))
+    setNoEntry()
+    scheduleSync()
+    void runAudit()
+  }
+  rethrow()
 }
+
+export const deleteEntry = (id: string) => deleteEntries([id])
 
 export const loadArchive = async () => {
   try {
@@ -215,25 +342,47 @@ export const loadArchive = async () => {
   }
 }
 
-// Restore and purge both take the row out of the Archive and leave nothing
+// Restore and purge both take the rows out of the Archive and leave nothing
 // selected: the detail pane must not keep showing a row this view no longer has.
-const dropFromArchive = (id: string) => {
-  setArchive(useVault.getState().archive.filter(e => e.id !== id))
+const dropFromArchive = (ids: ReadonlySet<string>) => {
+  setArchive(useVault.getState().archive.filter(e => !ids.has(e.id)))
   setNoEntry()
 }
 
-export const restoreEntry = async (id: string) => {
-  const meta = await restoreEntryCmd(id)
-  setEntries(upsert(useVault.getState().items, meta))
-  dropFromArchive(id)
-  scheduleSync()
-  void runAudit()
+export const restoreEntries = async (ids: readonly string[]) => {
+  const { done, values, rethrow } = await each(ids, restoreEntryCmd)
+  if (done.size) {
+    setEntries(upsert(useVault.getState().items, ...values))
+    dropFromArchive(done)
+    scheduleSync()
+    void runAudit()
+  }
+  rethrow()
 }
 
-export const purgeEntry = async (id: string) => {
-  await purgeEntryCmd(id)
-  dropFromArchive(id)
-  scheduleSync()
+export const restoreEntry = (id: string) => restoreEntries([id])
+
+export const purgeEntries = async (ids: readonly string[]) => {
+  const { done, rethrow } = await each(ids, purgeEntryCmd)
+  if (done.size) {
+    dropFromArchive(done)
+    scheduleSync()
+  }
+  rethrow()
+}
+
+export const purgeEntry = (id: string) => purgeEntries([id])
+
+// Stars or unstars a batch. The rows stay picked — they are all still there —
+// except where unstarring takes them out of the view, as in Favorites.
+export const favoriteEntries = async (ids: readonly string[], favorite: boolean) => {
+  const { values, rethrow } = await each(ids, id => setFavorite(id, favorite))
+  if (values.length) {
+    setEntries(upsert(useVault.getState().items, ...values))
+    if (!favorite && useUi.getState().view === 'favorites') setNoEntry()
+    scheduleSync()
+  }
+  rethrow()
 }
 
 export const toggleFavorite = async (id: string) => {

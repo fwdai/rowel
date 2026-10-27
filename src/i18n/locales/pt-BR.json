@@ -909,5 +909,21 @@
   "Add": "Adicionar",
   "Disconnect from {{tenant}}?": "Desconectar de {{tenant}}?",
   "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "Os compartimentos da organização que já estão neste dispositivo ficam, mas param de sincronizar. Este dispositivo precisará ser aprovado de novo se você reconectar.",
-  "This lockbox's key was sealed under a different key, so this device cannot open it.": "A chave deste compartimento foi selada com outra chave, então este dispositivo não consegue abri-lo."
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "A chave deste compartimento foi selada com outra chave, então este dispositivo não consegue abri-lo.",
+  "{{count}} selected_one": "{{count}} selecionado",
+  "{{count}} selected_many": "{{count}} selecionados",
+  "{{count}} selected_other": "{{count}} selecionados",
+  "{{count}} items selected_one": "{{count}} item selecionado",
+  "{{count}} items selected_many": "{{count}} de itens selecionados",
+  "{{count}} items selected_other": "{{count}} itens selecionados",
+  "Archive {{count}} items?_one": "Arquivar {{count}} item?",
+  "Archive {{count}} items?_many": "Arquivar {{count}} de itens?",
+  "Archive {{count}} items?_other": "Arquivar {{count}} itens?",
+  "Some items could not be changed. Please try again.": "Alguns itens não puderam ser alterados. Tente novamente.",
+  "add or remove": "adicionar ou remover",
+  "select a range": "selecionar intervalo",
+  "select all": "selecionar tudo",
+  "archive": "arquivar",
+  "delete forever": "excluir para sempre",
+  "deselect": "desmarcar"
 }

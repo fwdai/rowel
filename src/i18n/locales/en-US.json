@@ -895,5 +895,18 @@
   "Add": "Add",
   "Disconnect from {{tenant}}?": "Disconnect from {{tenant}}?",
   "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.",
-  "This lockbox's key was sealed under a different key, so this device cannot open it.": "This lockbox's key was sealed under a different key, so this device cannot open it."
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "This lockbox's key was sealed under a different key, so this device cannot open it.",
+  "{{count}} selected_one": "{{count}} selected",
+  "{{count}} selected_other": "{{count}} selected",
+  "{{count}} items selected_one": "{{count}} item selected",
+  "{{count}} items selected_other": "{{count}} items selected",
+  "Archive {{count}} items?_one": "Archive {{count}} item?",
+  "Archive {{count}} items?_other": "Archive {{count}} items?",
+  "Some items could not be changed. Please try again.": "Some items could not be changed. Please try again.",
+  "add or remove": "add or remove",
+  "select a range": "select a range",
+  "select all": "select all",
+  "archive": "archive",
+  "delete forever": "delete forever",
+  "deselect": "deselect"
 }

@@ -881,5 +881,15 @@
   "Add": "添加",
   "Disconnect from {{tenant}}?": "断开与 {{tenant}} 的连接？",
   "The org lockboxes already on this device stay, but stop syncing. This device will need approving again if you reconnect.": "此设备上已有的组织保管箱会保留，但不再同步。若重新连接，此设备需要再次获得批准。",
-  "This lockbox's key was sealed under a different key, so this device cannot open it.": "此保管箱的密钥是用另一把密钥封存的，因此此设备无法打开它。"
+  "This lockbox's key was sealed under a different key, so this device cannot open it.": "此保管箱的密钥是用另一把密钥封存的，因此此设备无法打开它。",
+  "{{count}} selected_other": "已选择 {{count}} 个",
+  "{{count}} items selected_other": "已选择 {{count}} 个条目",
+  "Archive {{count}} items?_other": "归档 {{count}} 个条目？",
+  "Some items could not be changed. Please try again.": "部分条目无法更改，请重试。",
+  "add or remove": "添加或移除",
+  "select a range": "选择范围",
+  "select all": "全选",
+  "archive": "归档",
+  "delete forever": "彻底删除",
+  "deselect": "取消选择"
 }

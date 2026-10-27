@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type MouseEvent } from 'react'
 import { cx } from '@/utils/cx'
-import { useVault, setCurrentEntry } from '@/store'
+import { useVault, selectBatch, setCurrentEntry } from '@/store'
 import type { EntryMeta } from '@/api/types'
 import { kindOf } from '@/kinds'
 import { useDates } from '@/hooks/useDates'
@@ -13,13 +13,23 @@ import { META } from '@/components/elements/tokens'
 
 interface Props {
   entry: EntryMeta
+  /**
+   * What a click does, modifiers and all (see List/pick). Absent, it opens the
+   * row: the audit list and the phone pick no batches.
+   */
+  onClick?: (event: MouseEvent) => void
 }
 
-export default function Item({ entry }: Props) {
+export default function Item({ entry, onClick }: Props) {
   const { t } = useTranslation()
   const { relativeTime } = useDates()
   const ref = useRef<HTMLDivElement>(null)
-  const selected = useVault(state => state.currentId === entry.id)
+  // Where the keyboard sits — the open row, or a batch's last-clicked one.
+  const current = useVault(state => state.currentId === entry.id)
+  // In a batch every picked row wears the selection; otherwise the open one.
+  const selected = useVault(state =>
+    selectBatch(state) ? state.picked.has(entry.id) : state.currentId === entry.id
+  )
   // Read the flag off the audit the vault already ran on unlock — never score
   // a password during a row render (see src/hooks/useStrength.ts).
   const flagKind = useVault(state => flagOf(state.audit?.[entry.id]))
@@ -36,13 +46,13 @@ export default function Item({ entry }: Props) {
   // carry focus along only when the list already had it: arrowing from the
   // search field must leave the caret in the field.
   useEffect(() => {
-    if (!selected) return
+    if (!current) return
     ref.current?.scrollIntoView({ block: 'nearest' })
     // Still an option at this point even when the arrows just moved off it:
     // dropping a focused row to tabIndex -1 does not blur it, so the row being
     // left keeps focus until this one takes it.
     if (document.activeElement?.getAttribute('role') === 'option') ref.current?.focus()
-  }, [selected])
+  }, [current])
 
   return (
     <div
@@ -51,7 +61,7 @@ export default function Item({ entry }: Props) {
       aria-selected={selected}
       // One tab stop for the whole list: Tab lands on the selection, and the
       // arrows take over from there.
-      tabIndex={selected ? 0 : -1}
+      tabIndex={current ? 0 : -1}
       className={cx(
         // A finger needs a 44pt row where a mouse is happy with 30. This is a
         // capability rule, not a shell one: it holds wherever *any* pointer is
@@ -67,7 +77,7 @@ export default function Item({ entry }: Props) {
           : 'border-transparent hover:bg-hover'
       )}
       data-testid="entry-item"
-      onClick={() => setCurrentEntry(entry.id)}
+      onClick={onClick ?? (() => setCurrentEntry(entry.id))}
     >
       <Content entry={entry} flag={flag} />
       {entry.favorite && (
