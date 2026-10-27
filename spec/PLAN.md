@@ -496,10 +496,16 @@ when A, B and C are merged.
       binary `rowel-server serve` / `rowel-server admin`, public crates pinned by
       git rev) (`00 §4`, Q1).
 
-Tier 2, before any server is deployed (in the private repository): members
-bound by the IdP's `sub` rather than matched by email, and `email_verified`
-required; `ws://` refused off loopback for agents; workload issuers and JWKS
-over https only.
+- [x] **Tier 2, before any server is deployed.** In the private repository
+      (`fwdai/rowel-server`): a member is bound to the IdP's `(issuer, sub)` at
+      first sign-in and matched by it from then on, and a first link by email
+      needs `email_verified` (`members.oidc.emailVerifiedClaim` opts an IdP
+      that never sends it in); every URL keys come from is https or loopback
+      (`identity::trusted_url`); a member's wrapped masters go with the
+      membership, the device and a disable, in one transaction; `admin init`
+      keeps the root key outside the data directory. In the public CLI (#672):
+      `ws://` only to this machine, one loopback rule in
+      `rowel_core::host::is_loopback_host`.
 
 ---
 
@@ -520,6 +526,13 @@ feed existing tooling. Spec `03`, `07`, `09`, Q20.
 - [ ] Postgres as an alternative metadata store; sharding by lockbox id
       documented (`07`, Q18).
 - [ ] Signed webhook and OTLP exports (`09`).
+- [ ] Carried over from I7 and the Tier 1 audit: per-rule ask timeouts and
+      asks parked for long approvals; `sidecar_for` enforced (a sidecar
+      resolves only its own agent's grants, `05`); push-token registration at
+      enrollment (I10 needs it); a signal hub per lockbox in `OrgHost` once
+      the server raises signals (today one per connection, `rowel_broker::hub`);
+      an admin command to unbind a member when the IdP issuer changes; a
+      member's stored email kept in step with the IdP's.
 - [ ] **Acceptance:** a design-partner-sized tenant (hundreds of members, tens
       of agents) runs a week with approvals under a stated latency and no
       standing grant older than its policy allows.

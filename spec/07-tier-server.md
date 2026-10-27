@@ -367,7 +367,12 @@ directly (`docs/server.md`); the contract is `docs/server-api.md`.
   409; one server-wide `askTimeoutMs`. Asks a previous run left pending are
   expired at startup.
 - *Members.* `GET /v1/members/auth/callback` is the server's OIDC callback;
-  an unverified email is refused; a member is auto-provisioned only when
+  a member is one IdP account: bound to `(issuer, sub)` at the first sign-in
+  and matched by it after, a different account under the same email refused
+  (migration 2, `member_bound` event); a first link by email needs
+  `email_verified`, unless `members.oidc.emailVerifiedClaim` is
+  `absentMeansVerified` for an IdP that never sends it (Entra; the risk is in
+  `docs/server.md`); a member is auto-provisioned only when
   `allowedDomains` is set and matches, otherwise an admin adds them; a
   refusal goes back to the app's loopback as an RFC 6749 error. Access
   tokens are stored as hashes; a refresh token is single-use and a reused one

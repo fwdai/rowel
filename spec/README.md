@@ -187,6 +187,11 @@ Read the overview first. Everything else hangs off it.
   (#669) ticked; the I1 and I5 items the audit reopened ticked again as built
   in C; a host's signals scoped to its own connections (`rowel_broker::hub`);
   #656's agent-driven mark recorded in `05 §2`.
+- **2026-10-27, Tier 2 hardening.** In `fwdai/rowel-server`: members bound to
+  the IdP subject, keys only from https or loopback URLs, wrapped masters
+  withdrawn with the membership, the root key outside the data directory
+  (`07`); in the public CLI, `ws://` to this machine only (#672). I8 gains
+  the items carried over from I7 and the audit.
 
 ## Relationship to the other docs
 
