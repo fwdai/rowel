@@ -257,7 +257,12 @@ The floor in `03` keeps every passkey ceremony behind the tap, agent or not.
   grant id the host has accepted (the first request whose placeholders
   resolved under it); a grant with a bucket is held to it before anything is
   resolved again, and a made-up id is refused by the resolve and never
-  enters the map. A resolve refused with `AuditUnavailable` is 503, not 403.
+  enters the map. A bucket that has refilled to capacity is forgotten — a
+  fresh one for the same grant would be identical — so every take first
+  drops the full ones (computed at that instant): the map holds only the
+  grants a token was taken under in the last 60 seconds, the time an emptied
+  bucket takes to refill, however long the proxy runs. A resolve refused
+  with `AuditUnavailable` is 503, not 403.
 - *Review of PR #657, round 4.* The answer is asked for with
   `Accept-Encoding: identity` and an encoded one is refused (`502`), since
   the redactor reads the bytes as sent; the grant is checked against the

@@ -65,9 +65,25 @@ same locked section as its decision: `agents::record` returns
 `Result<(), Code>` and is for the rows a release stands on (`granted`, `used`
 — a fill, a TOTP code, a resolve, a passkey ceremony — `rule_added`, and the
 server's `key_unwrapped`), each written `record(…)?` before the release; a
-row that will not write refuses it with `AuditUnavailable` (47), a standing
-rule whose row will not write is taken back, and the Rowel Server drops a key
-whose `key_unwrapped` row will not write and refuses the open.
+row that will not write refuses it with `AuditUnavailable` (47), and the
+Rowel Server drops a key whose `key_unwrapped` row will not write and refuses
+the open. **Nothing of a release outlives its row.** In memory, every use of
+a grant goes through one function (`engine::use_grant`): the use is counted —
+and an agent's fill grant claimed by the extension served — on a copy, the
+`used` row is written from the copy, and only then is the copy kept, so a
+refused row leaves `uses`, `state` and `served_to` exactly as they were. On
+disk, a release that writes the store commits that write and its row in one
+SQLite transaction (`SqliteStore::commit_with_audit`, through
+`agents::record_with`; the row is chained beforehand by `Writer::chain`, and
+the session lock every host holds keeps the chain's head from moving in
+between): a standing rule and its `rule_added` row, and a passkey
+ceremony's vault write — a registration's new credential, a sign-in's
+counter — and its `used` row (`passkeys::CeremonyLog`, which the app's and
+`rowel serve`'s passkey vault adapters write through). A row that will not
+go in rolls the write back; there is no write-then-undo. A sign-in under a
+credential that keeps no counter writes nothing to the vault, and its row is
+written before the assertion goes out. A standing rule that will not commit
+is not kept, and the yes it came with stands or falls on its own rows.
 `agents::note` is for rows about something that only restricts (`denied`,
 `ended`, `revoked`, `exposed`, `rule_removed`, `rate_limited`) or bookkeeping
 (`requested`, `associated`, `revoked_client`): a failure is logged and the

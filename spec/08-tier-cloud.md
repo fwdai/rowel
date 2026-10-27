@@ -88,7 +88,7 @@ and an error budget are operational matters outside this spec.
 
 **Deployment on Cloudflare (❌).** The broker cannot run in a plain Worker: it
 needs SQLCipher, native crypto and keys held in process memory. It runs as
-`rowel serve --server` in a **Cloudflare Container**, the same binary a
+`rowel-server serve` in a **Cloudflare Container**, the same binary a
 self-hosting company runs, and everything around it is Workers-native. The
 principle: Cloudflare for the edge, coordination, storage and plumbing; the
 container for the one thing that must be a trusted Rust process.
@@ -116,7 +116,7 @@ Activation sequence:
   request ─▶ Worker (TLS, WAF, auth) ─▶ tenant Durable Object
                                             │ wake container if asleep
                                             ▼
-                                      rowel serve --server (Container)
+                                      rowel-server serve (Container)
                                             │ load lockbox files from R2
                                             │ serve grants / merges / approvals
                                             │ write back to R2 with CAS

@@ -125,8 +125,8 @@ mode now lives in the private repository `fwdai/rowel-server`, one package
 with its own binary (`rowel-server serve`, `rowel-server admin …`, replacing
 `rowel serve --server` and `rowel admin server …`), depending on the public
 `rowel-core`, `rowel-broker` and `rowel-serve` by a pinned git rev; the
-public repository drops the crate, the admin commands and `docs/server.md`
-(PLAN, PR D) and keeps `docs/server-api.md`, the contract its clients speak.
+public repository dropped the crate, the admin commands and `docs/server.md`
+(PR D, #669) and keeps `docs/server-api.md`, the contract its clients speak.
 
 ```
                  ┌────────────────────────────────────────────────────────────┐

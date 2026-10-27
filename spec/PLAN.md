@@ -51,7 +51,7 @@ One core, two binaries, no second implementation of anything.
 ```
   laptop                 dev VM / CI box          company               Rowel Cloud
   ──────                 ────────────────         ───────               ───────────
-  Rowel app (AppHost)    rowel serve              rowel serve --server  rowel serve --server
+  Rowel app (AppHost)    rowel serve              rowel-server serve    rowel-server serve
   + rowel mcp/run/proxy  + rowel mcp/run/proxy    + members, OIDC,      in a Cloudflare
                                                    policy, audit        Container, behind a
                                                                          Worker + Durable Object
@@ -462,7 +462,7 @@ above that were ticked but not delivered, two correctness bugs and the
 distribution gaps. They land as four PRs; Tier 1 is ready for outside testers
 when A, B and C are merged.
 
-- [ ] **PR A, security and correctness** *(in review: #666)*: the
+- [x] **PR A, security and correctness** *(merged: #666; review round: a use, a passkey and a standing rule commit with their row or not at all, proxy buckets forgotten once refilled)*: the
       redactor at a constant lag (no prefix oracle); one expiry path that always
       writes `ended` and signs out, with a 30 s wall-clock recheck; the audit
       fails closed (`AuditUnavailable` = 47); the proxy forwards only what a
@@ -490,7 +490,7 @@ when A, B and C are merged.
       `serve_writer_id`; manifests and relay in `rowel_broker::{manifest,
       relay}`, `rowel native-host`, `rowel serve --install-host` /
       `--uninstall-host` on macOS and Linux.
-- [ ] **PR D, open-core boundary:** remove `crates/server`, `rowel admin
+- [ ] **PR D, open-core boundary** *(in review: #669; the server is `fwdai/rowel-server`, pinned at 59f1df3c)*: remove `crates/server`, `rowel admin
       server`, the `--server` wiring and `docs/server.md` from the public
       repository; they live in the private `fwdai/rowel-server` (one package,
       binary `rowel-server serve` / `rowel-server admin`, public crates pinned by
@@ -535,7 +535,7 @@ Spec `08` (Deployment on Cloudflare).
 
 *Decide first:* Q4 (billing unit), Q25 (container transport spike result).
 
-- [ ] Spike: `rowel serve --server` image in a Cloudflare Container bound to a
+- [ ] Spike: `rowel-server serve` image in a Cloudflare Container bound to a
       tenant Durable Object; Worker routes HTTPS; confirm WebSocket
       pass-through to the container or adopt HTTPS-POST-per-frame for agents
       (`08`, Q25).

@@ -177,6 +177,12 @@ Read the overview first. Everything else hangs off it.
   only from a grant's holder, `GrantExpired` on an expired grant (`04`); the
   shared manifest and relay, `rowel native-host`, `rowel serve
   --install-host`, the broker's own writer id (`06`).
+- **2026-10-27, PR A merged; PR D.** The #666 review round: a grant use, a
+  passkey and a standing rule commit with their audit row or not at all
+  (`use_grant`, `SqliteStore::commit_with_audit`), and the proxy forgets a
+  bucket once it has refilled (`05`, `09`). PR D (#669) removes the server
+  mode from the public repository; the spec names `rowel-server serve` and
+  `rowel-server admin` throughout (`00 §4`, `07`, `08`, Q1, Q19, Q21).
 
 ## Relationship to the other docs
 

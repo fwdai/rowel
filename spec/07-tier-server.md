@@ -70,12 +70,14 @@ provider. From then on the app is also the member's approval device.
 
 ### Technical details
 
-**Binary and crate (✅ I7).** The server is not a separate binary. It is the
-`rowel` CLI's `serve` subcommand in **server mode** (`rowel serve --server`),
-built from a `rowel-serve` library crate (`src-tauri/crates/serve`) that the
-CLI links. The same `serve` without `--server` is the headless broker for one
-person's device-held lockbox on a VM (`PLAN.md`, I5); server mode switches on
-tenants, members, workload identity, routing and the pack endpoints. Rust,
+**Binary and crate (✅ I7; moved 2026-10-27).** Built in I7 as the `rowel`
+CLI's `serve` subcommand in **server mode** (`rowel serve --server`), the
+server is now its own binary in the private repository `fwdai/rowel-server`:
+`rowel-server serve` and `rowel-server admin …`, one package over the public
+`rowel-core`, `rowel-broker` and `rowel-serve` crates (pinned by git rev),
+so the code path is still the headless broker's, `rowel serve`, with
+tenants, members, workload identity, routing and the pack endpoints switched
+on (`00 §4`, Q1; PR D removed it from the public repository). Rust,
 `axum` + `tokio`, `sqlx` for metadata (SQLite for the single-node self-host
 default so the first run is one binary and one data directory, like the app;
 Postgres as an alternative). Depends on `rowel-core` and `rowel-broker`; never
@@ -308,7 +310,9 @@ later addition, not a prerequisite.
 
 **As built in I7 (the server).** The server mode is its own crate,
 `src-tauri/crates/server` (`rowel-server`), not a mode inside `rowel-serve`:
-the open-core boundary as a directory (`00 §4`). `rowel serve --server
+the open-core boundary as a directory (`00 §4`). *Since 2026-10-27 that crate
+is the private repository `fwdai/rowel-server`, and the commands below are
+`rowel-server serve` and `rowel-server admin …`.* `rowel serve --server
 --data-dir` runs it (`run.rs`): `server.json` (tenant name, `publicUrl` held
 to the app's https-or-loopback rule, `listen.http` and optional TLS PEM
 files, `rootKeyFile`, `members.oidc { issuer, clientId, clientSecret,
@@ -396,8 +400,8 @@ tokens), `auth_codes`, `lockboxes` (with `gen`, `agents`, `revision`),
 seq), `server_events` (tenant-level rows) and `replay` (`jti`, keyed by
 issuer).
 
-**Operational notes.** Single binary, `rowel serve --server` and `rowel
-admin …`. Health endpoint. Backups = metadata DB dump + lockbox files + the
+**Operational notes.** Single binary, `rowel-server serve` and
+`rowel-server admin …`. Health endpoint. Backups = metadata DB dump + lockbox files + the
 root key held separately. Horizontal scale: lockboxes are the unit; shard by
 lockbox id when one node is not enough (`10`). Outage behaviour: agents fail
 closed (no cached values anywhere); employees' apps keep working on their

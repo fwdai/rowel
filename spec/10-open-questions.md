@@ -18,7 +18,7 @@ whether the single-node server is ever offered as a supported product (Q2).
 public repository as its own crate (`crates/server`, `rowel-server`), so that
 moving it to the private repository later is a crate move.
 *2026-10-27:* moved. The server mode lives in the private `fwdai/rowel-server`
-under a proprietary license; the public repository removes it (PLAN, PR D).
+under a proprietary license; the public repository removed it (PR D, #669).
 
 **Q2. Self-host first or cloud first.** *Owner decides.*
 Spec assumes self-host binary first (`11`), because the cloud is that binary
@@ -159,7 +159,7 @@ merge engine reusable as-is. Rows in Postgres scale and index better. Spec:
 files per lockbox, metadata in Postgres/SQLite, shard by lockbox when needed.
 Revisit at the first tenant with thousands of lockboxes.
 
-**Q19. Merge authority and write interleaving.** ✅ *Tested in I7* (`crates/server/src/tests/interleave.rs`: an agent's write between a device's probe and push is a 412 then a merge; two devices and an agent in turn converge; a device offline past the tombstone TTL loses to the tombstone unless edited after it).
+**Q19. Merge authority and write interleaving.** ✅ *Tested in I7* (`fwdai/rowel-server`: `src/tests/interleave.rs`: an agent's write between a device's probe and push is a 412 then a merge; two devices and an agent in turn converge; a device offline past the tombstone TTL loses to the tombstone unless edited after it).
 The server merges device pushes with `engine::sync` and bumps the revision on
 every agent write, so device CAS retries. Needs a test matrix: agent
 `save_login` during a device push; two devices and one agent; a device offline
@@ -178,7 +178,7 @@ Vault Health's *Verify the log* runs it per writer. Two things the build
 settled that the draft did not: every device reclaims every writer's aged
 prefix (a union merge hands a device its own pruned rows back otherwise), and
 the cut is a chain prefix rather than the old rows alone (a stepped-back clock
-would leave a permanent gap). `rowel admin server audit verify` (I7) runs
+would leave a permanent gap). `rowel-server admin audit verify` (I7) runs
 the same algorithm over the server's mirror, per lockbox and writer.
 
 **Q22. Remote extension in cloud browsers.** *Phase 4.*
