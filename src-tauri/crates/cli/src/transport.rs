@@ -4,8 +4,13 @@
 //! There are two transports. With `ROWEL_BROKER` unset the broker is the app
 //! on this machine, reached over the data directory's socket (a named pipe on
 //! Windows) in native messaging frames — a length, then the JSON. With
-//! `ROWEL_BROKER=ws://host:port[/path]` or `wss://…` the broker is a `rowel
-//! serve` on another box (a CI runner, a dev VM), reached over a WebSocket.
+//! `ROWEL_BROKER=wss://host:port[/path]` the broker is a `rowel serve` on
+//! another box (a CI runner, a dev VM) or a Rowel Server, reached over a
+//! WebSocket; `ws://` only to this machine (`localhost`, `127.0.0.0/8`,
+//! `[::1]`). The channel's key exchange is not authenticated, so over a
+//! network in the clear whoever sits in the middle could swap the keys and
+//! read every value resolved through it; a reverse proxy on the broker's box
+//! terminates `wss://` and speaks `ws://` to the broker over loopback.
 //! There a binary message carries exactly one frame's JSON body and nothing
 //! else: the WebSocket already frames for us, so the length prefix would only
 //! say what the message's own length says. `wss://` verifies the broker's
@@ -27,6 +32,7 @@ use interprocess::local_socket::{prelude::*, Stream};
 use rowel_broker::client::Transport;
 use rowel_broker::frame;
 use rowel_broker::socket::{root_dir, socket_name};
+use rowel_core::host::is_loopback_host;
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;
 use tungstenite::stream::MaybeTlsStream;
@@ -67,6 +73,15 @@ pub struct Broker {
     uri: Uri,
 }
 
+/// The one error every value that is not a broker URL gets: it names the
+/// variable and the forms it takes, never the value, which may carry a secret.
+fn malformed() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("{BROKER_VAR} must be unset, wss://host:port[/path] or ws://localhost:port[/path]"),
+    )
+}
+
 impl Broker {
     /// `value` as a broker URL, or the one error every bad value gets, which
     /// names the variable and the forms it takes and not the value: a value
@@ -74,15 +89,18 @@ impl Broker {
     pub fn parse(value: &str) -> io::Result<Self> {
         let uri: Option<Uri> = value.parse().ok();
         match uri {
-            Some(uri) if matches!(uri.scheme_str(), Some("ws" | "wss")) && uri.host().is_some() => {
-                Ok(Self { uri })
-            }
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "{BROKER_VAR} must be unset, ws://host:port[/path] or wss://host:port[/path]"
-                ),
-            )),
+            Some(uri) if uri.host().is_some() => match uri.scheme_str() {
+                Some("wss") => Ok(Self { uri }),
+                Some("ws") if uri.host().is_some_and(is_loopback_host) => Ok(Self { uri }),
+                Some("ws") => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "{BROKER_VAR} reaches a broker on another machine over wss:// only; ws:// is for this machine (localhost, 127.0.0.1)"
+                    ),
+                )),
+                _ => Err(malformed()),
+            },
+            _ => Err(malformed()),
         }
     }
 
@@ -401,12 +419,41 @@ mod tests {
             let error = broker_from(Some(value.into())).unwrap_err();
             let text = error.to_string();
             assert!(text.contains("ROWEL_BROKER"), "{value}: {text}");
-            assert!(text.contains("ws://host:port[/path]"), "{value}: {text}");
+            assert!(text.contains("wss://host:port[/path]"), "{value}: {text}");
         }
         // The value is never repeated: it may be a URL with a secret in it.
         let value = "http://user:hunter2@host:1";
         let text = broker_from(Some(value.into())).unwrap_err().to_string();
         assert!(!text.contains("hunter2"), "the value is echoed: {text}");
+    }
+
+    // In the clear only to this machine: the channel's key exchange is not
+    // authenticated, so a `ws://` broker across a network could be anyone
+    // who can sit between the two. The refusal names wss:// and never the
+    // value.
+    #[test]
+    fn ws_reaches_only_this_machine() {
+        for value in [
+            "ws://127.0.0.1:7401",
+            "ws://localhost:7401/x",
+            "ws://[::1]:7401",
+        ] {
+            assert!(Broker::parse(value).is_ok(), "{value}");
+        }
+        for value in [
+            "ws://vm.example:7401",
+            "ws://10.0.0.5:7401",
+            "ws://0.0.0.0:7401",
+            "ws://localhost.example.com",
+        ] {
+            let text = Broker::parse(value).unwrap_err().to_string();
+            assert!(text.contains("wss://"), "{value}: {text}");
+            assert!(
+                !text.contains("example") && !text.contains("10.0.0.5"),
+                "echoed: {text}"
+            );
+        }
+        assert!(Broker::parse("wss://vm.example:7401").is_ok());
     }
 
     #[test]
@@ -415,8 +462,8 @@ mod tests {
         assert_eq!(broker.to_string(), "wss://vm.example:7401/rowel");
         assert!(broker.tls());
         assert_eq!(broker.port(), 7401);
-        let broker = Broker::parse("ws://vm.example").unwrap();
-        assert_eq!(broker.to_string(), "ws://vm.example/");
+        let broker = Broker::parse("ws://localhost").unwrap();
+        assert_eq!(broker.to_string(), "ws://localhost/");
         assert!(!broker.tls());
         assert_eq!(broker.port(), 80);
         assert_eq!(Broker::parse("wss://vm.example").unwrap().port(), 443);
