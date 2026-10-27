@@ -157,6 +157,11 @@ jobs:
                 src-tauri/target/aarch64-apple-darwin/release/rowel-cli \
                 src-tauri/target/x86_64-apple-darwin/release/rowel-cli \
                 -output src-tauri/binaries/rowel-cli-universal-apple-darwin
+              # A universal build compiles the app once per Apple target, and
+              # each pass's tauri-build checks for the sidecar under its own
+              # triple; only the bundler takes the universal one.
+              cp src-tauri/target/aarch64-apple-darwin/release/rowel-cli src-tauri/binaries/rowel-cli-aarch64-apple-darwin
+              cp src-tauri/target/x86_64-apple-darwin/release/rowel-cli src-tauri/binaries/rowel-cli-x86_64-apple-darwin
               ;;
             ubuntu-latest)
               cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml
