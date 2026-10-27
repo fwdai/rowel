@@ -332,7 +332,9 @@ fn every_browser_has_a_place_on_every_platform() {
 
 // Where each browser reads a manifest: under the browser's own directory on
 // macOS, the XDG config directory for Chrome and its kin on Linux, and
-// Mozilla's directory for Firefox on both.
+// Mozilla's directory for Firefox on both. Compared as paths, component by
+// component, so the layout is checked on every runner: a Windows build joins
+// with `\`, and the separator is not what this is about.
 #[test]
 fn each_browser_reads_its_manifest_where_its_platform_puts_it() {
     let home = Path::new("/home/me");
@@ -340,8 +342,6 @@ fn each_browser_reads_its_manifest_where_its_platform_puts_it() {
     let at = |mac: bool, id: &str| {
         let browser = manifest::BROWSERS.iter().find(|b| b.id == id).unwrap();
         manifest::unix_manifest_path(mac, home, config, &ROWEL, browser)
-            .to_string_lossy()
-            .into_owned()
     };
     let linux = [
         (
@@ -371,14 +371,14 @@ fn each_browser_reads_its_manifest_where_its_platform_puts_it() {
     for (id, dir) in linux {
         assert_eq!(
             at(false, id),
-            format!("{dir}/app.rowel.browser.json"),
+            Path::new(&format!("{dir}/app.rowel.browser.json")),
             "{id}"
         );
     }
     for (id, dir) in mac {
         assert_eq!(
             at(true, id),
-            format!("/home/me/Library/Application Support/{dir}/NativeMessagingHosts/app.rowel.browser.json"),
+            Path::new(&format!("/home/me/Library/Application Support/{dir}/NativeMessagingHosts/app.rowel.browser.json")),
             "{id}"
         );
     }
