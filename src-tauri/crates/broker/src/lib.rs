@@ -25,6 +25,7 @@ pub mod audit;
 pub mod client;
 pub mod frame;
 pub mod grant;
+pub mod hub;
 pub mod lockbox;
 pub mod passkeys;
 pub mod policy;

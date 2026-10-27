@@ -1044,7 +1044,7 @@ async fn the_websocket_carries_frames_and_pushed_signals() {
         loop {
             assert!(Instant::now() < deadline, "no signal arrived");
             if let tungstenite::Message::Binary(body) = socket.read().unwrap() {
-                assert_eq!(&body[..], rowel_broker::server::LOCKED);
+                assert_eq!(&body[..], rowel_broker::hub::LOCKED);
                 break;
             }
         }

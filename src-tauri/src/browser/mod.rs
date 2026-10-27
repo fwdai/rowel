@@ -597,6 +597,10 @@ impl Host for AppHost {
         settings::current(&self.0).browser.enabled
     }
 
+    fn hub(&self) -> &rowel_broker::hub::Hub {
+        server::hub(&self.0)
+    }
+
     fn database_hash(&self) -> Option<String> {
         let state = self.0.state::<AppState>();
         let unlocked = state.session.lock().unwrap().is_unlocked();
@@ -1142,7 +1146,7 @@ impl AppHost {
             agents::rearm(app);
             events::agents_changed(app);
             if client.kind != ClientKind::Extension {
-                server::notify_signals();
+                server::hub(app).notify_signals();
             }
         }
         Ok((prepared, epoch))
@@ -1204,7 +1208,7 @@ impl AppHost {
         agents::rearm(app);
         events::agents_changed(app);
         if client.kind != ClientKind::Extension {
-            server::notify_signals();
+            server::hub(app).notify_signals();
         }
         Ok(reply)
     }

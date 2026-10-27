@@ -36,6 +36,7 @@ use rowel_broker::agents::{
 };
 use rowel_broker::audit::Event;
 use rowel_broker::grant::{GrantReply, GrantRequest, Mode, ResolveContext};
+use rowel_broker::hub::Hub;
 use rowel_broker::passkeys::{Assertion, Registration};
 use rowel_broker::protocol::Code;
 use rowel_broker::reference::{self, Reference};
@@ -60,6 +61,12 @@ pub struct OrgHost {
     runtime: Handle,
     /// The tenant id digested, read once: it never changes.
     hash: Option<String>,
+    /// The connection this host was made for, and no other. The server is
+    /// never locked as a whole and raises no clear signal, so nothing goes
+    /// out through it yet; a hub shared wider than one connection would be
+    /// one lockbox's, so that its seal reaches its own agents and no other
+    /// lockbox's.
+    hub: Hub,
 }
 
 /// What a client's request is about: its definition, the definition's
@@ -95,6 +102,7 @@ impl OrgHost {
             state,
             runtime,
             hash,
+            hub: Hub::default(),
         }
     }
 
@@ -342,6 +350,10 @@ pub fn tick(state: &AppState, now: i64) {
 impl Host for OrgHost {
     fn enabled(&self) -> bool {
         true
+    }
+
+    fn hub(&self) -> &Hub {
+        &self.hub
     }
 
     // The tenant's digest: the server is never locked as a whole, and an

@@ -9,8 +9,8 @@
 //! messages, a std thread owning the `Connection` and serving requests one
 //! at a time — `request_grant` blocks for up to the ask timeout, which must
 //! not stall the runtime — and a writer task that sends what the thread
-//! replies and what the host pushes (the lock signals, registered through
-//! `server::register` with a sink into the same channel). No frame is ever
+//! replies and what the host pushes (the lock signals, registered on the
+//! host's own hub with a sink into the same channel). No frame is ever
 //! logged.
 //!
 //! The port may face anyone the operator lets reach it, and a client is let
@@ -207,7 +207,8 @@ pub enum Inbound {
 
 /// One WebSocket connection to `host`, served until it closes or the host is
 /// switched off: `incoming` is the socket's reading half as [`Inbound`]s,
-/// `outgoing` its writing half taking each frame as one binary message. The
+/// `outgoing` its writing half taking each frame as one binary message, and
+/// the signals it carries unasked are `host`'s alone ([`Host::hub`]). The
 /// same loop serves `rowel serve`'s listener and a Rowel Server's agent
 /// endpoint, so the bounds this module states hold for both. `slot` is the
 /// connection's place under a ceiling, when it is under one; it goes to the
@@ -227,8 +228,9 @@ pub async fn serve_connection<H, R, W>(
     // Requests, to the one thread, as many as the backlog allows.
     let (requests_in, mut requests) = async_mpsc::channel::<Vec<u8>>(REQUEST_BACKLOG);
 
+    let hub = host.hub().clone();
     let signals = out.clone();
-    let registered = server::register(Box::new(move |message| {
+    let registered = hub.register(Box::new(move |message| {
         signals
             .blocking_send(message.to_vec())
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "the connection ended"))
@@ -273,6 +275,6 @@ pub async fn serve_connection<H, R, W>(
     // Dropping the request sender ends the thread; forgetting the sink ends
     // the signals; the writer ends when the last sender is gone.
     drop(requests_in);
-    server::forget(registered);
+    hub.forget(registered);
     writer.abort();
 }

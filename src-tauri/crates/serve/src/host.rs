@@ -38,13 +38,13 @@ use rowel_broker::agents::{
 };
 use rowel_broker::audit::Event;
 use rowel_broker::grant::{Approval, GrantReply, GrantRequest, Mode, ResolveContext, VisibleItem};
+use rowel_broker::hub::Hub;
 use rowel_broker::lockbox::{
     clients_in, logins_in, mark_seen, save_failed, save_login_in, totp_in, write_clients,
 };
 use rowel_broker::passkeys::{self, Assertion, CeremonyLog, Registration};
 use rowel_broker::protocol::Code;
 use rowel_broker::reference::Reference;
-use rowel_broker::server;
 use rowel_broker::Signal;
 use rowel_core::error::Result as CoreResult;
 use rowel_core::models::Passkey;
@@ -131,6 +131,9 @@ struct Shared {
     key_file: Option<PathBuf>,
     /// When the last request came in, for the idle lock.
     last_used_ms: AtomicI64,
+    /// The connections serving this lockbox, which its seals, unlocks and
+    /// wake-ups reach, and no other host's.
+    hub: Hub,
 }
 
 /// The headless broker as a `Host`. Cheap to clone: every connection holds
@@ -217,6 +220,7 @@ impl HeadlessHost {
             }),
             key_file,
             last_used_ms: AtomicI64::new(now_ms()),
+            hub: Hub::default(),
         })))
     }
 
@@ -260,7 +264,7 @@ impl HeadlessHost {
             session.epoch += 1;
         }
         self.touch();
-        server::notify_unlocked();
+        self.0.hub.notify_unlocked();
     }
 
     /// Seal the lockbox: nothing is served until the next unlock, every grant
@@ -280,7 +284,7 @@ impl HeadlessHost {
         };
         self.0.approvals.refuse_all();
         if was_open {
-            server::notify_locked();
+            self.0.hub.notify_locked();
         }
         was_open
     }
@@ -377,7 +381,7 @@ impl HeadlessHost {
         };
         if changed {
             self.0.approvals.refuse_grants();
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
     }
 
@@ -415,7 +419,7 @@ impl HeadlessHost {
             flipped || pruned
         };
         if changed {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         self.refresh();
         let idle = self.settings().idle_lock();
@@ -582,7 +586,7 @@ impl HeadlessHost {
         drop(held);
         drop(session);
         if matches!(prepared, Prepared::Answered(_)) && client.kind != ClientKind::Extension {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         Ok((prepared, epoch))
     }
@@ -634,7 +638,7 @@ impl HeadlessHost {
         drop(held);
         drop(session);
         if client.kind != ClientKind::Extension {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         Ok(reply)
     }
@@ -738,6 +742,10 @@ impl UserConsent for AskUser {
 impl Host for HeadlessHost {
     fn enabled(&self) -> bool {
         true
+    }
+
+    fn hub(&self) -> &Hub {
+        &self.0.hub
     }
 
     // The lockbox id digested, the app's scheme, so an extension's
@@ -974,7 +982,7 @@ impl Host for HeadlessHost {
             (reply_for(grant, items), flipped)
         };
         if flipped {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         Ok(reply)
     }
@@ -999,7 +1007,7 @@ impl Host for HeadlessHost {
             }
         };
         if ended {
-            server::notify_signals();
+            self.0.hub.notify_signals();
         }
         Ok(())
     }
@@ -1075,7 +1083,7 @@ impl Host for HeadlessHost {
             )
         };
         match end {
-            GrantEnd::Ended => server::notify_signals(),
+            GrantEnd::Ended => self.0.hub.notify_signals(),
             GrantEnd::AlreadyOver => {}
             GrantEnd::NotFound => {
                 log::debug!("rowel serve: exposure reported for {grant_id}, not the reporter's")

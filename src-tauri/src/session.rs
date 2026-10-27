@@ -301,7 +301,7 @@ pub fn lock(app: &AppHandle) -> bool {
 pub fn opened(app: &AppHandle) {
     #[cfg(desktop)]
     {
-        crate::browser::server::notify_unlocked();
+        crate::browser::server::hub(app).notify_unlocked();
         crate::org::approvals::start(app);
     }
     #[cfg(not(desktop))]
@@ -317,7 +317,7 @@ pub fn sealed(app: &AppHandle) {
     crate::commands::clipboard::clear_on_lock(app);
     crate::autolock::disarm(app);
     #[cfg(desktop)]
-    crate::browser::server::notify_locked();
+    crate::browser::server::hub(app).notify_locked();
     // And every grant an agent held goes with the session: nothing is served
     // from a locked vault, and the next lockbox open is not this one's. The
     // asks a Rowel Server routes here stop with it; the one up on screen is

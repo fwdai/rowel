@@ -103,7 +103,7 @@ pub fn change_access<T>(
         }
         events::agents_changed(app);
         rearm(app);
-        browser::server::notify_signals();
+        browser::server::hub(app).notify_signals();
     }
     Ok(value)
 }
@@ -159,7 +159,7 @@ fn on_expiry(app: &AppHandle) {
     };
     if changed {
         events::agents_changed(app);
-        browser::server::notify_signals();
+        browser::server::hub(app).notify_signals();
     }
     rearm(app);
 }
@@ -170,7 +170,7 @@ fn on_expiry(app: &AppHandle) {
 pub(crate) fn grants_changed(app: &AppHandle) {
     events::agents_changed(app);
     rearm(app);
-    browser::server::notify_signals();
+    browser::server::hub(app).notify_signals();
 }
 
 /// Every seal ends here — a lock, the auto-lock, a lockbox switch
