@@ -14,7 +14,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 pub use rowel_broker::agents::{
-    change_under_locks, draft, ended, expire_due, now_ms, record, site_origin, AccessState,
+    change_under_locks, draft, ended, expire_due, note, now_ms, site_origin, AccessState,
     AgentState, GrantRow, RuleRow,
 };
 use rowel_broker::agents::{
@@ -110,6 +110,17 @@ pub fn change_access<T>(
 
 // --- expiry -----------------------------------------------------------------------
 
+/// The longest the expiry timer waits before it reads the wall clock again.
+/// Grants end by the wall clock (`now_ms`), the timer waits on an `Instant`,
+/// and a sleeping Apple machine does not advance the latter at all: a grant
+/// due an hour into a night's sleep would otherwise end, and sign its site
+/// out, an hour after the lid opens. Capped, the deadline is checked against
+/// the wall clock at least this often, so a grant ends at most this long
+/// after a wake; a check that finds nothing due is one pass under the locks
+/// and changes nothing. Grants last minutes, so half a minute is late
+/// enough to cost nothing and soon enough not to matter.
+const EXPIRY_RECHECK: Duration = Duration::from_secs(30);
+
 /// Point the one expiry timer at the next deadline, or stop it when there is
 /// nothing left to end. Call after every change to the grants.
 pub fn rearm(app: &AppHandle) {
@@ -117,17 +128,24 @@ pub fn rearm(app: &AppHandle) {
     let next = state.agents.lock().unwrap().next_wake_ms();
     match next {
         Some(at) => {
-            let delay = Duration::from_millis(at.saturating_sub(now_ms()).max(0) as u64);
             let handle = app.clone();
-            state.agent_expiry.arm(delay, move || on_expiry(&handle));
+            state
+                .agent_expiry
+                .arm(expiry_wait(at, now_ms()), move || on_expiry(&handle));
         }
         None => state.agent_expiry.disarm(),
     }
 }
 
-// The timer came due: expire what is due, write an `ended` row for each
-// grant that flipped and tell the extensions, let the lists know, and arm
-// for the next one.
+/// How long to wait for a deadline `at`, by the wall clock at `now`: until
+/// then, never past [`EXPIRY_RECHECK`].
+fn expiry_wait(at: i64, now: i64) -> Duration {
+    Duration::from_millis(at.saturating_sub(now).max(0) as u64).min(EXPIRY_RECHECK)
+}
+
+// The timer came due, or its wait reached the cap: expire what is due by the
+// wall clock, write an `ended` row for each grant that flipped and tell the
+// extensions, let the lists know, and arm for the next one.
 fn on_expiry(app: &AppHandle) {
     let state = app.state::<AppState>();
     let now = now_ms();
@@ -144,6 +162,15 @@ fn on_expiry(app: &AppHandle) {
         browser::server::notify_signals();
     }
     rearm(app);
+}
+
+/// What follows a change to the grants made under the locks, once they are
+/// let go: the lists are told, the timer points at the new next deadline,
+/// and the extensions are woken for the signals the change queued.
+pub(crate) fn grants_changed(app: &AppHandle) {
+    events::agents_changed(app);
+    rearm(app);
+    browser::server::notify_signals();
 }
 
 /// Every seal ends here — a lock, the auto-lock, a lockbox switch
@@ -204,9 +231,7 @@ pub(crate) fn end_grant_by(
             GrantEnd::Ended => {}
         }
     }
-    events::agents_changed(app);
-    rearm(app);
-    browser::server::notify_signals();
+    grants_changed(app);
     Ok(true)
 }
 
@@ -236,13 +261,41 @@ pub fn list_rules(app: &AppHandle) -> Result<Vec<RuleRow>> {
 }
 
 /// Every grant still held: the active ones, and the ones that ended within
-/// the last hour. Empty while locked.
+/// the last hour. Empty while locked. A grant the listing found past its
+/// window ends there, with its row and its signal, and is followed up as
+/// the timer's firing would have been.
 pub fn list_grants(app: &AppHandle) -> Vec<GrantRow> {
     let state = app.state::<AppState>();
-    let session = state.session.lock().unwrap();
-    let Ok(store) = session.store() else {
-        return Vec::new();
+    let writer_id = storage::install_id(app);
+    let (rows, expired) = {
+        let session = state.session.lock().unwrap();
+        let Ok(store) = session.store() else {
+            return Vec::new();
+        };
+        let mut agents = state.agents.lock().unwrap();
+        list_grants_in(Locked {
+            store,
+            held: &mut agents,
+            writer: &writer_id,
+            now: now_ms(),
+        })
     };
-    let mut agents = state.agents.lock().unwrap();
-    list_grants_in(store, &mut agents, now_ms())
+    if expired {
+        grants_changed(app);
+    }
+    rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The wait is the deadline's distance by the wall clock, capped so that
+    // a sleep the timer's `Instant` did not see costs at most one cap.
+    #[test]
+    fn the_expiry_wait_is_capped_and_never_negative() {
+        assert_eq!(expiry_wait(1_500, 1_000), Duration::from_millis(500));
+        assert_eq!(expiry_wait(1_000, 5_000), Duration::ZERO, "overdue");
+        assert_eq!(expiry_wait(60 * 60 * 1000, 0), EXPIRY_RECHECK);
+    }
 }

@@ -58,7 +58,8 @@ const GRANT_NOTIFICATIONS = {
     40: 'agentModeGrantDeniedNotification',
     41: 'agentModeGrantPendingNotification',
     45: 'agentModeRateLimitedNotification',
-    46: 'agentModeAgentsDisabledNotification'
+    46: 'agentModeAgentsDisabledNotification',
+    47: 'agentModeAuditUnavailableNotification'
 };
 
 // Replaced by the unit test (tests/grants.spec.ts), which runs without a browser.

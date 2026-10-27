@@ -20,7 +20,11 @@
 //! lock, with the host's install id as the writer id — the chain is per
 //! writer, and the workspace id is `default` on every device. Nothing secret
 //! goes in a row: the target is reduced to scheme, host and path before it
-//! is written.
+//! is written. The log fails closed: a release — a grant going active, a
+//! use, a standing rule — is made only once its row is in ([`record`]), and
+//! a row that will not write refuses it with `AuditUnavailable`; a row about
+//! something that only restricts ([`note`]) is logged when it fails, and the
+//! restriction still happens.
 //!
 //! Two switches gate all of it: the app's Agents switch and the open
 //! lockbox's agent access. The host's files hold them between launches;
@@ -62,8 +66,8 @@ use crate::lockbox::{clients_in, live_rules, rules_in, titles_in, write_rules};
 use crate::signal::Signal;
 
 pub use audit::{
-    about, actor_kind, audit_target, audit_target_of, client_label, draft, origin_of, record,
-    resolve_target_text, single_id, site_origin, target_text,
+    about, actor_kind, audit_target, audit_target_of, client_label, draft, note, origin_of, record,
+    record_with, resolve_target_text, single_id, site_origin, target_text,
 };
 use audit::{first_mode, rule_client};
 pub use engine::{
@@ -151,7 +155,7 @@ pub fn ended(
         return;
     };
     let clients = clients_in(store);
-    record(
+    note(
         store,
         writer_id,
         about(
@@ -177,7 +181,9 @@ pub fn ended(
 /// Flip every grant whose window has closed, with the row and the signal
 /// each flip owes ([`ended`]): what the host's timer does when it fires, and
 /// what a read of a grant's state does first, so the state it reads is the
-/// one the log says. Whether anything flipped.
+/// one the log says. The one way a grant leaves `Active` by time. Whether
+/// anything flipped: the host then wakes the extensions for the signals and
+/// re-arms its timer, with the locks let go.
 pub fn expire_due(
     store: Option<&SqliteStore>,
     held: &mut AgentState,
@@ -266,7 +272,7 @@ pub fn revoke_rule_in(store: &SqliteStore, writer_id: &str, id: &str, now: i64) 
     draft.mode = rule.modes.first().copied();
     draft.approval = Some(rule.approval);
     draft.detail = Some(format!(r#"{{"ruleId":"{}"}}"#, rule.id));
-    record(store, writer_id, draft, now);
+    note(store, writer_id, draft, now);
     Ok(())
 }
 
@@ -338,15 +344,23 @@ pub fn list_rules_in(store: &SqliteStore, now: i64) -> Vec<RuleRow> {
 }
 
 /// Every grant still held: the active ones, and the ones that ended within
-/// the last hour.
-pub fn list_grants_in(store: &SqliteStore, held: &mut AgentState, now: i64) -> Vec<GrantRow> {
+/// the last hour — and whether listing them expired any, which the host
+/// follows up as it does its timer's firing.
+pub fn list_grants_in(ctx: Locked<'_>) -> (Vec<GrantRow>, bool) {
+    let Locked {
+        store,
+        held,
+        writer,
+        now,
+    } = ctx;
     let clients = clients_in(store);
     let titles = titles_in(store);
     // What the list says should be what is true now, not what was true when
-    // the timer last fired.
-    held.expire_due(now);
+    // the timer last fired — and a grant it shows as over has its row.
+    let expired = expire_due(Some(store), held, writer, now);
     held.prune(now);
-    held.grants
+    let rows = held
+        .grants
         .iter()
         .map(|grant| {
             let item_id = single_id(&grant.items);
@@ -364,5 +378,6 @@ pub fn list_grants_in(store: &SqliteStore, held: &mut AgentState, now: i64) -> V
                 uses: grant.uses,
             }
         })
-        .collect()
+        .collect();
+    (rows, expired)
 }

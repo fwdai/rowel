@@ -179,6 +179,9 @@ still gets back is one to request again, not one to wait on.
 A refusal is a tool error (`isError: true`) whose text is `{ error, message }`
 — `error` is the broker's code name (`AgentsDisabled`, `GrantDenied`,
 `DatabaseNotOpened`, …) or `unreachable` when the app is not running.
+`AuditUnavailable` means the app could not write the audit row the release
+stood on, so it released nothing; it is the host's trouble, not the grant's,
+and the same request may succeed once the log takes rows again.
 
 `initialize` and `tools/list` work with the app closed; a tool call needs it
 running and the vault unlocked.
@@ -271,6 +274,10 @@ X-Rowel-Grant: <grant id from rowel_request_secret>
   for this host, path (without the query) and method — each distinct
   placeholder once per request, every request a use — and replaced in place.
   A placeholder anywhere in the URL is refused: URLs land in logs upstream.
+  A request with no placeholder to put in is refused too (`no_placeholder`),
+  never forwarded: the resolve is what checks the grant covers the host,
+  path and method, so the proxy forwards only what a live grant covers.
+  Call an API that needs no secret directly.
 - **The host**, everywhere an HTTP target names one (the grant
   `rowel_request_secret` asks for, every resolve, `rowel redact --http`): lower
   case, with the port when it is not the scheme's default (`localhost:3000`
@@ -292,7 +299,9 @@ X-Rowel-Grant: <grant id from rowel_request_secret>
   `/https/elsewhere.example/x`, a path on the proxy. Your client follows it
   (or you rebuild the hop) back through the proxy, where it is a request of
   its own with its own grant check: a hop to a host the grant does not name
-  is refused there, and nothing ever goes to it directly. A `Location` that
+  is refused there, and nothing ever goes to it directly. A hop that carries
+  no placeholder (a client that drops `Authorization` on a redirect) is
+  refused as `no_placeholder`; follow it directly or put the placeholder back. A `Location` that
   is not an `http`/`https` URL is dropped.
 - **Forwarding**: the method and headers are kept; `X-Rowel-Grant`, `Host`,
   `Content-Length` and the hop-by-hop headers (`Connection`, `Keep-Alive`,
@@ -304,8 +313,11 @@ X-Rowel-Grant: <grant id from rowel_request_secret>
   headers and body come back with every value this request released redacted (its placeholder in its place, in headers and
   body alike, through the same redactor as `rowel run`); hop-by-hop headers
   are dropped and `Content-Length` is the redacted body's.
-- **Limits**: 60 requests a minute per grant id (a bucket of 60, refilled one
-  a second), so a looping agent cannot hammer an upstream with a real key.
+- **Limits**: 60 requests a minute per grant (a bucket of 60, refilled one
+  a second), so a looping agent cannot hammer an upstream with a real key. A
+  bucket is kept only for a grant the app has accepted, from the first
+  request whose placeholders resolved under it: a made-up id is refused and
+  takes no memory.
 - **Logging**: one line on stderr per request — method, `/https/<host>/<path>`
   and the status; never the query, a header or a body.
 - **Listening**: the loopback address only; a `--listen` on any other address
@@ -318,9 +330,11 @@ placeholder when one is at fault and never a value:
 | status | `error` | when |
 | --- | --- | --- |
 | 400 | `bad_request` | a path not of the form `/https/<host>/<path>`, `/http/` without `--allow-http`, a placeholder in the URL |
+| 400 | `no_placeholder` | nothing in the headers or the JSON or form body to put a value in |
 | 400 | `bad_header` | a resolved value that cannot be sent as a header |
 | 403 | `no_grant` | no `X-Rowel-Grant` |
 | 403 | the broker's code name (`GrantDenied`, `GrantExpired`, …) or `unreachable` | a placeholder the grant does not cover, or the app not running |
+| 503 | `AuditUnavailable` | the app could not write the `used` row, so it released nothing |
 | 413 | `body_too_large` | a body over 32 MiB |
 | 429 | `rate_limited` (with `Retry-After`) | the bucket is empty |
 | 502 | `upstream` | the upstream could not be reached or did not answer |
@@ -339,9 +353,14 @@ for a header grant). With no `--ref` it copies.
 The redactor replaces every occurrence of a released value with its
 placeholder, in the value's exact bytes and in the forms a program commonly
 prints it: standard and URL-safe base64 (padded or not), percent-encoded
-(RFC 3986, upper-case hex) and JSON-escaped. It streams, carrying over at most
-one byte less than the longest form between reads, so a value split across
-two reads is still caught. It is a safety net, not a guarantee: a value
+(RFC 3986, upper-case hex) and JSON-escaped. It streams at a constant lag:
+the last bytes it has read, one fewer than the longest form, are always held
+until more output comes or the stream ends, whatever they are, so a value
+split across two reads is still caught and how soon output appears never
+says whether it began like a value. Output therefore trails by up to that
+many bytes (a prompt the program prints may wait for the next line or for
+the end), and there is no flush on a timer: one would print a slowly printed
+value in pieces. It is a safety net, not a guarantee: a value
 hashed, truncated, printed in parts, or transformed any other way passes.
 **Values shorter than 6 bytes are not matched at all** — a needle that short
 would redact ordinary text.

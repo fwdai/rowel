@@ -47,7 +47,7 @@ pub use rowel_broker::{actions, frame, passkeys, protocol};
 
 pub use self::actions::Client;
 use self::actions::{ClientKind, Hello, Host, Login, VisibleRef};
-use self::passkeys::{Assertion, Registration};
+use self::passkeys::{Assertion, CeremonyLog, Registration};
 use self::protocol::Code;
 use crate::error::Result;
 use crate::models::{EntryMetaDto, GeneratorOptions, Passkey};
@@ -528,7 +528,7 @@ pub fn forget(app: &AppHandle, key: &str) -> Result<()> {
     let clients: Vec<Client> = before.iter().filter(|c| c.key != key).cloned().collect();
     write_clients(store, &clients)?;
     if clients.len() != before.len() {
-        agents::record(
+        agents::note(
             store,
             &writer,
             agents::draft(Event::RevokedClient, key, &before),
@@ -545,10 +545,12 @@ pub fn forget(app: &AppHandle, key: &str) -> Result<()> {
 /// asked — in the middle of the ceremony — with it let go, as `associate`
 /// asks; and every operation is pinned to the session the ceremony began in,
 /// so a lock or a workspace switch while the user decides fails the write
-/// rather than landing it in another vault.
+/// rather than landing it in another vault. Every write commits with the
+/// ceremony's `used` row ([`CeremonyLog`]).
 struct OpenVault {
     app: AppHandle,
     epoch: Epoch,
+    log: CeremonyLog,
 }
 
 impl OpenVault {
@@ -557,7 +559,18 @@ impl OpenVault {
         let session = state.session.lock().unwrap();
         let store = session.store_at(self.epoch)?;
         let cipher = session.payload_cipher()?;
-        op(&SessionVault::new(store, &cipher))
+        self.log.vault(store, &cipher, op)
+    }
+
+    /// The ceremony's `outcome` as it may go out, and what it leaves on the
+    /// log, in the session it began in (`CeremonyLog::settle`).
+    fn settle(
+        &self,
+        outcome: std::result::Result<Value, Code>,
+    ) -> std::result::Result<Value, Code> {
+        let state = self.app.state::<AppState>();
+        let session = state.session.lock().unwrap();
+        self.log.settle(session.store_at(self.epoch).ok(), outcome)
     }
 }
 
@@ -643,7 +656,7 @@ impl Host for AppHost {
             log::warn!("browser host: could not remember the client: {e}");
             Code::AssociationFailed
         })?;
-        agents::record(
+        agents::note(
             store,
             &writer,
             agents::draft(Event::Associated, key, &clients),
@@ -726,13 +739,11 @@ impl Host for AppHost {
         client: &Client,
         registration: Registration,
     ) -> std::result::Result<Value, Code> {
-        let vault = self.open_vault()?;
+        let vault = self.open_vault(client, &registration.origin)?;
         let epoch = vault.epoch;
-        let origin = registration.origin.clone();
-        let consent = self.ask_user(&origin, client);
-        let outcome = passkeys::register(vault, consent, registration);
-        self.passkey_row(epoch, client, &origin, &outcome);
-        let credential = outcome?;
+        let consent = self.ask_user(&registration.origin, client);
+        let outcome = passkeys::register(&vault, consent, registration);
+        let credential = vault.settle(outcome)?;
         // The passkey is on a login — a new one, or the one for the site.
         let entries = {
             let state = self.0.state::<AppState>();
@@ -749,13 +760,10 @@ impl Host for AppHost {
         client: &Client,
         assertion: Assertion,
     ) -> std::result::Result<Value, Code> {
-        let vault = self.open_vault()?;
-        let epoch = vault.epoch;
-        let origin = assertion.origin.clone();
-        let consent = self.ask_user(&origin, client);
-        let outcome = passkeys::assert(vault, consent, assertion);
-        self.passkey_row(epoch, client, &origin, &outcome);
-        outcome
+        let vault = self.open_vault(client, &assertion.origin)?;
+        let consent = self.ask_user(&assertion.origin, client);
+        let outcome = passkeys::assert(&vault, consent, assertion);
+        vault.settle(outcome)
     }
 
     fn lock(&self) {
@@ -895,9 +903,7 @@ impl Host for AppHost {
             (reply_for(grant, items), flipped)
         };
         if flipped {
-            events::agents_changed(app);
-            agents::rearm(app);
-            server::notify_signals();
+            agents::grants_changed(app);
         }
         Ok(reply)
     }
@@ -948,11 +954,22 @@ impl Host for AppHost {
     // in hand to say so. The targets are not checked again: the TOTP step
     // comes with no URL, and the grant was narrowed to its page when it was
     // issued.
-    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool {
+    fn grant_covers(
+        &self,
+        client: &Client,
+        grant_id: &str,
+        item_id: &str,
+        mode: Mode,
+    ) -> std::result::Result<bool, Code> {
         self.with_locked(|ctx| covered(ctx, &client.key, grant_id, item_id, mode))
     }
 
-    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool {
+    fn client_grant_covers(
+        &self,
+        client: &Client,
+        item_id: &str,
+        mode: Mode,
+    ) -> std::result::Result<bool, Code> {
         self.with_locked(|ctx| client_covered(ctx, &client.key, item_id, mode))
     }
 
@@ -987,9 +1004,7 @@ impl Host for AppHost {
                 now,
             );
         }
-        events::agents_changed(app);
-        agents::rearm(app);
-        server::notify_signals();
+        agents::grants_changed(app);
     }
 
     // The one reply that carries a value to something other than an
@@ -1039,12 +1054,14 @@ impl Host for AppHost {
 }
 
 impl AppHost {
-    fn open_vault(&self) -> std::result::Result<OpenVault, Code> {
+    /// The open vault for a ceremony `client` runs for the page at `origin`.
+    fn open_vault(&self, client: &Client, origin: &str) -> std::result::Result<OpenVault, Code> {
         let state = self.0.state::<AppState>();
         let epoch = commands::unlocked_epoch(&state).map_err(|_| Code::DatabaseNotOpened)?;
         Ok(OpenVault {
             app: self.0.clone(),
             epoch,
+            log: CeremonyLog::new(&storage::install_id(&self.0), client, origin),
         })
     }
 
@@ -1056,47 +1073,12 @@ impl AppHost {
         }
     }
 
-    // What a passkey ceremony leaves on the log: a `used` row for one that
-    // went through — a sign-in or a registration is a use of the site's
-    // passkey, in the passkey mode, approved by the user at the dialog — and
-    // a `denied` row for one the user refused. No grant object is involved:
-    // the dialog is the grant. Written in the session the ceremony began in,
-    // and nowhere if that session is gone; any other failure of the ceremony
-    // is the page's business, not the log's.
-    fn passkey_row(
-        &self,
-        epoch: Epoch,
-        client: &Client,
-        origin: &str,
-        outcome: &std::result::Result<Value, Code>,
-    ) {
-        let event = match outcome {
-            Ok(_) => Event::Used,
-            Err(Code::PasskeyRequestCanceled) => Event::Denied,
-            Err(_) => return,
-        };
-        let writer = storage::install_id(&self.0);
-        let now = agents::now_ms();
-        let state = self.0.state::<AppState>();
-        let session = state.session.lock().unwrap();
-        let Ok(store) = session.store_at(epoch) else {
-            return;
-        };
-        let mut row = agents::draft(event, &client.key, &clients_in(store));
-        row.mode = Some(Mode::Passkey);
-        row.target = Some(agents::site_origin(origin));
-        row.approval = Some(Approval::Ask);
-        if event == Event::Used {
-            row.approver = Some("user".into());
-        } else {
-            row.detail = Some(r#"{"reason":"user"}"#.into());
-        }
-        agents::record(store, &writer, row, now);
-    }
-
     // `check` under the session and agents locks, over the open store, once
     // the session has read the switches; false while locked.
-    fn with_locked(&self, check: impl FnOnce(Locked<'_>) -> bool) -> bool {
+    fn with_locked(
+        &self,
+        check: impl FnOnce(Locked<'_>) -> std::result::Result<bool, Code>,
+    ) -> std::result::Result<bool, Code> {
         let app = &self.0;
         agents::initialise(app);
         let writer = storage::install_id(app);
@@ -1104,7 +1086,7 @@ impl AppHost {
         let now = agents::now_ms();
         let session = state.session.lock().unwrap();
         let Ok(store) = session.store() else {
-            return false;
+            return Ok(false);
         };
         let mut held = state.agents.lock().unwrap();
         check(Locked {

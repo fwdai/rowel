@@ -71,12 +71,15 @@ pub enum Code {
     PolicyRequiresApproval = 44,
     RateLimited = 45,
     AgentsDisabled = 46,
+    /// The audit row a release stands on would not write, so nothing was
+    /// released (`agents::record`).
+    AuditUnavailable = 47,
 }
 
 impl Code {
     /// Every code, so a client reading `errorCode` off the wire can name the
     /// refusal it was sent (`from_number`).
-    const ALL: [Code; 29] = [
+    const ALL: [Code; 30] = [
         Code::DatabaseNotOpened,
         Code::ClientPublicKeyNotReceived,
         Code::CannotDecryptMessage,
@@ -106,6 +109,7 @@ impl Code {
         Code::PolicyRequiresApproval,
         Code::RateLimited,
         Code::AgentsDisabled,
+        Code::AuditUnavailable,
     ];
 
     /// The code numbered `n`, or `None` for a number this host never raises —
@@ -145,6 +149,9 @@ impl Code {
             Code::PolicyRequiresApproval => "Policy requires approval",
             Code::RateLimited => "Too many requests",
             Code::AgentsDisabled => "Agents are turned off in Rowel's settings",
+            Code::AuditUnavailable => {
+                "Rowel could not write its activity log, so nothing was released"
+            }
         }
     }
 }

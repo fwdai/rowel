@@ -266,13 +266,22 @@ pub trait Host {
     /// Whether grant `grant_id` is active and covers `item_id` in `mode`
     /// right now, for `client`: a fill grant an agent requested is claimed by
     /// the first extension served under it and refused to any other
-    /// (`Grant::served_to`). A yes is a use.
-    fn grant_covers(&self, client: &Client, grant_id: &str, item_id: &str, mode: Mode) -> bool;
+    /// (`Grant::served_to`). A yes is a use, and is made only once its row is
+    /// in: one that will not write is `AuditUnavailable`, and nothing is
+    /// served.
+    fn grant_covers(
+        &self,
+        client: &Client,
+        grant_id: &str,
+        item_id: &str,
+        mode: Mode,
+    ) -> Result<bool, Code>;
     /// [`Host::grant_covers`] over the grants `client` holds or was served
     /// under, for a step that names none: the TOTP step of an extension in
     /// agent mode that sent no `grantId`. Never claims a grant it was not
     /// served under.
-    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode) -> bool;
+    fn client_grant_covers(&self, client: &Client, item_id: &str, mode: Mode)
+        -> Result<bool, Code>;
     /// The extension found a filled secret showing on the page: end the grant
     /// and log it.
     fn report_exposure(&self, client: &Client, grant_id: &str);
@@ -445,13 +454,15 @@ impl<H: Host> Connection<H> {
                 // mode whatever its message says.
                 let grant_id = str_of(message, "grantId");
                 let (logins, grant_id) = if !grant_id.is_empty() {
-                    let covered: Vec<Login> = logins
-                        .into_iter()
-                        .filter(|login| {
-                            self.host
-                                .grant_covers(&client, grant_id, &login.id, Mode::Fill)
-                        })
-                        .collect();
+                    let mut covered: Vec<Login> = Vec::new();
+                    for login in logins {
+                        if self
+                            .host
+                            .grant_covers(&client, grant_id, &login.id, Mode::Fill)?
+                        {
+                            covered.push(login);
+                        }
+                    }
                     if covered.is_empty() {
                         return Err(Code::GrantDenied.into());
                     }
@@ -525,9 +536,9 @@ impl<H: Host> Connection<H> {
                 // person's click would be.
                 let grant_id = str_of(message, "grantId");
                 let covered = if !grant_id.is_empty() {
-                    self.host.grant_covers(&client, grant_id, id, Mode::Fill)
+                    self.host.grant_covers(&client, grant_id, id, Mode::Fill)?
                 } else if agent_mode(&client, message) {
-                    self.host.client_grant_covers(&client, id, Mode::Fill)
+                    self.host.client_grant_covers(&client, id, Mode::Fill)?
                 } else {
                     true
                 };

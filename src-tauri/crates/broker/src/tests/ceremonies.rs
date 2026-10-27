@@ -12,7 +12,15 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use super::{error_code, Code, Connection, Extension, Mock};
-use crate::passkeys::rp_id;
+use crate::actions::Client;
+use crate::passkeys::{self, rp_id, CeremonyLog};
+use crate::testing::{seed, stored, vault};
+use rowel_core::crypto::PayloadCipher;
+use rowel_core::error::Result as CoreResult;
+use rowel_core::models::{Entry, Passkey};
+use rowel_core::passkey::store::{PasskeyVault, Stored};
+use rowel_core::passkey::{Ceremony, UserConsent};
+use rowel_core::store::{SqliteStore, VaultStore};
 
 const ORIGIN: &str = "https://login.example.com";
 const RP_ID: &str = "example.com";
@@ -533,4 +541,136 @@ fn an_rp_id_is_the_host_or_a_registrable_suffix_of_it() {
         check("https://[::1]", None),
         Err(Code::PasskeyDomainNotValid)
     );
+}
+
+// --- what a ceremony leaves in the vault and on the log ---------------------------
+
+/// The open vault in `store` as a host lends it to a ceremony: every
+/// operation through the ceremony's log, as the app's and `rowel serve`'s
+/// `OpenVault` make them.
+struct Logged<'a> {
+    store: &'a SqliteStore,
+    cipher: &'a PayloadCipher,
+    log: CeremonyLog,
+}
+
+impl PasskeyVault for Logged<'_> {
+    fn find(&self, rp_id: &str) -> CoreResult<Vec<Stored>> {
+        self.log
+            .vault(self.store, self.cipher, |vault| vault.find(rp_id))
+    }
+    fn insert(&self, passkey: &Passkey) -> CoreResult<()> {
+        self.log
+            .vault(self.store, self.cipher, |vault| vault.insert(passkey))
+    }
+    fn update(&self, entry_id: &str, passkey: &Passkey) -> CoreResult<()> {
+        self.log.vault(self.store, self.cipher, |vault| {
+            vault.update(entry_id, passkey)
+        })
+    }
+}
+
+struct Yes;
+
+impl UserConsent for Yes {
+    fn approve(&self, _: Ceremony<'_>) -> Option<usize> {
+        Some(0)
+    }
+}
+
+/// One ceremony, `register` or not, run and settled as a host runs it.
+fn logged(store: &SqliteStore, cipher: &PayloadCipher, register: bool) -> Result<Value, Code> {
+    let client: Client =
+        serde_json::from_value(json!({ "name": "Chrome", "key": "id-key" })).unwrap();
+    let vault = Logged {
+        store,
+        cipher,
+        log: CeremonyLog::new("dev", &client, ORIGIN),
+    };
+    let message = |public_key: Value| {
+        json!({ "publicKey": public_key, "origin": ORIGIN })
+            .as_object()
+            .unwrap()
+            .clone()
+    };
+    let outcome = if register {
+        let registration = passkeys::registration(&message(creation(&challenge(), &[]))).unwrap();
+        passkeys::register(&vault, Yes, registration)
+    } else {
+        let assertion = passkeys::assertion(&message(request(&challenge(), &[]))).unwrap();
+        passkeys::assert(&vault, Yes, assertion)
+    };
+    vault.log.settle(Some(store), outcome)
+}
+
+fn used_rows(store: &SqliteStore) -> usize {
+    store
+        .audit_rows("dev")
+        .unwrap()
+        .iter()
+        .filter(|row| row.event == "used")
+        .count()
+}
+
+// A ceremony's vault write commits with its `used` row or not at all. With
+// the log refusing rows, a registration is `AuditUnavailable` and the login
+// it would have gone on is as it was — no credential the site never got —
+// and a sign-in's counter does not move. Once the log takes rows, each goes
+// through with exactly one row, the one its write committed with; a sign-in
+// that writes nothing has its row written before the assertion goes out.
+#[test]
+fn a_ceremony_whose_row_will_not_write_leaves_the_vault_as_it_was() {
+    let (_dir, store, cipher) = vault();
+    let login = Entry {
+        id: "site".into(),
+        kind: "login".into(),
+        title: "Example".into(),
+        website: Some("https://example.com".into()),
+        ..Default::default()
+    };
+    seed(&store, &cipher, &login);
+    let payload = |store: &SqliteStore| store.get("site").unwrap().unwrap().payload;
+    let before = payload(&store);
+
+    store.refuse_audit_writes().unwrap();
+    assert_eq!(logged(&store, &cipher, true), Err(Code::AuditUnavailable));
+    assert_eq!(payload(&store), before, "no passkey was kept");
+    assert_eq!(
+        store.list().unwrap().len(),
+        1,
+        "nor put on a login of its own"
+    );
+
+    store.allow_audit_writes().unwrap();
+    logged(&store, &cipher, true).unwrap();
+    assert_eq!(stored(&store, &cipher, "site").passkeys.unwrap().len(), 1);
+    assert_eq!(
+        used_rows(&store),
+        1,
+        "the row it committed with, and no other"
+    );
+
+    // An imported credential keeps a counter, and a sign-in moves it.
+    let mut counted = stored(&store, &cipher, "site");
+    counted.passkeys.as_mut().unwrap()[0].counter = 5;
+    seed(&store, &cipher, &counted);
+    let counter = |store: &SqliteStore| stored(store, &cipher, "site").passkeys.unwrap()[0].counter;
+    store.refuse_audit_writes().unwrap();
+    assert_eq!(logged(&store, &cipher, false), Err(Code::AuditUnavailable));
+    assert_eq!(counter(&store), 5, "the counter did not move");
+    store.allow_audit_writes().unwrap();
+    logged(&store, &cipher, false).unwrap();
+    assert_eq!(counter(&store), 6);
+    assert_eq!(used_rows(&store), 2);
+
+    // A synced credential keeps none: the sign-in writes nothing to the
+    // vault, and its row is what lets the assertion out.
+    let mut synced = stored(&store, &cipher, "site");
+    synced.passkeys.as_mut().unwrap()[0].counter = 0;
+    seed(&store, &cipher, &synced);
+    store.refuse_audit_writes().unwrap();
+    assert_eq!(logged(&store, &cipher, false), Err(Code::AuditUnavailable));
+    store.allow_audit_writes().unwrap();
+    logged(&store, &cipher, false).unwrap();
+    assert_eq!(used_rows(&store), 3);
 }

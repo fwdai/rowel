@@ -12,7 +12,9 @@ use zeroize::Zeroizing;
 use rowel_core::crypto::PayloadCipher;
 use rowel_core::error::{store_err, Error, Result};
 use rowel_core::models::Entry;
-use rowel_core::store::{migrate, EntryMeta, SqliteStore, VaultStore};
+use rowel_core::store::{
+    migrate, EntryMeta, Result as StoreResult, SqliteStore, StoreError, StoreTx, VaultStore,
+};
 
 use crate::actions::{self, Client, Login};
 use crate::policy::Rule;
@@ -251,6 +253,13 @@ pub fn write_rules(store: &SqliteStore, rules: &[Rule]) -> Result<()> {
     store
         .meta_set(RULES_META, &serde_json::to_string(rules)?)
         .map_err(store_err)
+}
+
+/// [`write_rules`], inside a transaction that commits it with its audit row
+/// (`agents::record_with`).
+pub fn write_rules_in(tx: &StoreTx<'_>, rules: &[Rule]) -> StoreResult<()> {
+    let json = serde_json::to_string(rules).map_err(|e| StoreError::Other(e.to_string()))?;
+    tx.meta_set(RULES_META, &json)
 }
 
 /// The lockbox's own rules that still apply at `now_ms`. A rule past its end

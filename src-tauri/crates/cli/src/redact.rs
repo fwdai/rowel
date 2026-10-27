@@ -6,10 +6,14 @@
 //! value a program base64s, percent-encodes or JSON-escapes still reads as
 //! the value — and anything transformed otherwise passes.
 //!
-//! The matcher streams: a chunk is scanned, everything that cannot be the
-//! start of a needle is written out, and at most one byte less than the
-//! longest needle is carried to the next chunk, so a value split across two
-//! reads is still caught and nothing is held back longer than it must be.
+//! The matcher streams at a constant lag: a chunk is scanned, and its tail
+//! too short to hold the longest needle is always carried to the next chunk,
+//! whatever it is, so a value split across two reads is still
+//! caught and the moment a byte is released says nothing about the values.
+//! The cost is that output trails the input by up to that many bytes until
+//! more output comes or the stream ends. Nothing flushes the tail on a timer
+//! either: a program that prints a value slowly would have it printed in
+//! pieces, each too short to match.
 
 use std::io::{self, Read, Write};
 
@@ -44,8 +48,8 @@ pub struct Redactor {
     needles: Vec<Needle>,
     placeholders: Vec<String>,
     longest: usize,
-    /// The tail of the last chunk that may be the start of a needle. It may
-    /// hold part of a value, so it is wiped like one.
+    /// The tail of the last chunk, shorter than the longest needle, not yet
+    /// decided. It may hold part of a value, so it is wiped like one.
     carry: Zeroizing<Vec<u8>>,
 }
 
@@ -88,8 +92,8 @@ impl Redactor {
     }
 
     /// Scan `chunk` after what was carried over, writing out everything that
-    /// is settled: text before a match, the placeholder for a match, and the
-    /// tail that cannot be the start of a needle.
+    /// is settled: text before a match and the placeholder for a match, up
+    /// to the tail too short to hold the longest needle.
     pub fn feed(&mut self, chunk: &[u8], out: &mut impl Write) -> io::Result<()> {
         if self.is_empty() {
             out.write_all(chunk)?;
@@ -114,22 +118,19 @@ impl Redactor {
 
     /// Write `buffer` with every needle replaced, left to right, the longest
     /// where several start at one place, and return how much of it was
-    /// written. Short of the stream's `end`, it stops at the first place
-    /// where the buffer runs out partway through a needle: what is there may
-    /// still be that needle — or a longer one around a shorter value that
-    /// already matched, a password inside a URL — and deciding now would
-    /// print part of it. The rest is carried to the next chunk.
+    /// written. Short of the stream's `end`, a place is decided only once
+    /// the longest needle's length of bytes stands after it, whatever those
+    /// bytes are, and the shorter tail is carried to the next chunk. Holding
+    /// back only what could still grow into a needle would release a byte
+    /// the moment it ruled one out, and how soon output appeared would then
+    /// tell whoever writes the input whether their guess is a prefix of the
+    /// value — a secret recovered a byte at a time. At a constant lag, what
+    /// is written and when depends on the values only through a whole match.
     fn write_redacted(&self, buffer: &[u8], out: &mut impl Write, end: bool) -> io::Result<usize> {
         let (mut at, mut written) = (0, 0);
         while at < buffer.len() {
             let hay = &buffer[at..];
-            if !end
-                && hay.len() < self.longest
-                && self
-                    .needles
-                    .iter()
-                    .any(|n| n.bytes.len() > hay.len() && n.bytes.starts_with(hay))
-            {
+            if !end && hay.len() < self.longest {
                 break;
             }
             match self
@@ -445,21 +446,44 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_prefix_of_the_value_is_written_out_not_held() {
-        let mut r = redactor(&[(KEY, REF)]);
-        let prefix = &KEY[..12];
+    /// What `feed` writes for `input`, before `finish`.
+    fn fed(redactor: &mut Redactor, input: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        r.feed(format!("{prefix}-").as_bytes(), &mut out).unwrap();
-        assert_eq!(out, format!("{prefix}-").as_bytes());
-        r.feed(b"mock-v", &mut out).unwrap();
-        assert_eq!(
-            out,
-            format!("{prefix}-").as_bytes(),
-            "a possible start is carried"
-        );
+        redactor.feed(input, &mut out).unwrap();
+        out
+    }
+
+    // Whoever writes the input learns nothing from how much comes out: a
+    // guess that is a prefix of the value and one that is not, of the same
+    // length, release the same bytes, at every length up to the value's.
+    #[test]
+    fn how_much_is_released_does_not_depend_on_a_partial_match() {
+        let longest = redactor(&[(KEY, REF)]).longest;
+        let padding = "x".repeat(longest);
+        for len in 1..KEY.len() {
+            let prefix = format!("{padding}{}", &KEY[..len]);
+            let other = format!("{padding}{}", "z".repeat(len));
+            let from_prefix = fed(&mut redactor(&[(KEY, REF)]), prefix.as_bytes());
+            let from_other = fed(&mut redactor(&[(KEY, REF)]), other.as_bytes());
+            assert_eq!(from_prefix.len(), from_other.len(), "at {len}");
+            assert_eq!(from_prefix.len(), prefix.len() + 1 - longest, "at {len}");
+        }
+    }
+
+    // A guess fed a byte at a time shows nothing either: each byte that
+    // comes out is the one a full window before it, the same for any input.
+    #[test]
+    fn output_trails_the_input_by_a_constant_window() {
+        let mut r = redactor(&[(KEY, REF)]);
+        let longest = r.longest;
+        let input = format!("{}{}", "y".repeat(longest), &KEY[..KEY.len() - 1]);
+        let mut out = Vec::new();
+        for (n, byte) in input.bytes().enumerate() {
+            r.feed(&[byte], &mut out).unwrap();
+            assert_eq!(out.len(), (n + 2).saturating_sub(longest), "after {n}");
+        }
         r.finish(&mut out).unwrap();
-        assert_eq!(out, format!("{prefix}-mock-v").as_bytes());
+        assert_eq!(out, input.as_bytes(), "the end decides the rest");
     }
 
     #[test]

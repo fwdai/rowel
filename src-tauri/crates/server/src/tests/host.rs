@@ -357,6 +357,38 @@ fn an_idle_lockbox_is_sealed_and_unwrapped_again_by_the_next_request() {
     assert_eq!(unwraps, 2);
 }
 
+// The log fails closed on the server too. With the lockbox's log refusing
+// rows, a value is not resolved; and once the idle seal has dropped the key,
+// it is not unwrapped again, since the `key_unwrapped` row is the record
+// that the server used a key it holds.
+#[test]
+fn a_lockbox_whose_log_will_not_write_releases_nothing_and_stays_sealed() {
+    let org = Org::new(ASK_TIMEOUT_MS);
+    org.stripe_rule(Gate::Auto);
+    let mut agent = org.associated("run-key-1", "agent");
+    let granted = agent.call("request-grant", header_request("a")).unwrap();
+    let mut sidecar = org.associated("sidecar-key-1", "sidecar");
+    let vault = org.state.vaults.get(&org.lockbox.id).unwrap();
+    vault
+        .session()
+        .store()
+        .unwrap()
+        .refuse_audit_writes()
+        .unwrap();
+
+    let resolved = sidecar.call(
+        "resolve",
+        resolve_request(&granted["grantId"], &org.lockbox.id),
+    );
+    assert_eq!(refused(resolved.unwrap_err()), Code::AuditUnavailable);
+
+    host::tick(&org.state, now_ms() + KEY_IDLE_MS as i64 + 1);
+    assert!(!vault.is_open(), "idle: sealed");
+    let after = agent.call("request-grant", header_request("b"));
+    assert_eq!(refused(after.unwrap_err()), Code::AuditUnavailable);
+    assert!(!vault.is_open(), "the key went with the refused open");
+}
+
 #[test]
 fn the_mirror_holds_every_row_the_lockbox_holds() {
     let org = Org::new(ASK_TIMEOUT_MS);

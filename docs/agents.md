@@ -134,7 +134,9 @@ slug; the exact rules and the field names per kind are in
   `http://127.0.0.1:7400/https/api.stripe.com`. The agent sends the
   placeholder where the key would go and the grant id in an `X-Rowel-Grant`
   header; the proxy swaps in the value, forwards over TLS and scrubs it from
-  the response. See [`rowel proxy`](./cli.md#rowel-proxy).
+  the response. A request with no placeholder is refused, never forwarded:
+  the proxy carries only what a grant covers. See
+  [`rowel proxy`](./cli.md#rowel-proxy).
 - **Hooks**: with `rowel hook pre` and `rowel hook post` configured as the
   agent's shell hooks, a command the agent writes as `STRIPE_KEY=rowel://… cmd`
   is rewritten into the `rowel run` form before it runs, and a command whose
@@ -224,7 +226,9 @@ section. In short:
 - **The redactor is a safety net, not a guarantee.** It catches the value
   printed as is or in the common encodings (base64, percent-encoding, JSON
   escaping). A value hashed, truncated, split or shown as pixels passes, and
-  values shorter than six bytes are never matched.
+  values shorter than six bytes are never matched. It always holds back
+  the last bytes of output, one fewer than the longest form of a value, until
+  more comes or the command ends, so streamed output trails a little.
 - **A logged-in session is a session.** Rowel signs the agent's browser out of
   the site when the grant ends. While the grant is live, an agent that controls
   the browser can use the session like any logged-in user.

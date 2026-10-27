@@ -240,7 +240,8 @@ impl Device {
             &self.writer,
             Draft::new(ActorKind::Human, event),
             now_ms(),
-        );
+        )
+        .unwrap();
     }
 
     pub fn entries(&self) -> Vec<Record> {
@@ -264,7 +265,8 @@ pub(super) fn agent_writes(state: &AppState, lockbox: &Lockbox) {
             &state.writer_id,
             Draft::new(ActorKind::Agent, Event::Granted),
             now_ms(),
-        );
+        )
+        .unwrap();
     }
     vault.mirror(state);
 }

@@ -1565,5 +1565,13 @@
     "agentModeGrantEndedNotification": {
         "message": "The agent is done: Rowel signed you out of the site in this browser",
         "description": "Rowel: notification when an agent's grant ended and the site's cookies were deleted."
+    },
+    "agentModeAuditUnavailableNotification": {
+        "message": "Rowel could not write its activity log, so nothing was filled",
+        "description": "Rowel: notification when a fill was refused because its audit row could not be written."
+    },
+    "errorMessageAuditUnavailable": {
+        "message": "Rowel could not write its activity log, so nothing was released",
+        "description": "Rowel: error code 47."
     }
 }

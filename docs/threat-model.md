@@ -1020,7 +1020,14 @@ allowed, no more, and only while the grant is active.
 items: `requested`, `granted`, `denied`, `used`, `exposed`, `ended` and
 `revoked` for grants; `associated` and `revoked_client` for clients;
 `rule_added` and `rule_removed` for standing rules; `rate_limited`; and
-`pruned_through`. A row carries the actor's kind and name, the agent's run id,
+`pruned_through`. The log fails closed: a release — a grant going active, a
+login, code, value or passkey assertion served under one, a standing rule
+written, a key a Rowel Server unwraps — is made only once its row is written,
+in the same locked section as the decision, and a row that will not write
+refuses the release with `AuditUnavailable` (47). A row about something that
+only restricts (a refusal, an end, a revocation, an exposure, a rule removed,
+a rate limit) is logged when it will not write, and the restriction still
+takes effect. A row carries the actor's kind and name, the agent's run id,
 the grant, the item id, the target, the mode, the approval and a small detail
 object, and never a secret value, a TOTP code, passkey material or a URL's
 query: the target is the page reduced to scheme, host and path, or the command
@@ -1159,7 +1166,9 @@ associated data). It never sees a member's personal lockboxes, which never
 leave their devices. What bounds it:
 
 - **Keys at rest and in memory.** A master is unwrapped on first use, written
-  as a `key_unwrapped` row, and wiped again after ten idle minutes, on a
+  as a `key_unwrapped` row (an unwrap whose row will not write is dropped and
+  the request refused, so no use of a server-held key goes unrecorded), and
+  wiped again after ten idle minutes, on a
   freeze and on `SIGTERM`; a quiet server holds no plaintext key. The root key
   file is the whole of the escrow: whoever reads it and the data directory
   reads every org lockbox, which is why the operator is told to keep it

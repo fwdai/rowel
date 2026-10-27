@@ -2,12 +2,13 @@
 //! share for a target, a client and a mode. Nothing secret goes in a row: the
 //! target is reduced to scheme, host and path before it is written.
 
-use rowel_core::store::SqliteStore;
+use rowel_core::store::{Result as StoreResult, SqliteStore, StoreTx};
 
 use crate::actions::{clamp, Client, ClientKind};
 use crate::audit::{ActorKind, Draft, Event, Writer};
 use crate::grant::{Grant, ItemSelector, Mode, ResolveTarget, Target};
 use crate::policy::{AgentSelector, Rule};
+use crate::protocol::Code;
 
 /// A row about what client `key` did, as the kind of client the lockbox's
 /// record says it is. A key the lockbox never named — a stale association —
@@ -48,14 +49,71 @@ pub fn about(mut draft: Draft, grant: &Grant, detail: Option<&str>) -> Draft {
     draft
 }
 
-/// Chain `draft` onto the lockbox's log. A row that will not write is logged
-/// and not fatal: the decision it describes has been made, and refusing the
-/// fill over a bookkeeping failure would only teach the user to turn the
-/// bookkeeping off.
-pub fn record(store: &SqliteStore, writer_id: &str, draft: Draft, now_ms: i64) {
+/// Chain `draft` onto the lockbox's log as the row a release stands on: a
+/// grant going active, a use — a login, a code, a value, an assertion — or
+/// a standing rule, which is a release to come. The log fails closed: a row
+/// that will not write is `AuditUnavailable`, and the caller releases
+/// nothing, so there is no use the log does not hold. A release is written
+/// `record(…)?;` and then made, in the same section as its decision.
+pub fn record(store: &SqliteStore, writer_id: &str, draft: Draft, now_ms: i64) -> Result<(), Code> {
+    Writer::new(writer_id, store)
+        .record(draft, now_ms)
+        .map(drop)
+        .map_err(|e| {
+            log::warn!("agents: could not write the audit row, so nothing is released: {e}");
+            Code::AuditUnavailable
+        })
+}
+
+/// [`record`], for a release that writes the store too — a passkey saved, a
+/// standing rule — in one transaction with its row
+/// (`SqliteStore::commit_with_audit`): both commit or neither does, so the
+/// vault never keeps what the log does not hold. Either half failing is
+/// `AuditUnavailable`, since either way the row is not in, and nothing of
+/// `write` is left behind.
+pub fn record_with<T>(
+    store: &SqliteStore,
+    writer_id: &str,
+    draft: Draft,
+    now_ms: i64,
+    write: impl FnOnce(&StoreTx<'_>) -> StoreResult<T>,
+) -> Result<T, Code> {
+    Writer::new(writer_id, store)
+        .chain(draft, now_ms)
+        .map_err(|e| e.to_string())
+        .and_then(|row| {
+            store
+                .commit_with_audit(&row, write)
+                .map_err(|e| e.to_string())
+        })
+        .map_err(|e| {
+            log::warn!("agents: could not write the audit row, so nothing is released: {e}");
+            Code::AuditUnavailable
+        })
+}
+
+/// Chain `draft` onto the lockbox's log as a row about something that
+/// releases nothing: a refusal, an end, a client let in or forgotten, an ask
+/// put up. A row that will not write is logged, and what it describes still
+/// happens — failing closed means never releasing without a row, not
+/// refusing to end what is live. A releasing event goes through [`record`].
+pub fn note(store: &SqliteStore, writer_id: &str, draft: Draft, now_ms: i64) {
+    debug_assert!(
+        !releases(draft.event),
+        "a {} row goes through `record`",
+        draft.event.as_str()
+    );
     if let Err(e) = Writer::new(writer_id, store).record(draft, now_ms) {
         log::warn!("agents: could not write the audit row: {e}");
     }
+}
+
+/// Whether a row of `event` is one a release stands on ([`record`]).
+fn releases(event: Event) -> bool {
+    matches!(
+        event,
+        Event::Granted | Event::Used | Event::RuleAdded | Event::KeyUnwrapped
+    )
 }
 
 /// A URL as the log may hold it: scheme, host and path, never the query or

@@ -154,12 +154,14 @@ back but serves nothing without a grant. While it is on:
   own grant, the dialog names the frame's origin, and its TOTP step finds
   that grant. One bounded retry: a `GrantExpired` answer to a
   remembered grant forgets it and asks afresh; a `GrantPending` with
-  `retryAfterMs` is waited for once. The refusals (codes 40–46 in `kpErrors`,
+  `retryAfterMs` is waited for once. The refusals (codes 40–47 in `kpErrors`,
   `client.js`) become the extension's notification: `GrantDenied` "Rowel did
   not allow this fill", `GrantPending` "Rowel is busy with another request…",
   `RateLimited` "Too many requests; wait a minute.", `AgentsDisabled` "Turn on
-  Agents in Rowel › Settings › Browser & agents". The notifications carry no
-  credential and no URL.
+  Agents in Rowel › Settings › Browser & agents", `AuditUnavailable` "Rowel
+  could not write its activity log, so nothing was filled" (the app writes
+  the row before it serves, and serves nothing it could not write). The
+  notifications carry no credential and no URL.
 - **Grants an agent asked for.** The host pushes a clear `rowel-signal` (no
   content, beside `database-locked`; the Safari shim's `isSignal` knows it)
   and the extension answers with a sealed `get-signals`

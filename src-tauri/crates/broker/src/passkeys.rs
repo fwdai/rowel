@@ -78,6 +78,7 @@
 //! discoverable); BE/BS are whatever the authenticator sets.
 
 use std::future::Future;
+use std::sync::Mutex;
 
 use passkey_types::ctap2::{get_assertion, make_credential, Ctap2Error, StatusCode};
 use passkey_types::encoding::{base64url, try_from_base64url};
@@ -89,9 +90,17 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use url::{Host, Url};
 
+use super::actions::Client;
+use super::agents::{draft, note, now_ms, record, record_with, site_origin};
+use super::audit::{Draft, Event};
+use super::grant::{Approval, Mode};
+use super::lockbox::clients_in;
 use super::protocol::{str_of, Code};
-use rowel_core::passkey::store::PasskeyVault;
+use rowel_core::crypto::PayloadCipher;
+use rowel_core::error::Result as CoreResult;
+use rowel_core::passkey::store::{PasskeyVault, SessionVault};
 use rowel_core::passkey::{Authenticator, UserConsent};
+use rowel_core::store::{Record, Result as StoreResult, SqliteStore, StoreError};
 
 /// ES256, the one algorithm the vault's keys are.
 const ES256: i64 = -7;
@@ -274,6 +283,109 @@ pub fn assert<V: PasskeyVault>(
             "userHandle": signed.user.map(|user| base64url(&user.id)),
         },
     }))
+}
+
+/// The log's side of one passkey ceremony, as every host writes it: a `used`
+/// row for one that went through — a sign-in or a registration is a use of
+/// the site's passkey, in the passkey mode, approved by the user at the
+/// dialog — and a `denied` row for one the user refused. No grant object is
+/// involved: the dialog is the grant.
+///
+/// The `used` row is what the ceremony's vault write stands on — a
+/// registration's new passkey, a sign-in's counter — so the two commit in one
+/// transaction ([`CeremonyLog::vault`]): a row that will not write leaves no
+/// credential the site never received. A host makes one per ceremony, lends
+/// it to its `PasskeyVault` adapter, and once the ceremony is over lets it
+/// say what may go out ([`CeremonyLog::settle`]). Both run under the host's
+/// session lock, which is what keeps the rows' chain in order.
+pub struct CeremonyLog {
+    writer_id: String,
+    client: Client,
+    origin: String,
+    /// Whether a vault write went with the row: `None` until one was tried,
+    /// then whether it committed.
+    committed: Mutex<Option<bool>>,
+}
+
+impl CeremonyLog {
+    /// The log of a ceremony `client` runs for the page at `origin`, written
+    /// by `writer_id`.
+    pub fn new(writer_id: &str, client: &Client, origin: &str) -> Self {
+        Self {
+            writer_id: writer_id.to_string(),
+            client: client.clone(),
+            origin: origin.to_string(),
+            committed: Mutex::new(None),
+        }
+    }
+
+    /// `op` over the open vault in `store`, every write of which commits
+    /// together with the ceremony's `used` row, or not at all.
+    pub fn vault<T>(
+        &self,
+        store: &SqliteStore,
+        cipher: &PayloadCipher,
+        op: impl FnOnce(&SessionVault<'_>) -> CoreResult<T>,
+    ) -> CoreResult<T> {
+        let commit = |record: &Record| self.commit(store, record);
+        op(&SessionVault::new(store, cipher).committing_through(&commit))
+    }
+
+    fn commit(&self, store: &SqliteStore, record: &Record) -> StoreResult<()> {
+        let row = self.row(store, Event::Used);
+        let committed = record_with(store, &self.writer_id, row, now_ms(), |tx| {
+            tx.upsert(record)
+        });
+        *self.committed.lock().unwrap_or_else(|e| e.into_inner()) = Some(committed.is_ok());
+        committed.map_err(|_| StoreError::Other("the passkey's audit row would not write".into()))
+    }
+
+    /// The ceremony's `outcome` as it may go out, with what it leaves on the
+    /// log, in the session it began in: `store`, or `None` when that session
+    /// is gone. Any failure but the user's refusal is the page's business,
+    /// not the log's.
+    pub fn settle(
+        &self,
+        store: Option<&SqliteStore>,
+        outcome: Result<Value, Code>,
+    ) -> Result<Value, Code> {
+        let committed = *self.committed.lock().unwrap_or_else(|e| e.into_inner());
+        match (committed, outcome) {
+            // The write is in with its row: there is nothing left to write.
+            (Some(true), outcome) => outcome,
+            // Neither is in, and the ceremony failed at the write.
+            (Some(false), _) => Err(Code::AuditUnavailable),
+            // A sign-in under a credential that keeps no counter writes
+            // nothing to the vault, so its row goes in here, and the
+            // assertion goes out only once it is in.
+            (None, Ok(credential)) => {
+                let store = store.ok_or(Code::DatabaseNotOpened)?;
+                let row = self.row(store, Event::Used);
+                record(store, &self.writer_id, row, now_ms())?;
+                Ok(credential)
+            }
+            (None, Err(Code::PasskeyRequestCanceled)) => {
+                if let Some(store) = store {
+                    let mut row = self.row(store, Event::Denied);
+                    row.detail = Some(r#"{"reason":"user"}"#.into());
+                    note(store, &self.writer_id, row, now_ms());
+                }
+                Err(Code::PasskeyRequestCanceled)
+            }
+            (None, outcome) => outcome,
+        }
+    }
+
+    fn row(&self, store: &SqliteStore, event: Event) -> Draft {
+        let mut row = draft(event, &self.client.key, &clients_in(store));
+        row.mode = Some(Mode::Passkey);
+        row.target = Some(site_origin(&self.origin));
+        row.approval = Some(Approval::Ask);
+        if event == Event::Used {
+            row.approver = Some("user".into());
+        }
+        row
+    }
 }
 
 /// The sealed reply's params: the credential under `response`, or the

@@ -979,6 +979,57 @@ fn recent_audit_rows_are_chosen_by_event_before_the_limit() {
     assert_eq!(store.audit_recent(0, &["granted"], 5).unwrap().len(), 5);
 }
 
+// A write and the row it stands on are one commit: kept together, and when
+// the row will not go in — the log refusing it, or its `seq` already taken —
+// the write is rolled back with it, whichever of the writes it was.
+#[test]
+fn a_write_commits_with_its_audit_row_or_not_at_all() {
+    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    store
+        .commit_with_audit(&audit_rec("dev", 1, 100), |tx| {
+            tx.upsert(&rec("1", b"one"))?;
+            tx.meta_set("rules", "[1]")
+        })
+        .unwrap();
+    assert_eq!(store.get("1").unwrap().unwrap().payload, b"one");
+    assert_eq!(store.meta_get("rules").unwrap().as_deref(), Some("[1]"));
+    assert_eq!(
+        store.audit_rows("dev").unwrap(),
+        vec![audit_rec("dev", 1, 100)]
+    );
+
+    let taken = AuditRecord {
+        id: "another-id".into(),
+        ..audit_rec("dev", 1, 101)
+    };
+    assert!(store
+        .commit_with_audit(&taken, |tx| tx.upsert(&rec("2", b"two")))
+        .is_err());
+    assert_eq!(store.get("2").unwrap(), None, "a taken seq keeps nothing");
+
+    store.refuse_audit_writes().unwrap();
+    assert!(store
+        .commit_with_audit(&audit_rec("dev", 2, 200), |tx| {
+            tx.upsert(&rec("1", b"changed"))?;
+            tx.meta_set("rules", "[1,2]")
+        })
+        .is_err());
+    assert_eq!(store.get("1").unwrap().unwrap().payload, b"one");
+    assert_eq!(store.meta_get("rules").unwrap().as_deref(), Some("[1]"));
+    assert_eq!(store.audit_rows("dev").unwrap().len(), 1);
+
+    // A write that fails itself writes no row either.
+    let no_row = SqliteStore::open(&tmp_db(), KEY).unwrap();
+    let failed: Result<(), StoreError> =
+        no_row.commit_with_audit(&audit_rec("dev", 1, 100), |tx| {
+            tx.meta_set("k", "v")?;
+            Err(StoreError::Other("the write failed".into()))
+        });
+    assert!(failed.is_err());
+    assert_eq!(no_row.meta_get("k").unwrap(), None);
+    assert!(no_row.audit_rows("dev").unwrap().is_empty());
+}
+
 #[test]
 fn a_second_audit_row_with_a_writers_seq_is_refused() {
     let store = SqliteStore::open(&tmp_db(), KEY).unwrap();

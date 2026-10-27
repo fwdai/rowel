@@ -20,7 +20,7 @@ pub mod identity;
 mod tests;
 
 pub use hash::{audit_fingerprint, record_hash, state_digest, vault_digest};
-pub use sqlite::{create_private_dir, ImageCache, SqliteStore, SYNC_META_PREFIX};
+pub use sqlite::{create_private_dir, ImageCache, SqliteStore, StoreTx, SYNC_META_PREFIX};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

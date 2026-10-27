@@ -14,6 +14,7 @@ use rowel_broker::grant::{Approval, ItemSelector, Mode, Target};
 use rowel_broker::policy::{AgentSelector, Rule};
 use rowel_broker::protocol::Code;
 use rowel_broker::testing::Extension;
+use rowel_core::store::VaultStore;
 use rowel_core::workspace;
 
 use crate::approvals::{Answer, AskKind};
@@ -346,6 +347,76 @@ fn a_config_auto_rule_issues_a_header_grant_without_an_ask() {
     );
 }
 
+// A grant whose window closed is ended by the first read of it, through the
+// engine's one expiry path, with its `ended` row; the tick after it finds
+// nothing left to write.
+#[test]
+fn an_expired_grant_has_one_ended_row_whoever_sees_it_first() {
+    let data = seeded();
+    config_with(
+        &data,
+        vec![Rule {
+            ttl_ms: 200,
+            ..stripe_rule(AGENT_KEY, Approval::Auto)
+        }],
+    );
+    let host = data.host(&Notices::default());
+    let mut agent = peer(&host, AGENT_KEY);
+    let reply = agent
+        .call("request-grant", header_request("check the balance"))
+        .unwrap();
+    assert_eq!(reply["state"], "active");
+    thread::sleep(Duration::from_millis(300));
+
+    let status = agent
+        .call("grant-status", json!({ "grantId": reply["grantId"] }))
+        .unwrap();
+    assert_eq!(status["state"], "expired");
+    let rows = data.rows();
+    assert_eq!(events(&rows), ["requested", "granted", "ended"]);
+    assert_eq!(rows[2].1.as_deref(), Some(r#"{"reason":"expired"}"#));
+
+    host.tick();
+    assert_eq!(data.rows().len(), 3, "the tick has nothing left to end");
+}
+
+// The log fails closed: with the vault's log refusing rows, a value is not
+// resolved and a grant is not issued, each refused as `AuditUnavailable`,
+// while the agent's end of its grant still takes.
+#[test]
+fn a_log_that_will_not_write_releases_nothing_and_still_ends_a_grant() {
+    let data = seeded();
+    config_with(&data, vec![stripe_rule(AGENT_KEY, Approval::Auto)]);
+    let host = data.host(&Notices::default());
+    let mut agent = peer(&host, AGENT_KEY);
+    let mut sidecar = peer(&host, SIDECAR_KEY);
+    let reply = agent
+        .call("request-grant", header_request("check the balance"))
+        .unwrap();
+    data.open().store.refuse_audit_writes().unwrap();
+
+    let resolved = sidecar.call(
+        "resolve",
+        json!({
+            "grantId": reply["grantId"],
+            "ref": format!("rowel://default/{STRIPE}/apiKey"),
+            "context": { "target": { "http": { "host": "api.stripe.com", "path": "/v1/balance", "method": "GET" } } },
+        }),
+    );
+    assert_eq!(refused(resolved.unwrap_err()), Code::AuditUnavailable);
+
+    agent
+        .call("end-grant", json!({ "grantId": reply["grantId"] }))
+        .unwrap();
+    let status = agent
+        .call("grant-status", json!({ "grantId": reply["grantId"] }))
+        .unwrap();
+    assert_eq!(status["state"], "revoked");
+    let again = agent.call("request-grant", header_request("once more"));
+    assert_eq!(refused(again.unwrap_err()), Code::AuditUnavailable);
+    assert_eq!(events(&data.rows()), ["requested", "granted"]);
+}
+
 #[test]
 fn a_request_no_rule_covers_asks_and_approve_activates_it() {
     let data = seeded();
@@ -666,6 +737,82 @@ fn the_extensions_fill_and_the_refusals_it_handles() {
     );
     let hash = extension.send(&mut connection, "get-databasehash", json!({}));
     assert_eq!(hash["hash"].as_str().unwrap().len(), 64);
+}
+
+// A passkey registration stands on its `used` row: with the log refusing
+// rows, the site is told `AuditUnavailable` and the login it would have gone
+// on keeps no credential the site never received.
+#[test]
+fn a_passkey_whose_row_will_not_write_is_not_kept() {
+    let data = seeded();
+    let opened = data.open();
+    testing::seed_login(
+        &opened,
+        "site",
+        "Example",
+        "https://example.com",
+        "alice",
+        "pw",
+    );
+    testing::let_in(
+        &opened,
+        &[testing::client(
+            "Chrome",
+            "ext-key",
+            ClientKind::Extension,
+            "browser",
+        )],
+    );
+    let before = opened.store.get("site").unwrap().unwrap().payload;
+    let entries = opened.store.list().unwrap().len();
+    opened.store.refuse_audit_writes().unwrap();
+    drop(opened);
+    let host = data.host(&Notices::default());
+    let registered = {
+        let host = host.clone();
+        thread::spawn(move || {
+            let mut extension = Extension::new();
+            let mut connection = Connection::new(host);
+            extension.exchange(&mut connection);
+            extension.send(
+                &mut connection,
+                "test-associate",
+                json!({ "id": "Chrome", "key": "ext-key" }),
+            );
+            let options = json!({
+                "challenge": "c2l4dGVlbi1ieXRlcy1jaGFsbGVuZ2U",
+                "rp": { "id": "example.com", "name": "Example" },
+                "user": { "id": "dXNlci1hbGljZQ", "name": "alice", "displayName": "Alice" },
+                "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
+            });
+            extension.send(
+                &mut connection,
+                "passkeys-register",
+                json!({
+                    "publicKey": options,
+                    "origin": "https://example.com",
+                    "keys": [{ "id": "Chrome", "key": "ext-key" }],
+                }),
+            )
+        })
+    };
+    let id = pending_id(&host);
+    assert!(matches!(host.pending()[0].kind, AskKind::Passkey { .. }));
+    host.answer(AnswerRequest {
+        id,
+        ..AnswerRequest::default()
+    })
+    .unwrap();
+    let reply = registered.join().unwrap();
+    assert_eq!(reply["response"]["errorCode"], Code::AuditUnavailable as u8);
+    let store = data.open().store;
+    assert_eq!(store.get("site").unwrap().unwrap().payload, before);
+    assert_eq!(
+        store.list().unwrap().len(),
+        entries,
+        "nor on a login of its own"
+    );
+    assert!(data.rows().is_empty());
 }
 
 // --- the control socket -----------------------------------------------------------------

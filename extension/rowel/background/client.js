@@ -56,6 +56,7 @@ const kpErrors = {
     POLICY_REQUIRES_APPROVAL: 44,
     RATE_LIMITED: 45,
     AGENTS_DISABLED: 46,
+    AUDIT_UNAVAILABLE: 47,
 
     errorMessages: {
         0: { msg: tr('errorMessageUnknown') },
@@ -103,7 +104,8 @@ const kpErrors = {
         43: { msg: tr('errorMessageNotPermittedForKind') },
         44: { msg: tr('errorMessagePolicyRequiresApproval') },
         45: { msg: tr('errorMessageRateLimited') },
-        46: { msg: tr('errorMessageAgentsDisabled') }
+        46: { msg: tr('errorMessageAgentsDisabled') },
+        47: { msg: tr('errorMessageAuditUnavailable') }
     },
 
     getError(errorCode) {

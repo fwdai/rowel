@@ -102,11 +102,18 @@ impl AgentState {
     }
 
     /// Flip every active grant whose window has closed, and hand back the
-    /// ones this call flipped, for their `ended` rows.
-    pub fn expire_due(&mut self, now_ms: i64) -> Vec<Grant> {
+    /// ones this call flipped. Private to the engine, whose one caller,
+    /// [`super::expire_due`], writes the `ended` row and queues the sign-out
+    /// each flip owes: a flip anywhere else would leave the grant over with
+    /// neither, and the next sweep would find nothing left to flip.
+    pub(super) fn expire_due(&mut self, now_ms: i64) -> Vec<Grant> {
         self.grants
             .iter_mut()
-            .filter_map(|g| g.expire_if_due(now_ms).then(|| g.clone()))
+            .filter(|g| g.is_due(now_ms))
+            .map(|g| {
+                g.state = State::Expired;
+                g.clone()
+            })
             .collect()
     }
 
