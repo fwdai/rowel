@@ -1,6 +1,5 @@
 {
   "name": "rowel-browser-extension",
-  "version": "0.2.0",
   "description": "Rowel browser extension, a fork of KeePassXC-Browser",
   "keepassxcBrowserVersion": "1.10.4",
   "main": "rowel-build.js",
@@ -17,8 +16,8 @@
   "scripts": {
     "build": "node rowel-build.js",
     "build:safari": "node safari/build.mjs",
-    "debug:chromium": "cp dist/manifest_chromium.json rowel/manifest.json",
-    "debug:firefox": "cp dist/manifest_firefox.json rowel/manifest.json",
+    "debug:chromium": "node rowel-build.js --source chromium",
+    "debug:firefox": "node rowel-build.js --source firefox",
     "lint": "npx eslint --no-warn-ignored rowel/**/*.js safari/*.js",
     "tests": "npx playwright test",
     "test:safari": "node --test safari/safari-native.test.mjs"

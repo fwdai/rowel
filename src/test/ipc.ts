@@ -337,7 +337,7 @@ const DEFAULTS: Record<string, Handler> = {
 
   // The command line tool: a dev build, with nothing bundled beside it. A
   // spec about the Install button mocks a bundled one.
-  cli_status: () => ({ bundled: null, installed: null, installDir: null }),
+  cli_status: () => ({ bundled: null, installed: null, installDir: null, onPath: false }),
   cli_install: reject({ kind: 'other', message: 'the command line tool is not bundled with this build' })
 }
 

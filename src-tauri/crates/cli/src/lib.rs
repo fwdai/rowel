@@ -57,6 +57,10 @@ pub const CLIENT_ID: &str = "rowel-mcp";
 /// the command it rewrites so the platform's shell finds the same binary.
 pub fn run(program: &str, args: impl Iterator<Item = String>) -> i32 {
     match args::parse(args) {
+        Ok(args::Command::Help) => {
+            println!("{}", args::USAGE);
+            0
+        }
         Ok(args::Command::Status) => status::run(),
         Ok(args::Command::Mcp { platform, name }) => mcp::run(platform, name),
         Ok(args::Command::Run(run)) => {

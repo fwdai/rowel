@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { cliInstall, cliStatus, type CliStatus } from '@/api/browser'
+import { cliInstall, cliStatus, cliUninstall, type CliStatus } from '@/api/browser'
 import { describeError } from '@/api/errors'
 import { useLatestRequest } from '@/hooks/useLatestRequest'
 import Button from '@/components/elements/Button'
+import CopyButton from '@/components/elements/CopyButton'
 import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
@@ -11,10 +12,13 @@ import { SshGlyph } from '@/components/Main/icons'
 
 // Settings › General › Command line tool: the `rowel` command coding agents
 // reach the vault through (its MCP server), shipped beside the packaged app.
-// Three states, all Rust's to say: linked into the PATH already (the path is
-// shown), bundled but not yet linked (one button does it), or not bundled at
-// all — a dev build, until `cargo build -p rowel-cli` puts one beside the
-// binary. Desktop only; the caller leaves it out on a phone.
+// Three states, all Rust's to say: on the PATH already (Remove takes it off),
+// bundled but not yet there (Install puts it there), or not bundled at all —
+// a dev build, until `cargo build -p rowel-cli` puts one beside the binary.
+// Whenever there is a tool its full path is shown, with a copy button: an
+// agent started from the Dock or the Start menu does not read the shell's
+// PATH, so its MCP config names the tool by that path. Desktop only; the
+// caller leaves it out on a phone.
 export default function CommandLineTool() {
   const { t } = useTranslation()
   const [status, setStatus] = useState<CliStatus | null>(null)
@@ -41,15 +45,16 @@ export default function CommandLineTool() {
     void load(cliStatus)
   }, [load])
 
-  const install = () => {
+  const act = (request: () => Promise<CliStatus>) => {
     setBusy(true)
-    void load(cliInstall).finally(() => setBusy(false))
+    void load(request).finally(() => setBusy(false))
   }
 
   const label = t('Command line tool')
-  // A link in the user's own bin directory is on the PATH only if their
-  // shell was told so; the system one needs no telling.
-  const needsPathHint = !!status?.installed && status.installDir !== '/usr/local/bin'
+  // A directory the PATH of a new terminal does not list — `~/.local/bin` on
+  // a Mac whose shell profile does not add it — has to be added by hand.
+  const needsPathHint = !!status?.installed && !status.onPath
+  const path = status?.installed ?? status?.bundled
   const description = !status
     ? null
     : status.installed
@@ -82,14 +87,42 @@ export default function CommandLineTool() {
         iconActive={!!status?.installed}
         description={description && <span data-testid={`settings-cli-${state}`}>{description}</span>}
         control={
-          status && !status.installed && status.bundled ? (
-            <Button size="md" disabled={busy} onClick={install} testid="settings-cli-install">
+          status?.installed ? (
+            <Button
+              size="md"
+              disabled={busy}
+              onClick={() => act(cliUninstall)}
+              testid="settings-cli-uninstall"
+            >
+              {t('Remove')}
+            </Button>
+          ) : status?.bundled ? (
+            <Button
+              size="md"
+              disabled={busy}
+              onClick={() => act(cliInstall)}
+              testid="settings-cli-install"
+            >
               {t('Install')}
             </Button>
           ) : undefined
         }
         testid="settings-cli-row"
       >
+        {path && (
+          <div className="text-sm text-text2">
+            {t("Use this full path in an agent's MCP config:")}
+            <div className="mt-1 flex items-center gap-2">
+              <code
+                className="min-w-0 flex-1 font-mono break-all text-text select-text"
+                data-testid="settings-cli-path"
+              >
+                {path}
+              </code>
+              <CopyButton value={path} title={t('Copy')} testid="settings-cli-copy" stay />
+            </div>
+          </div>
+        )}
         {error && (
           <Note tone="bad" testid="settings-cli-error">
             {error}

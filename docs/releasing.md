@@ -2,25 +2,53 @@
 
 Rowel ships for macOS (signed + notarized universal build), Windows (NSIS
 installer) and Linux (.deb, .rpm, AppImage) through GitHub Releases, with a
-silent in-app auto-updater. This doc covers the one-time setup and the
-per-release procedure. iOS is a separate workflow: see
+silent in-app auto-updater. Every app carries the `rowel` command line tool
+coding agents connect through; the release also offers that tool on its own,
+and the browser extension's packages. This doc covers the one-time setup and
+the per-release procedure. iOS is a separate workflow: see
 [releasing-ios.md](releasing-ios.md).
+
+> **Before the next release: merge PR D.** The command line tool still links
+> `rowel-server` (`crates/server`, `rowel admin server`, `rowel serve
+> --server`), which is leaving this repository for the private
+> `fwdai/rowel-server`. Every binary this workflow builds would ship it, and
+> the standalone archives would publish it. Do not run *Release* until that
+> removal is on `main`.
 
 ## Overview
 
 ```
-bump version → run Release manually from Actions → CI builds all three platforms
-            → DRAFT GitHub release (installers + .app.tar.gz + .sig + latest.json)
-            → you review and publish the draft → installed apps update on next launch
+bump versions → run Release manually from Actions → CI builds all three platforms
+             → DRAFT GitHub release (below)
+             → you review, write the notes and publish → installed apps update on next launch
+             → submit the extension packages to the stores by hand
 ```
 
-- **Workflow:** `.github/workflows/release.yml`, one matrix job per platform.
+What the draft holds:
+
+| Asset | From |
+| --- | --- |
+| `Rowel_<version>_universal.dmg`, `Rowel_<version>_x64-setup.exe`, `Rowel_<version>_amd64.deb`, `Rowel-<version>-1.x86_64.rpm`, `Rowel_<version>_amd64.AppImage`, and their version-free copies | the app, each with the command line tool inside as a sidecar (`rowel-cli`), which Settings › General › Command line tool installs as `rowel` ([cli.md](cli.md#installing)) |
+| `*.app.tar.gz`, `*.sig`, `latest.json` | the updater |
+| `rowel-<version>-universal-apple-darwin.zip` | the command line tool on its own: the sidecar out of the signed app, notarized |
+| `rowel-<version>-x86_64-pc-windows-msvc.zip` | the same, the exe the installer carries |
+| `rowel-<version>-x86_64-unknown-linux-gnu.tar.gz`, `rowel-<version>-aarch64-unknown-linux-gnu.tar.gz` | the same, built on Ubuntu 22.04 for a glibc 2.35 floor |
+| `rowel_<extension version>_chromium.zip`, `rowel_<extension version>_firefox.zip` | the browser extension, for the Chrome Web Store, Edge Add-ons and addons.mozilla.org (Safari's is inside the macOS app) |
+| `SHA256SUMS` | the checksums of the command line archives and the extension zips |
+| `rowel-rust.cdx.json`, `rowel-js.cdx.json` | the SBOMs |
+
+- **Workflow:** `.github/workflows/release.yml`: one matrix job per platform
+  (`release`), then `cli` for the two Linux archives and `checksums` for
+  `SHA256SUMS`, which wait for it because it creates the draft.
 - **macOS:** `universal-apple-darwin` (one binary for Apple Silicon + Intel),
   signed with the Developer ID Application cert (team `UFBL3F444A`), notarized
-  and stapled by `tauri-apps/tauri-action`.
-- **Windows:** NSIS `-setup.exe` only, not code-signed (no certificate). The
-  MSI bundler is skipped while versions carry a pre-release suffix such as
-  `1.0.0-alpha.1`; WiX only accepts numeric pre-release identifiers.
+  and stapled by `tauri-apps/tauri-action`. The command line archive is
+  notarized separately with `notarytool`; a bare binary cannot be stapled, so
+  Gatekeeper checks it online.
+- **Windows:** NSIS `-setup.exe` only, not code-signed (no certificate), and
+  neither is the command line `rowel.exe`. The MSI bundler is skipped while
+  versions carry a pre-release suffix such as `1.0.0-alpha.1`; WiX only
+  accepts numeric pre-release identifiers.
 - **Linux:** `.deb`, `.rpm` and `.AppImage`, unsigned.
 - **Version-free copies:** every bundler filename carries the version
   (`Rowel_1.0.2_universal.dmg`), so each job also uploads a copy of its own
@@ -30,13 +58,15 @@ bump version → run Release manually from Actions → CI builds all three platf
   signatures, attested under both names. README.md and rowel.app link to these,
   so **the names are public API**: renaming one breaks those links. The
   `latestAssets` entry in the workflow's matrix is the mapping, and a job fails
-  if its glob stops matching.
+  if its glob stops matching. The command line archives' names are public API
+  too: `docs/serve.md` builds its download URL from them.
 - **Update artifacts:** `createUpdaterArtifacts: true` in `tauri.conf.json`
   emits the platform-specific updater bundle plus a `.sig` made with the Rowel
   minisign key. `tauri-action` merges them into one `latest.json`, which the app
   fetches from `releases/latest/download/latest.json`.
-- **Provenance + SBOM:** every installer gets a SLSA build-provenance
-  attestation, and the Linux job attaches CycloneDX SBOMs to the release.
+- **Provenance + SBOM:** every installer, command line archive and extension
+  zip gets a SLSA build-provenance attestation, and the Linux job attaches
+  CycloneDX SBOMs to the release.
 
 ## One-time setup
 
@@ -197,12 +227,22 @@ how the current profile was made.
 
 ## Per-release procedure
 
-1. **Bump the version** in all three files (keep them identical):
-   - `src-tauri/tauri.conf.json` → `version` (this is what the release tag and
-     name are derived from, via `v__VERSION__`)
-   - `package.json` → `version`
-   - `src-tauri/Cargo.toml` → `version` (then `cargo update -p rowel
-     --manifest-path src-tauri/Cargo.toml` so `Cargo.lock` follows)
+1. **Bump the versions.**
+   - The app, in all three files (keep them identical):
+     - `src-tauri/tauri.conf.json` → `version` (this is what the release tag
+       and name are derived from, via `v__VERSION__`, and what the command
+       line archives are named after)
+     - `package.json` → `version`
+     - `src-tauri/Cargo.toml` → `version` (then `cargo update -p rowel
+       --manifest-path src-tauri/Cargo.toml` so `Cargo.lock` follows)
+
+     The workspace crates (`crates/*`, the command line tool among them) keep
+     `0.1.0`: they are never released on their own, and the tool ships under
+     the app's version.
+   - The browser extension, when it changed since the last release: `version`
+     and `version_name` in `extension/rowel/manifest.json`, its one home
+     ([browser-extension.md](browser-extension.md#versioning)). A store
+     refuses an upload whose version it has already seen.
 2. Merge that to `main`. CI's supply-chain job must be green: it fails when a
    `@tauri-apps/*` npm package and its Rust crate are on different major.minor
    releases, which is exactly the check `tauri build` would otherwise fail on
@@ -214,14 +254,48 @@ how the current profile was made.
    ([releasing-ios.md](releasing-ios.md)) that must come **after** this one:
    this workflow creates the draft release, and the iOS run only attaches its
    IPA to a draft that already exists.
-4. Wait for all three platform jobs. They create one **draft** release
-   `Rowel v<version>` with the installers, their version-free copies, the
-   updater artifacts, their `.sig` files, `latest.json` and the SBOMs. The
-   Linux job replaces the placeholder body with GitHub's auto-generated release
-   notes.
-5. Review the draft and **Publish** it. Once published, installed apps pick it
+4. Wait for every job: the three platform jobs, then the two Linux `cli` jobs,
+   then `checksums`. Together they fill one **draft** release
+   `Rowel v<version>` with the assets in the table above. The Linux job
+   replaces the placeholder body with GitHub's auto-generated release notes.
+5. **Smoke-test the draft's assets** on at least one machine per platform:
+   install the app, then Settings › General › Command line tool › Install,
+   and `rowel status` in a new terminal; unpack a command line archive and run
+   `rowel --help`; check one archive against `SHA256SUMS`.
+6. **Write the release notes.** The generated list is per pull request; put a
+   short summary for users above it. While the agent features are new, say:
+   - what they are and that they are off by default (Settings › Browser &
+     agents › Agents, and a lockbox's *Agents can use items in this lockbox*),
+     linking [agents.md](agents.md);
+   - that coding agents connect through the bundled `rowel` command, installed
+     from Settings › General › Command line tool, and that MCP configs should
+     name it by the full path the row shows;
+   - that the browser extension's agent mode needs the extension version in
+     this release (and the store versions once they are approved);
+   - that the command line tool is also attached on its own, for a box
+     without the app ([serve.md](serve.md#installing-the-command-line-tool)),
+     with `SHA256SUMS`;
+   - what `env` mode does not protect: the approved command receives the
+     value ([agents.md](agents.md#what-is-and-is-not-protected)).
+7. Review the draft and **Publish** it. Once published, installed apps pick it
    up on next launch, and the `releases/latest/download/` links on README.md
    and rowel.app serve this version's installers.
+8. **Submit the extension**, when its version changed. The release's zips are
+   the uploads; nothing in CI talks to the stores.
+   - **Chrome Web Store:** the developer dashboard → the Rowel item →
+     *Package* → *Upload new package* → `rowel_<version>_chromium.zip`, then
+     *Submit for review*. The zip has no `key`, which the store refuses; the
+     listing has its own ID, which the host already allows. Edge Add-ons
+     takes the same zip in Partner Center, but its listing's ID has to be in
+     the host's `chromium_origins` before that extension can connect
+     ([browser-extension.md](browser-extension.md)).
+   - **Firefox (addons.mozilla.org):** the Developer Hub → *Upload New
+     Version* → `rowel_<version>_firefox.zip`. The build copies the files,
+     stamps the manifest and zips; nothing is compiled or minified by it. If
+     a reviewer asks for source, give them `extension/` at the release's tag
+     and the build steps in browser-extension.md.
+   - **Safari:** nothing to submit. The extension is inside the macOS app and
+     updates with it.
 
 ## Local signed build (macOS)
 

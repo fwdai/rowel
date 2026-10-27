@@ -45,12 +45,14 @@ listed there, which goes in the same list.
 
 ## Versioning
 
-The extension has its own version, starting at `0.1.0`, independent of the
-app's. `0.1.0` is KeePassXC-Browser **1.10.4** plus the Rowel changes. The
-upstream base is recorded as `keepassxcBrowserVersion` in
-`extension/package.json`. To bump, edit `version` (and `version_name`) in
-`extension/rowel/manifest.json`, which the build stamps into both
-browsers' manifests, and `version` in `extension/package.json`.
+The extension has its own version, independent of the app's; `0.1.0` was
+KeePassXC-Browser **1.10.4** plus the Rowel changes. The upstream base is
+recorded as `keepassxcBrowserVersion` in `extension/package.json`. The version
+has one home, `version` (and `version_name`, the same) in
+`extension/rowel/manifest.json`: the per-browser templates in `extension/dist/`
+carry none, and `rowel-build.js`, `safari/build.mjs` and `npm run debug:…`
+write it into every manifest they make. `extension/package.json` has no
+version of its own. To bump, edit those two fields.
 
 ## Commands
 
@@ -79,8 +81,8 @@ zips with `tar -a`, which only produces a zip with BSD tar. It needs `zip` on
 extension/build/
   chromium/                    unpacked, with the pinned key
   firefox/                     unpacked
-  rowel_0.1.0_chromium.zip     Chrome Web Store / Edge Add-ons (no key)
-  rowel_0.1.0_firefox.zip      addons.mozilla.org
+  rowel_<version>_chromium.zip Chrome Web Store / Edge Add-ons (no key)
+  rowel_<version>_firefox.zip  addons.mozilla.org
   safari/                      unpacked, for the Safari app extension
 ```
 
@@ -251,8 +253,9 @@ The grant request itself needs the running app.
      `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on**
      and pick `extension/build/firefox/manifest.json`. The source folder holds
      the Chromium (MV3 service worker) manifest, so it won't load in Firefox
-     as-is. `npm run debug:firefox` swaps the Firefox manifest into the source
-     folder if you want live edits; put it back with `npm run debug:chromium`
+     as-is. `npm run debug:firefox` (in `extension/`) writes the Firefox
+     manifest into the source folder, with the source's version, if you want
+     live edits; put the Chromium one back with `npm run debug:chromium`
      before committing. Temporary add-ons are removed when Firefox quits.
 3. Click the toolbar icon, then **Connect**, and approve the dialog in Rowel.
 
@@ -316,7 +319,7 @@ surface, and each file has a set way to resolve it:
 | --- | --- |
 | `rowel/_locales/*/messages.json` | Take upstream's (`git checkout --theirs -- <files>`), then `bun run extension:strings`. If upstream reworded an English string listed in `OVERRIDES` in `scripts/extension-strings.mjs`, review the override. The Rowel-only keys (`agentMode*`, `errorMessageGrant*` and the other codes 40–46) come from `ROWEL_MESSAGES` in the same script and are re-appended to `en` |
 | `rowel/icons/**` (PNG + SVG) | Take upstream's, then `bun run extension:icons`. The toolbar state badges come from upstream's SVGs, so new ones are picked up |
-| `rowel/manifest.json`, `dist/manifest_chromium.json`, `dist/manifest_firefox.json` | Take upstream's changes and keep ours for `name`, `version`/`version_name`, `author`, `homepage_url`, `key`, `default_title`, `css/rowel.css` and `css/rowel-tokens.css` in `web_accessible_resources`, `content/agent-mode.js` after `content/fill.js` in `content_scripts`, and on Firefox `browser_specific_settings` (add-on ID, `data_collection_permissions`), `background/grants.js` after `background/event.js` in `background.scripts`, plus the dropped `https://api.github.com/` permission |
+| `rowel/manifest.json`, `dist/manifest_chromium.json`, `dist/manifest_firefox.json` | Take upstream's changes and keep ours for `name`, `version`/`version_name` (in `rowel/manifest.json` only; the `dist/` templates carry no version, so drop upstream's there), `author`, `homepage_url`, `key`, `default_title`, `css/rowel.css` and `css/rowel-tokens.css` in `web_accessible_resources`, `content/agent-mode.js` after `content/fill.js` in `content_scripts`, and on Firefox `browser_specific_settings` (add-on ID, `data_collection_permissions`), `background/grants.js` after `background/event.js` in `background.scripts`, plus the dropped `https://api.github.com/` permission |
 | `rowel/background/background_service.js` | Keep `'grants.js'` after `'event.js'` in `importScripts` |
 | `rowel/background/client.js` | Keep `nativeHostName = 'app.rowel.browser'`, the Rowel codes 40–46 (`GRANT_DENIED` … `AGENTS_DISABLED`) in `kpErrors` with their `errorMessages` entries, and in `onNativeMessage` the `if (response.action === kpActions.DATABASE_LOCKED) { grants.onLocked(); }` block before the lock/unlock one and the `if (response.action === kpActions.ROWEL_SIGNAL) { grants.onSignal(); return; }` block after it |
 | `rowel/background/keepass.js` | Keep the Rowel lines: `ROWEL_SIGNAL: 'rowel-signal'` in `kpActions`, `grants.sendGetLogins(tab, messageData, nonce)` in place of `keepassClient.sendMessage(...)` in `retrieveCredentials`, `Object.assign(messageData, await grants.totpFields(tab, sender))` in `getTotp`, and `await grants.onSignal()` after `testAssociation` in `reconnect` |
@@ -334,7 +337,7 @@ surface, and each file has a set way to resolve it:
 | `eslint.config.mjs` | Keep the `grants` and `kpxcAgentMode` globals |
 | `tests/tests.html` | Keep `<script defer src="../content/agent-mode.js">` after `fill.js`, as in the manifests |
 | `rowel/css/define.css` | Keep ours (the field-picker chips are restyled in place, since `rowel.css` only overrides the other in-page sheets). If upstream added a class, add it with the same `color-mix` wash and 2px edge |
-| `package.json`, `package-lock.json` | Keep our `name`, `version`, `description`, `main`, `build` script and URLs, and take upstream's dependencies. Then run `npm install` in `extension/` to regenerate the lock, and bump `keepassxcBrowserVersion` |
+| `package.json`, `package-lock.json` | Keep our `name` (and no `version`: the manifest has it), `description`, `main`, `build` script and URLs, and take upstream's dependencies. Then run `npm install` in `extension/` to regenerate the lock, and bump `keepassxcBrowserVersion` |
 | `README.md` | Keep the fork note at the top |
 
 Rowel-only files never conflict: `rowel-build.js`, `upstream-map.json`,

@@ -8,6 +8,11 @@
 # friends), so `releases/latest/download/<name>` is a permanent download link.
 # README.md and rowel.app point at those.
 #
+# Beside the installers the release carries the command line tool on its own
+# (`rowel-<version>-<target>.tar.gz|.zip`, for a box without the app; see
+# docs/serve.md), the Chromium and Firefox extension packages, and a
+# SHA256SUMS over both. Safari's extension ships inside the macOS app.
+#
 # One-time secret setup and the per-release procedure: docs/releasing.md.
 # The same build can be run locally with scripts/release-local.sh (macOS only).
 #
@@ -256,6 +261,71 @@ jobs:
           echo "$ENT" | grep -q "com.apple.security.app-sandbox" || { echo "::error::extension is not sandboxed"; exit 1; }
           echo "$ENT" | grep -q "UFBL3F444A.app.rowel.desktop" || { echo "::error::extension is not in the app group"; exit 1; }
 
+      # --- The command line tool on its own ------------------------------
+      # For a box without the app (docs/serve.md): the sidecar this job just
+      # bundled, packed as `rowel`. macOS takes it out of the signed app, so
+      # the archive holds the Developer ID-signed, hardened universal binary
+      # the bundler signed, and submits the zip for notarization: a bare
+      # binary cannot be stapled, so Gatekeeper looks its ticket up online.
+      # Windows packs the exe the installer carries, unsigned like it. Linux's
+      # are built in the `cli` job below, on an older Ubuntu.
+      - name: Pack the command line tool
+        if: matrix.platform != 'ubuntu-latest'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version src-tauri/tauri.conf.json)
+          mkdir -p extra-assets cli-stage
+          case "${{ matrix.platform }}" in
+            macos-latest)
+              BIN="${{ matrix.bundlePath }}/macos/Rowel.app/Contents/MacOS/rowel-cli"
+              codesign --verify --strict --verbose=2 "$BIN"
+              INFO=$(codesign -dvv "$BIN" 2>&1)
+              echo "$INFO" | grep -q "TeamIdentifier=UFBL3F444A" || { echo "::error::rowel-cli not signed by team UFBL3F444A"; exit 1; }
+              echo "$INFO" | grep -q "flags=.*runtime" || { echo "::error::rowel-cli without hardened runtime"; exit 1; }
+              cp "$BIN" cli-stage/rowel
+              ARCHIVE="extra-assets/rowel-$VERSION-universal-apple-darwin.zip"
+              ditto -c -k cli-stage "$ARCHIVE"
+              RESULT=$(xcrun notarytool submit "$ARCHIVE" --apple-id "$APPLE_ID" \
+                --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --output-format json)
+              echo "$RESULT"
+              [ "$(echo "$RESULT" | jq -r .status)" = "Accepted" ] \
+                || { echo "::error::Apple did not notarize the command line tool"; exit 1; }
+              ;;
+            windows-latest)
+              cp src-tauri/target/release/rowel-cli.exe cli-stage/rowel.exe
+              (cd cli-stage && 7z a -tzip "../extra-assets/rowel-$VERSION-x86_64-pc-windows-msvc.zip" rowel.exe)
+              ;;
+          esac
+          ls -l extra-assets
+
+      # --- Browser extension packages -------------------------------------
+      # The Chromium and Firefox packages, built as CI's `extension` job
+      # builds them and checked the same way, for testers to load and for the
+      # store submissions (docs/releasing.md) to upload exactly what was
+      # released. The Safari build the check also wants is thrown away.
+      - name: Setup Node.js for the browser extension
+        if: matrix.platform == 'ubuntu-latest'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Build the browser extension packages
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          set -euo pipefail
+          (cd extension && npm ci && npm run build && npm run build:safari)
+          node scripts/check-extension-build.mjs
+          mkdir -p extra-assets
+          cp extension/build/rowel_*_chromium.zip extension/build/rowel_*_firefox.zip extra-assets/
+          ls -l extra-assets
+
       # Replace the placeholder release body with GitHub's auto-generated
       # release notes (the same "What's Changed" list the UI button produces),
       # built from PRs/commits since the previous release. Runs once, on Linux,
@@ -337,19 +407,22 @@ jobs:
             ${{ matrix.bundlePath }}/**/*.msi
             ${{ matrix.bundlePath }}/**/*-setup.exe
             latest-assets/*
+            extra-assets/*
 
       # Uploaded after the attestation so a copy is never downloadable without
       # its provenance. `--clobber` keeps a re-run against an existing draft
       # idempotent; the names are disjoint per platform, so the three jobs do
-      # not race each other.
-      - name: Upload the version-free copies to the release
+      # not race each other. The extra assets are the command line tool's
+      # archive (macOS, Windows) and the extension packages (Linux).
+      - name: Upload the version-free copies and extra assets to the release
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
           TAG="v$(jq -r .version src-tauri/tauri.conf.json)"
-          gh release upload "$TAG" latest-assets/* --clobber
+          gh release upload "$TAG" latest-assets/* extra-assets/* --clobber
 
       # --- CycloneDX SBOM (T-CI-4) ----------------------------------------
       # Generated once, on Linux, and attached to the release. The Rust SBOM is
@@ -377,3 +450,98 @@ jobs:
         run: |
           TAG="v$(jq -r .version src-tauri/tauri.conf.json)"
           gh release upload "$TAG" sbom/* --clobber
+
+  # The command line tool on its own for Linux, x86_64 and arm64, built here
+  # rather than taken from the release job's sidecar: that one is built on
+  # ubuntu-latest beside the app, whose WebKitGTK sets the floor anyway, while
+  # a box without the app is as likely to run an older LTS. The tool needs no
+  # system library but glibc (SQLCipher and OpenSSL are vendored, TLS is
+  # rustls), and on Ubuntu 22.04, the oldest hosted runner, its floor is glibc
+  # 2.35: Ubuntu 22.04 and later, Debian 13, Fedora 36 and later. It waits for
+  # the release job because that job creates the draft it uploads to.
+  cli:
+    needs: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Build and pack the command line tool
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version src-tauri/tauri.conf.json)
+          cargo build --release --locked -p rowel-cli --manifest-path src-tauri/Cargo.toml
+          BIN=src-tauri/target/release/rowel-cli
+          # The newest glibc symbol the binary asks for is its floor. A
+          # runner image or a dependency that raises it fails here, not on a
+          # user's box.
+          FLOOR=$(objdump -T "$BIN" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "glibc floor: $FLOOR"
+          [ "$(printf '%s\n' "$FLOOR" GLIBC_2.35 | sort -V | tail -1)" = GLIBC_2.35 ] \
+            || { echo "::error::rowel-cli needs $FLOOR, above the documented glibc 2.35"; exit 1; }
+          mkdir -p cli-stage extra-assets
+          cp "$BIN" cli-stage/rowel
+          tar -czf "extra-assets/rowel-$VERSION-${{ matrix.target }}.tar.gz" -C cli-stage rowel
+          ls -l extra-assets
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: extra-assets/*
+
+      - name: Upload to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(jq -r .version src-tauri/tauri.conf.json)"
+          gh release upload "$TAG" extra-assets/* --clobber
+
+  # One SHA256SUMS over everything a user downloads to run without an
+  # installer: the command line tool's archives and the extension packages.
+  # Read back from the draft, so it sums exactly what was uploaded.
+  checksums:
+    needs: [release, cli]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v$(jq -r .version src-tauri/tauri.conf.json)"
+          mkdir sums
+          gh release download "$TAG" --dir sums \
+            --pattern 'rowel-*-linux-gnu.tar.gz' --pattern 'rowel-*-apple-darwin.zip' \
+            --pattern 'rowel-*-windows-msvc.zip' --pattern 'rowel_*_chromium.zip' --pattern 'rowel_*_firefox.zip'
+          (cd sums && sha256sum -- * > ../SHA256SUMS)
+          cat SHA256SUMS
+          [ "$(wc -l < SHA256SUMS)" -eq 6 ] \
+            || { echo "::error::expected 4 command line archives and 2 extension packages"; exit 1; }
+          gh release upload "$TAG" SHA256SUMS --clobber

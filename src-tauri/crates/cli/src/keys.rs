@@ -13,14 +13,16 @@
 //! Where a record lives (Q9): in the OS secure store where the platform has
 //! one — a generic password in the login keychain on macOS, a Credential
 //! Manager entry on Windows — else a file of the user's own in the config
-//! directory, readable by them alone. The store is not gated by biometrics;
-//! what it adds over a file is the store's own access control, under which
-//! another program reading the item prompts the user. A record written as a
-//! file by an earlier release is moved into the store the first time it is
-//! read, and a store that refuses (anything but "not there") is stood in for
-//! by the file for that run, so a broken keychain never strands an
-//! association. Everything goes through one [`Keys`] per role, so the tests
-//! can keep to the file backend and a developer's keychain is never touched.
+//! directory, readable by them alone. The store is not gated by biometrics.
+//! On macOS what it adds over a file is the item's access list, under which
+//! another program reading it prompts the user; Credential Manager has no
+//! such list and only encrypts the entry at rest under the user's account. A
+//! record written as a file by an earlier release is moved into the store
+//! the first time it is read, the file left as a note saying so, and a store
+//! that refuses (anything but "not there") is stood in for by the file for
+//! that run, so a broken keychain never strands an association. Everything
+//! goes through one [`Keys`] per role, so the tests can keep to the file
+//! backend and a developer's keychain is never touched.
 
 use std::cell::Cell;
 use std::fs;

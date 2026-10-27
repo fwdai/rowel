@@ -83,7 +83,7 @@ Down the road there may be a paid option for professional teams that need extra 
 - Vault Health: strength scoring, reused-password checks, and an optional private breach check that never sends your password
 - Browser autofill and passkeys for Chrome, Edge, Brave, Vivaldi and Firefox, plus Safari on macOS ([details](docs/browser-extension.md)). Passkeys are on by default from extension 0.1.1; an earlier install turns them on in the extension's options
 - iOS AutoFill for passwords and passkeys, unlocked with Face ID (passkeys need iOS 17 or later)
-- Agents: Claude Code, Codex, Cursor and agentic browsers use your logins and API keys through grants you approve, never holding the value, with a readable audit log in Vault Health ([details](docs/agents.md))
+- Agents: Claude Code, Codex, Cursor and agentic browsers use your logins and API keys through grants you approve, with a readable audit log in Vault Health ([details](docs/agents.md)). The agent itself never receives the value; a command you approve to run with a key does, so approve only command lines you would run yourself
 - Touch ID, Face ID or Windows Hello unlock
 - Locks itself when you're inactive and clears copied secrets from the clipboard
 - Export to CSV, FIDO CXF, or Bitwarden-compatible JSON, plus encrypted backups
@@ -116,7 +116,12 @@ Every release is built in GitHub Actions and ships with supply-chain evidence:
 
   (works for the `.dmg`, `-setup.exe`, `.deb`, `.rpm` and `.AppImage`
   assets — point it at whichever you downloaded, versioned name or not: the
-  version-free copies are the same bytes and are attested as well).
+  version-free copies are the same bytes and are attested as well — and for
+  the standalone command line tool archives and the browser extension zips).
+
+- **Checksums** — `SHA256SUMS` lists the command line tool archives and the
+  extension zips, for checking a download where `gh` is not at hand
+  ([`docs/serve.md`](docs/serve.md#installing-the-command-line-tool)).
 
   Releases up to and including `v1.0.0-alpha.6` were built before the project
   moved from `swiftyapp/swifty` to `fwdai/rowel`, so their provenance names the
