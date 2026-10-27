@@ -107,14 +107,11 @@ impl Connection {
 pub(crate) fn normalize_url(url: &str) -> Result<String> {
     let parsed =
         url::Url::parse(url.trim()).map_err(|e| Error::Other(format!("not a server URL: {e}")))?;
-    let host = parsed
-        .host()
-        .ok_or_else(|| Error::Other("a Rowel Server URL names a host".into()))?;
-    let loopback = match host {
-        url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
-        url::Host::Ipv4(addr) => addr.is_loopback(),
-        url::Host::Ipv6(addr) => addr.is_loopback(),
-    };
+    let loopback = rowel_core::host::is_loopback_host(
+        parsed
+            .host_str()
+            .ok_or_else(|| Error::Other("a Rowel Server URL names a host".into()))?,
+    );
     match parsed.scheme() {
         "https" => {}
         "http" if loopback => {}

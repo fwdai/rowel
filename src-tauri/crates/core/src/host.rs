@@ -137,12 +137,23 @@ fn is_scheme(scheme: &str) -> bool {
 
 /// Whether `url` names this machine: `localhost` or a loopback address.
 fn is_loopback(url: &url::Url) -> bool {
-    match url.host() {
-        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    }
+    url.host_str().is_some_and(is_loopback_host)
+}
+
+/// Whether `host`, as a URL spells it, is this machine: `localhost`, an
+/// address in `127.0.0.0/8`, or `[::1]`. The one rule for where plaintext is
+/// allowed — a page that may fill an https login over http, a Rowel Server
+/// reached over http, a broker over `ws://` — since traffic that never
+/// leaves the machine has no one in the middle to read or alter it.
+pub fn is_loopback_host(host: &str) -> bool {
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    bare.eq_ignore_ascii_case("localhost")
+        || bare
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// The host in a `url_host` column, or `None` when what was typed there does
@@ -165,6 +176,31 @@ pub fn is_public_suffix(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_this_machine_is_a_loopback_host() {
+        for host in [
+            "localhost",
+            "LocalHost",
+            "127.0.0.1",
+            "127.8.9.10",
+            "[::1]",
+            "::1",
+        ] {
+            assert!(is_loopback_host(host), "{host}");
+        }
+        for host in [
+            "example.com",
+            "localhost.example.com",
+            "10.0.0.1",
+            "0.0.0.0",
+            "[::]",
+            "[2001:db8::1]",
+            "",
+        ] {
+            assert!(!is_loopback_host(host), "{host}");
+        }
+    }
 
     #[test]
     fn site_host_is_the_lowercase_host_of_a_url() {

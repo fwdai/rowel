@@ -122,11 +122,15 @@ its data directory. Set `ROWEL_BROKER` to reach a broker elsewhere instead —
 a `rowel serve` ([`serve.md`](serve.md)) on a CI runner or a dev VM:
 
 - unset or empty: the app's socket, as today;
-- `ws://host:port[/path]`: a WebSocket to that address, in the clear — for a
-  broker on the same host or behind a reverse proxy that terminates TLS;
-- `wss://host:port[/path]`: the same over TLS. The certificate is verified
+- `wss://host:port[/path]`: a WebSocket to that address over TLS. The certificate is verified
   against the platform's roots; a broker signed by a CA of your own needs
-  `ROWEL_BROKER_CA=<path to a PEM>`, which adds that CA beside them.
+  `ROWEL_BROKER_CA=<path to a PEM>`, which adds that CA beside them;
+- `ws://localhost:port[/path]` (or `127.0.0.1`, `[::1]`): the same in the
+  clear, to a broker on this machine only. The channel's key exchange is not
+  authenticated, so in the clear across a network whoever sits in the middle
+  could swap the keys and read every value resolved through it; `ws://` to
+  any other host is refused. A broker behind a reverse proxy is reached over
+  the proxy's `wss://`, and the proxy speaks `ws://` to it over loopback.
 
 Any other value is refused by every command with a message naming the
 variable and the forms it takes. The channel is the same sealed one whichever

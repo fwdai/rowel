@@ -253,10 +253,12 @@ connect, or the key an association ask announced.
 
 Over the WebSocket a binary message carries exactly one frame's JSON body,
 the sealed channel inside it unchanged; text messages are ignored. Plain
-`ws://` is for the loopback address or a reverse proxy; `wss://` with
-`listen.tls` serves TLS from the PEM files directly. On the agent's side set
-`ROWEL_BROKER=ws://host:port` or `wss://…` (and `ROWEL_BROKER_CA` for a CA
-of your own) before `rowel mcp`, `rowel run`, `rowel proxy` — see
+`ws://` is for the loopback address or a reverse proxy on the same box;
+`wss://` with `listen.tls` serves TLS from the PEM files directly. On the
+agent's side set `ROWEL_BROKER=wss://host:port` (and `ROWEL_BROKER_CA` for a
+CA of your own), or `ws://localhost:port` for a broker on the agent's own
+machine — the CLI refuses `ws://` to any other host, since the channel's key
+exchange is not authenticated — before `rowel mcp`, `rowel run`, `rowel proxy` — see
 [`cli.md`](cli.md#reaching-a-broker). The two keys are let in the first time
 each is seen, through an association ask answered with `rowel approve`.
 
