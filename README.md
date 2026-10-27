@@ -99,7 +99,7 @@ Your vault is everything your master password opens. Each lockbox in it is an en
 - [`SECURITY.md`](SECURITY.md): how to report a vulnerability
 - [`docs/browser-extension.md`](docs/browser-extension.md) and [`docs/safari-extension.md`](docs/safari-extension.md): browser autofill
 - [`docs/agents.md`](docs/agents.md) and [`docs/cli.md`](docs/cli.md): AI agents using logins and API keys through grants, and the `rowel` command line tool
-- [`docs/server.md`](docs/server.md) and [`docs/server-api.md`](docs/server-api.md): the Rowel Server a company runs for its agents, and its API. Your personal vault never touches it
+- [`docs/server-api.md`](docs/server-api.md): the API the app and the command line tool speak to a Rowel Server, the separate product a company runs for its agents' org lockboxes. Your personal vault never touches it
 
 ## Verifying a release
 

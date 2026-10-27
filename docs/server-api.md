@@ -5,9 +5,8 @@ agents by the identity their platforms give them, decides by policy, routes
 approvals to members' Rowel apps and keeps the audit log (spec `07`). This
 document is the contract between a server and everything that talks to one —
 the app, `rowel-cli`, the browser extension — so any server, ours or one you
-write yourself, can be checked against it. `rowel serve --server`
-(`src-tauri/crates/server`, [docs/server.md](./server.md)) implements it;
-the app's half, `src-tauri/src/org/client.rs`, `org/approvals.rs` and
+write yourself, can be checked against it. Our Rowel Server, a separate
+product whose code is not in this repository, implements it; the app's half, `src-tauri/src/org/client.rs`, `org/approvals.rs` and
 `sync/providers/rowel`, speaks it, and the in-process server the app's tests
 run against, `org/fake_server.rs`, answers it the same way. Each endpoint is
 marked ✅ when a shipped build serves and speaks it and ❌ when it is planned.

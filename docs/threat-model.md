@@ -828,9 +828,11 @@ covers what the extension's agent mode, the `rowel` command line and the local
 socket let an agent do with the vault, and what a person sees of it afterwards.
 It describes the free, local tier this build ships, in the app and — since
 `rowel serve` — from the command line on a box without one (see *The headless
-broker* below). The single-node Rowel Server (`rowel serve --server`: org
-lockboxes with server-held keys, members, workload identity for agents,
-approvals routed to members' apps) is in it too, in *The Rowel Server* below.
+broker* below). The Rowel Server (org lockboxes with server-held keys,
+members, workload identity for agents, approvals routed to members' apps) is
+a separate product whose code is not in this repository; the app and the
+command line are its clients in this build, and what they trust it with is
+in *The Rowel Server* below.
 What the spec plans beyond it (Rowel Cloud, approvals pushed to a phone,
 rotation and offboarding at the server, OAuth token mode, remote browsers,
 policy as code) is not, and is named only where a reader would otherwise
@@ -1163,10 +1165,13 @@ so older packs still open), followed on each device at its next sync or on
 demand; a device the server revokes is handed no new master and keeps only
 the copy it has, which the next rotation leaves behind.
 
-**The Rowel Server.** `rowel serve --server` (`rowel-server`,
-[docs/server.md](./server.md)) is the other half: one process and one data
-directory, holding a company's org lockboxes as SQLCipher files and a
-metadata database beside them. What it can read, it can read by design: every
+**The Rowel Server.** The other half is the server itself, a separate
+product: this repository holds its clients and the API they speak
+([docs/server-api.md](./server-api.md)), not its code, so what follows is
+the server's design as an open client relies on it rather than something
+this build enforces. It is one process and one data directory, holding a
+company's org lockboxes as SQLCipher files and a metadata database beside
+them. What it can read, it can read by design: every
 org lockbox, since it holds each master wrapped under its root key (a
 32-byte key file, HKDF'd per tenant, AES-GCM with the lockbox id as
 associated data). It never sees a member's personal lockboxes, which never
@@ -1178,8 +1183,8 @@ leave their devices. What bounds it:
   wiped again after ten idle minutes, on a
   freeze and on `SIGTERM`; a quiet server holds no plaintext key. The root key
   file is the whole of the escrow: whoever reads it and the data directory
-  reads every org lockbox, which is why the operator is told to keep it
-  apart, owner-only, and backed up separately. A compromised server host is
+  reads every org lockbox, which is why it belongs apart from the data
+  directory, owner-only, and backed up separately. A compromised server host is
   the compromised-OS case of this document, for a company's org lockboxes.
 - **Agents prove who they are, nobody vouches for them.** An agent associates
   only with a workload token (GitHub Actions OIDC, or a token file) verified

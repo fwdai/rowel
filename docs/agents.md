@@ -265,8 +265,8 @@ section. In short:
 On a machine with no desktop, the same broker runs from the command line as
 `rowel serve`, unlocked from a terminal or a key file, with standing rules in
 a config file and asks answered by `rowel approve`; see
-[`docs/serve.md`](./serve.md). A company runs the Rowel Server itself with
-`rowel serve --server`; see [`docs/server.md`](./server.md). Not in this
-release: connecting to a server from the phone, approvals pushed to a phone,
+[`docs/serve.md`](./serve.md). The Rowel Server is a separate product, not
+part of this repository: the app and the command line connect to one over
+the API in [`docs/server-api.md`](./server-api.md). Not in this release: connecting to a server from the phone, approvals pushed to a phone,
 key rotation and offboarding at the server, OAuth token minting, and agents
 in remote browsers.

@@ -79,11 +79,6 @@ rowel-serve = { path = "../serve" }
 rowel-core = { path = "../core" }
 rpassword = "7"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-# `rowel admin server` (`server_admin`): a Rowel Server's metadata store,
-# config, root key and lockbox files, edited on its data directory; `hex`
-# spells the audit export's hashes, as the server's crate does.
-rowel-server = { path = "../server" }
-hex = "0.4"
 
 # The two client keys in the OS secure store (`keys`), with the crates and
 # features the app's own `secure_store` uses, so one keychain binding and one
