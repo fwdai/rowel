@@ -14,8 +14,7 @@
 //! installs it under the short name.
 //!
 //! On a box without the app, `serve` is the broker itself — the headless
-//! one of `rowel-serve` — and `approve` and `admin` are its terminal;
-//! `admin server` is a Rowel Server's, on its data directory.
+//! one of `rowel-serve` — and `approve` and `admin` are its terminal.
 
 // Desktop only, as the broker's `socket` it connects through is: a phone has
 // no command line to run this from, so there the crate is empty and the
@@ -36,7 +35,6 @@ pub mod proxy;
 pub mod redact;
 pub mod run;
 pub mod serve;
-pub mod server_admin;
 pub mod status;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -125,7 +123,6 @@ pub fn run(program: &str, args: impl Iterator<Item = String>) -> i32 {
         Ok(args::Command::NativeHost { data_dir }) => native_host::run(data_dir),
         Ok(args::Command::Approve(approve)) => approve::run(approve),
         Ok(args::Command::Admin(admin)) => admin::run(admin),
-        Ok(args::Command::AdminServer(server)) => server_admin::run(server),
         Err(usage) => {
             eprintln!("{usage}");
             2
