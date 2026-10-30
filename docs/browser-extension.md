@@ -236,6 +236,43 @@ the fill, the scan and clear, the echo fixture and clear-on-failure;
 `tests/grants.spec.ts` covers the grant map and the handoff as pure functions.
 The grant request itself needs the running app.
 
+## Locked and not running
+
+A locked Rowel and one that isn't running are states, not errors, and the
+popup shows each as a screen of its own instead of upstream's "Rowel has
+encountered an error:" block (`rowel/popups/app-status.js`, styled in
+`popup.css`):
+
+- **Rowel is locked** (the host refuses with code 1, `DatabaseNotOpened`):
+  "Unlock Rowel to fill and save passwords. Nothing can be read from it while
+  it's locked." **Unlock Rowel** is upstream's reopen button: `get_status`
+  with `triggerUnlock`, on which the host brings Rowel's window forward
+  (`unlock_requested`). Unlocking happens in the app; the extension never sees
+  the password.
+- **Rowel isn't running** (the extension can't reach the host): "Open the
+  Rowel app and **Try again**", one sentence the button finishes, with a hint
+  under it for an open Rowel whose browser extension switch is off. Opening
+  Rowel is said, not a button: the native host the browser launches only
+  relays to a running app's socket (`rowel_broker::relay`) and exits when
+  there is none, so nothing in the extension can start the app. **Try again**
+  is upstream's reload. The extension doesn't reconnect on its own
+  (`autoReconnect` is off by default), so when a status says not running, the
+  popup reconnects once before showing it. That catches a Rowel opened since
+  the extension last looked, which is the usual case, since the popup closes
+  when the app takes focus.
+
+Upstream's markup and scripts are untouched. Upstream's status logic still
+decides the state and shows its own block. The script wraps
+`statusResponse` in `popup.html`, and listens to the lock button in
+`popup_login.html` and `popup_httpauth.html`. It adds its two screens at the
+end of `.container`, and a body class (`rowel-locked`, `rowel-not-running`)
+puts one in place of upstream's block. Its buttons click upstream's hidden
+ones. A closed database with an error other than code 1's keeps upstream's
+block. The copy is in `ROWEL_MESSAGES` in `scripts/extension-strings.mjs`.
+Upstream's strings for the same states ("Reopen vault", "Vault not opened.",
+the field icon's hover text) are reworded in its `OVERRIDES`.
+`tests/popup-status.spec.ts` runs the three popups behind a stub API.
+
 ## Developing against a debug Rowel
 
 1. Run the app: `bun run tauri:dev`. In **Settings › Browser extension**, turn
@@ -261,7 +298,7 @@ The grant request itself needs the running app.
 
 ## Troubleshooting
 
-- **"Cannot connect to Rowel" / red cross on the icon.** Check that Rowel is
+- **"Rowel isn't running" / red cross on the icon.** Check that Rowel is
   running with the browser extension turned on, then look for the host
   manifest `app.rowel.browser.json`:
   - macOS: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`
@@ -317,7 +354,7 @@ surface, and each file has a set way to resolve it:
 
 | Files (under `extension/`) | Resolve by |
 | --- | --- |
-| `rowel/_locales/*/messages.json` | Take upstream's (`git checkout --theirs -- <files>`), then `bun run extension:strings`. If upstream reworded an English string listed in `OVERRIDES` in `scripts/extension-strings.mjs`, review the override. The Rowel-only keys (`agentMode*`, `errorMessageGrant*` and the other codes 40–46) come from `ROWEL_MESSAGES` in the same script and are re-appended to `en` |
+| `rowel/_locales/*/messages.json` | Take upstream's (`git checkout --theirs -- <files>`), then `bun run extension:strings`. If upstream reworded an English string listed in `OVERRIDES` in `scripts/extension-strings.mjs`, review the override. The Rowel-only keys (`agentMode*`, `errorMessageGrant*` and the other codes 40–46, the popup's `rowel*` state screens) come from `ROWEL_MESSAGES` in the same script and are re-appended to `en` |
 | `rowel/icons/**` (PNG + SVG) | Take upstream's, then `bun run extension:icons`. The toolbar state badges come from upstream's SVGs, so new ones are picked up |
 | `rowel/manifest.json`, `dist/manifest_chromium.json`, `dist/manifest_firefox.json` | Take upstream's changes and keep ours for `name`, `version`/`version_name` (in `rowel/manifest.json` only; the `dist/` templates carry no version, so drop upstream's there), `author`, `homepage_url`, `key`, `default_title`, `css/rowel.css` and `css/rowel-tokens.css` in `web_accessible_resources`, `content/agent-mode.js` after `content/fill.js` in `content_scripts`, and on Firefox `browser_specific_settings` (add-on ID, `data_collection_permissions`), `background/grants.js` after `background/event.js` in `background.scripts`, plus the dropped `https://api.github.com/` permission |
 | `rowel/background/background_service.js` | Keep `'grants.js'` after `'event.js'` in `importScripts` |
@@ -328,7 +365,7 @@ surface, and each file has a set way to resolve it:
 | `rowel/content/rowel.js` | Keep the four Rowel lines: `await kpxcAgentMode.onPageLoad()` after `kpxc.isFirefox = …` in `initContentScript`; the `if (kpxcAgentMode.isOn()) { return kpxcAgentMode.fill(); }` block after the empty-credentials check in `prepareCredentials`; `\|\| kpxcAgentMode.isOn()` in `initLoginPopup`'s first `if`; `(kpxc.settings.autoRetrieveCredentials \|\| kpxcAgentMode.isOn())` in `retrieveCredentials`'s condition, so agent mode retrieves on its own with the setting off |
 | `rowel/content/fill.js` | Keep `await kpxcAgentMode.afterFill(combination, selectedCredentials)` right before `performAutoSubmit` in `fillInCredentials`, and `await kpxcAgentMode.noteTotp(val)` after the empty-credentials check in `setTOTPValue` |
 | `rowel/content/icon-handler.js`, `content/totp-field.js` | Keep the `kpxcAgentMode.isOn()` gate: `\|\| kpxcAgentMode.isOn()` in `kpxcIcons.initIcons`'s first `if`, and the `if (kpxcAgentMode.isOn()) { return; }` at the top of `kpxcTOTPIcons.newIcon` |
-| `rowel/popups/popup.html`, `popups/popup_login.html`, `popups/popup_httpauth.html` | Take upstream's markup and re-apply: the Rowel links; the `<link rel="stylesheet" href="../css/rowel.css">` after the last stylesheet, with `popup.css` moved to just before it (after Bootstrap, so popup.css needs no `!important`); the `.rowel-brand` header row (mark + "Rowel") as the first child of `#settings`; `rowel-ghost` in place of `btn-success`/`btn-warning`/`btn-danger` on the toolbar buttons and on the secondary actions (`#username-only-button`, `#allow-iframe-button`, `#btn-dismiss`); in `popup.html` the `<script defer src="agent-mode.js">` after `popup.js` and the `#rowel-agent-mode` and `#rowel-agent-mode-on` blocks as the last children of `.container`. Every ID and `data-i18n` key stays upstream's |
+| `rowel/popups/popup.html`, `popups/popup_login.html`, `popups/popup_httpauth.html` | Take upstream's markup and re-apply: the Rowel links; the `<link rel="stylesheet" href="../css/rowel.css">` after the last stylesheet, with `popup.css` moved to just before it (after Bootstrap, so popup.css needs no `!important`); the `.rowel-brand` header row (mark + "Rowel") as the first child of `#settings`; `rowel-ghost` in place of `btn-success`/`btn-warning`/`btn-danger` on the toolbar buttons and on the secondary actions (`#username-only-button`, `#allow-iframe-button`, `#btn-dismiss`); in `popup.html` the `<script defer src="agent-mode.js">` after `popup.js` and the `#rowel-agent-mode` and `#rowel-agent-mode-on` blocks as the last children of `.container`; in all three the `<script defer src="app-status.js">` after the page's own script (after `agent-mode.js` in `popup.html`). Every ID and `data-i18n` key stays upstream's. If upstream renamed `statusResponse`, the state blocks' IDs (`#database-not-opened`, `#error-encountered`, `#initial-state`) or the buttons `app-status.js` clicks (`#reopen-database-button`, `#reload-status-button`, `#lock-database-button`), follow it there |
 | `rowel/popups/popup.css` | Keep ours: it is a rewrite (Rowel tokens, no `!important` except over Bootstrap's `.bg-*`). Diff upstream's for new selectors (states, IDs) and add them |
 | `rowel/options/options.html` | Take upstream's markup and re-apply the Rowel links, the hidden Updates card, the removed store links, the debug-info labels, the `rowel.css` link, and the rail sidebar block: the `.rowel-brand` `h1`, `nav-link` without `text-light`/`text-white`, the toggler without `navbar-dark`, the footer credit without `small text-muted` |
 | `rowel/options/options.css` | Take upstream's and re-apply the Rowel rules: page-title `h2`, `span.menu-item`, `footer`, `.card`/`.card-header`, the `.sidebar` block through `.navbar-toggler-icon`, and the three media queries at the end (mobile sheet, 240px rail from lg) |
@@ -345,7 +382,8 @@ Rowel-only files never conflict: `rowel-build.js`, `upstream-map.json`,
 mode files `rowel/background/grants.js`, `rowel/content/agent-mode.js`,
 `rowel/popups/agent-mode.js` and their tests `tests/agent-mode.html`,
 `tests/agent-mode-tests.js`, `tests/browser-stub.js`,
-`tests/agent-mode.spec.ts`, `tests/grants.spec.ts`, and
+`tests/agent-mode.spec.ts`, `tests/grants.spec.ts`, the popup's state
+screens `rowel/popups/app-status.js` and `tests/popup-status.spec.ts`, and
 everything outside `extension/`
 (`scripts/extension-sync.mjs`, the other `scripts/extension-*.mjs`,
 `scripts/check-extension-build.mjs`, this doc).
