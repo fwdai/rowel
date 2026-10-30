@@ -44,6 +44,16 @@ const OVERRIDES = {
   optionsAboutKeePassXCVersion: 'KeePassXC protocol version reported by Rowel: $1',
   optionsAboutExtensionVersion: 'Extension version: $1',
   optionsConnectedDatabasesText: 'Vaults connected to this extension.',
+  // A locked Rowel and one that isn't running are states, not errors
+  // (extension/rowel/popups/app-status.js). Upstream's "reopen database" is
+  // the host bringing Rowel forward to be unlocked; the button and the
+  // keyboard shortcut (manifest.json) say so.
+  errorMessageDatabaseNotOpened: 'Rowel is locked.',
+  popupReopenButton: 'Unlock Rowel',
+  reopenDatabaseButtonTitle: 'Bring Rowel forward to unlock it.',
+  usernameLockedFieldText: 'Rowel is locked.',
+  usernameDisconnectedFieldText: "Rowel isn't running.",
+  errorNotConnected: "Rowel isn't running. Open the Rowel app and try again.",
   gettingStartedWelcomeText:
     'Welcome to the Rowel browser extension. It fills logins and passkeys from your Rowel vault.'
 }
@@ -91,6 +101,32 @@ const ROWEL_MESSAGES = {
   agentModeGrantEndedNotification: [
     'The agent is done: Rowel signed you out of the site in this browser',
     "Rowel: notification when an agent's grant ended and the site's cookies were deleted."
+  ],
+  rowelLockedTitle: ['Rowel is locked', 'Rowel: title of the popup screen shown while Rowel is locked.'],
+  rowelLockedText: [
+    "Unlock Rowel to fill and save passwords. Nothing can be read from it while it's locked.",
+    'Rowel: text of the popup screen shown while Rowel is locked.'
+  ],
+  rowelUnlockButton: ['Unlock Rowel', 'Rowel: button that brings Rowel forward to be unlocked.'],
+  rowelUnlockButtonTitle: [
+    'Bring Rowel forward to unlock it',
+    'Rowel: hover text of the button that brings Rowel forward to be unlocked.'
+  ],
+  rowelNotRunningTitle: [
+    "Rowel isn't running",
+    'Rowel: title of the popup screen shown while the extension cannot reach Rowel.'
+  ],
+  rowelNotRunningText: [
+    'Open the Rowel app and',
+    'Rowel: the step to take while the extension cannot reach Rowel. The Try again button under it finishes the sentence.'
+  ],
+  rowelNotRunningHint: [
+    'Already open? Turn on “Fill logins in your browser” in Rowel › Settings › Browser & agents.',
+    "Rowel: hint under the Try again button, for a Rowel that is open with the browser extension turned off. Names the app's setting."
+  ],
+  rowelTryAgainButton: [
+    'Try again',
+    'Rowel: button that looks for Rowel again, finishing "Open the Rowel app and" above it.'
   ],
   errorMessageGrantDenied: ['Grant denied', 'Rowel: error code 40.'],
   errorMessageGrantPending: ['Grant pending approval', 'Rowel: error code 41.'],

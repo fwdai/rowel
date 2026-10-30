@@ -52,7 +52,7 @@
         "description": "Remove button title on Site Preferences tab."
     },
     "reopenDatabaseButtonTitle": {
-        "message": "Reopen current active vault.",
+        "message": "Bring Rowel forward to unlock it.",
         "description": "Reopen database button title text."
     },
     "usernameButtonTitle": {
@@ -100,7 +100,7 @@
         "description": "Unknown error."
     },
     "errorMessageDatabaseNotOpened": {
-        "message": "Vault not opened.",
+        "message": "Rowel is locked.",
         "description": "Database not opened."
     },
     "errorMessageDatabaseHash": {
@@ -256,7 +256,7 @@
         "description": "Username or password cannot contain references."
     },
     "errorNotConnected": {
-        "message": "Not connected to Rowel.",
+        "message": "Rowel isn't running. Open the Rowel app and try again.",
         "description": "Error notification shown when not connected to KeePassXC."
     },
     "errorCurrentDatabaseNotConnected": {
@@ -291,11 +291,11 @@
         "description": "Username field icon hover text when no credentials are."
     },
     "usernameLockedFieldText": {
-        "message": "Vault is locked.",
+        "message": "Rowel is locked.",
         "description": "Username field icon hover text when database is locked."
     },
     "usernameDisconnectedFieldText": {
-        "message": "Rowel is disconnected.",
+        "message": "Rowel isn't running.",
         "description": "Username field icon hover text when KeePassXC is disconnected."
     },
     "totp": {
@@ -471,7 +471,7 @@
         "description": "Popup Reload button text."
     },
     "popupReopenButton": {
-        "message": "Reopen vault",
+        "message": "Unlock Rowel",
         "description": "Popup reopen database button text."
     },
     "popupUsernameButton": {
@@ -1573,5 +1573,37 @@
     "errorMessageAuditUnavailable": {
         "message": "Rowel could not write its activity log, so nothing was released",
         "description": "Rowel: error code 47."
+    },
+    "rowelLockedTitle": {
+        "message": "Rowel is locked",
+        "description": "Rowel: title of the popup screen shown while Rowel is locked."
+    },
+    "rowelLockedText": {
+        "message": "Unlock Rowel to fill and save passwords. Nothing can be read from it while it's locked.",
+        "description": "Rowel: text of the popup screen shown while Rowel is locked."
+    },
+    "rowelUnlockButton": {
+        "message": "Unlock Rowel",
+        "description": "Rowel: button that brings Rowel forward to be unlocked."
+    },
+    "rowelUnlockButtonTitle": {
+        "message": "Bring Rowel forward to unlock it",
+        "description": "Rowel: hover text of the button that brings Rowel forward to be unlocked."
+    },
+    "rowelNotRunningTitle": {
+        "message": "Rowel isn't running",
+        "description": "Rowel: title of the popup screen shown while the extension cannot reach Rowel."
+    },
+    "rowelNotRunningText": {
+        "message": "Open the Rowel app and",
+        "description": "Rowel: the step to take while the extension cannot reach Rowel. The Try again button under it finishes the sentence."
+    },
+    "rowelNotRunningHint": {
+        "message": "Already open? Turn on “Fill logins in your browser” in Rowel › Settings › Browser & agents.",
+        "description": "Rowel: hint under the Try again button, for a Rowel that is open with the browser extension turned off. Names the app's setting."
+    },
+    "rowelTryAgainButton": {
+        "message": "Try again",
+        "description": "Rowel: button that looks for Rowel again, finishing \"Open the Rowel app and\" above it."
     }
 }

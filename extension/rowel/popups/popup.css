@@ -212,6 +212,79 @@ hr {
     margin-left: 1em;
 }
 
+/* Rowel: the locked and not-running screens (app-status.js). A body class
+   puts one in place of upstream's block, which statusResponse shows with
+   inline display, hence !important; the agent-mode switch steps aside too,
+   so the screen is the whole popup under the header. Agent mode's own rule
+   below still wins over the screens. */
+.rowel-status {
+    align-items: center;
+    display: none;
+    flex-direction: column;
+    padding: 18px 28px;
+    text-align: center;
+}
+
+body.rowel-locked #rowel-locked,
+body.rowel-not-running #rowel-not-running {
+    display: flex;
+}
+
+body.rowel-locked #database-not-opened,
+body.rowel-not-running #error-encountered {
+    display: none !important;
+}
+
+body.rowel-locked #rowel-agent-mode,
+body.rowel-not-running #rowel-agent-mode {
+    display: none;
+}
+
+.rowel-status-icon {
+    align-items: center;
+    background-color: var(--c-tile);
+    border-radius: 50%;
+    color: var(--c-text2);
+    display: flex;
+    font-size: 24px;
+    height: 56px;
+    justify-content: center;
+    margin-bottom: 14px;
+    width: 56px;
+}
+
+.rowel-status-title {
+    color: var(--c-text);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: var(--tracking-display);
+    margin-bottom: 6px;
+}
+
+.rowel-status-text {
+    color: var(--c-text2);
+    max-width: 330px;
+    margin-bottom: 18px;
+}
+
+.rowel-status-hint {
+    color: var(--c-text3);
+    font-size: 12px;
+    max-width: 330px;
+    margin: 14px 0 0;
+}
+
+.rowel-status .btn {
+    min-width: 180px;
+}
+
+/* Opening Rowel is the step to take, and not a button (nothing here can start
+   the app): the line carries the weight, and Try again finishes it. */
+#rowel-not-running .rowel-status-text {
+    color: var(--c-text);
+    font-weight: 500;
+}
+
 /* Rowel: agent mode (agent-mode.js). The switch sits under the status blocks.
    While it is on, the body class leaves only the brand row and the
    "Agent mode is on" screen. Upstream's statusResponse shows its blocks with
