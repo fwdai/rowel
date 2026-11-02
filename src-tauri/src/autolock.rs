@@ -349,7 +349,8 @@ fn overdue(blurred_at: SystemTime, now: SystemTime, timeout: Duration) -> bool {
 /// The lock the tray asks for: a lock now, whatever is open (`session::lock`),
 /// which may well find the vault already sealed — the tray item pressed
 /// twice. The idle deadline is not this: it is a lock decided earlier
-/// ([`idle`]).
+/// ([`idle`]). Desktop only, like the tray.
+#[cfg(desktop)]
 pub fn lock(app: &AppHandle) {
     session::lock(app);
 }
