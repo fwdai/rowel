@@ -1,4 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import type { OsLockStatus } from './app'
 import type { AgentGrantAsk, AssociateAsk, PasskeyAsk } from './browser'
 import type { OrgConnectStatus } from './org'
 import type { RemotePack } from './setup'
@@ -113,6 +114,12 @@ export interface EventPayloads {
    * expired. Settings › Lockboxes re-reads what it has on screen; no payload.
    */
   'org:changed': void
+  /**
+   * Whether Rust hears the OS locking, every time that changes: the listener
+   * came up — possibly after the launch probe — or was lost. Versioned like
+   * `sync:status`. Desktop only.
+   */
+  'oslock:status': OsLockStatus
 }
 
 export type EventName = keyof EventPayloads
@@ -145,7 +152,8 @@ export const EVENTS: { [K in EventName as Camel<K>]: K } = {
   agentGrantClosed: 'agent:grant:closed',
   agentsChanged: 'agents:changed',
   orgConnect: 'org:connect',
-  orgChanged: 'org:changed'
+  orgChanged: 'org:changed',
+  oslockStatus: 'oslock:status'
 }
 
 // Typed wrapper over Tauri's `listen`.

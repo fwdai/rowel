@@ -1,6 +1,7 @@
 use crate::session;
 use crate::state::AppState;
 use crate::timer::Timer;
+use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -41,8 +42,9 @@ pub struct AutoLock {
     /// counts only while it is: until the listener is up, after it is lost,
     /// and on a phone, the idle timeout last chosen stays in force, so a
     /// listener that is not there never leaves the vault with no lock but a
-    /// day's idleness.
-    os_watched: AtomicBool,
+    /// day's idleness. Versioned, because the frontend is told every change
+    /// (see [`OsLockStatus`]).
+    os_lock: Mutex<OsLockStatus>,
     /// Wall-clock reading taken when the window last lost focus, cleared when
     /// it comes back. The timer alone cannot be trusted across that gap: it
     /// measures in `Instant`s, which do not advance while an Apple machine is
@@ -57,10 +59,29 @@ impl Default for AutoLock {
             timer: Timer::spawn(),
             timeout_secs: AtomicU64::new(DEFAULT_TIMEOUT_SECS),
             follows_os: AtomicBool::new(false),
-            os_watched: AtomicBool::new(false),
+            os_lock: Mutex::new(OsLockStatus::default()),
             blurred_at: Mutex::new(None),
         }
     }
+}
+
+/// Whether the OS locking is heard here, as the frontend holds it: Settings
+/// offers to follow the OS, and says the vault seals with it, only while
+/// `supported`.
+///
+/// It changes at run time — the listener comes up on a thread of its own,
+/// possibly after the window has taken its launch probe, and can be lost
+/// later — so it reaches the frontend the way sync's state does: in the probe,
+/// in an `oslock:status` event on every change, and once more on request
+/// (`os_lock_status`) as soon as the frontend is listening, for a change it
+/// was not yet listening for. Those can land in any order; `seq` is what lets
+/// the frontend keep the newest.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OsLockStatus {
+    pub supported: bool,
+    /// Counts the changes, from 0 for "not heard yet".
+    pub seq: u64,
 }
 
 /// What coming back owes the session: sealed, because the time away spent the
@@ -77,8 +98,29 @@ impl AutoLock {
         Duration::from_secs(idle_secs(
             self.timeout_secs.load(Ordering::SeqCst),
             self.follows_os.load(Ordering::SeqCst),
-            self.os_watched.load(Ordering::SeqCst),
+            self.os_lock_status().supported,
         ))
+    }
+
+    fn os_lock_status(&self) -> OsLockStatus {
+        *self.os_lock.lock().unwrap()
+    }
+
+    /// The listener is up, or gone. The new status when that is a change —
+    /// counted, so the frontend can tell it from an older copy — and `None`
+    /// when it is not, so a repeat neither re-arms nor reaches the frontend.
+    /// Desktop only, like the listener that reports it.
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    fn set_os_watched(&self, watched: bool) -> Option<OsLockStatus> {
+        let mut status = self.os_lock.lock().unwrap();
+        if status.supported == watched {
+            return None;
+        }
+        *status = OsLockStatus {
+            supported: watched,
+            seq: status.seq + 1,
+        };
+        Some(*status)
     }
 
     /// The window lost focus at `now`: remember when, so coming back can tell
@@ -129,10 +171,10 @@ pub fn store_timeout(app: &AppHandle, secs: u64, follows_os: bool) {
     state.follows_os.store(follows_os, Ordering::SeqCst);
 }
 
-/// Whether the OS locking is heard here, which is what decides whether
-/// Settings offers to follow it (`app_status`).
-pub fn os_watched(app: &AppHandle) -> bool {
-    app.state::<AutoLock>().os_watched.load(Ordering::SeqCst)
+/// Whether the OS locking is heard here, for the launch probe and the
+/// `os_lock_status` command (see [`OsLockStatus`]).
+pub fn os_lock_status(app: &AppHandle) -> OsLockStatus {
+    app.state::<AutoLock>().os_lock_status()
 }
 
 /// What the OS did, as `oslock` heard it.
@@ -144,16 +186,20 @@ pub fn os_watched(app: &AppHandle) -> bool {
 /// just typed again would be the surprise.
 ///
 /// The listener coming or going changes what "follow the OS" means
-/// (`idle_secs`), so the pending lock is re-armed for the new answer.
+/// (`idle_secs`), so the pending lock is re-armed for the new answer, and what
+/// Settings may offer, so the frontend is told.
 #[cfg(desktop)]
 pub fn os_event(app: &AppHandle, event: crate::oslock::Event) {
     use crate::oslock::Event;
     match event {
         Event::Watching | Event::Lost => {
-            app.state::<AutoLock>()
-                .os_watched
-                .store(event == Event::Watching, Ordering::SeqCst);
-            touch(app);
+            let changed = app
+                .state::<AutoLock>()
+                .set_os_watched(event == Event::Watching);
+            if let Some(status) = changed {
+                touch(app);
+                crate::events::os_lock_status(app, status);
+            }
         }
         Event::Locked | Event::SwitchedAway | Event::Sleep | Event::Wake => {
             if session::lock(app) {
@@ -344,13 +390,39 @@ mod tests {
     }
 
     #[test]
-    fn the_timeout_follows_the_os_only_once_it_is_heard() {
+    fn the_timeout_follows_the_os_only_while_it_is_heard() {
         let autolock = AutoLock::default();
         autolock.timeout_secs.store(300, Ordering::SeqCst);
         autolock.follows_os.store(true, Ordering::SeqCst);
         assert_eq!(autolock.timeout(), Duration::from_secs(300));
 
-        autolock.os_watched.store(true, Ordering::SeqCst);
+        autolock.set_os_watched(true);
         assert_eq!(autolock.timeout(), Duration::from_secs(MAX_TIMEOUT_SECS));
+
+        autolock.set_os_watched(false);
+        assert_eq!(autolock.timeout(), Duration::from_secs(300));
+    }
+
+    // Every change is counted, so the frontend can keep the newest of the
+    // copies it is handed; a repeat is no change, and is not handed on.
+    #[test]
+    fn each_change_of_the_listener_is_counted_and_a_repeat_is_not() {
+        let autolock = AutoLock::default();
+        assert_eq!(autolock.os_lock_status(), OsLockStatus::default());
+
+        let up = OsLockStatus {
+            supported: true,
+            seq: 1,
+        };
+        assert_eq!(autolock.set_os_watched(true), Some(up));
+        assert_eq!(autolock.set_os_watched(true), None);
+        assert_eq!(autolock.os_lock_status(), up);
+
+        let lost = OsLockStatus {
+            supported: false,
+            seq: 2,
+        };
+        assert_eq!(autolock.set_os_watched(false), Some(lost));
+        assert_eq!(autolock.os_lock_status(), lost);
     }
 }

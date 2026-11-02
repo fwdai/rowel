@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { UnlockResult } from '@/api/types'
-import { appStatus, type AppStatus } from '@/api/app'
+import { appStatus, type AppStatus, type OsLockStatus } from '@/api/app'
 import { lock } from '@/api/auth'
 import type { Provider } from '@/api/provider'
 import type { RemotePack } from '@/api/setup'
@@ -89,6 +89,13 @@ export interface AppState {
    * local until the next lock.
    */
   sync: SyncStatus
+  /**
+   * Whether Rust hears the OS locking, and so whether Settings offers to
+   * follow it. Kept apart from `status` for the reason `sync` is: it changes
+   * between probes (the listener comes up late, or is lost), and each change
+   * arrives as `oslock:status`, reconciled with the probe's copy by `seq`.
+   */
+  osLock: OsLockStatus
   setupAccount: SetupAccountState
   /**
    * The account's vaults that are not workspaces on this device, as the last
@@ -147,6 +154,7 @@ export const initialApp: AppState = {
     lastSyncedAt: null,
     seq: 0
   },
+  osLock: { supported: false, seq: 0 },
   setupAccount: ACCOUNT_IDLE,
   remoteVaults: [],
   locks: 0,
@@ -174,20 +182,25 @@ export const useApp = create<AppState>()(() => initialApp)
  * boot path passes none, since nothing can have been written before it.
  */
 export const setApp = (status: AppStatus, mark?: number) => {
-  useApp.setState(state => ({ status, sync: newer(state.sync, status.sync) }))
+  useApp.setState(state => ({
+    status,
+    sync: newer(state.sync, status.sync),
+    osLock: newer(state.osLock, status.osLock)
+  }))
   if (mark === undefined) hydratePrefs(status.settings)
   else hydrateFromProbe(status.settings, mark)
 }
 
 /**
- * Of two sync snapshots, the one the backend produced later. The probe and the
- * `sync:status` event are two routes for the same fact, and a probe taken just
- * before a transition can resolve after the event that transition emitted;
- * without this it would put the older state back on screen. Equal sequence
- * numbers mean the same transition, and the incoming copy is taken so a
- * `configured` that changed without a transition still lands.
+ * Of two snapshots of the same backend state, the one the backend produced
+ * later. The probe and the state's event are two routes for the same fact, and
+ * a probe taken just before a transition can resolve after the event that
+ * transition emitted; without this it would put the older state back on
+ * screen. Equal sequence numbers mean the same transition, and the incoming
+ * copy is taken so a sync `configured` that changed without a transition
+ * still lands.
  */
-const newer = (held: SyncStatus, incoming: SyncStatus): SyncStatus =>
+const newer = <T extends { seq: number }>(held: T, incoming: T): T =>
   incoming.seq >= held.seq ? incoming : held
 
 /**
@@ -385,6 +398,10 @@ export const scheduleSync = () => {
 
 export const setSyncStatus = (sync: SyncStatus) =>
   useApp.setState(state => ({ sync: newer(state.sync, sync) }))
+
+/** An `oslock:status`, or the answer to asking for one (see `OsLockStatus`). */
+export const setOsLockStatus = (osLock: OsLockStatus) =>
+  useApp.setState(state => ({ osLock: newer(state.osLock, osLock) }))
 
 // --- first-run account probe -------------------------------------------------------
 

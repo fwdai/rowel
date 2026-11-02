@@ -43,6 +43,9 @@ pub const AGENTS_CHANGED: &str = "agents:changed";
 #[cfg(desktop)]
 pub const ORG_CONNECT: &str = "org:connect";
 pub const ORG_CHANGED: &str = "org:changed";
+// Desktop only, like the listener whose state it carries (`crate::oslock`).
+#[cfg(desktop)]
+pub const OS_LOCK_STATUS: &str = "oslock:status";
 
 #[derive(Serialize, Clone)]
 struct Entries {
@@ -87,6 +90,14 @@ pub fn vault_merged(app: &AppHandle, entries: Vec<EntryMetaDto>) {
 /// neither side has to agree on an order of events.
 pub fn sync_status(app: &AppHandle, status: SyncStatus) {
     let _ = app.emit(SYNC_STATUS, status);
+}
+
+/// Whether the OS locking is heard, every time that changes: the listener came
+/// up, or was lost. A snapshot with its sequence number, as sync's is, so it
+/// and the probe's copy can arrive in either order.
+#[cfg(desktop)]
+pub fn os_lock_status(app: &AppHandle, status: crate::autolock::OsLockStatus) {
+    let _ = app.emit(OS_LOCK_STATUS, status);
 }
 
 pub fn import_progress(app: &AppHandle, done: usize, total: usize) {

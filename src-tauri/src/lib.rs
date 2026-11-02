@@ -252,6 +252,7 @@ pub fn run() {
             #[cfg(desktop)]
             commands::app::hide_window,
             commands::app::take_opened_file,
+            commands::app::os_lock_status,
             commands::app::set_settings,
             commands::vault::reveal_entry,
             commands::vault::save_entry,

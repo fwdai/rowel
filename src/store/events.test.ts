@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { on, EVENTS, type EventName, type EventPayloads } from '@/api/events'
 import type { EntryMeta } from '@/api/types'
 import { appStatusDefault, calls, clearCalls, mockCommand } from '../test/ipc'
+import { deferred } from '../test/utils'
 import { subscribeToEvents } from './events'
 import {
   useApp,
@@ -157,6 +158,58 @@ describe('sync:status', () => {
     handlerFor(EVENTS.syncStatus)({ ...initialApp.sync, seq: 5 })
     setApp({ ...appStatusDefault(), sync: { ...initialApp.sync, configured: true, seq: 5 } })
     expect(useApp.getState().sync.configured).toBe(true)
+  })
+})
+
+// Whether Rust hears the OS locking changes after the launch probe: the
+// listener comes up on a thread of its own, and can be lost later.
+describe('oslock:status', () => {
+  it('follows the listener coming up, then being lost, after the probe', () => {
+    setApp(appStatusDefault())
+    expect(useApp.getState().osLock.supported).toBe(false)
+
+    handlerFor(EVENTS.oslockStatus)({ supported: true, seq: 1 })
+    expect(useApp.getState().osLock.supported).toBe(true)
+
+    handlerFor(EVENTS.oslockStatus)({ supported: false, seq: 2 })
+    expect(useApp.getState().osLock.supported).toBe(false)
+  })
+
+  it('is not put back by a probe that read it before the change', () => {
+    handlerFor(EVENTS.oslockStatus)({ supported: true, seq: 1 })
+
+    setApp({ ...appStatusDefault(), osLock: { supported: false, seq: 0 } })
+
+    expect(useApp.getState().osLock.supported).toBe(true)
+  })
+
+  // The listener came up after the probe was read but before anything was
+  // listening: its event went unheard. Asking once listening is what lands it.
+  it('asks once listening, for a change no one was listening for', async () => {
+    setApp(appStatusDefault())
+    mockCommand('os_lock_status', () => ({ supported: true, seq: 1 }))
+    clearCalls('os_lock_status')
+
+    subscribeToEvents()
+
+    await vi.waitFor(() => expect(useApp.getState().osLock.supported).toBe(true))
+    expect(calls('os_lock_status')).toHaveLength(1)
+  })
+
+  // That answer and an event can cross on the way: the newer wins either way.
+  it('keeps a later event over an earlier answer that lands after it', async () => {
+    const answer = deferred<{ supported: boolean; seq: number }>()
+    mockCommand('os_lock_status', () => answer.promise)
+    clearCalls('os_lock_status')
+    subscribeToEvents()
+    await vi.waitFor(() => expect(calls('os_lock_status')).toHaveLength(1))
+
+    handlerFor(EVENTS.oslockStatus)({ supported: false, seq: 2 })
+    answer.resolve({ supported: true, seq: 1 })
+    // A macrotask: every microtask the answer's delivery takes has run.
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(useApp.getState().osLock).toEqual({ supported: false, seq: 2 })
   })
 })
 

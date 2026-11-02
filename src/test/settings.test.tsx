@@ -28,6 +28,9 @@ import {
 import DateField from '@/components/elements/fields/DateField'
 import { FieldsProvider } from '@/components/elements/fields/context'
 import Footer from '@/components/Main/Body/Aside/Show/Footer'
+import { EVENTS } from '@/api/events'
+import { subscribeToEvents } from '@/store/events'
+import { emitEvent } from './events'
 import { appStatusDefault, calls, mockCommand, mockCommandOnce } from './ipc'
 import { loginMeta, seedApp, withEntries } from './utils'
 
@@ -53,6 +56,11 @@ const open = async () => {
 
 const go = (section: string) =>
   userEvent.click(screen.getByTestId(`settings-nav-${section}`))
+
+// Rust reporting whether it hears the OS locking — its listener coming up, or
+// lost — through the subscription the app holds (`subscribeToEvents`).
+const heard = (supported: boolean, seq: number) =>
+  act(() => emitEvent(EVENTS.oslockStatus, { supported, seq }))
 
 // Settings opens on General; the sync tests want the Sync & backup pane.
 const openSync = async () => {
@@ -620,10 +628,25 @@ describe('Settings › security', () => {
     expect(screen.getByText('Idle time before the vault seals itself')).toBeInTheDocument()
   })
 
+  // The listener comes up on its own thread, so it can report in after the
+  // launch probe was read and Settings drawn from it: the row follows.
+  it('offers the OS lock once the listener comes up after the launch probe', async () => {
+    subscribeToEvents()
+    await open()
+    await go('security')
+    expect(screen.queryByTestId('settings-autolock-os')).not.toBeInTheDocument()
+
+    heard(true, 1)
+
+    expect(screen.getByTestId('settings-autolock-os')).toBeInTheDocument()
+    expect(screen.getByText(/it also seals whenever this computer locks or sleeps/)).toBeInTheDocument()
+  })
+
   // The OS lock seals the vault whatever the timeout, so the row says so, and
   // following the OS is one more choice after the timeouts.
   it('follows the OS lock, keeping the minutes chosen before', async () => {
-    seedApp({ osLockSupported: true })
+    subscribeToEvents()
+    heard(true, 1)
     await open()
     await go('security')
     expect(screen.getByText(/it also seals whenever this computer locks or sleeps/)).toBeInTheDocument()
@@ -639,7 +662,8 @@ describe('Settings › security', () => {
   })
 
   it('goes back to a timeout from following the OS', async () => {
-    seedApp({ osLockSupported: true })
+    subscribeToEvents()
+    heard(true, 1)
     await open()
     await go('security')
     await userEvent.click(screen.getByTestId('settings-autolock-os'))
@@ -649,6 +673,24 @@ describe('Settings › security', () => {
     expect(calls('set_settings')).toContainEqual({ patch: { autolockSecs: 900 } })
     expect(calls('set_settings')).toContainEqual({ patch: { autolockFollowsOs: false } })
     expect(screen.getByTestId('settings-autolock-900')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  // The listener lost while following it: Rust has fallen back to the minutes
+  // chosen before, so the row stops claiming the OS and shows those. The choice
+  // itself is kept, to count again once the OS is heard again.
+  it('shows the minutes Rust falls back to when the listener is lost', async () => {
+    subscribeToEvents()
+    heard(true, 1)
+    await open()
+    await go('security')
+    await userEvent.click(screen.getByTestId('settings-autolock-os'))
+
+    heard(false, 2)
+
+    expect(screen.queryByTestId('settings-autolock-os')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-autolock-60')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByText('Idle time before the vault seals itself')).toBeInTheDocument()
+    expect(usePrefs.getState().autolockFollowsOs).toBe(true)
   })
 
   // A stored "follow" on a desktop that cannot hear the OS: Rust falls back to

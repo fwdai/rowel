@@ -7,6 +7,22 @@ import type { Accent, ThemePreference } from '@/theme'
 
 export type DateFormat = 'MM/DD/YYYY' | 'DD.MM.YYYY' | 'YYYY-MM-DD'
 
+/**
+ * Whether Rust hears the OS locking here — the screen lock, sleep, a switch to
+ * another user. Where it does, the vault seals with it whatever the timeout,
+ * and Settings offers to follow it instead of a timeout. Never on a phone.
+ *
+ * On a desktop it changes at run time: the listener comes up on a thread of
+ * its own, possibly after the launch probe was read, and can be lost later. So
+ * it arrives three ways — the probe, an `oslock:status` event on every change,
+ * and `osLockStatus` asked once the app listens for that event — in any order,
+ * and the store keeps whichever has the higher `seq` (`setOsLockStatus`).
+ */
+export interface OsLockStatus {
+  supported: boolean
+  seq: number
+}
+
 // The order the segmented control offers them in.
 export const DATE_FORMATS: DateFormat[] = ['MM/DD/YYYY', 'DD.MM.YYYY', 'YYYY-MM-DD']
 
@@ -34,8 +50,8 @@ export interface Settings {
   autolockSecs: number
   /**
    * Follow the OS instead: the vault seals when the computer locks or sleeps,
-   * and idles out only after a day. Counts only where `osLockSupported`;
-   * `autolockSecs` stays the timeout everywhere else.
+   * and idles out only after a day. Counts only while the OS locking is heard
+   * (`OsLockStatus`); `autolockSecs` stays the timeout everywhere else.
    */
   autolockFollowsOs: boolean
   /** How long a copied secret lingers before the clipboard is cleared (ms). */
@@ -92,12 +108,11 @@ export interface AppStatus {
    */
   scanSupported: boolean
   /**
-   * Whether the OS locking is heard here — the screen lock, sleep, a switch to
-   * another user. Where it is, the vault seals with it whatever the timeout,
-   * and Settings offers to follow it instead of a timeout. False on a phone,
-   * and on a desktop where Rust could not start listening.
+   * Whether the OS locking is heard here, as of this probe. It can change
+   * after it (`OsLockStatus`), so the store keeps it apart from the rest of the
+   * probe, as it keeps `sync` (`useApp.osLock`).
    */
-  osLockSupported: boolean
+  osLock: OsLockStatus
   /**
    * Whether this build can connect to a Rowel Server: the sign-in comes back
    * through the browser, which the desktop listens for and the phone cannot
@@ -151,3 +166,6 @@ export const hideWindow = (): Promise<void> => call('hide_window')
  * so anything opened from then on arrives as the event instead.
  */
 export const takeOpenedFile = (): Promise<string | null> => call('take_opened_file')
+
+/** Whether the OS locking is heard now (see `OsLockStatus`). */
+export const osLockStatus = (): Promise<OsLockStatus> => call('os_lock_status')

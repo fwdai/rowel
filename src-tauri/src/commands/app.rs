@@ -45,9 +45,9 @@ pub struct AppStatus {
     /// Whether the OS locking is heard here (`oslock`): the screen lock,
     /// sleep, a switch to another user. Settings offers to follow the OS
     /// rather than an idle timeout only where it is, and says the vault seals
-    /// with it. False on a phone, and on a desktop where no listener could
-    /// start.
-    os_lock_supported: bool,
+    /// with it. Never on a phone. On a desktop it can change after this is
+    /// read, so it is versioned and the changes follow as `oslock:status`.
+    os_lock: crate::autolock::OsLockStatus,
     biometric: Biometric,
     /// Every vault on this install — exactly one until the user makes a second,
     /// which is what lets the frontend leave the whole feature out of the UI
@@ -127,7 +127,7 @@ pub fn snapshot(app: &AppHandle) -> Result<AppStatus> {
         providers: crate::sync::Provider::available(),
         org_connect: cfg!(desktop),
         scan_supported: scan::is_supported(),
-        os_lock_supported: crate::autolock::os_watched(app),
+        os_lock: crate::autolock::os_lock_status(app),
         biometric: Biometric {
             available: hardware && storage::biometric_enrolled(app) && openable,
             can_enroll: hardware && app_key_known,
@@ -197,6 +197,16 @@ pub fn hide_window(app: AppHandle) {
 #[tauri::command]
 pub fn take_opened_file(app: AppHandle) -> Option<String> {
     crate::opened::take(&app)
+}
+
+/// Whether the OS locking is heard, asked once the webview listens for
+/// `oslock:status`: the listener comes up on its own thread and may have done
+/// so after the launch probe was read but before anyone was listening, which
+/// would leave Settings on the probe's answer. Versioned like the event, so
+/// either may land first.
+#[tauri::command]
+pub fn os_lock_status(app: AppHandle) -> crate::autolock::OsLockStatus {
+    crate::autolock::os_lock_status(&app)
 }
 
 /// Apply a partial settings object and hand the whole merged result back, so a

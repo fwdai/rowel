@@ -10,8 +10,10 @@ import {
   refreshApp,
   showLockScreen,
   fileOpened,
+  setOsLockStatus,
   useApp
 } from './app'
+import { osLockStatus } from '@/api/app'
 import { setEntries, loadArchive, runAudit } from './vault'
 import {
   useUi,
@@ -97,7 +99,18 @@ export const subscribeToEvents = (): (() => void) => {
     // A rule or a grant came or went: Settings › Browser & agents re-reads.
     on(EVENTS.agentsChanged, () => agentsChanged()),
     on(EVENTS.orgConnect, orgConnectReported),
-    on(EVENTS.orgChanged, () => orgChanged())
+    on(EVENTS.orgChanged, () => orgChanged()),
+    // Whether the OS locking is heard. Its listener comes up on a thread of its
+    // own, so it may have changed after the launch probe was read and before
+    // this was listening — an event no one heard. Once listening, ask once
+    // more; the sequence numbers keep the newest of that answer, the probe's
+    // and any event, whatever order they land in.
+    on(EVENTS.oslockStatus, setOsLockStatus).then(unlisten => {
+      osLockStatus()
+        .then(setOsLockStatus)
+        .catch(() => {})
+      return unlisten
+    })
   ]
 
   return () => {
