@@ -51,6 +51,9 @@ impl Keyring {
         self.keys.get(id).cloned()
     }
 
+    /// Whether workspace `id`'s key is held. The tests' question: an open
+    /// asks its `session::Ticket` whether a lock emptied the ring meanwhile.
+    #[cfg(test)]
     pub fn has(&self, id: &str) -> bool {
         self.keys.contains_key(id)
     }

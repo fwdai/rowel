@@ -748,7 +748,10 @@ mod lock_scope {
                 at(&body, ".ticket()") < at(&body, slow),
                 "{signature}: the ticket is taken before `{slow}`"
             );
-            at(&body, "adopt(&app, &state, ticket,");
+            // Without whitespace: rustfmt lays a long call out one argument
+            // to a line.
+            let squeezed: String = body.split_whitespace().collect();
+            at(&squeezed, "adopt(&app,&state,ticket,");
         }
         at(&body_of(setup, "fn adopt("), ".open(ticket");
     }
