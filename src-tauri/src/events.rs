@@ -110,7 +110,7 @@ pub fn sync_status(app: &AppHandle, status: SyncStatus) {
 
 /// Whether the OS locking is heard, every time that changes: the listener came
 /// up, or was lost. A snapshot with its sequence number, as sync's is, so it
-/// and the probe's copy can arrive in either order.
+/// and the webview's own ask (`os_lock_status`) can arrive in either order.
 #[cfg(desktop)]
 pub fn os_lock_status(app: &AppHandle, status: crate::autolock::OsLockStatus) {
     let _ = app.emit(OS_LOCK_STATUS, status);

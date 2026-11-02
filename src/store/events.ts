@@ -105,10 +105,9 @@ export const subscribeToEvents = (): (() => void) => {
     on(EVENTS.orgConnect, orgConnectReported),
     on(EVENTS.orgChanged, () => orgChanged()),
     // Whether the OS locking is heard. Its listener comes up on a thread of its
-    // own, so it may have changed after the launch probe was read and before
-    // this was listening — an event no one heard. Once listening, ask once
-    // more; the sequence numbers keep the newest of that answer, the probe's
-    // and any event, whatever order they land in.
+    // own, so it may have reported before this was listening — an event no one
+    // heard. Once listening, ask once; the sequence numbers keep the newer of
+    // that answer and any event, whatever order they land in.
     on(EVENTS.oslockStatus, setOsLockStatus).then(unlisten => {
       osLockStatus()
         .then(setOsLockStatus)

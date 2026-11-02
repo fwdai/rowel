@@ -80,12 +80,11 @@ impl Default for AutoLock {
 /// `supported`.
 ///
 /// It changes at run time — the listener comes up on a thread of its own,
-/// possibly after the window has taken its launch probe, and can be lost
-/// later — so it reaches the frontend the way sync's state does: in the probe,
-/// in an `oslock:status` event on every change, and once more on request
-/// (`os_lock_status`) as soon as the frontend is listening, for a change it
-/// was not yet listening for. Those can land in any order; `seq` is what lets
-/// the frontend keep the newest.
+/// possibly before the webview listens, and can be lost later — so it reaches
+/// the frontend as an `oslock:status` event on every change, and once on
+/// request (`os_lock_status`) as soon as the frontend is listening, for a
+/// change it was not yet listening for. The two can land in either order;
+/// `seq` is what lets the frontend keep the newer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OsLockStatus {
@@ -206,8 +205,8 @@ pub fn store_timeout(app: &AppHandle, secs: u64, follows_os: bool) {
     state.follows_os.store(follows_os, Ordering::SeqCst);
 }
 
-/// Whether the OS locking is heard here, for the launch probe and the
-/// `os_lock_status` command (see [`OsLockStatus`]).
+/// Whether the OS locking is heard here, for the `os_lock_status` command
+/// (see [`OsLockStatus`]).
 pub fn os_lock_status(app: &AppHandle) -> OsLockStatus {
     app.state::<AutoLock>().os_lock_status()
 }

@@ -103,9 +103,6 @@ export const appStatusDefault = (): AppStatus => ({
   providers: ['googleDrive', 'dropbox'],
   // Off by default, so no suite sees a scan affordance it did not ask for.
   scanSupported: false,
-  // Not heard, so the auto-lock row reads as it always has. A suite about
-  // following the OS reports it heard (`setOsLockStatus`, or `oslock:status`).
-  osLock: { supported: false, seq: 0 },
   // The desktop's answer: a Rowel Server can be connected. A suite about the
   // phone seeds false.
   orgConnect: true,
@@ -132,8 +129,9 @@ const DEFAULTS: Record<string, Handler> = {
   app_ready: () => undefined,
   // Nothing was double-clicked to launch the app, which is every ordinary run.
   take_opened_file: () => null,
-  // The probe's own answer: nothing changed since it was read.
-  os_lock_status: () => appStatusDefault().osLock,
+  // Not heard, so the auto-lock row reads as it always has. A suite about
+  // following the OS reports it heard (`oslock:status`).
+  os_lock_status: () => ({ supported: false, seq: 0 }),
 
   setup: () => undefined,
   unlock: opened,

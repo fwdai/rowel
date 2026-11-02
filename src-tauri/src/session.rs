@@ -63,7 +63,7 @@ pub struct Claim {
 /// switch opening the next workspace — and presented to [`Session::open`].
 ///
 /// Every lock advances the epoch, whether or not it found anything open
-/// ([`seal`]), so an open whose ticket predates a lock is refused. Without
+/// ([`lock`]), so an open whose ticket predates a lock is refused. Without
 /// it a lock that landed while the key was still being derived — the OS
 /// locking a second after the password was submitted — found nothing to
 /// seal and left no trace, and the unlock then opened the vault behind it.
@@ -328,14 +328,14 @@ impl Session {
 /// was sealed; a vault already locked has nothing to announce — but the lock
 /// is still recorded, so an unlock on its way in is refused (see [`Ticket`]).
 pub fn lock(app: &AppHandle) -> bool {
-    end(app, false, None)
+    end(app, false, |_| true)
 }
 
 /// The lock the user asked for (the `lock` command): announced even when there
 /// was nothing left to seal — the user asked for the lock screen, and a webview
 /// that somehow still shows the vault gets it.
 pub fn lock_on_request(app: &AppHandle) {
-    end(app, true, None);
+    end(app, true, |_| true);
 }
 
 /// A lock decided earlier and taken now — the idle timer's deadline coming due,
@@ -349,7 +349,10 @@ pub fn lock_on_request(app: &AppHandle) {
 /// session opened — and then it must lock nothing, and leave no trace for
 /// an unlock on its way in to be refused by.
 pub fn lock_if(app: &AppHandle, still: impl FnOnce(&Session) -> bool) -> bool {
-    end(app, false, Some(Box::new(still)))
+    let state = app.state::<AppState>();
+    end(app, false, |session| {
+        lock_applies(session, &state.keyring, still)
+    })
 }
 
 /// Whether a lock decided earlier applies, asked under the session guard
@@ -368,20 +371,15 @@ pub(crate) fn lock_applies(
     holds && open
 }
 
-/// A lock decided earlier's own question (see [`lock_if`]).
-type Decided<'a> = Box<dyn FnOnce(&Session) -> bool + 'a>;
-
-// `decided`: a lock decided earlier (`lock_if`), sealing only where it still
-// applies; `None`, a lock now.
-fn end(app: &AppHandle, announce: bool, decided: Option<Decided<'_>>) -> bool {
+// `applies`, asked under the guard before anything is sealed: always yes for
+// a lock now, the decision's own question for a lock decided earlier.
+fn end(app: &AppHandle, announce: bool, applies: impl FnOnce(&Session) -> bool) -> bool {
     let workspace = crate::workspace::active_id(app);
     let state = app.state::<AppState>();
     let (sealed, ended) = {
         let mut session = state.session.lock().unwrap();
-        if let Some(still) = decided {
-            if !lock_applies(&session, &state.keyring, still) {
-                return false;
-            }
+        if !applies(&session) {
+            return false;
         }
         let sealed = seal_in(&mut session, &state.keyring);
         let ended = (sealed.live || sealed.held).then(|| announce_ended(app));
@@ -809,8 +807,10 @@ pub fn live_records(store: &SqliteStore) -> Result<Vec<Record>> {
 mod lock_scope {
     // Everything above the test module: the fakes below it borrow nothing from
     // the real session and would only confuse the search.
+    // The test module, not the first `#[cfg(test)]`: a test-only item can sit
+    // among the production code (`Session::set`).
     fn production(source: &str) -> &str {
-        match source.find("#[cfg(test)]") {
+        match source.find("#[cfg(test)]\nmod ") {
             Some(at) => &source[..at],
             None => source,
         }
@@ -819,12 +819,7 @@ mod lock_scope {
     // The brace-matched body of the function `signature` introduces, with
     // full-line comments dropped so prose about a lock never reads as one.
     fn body_of(source: &str, signature: &str) -> String {
-        body_from(production(source), signature)
-    }
-
-    // `body_of` over the whole file: for one whose test-only items come before
-    // the code a guard is about (this one's `Session::set`).
-    fn body_from(source: &str, signature: &str) -> String {
+        let source = production(source);
         let start = source
             .find(signature)
             .unwrap_or_else(|| panic!("`{signature}` is gone — keep this guard in step with it"));
@@ -962,7 +957,7 @@ mod lock_scope {
             ("\npub fn end_in(", "session.clear()", "announce_ended(app)"),
             ("\nfn end(", "seal_in(&mut session", "announce_ended(app)"),
         ] {
-            let body = body_from(source, signature);
+            let body = body_of(source, signature);
             assert!(
                 at(&body, change) < at(&body, told),
                 "{signature}: the change is told after it is made"
@@ -974,7 +969,7 @@ mod lock_scope {
         }
         // `end` lets its guard go with the block it took it in, and only then
         // finishes what is not memory.
-        let end = body_from(source, "\nfn end(");
+        let end = body_of(source, "\nfn end(");
         assert!(at(&end, "announce_ended(app)") < at(&end, "ended.finish(app)"));
 
         // The idle clock's own arming checks for a session under the same

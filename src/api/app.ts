@@ -13,10 +13,10 @@ export type DateFormat = 'MM/DD/YYYY' | 'DD.MM.YYYY' | 'YYYY-MM-DD'
  * and Settings offers to follow it instead of a timeout. Never on a phone.
  *
  * On a desktop it changes at run time: the listener comes up on a thread of
- * its own, possibly after the launch probe was read, and can be lost later. So
- * it arrives three ways — the probe, an `oslock:status` event on every change,
- * and `osLockStatus` asked once the app listens for that event — in any order,
- * and the store keeps whichever has the higher `seq` (`setOsLockStatus`).
+ * its own, possibly before the app listens, and can be lost later. So it
+ * arrives as an `oslock:status` event on every change, and as `osLockStatus`
+ * asked once the app listens for that event — in either order, and the store
+ * keeps whichever has the higher `seq` (`setOsLockStatus`).
  */
 export interface OsLockStatus {
   supported: boolean
@@ -107,12 +107,6 @@ export interface AppStatus {
    * Windows without an OCR language pack, where the UI offers no scanning.
    */
   scanSupported: boolean
-  /**
-   * Whether the OS locking is heard here, as of this probe. It can change
-   * after it (`OsLockStatus`), so the store keeps it apart from the rest of the
-   * probe, as it keeps `sync` (`useApp.osLock`).
-   */
-  osLock: OsLockStatus
   /**
    * Whether this build can connect to a Rowel Server: the sign-in comes back
    * through the browser, which the desktop listens for and the phone cannot

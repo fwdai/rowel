@@ -166,7 +166,7 @@ describe('sync:status', () => {
 // Whether Rust hears the OS locking changes after the launch probe: the
 // listener comes up on a thread of its own, and can be lost later.
 describe('oslock:status', () => {
-  it('follows the listener coming up, then being lost, after the probe', () => {
+  it('follows the listener coming up, then being lost', () => {
     setApp(appStatusDefault())
     expect(useApp.getState().osLock.supported).toBe(false)
 
@@ -177,10 +177,12 @@ describe('oslock:status', () => {
     expect(useApp.getState().osLock.supported).toBe(false)
   })
 
-  it('is not put back by a probe that read it before the change', () => {
+  // Not part of the probe, so a re-probe — every lock runs one — leaves it as
+  // the listener last said.
+  it('is left alone by a later probe', () => {
     handlerFor(EVENTS.oslockStatus)({ supported: true, seq: 1 })
 
-    setApp({ ...appStatusDefault(), osLock: { supported: false, seq: 0 } })
+    setApp(appStatusDefault())
 
     expect(useApp.getState().osLock.supported).toBe(true)
   })

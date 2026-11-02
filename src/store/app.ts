@@ -91,9 +91,9 @@ export interface AppState {
   sync: SyncStatus
   /**
    * Whether Rust hears the OS locking, and so whether Settings offers to
-   * follow it. Kept apart from `status` for the reason `sync` is: it changes
-   * between probes (the listener comes up late, or is lost), and each change
-   * arrives as `oslock:status`, reconciled with the probe's copy by `seq`.
+   * follow it. Not on `status`: it changes between probes (the listener comes
+   * up late, or is lost), so it arrives as `oslock:status` and as the answer
+   * to asking once listening, reconciled by `seq` (see `OsLockStatus`).
    */
   osLock: OsLockStatus
   setupAccount: SetupAccountState
@@ -191,11 +191,7 @@ export const useApp = create<AppState>()(() => initialApp)
  * boot path passes none, since nothing can have been written before it.
  */
 export const setApp = (status: AppStatus, mark?: number) => {
-  useApp.setState(state => ({
-    status,
-    sync: newer(state.sync, status.sync),
-    osLock: newer(state.osLock, status.osLock)
-  }))
+  useApp.setState(state => ({ status, sync: newer(state.sync, status.sync) }))
   if (mark === undefined) hydratePrefs(status.settings)
   else hydrateFromProbe(status.settings, mark)
 }
