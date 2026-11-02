@@ -111,13 +111,21 @@ fn forget_if(last: &mut Option<Remembered>, generation: u64) {
 /// something of their own since, and that is theirs to keep. The pending timer
 /// is dropped either way: the value it was armed for is gone or was never ours.
 ///
+/// Only a copy made before the lock — counted under the guard that sealed
+/// (`copies`, read in `session::Ended`) — is the lock's to clear: this runs
+/// after that guard is let go, and a copy made since, in a session opened
+/// after the lock, is that session's. Its timer, too, is its own.
+///
 /// Not on iOS, where nothing is read back from the pasteboard (see
 /// `copy_to_clipboard`): the expiry set at write time is the clear there.
-pub fn clear_on_lock(app: &AppHandle) {
+pub fn clear_on_lock(app: &AppHandle, copies: u64) {
     #[cfg(not(target_os = "ios"))]
     {
         let state = app.state::<ClipboardClear>();
         let mut last = state.lock();
+        if last.as_ref().is_some_and(|r| r.generation > copies) {
+            return;
+        }
         state.timer.disarm();
         if let Some(written) = last.take().map(|r| r.value) {
             let current = app.clipboard().read_text().ok();
@@ -127,7 +135,24 @@ pub fn clear_on_lock(app: &AppHandle) {
         }
     }
     #[cfg(target_os = "ios")]
-    let _ = app;
+    let _ = (app, copies);
+}
+
+/// How many copies have been made so far: read when a session ends, under its
+/// guard, to bound what the lock's clear may touch ([`clear_on_lock`]). An
+/// atomic read, so it takes none of this module's locks under that guard.
+pub fn copies(app: &AppHandle) -> u64 {
+    #[cfg(not(target_os = "ios"))]
+    {
+        app.state::<ClipboardClear>()
+            .generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let _ = app;
+        0
+    }
 }
 
 // Copy text to the clipboard, optionally clearing it after `clear_after_ms`.

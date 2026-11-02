@@ -559,12 +559,9 @@ fn adopt(
             // Copied before the key goes into the session: this is the app
             // key, and the ring is what every later workspace is sealed under.
             let material = Zeroizing::new(key.biometric_material().to_vec());
-            let Some(opened) =
-                state
-                    .session
-                    .lock()
-                    .unwrap()
-                    .open(ticket, key, store, sync_configured)
+            // Opened, it is on the idle clock and the extensions and
+            // approvals are told, as part of the open (`session::open`).
+            let Some(opened) = crate::session::open(app, ticket, key, store, sync_configured)
             else {
                 // The account is this vault's now, sealed under its key above.
                 take_pending(state);
@@ -573,11 +570,6 @@ fn adopt(
                 crate::session::announce_locked(app);
                 return Err(crate::session::locked_meanwhile());
             };
-            // A vault created or restored at first run is an open vault, and
-            // it goes on the idle clock here rather than waiting for the
-            // frontend's first activity ping.
-            crate::autolock::touch(app);
-            crate::session::opened(app);
             crate::credential_identities::publish(app);
             crate::appkey::adopt_or_log(app, &crate::workspace::active_id(app), &material);
             take_pending(state);

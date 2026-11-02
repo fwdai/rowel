@@ -1,6 +1,8 @@
 //! The unlocked vault: the in-memory session, and the vault-opening helpers
 //! every command reaches for.
 
+use std::sync::Mutex;
+
 use tauri::{AppHandle, Manager};
 
 use crate::crypto::{self, Cryptor, KdfParams, PayloadCipher, VaultKey};
@@ -182,8 +184,10 @@ impl Session {
     /// the lock left it. The session it opened, for the result to carry
     /// (see [`Epoch`]); `None` when it did not, and an open that did not must
     /// not go on as if it had.
+    ///
+    /// The state change alone: [`open`] is the open, with what it tells.
     #[must_use]
-    pub fn open(
+    fn open(
         &mut self,
         ticket: Ticket,
         key: VaultKey,
@@ -244,12 +248,19 @@ impl Session {
 
     // Drop the in-memory key and close the store. Every lock path ends here,
     // including one that lands while a lease is out: the lease then has nothing
-    // to come back to.
-    pub fn clear(&mut self) {
+    // to come back to. The state change alone: [`lock`] and [`end_in`] are the
+    // ends, with what they tell.
+    fn clear(&mut self) {
         self.advance();
         self.key = None;
         self.store = None;
         self.sync_configured = false;
+    }
+
+    /// [`clear`](Self::clear), for a test elsewhere standing in for a lock.
+    #[cfg(test)]
+    pub fn clear_for_test(&mut self) {
+        self.clear();
     }
 
     /// Take the key and store out for a whole-vault operation. Fails if locked.
@@ -310,7 +321,7 @@ impl Session {
 /// everything and show the lock screen" ended up written three times over
 /// there.
 ///
-/// The check and the clear happen under one guard ([`seal`]). Checked first
+/// The check and the clear happen under one guard ([`seal_in`]). Checked first
 /// and cleared later, an idle timer coming due in the gap between an unlock's
 /// check and its open would clear the session that unlock had just opened and
 /// send the user straight back to the lock screen. Returns whether anything
@@ -329,26 +340,75 @@ pub fn lock_on_request(app: &AppHandle) {
 
 fn end(app: &AppHandle, announce: bool) -> bool {
     let workspace = crate::workspace::active_id(app);
-    let Sealed {
-        live,
-        held,
-        count,
-        epoch,
-    } = seal(&app.state::<AppState>());
-    if let Some(count) = count {
+    let state = app.state::<AppState>();
+    let (sealed, ended) = {
+        let mut session = state.session.lock().unwrap();
+        let sealed = seal_in(&mut session, &state.keyring);
+        let ended = (sealed.live || sealed.held).then(|| announce_ended(app));
+        (sealed, ended)
+    };
+    if let Some(count) = sealed.count {
         crate::workspace::record_item_count(app, &workspace, count);
     }
-    let ended = live || held;
-    if ended {
-        sealed(app);
+    let was_open = ended.is_some();
+    if let Some(ended) = ended {
+        ended.finish(app);
     }
     // With the epoch read under the guard that sealed: read any later, it
     // could be an open's that landed since, and the webview would take the
     // result of that open for one this lock overtook.
-    if ended || announce {
-        events::vault_locked(app, epoch);
+    if was_open || announce {
+        events::vault_locked(app, sealed.epoch);
     }
-    ended
+    was_open
+}
+
+/// Open a session from locked: the key and store installed — unless a lock
+/// landed since `ticket` was taken ([`Ticket`]) — and, under the same guard,
+/// everything that follows the session told ([`announce_opened`]). The only
+/// way a session opens; the session it opened, for the result to carry.
+#[must_use]
+pub fn open(
+    app: &AppHandle,
+    ticket: Ticket,
+    key: VaultKey,
+    store: SqliteStore,
+    sync_configured: bool,
+) -> Option<Epoch> {
+    let state = app.state::<AppState>();
+    let mut session = state.session.lock().unwrap();
+    let opened = session.open(ticket, key, store, sync_configured)?;
+    announce_opened(app);
+    Some(opened)
+}
+
+/// Continue the session a lease was taken from with another vault — a
+/// workspace created or restored beside the one that was open — told as an
+/// open, since it is a different vault now. `None` when a lock landed while
+/// the lease was out: the lock wins (`Session::adopt`).
+#[must_use]
+pub fn continue_lease(
+    app: &AppHandle,
+    claim: Claim,
+    key: VaultKey,
+    store: SqliteStore,
+    sync_configured: bool,
+) -> Option<Epoch> {
+    let state = app.state::<AppState>();
+    let mut session = state.session.lock().unwrap();
+    if !session.adopt(claim, key, store, sync_configured) {
+        return None;
+    }
+    announce_opened(app);
+    Some(session.epoch())
+}
+
+/// End the session under the caller's guard — a switch, a deletion, which
+/// read and change more under it — and tell it ([`announce_ended`]). What is
+/// left for after the guard comes back; the caller finishes it.
+pub fn end_in(app: &AppHandle, session: &mut Session) -> Ended {
+    session.clear();
+    announce_ended(app)
 }
 
 /// Say `vault:locked` for a session ended other than by [`lock`] — a switch
@@ -382,10 +442,9 @@ struct Sealed {
     epoch: Epoch,
 }
 
-/// The part of a lock that happens under the session guard: the session and
-/// the ring cleared, in one step.
-fn seal(state: &AppState) -> Sealed {
-    let mut session = state.session.lock().unwrap();
+/// The state change of a lock, under the session guard the caller holds: the
+/// session and the ring cleared, in one step.
+fn seal_in(session: &mut Session, keyring: &Mutex<crate::appkey::Keyring>) -> Sealed {
     let live = session.is_live();
     // The size the vault is left at, for the lock screen to show while it is
     // sealed — read while the store is still open, recorded once the session
@@ -410,7 +469,7 @@ fn seal(state: &AppState) -> Sealed {
     // first and reads the ring under it (`appkey`, `workspace_select`) — so
     // this either runs wholly before such a step, which then finds the ring
     // empty and stands down, or wholly after it, which it then ends.
-    let held = state.keyring.lock().unwrap().clear();
+    let held = keyring.lock().unwrap().clear();
     Sealed {
         live,
         held,
@@ -419,39 +478,68 @@ fn seal(state: &AppState) -> Sealed {
     }
 }
 
-/// What follows every open of a session — a password or biometric unlock, a
-/// switch to a workspace the ring holds, a create or a restore: a browser
-/// extension waiting on the vault is told, and the approvals the member's
-/// Rowel Servers route here start arriving (`org::approvals`). The twin of
-/// [`sealed`], and the one place either of those is started.
-pub fn opened(app: &AppHandle) {
+/// [`seal_in`] for a test, with the guard taken here.
+#[cfg(test)]
+fn seal(state: &AppState) -> Sealed {
+    seal_in(&mut state.session.lock().unwrap(), &state.keyring)
+}
+
+// What a change of session tells everything that has to follow it: the idle
+// timer, the browser extensions (`database-unlocked`, `database-locked`), the
+// approvals a Rowel Server routes here, the agents' grants and the clipboard.
+//
+// Told under the guard that made the change, as part of it. Told after the
+// guard was let go, as it used to be, two changes could be told in the other
+// order: a lock landing a moment after an open told the extensions
+// `database-locked`, and the open's late `database-unlocked` followed it over
+// a vault that was locked; a late disarm could stop the next session's idle
+// clock. Under the guard the telling is in the order of the changes, because
+// the changes are. So it is memory only — a signal queued, a flag set, a
+// timer re-pointed, a list emptied — and nothing here takes the session lock
+// (the agents' lock comes after it, as everywhere). What is not memory, the
+// clipboard, is left for after the guard, bounded by what was decided under
+// it (`Ended`).
+
+/// A session opened, or another vault took its place.
+fn announce_opened(app: &AppHandle) {
+    crate::autolock::arm(app);
     #[cfg(desktop)]
     {
         crate::browser::server::hub(app).notify_unlocked();
         crate::org::approvals::start(app);
     }
-    #[cfg(not(desktop))]
-    let _ = app;
 }
 
-/// What follows every clear of a session, however it was ended — here, or by
-/// a workspace switch that clears and repoints in one step. A secret copied
-/// out of the vault does not outlive the vault being open, and the idle timer
-/// armed for this session must not come due inside the next one. And a
-/// browser extension that was filling from it is told it has gone.
-pub fn sealed(app: &AppHandle) {
-    crate::commands::clipboard::clear_on_lock(app);
+/// A session ended. A secret copied out of the vault does not outlive it; the
+/// idle timer armed for it must not come due inside the next one; a browser
+/// extension filling from it is told it has gone; the approvals a Rowel Server
+/// routes here stop, and the grants agents held — and the grant ask up on
+/// screen — go with it.
+fn announce_ended(app: &AppHandle) -> Ended {
     crate::autolock::disarm(app);
     #[cfg(desktop)]
-    crate::browser::server::hub(app).notify_locked();
-    // And every grant an agent held goes with the session: nothing is served
-    // from a locked vault, and the next lockbox open is not this one's. The
-    // asks a Rowel Server routes here stop with it; the one up on screen is
-    // refused by the clear below like any grant ask.
-    #[cfg(desktop)]
     {
+        crate::browser::server::hub(app).notify_locked();
         crate::org::approvals::stop();
         crate::agents::clear(app);
+    }
+    Ended {
+        copies: crate::commands::clipboard::copies(app),
+    }
+}
+
+/// What an ended session leaves for after its guard: the clipboard, which is
+/// the OS's to read and write and too slow for the guard. Only the copies
+/// made before the end are cleared, so one made in a session opened since is
+/// left alone, however late this runs.
+#[must_use]
+pub struct Ended {
+    copies: u64,
+}
+
+impl Ended {
+    pub fn finish(self, app: &AppHandle) {
+        crate::commands::clipboard::clear_on_lock(app, self.copies);
     }
 }
 
@@ -691,7 +779,12 @@ mod lock_scope {
     // The brace-matched body of the function `signature` introduces, with
     // full-line comments dropped so prose about a lock never reads as one.
     fn body_of(source: &str, signature: &str) -> String {
-        let source = production(source);
+        body_from(production(source), signature)
+    }
+
+    // `body_of` over the whole file: for one whose test-only items come before
+    // the code a guard is about (this one's `Session::set`).
+    fn body_from(source: &str, signature: &str) -> String {
         let start = source
             .find(signature)
             .unwrap_or_else(|| panic!("`{signature}` is gone — keep this guard in step with it"));
@@ -785,7 +878,8 @@ mod lock_scope {
                 at(body, ".ticket()") < at(body, slow),
                 "the ticket is taken before `{slow}`, which a lock can land during"
             );
-            at(body, ".open(ticket");
+            let squeezed: String = body.split_whitespace().collect();
+            at(&squeezed, "session::open(&app,ticket,");
         }
 
         let setup = include_str!("commands/setup.rs");
@@ -805,7 +899,51 @@ mod lock_scope {
             let squeezed: String = body.split_whitespace().collect();
             at(&squeezed, "adopt(&app,&state,ticket,");
         }
-        at(&body_of(setup, "fn adopt("), ".open(ticket");
+        let adopt: String = body_of(setup, "fn adopt(").split_whitespace().collect();
+        at(&adopt, "session::open(app,ticket,");
+    }
+
+    // Every change of session tells what follows it — the timer, the
+    // extensions, the approvals, the grants — under the guard that made the
+    // change, so two changes are never told in the other order (a stale
+    // `database-unlocked` after the lock that ended it). The raw changes are
+    // private to this module (`Session::open`, `Session::clear`), so these
+    // are the only ways a session opens or ends.
+    #[test]
+    fn every_change_of_session_is_told_under_its_guard() {
+        let source = include_str!("session.rs");
+        for (signature, change, told) in [
+            ("\npub fn open(", "session.open(", "announce_opened(app)"),
+            (
+                "\npub fn continue_lease(",
+                "session.adopt(",
+                "announce_opened(app)",
+            ),
+            ("\npub fn end_in(", "session.clear()", "announce_ended(app)"),
+            ("\nfn end(", "seal_in(&mut session", "announce_ended(app)"),
+        ] {
+            let body = body_from(source, signature);
+            assert!(
+                at(&body, change) < at(&body, told),
+                "{signature}: the change is told after it is made"
+            );
+            assert!(
+                !body.contains("drop(session)"),
+                "{signature}: and before its guard is let go"
+            );
+        }
+        // `end` lets its guard go with the block it took it in, and only then
+        // finishes what is not memory.
+        let end = body_from(source, "\nfn end(");
+        assert!(at(&end, "announce_ended(app)") < at(&end, "ended.finish(app)"));
+
+        // The idle clock's own arming checks for a session under the same
+        // guard, and the approvals' restart stops and starts under it.
+        let touch = body_of(include_str!("autolock.rs"), "pub fn touch(");
+        assert!(at(&touch, "session.lock()") < at(&touch, "arm(app)"));
+        let restart = body_of(include_str!("org/approvals.rs"), "fn restart(");
+        assert!(at(&restart, "session.lock()") < at(&restart, "stop()"));
+        assert!(at(&restart, "stop()") < at(&restart, "start(app)"));
     }
 
     #[test]

@@ -36,7 +36,7 @@ use crate::crypto::{KdfParams, VaultKey};
 use crate::error::{Error, Result};
 use crate::models::{EntryMetaDto, UnlockResult};
 use crate::secure_store::KeyStore;
-use crate::session::{list_metas, store_err, Claim, Epoch, Lease};
+use crate::session::{list_metas, store_err, Lease};
 use crate::state::AppState;
 use crate::storage;
 use crate::store::{identity, SqliteStore, StoreError};
@@ -71,7 +71,7 @@ pub async fn workspace_select(
     let _step = begin_step(&state)?;
     let root = storage::root_dir(&app)?;
 
-    let (material, ticket) = {
+    let (material, ended, ticket) = {
         // Read under the lock too: every writer of the registry holds it, so
         // what is saved below is a change to the current file, never to a
         // stale copy.
@@ -113,22 +113,23 @@ pub async fn workspace_select(
         // untouched — the open workspace's key stays in it, which is what
         // lets a switch back open it without a prompt.
         //
-        // The key is read and the ticket taken under one session guard, the
-        // one a lock seals the session and the ring under (`session::seal`):
-        // a lock lands either before both — and the ring holds no key — or
-        // after both, and refuses the open below. The ticket comes after the
-        // switch's own clear, which is a change of hands of its own.
-        let (material, ticket) = {
+        // The key is read, the session ended and the ticket taken under one
+        // session guard, the one a lock seals the session and the ring under
+        // (`session::seal_in`): a lock lands either before all three — and the
+        // ring holds no key — or after, and refuses the open below. The end
+        // is told as any end is, under that guard (`session::end_in`); the
+        // ticket comes after it, since it is a change of hands of its own.
+        let (material, ended, ticket) = {
             let mut session = state.session.lock().unwrap();
             let material = state.keyring.lock().unwrap().get(&id);
-            session.clear();
-            (material, session.ticket())
+            let ended = crate::session::end_in(&app, &mut session);
+            (material, ended, session.ticket())
         };
         *state.active_workspace.lock().unwrap() = id.clone();
-        (material, ticket)
+        (material, ended, ticket)
     };
-    // Ended like any other session: clipboard cleared, idle timer dropped.
-    crate::session::sealed(&app);
+    // What the end left for after the guard: a secret it copied, cleared.
+    ended.finish(&app);
     // Sync is per workspace, and what the frontend is holding belongs to the one
     // that just closed. Said now rather than left to the re-probe or the entry
     // below, so no frame shows another vault's "last synced" or another
@@ -170,21 +171,16 @@ pub async fn workspace_select(
     // the store closes and the vault stays as the lock left it, as for any
     // open (`session::Ticket`). The lock has already said `vault:locked` — it
     // ended a ring that held keys — so there is nothing to add.
-    let Some(opened) = state
-        .session
-        .lock()
-        .unwrap()
-        .open(ticket, key, store, sync_configured)
-    else {
+    // Opened as any session is (`session::open`): its idle clock armed and a
+    // connected browser extension told — which, re-checking the hash, hears of
+    // the switch.
+    let Some(opened) = crate::session::open(&app, ticket, key, store, sync_configured) else {
         log::info!("vault locked during the switch; workspace {id} stays locked");
         return Ok(None);
     };
-    // As after any unlock: the session arms its own idle clock, a connected
-    // browser extension hears of it (and, re-checking the hash, of the switch),
-    // iOS is handed this vault's logins in place of the last one's, and a vault
-    // named before names lived inside it takes the registry's label.
-    crate::autolock::touch(&app);
-    crate::session::opened(&app);
+    // As after any unlock: iOS is handed this vault's logins in place of the
+    // last one's, and a vault named before names lived inside it takes the
+    // registry's label.
     crate::credential_identities::publish(&app);
     super::auth::seed_vault_name(&app, &state);
     Ok(Some(UnlockResult {
@@ -268,23 +264,6 @@ fn restore(state: &AppState, active: String, previous: Lease) {
     let _paths = state.workspace_lock.lock().unwrap();
     *state.active_workspace.lock().unwrap() = active;
     state.session.lock().unwrap().restore(previous);
-}
-
-/// The new workspace's key and store, as the continuation of the session the
-/// previous one was leased from (`Session::adopt`) — and that session, read
-/// under the same guard, for the result to name. `None` when a lock landed
-/// while the lease was out: the lock wins.
-fn continue_session(
-    state: &AppState,
-    claim: Claim,
-    key: VaultKey,
-    store: SqliteStore,
-    sync_configured: bool,
-) -> Option<Epoch> {
-    let mut session = state.session.lock().unwrap();
-    session
-        .adopt(claim, key, store, sync_configured)
-        .then(|| session.epoch())
 }
 
 /// Create a workspace under the device's master password and leave it unlocked.
@@ -398,14 +377,12 @@ pub async fn workspace_create(
     let syncing = inherited.is_some();
     let material = Zeroizing::new(key.biometric_material().to_vec());
     let (_, _, _, claim) = previous.split();
-    let Some(opened) = continue_session(&state, claim, key, store, syncing) else {
+    // The new vault is open as the continuation (`session::continue_lease`),
+    // on the idle clock from here — the Argon2id derive above took a while —
+    // and told to the extensions and approvals as any open is.
+    let Some(opened) = crate::session::continue_lease(&app, claim, key, store, syncing) else {
         return Err(Error::Locked);
     };
-    // The new vault is open now, and the Argon2id derive above took a while:
-    // put it on the idle clock from here rather than from whenever the webview
-    // next reports activity.
-    crate::autolock::touch(&app);
-    crate::session::opened(&app);
     // An empty vault: what iOS suggests is emptied with it.
     crate::credential_identities::publish(&app);
     // And open at the app level: sealed under the app key, which the check
@@ -742,14 +719,12 @@ async fn restore_workspace(
     // wins — the workspace exists and is recorded, and the next unlock opens it.
     let material = Zeroizing::new(key.biometric_material().to_vec());
     let (_, _, _, claim) = previous.split();
-    let Some(opened) = continue_session(state, claim, key, store, true) else {
+    // As in `workspace_create`: the restored vault is open, its idle clock
+    // started and the extensions told as part of that — and it is open at the
+    // app level, sealed under the app key when the ring holds one.
+    let Some(opened) = crate::session::continue_lease(app, claim, key, store, true) else {
         return Err(Error::Locked);
     };
-    // As in `workspace_create`: the restored vault is open, so its idle clock
-    // starts here — and it is open at the app level, sealed under the app key
-    // when the ring holds one.
-    crate::autolock::touch(app);
-    crate::session::opened(app);
     crate::credential_identities::publish(app);
     appkey::adopt_or_log(app, &id, &material);
     super::autojoin::with_password(app, join);
@@ -1014,7 +989,7 @@ pub async fn workspace_delete(
     // registry is re-read inside it (a rename could have landed while the
     // derive ran), the session ends before its files move, and the paths and
     // the file on disk change together.
-    let (ended_session, was_primary, applied) = {
+    let (ended, was_primary, applied) = {
         let _paths = state.workspace_lock.lock().unwrap();
         let registry = Registry::load(&root);
         let deletion = workspace::deletion_of(&root, &registry, &id)?;
@@ -1027,9 +1002,10 @@ pub async fn workspace_delete(
         // root. Either way its store has to close before the files move.
         let active = state.active_workspace.lock().unwrap().clone();
         let ends_session = active == id || deletion.promoted.as_deref() == Some(active.as_str());
-        if ends_session {
-            state.session.lock().unwrap().clear();
-        }
+        // Ended as any session is, and told under the guard that ends it
+        // (`session::end_in`).
+        let ended =
+            ends_session.then(|| crate::session::end_in(&app, &mut state.session.lock().unwrap()));
 
         // Staged, so that whichever step a failure lands on, what is left is
         // either the old layout or a record that can be finished without the
@@ -1046,7 +1022,7 @@ pub async fn workspace_delete(
             // resealed under it.
             appkey::forget(&app, &id, deletion.promoted.as_deref());
         }
-        (ends_session, deletion.promoted.is_some(), applied)
+        (ended, deletion.promoted.is_some(), applied)
     };
 
     // Off the lock, because a keychain delete is a blocking call into the OS.
@@ -1077,8 +1053,8 @@ pub async fn workspace_delete(
     // Said for a failed delete too: the session was closed before the files
     // moved, so a vault the user was in is locked whether or not the delete
     // went through, and the frontend has to hear it either way.
-    if ended_session {
-        crate::session::sealed(&app);
+    if let Some(ended) = ended {
+        ended.finish(&app);
         super::sync::switched(&app);
         crate::session::announce_locked(&app);
     }

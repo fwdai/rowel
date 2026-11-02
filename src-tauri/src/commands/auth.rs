@@ -104,23 +104,16 @@ pub async fn unlock(
             let sync_configured = storage::sync_configured(&app);
             let material = Zeroizing::new(key.biometric_material().to_vec());
             // Refused when a lock landed since the ticket was taken: the key
-            // and store go, and nothing below runs — no ring, no extension
-            // told, no result for the webview to open the vault on.
-            let Some(opened) =
-                state
-                    .session
-                    .lock()
-                    .unwrap()
-                    .open(ticket, key, store, sync_configured)
+            // and store go, and nothing below runs — no ring, no result for
+            // the webview to open the vault on. Opened, the session has its
+            // idle clock and the extensions and approvals are told, all as
+            // part of the open (`session::open`): a webview that never pings
+            // (a build whose bundle failed, a page left untouched) does not
+            // leave the vault open for good.
+            let Some(opened) = crate::session::open(&app, ticket, key, store, sync_configured)
             else {
                 return Err(crate::session::locked_meanwhile());
             };
-            // The idle clock starts with the session, not with the frontend's
-            // first activity ping: a webview that never sends one (a build
-            // whose bundle failed, a page left untouched) would otherwise leave
-            // the vault open for good.
-            crate::autolock::touch(&app);
-            crate::session::opened(&app);
             // And iOS suggests this vault's logins from here on.
             crate::credential_identities::publish(&app);
             seed_vault_name(&app, &state);
@@ -285,19 +278,11 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     };
     let (key, store, entries) = open_off_thread(&app, key).await?;
     let sync_configured = storage::sync_configured(&app);
-    let Some(opened) = state
-        .session
-        .lock()
-        .unwrap()
-        .open(ticket, key, store, sync_configured)
-    else {
+    let Some(opened) = crate::session::open(&app, ticket, key, store, sync_configured) else {
         return Err(crate::session::locked_meanwhile());
     };
-    // As in `unlock`: the session arms its own idle clock, a connected browser
-    // extension hears of it, iOS is handed its logins, and a vault named before
-    // names lived inside it takes the registry's label.
-    crate::autolock::touch(&app);
-    crate::session::opened(&app);
+    // As in `unlock`: iOS is handed its logins, and a vault named before names
+    // lived inside it takes the registry's label.
     crate::credential_identities::publish(&app);
     seed_vault_name(&app, &state);
     // The app key opens the app: every workspace sealed under it joins the ring.

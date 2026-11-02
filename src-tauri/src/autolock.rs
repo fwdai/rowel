@@ -220,22 +220,34 @@ pub fn os_event(app: &AppHandle, event: crate::oslock::Event) {
 /// not hold ends the session and keeps the ring (`workspace_select`), so the
 /// lock screen it lands on has the app open behind it — for exactly as long
 /// as an open vault would be.
+///
+/// The check and the arming under one session guard, the guard a lock seals
+/// and disarms under: checked and armed apart, a lock landing between them
+/// would disarm first and be armed over after — a deadline left from the old
+/// session, coming due in the next one.
 pub fn touch(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let live = state.session.lock().unwrap().is_live();
+    let session = state.session.lock().unwrap();
     let held = !state.keyring.lock().unwrap().is_empty();
-    if !live && !held {
+    if !session.is_live() && !held {
         return;
     }
+    arm(app);
+}
+
+/// Start the idle clock now, unchecked: for a caller under the session guard
+/// that knows there is a session to lock (`session::open`, [`touch`]).
+pub fn arm(app: &AppHandle) {
     let state = app.state::<AutoLock>();
     let timeout = state.timeout();
     let app = app.clone();
     state.timer.arm(timeout, move || lock(&app));
 }
 
-/// Nothing left to lock. Called when a session ends, so a timer armed for the
-/// session just sealed cannot come due inside the next one — an unlock a few
-/// seconds later would otherwise be locked again by the old deadline.
+/// Nothing left to lock. Called when a session ends, under the guard that
+/// ended it, so a timer armed for the session just sealed cannot come due
+/// inside the next one — an unlock a few seconds later would otherwise be
+/// locked again by the old deadline.
 pub fn disarm(app: &AppHandle) {
     app.state::<AutoLock>().timer.disarm();
 }
