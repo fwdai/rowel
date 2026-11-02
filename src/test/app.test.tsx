@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import App from '@/App'
-import { useApp, usePrefs } from '@/store'
+import { enterMain, useApp, usePrefs, useUi } from '@/store'
 import { unlistens } from './events'
 import { appStatusDefault, calls, mockCommand } from './ipc'
 import { seedApp } from './utils'
@@ -90,5 +91,49 @@ describe('App', () => {
     await waitFor(() => expect(calls('app_status')).toHaveLength(1))
     expect(useApp.getState().flow).toBe('auth')
     expect(useApp.getState().status).toBeNull()
+  })
+})
+
+// Where the caret lands once the vault opens: in the search field on desktop,
+// so the first keystroke after an unlock is already a query.
+describe('unlocking', () => {
+  it('puts the caret in the search field', async () => {
+    seedApp({ initialized: true })
+    mockCommand('unlock', () => ({ entries: [], syncConfigured: false }))
+    render(<App />)
+
+    await userEvent.type(screen.getByPlaceholderText('Master Password'), 'hunter2{Enter}')
+
+    await waitFor(() => expect(screen.getByTestId('search-input')).toHaveFocus(), {
+      timeout: 3000
+    })
+  })
+
+  // The backup is what the unlock was for, and Settings › Import is open over
+  // the list: the caret belongs in that dialog, not in the field behind it.
+  it('leaves the search field alone when a waiting backup opens Settings', async () => {
+    useApp.setState({ openedFile: '/tmp/Rowel backup.rowel' })
+
+    await act(() => enterMain({ entries: [], syncConfigured: false }))
+
+    expect(useUi.getState().settingsSection).toBe('import')
+    expect(useUi.getState().searchFocus).toBe(0)
+  })
+
+  // A focused field on a phone or tablet raises the on-screen keyboard over
+  // the vault that just opened.
+  it('leaves the search field alone on mobile', async () => {
+    vi.resetModules()
+    vi.doMock('@/lib/platform', () => ({ isIOS: true, isAndroid: false, isMobile: true }))
+    try {
+      const store = await import('@/store')
+      await act(() => store.enterMain({ entries: [], syncConfigured: false }))
+
+      expect(store.useApp.getState().flow).toBe('main')
+      expect(store.useUi.getState().searchFocus).toBe(0)
+    } finally {
+      vi.doUnmock('@/lib/platform')
+      vi.resetModules()
+    }
   })
 })

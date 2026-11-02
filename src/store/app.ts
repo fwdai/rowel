@@ -9,7 +9,8 @@ import { checkForUpdate } from '@/api/autoUpdate'
 import { resetEmblems } from '@/hooks/useEmblem'
 import { resetFavicons } from '@/hooks/useFavicon'
 import { setEntries, resetVault, runAudit } from './vault'
-import { openSettings, resetUi } from './ui'
+import { isMobile } from '@/lib/platform'
+import { focusSearch, openSettings, resetUi } from './ui'
 import { hydratePrefs, hydrateFromProbe, prefsMark } from './prefs'
 
 /**
@@ -297,6 +298,10 @@ export const enterMain = async (result: UnlockResult) => {
   // A backup the OS opened while the vault was locked (or before it existed)
   // has waited for this: the only screen that can import it is now reachable.
   if (useApp.getState().openedFile) openSettings('import')
+  // Otherwise the caret starts in the search field, so the first keystroke
+  // after an unlock is already a query. Not on a phone or tablet: a focused
+  // field there raises the on-screen keyboard over the vault just opened.
+  else if (!isMobile) focusSearch()
   // The unlock result carries whether this vault syncs; everything else about
   // sync arrives as `sync:status` once a flow or a run happens. No re-probe:
   // `initialized` and `scanSupported` cannot have changed, and this is the one
