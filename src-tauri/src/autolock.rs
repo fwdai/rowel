@@ -1,4 +1,4 @@
-use crate::session;
+use crate::session::{self, Epoch, Session};
 use crate::state::AppState;
 use crate::timer::Timer;
 use serde::Serialize;
@@ -45,12 +45,21 @@ pub struct AutoLock {
     /// day's idleness. Versioned, because the frontend is told every change
     /// (see [`OsLockStatus`]).
     os_lock: Mutex<OsLockStatus>,
-    /// Wall-clock reading taken when the window last lost focus, cleared when
-    /// it comes back. The timer alone cannot be trusted across that gap: it
-    /// measures in `Instant`s, which do not advance while an Apple machine is
-    /// asleep and whose thread does not run at all while iOS has the process
-    /// suspended. This is what says how long the user was really away.
-    blurred_at: Mutex<Option<SystemTime>>,
+    /// Counts the armings and disarmings of `timer`, each made under the
+    /// session guard (`session::announce_opened`, `announce_ended`,
+    /// [`touch`]). A deadline carries the count it was armed at, and locks
+    /// only while that is still the count ([`AutoLock::in_force`]): the timer
+    /// takes a callback out of its slot before running it, so one already
+    /// coming due cannot be disarmed, and without this it would lock what a
+    /// re-arm since — activity, an unlock, a switch — put back on the clock.
+    arming: AtomicU64,
+    /// Wall-clock reading taken when the window last lost focus, and the
+    /// session open then; cleared when it comes back. The timer alone cannot
+    /// be trusted across that gap: it measures in `Instant`s, which do not
+    /// advance while an Apple machine is asleep and whose thread does not run
+    /// at all while iOS has the process suspended. This is what says how long
+    /// the user was really away — and from which session.
+    blurred_at: Mutex<Option<(SystemTime, Epoch)>>,
 }
 
 impl Default for AutoLock {
@@ -60,6 +69,7 @@ impl Default for AutoLock {
             timeout_secs: AtomicU64::new(DEFAULT_TIMEOUT_SECS),
             follows_os: AtomicBool::new(false),
             os_lock: Mutex::new(OsLockStatus::default()),
+            arming: AtomicU64::new(0),
             blurred_at: Mutex::new(None),
         }
     }
@@ -123,22 +133,47 @@ impl AutoLock {
         Some(*status)
     }
 
-    /// The window lost focus at `now`: remember when, so coming back can tell
-    /// how long the user was really away.
-    fn blur(&self, now: SystemTime) {
-        *self.blurred_at.lock().unwrap() = Some(now);
+    /// The window lost focus at `now`, with session `open` on screen:
+    /// remember both, so coming back can tell how long the user was really
+    /// away, and from which session.
+    fn blur(&self, now: SystemTime, open: Epoch) {
+        *self.blurred_at.lock().unwrap() = Some((now, open));
     }
 
-    /// The window came back at `now`. Consumes the stored blur — a resume with
-    /// none, or a second resume after one was already spent, has nothing to
-    /// measure and so only re-arms.
-    fn resume(&self, now: SystemTime, timeout: Duration) -> Resume {
-        let blurred_at = self.blurred_at.lock().unwrap().take();
-        if blurred_at.is_some_and(|at| overdue(at, now, timeout)) {
+    /// The window came back at `now`, with session `open` in place. Locks
+    /// only the session the window was left on, and only if the time away
+    /// spent its whole timeout: one opened since — the Touch ID sheet took
+    /// focus while it opened — has its own clock. Consumes the stored blur —
+    /// a resume with none, or a second resume after one was already spent,
+    /// has nothing to measure and so only re-arms.
+    fn resume(&self, now: SystemTime, open: Epoch, timeout: Duration) -> Resume {
+        let blurred = self.blurred_at.lock().unwrap().take();
+        if blurred.is_some_and(|(at, left)| left == open && overdue(at, now, timeout)) {
             Resume::Lock
         } else {
             Resume::Touch
         }
+    }
+
+    /// Arm the deadline `after` from now as a new arming: `fire` is handed
+    /// the count it was armed at, to ask [`AutoLock::in_force`] with when it
+    /// runs. Only under the session guard, where the count is also asked.
+    fn arm_with(&self, after: Duration, fire: impl FnOnce(u64) + Send + 'static) {
+        let arming = self.arming.fetch_add(1, Ordering::SeqCst) + 1;
+        self.timer.arm(after, move || fire(arming));
+    }
+
+    /// Drop the deadline, and any already on its way with it (`in_force`).
+    /// Only under the session guard.
+    fn disarm(&self) {
+        self.arming.fetch_add(1, Ordering::SeqCst);
+        self.timer.disarm();
+    }
+
+    /// Whether the deadline armed at `arming` is still the one in force:
+    /// nothing has armed or disarmed the clock since.
+    fn in_force(&self, arming: u64) -> bool {
+        self.arming.load(Ordering::SeqCst) == arming
     }
 }
 
@@ -239,17 +274,28 @@ pub fn touch(app: &AppHandle) {
 /// that knows there is a session to lock (`session::open`, [`touch`]).
 pub fn arm(app: &AppHandle) {
     let state = app.state::<AutoLock>();
-    let timeout = state.timeout();
     let app = app.clone();
-    state.timer.arm(timeout, move || lock(&app));
+    state.arm_with(state.timeout(), move |arming| idle(&app, arming));
 }
 
 /// Nothing left to lock. Called when a session ends, under the guard that
-/// ended it, so a timer armed for the session just sealed cannot come due
-/// inside the next one — an unlock a few seconds later would otherwise be
-/// locked again by the old deadline.
+/// ended it, so a deadline armed for the session just sealed — one waiting,
+/// or one already coming due — cannot lock the next one: an unlock a few
+/// seconds later would otherwise be locked again by the old deadline.
 pub fn disarm(app: &AppHandle) {
-    app.state::<AutoLock>().timer.disarm();
+    app.state::<AutoLock>().disarm();
+}
+
+/// The idle deadline armed at `arming` came due. A lock decided when it was
+/// armed, so taken only if it still holds (`session::lock_if`): the deadline
+/// is still the one in force, asked under the session guard every arming and
+/// disarming is made under. One that a re-arm overtook while it waited for
+/// that guard locks nothing, and leaves no trace.
+fn idle(app: &AppHandle, arming: u64) {
+    let state = app.state::<AutoLock>();
+    if session::lock_if(app, |_| state.in_force(arming)) {
+        log::info!("vault sealed after its idle timeout");
+    }
 }
 
 /// Focus in either direction is activity: the user is switching to or from
@@ -271,18 +317,21 @@ pub fn disarm(app: &AppHandle) {
 pub fn handle_event(app: &AppHandle, event: &WindowEvent) {
     match event {
         WindowEvent::Focused(false) => {
-            app.state::<AutoLock>().blur(SystemTime::now());
+            let open = app.state::<AppState>().session.lock().unwrap().epoch();
+            app.state::<AutoLock>().blur(SystemTime::now(), open);
             touch(app);
         }
         WindowEvent::Focused(true) => {
-            let resume = {
-                let state = app.state::<AutoLock>();
-                let timeout = state.timeout();
-                state.resume(SystemTime::now(), timeout)
+            // Decided under the session guard, with the seal it allows
+            // (`session::lock_if`): the session in place then is the one
+            // compared against the one the window was left on.
+            let now = SystemTime::now();
+            let state = app.state::<AutoLock>();
+            let owed = |session: &Session| {
+                state.resume(now, session.epoch(), state.timeout()) == Resume::Lock
             };
-            match resume {
-                Resume::Lock => lock(app),
-                Resume::Touch => touch(app),
+            if !session::lock_if(app, owed) {
+                touch(app);
             }
         }
         _ => {}
@@ -297,11 +346,10 @@ fn overdue(blurred_at: SystemTime, now: SystemTime, timeout: Duration) -> bool {
     now.duration_since(blurred_at).unwrap_or_default() >= timeout
 }
 
-/// The lock an idle timer or the tray asks for, which may well find the vault
-/// already sealed — a timer that comes due after a manual lock, the tray item
-/// pressed twice. `session::lock` checks and seals under one guard and says
-/// whether there was anything to seal, so a timer that comes due while a fresh
-/// unlock is landing cannot clear the session that unlock just opened.
+/// The lock the tray asks for: a lock now, whatever is open (`session::lock`),
+/// which may well find the vault already sealed — the tray item pressed
+/// twice. The idle deadline is not this: it is a lock decided earlier
+/// ([`idle`]).
 pub fn lock(app: &AppHandle) {
     session::lock(app);
 }
@@ -319,12 +367,41 @@ mod tests {
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_000)
     }
 
+    // The session the window was left on, and one opened after it.
+    fn open() -> Epoch {
+        Session::default().epoch()
+    }
+    fn opened_since() -> Epoch {
+        let mut session = Session::default();
+        session.clear_for_test();
+        session.epoch()
+    }
+
+    // Coming back after the whole timeout locks the session the window was
+    // left on — not one opened since, which has its own clock: the Touch ID
+    // sheet takes focus while the vault opens behind it, and the return from
+    // a long wait on it must not seal what it just opened.
+    #[test]
+    fn a_resume_does_not_lock_a_session_opened_since_the_window_was_left() {
+        let autolock = AutoLock::default();
+        autolock.blur(blurred_at(), open());
+        assert_eq!(
+            autolock.resume(blurred_at() + A_DAY, opened_since(), TIMEOUT),
+            Resume::Touch
+        );
+        // And the blur is spent, so a later return does not lock on it.
+        assert_eq!(
+            autolock.resume(blurred_at() + A_DAY, open(), TIMEOUT),
+            Resume::Touch
+        );
+    }
+
     #[test]
     fn a_resume_inside_the_timeout_touches() {
         let autolock = AutoLock::default();
-        autolock.blur(blurred_at());
+        autolock.blur(blurred_at(), open());
         assert_eq!(
-            autolock.resume(blurred_at() + TIMEOUT / 2, TIMEOUT),
+            autolock.resume(blurred_at() + TIMEOUT / 2, open(), TIMEOUT),
             Resume::Touch
         );
     }
@@ -335,14 +412,17 @@ mod tests {
     fn a_resume_after_the_whole_timeout_locks() {
         let autolock = AutoLock::default();
 
-        autolock.blur(blurred_at());
+        autolock.blur(blurred_at(), open());
         assert_eq!(
-            autolock.resume(blurred_at() + TIMEOUT, TIMEOUT),
+            autolock.resume(blurred_at() + TIMEOUT, open(), TIMEOUT),
             Resume::Lock
         );
 
-        autolock.blur(blurred_at());
-        assert_eq!(autolock.resume(blurred_at() + A_DAY, TIMEOUT), Resume::Lock);
+        autolock.blur(blurred_at(), open());
+        assert_eq!(
+            autolock.resume(blurred_at() + A_DAY, open(), TIMEOUT),
+            Resume::Lock
+        );
     }
 
     // Focus gained with no blur behind it — the window raised at startup, a
@@ -351,7 +431,7 @@ mod tests {
     fn a_resume_without_a_blur_touches() {
         let autolock = AutoLock::default();
         assert_eq!(
-            autolock.resume(blurred_at() + A_DAY, TIMEOUT),
+            autolock.resume(blurred_at() + A_DAY, open(), TIMEOUT),
             Resume::Touch
         );
     }
@@ -361,13 +441,13 @@ mod tests {
     #[test]
     fn a_second_resume_touches_because_the_blur_was_consumed() {
         let autolock = AutoLock::default();
-        autolock.blur(blurred_at());
+        autolock.blur(blurred_at(), open());
         assert_eq!(
-            autolock.resume(blurred_at() + TIMEOUT, TIMEOUT),
+            autolock.resume(blurred_at() + TIMEOUT, open(), TIMEOUT),
             Resume::Lock
         );
         assert_eq!(
-            autolock.resume(blurred_at() + A_DAY, TIMEOUT),
+            autolock.resume(blurred_at() + A_DAY, open(), TIMEOUT),
             Resume::Touch
         );
     }
@@ -377,8 +457,11 @@ mod tests {
     #[test]
     fn a_resume_on_a_clock_that_went_backwards_touches() {
         let autolock = AutoLock::default();
-        autolock.blur(blurred_at() + A_DAY);
-        assert_eq!(autolock.resume(blurred_at(), TIMEOUT), Resume::Touch);
+        autolock.blur(blurred_at() + A_DAY, open());
+        assert_eq!(
+            autolock.resume(blurred_at(), open(), TIMEOUT),
+            Resume::Touch
+        );
     }
 
     #[test]
@@ -436,5 +519,89 @@ mod tests {
         };
         assert_eq!(autolock.set_os_watched(false), Some(lost));
         assert_eq!(autolock.os_lock_status(), lost);
+    }
+
+    // The idle deadline, as `idle` takes it: under the session guard, the
+    // deadline still in force and something open (`session::lock_applies`).
+    fn would_lock(state: &AppState, autolock: &AutoLock, arming: u64) -> bool {
+        let session = state.session.lock().unwrap();
+        session::lock_applies(&session, &state.keyring, |_| autolock.in_force(arming))
+    }
+
+    fn unlocked() -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let key = crate::crypto::VaultKey::legacy_from_password("first");
+        let store =
+            crate::store::SqliteStore::open(&dir.path().join("vault.db"), &*key.sqlcipher_key())
+                .unwrap();
+        let state = AppState::default();
+        state.session.lock().unwrap().set(key, store, false);
+        (state, dir)
+    }
+
+    // A deadline already coming due — out of the timer's slot, past the
+    // reach of any disarm — waits on the session guard while `step` changes
+    // the clock under it. Run through the real timer, with the callback held
+    // where it would wait for the guard.
+    fn deadline_overtaken_by(step: impl FnOnce(&AppState, &AutoLock)) -> bool {
+        let (state, _dir) = unlocked();
+        let state = std::sync::Arc::new(state);
+        let autolock = std::sync::Arc::new(AutoLock::default());
+        let (due, is_due) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (answer, answered) = std::sync::mpsc::channel();
+        {
+            let _session = state.session.lock().unwrap();
+            let (state, held) = (state.clone(), autolock.clone());
+            autolock.arm_with(Duration::from_millis(10), move |arming| {
+                due.send(()).unwrap();
+                released.recv().unwrap();
+                answer.send(would_lock(&state, &held, arming)).unwrap();
+            });
+        }
+        is_due.recv_timeout(Duration::from_secs(5)).unwrap();
+        {
+            let _session = state.session.lock().unwrap();
+            step(&state, &autolock);
+        }
+        release.send(()).unwrap();
+        answered.recv_timeout(Duration::from_secs(5)).unwrap()
+    }
+
+    // The review's case: activity re-arms the clock while a deadline is
+    // already firing. The stale deadline locks nothing.
+    #[test]
+    fn a_deadline_already_firing_locks_nothing_once_activity_re_arms() {
+        assert!(!deadline_overtaken_by(|_, autolock| {
+            autolock.arm_with(Duration::from_secs(3600), |_| {});
+        }));
+    }
+
+    // The same across a lock and a fresh unlock (or a switch): the end
+    // disarms, the open arms anew, and the old deadline locks nothing.
+    #[test]
+    fn a_deadline_already_firing_locks_nothing_once_a_session_reopens() {
+        assert!(!deadline_overtaken_by(|_, autolock| {
+            autolock.disarm();
+            autolock.arm_with(Duration::from_secs(3600), |_| {});
+        }));
+    }
+
+    // And untouched, a deadline that comes due does lock.
+    #[test]
+    fn a_deadline_nothing_overtook_locks() {
+        assert!(deadline_overtaken_by(|_, _| {}));
+    }
+
+    // A deadline still in force but over nothing open — the vault was
+    // locked by other means and nothing re-armed — is no lock: it leaves no
+    // trace an unlock on its way in would be refused by.
+    #[test]
+    fn a_deadline_over_nothing_open_locks_nothing() {
+        let state = AppState::default();
+        let autolock = AutoLock::default();
+        autolock.arm_with(Duration::from_secs(3600), |_| {});
+        let arming = autolock.arming.load(Ordering::SeqCst);
+        assert!(!would_lock(&state, &autolock, arming));
     }
 }

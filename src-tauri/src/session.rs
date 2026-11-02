@@ -328,21 +328,61 @@ impl Session {
 /// was sealed; a vault already locked has nothing to announce — but the lock
 /// is still recorded, so an unlock on its way in is refused (see [`Ticket`]).
 pub fn lock(app: &AppHandle) -> bool {
-    end(app, false)
+    end(app, false, None)
 }
 
 /// The lock the user asked for (the `lock` command): announced even when there
 /// was nothing left to seal — the user asked for the lock screen, and a webview
 /// that somehow still shows the vault gets it.
 pub fn lock_on_request(app: &AppHandle) {
-    end(app, true);
+    end(app, true, None);
 }
 
-fn end(app: &AppHandle, announce: bool) -> bool {
+/// A lock decided earlier and taken now — the idle timer's deadline coming due,
+/// a return to a window left for longer than the timeout — taken only if that
+/// decision still holds ([`lock_applies`]). Whether it sealed.
+///
+/// [`lock`] is a lock *now*, whatever is open, and it is recorded even with
+/// nothing open, so an unlock on its way in loses to it (`Ticket`): the OS
+/// locking, the user asking. A decision made earlier is not that. It may
+/// have been overtaken by the time it runs — activity re-armed the clock, a
+/// session opened — and then it must lock nothing, and leave no trace for
+/// an unlock on its way in to be refused by.
+pub fn lock_if(app: &AppHandle, still: impl FnOnce(&Session) -> bool) -> bool {
+    end(app, false, Some(Box::new(still)))
+}
+
+/// Whether a lock decided earlier applies, asked under the session guard
+/// (`session`) — where every open, every end and every arming of the idle
+/// clock is made, so nothing can change between this answer and the seal it
+/// allows. `still` is the decision's own question, and it is always asked,
+/// so what it consumes is consumed either way (a blur, say); it applies only
+/// over something open to seal: a session, or a ring of keys.
+pub(crate) fn lock_applies(
+    session: &Session,
+    keyring: &Mutex<crate::appkey::Keyring>,
+    still: impl FnOnce(&Session) -> bool,
+) -> bool {
+    let holds = still(session);
+    let open = session.is_live() || !keyring.lock().unwrap().is_empty();
+    holds && open
+}
+
+/// A lock decided earlier's own question (see [`lock_if`]).
+type Decided<'a> = Box<dyn FnOnce(&Session) -> bool + 'a>;
+
+// `decided`: a lock decided earlier (`lock_if`), sealing only where it still
+// applies; `None`, a lock now.
+fn end(app: &AppHandle, announce: bool, decided: Option<Decided<'_>>) -> bool {
     let workspace = crate::workspace::active_id(app);
     let state = app.state::<AppState>();
     let (sealed, ended) = {
         let mut session = state.session.lock().unwrap();
+        if let Some(still) = decided {
+            if !lock_applies(&session, &state.keyring, still) {
+                return false;
+            }
+        }
         let sealed = seal_in(&mut session, &state.keyring);
         let ended = (sealed.live || sealed.held).then(|| announce_ended(app));
         (sealed, ended)
@@ -944,6 +984,22 @@ mod lock_scope {
         let restart = body_of(include_str!("org/approvals.rs"), "fn restart(");
         assert!(at(&restart, "session.lock()") < at(&restart, "stop()"));
         assert!(at(&restart, "stop()") < at(&restart, "start(app)"));
+    }
+
+    // A lock decided earlier — the idle deadline, a return to a window left
+    // too long — is asked again under the guard (`lock_if`), never taken as
+    // a lock now (`lock`): by the time it runs it may have been overtaken,
+    // and the timer cannot call back a deadline already coming due.
+    #[test]
+    fn a_lock_decided_earlier_is_asked_again_under_the_guard() {
+        let autolock = include_str!("autolock.rs");
+        let idle = body_of(autolock, "fn idle(");
+        at(&idle, "session::lock_if(");
+        assert!(!idle.contains("session::lock("));
+        at(&body_of(autolock, "pub fn arm("), "idle(&app, arming)");
+        let events = body_of(autolock, "pub fn handle_event(");
+        at(&events, "session::lock_if(");
+        assert!(!events.contains("session::lock(") && !events.contains(" lock(app)"));
     }
 
     #[test]
