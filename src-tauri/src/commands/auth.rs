@@ -15,7 +15,7 @@ use crate::session::{derive_key, open_with_key, unlock_with_password};
 use crate::state::AppState;
 use crate::store::SqliteStore;
 use crate::workspace::PRIMARY_ID;
-use crate::{appkey, biometrics, crypto, events, storage};
+use crate::{appkey, biometrics, crypto, storage};
 use std::path::Path;
 use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
@@ -46,6 +46,8 @@ pub async fn unlock(
     // saga), and the recovery below would read that change's snapshot as an
     // interrupted one and copy it over a database the saga still has open.
     let _step = super::setup::begin_step(&state)?;
+    // Before the derive, so a lock during it refuses the open.
+    let ticket = state.session.lock().unwrap().ticket();
     // Before the lockout check and before anything reads the sidecar: a crash
     // during a password change can leave the DB and the sidecar disagreeing, and
     // the rollback has to land before either is consulted.
@@ -99,17 +101,10 @@ pub async fn unlock(
             };
             let sync_configured = storage::sync_configured(&app);
             let material = Zeroizing::new(key.biometric_material().to_vec());
-            state
-                .session
-                .lock()
-                .unwrap()
-                .set(key, store, sync_configured);
-            // The idle clock starts with the session, not with the frontend's
-            // first activity ping: a webview that never sends one (a build
-            // whose bundle failed, a page left untouched) would otherwise leave
-            // the vault open for good.
-            crate::autolock::touch(&app);
-            crate::session::opened(&app);
+            let Some(opened) = crate::session::open(&app, ticket, key, store, sync_configured)
+            else {
+                return Err(crate::session::locked_meanwhile());
+            };
             // And iOS suggests this vault's logins from here on.
             crate::credential_identities::publish(&app);
             seed_vault_name(&app, &state);
@@ -127,6 +122,7 @@ pub async fn unlock(
             Ok(UnlockResult {
                 entries,
                 sync_configured,
+                session: opened.into(),
             })
         }
         Err(Error::InvalidPassword) => {
@@ -202,9 +198,7 @@ pub(crate) async fn open_off_thread(
 // lock screen, and a webview that somehow still shows the vault gets it.
 #[tauri::command]
 pub fn lock(app: AppHandle) -> Result<()> {
-    if !crate::session::lock(&app) {
-        events::vault_locked(&app);
-    }
+    crate::session::lock_on_request(&app);
     Ok(())
 }
 
@@ -234,6 +228,7 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     // and an interrupted change rolled back before the sidecar decides how to
     // read the stored material.
     let _step = super::setup::begin_step(&state)?;
+    let ticket = state.session.lock().unwrap().ticket();
     auth::recover_interrupted_rekey(&app, &state)?;
 
     let Some(marker) = storage::biometric_marker(&app) else {
@@ -272,16 +267,11 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     };
     let (key, store, entries) = open_off_thread(&app, key).await?;
     let sync_configured = storage::sync_configured(&app);
-    state
-        .session
-        .lock()
-        .unwrap()
-        .set(key, store, sync_configured);
-    // As in `unlock`: the session arms its own idle clock, a connected browser
-    // extension hears of it, iOS is handed its logins, and a vault named before
-    // names lived inside it takes the registry's label.
-    crate::autolock::touch(&app);
-    crate::session::opened(&app);
+    let Some(opened) = crate::session::open(&app, ticket, key, store, sync_configured) else {
+        return Err(crate::session::locked_meanwhile());
+    };
+    // As in `unlock`: iOS is handed its logins, and a vault named before names
+    // lived inside it takes the registry's label.
     crate::credential_identities::publish(&app);
     seed_vault_name(&app, &state);
     // The app key opens the app: every workspace sealed under it joins the ring.
@@ -289,6 +279,7 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     Ok(UnlockResult {
         entries,
         sync_configured,
+        session: opened.into(),
     })
 }
 

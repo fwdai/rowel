@@ -658,7 +658,7 @@ mod tests {
 
         // The vault locks and a second workspace is opened while the lookup
         // for `other.com` is still in flight.
-        session.clear();
+        session.clear_for_test();
         cache(&session, ImageCache::Favicons, "other.com", asked_in, icon);
         let second_dir = tempfile::tempdir().unwrap();
         let (key, store) = open(&second_dir, "second");

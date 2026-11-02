@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { UnlockResult } from '@/api/types'
-import { appStatus, type AppStatus } from '@/api/app'
+import { appStatus, type AppStatus, type OsLockStatus } from '@/api/app'
 import { lock } from '@/api/auth'
 import type { Provider } from '@/api/provider'
 import type { RemotePack } from '@/api/setup'
@@ -9,7 +9,8 @@ import { checkForUpdate } from '@/api/autoUpdate'
 import { resetEmblems } from '@/hooks/useEmblem'
 import { resetFavicons } from '@/hooks/useFavicon'
 import { setEntries, resetVault, runAudit } from './vault'
-import { openSettings, resetUi } from './ui'
+import { isMobile } from '@/lib/platform'
+import { focusSearch, openSettings, resetUi } from './ui'
 import { hydratePrefs, hydrateFromProbe, prefsMark } from './prefs'
 
 /**
@@ -88,6 +89,8 @@ export interface AppState {
    * local until the next lock.
    */
   sync: SyncStatus
+  /** Whether Rust hears the OS locking; changes between probes (`OsLockStatus`). */
+  osLock: OsLockStatus
   setupAccount: SetupAccountState
   /**
    * The account's vaults that are not workspaces on this device, as the last
@@ -104,6 +107,8 @@ export interface AppState {
    * asked for it. The Rust side keeps the same check around its own awaits.
    */
   locks: number
+  /** The latest `vault:locked` epoch; `enterMain` refuses results older than it. */
+  lockedAt: number
   /**
    * A backup the OS asked the app to open (`file:opened`), waiting for a
    * screen that can take it: the restore step on a fresh install, Settings ›
@@ -146,9 +151,11 @@ export const initialApp: AppState = {
     lastSyncedAt: null,
     seq: 0
   },
+  osLock: { supported: false, seq: 0 },
   setupAccount: ACCOUNT_IDLE,
   remoteVaults: [],
   locks: 0,
+  lockedAt: 0,
   openedFile: null,
   update: { readyVersion: null, readyNotes: null, status: null }
 }
@@ -179,14 +186,14 @@ export const setApp = (status: AppStatus, mark?: number) => {
 }
 
 /**
- * Of two sync snapshots, the one the backend produced later. The probe and the
+ * Of two snapshots, the one the backend produced later. The probe and the
  * `sync:status` event are two routes for the same fact, and a probe taken just
  * before a transition can resolve after the event that transition emitted;
  * without this it would put the older state back on screen. Equal sequence
  * numbers mean the same transition, and the incoming copy is taken so a
  * `configured` that changed without a transition still lands.
  */
-const newer = (held: SyncStatus, incoming: SyncStatus): SyncStatus =>
+const newer = <T extends { seq: number }>(held: T, incoming: T): T =>
   incoming.seq >= held.seq ? incoming : held
 
 /**
@@ -291,12 +298,22 @@ export const setRemoteVaults = (files: RemotePack[]) => useApp.setState({ remote
 // screen — for this, for the autolock, for the tray and for a workspace switch.
 export const lockVault = () => lock().catch(() => {})
 
-export const enterMain = async (result: UnlockResult) => {
+export const lockHeard = (epoch: number) =>
+  useApp.setState(state => ({ lockedAt: Math.max(state.lockedAt, epoch) }))
+
+/**
+ * The one way into the vault's screens. Refuses a result whose session a lock
+ * has since ended, as its response can arrive after the lock's event.
+ */
+export const enterMain = async (result: UnlockResult): Promise<boolean> => {
+  if (result.session < useApp.getState().lockedAt) return false
   setEntries(result.entries)
   flowMain()
   // A backup the OS opened while the vault was locked (or before it existed)
   // has waited for this: the only screen that can import it is now reachable.
   if (useApp.getState().openedFile) openSettings('import')
+  // Not on mobile, where focusing raises the on-screen keyboard.
+  else if (!isMobile) focusSearch()
   // The unlock result carries whether this vault syncs; everything else about
   // sync arrives as `sync:status` once a flow or a run happens. No re-probe:
   // `initialized` and `scanSupported` cannot have changed, and this is the one
@@ -321,6 +338,7 @@ export const enterMain = async (result: UnlockResult) => {
   // and it may itself be holding writes a previous session never published.
   if (result.syncConfigured) syncNow().catch(() => {})
   void runAudit()
+  return true
 }
 
 // --- a backup the OS opened with the app -------------------------------------------
@@ -380,6 +398,9 @@ export const scheduleSync = () => {
 
 export const setSyncStatus = (sync: SyncStatus) =>
   useApp.setState(state => ({ sync: newer(state.sync, sync) }))
+
+export const setOsLockStatus = (osLock: OsLockStatus) =>
+  useApp.setState(state => ({ osLock: newer(state.osLock, osLock) }))
 
 // --- first-run account probe -------------------------------------------------------
 

@@ -7,6 +7,15 @@ import type { Accent, ThemePreference } from '@/theme'
 
 export type DateFormat = 'MM/DD/YYYY' | 'DD.MM.YYYY' | 'YYYY-MM-DD'
 
+/**
+ * Whether Rust hears the OS locking. Arrives as `oslock:status` and as one
+ * `osLockStatus` asked after subscribing; `seq` orders the two.
+ */
+export interface OsLockStatus {
+  supported: boolean
+  seq: number
+}
+
 // The order the segmented control offers them in.
 export const DATE_FORMATS: DateFormat[] = ['MM/DD/YYYY', 'DD.MM.YYYY', 'YYYY-MM-DD']
 
@@ -32,6 +41,8 @@ export interface Settings {
   breachCheck: boolean
   /** Idle seconds before the vault seals itself; enforced by Rust. */
   autolockSecs: number
+  /** Lock with the OS instead of `autolockSecs`, which stays the fallback. */
+  autolockFollowsOs: boolean
   /** How long a copied secret lingers before the clipboard is cleared (ms). */
   clipboardTimeoutMs: number
   /** Desktop, off by default: a copy sends the window away (`services/copy`). */
@@ -138,3 +149,5 @@ export const hideWindow = (): Promise<void> => call('hide_window')
  * so anything opened from then on arrives as the event instead.
  */
 export const takeOpenedFile = (): Promise<string | null> => call('take_opened_file')
+
+export const osLockStatus = (): Promise<OsLockStatus> => call('os_lock_status')

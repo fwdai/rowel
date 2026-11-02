@@ -40,6 +40,7 @@ export const DEFAULT_PREFS: Settings = {
   sort: 'recent',
   breachCheck: false,
   autolockSecs: 60,
+  autolockFollowsOs: false,
   clipboardTimeoutMs: 30_000,
   hideOnCopy: false,
   dateFormat: 'MM/DD/YYYY',
@@ -75,6 +76,7 @@ const sanitize = (raw: Partial<Settings>): Settings => {
     sort: SORT_MODES.includes(raw.sort as SortMode) ? (raw.sort as SortMode) : 'recent',
     breachCheck: raw.breachCheck === true,
     autolockSecs: isPositive(raw.autolockSecs) ? raw.autolockSecs : DEFAULT_PREFS.autolockSecs,
+    autolockFollowsOs: raw.autolockFollowsOs === true,
     clipboardTimeoutMs:
       typeof raw.clipboardTimeoutMs === 'number' &&
       Number.isFinite(raw.clipboardTimeoutMs) &&

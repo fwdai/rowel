@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { on, EVENTS, type EventName, type EventPayloads } from '@/api/events'
 import type { EntryMeta } from '@/api/types'
 import { appStatusDefault, calls, clearCalls, mockCommand } from '../test/ipc'
+import { deferred } from '../test/utils'
 import { subscribeToEvents } from './events'
 import {
   useApp,
@@ -15,7 +16,9 @@ import {
   flowMain,
   initialApp,
   lockVault,
-  setApp
+  setApp,
+  enterMain,
+  switchWorkspace
 } from './index'
 
 const meta = (id: string): EntryMeta => ({
@@ -160,12 +163,59 @@ describe('sync:status', () => {
   })
 })
 
+describe('oslock:status', () => {
+  it('follows the listener coming up, then being lost', () => {
+    setApp(appStatusDefault())
+    expect(useApp.getState().osLock.supported).toBe(false)
+
+    handlerFor(EVENTS.oslockStatus)({ supported: true, seq: 1 })
+    expect(useApp.getState().osLock.supported).toBe(true)
+
+    handlerFor(EVENTS.oslockStatus)({ supported: false, seq: 2 })
+    expect(useApp.getState().osLock.supported).toBe(false)
+  })
+
+  it('is left alone by a later probe', () => {
+    handlerFor(EVENTS.oslockStatus)({ supported: true, seq: 1 })
+
+    setApp(appStatusDefault())
+
+    expect(useApp.getState().osLock.supported).toBe(true)
+  })
+
+  it('asks once listening, for a change no one was listening for', async () => {
+    setApp(appStatusDefault())
+    mockCommand('os_lock_status', () => ({ supported: true, seq: 1 }))
+    clearCalls('os_lock_status')
+
+    subscribeToEvents()
+
+    await vi.waitFor(() => expect(useApp.getState().osLock.supported).toBe(true))
+    expect(calls('os_lock_status')).toHaveLength(1)
+  })
+
+  it('keeps a later event over an earlier answer that lands after it', async () => {
+    const answer = deferred<{ supported: boolean; seq: number }>()
+    mockCommand('os_lock_status', () => answer.promise)
+    clearCalls('os_lock_status')
+    subscribeToEvents()
+    await vi.waitFor(() => expect(calls('os_lock_status')).toHaveLength(1))
+
+    handlerFor(EVENTS.oslockStatus)({ supported: false, seq: 2 })
+    answer.resolve({ supported: true, seq: 1 })
+    // A macrotask, so the answer's delivery has fully run.
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(useApp.getState().osLock).toEqual({ supported: false, seq: 2 })
+  })
+})
+
 describe('vault:locked', () => {
   it('shows the Touch ID button when a key is enrolled, not a hardcoded false', async () => {
     gate(true)
     flowMain()
 
-    handlerFor(EVENTS.vaultLocked)()
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
     expect(useApp.getState().flow).toBe('auth')
 
     // The regression: this used to be `flowAuth(false)` unconditionally, so an
@@ -183,7 +233,7 @@ describe('vault:locked', () => {
     flowMain()
     setEntries([meta('a')])
 
-    handlerFor(EVENTS.vaultLocked)()
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
 
     expect(useApp.getState().flow).toBe('auth')
     expect(useVault.getState().items).toEqual([])
@@ -196,7 +246,7 @@ describe('vault:locked', () => {
     setCurrentEntry('a')
     setView('archive')
 
-    handlerFor(EVENTS.vaultLocked)()
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
     await vi.waitFor(() => expect(useApp.getState().flow).toBe('auth'))
 
     // Nothing of the unlocked vault survives the lock — the next unlock must
@@ -213,10 +263,44 @@ describe('vault:locked', () => {
     useApp.setState({ status: null })
     flowMain()
 
-    handlerFor(EVENTS.vaultLocked)()
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
     await vi.waitFor(() => expect(useApp.getState().flow).toBe('auth'))
     // A failed re-probe keeps the last known answer, and there was none.
     expect(useApp.getState().status).toBeNull()
+  })
+
+  it('turns away a result the lock overtook, though it arrives after the lock', async () => {
+    handlerFor(EVENTS.vaultLocked)({ epoch: 5 })
+
+    const entered = await enterMain({ entries: [meta('a')], syncConfigured: false, session: 4 })
+
+    expect(entered).toBe(false)
+    expect(useApp.getState().flow).toBe('auth')
+    expect(useVault.getState().items).toEqual([])
+  })
+
+  it('enters a result opened after the lock', async () => {
+    handlerFor(EVENTS.vaultLocked)({ epoch: 5 })
+
+    const entered = await enterMain({ entries: [meta('a')], syncConfigured: false, session: 6 })
+
+    expect(entered).toBe(true)
+    expect(useApp.getState().flow).toBe('main')
+  })
+
+  // The switch opens, the OS locks, and the lock's event lands before the answer.
+  it('keeps a switch whose result a lock overtook on the lock screen', async () => {
+    flowMain()
+    const answer = deferred<{ entries: EntryMeta[]; syncConfigured: boolean; session: number }>()
+    mockCommand('workspace_select', () => answer.promise)
+
+    const switching = switchWorkspace('w2')
+    handlerFor(EVENTS.vaultLocked)({ epoch: 8 })
+    answer.resolve({ entries: [meta('secret')], syncConfigured: false, session: 7 })
+    await switching
+
+    expect(useApp.getState().flow).toBe('auth')
+    expect(useVault.getState().items).toEqual([])
   })
 })
 

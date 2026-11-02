@@ -273,6 +273,7 @@ pub async fn setup_restore_from_account(
 ) -> Result<UnlockResult> {
     guard_no_vault(&app)?;
     let _step = begin_step(&state)?;
+    let ticket = state.session.lock().unwrap().ticket();
     let mut tokens = peek_pending(&state)?;
 
     // Nothing to refuse on a fresh install: there is no vault here for the
@@ -286,7 +287,15 @@ pub async fn setup_restore_from_account(
     // password opens too are added beside this one (`commands::autojoin`).
     let join = password.clone();
     let (key, store) = restore_off_thread(&app, bytes, password).await?;
-    let result = adopt(&app, &state, key, store, Some(&tokens), Some(&vault_id))?;
+    let result = adopt(
+        &app,
+        &state,
+        ticket,
+        key,
+        store,
+        Some(&tokens),
+        Some(&vault_id),
+    )?;
     super::autojoin::with_password(&app, join);
     Ok(result)
 }
@@ -316,6 +325,7 @@ pub async fn setup_restore_from_file(
 ) -> Result<UnlockResult> {
     guard_no_vault(&app)?;
     let _step = begin_step(&state)?;
+    let ticket = state.session.lock().unwrap().ticket();
     let chosen = PathBuf::from(&path);
     if !grants.holds(&chosen, Purpose::Backup) {
         return Err(grants::not_chosen());
@@ -331,7 +341,7 @@ pub async fn setup_restore_from_file(
     // The step guard keeps any other restore out while this one ran, so the
     // grant checked above is still here to spend.
     grants.take(&chosen, Purpose::Backup);
-    adopt(&app, &state, key, store, None, None)
+    adopt(&app, &state, ticket, key, store, None, None)
 }
 
 /// Restore from a legacy `.swftx` vault on disk. Onboarding only.
@@ -356,6 +366,7 @@ pub async fn setup_restore_from_legacy(
 ) -> Result<UnlockResult> {
     guard_no_vault(&app)?;
     let _step = begin_step(&state)?;
+    let ticket = state.session.lock().unwrap().ticket();
     let chosen = PathBuf::from(&path);
     if !grants.holds(&chosen, Purpose::Backup) {
         return Err(grants::not_chosen());
@@ -391,7 +402,7 @@ pub async fn setup_restore_from_legacy(
     })
     .await?;
     grants.take(&chosen, Purpose::Backup);
-    adopt(&app, &state, key, store, None, None)
+    adopt(&app, &state, ticket, key, store, None, None)
 }
 
 /// Fetch the chosen pack, and say which vault its name says it is.
@@ -465,12 +476,13 @@ pub async fn setup_create(
     // so running it over an existing vault would leave that vault unopenable.
     guard_no_vault(&app)?;
     let _step = begin_step(&state)?;
+    let ticket = state.session.lock().unwrap().ticket();
     // Creating without Drive is valid; a stale result from a cancelled or
     // replaced attempt is not.
     let tokens = peek_pending(&state).ok();
 
     let (key, store) = create_off_thread(&app, password).await?;
-    adopt(&app, &state, key, store, tokens.as_ref(), None)
+    adopt(&app, &state, ticket, key, store, tokens.as_ref(), None)
 }
 
 // Argon2id + creating the encrypted DB: CPU-bound, same as the restore path.
@@ -498,9 +510,13 @@ pub(crate) async fn create_off_thread(
 /// `vault_id` is the id the restored pack's own file name gave it, when it came
 /// from `Vaults/<id>.rowel`. Stamped here, inside the all-or-nothing, rather
 /// than after the fact.
+///
+/// A lock during the slow part refuses the open but keeps the vault, and the
+/// app goes to its lock screen.
 fn adopt(
     app: &AppHandle,
     state: &AppState,
+    ticket: crate::session::Ticket,
     key: VaultKey,
     store: SqliteStore,
     tokens: Option<&sync::Tokens>,
@@ -537,22 +553,21 @@ fn adopt(
             // Copied before the key goes into the session: this is the app
             // key, and the ring is what every later workspace is sealed under.
             let material = Zeroizing::new(key.biometric_material().to_vec());
-            state
-                .session
-                .lock()
-                .unwrap()
-                .set(key, store, sync_configured);
-            // A vault created or restored at first run is an open vault, and
-            // it goes on the idle clock here rather than waiting for the
-            // frontend's first activity ping.
-            crate::autolock::touch(app);
-            crate::session::opened(app);
+            let Some(opened) = crate::session::open(app, ticket, key, store, sync_configured)
+            else {
+                // The pending account is already sealed into this vault.
+                take_pending(state);
+                // The lock had nothing open to announce; the webview is still on setup.
+                crate::session::announce_locked(app);
+                return Err(crate::session::locked_meanwhile());
+            };
             crate::credential_identities::publish(app);
             crate::appkey::adopt_or_log(app, &crate::workspace::active_id(app), &material);
             take_pending(state);
             Ok(UnlockResult {
                 entries,
                 sync_configured,
+                session: opened.into(),
             })
         }
         Err(e) => {

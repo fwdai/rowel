@@ -192,6 +192,12 @@ pub fn take_opened_file(app: AppHandle) -> Option<String> {
     crate::opened::take(&app)
 }
 
+/// Asked once the webview listens for `oslock:status`, for a change it missed.
+#[tauri::command]
+pub fn os_lock_status(app: AppHandle) -> crate::autolock::OsLockStatus {
+    crate::autolock::os_lock_status(&app)
+}
+
 /// Apply a partial settings object and hand the whole merged result back, so a
 /// caller that patched one key ends up holding exactly what is on disk. The
 /// auto-lock is re-armed inside `settings::set`, under its lock, rather than by

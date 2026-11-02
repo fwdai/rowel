@@ -11,8 +11,8 @@
 //! server times it out for itself and must not be told "no". No audit row is
 //! written here: the server's log is authoritative for its own grants.
 //!
-//! The threads start when a session opens (`session::opened`) and stop when
-//! it is sealed (`session::sealed`): a stop flag every thread reads between
+//! The threads start when a session opens (`session::announce_opened`) and
+//! stop when it ends (`announce_ended`): a stop flag every thread reads between
 //! frames, which is why the server has to keep sending keepalive comments —
 //! a frame is the moment the flag is looked at, and the stream's read
 //! timeout (60 s) is the longest a thread can sit without one. A stream that
@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use rowel_broker::actions::ClientKind;
 use rowel_broker::agents::{now_ms, Verdict};
 use tauri::async_runtime::block_on;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use super::client::{session_over, Approval, DeviceState, ServerClient};
 use super::connections::{self, Connection, SessionResolver};
@@ -83,9 +83,15 @@ pub(crate) fn stop() {
 
 /// The connections changed under a live session: the set is rebuilt from
 /// what is on disk now.
+///
+/// Under the session guard, so a lock can't land between the stop and the start.
 pub(crate) fn restart(app: &AppHandle) {
+    let state = app.state::<crate::state::AppState>();
+    let session = state.session.lock().unwrap();
     stop();
-    start(app);
+    if session.is_live() {
+        start(app);
+    }
 }
 
 // One thread per approved connection, once the app key is there to read

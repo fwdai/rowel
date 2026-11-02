@@ -390,7 +390,16 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
    fresh start when the time away already spent the whole timeout**: the focus
    event locks instead of re-arming, and it judges by the wall clock rather than
    the timer's `Instant`, which does not advance across a sleeping Mac or a
-   suspended iOS process (`autolock::handle_event`). Every lock, including
+   suspended iOS process (`autolock::handle_event`). On desktop **the vault
+   also seals whenever the OS locks** — the screen lock, sleep (and wake, for a
+   sleep noticed too late), a switch to another user — whatever the timeout
+   (`oslock`: `com.apple.screenIsLocked` and the workspace notifications on
+   macOS, the session-change and power broadcasts on Windows, logind on
+   Linux), and there is no setting against it. The timeout can instead be set
+   to follow the OS: the idle lock then runs to the one-day ceiling, so an OS
+   set never to lock or sleep still cannot keep the vault open for good. It is
+   followed only while its locking is heard; where the listener could not
+   start, or was lost, the minutes chosen before stand. Every lock, including
    a lockbox switch, also **clears the clipboard** if it still holds a secret
    the app copied, so a copied password does not outlive the session it came
    from even with the clipboard timeout set to "Never". On iOS the clear is the

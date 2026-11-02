@@ -224,6 +224,8 @@ export interface AttachmentUsage {
 export interface UnlockResult {
   entries: EntryMeta[]
   syncConfigured: boolean
+  /** The session epoch this opened (see `vault:locked`). */
+  session: number
 }
 
 // One encrypted database, with its own master password. Optional: an install

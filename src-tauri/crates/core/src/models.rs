@@ -572,6 +572,8 @@ fn iso(ms: i64) -> Option<String> {
 pub struct UnlockResult {
     pub entries: Vec<EntryMetaDto>,
     pub sync_configured: bool,
+    /// The session epoch this opened; a later `vault:locked` epoch makes it stale.
+    pub session: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -43,6 +43,8 @@ pub const AGENTS_CHANGED: &str = "agents:changed";
 #[cfg(desktop)]
 pub const ORG_CONNECT: &str = "org:connect";
 pub const ORG_CHANGED: &str = "org:changed";
+#[cfg(desktop)]
+pub const OS_LOCK_STATUS: &str = "oslock:status";
 
 #[derive(Serialize, Clone)]
 struct Entries {
@@ -74,8 +76,19 @@ struct Probed {
     files: Vec<PackInfo>,
 }
 
-pub fn vault_locked(app: &AppHandle) {
-    let _ = app.emit(VAULT_LOCKED, ());
+#[derive(Serialize, Clone)]
+struct LockedAt {
+    epoch: u64,
+}
+
+/// `epoch` is where the lock left the session; the webview compares results to it.
+pub fn vault_locked(app: &AppHandle, epoch: crate::session::Epoch) {
+    let _ = app.emit(
+        VAULT_LOCKED,
+        LockedAt {
+            epoch: epoch.into(),
+        },
+    );
 }
 
 pub fn vault_merged(app: &AppHandle, entries: Vec<EntryMetaDto>) {
@@ -87,6 +100,11 @@ pub fn vault_merged(app: &AppHandle, entries: Vec<EntryMetaDto>) {
 /// neither side has to agree on an order of events.
 pub fn sync_status(app: &AppHandle, status: SyncStatus) {
     let _ = app.emit(SYNC_STATUS, status);
+}
+
+#[cfg(desktop)]
+pub fn os_lock_status(app: &AppHandle, status: crate::autolock::OsLockStatus) {
+    let _ = app.emit(OS_LOCK_STATUS, status);
 }
 
 pub fn import_progress(app: &AppHandle, done: usize, total: usize) {

@@ -174,7 +174,7 @@ pub(crate) fn grants_changed(app: &AppHandle) {
 }
 
 /// Every seal ends here — a lock, the auto-lock, a lockbox switch
-/// (`session::sealed`, with the session lock let go): nothing is served from
+/// (`session::announce_ended`, under the session lock): nothing is served from
 /// a locked vault, the switches are read afresh by the next session's first
 /// request, a client that was being slowed down starts afresh, and what
 /// decided under the session settles no more ([`AgentState::reset`]). The

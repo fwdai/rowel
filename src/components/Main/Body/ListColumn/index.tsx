@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useUi } from '@/store'
+import { useApp, useUi } from '@/store'
 import { useLayout } from '@/hooks/useLayout'
 import { cx } from '@/utils/cx'
 import ActiveTag from './ActiveTag'
@@ -64,6 +64,8 @@ export default function ListColumn({
   footer
 }: Props) {
   const view = useUi(state => state.view)
+  // Remounted per session, so its applied-focus count resets with the store's.
+  const session = useApp(state => state.locks)
   const health = view === 'health'
   // Rows are picked in batches on the wide shell only (see List/Manager).
   const batch = useLayout() === 'wide'
@@ -97,7 +99,7 @@ export default function ListColumn({
             not apply to it. */}
         {!health && (
           <>
-            <Search className={search} filter={filter} />
+            <Search key={session} className={search} filter={filter} />
             <ActiveTag />
           </>
         )}

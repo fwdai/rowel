@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import Settings from '@/components/Main/Sidebar/Settings'
 import i18n, { changeLocale } from '@/i18n'
 import { dates } from '@/utils/time'
+import { setSettings } from '@/api/app'
 import type { SyncStatus } from '@/api/sync'
 import type { RemotePack } from '@/api/setup'
 import {
@@ -27,6 +28,9 @@ import {
 import DateField from '@/components/elements/fields/DateField'
 import { FieldsProvider } from '@/components/elements/fields/context'
 import Footer from '@/components/Main/Body/Aside/Show/Footer'
+import { EVENTS } from '@/api/events'
+import { subscribeToEvents } from '@/store/events'
+import { emitEvent } from './events'
 import { appStatusDefault, calls, mockCommand, mockCommandOnce } from './ipc'
 import { loginMeta, seedApp, withEntries } from './utils'
 
@@ -52,6 +56,9 @@ const open = async () => {
 
 const go = (section: string) =>
   userEvent.click(screen.getByTestId(`settings-nav-${section}`))
+
+const heard = (supported: boolean, seq: number) =>
+  act(() => emitEvent(EVENTS.oslockStatus, { supported, seq }))
 
 // Settings opens on General; the sync tests want the Sync & backup pane.
 const openSync = async () => {
@@ -607,6 +614,82 @@ describe('Settings › security', () => {
 
     expect(usePrefs.getState().autolockSecs).toBe(300)
     expect(calls('set_settings')).toContainEqual({ patch: { autolockSecs: 300 } })
+  })
+
+  it('offers no OS lock where the OS locking is not heard', async () => {
+    await open()
+    await go('security')
+
+    expect(screen.queryByTestId('settings-autolock-os')).not.toBeInTheDocument()
+    expect(screen.getByText('Idle time before the vault seals itself')).toBeInTheDocument()
+  })
+
+  it('offers the OS lock once the listener comes up after the launch probe', async () => {
+    subscribeToEvents()
+    await open()
+    await go('security')
+    expect(screen.queryByTestId('settings-autolock-os')).not.toBeInTheDocument()
+
+    heard(true, 1)
+
+    expect(screen.getByTestId('settings-autolock-os')).toBeInTheDocument()
+    expect(screen.getByText(/it also seals whenever this computer locks or sleeps/)).toBeInTheDocument()
+  })
+
+  it('follows the OS lock, keeping the minutes chosen before', async () => {
+    subscribeToEvents()
+    heard(true, 1)
+    await open()
+    await go('security')
+    expect(screen.getByText(/it also seals whenever this computer locks or sleeps/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-autolock-os'))
+
+    expect(calls('set_settings')).toContainEqual({ patch: { autolockFollowsOs: true } })
+    expect(usePrefs.getState().autolockSecs).toBe(60)
+    expect(screen.getByTestId('settings-autolock-os')).toHaveAttribute('aria-checked', 'true')
+    expect(
+      screen.getByText('Seals whenever this computer locks or sleeps, or after a day idle')
+    ).toBeInTheDocument()
+  })
+
+  it('goes back to a timeout from following the OS', async () => {
+    subscribeToEvents()
+    heard(true, 1)
+    await open()
+    await go('security')
+    await userEvent.click(screen.getByTestId('settings-autolock-os'))
+
+    await userEvent.click(screen.getByTestId('settings-autolock-900'))
+
+    expect(calls('set_settings')).toContainEqual({ patch: { autolockSecs: 900 } })
+    expect(calls('set_settings')).toContainEqual({ patch: { autolockFollowsOs: false } })
+    expect(screen.getByTestId('settings-autolock-900')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('shows the minutes Rust falls back to when the listener is lost', async () => {
+    subscribeToEvents()
+    heard(true, 1)
+    await open()
+    await go('security')
+    await userEvent.click(screen.getByTestId('settings-autolock-os'))
+
+    heard(false, 2)
+
+    expect(screen.queryByTestId('settings-autolock-os')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-autolock-60')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByText('Idle time before the vault seals itself')).toBeInTheDocument()
+    expect(usePrefs.getState().autolockFollowsOs).toBe(true)
+  })
+
+  it('shows the minutes in force when the OS is not heard after all', async () => {
+    const stored = { autolockSecs: 900, autolockFollowsOs: true }
+    await setSettings(stored)
+    usePrefs.setState(stored)
+    await open()
+    await go('security')
+
+    expect(screen.getByTestId('settings-autolock-900')).toHaveAttribute('aria-checked', 'true')
   })
 
   it('stores the clipboard delay, "Never" included', async () => {

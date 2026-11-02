@@ -254,7 +254,7 @@ describe('deleteEntry', () => {
 
 describe('enterMain', () => {
   it('loads the vault and switches to the main flow', async () => {
-    await enterMain({ entries: [meta('a')], syncConfigured: true })
+    await enterMain({ entries: [meta('a')], syncConfigured: true, session: 1 })
 
     expect(useApp.getState().flow).toBe('main')
     expect(useVault.getState().items.map(e => e.id)).toEqual(['a'])
@@ -264,7 +264,7 @@ describe('enterMain', () => {
   })
 
   it('leaves sync off for a vault that has never been connected', async () => {
-    await enterMain({ entries: [], syncConfigured: false })
+    await enterMain({ entries: [], syncConfigured: false, session: 1 })
 
     expect(useApp.getState().sync.configured).toBe(false)
     expect(calls('sync_now')).toHaveLength(0)
@@ -275,7 +275,7 @@ describe('enterMain', () => {
   it('takes the provider from the connect that a fresh vault was made behind', async () => {
     setupAccountPending('dropbox')
 
-    await enterMain({ entries: [], syncConfigured: true })
+    await enterMain({ entries: [], syncConfigured: true, session: 1 })
 
     expect(useApp.getState().sync.provider).toBe('dropbox')
   })
@@ -284,7 +284,7 @@ describe('enterMain', () => {
     setSyncStatus({ ...initialApp.sync, configured: true, provider: 'googleDrive' })
     setupAccountPending('dropbox')
 
-    await enterMain({ entries: [], syncConfigured: true })
+    await enterMain({ entries: [], syncConfigured: true, session: 1 })
 
     expect(useApp.getState().sync.provider).toBe('googleDrive')
   })

@@ -3,7 +3,7 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
 import type { EntryMeta } from '@/api/types'
-import { useUi, useVault, setView } from '@/store'
+import { useUi, useVault, setView, clearSession, setEntries } from '@/store'
 import { withEntries, loginEntry, loginMeta } from './utils'
 import { calls, mockCommand } from './ipc'
 
@@ -70,6 +70,22 @@ describe('Main', () => {
 
     await userEvent.keyboard('{Meta>}f{/Meta}')
     expect(screen.getByTestId('search-input')).toHaveFocus()
+  })
+
+  it('still focuses the search field on ⌘F after a workspace switch', async () => {
+    seed()
+    render(<Main />)
+    const field = () => screen.getByTestId('search-input')
+    await userEvent.keyboard('{Meta>}f{/Meta}')
+    act(() => field().blur())
+
+    act(() => {
+      clearSession()
+      setEntries([loginMeta({ id: 'l2', title: 'GitHub' })])
+    })
+    await userEvent.keyboard('{Meta>}f{/Meta}')
+
+    expect(field()).toHaveFocus()
   })
 
   // `key` is what the layout prints — on ru-RU, ⌘F arrives as `а`. The chord is

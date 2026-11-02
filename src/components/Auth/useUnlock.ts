@@ -163,10 +163,10 @@ export function useUnlock(): Unlock {
     setPhase('success')
     pending.current = result
     holdTimer.current = window.setTimeout(() => {
-      void untilFocused(FOCUS_WAIT_MS).then(() => {
+      void untilFocused(FOCUS_WAIT_MS).then(async () => {
         if (pending.current !== result) return
         pending.current = null
-        void enterMain(result)
+        if (!(await enterMain(result))) setPhase('idle')
       })
     }, SUCCESS_HOLD_MS)
   }
@@ -198,6 +198,8 @@ export function useUnlock(): Unlock {
       })
       .catch((err: unknown) => {
         setPhase('idle')
+        // Locked while the key was derived: not a password failure.
+        if (errorKind(err) === 'locked') return
         const workspaceId = vaultPasswordRequiredFor(err)
         if (workspaceId) {
           // The card is keyed on the question, so it comes back empty.
@@ -224,7 +226,8 @@ export function useUnlock(): Unlock {
         setPhase('idle')
         // A prompt the user dismissed is their choice, not a failure to
         // report in red: the screen goes back to waiting, passphrase at hand.
-        if (errorKind(err) !== 'cancelled') setError(biometricError(t, err))
+        const kind = errorKind(err)
+        if (kind !== 'cancelled' && kind !== 'locked') setError(biometricError(t, err))
       })
   }
 

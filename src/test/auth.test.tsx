@@ -3,7 +3,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Auth from '@/components/Auth'
 import { useApp, flowSetup } from '@/store'
+import { subscribeToEvents } from '@/store/events'
+import { EVENTS } from '@/api/events'
 import type { Workspace } from '@/api/types'
+import { emitEvent } from './events'
 import { calls, mockCommand, mockCommandOnce } from './ipc'
 import { seedApp } from './utils'
 
@@ -143,6 +146,37 @@ describe('Auth', () => {
     unmount()
 
     expect(useApp.getState().flow).toBe('setup')
+  })
+
+  it('does not enter a vault that locked during the success hold', async () => {
+    subscribeToEvents()
+    mockCommand('unlock', () => ({ entries: [], syncConfigured: false, session: 1 }))
+    render(<Auth biometric={false} />)
+
+    await userEvent.type(screen.getByPlaceholderText('Master Password'), 'right{Enter}')
+    await waitFor(() =>
+      expect(screen.getByTestId('lock-mascot')).toHaveAttribute('data-state', 'success')
+    )
+    act(() => emitEvent(EVENTS.vaultLocked, { epoch: 2 }))
+
+    await waitFor(
+      () => expect(screen.getByTestId('lock-mascot')).not.toHaveAttribute('data-state', 'success'),
+      { timeout: 3000 }
+    )
+    expect(useApp.getState().flow).toBe('auth')
+    expect(screen.queryByTestId('unlock-error')).not.toBeInTheDocument()
+  })
+
+  it('waits again, with no error, when the vault locked while the key was derived', async () => {
+    mockCommand('unlock', () => Promise.reject({ kind: 'locked', message: 'vault is locked' }))
+    render(<Auth biometric={false} />)
+
+    await userEvent.type(screen.getByPlaceholderText('Master Password'), 'right{Enter}')
+
+    await waitFor(() => expect(screen.getByTestId('unlock-status')).not.toHaveTextContent('Verifying'))
+    expect(screen.queryByTestId('unlock-error')).not.toBeInTheDocument()
+    expect(useApp.getState().flow).toBe('auth')
+    expect(screen.getByPlaceholderText('Master Password')).toBeEnabled()
   })
 
   it('unlocks the vault on Enter', async () => {

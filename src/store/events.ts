@@ -10,8 +10,11 @@ import {
   refreshApp,
   showLockScreen,
   fileOpened,
+  lockHeard,
+  setOsLockStatus,
   useApp
 } from './app'
+import { osLockStatus } from '@/api/app'
 import { setEntries, loadArchive, runAudit } from './vault'
 import {
   useUi,
@@ -77,7 +80,8 @@ export const subscribeToEvents = (): (() => void) => {
     // inactivity autolock, the tray, a workspace switch. Every one of them ends
     // in `session::lock` on the Rust side, so none of them has to hand-roll
     // this — and none of them can forget half of it.
-    on(EVENTS.vaultLocked, () => {
+    on(EVENTS.vaultLocked, ({ epoch }) => {
+      lockHeard(epoch)
       clearSession()
       void showLockScreen()
     }),
@@ -97,7 +101,14 @@ export const subscribeToEvents = (): (() => void) => {
     // A rule or a grant came or went: Settings › Browser & agents re-reads.
     on(EVENTS.agentsChanged, () => agentsChanged()),
     on(EVENTS.orgConnect, orgConnectReported),
-    on(EVENTS.orgChanged, () => orgChanged())
+    on(EVENTS.orgChanged, () => orgChanged()),
+    // Asked once listening, for a change reported before this subscribed.
+    on(EVENTS.oslockStatus, setOsLockStatus).then(unlisten => {
+      osLockStatus()
+        .then(setOsLockStatus)
+        .catch(() => {})
+      return unlisten
+    })
   ]
 
   return () => {

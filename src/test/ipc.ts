@@ -28,6 +28,11 @@ const meta = (id: string, type = 'login', title = '', favorite = false) => ({
 
 const session = { entries: [], syncConfigured: false }
 
+// Rust's session epoch: every open and every lock moves it on.
+let epoch = 0
+const opened = () => ({ ...session, session: ++epoch })
+const locked = () => emitEventSoon(EVENTS.vaultLocked, { epoch: ++epoch })
+
 // The preferences Rust would hand back on a fresh install, and the file it
 // would hand them back from: `set_settings` merges into this the way the real
 // command merges into `settings.json`, so a component sees its own write come
@@ -41,6 +46,7 @@ const session = { entries: [], syncConfigured: false }
 // by a generator flag.
 const DEFAULT_SETTINGS: Settings = {
   autolockSecs: 60,
+  autolockFollowsOs: false,
   clipboardTimeoutMs: 30000,
   hideOnCopy: false,
   dateFormat: 'MM/DD/YYYY',
@@ -121,22 +127,23 @@ const DEFAULTS: Record<string, Handler> = {
   app_ready: () => undefined,
   // Nothing was double-clicked to launch the app, which is every ordinary run.
   take_opened_file: () => null,
+  os_lock_status: () => ({ supported: false, seq: 0 }),
 
   setup: () => undefined,
-  unlock: () => session,
+  unlock: opened,
   // Rust seals the vault and says so (`session::lock`); the frontend does
   // nothing about a lock until the event lands, so the fake has to emit it too
   // — after this promise resolves, as the real one does.
-  lock: () => emitEventSoon(EVENTS.vaultLocked, undefined),
+  lock: locked,
   // The idle-clock ping `Main` sends on mount and on input; nothing to answer.
   touch_activity: () => undefined,
-  unlock_biometric: () => session,
+  unlock_biometric: opened,
   enable_biometric: () => 'protected',
   disable_biometric: () => undefined,
   change_master_password: () => undefined,
 
   // A new workspace arrives active and unlocked, so it answers like an unlock.
-  workspace_create: () => session,
+  workspace_create: opened,
   // Onboarding's connect, reached from Settings: the probe's answer comes back
   // as `setup:account:*`, never through this promise.
   workspace_connect: () => undefined,
@@ -148,7 +155,7 @@ const DEFAULTS: Record<string, Handler> = {
   // A switch to a workspace Rust holds no key for: it ends as the lock it is,
   // announced like any other. (One it does hold answers like an unlock — a
   // spec that wants that path mocks the command with a session.)
-  workspace_select: () => emitEventSoon(EVENTS.vaultLocked, undefined),
+  workspace_select: locked,
   // A lockbox that opened with a password of its own, moved onto the vault
   // password. A spec about a wrong vault password rejects `invalidPassword`.
   workspace_adopt_vault_password: () => undefined,
@@ -162,10 +169,10 @@ const DEFAULTS: Record<string, Handler> = {
   // it arrives as `setup:account:*`, which a spec drives through the store.
   setup_connect: () => undefined,
   setup_disconnect: () => undefined,
-  setup_create: () => session,
+  setup_create: opened,
   setup_restore_from_account: () => ({ entries: [], syncConfigured: true }),
-  setup_restore_from_file: () => session,
-  setup_restore_from_legacy: () => session,
+  setup_restore_from_file: opened,
+  setup_restore_from_legacy: opened,
 
   reveal_entry: ({ id }) => ({ id, type: 'login', title: '' }),
   save_entry: ({ entry }) => {
@@ -397,4 +404,5 @@ export const resetIpc = (): void => {
   recorded.clear()
   settings = DEFAULT_SETTINGS
   attachments = []
+  epoch = 0
 }

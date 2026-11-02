@@ -51,6 +51,7 @@ impl Keyring {
         self.keys.get(id).cloned()
     }
 
+    #[cfg(test)]
     pub fn has(&self, id: &str) -> bool {
         self.keys.contains_key(id)
     }
@@ -854,7 +855,7 @@ mod tests {
                             Adoption::Sealed
                         );
                         // A lock: the session and the ring end (`session::lock`).
-                        state.session.lock().unwrap().clear();
+                        state.session.lock().unwrap().clear_for_test();
                         state.keyring.lock().unwrap().clear();
                     })
                 };
@@ -886,7 +887,7 @@ mod tests {
     fn a_moved_lockbox_is_sealed_with_no_session_and_joins_a_live_ring() {
         let root = tmp_root();
         let state = live_state(&root);
-        state.session.lock().unwrap().clear();
+        state.session.lock().unwrap().clear_for_test();
 
         seal_under_in(&state, &root, "x", OLD_KEY, X_KEY).unwrap();
         assert_eq!(sealed_under(&root, "x", OLD_KEY), X_KEY);
@@ -937,7 +938,7 @@ mod tests {
         );
         assert_eq!(sealed_under(&root, "x", OLD_KEY), X_KEY);
 
-        state.session.lock().unwrap().clear();
+        state.session.lock().unwrap().clear_for_test();
         assert!(matches!(
             adopt_in(&state, &root, "y", Y_KEY),
             Err(Error::Locked)
@@ -982,7 +983,7 @@ mod tests {
 
         // A lock lands during the next re-key: the ring is empty, but the app
         // key read before it still seals the copy, and nothing joins the ring.
-        state.session.lock().unwrap().clear();
+        state.session.lock().unwrap().clear_for_test();
         state.keyring.lock().unwrap().clear();
         assert_eq!(
             rekeyed_in(

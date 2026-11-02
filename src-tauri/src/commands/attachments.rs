@@ -768,7 +768,7 @@ mod tests {
         let (epoch, cipher, room) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
         let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
 
-        state.session.lock().unwrap().clear();
+        state.session.lock().unwrap().clear_for_test();
         assert!(matches!(
             finish_add(&state, epoch, &attachment),
             Err(Error::Locked)
