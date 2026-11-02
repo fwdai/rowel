@@ -12,7 +12,7 @@ interface Props<T extends string> {
   className?: string
 }
 
-// THE two-to-five-way switch (generator mode, timeout, theme): a tile trough
+// THE two-to-six-way switch (generator mode, timeout, theme): a tile trough
 // with the active segment raised on the lens — the same "you are here" key the
 // rail and the phone tab bar use, so a chosen segment is a place rather than a
 // wash of accent. Labels arrive already translated. On the phone it spans its

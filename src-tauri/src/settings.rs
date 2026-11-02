@@ -126,6 +126,12 @@ impl Default for BrowserSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub autolock_secs: u64,
+    /// "Follow the OS": no idle lock of the app's own short of the day-long
+    /// ceiling, the OS locking being the lock (`autolock`). Off by default, so
+    /// a file written before it existed keeps its timeout. `autolock_secs` is
+    /// kept beside it — the timeout in force wherever the OS is not heard, and
+    /// the one Settings goes back to.
+    pub autolock_follows_os: bool,
     pub clipboard_timeout_ms: u64,
     pub date_format: String,
     pub sort: String,
@@ -149,6 +155,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             autolock_secs: DEFAULT_AUTOLOCK_SECS,
+            autolock_follows_os: false,
             clipboard_timeout_ms: 30_000,
             date_format: "MM/DD/YYYY".into(),
             sort: "recent".into(),
@@ -230,7 +237,7 @@ pub fn hydrate(app: &AppHandle, settings: Settings) {
 /// away, which would otherwise leave the previous spec's preferences in memory.
 pub fn boot(app: &AppHandle) {
     let stored = load(app);
-    crate::autolock::set_timeout(app, stored.autolock_secs);
+    crate::autolock::set_timeout(app, stored.autolock_secs, stored.autolock_follows_os);
     hydrate(app, stored);
 }
 
@@ -311,9 +318,10 @@ fn write(app: &AppHandle, patch: &Value) -> Result<Written> {
     let mut guard = state.0.lock().unwrap();
     let merged = merge(&guard, patch)?;
     storage::write_settings(app, &serde_json::to_string_pretty(&merged)?)?;
-    let autolock_changed = merged.autolock_secs != guard.autolock_secs;
+    let autolock_changed = merged.autolock_secs != guard.autolock_secs
+        || merged.autolock_follows_os != guard.autolock_follows_os;
     if autolock_changed {
-        crate::autolock::store_timeout(app, merged.autolock_secs);
+        crate::autolock::store_timeout(app, merged.autolock_secs, merged.autolock_follows_os);
     }
     let locale_changed = merged.locale != guard.locale;
     let agents_changed = merged.browser.agents.enabled != guard.browser.agents.enabled;
@@ -522,6 +530,20 @@ mod tests {
 
         let stored: Settings = serde_json::from_str(r#"{"autolockSecs":0}"#).unwrap();
         assert_eq!(stored.normalize().autolock_secs, DEFAULT_AUTOLOCK_SECS);
+    }
+
+    // Following the OS is its own key, not a timeout of zero: a file written
+    // before it existed keeps the timeout it chose, and turning it on keeps
+    // that timeout to come back to.
+    #[test]
+    fn following_the_os_keeps_the_timeout_beside_it() {
+        assert!(!Settings::default().autolock_follows_os);
+        let older: Settings = serde_json::from_str(r#"{"autolockSecs":900}"#).unwrap();
+        assert!(!older.autolock_follows_os);
+
+        let following = merge(&older, &serde_json::json!({ "autolockFollowsOs": true })).unwrap();
+        assert!(following.autolock_follows_os);
+        assert_eq!(following.autolock_secs, 900);
     }
 
     // The clipboard delay is armed as a `Duration` on an `Instant`, which

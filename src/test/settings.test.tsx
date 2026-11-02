@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import Settings from '@/components/Main/Sidebar/Settings'
 import i18n, { changeLocale } from '@/i18n'
 import { dates } from '@/utils/time'
+import { setSettings } from '@/api/app'
 import type { SyncStatus } from '@/api/sync'
 import type { RemotePack } from '@/api/setup'
 import {
@@ -607,6 +608,60 @@ describe('Settings › security', () => {
 
     expect(usePrefs.getState().autolockSecs).toBe(300)
     expect(calls('set_settings')).toContainEqual({ patch: { autolockSecs: 300 } })
+  })
+
+  // Where Rust cannot hear the OS lock — a phone, a desktop it could not
+  // listen on — the row is the timeouts alone, and says nothing about the OS.
+  it('offers no OS lock where the OS locking is not heard', async () => {
+    await open()
+    await go('security')
+
+    expect(screen.queryByTestId('settings-autolock-os')).not.toBeInTheDocument()
+    expect(screen.getByText('Idle time before the vault seals itself')).toBeInTheDocument()
+  })
+
+  // The OS lock seals the vault whatever the timeout, so the row says so, and
+  // following the OS is one more choice after the timeouts.
+  it('follows the OS lock, keeping the minutes chosen before', async () => {
+    seedApp({ osLockSupported: true })
+    await open()
+    await go('security')
+    expect(screen.getByText(/it also seals whenever this computer locks or sleeps/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-autolock-os'))
+
+    expect(calls('set_settings')).toContainEqual({ patch: { autolockFollowsOs: true } })
+    expect(usePrefs.getState().autolockSecs).toBe(60)
+    expect(screen.getByTestId('settings-autolock-os')).toHaveAttribute('aria-checked', 'true')
+    expect(
+      screen.getByText('Seals whenever this computer locks or sleeps, or after a day idle')
+    ).toBeInTheDocument()
+  })
+
+  it('goes back to a timeout from following the OS', async () => {
+    seedApp({ osLockSupported: true })
+    await open()
+    await go('security')
+    await userEvent.click(screen.getByTestId('settings-autolock-os'))
+
+    await userEvent.click(screen.getByTestId('settings-autolock-900'))
+
+    expect(calls('set_settings')).toContainEqual({ patch: { autolockSecs: 900 } })
+    expect(calls('set_settings')).toContainEqual({ patch: { autolockFollowsOs: false } })
+    expect(screen.getByTestId('settings-autolock-900')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  // A stored "follow" on a desktop that cannot hear the OS: Rust falls back to
+  // the minutes, so those are what the row shows as chosen.
+  it('shows the minutes in force when the OS is not heard after all', async () => {
+    // The store, and the file a probe would read it back from.
+    const stored = { autolockSecs: 900, autolockFollowsOs: true }
+    await setSettings(stored)
+    usePrefs.setState(stored)
+    await open()
+    await go('security')
+
+    expect(screen.getByTestId('settings-autolock-900')).toHaveAttribute('aria-checked', 'true')
   })
 
   it('stores the clipboard delay, "Never" included', async () => {

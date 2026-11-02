@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { usePrefs, setPref } from '@/store'
+import { useApp, usePrefs, setPref } from '@/store'
 import { isMobile } from '@/lib/platform'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsRow from '@/components/elements/SettingsRow'
@@ -16,6 +16,11 @@ const LOCK_OPTIONS = [
   { value: '3600', label: '1 h' }
 ]
 
+// The segment after the timeouts: follow the OS rather than an idle clock of
+// the app's own. A flag of its own in the settings (`autolockFollowsOs`), not
+// a timeout, so the minutes chosen before are still there to go back to.
+const FOLLOW_OS = 'os'
+
 // Built per render so a locale switch retranslates. The unit values read the
 // same in every locale; only `Never` is words.
 const clipboardOptions = (t: TFunction) => [
@@ -28,10 +33,22 @@ const clipboardOptions = (t: TFunction) => [
 export default function SessionGroup() {
   const { t } = useTranslation()
   const lock = usePrefs(state => state.autolockSecs)
+  const followsOs = usePrefs(state => state.autolockFollowsOs)
   const clipboard = usePrefs(state => state.clipboardTimeoutMs)
+  // Whether Rust hears the OS lock here. Where it does, the vault seals with
+  // it whatever the timeout, and following it is offered; where it does not
+  // (a phone, a desktop it could not listen on), the row is the timeouts alone
+  // and a stored "follow" shows the minutes Rust falls back to.
+  const osLock = useApp(state => state.status?.osLockSupported === true)
+  const following = osLock && followsOs
 
-  // Rust re-arms the auto-lock itself when this preference lands (`set_settings`).
-  const onLock = (value: string) => setPref('autolockSecs', Number(value))
+  // Rust re-arms the auto-lock itself when either preference lands
+  // (`set_settings`).
+  const onLock = (value: string) => {
+    if (value === FOLLOW_OS) return setPref('autolockFollowsOs', true)
+    setPref('autolockSecs', Number(value))
+    if (followsOs) setPref('autolockFollowsOs', false)
+  }
 
   const onClipboard = (value: string) => {
     setPref('clipboardTimeoutMs', Number(value))
@@ -46,12 +63,22 @@ export default function SessionGroup() {
       <SettingsRow
         label={lockLabel}
         icon={<LockGlyph size={16} />}
-        description={t('Idle time before the vault seals itself')}
+        description={
+          !osLock
+            ? t('Idle time before the vault seals itself')
+            : following
+              ? t('Seals whenever this computer locks or sleeps, or after a day idle')
+              : t(
+                  'Idle time before the vault seals itself — it also seals whenever this computer locks or sleeps'
+                )
+        }
         control={
           <Segmented
             name={lockLabel}
-            options={LOCK_OPTIONS}
-            value={String(lock)}
+            options={
+              osLock ? [...LOCK_OPTIONS, { value: FOLLOW_OS, label: t('OS lock') }] : LOCK_OPTIONS
+            }
+            value={following ? FOLLOW_OS : String(lock)}
             onChange={onLock}
             testidPrefix="settings-autolock"
           />

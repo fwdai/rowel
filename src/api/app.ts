@@ -32,6 +32,12 @@ export interface Settings {
   breachCheck: boolean
   /** Idle seconds before the vault seals itself; enforced by Rust. */
   autolockSecs: number
+  /**
+   * Follow the OS instead: the vault seals when the computer locks or sleeps,
+   * and idles out only after a day. Counts only where `osLockSupported`;
+   * `autolockSecs` stays the timeout everywhere else.
+   */
+  autolockFollowsOs: boolean
   /** How long a copied secret lingers before the clipboard is cleared (ms). */
   clipboardTimeoutMs: number
   /** Desktop, off by default: a copy sends the window away (`services/copy`). */
@@ -85,6 +91,13 @@ export interface AppStatus {
    * Windows without an OCR language pack, where the UI offers no scanning.
    */
   scanSupported: boolean
+  /**
+   * Whether the OS locking is heard here — the screen lock, sleep, a switch to
+   * another user. Where it is, the vault seals with it whatever the timeout,
+   * and Settings offers to follow it instead of a timeout. False on a phone,
+   * and on a desktop where Rust could not start listening.
+   */
+  osLockSupported: boolean
   /**
    * Whether this build can connect to a Rowel Server: the sign-in comes back
    * through the browser, which the desktop listens for and the phone cannot

@@ -40,6 +40,10 @@ mod hibp;
 mod locale;
 // Backups the OS asks the app to open (the `.rowel`/`.swftx` file associations).
 mod opened;
+// The OS locking — the screen lock, sleep, a switch to another user — which the
+// vault seals with. Desktop only: a phone backgrounds the app before it locks.
+#[cfg(desktop)]
+mod oslock;
 // Org lockboxes: a company's Rowel Server as the member's app speaks to it —
 // the sign-in, this device's enrollment key, the sealed record of both, the
 // lockboxes it hands this device and the approvals it routes here.
@@ -161,6 +165,11 @@ pub fn run() {
         .setup(|app| {
             // Preferences first: the shell and the auto-lock both open on them.
             settings::boot(app.handle());
+            // The OS locking, heard from here on: it seals the vault, and it is
+            // what "follow the OS" follows (`autolock::os_event`). On the main
+            // thread, which the macOS observers deliver on.
+            #[cfg(desktop)]
+            oslock::watch(app.handle());
             // iOS: park the vault's connection for the background, from the
             // first transition on (see `background`).
             #[cfg(target_os = "ios")]

@@ -42,6 +42,12 @@ pub struct AppStatus {
     /// Settings on a build that would refuse it.
     org_connect: bool,
     scan_supported: bool,
+    /// Whether the OS locking is heard here (`oslock`): the screen lock,
+    /// sleep, a switch to another user. Settings offers to follow the OS
+    /// rather than an idle timeout only where it is, and says the vault seals
+    /// with it. False on a phone, and on a desktop where no listener could
+    /// start.
+    os_lock_supported: bool,
     biometric: Biometric,
     /// Every vault on this install — exactly one until the user makes a second,
     /// which is what lets the frontend leave the whole feature out of the UI
@@ -121,6 +127,7 @@ pub fn snapshot(app: &AppHandle) -> Result<AppStatus> {
         providers: crate::sync::Provider::available(),
         org_connect: cfg!(desktop),
         scan_supported: scan::is_supported(),
+        os_lock_supported: crate::autolock::os_watched(app),
         biometric: Biometric {
             available: hardware && storage::biometric_enrolled(app) && openable,
             can_enroll: hardware && app_key_known,

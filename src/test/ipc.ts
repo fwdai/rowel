@@ -41,6 +41,7 @@ const session = { entries: [], syncConfigured: false }
 // by a generator flag.
 const DEFAULT_SETTINGS: Settings = {
   autolockSecs: 60,
+  autolockFollowsOs: false,
   clipboardTimeoutMs: 30000,
   hideOnCopy: false,
   dateFormat: 'MM/DD/YYYY',
@@ -95,6 +96,9 @@ export const appStatusDefault = (): AppStatus => ({
   providers: ['googleDrive', 'dropbox'],
   // Off by default, so no suite sees a scan affordance it did not ask for.
   scanSupported: false,
+  // Off by default too, so the auto-lock row reads as it always has. A suite
+  // about following the OS seeds true.
+  osLockSupported: false,
   // The desktop's answer: a Rowel Server can be connected. A suite about the
   // phone seeds false.
   orgConnect: true,

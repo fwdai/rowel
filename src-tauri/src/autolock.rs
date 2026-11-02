@@ -1,7 +1,7 @@
 use crate::session;
 use crate::state::AppState;
 use crate::timer::Timer;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Manager, WindowEvent};
@@ -20,6 +20,10 @@ use crate::settings::{
 /// one, wherever the window is. An earlier version armed only on blur and
 /// disarmed on focus, which left a focused window that nobody was at unlocked
 /// indefinitely: a laptop walked away from with the app in front never locked.
+///
+/// On desktop the OS locking seals the vault too, whatever the timeout
+/// (`os_event`), and the timeout can be set to follow the OS instead: no idle
+/// lock of the app's own short of a day.
 pub struct AutoLock {
     /// The pending lock. One timer for the whole process: every activity
     /// re-arms it rather than adding to it, so a busy user cannot pile up
@@ -29,6 +33,16 @@ pub struct AutoLock {
     /// `settings.json` at startup and re-set whenever the Settings row changes,
     /// so the value the user picked is in force from the first arming.
     timeout_secs: AtomicU64,
+    /// "Follow the OS" (`Settings::autolock_follows_os`): the OS locking is
+    /// the lock, and the idle timer runs to the day-long ceiling instead of
+    /// `timeout_secs`. Set beside it, from the same places.
+    follows_os: AtomicBool,
+    /// Whether the OS locking is heard at all (`oslock`). "Follow the OS"
+    /// counts only while it is: until the listener is up, after it is lost,
+    /// and on a phone, the idle timeout last chosen stays in force, so a
+    /// listener that is not there never leaves the vault with no lock but a
+    /// day's idleness.
+    os_watched: AtomicBool,
     /// Wall-clock reading taken when the window last lost focus, cleared when
     /// it comes back. The timer alone cannot be trusted across that gap: it
     /// measures in `Instant`s, which do not advance while an Apple machine is
@@ -42,6 +56,8 @@ impl Default for AutoLock {
         Self {
             timer: Timer::spawn(),
             timeout_secs: AtomicU64::new(DEFAULT_TIMEOUT_SECS),
+            follows_os: AtomicBool::new(false),
+            os_watched: AtomicBool::new(false),
             blurred_at: Mutex::new(None),
         }
     }
@@ -58,7 +74,11 @@ enum Resume {
 impl AutoLock {
     /// The idle timeout in force, as the settings row last left it.
     fn timeout(&self) -> Duration {
-        Duration::from_secs(self.timeout_secs.load(Ordering::SeqCst))
+        Duration::from_secs(idle_secs(
+            self.timeout_secs.load(Ordering::SeqCst),
+            self.follows_os.load(Ordering::SeqCst),
+            self.os_watched.load(Ordering::SeqCst),
+        ))
     }
 
     /// The window lost focus at `now`: remember when, so coming back can tell
@@ -80,20 +100,67 @@ impl AutoLock {
     }
 }
 
-pub fn set_timeout(app: &AppHandle, secs: u64) {
-    store_timeout(app, secs);
+/// Idle seconds before the vault seals: the timeout chosen, or — following
+/// the OS, and the OS heard — the ceiling, a day. Still a timeout, so an OS
+/// set never to lock or sleep cannot leave the vault open for good.
+fn idle_secs(chosen: u64, follows_os: bool, os_watched: bool) -> u64 {
+    if follows_os && os_watched {
+        MAX_TIMEOUT_SECS
+    } else {
+        chosen
+    }
+}
+
+pub fn set_timeout(app: &AppHandle, secs: u64, follows_os: bool) {
+    store_timeout(app, secs, follows_os);
     // Anything already pending was armed against the old value. Re-armed
     // rather than dropped: a session that is live stays on the clock, now the
     // new one.
     touch(app);
 }
 
-/// The value alone, for a caller that re-arms afterwards (`settings::set`):
+/// The values alone, for a caller that re-arms afterwards (`settings::set`):
 /// `touch` reads the session, and this takes no lock at all.
-pub fn store_timeout(app: &AppHandle, secs: u64) {
-    app.state::<AutoLock>()
+pub fn store_timeout(app: &AppHandle, secs: u64, follows_os: bool) {
+    let state = app.state::<AutoLock>();
+    state
         .timeout_secs
         .store(secs.clamp(1, MAX_TIMEOUT_SECS), Ordering::SeqCst);
+    state.follows_os.store(follows_os, Ordering::SeqCst);
+}
+
+/// Whether the OS locking is heard here, which is what decides whether
+/// Settings offers to follow it (`app_status`).
+pub fn os_watched(app: &AppHandle) -> bool {
+    app.state::<AutoLock>().os_watched.load(Ordering::SeqCst)
+}
+
+/// What the OS did, as `oslock` heard it.
+///
+/// Every lock of the OS's seals the vault, whatever the timeout: the screen
+/// locking, the user switching away, the machine going to sleep — and waking,
+/// for a sleep whose notice came too late to act on before it. There is no
+/// setting against it: a vault left open behind an OS password the user has
+/// just typed again would be the surprise.
+///
+/// The listener coming or going changes what "follow the OS" means
+/// (`idle_secs`), so the pending lock is re-armed for the new answer.
+#[cfg(desktop)]
+pub fn os_event(app: &AppHandle, event: crate::oslock::Event) {
+    use crate::oslock::Event;
+    match event {
+        Event::Watching | Event::Lost => {
+            app.state::<AutoLock>()
+                .os_watched
+                .store(event == Event::Watching, Ordering::SeqCst);
+            touch(app);
+        }
+        Event::Locked | Event::SwitchedAway | Event::Sleep | Event::Wake => {
+            if session::lock(app) {
+                log::info!("vault sealed with the OS ({event:?})");
+            }
+        }
+    }
 }
 
 /// The user did something: start the idle clock over. A no-op with no session
@@ -254,5 +321,36 @@ mod tests {
         let autolock = AutoLock::default();
         autolock.blur(blurred_at() + A_DAY);
         assert_eq!(autolock.resume(blurred_at(), TIMEOUT), Resume::Touch);
+    }
+
+    #[test]
+    fn the_chosen_timeout_is_the_idle_lock() {
+        assert_eq!(idle_secs(300, false, false), 300);
+        assert_eq!(idle_secs(300, false, true), 300);
+    }
+
+    // Following the OS still idles out, after a day: an OS set never to lock
+    // or sleep does not leave the vault open for good.
+    #[test]
+    fn following_a_heard_os_idles_out_after_a_day() {
+        assert_eq!(idle_secs(300, true, true), MAX_TIMEOUT_SECS);
+    }
+
+    // The fail-safe: an OS that is not heard — no listener here, or it was
+    // lost — is not followed, and the timeout chosen before stays the lock.
+    #[test]
+    fn an_os_that_is_not_heard_is_not_followed() {
+        assert_eq!(idle_secs(300, true, false), 300);
+    }
+
+    #[test]
+    fn the_timeout_follows_the_os_only_once_it_is_heard() {
+        let autolock = AutoLock::default();
+        autolock.timeout_secs.store(300, Ordering::SeqCst);
+        autolock.follows_os.store(true, Ordering::SeqCst);
+        assert_eq!(autolock.timeout(), Duration::from_secs(300));
+
+        autolock.os_watched.store(true, Ordering::SeqCst);
+        assert_eq!(autolock.timeout(), Duration::from_secs(MAX_TIMEOUT_SECS));
     }
 }
