@@ -144,7 +144,10 @@ export function Start() {
     // The boot probe already answered, and `canEnroll` and `type` are facts
     // about the device that do not change during setup.
     const biometric = useApp.getState().status?.biometric
-    if (!biometric?.canEnroll) return enterMain(unlocked)
+    if (!biometric?.canEnroll) {
+      await enterMain(unlocked)
+      return
+    }
     setResult(unlocked)
     setBiometry(biometric.type)
     // Replaces the stack: there is no going back from an unlocked session.

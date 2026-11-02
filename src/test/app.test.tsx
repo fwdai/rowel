@@ -114,7 +114,7 @@ describe('unlocking', () => {
   it('leaves the search field alone when a waiting backup opens Settings', async () => {
     useApp.setState({ openedFile: '/tmp/Rowel backup.rowel' })
 
-    await act(() => enterMain({ entries: [], syncConfigured: false }))
+    await act(() => enterMain({ entries: [], syncConfigured: false, session: 1 }))
 
     expect(useUi.getState().settingsSection).toBe('import')
     expect(useUi.getState().searchFocus).toBe(0)
@@ -127,7 +127,7 @@ describe('unlocking', () => {
     vi.doMock('@/lib/platform', () => ({ isIOS: true, isAndroid: false, isMobile: true }))
     try {
       const store = await import('@/store')
-      await act(() => store.enterMain({ entries: [], syncConfigured: false }))
+      await act(() => store.enterMain({ entries: [], syncConfigured: false, session: 1 }))
 
       expect(store.useApp.getState().flow).toBe('main')
       expect(store.useUi.getState().searchFocus).toBe(0)

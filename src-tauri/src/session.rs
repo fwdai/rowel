@@ -19,8 +19,20 @@ use crate::store::{EntryMeta, Record, SqliteStore, StoreError, VaultStore};
 /// that the session it was prepared for is no longer the one in front of it.
 /// The alternative, holding the session mutex from preparation to write, is
 /// what stalled every single-row command behind an import or a rekey.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// It is also how the webview tells the order of an open and a lock apart:
+/// every unlock result says which session it opened (`UnlockResult::session`)
+/// and every `vault:locked` the epoch the lock left (`events::vault_locked`).
+/// The response and the event travel apart and can land in either order; a
+/// result older than a lock the webview has heard of is not entered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Epoch(u64);
+
+impl From<Epoch> for u64 {
+    fn from(epoch: Epoch) -> u64 {
+        epoch.0
+    }
+}
 
 /// The key and store, out of the session for a whole-vault operation (a
 /// password change, a workspace being created beside it).
@@ -167,8 +179,9 @@ impl Session {
     /// Install the derived key and open store as a new session — unless the
     /// vault was locked, or changed hands, since `ticket` was taken. Then the
     /// lock wins: the key and store are dropped here and the vault stays as
-    /// the lock left it. Returns whether the session opened, and an open that
-    /// did not must not go on as if it had.
+    /// the lock left it. The session it opened, for the result to carry
+    /// (see [`Epoch`]); `None` when it did not, and an open that did not must
+    /// not go on as if it had.
     #[must_use]
     pub fn open(
         &mut self,
@@ -176,12 +189,12 @@ impl Session {
         key: VaultKey,
         store: SqliteStore,
         sync_configured: bool,
-    ) -> bool {
+    ) -> Option<Epoch> {
         if self.epoch() != ticket.epoch {
-            return false;
+            return None;
         }
         self.install(key, store, sync_configured);
-        true
+        Some(self.epoch())
     }
 
     /// [`open`](Self::open) with nothing to race: a test's vault, set up
@@ -304,17 +317,48 @@ impl Session {
 /// was sealed; a vault already locked has nothing to announce — but the lock
 /// is still recorded, so an unlock on its way in is refused (see [`Ticket`]).
 pub fn lock(app: &AppHandle) -> bool {
+    end(app, false)
+}
+
+/// The lock the user asked for (the `lock` command): announced even when there
+/// was nothing left to seal — the user asked for the lock screen, and a webview
+/// that somehow still shows the vault gets it.
+pub fn lock_on_request(app: &AppHandle) {
+    end(app, true);
+}
+
+fn end(app: &AppHandle, announce: bool) -> bool {
     let workspace = crate::workspace::active_id(app);
-    let Sealed { live, held, count } = seal(&app.state::<AppState>());
+    let Sealed {
+        live,
+        held,
+        count,
+        epoch,
+    } = seal(&app.state::<AppState>());
     if let Some(count) = count {
         crate::workspace::record_item_count(app, &workspace, count);
     }
-    if !live && !held {
-        return false;
+    let ended = live || held;
+    if ended {
+        sealed(app);
     }
-    sealed(app);
-    events::vault_locked(app);
-    true
+    // With the epoch read under the guard that sealed: read any later, it
+    // could be an open's that landed since, and the webview would take the
+    // result of that open for one this lock overtook.
+    if ended || announce {
+        events::vault_locked(app, epoch);
+    }
+    ended
+}
+
+/// Say `vault:locked` for a session ended other than by [`lock`] — a switch
+/// landing on the lock screen, a deletion, an open its ticket refused — at
+/// the epoch the session stands at now. Only under a step (`begin_step`):
+/// every open holds one too, so none can land between that end and this, and
+/// the epoch said is never a later open's.
+pub fn announce_locked(app: &AppHandle) {
+    let epoch = app.state::<AppState>().session.lock().unwrap().epoch();
+    events::vault_locked(app, epoch);
 }
 
 /// The answer of an open its ticket refused: the vault is locked, by the lock
@@ -333,6 +377,9 @@ struct Sealed {
     held: bool,
     /// The size the vault was left at, for the lock screen to show.
     count: Option<u32>,
+    /// Where the lock left the session: later than every session opened
+    /// before it, earlier than every one opened after.
+    epoch: Epoch,
 }
 
 /// The part of a lock that happens under the session guard: the session and
@@ -364,7 +411,12 @@ fn seal(state: &AppState) -> Sealed {
     // this either runs wholly before such a step, which then finds the ring
     // empty and stands down, or wholly after it, which it then ends.
     let held = state.keyring.lock().unwrap().clear();
-    Sealed { live, held, count }
+    Sealed {
+        live,
+        held,
+        count,
+        epoch: session.epoch(),
+    }
 }
 
 /// What follows every open of a session — a password or biometric unlock, a
@@ -995,7 +1047,8 @@ mod epoch_tests {
             .session
             .lock()
             .unwrap()
-            .open(ticket, key, store, false));
+            .open(ticket, key, store, false)
+            .is_some());
         assert!(state.session.lock().unwrap().is_unlocked());
     }
 
@@ -1015,7 +1068,7 @@ mod epoch_tests {
         let key = key("first");
         let store = store_in(&dir, &key);
         let mut session = state.session.lock().unwrap();
-        assert!(!session.open(ticket, key, store, false));
+        assert!(session.open(ticket, key, store, false).is_none());
         assert!(!session.is_live(), "the vault stays as the lock left it");
     }
 
@@ -1034,11 +1087,12 @@ mod epoch_tests {
         let dir = tempfile::tempdir().unwrap();
         let key = key("first");
         let store = store_in(&dir, &key);
-        assert!(!state
+        assert!(state
             .session
             .lock()
             .unwrap()
-            .open(ticket, key, store, false));
+            .open(ticket, key, store, false)
+            .is_none());
     }
 
     // A lock is a lock however often it lands: a ticket taken after it is
@@ -1056,6 +1110,33 @@ mod epoch_tests {
             .session
             .lock()
             .unwrap()
-            .open(ticket, key, store, false));
+            .open(ticket, key, store, false)
+            .is_some());
+    }
+
+    // What the webview reads off the numbers (`UnlockResult::session` against
+    // `vault:locked`'s epoch): a lock is later than every session opened
+    // before it and earlier than every one opened after, so a result is stale
+    // exactly when a lock the webview has heard of is later than it — in
+    // whatever order the result and the lock's event reached it.
+    #[test]
+    fn a_lock_is_numbered_between_the_session_before_it_and_the_one_after() {
+        let state = AppState::default();
+        let open = |dir: &tempfile::TempDir| {
+            let key = key("first");
+            let store = store_in(dir, &key);
+            let mut session = state.session.lock().unwrap();
+            let ticket = session.ticket();
+            session.open(ticket, key, store, false).unwrap()
+        };
+
+        let before = tempfile::tempdir().unwrap();
+        let opened_before = open(&before);
+        let lock = seal(&state).epoch;
+        let after = tempfile::tempdir().unwrap();
+        let opened_after = open(&after);
+
+        assert!(lock > opened_before, "a result the lock overtook is older");
+        assert!(opened_after > lock, "a result opened since is newer");
     }
 }

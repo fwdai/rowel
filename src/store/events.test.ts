@@ -16,7 +16,9 @@ import {
   flowMain,
   initialApp,
   lockVault,
-  setApp
+  setApp,
+  enterMain,
+  switchWorkspace
 } from './index'
 
 const meta = (id: string): EntryMeta => ({
@@ -218,7 +220,7 @@ describe('vault:locked', () => {
     gate(true)
     flowMain()
 
-    handlerFor(EVENTS.vaultLocked)()
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
     expect(useApp.getState().flow).toBe('auth')
 
     // The regression: this used to be `flowAuth(false)` unconditionally, so an
@@ -236,7 +238,7 @@ describe('vault:locked', () => {
     flowMain()
     setEntries([meta('a')])
 
-    handlerFor(EVENTS.vaultLocked)()
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
 
     expect(useApp.getState().flow).toBe('auth')
     expect(useVault.getState().items).toEqual([])
@@ -249,7 +251,7 @@ describe('vault:locked', () => {
     setCurrentEntry('a')
     setView('archive')
 
-    handlerFor(EVENTS.vaultLocked)()
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
     await vi.waitFor(() => expect(useApp.getState().flow).toBe('auth'))
 
     // Nothing of the unlocked vault survives the lock — the next unlock must
@@ -266,10 +268,51 @@ describe('vault:locked', () => {
     useApp.setState({ status: null })
     flowMain()
 
-    handlerFor(EVENTS.vaultLocked)()
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
     await vi.waitFor(() => expect(useApp.getState().flow).toBe('auth'))
     // A failed re-probe keeps the last known answer, and there was none.
     expect(useApp.getState().status).toBeNull()
+  })
+
+  // The response and the lock's event travel apart. A lock that landed after
+  // an open — the OS locking a moment after the password went in — can reach
+  // the webview before the open's result does; the result names the session it
+  // opened, the event where the lock left the count, and the result the lock
+  // overtook is not entered, whatever brought it.
+  it('turns away a result the lock overtook, though it arrives after the lock', async () => {
+    handlerFor(EVENTS.vaultLocked)({ epoch: 5 })
+
+    const entered = await enterMain({ entries: [meta('a')], syncConfigured: false, session: 4 })
+
+    expect(entered).toBe(false)
+    expect(useApp.getState().flow).toBe('auth')
+    expect(useVault.getState().items).toEqual([])
+  })
+
+  it('enters a result opened after the lock', async () => {
+    handlerFor(EVENTS.vaultLocked)({ epoch: 5 })
+
+    const entered = await enterMain({ entries: [meta('a')], syncConfigured: false, session: 6 })
+
+    expect(entered).toBe(true)
+    expect(useApp.getState().flow).toBe('main')
+  })
+
+  // The sequence as the review put it, through the workspace switch: Rust
+  // opens the next workspace, the OS locks, the lock's event lands, and only
+  // then does the switch's own answer.
+  it('keeps a switch whose result a lock overtook on the lock screen', async () => {
+    flowMain()
+    const answer = deferred<{ entries: EntryMeta[]; syncConfigured: boolean; session: number }>()
+    mockCommand('workspace_select', () => answer.promise)
+
+    const switching = switchWorkspace('w2')
+    handlerFor(EVENTS.vaultLocked)({ epoch: 8 })
+    answer.resolve({ entries: [meta('secret')], syncConfigured: false, session: 7 })
+    await switching
+
+    expect(useApp.getState().flow).toBe('auth')
+    expect(useVault.getState().items).toEqual([])
   })
 })
 

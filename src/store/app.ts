@@ -113,6 +113,14 @@ export interface AppState {
    */
   locks: number
   /**
+   * Where the latest lock the webview has heard of (`vault:locked`) left
+   * Rust's session count. An unlock result opened a session numbered before
+   * it is one that lock overtook, and `enterMain` turns it away: the response
+   * and the event travel apart, and the result can land after the lock that
+   * ended its session.
+   */
+  lockedAt: number
+  /**
    * A backup the OS asked the app to open (`file:opened`), waiting for a
    * screen that can take it: the restore step on a fresh install, Settings ›
    * Import once a vault is open. Kept across a lock — the vault has to be
@@ -158,6 +166,7 @@ export const initialApp: AppState = {
   setupAccount: ACCOUNT_IDLE,
   remoteVaults: [],
   locks: 0,
+  lockedAt: 0,
   openedFile: null,
   update: { readyVersion: null, readyNotes: null, status: null }
 }
@@ -305,7 +314,20 @@ export const setRemoteVaults = (files: RemotePack[]) => useApp.setState({ remote
 // screen — for this, for the autolock, for the tray and for a workspace switch.
 export const lockVault = () => lock().catch(() => {})
 
-export const enterMain = async (result: UnlockResult) => {
+/** A `vault:locked`: the lock's place in Rust's session count (see `lockedAt`). */
+export const lockHeard = (epoch: number) =>
+  useApp.setState(state => ({ lockedAt: Math.max(state.lockedAt, epoch) }))
+
+/**
+ * Open the vault's screens on what an unlock — a password, biometrics, a first
+ * run, a switch, a create, a restore — handed back. The one way in, so the one
+ * place a stale result is turned away: one whose session a lock has since
+ * ended, which can reach the webview after that lock's `vault:locked` (the OS
+ * locking a moment after the open). It stays on the lock screen the lock put
+ * up. Resolves with whether it entered.
+ */
+export const enterMain = async (result: UnlockResult): Promise<boolean> => {
+  if (result.session < useApp.getState().lockedAt) return false
   setEntries(result.entries)
   flowMain()
   // A backup the OS opened while the vault was locked (or before it existed)
@@ -339,6 +361,7 @@ export const enterMain = async (result: UnlockResult) => {
   // and it may itself be holding writes a previous session never published.
   if (result.syncConfigured) syncNow().catch(() => {})
   void runAudit()
+  return true
 }
 
 // --- a backup the OS opened with the app -------------------------------------------

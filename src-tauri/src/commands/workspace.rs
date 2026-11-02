@@ -36,7 +36,7 @@ use crate::crypto::{KdfParams, VaultKey};
 use crate::error::{Error, Result};
 use crate::models::{EntryMetaDto, UnlockResult};
 use crate::secure_store::KeyStore;
-use crate::session::{list_metas, store_err, Lease};
+use crate::session::{list_metas, store_err, Claim, Epoch, Lease};
 use crate::state::AppState;
 use crate::storage;
 use crate::store::{identity, SqliteStore, StoreError};
@@ -170,15 +170,15 @@ pub async fn workspace_select(
     // the store closes and the vault stays as the lock left it, as for any
     // open (`session::Ticket`). The lock has already said `vault:locked` — it
     // ended a ring that held keys — so there is nothing to add.
-    let opened = state
+    let Some(opened) = state
         .session
         .lock()
         .unwrap()
-        .open(ticket, key, store, sync_configured);
-    if !opened {
+        .open(ticket, key, store, sync_configured)
+    else {
         log::info!("vault locked during the switch; workspace {id} stays locked");
         return Ok(None);
-    }
+    };
     // As after any unlock: the session arms its own idle clock, a connected
     // browser extension hears of it (and, re-checking the hash, of the switch),
     // iOS is handed this vault's logins in place of the last one's, and a vault
@@ -190,6 +190,7 @@ pub async fn workspace_select(
     Ok(Some(UnlockResult {
         entries,
         sync_configured,
+        session: opened.into(),
     }))
 }
 
@@ -206,7 +207,7 @@ pub async fn workspace_select(
 /// that kept it there has ended.
 fn land_on_lock_screen(app: &AppHandle) -> Option<UnlockResult> {
     crate::autolock::touch(app);
-    crate::events::vault_locked(app);
+    crate::session::announce_locked(app);
     None
 }
 
@@ -267,6 +268,23 @@ fn restore(state: &AppState, active: String, previous: Lease) {
     let _paths = state.workspace_lock.lock().unwrap();
     *state.active_workspace.lock().unwrap() = active;
     state.session.lock().unwrap().restore(previous);
+}
+
+/// The new workspace's key and store, as the continuation of the session the
+/// previous one was leased from (`Session::adopt`) — and that session, read
+/// under the same guard, for the result to name. `None` when a lock landed
+/// while the lease was out: the lock wins.
+fn continue_session(
+    state: &AppState,
+    claim: Claim,
+    key: VaultKey,
+    store: SqliteStore,
+    sync_configured: bool,
+) -> Option<Epoch> {
+    let mut session = state.session.lock().unwrap();
+    session
+        .adopt(claim, key, store, sync_configured)
+        .then(|| session.epoch())
 }
 
 /// Create a workspace under the device's master password and leave it unlocked.
@@ -380,14 +398,9 @@ pub async fn workspace_create(
     let syncing = inherited.is_some();
     let material = Zeroizing::new(key.biometric_material().to_vec());
     let (_, _, _, claim) = previous.split();
-    if !state
-        .session
-        .lock()
-        .unwrap()
-        .adopt(claim, key, store, syncing)
-    {
+    let Some(opened) = continue_session(&state, claim, key, store, syncing) else {
         return Err(Error::Locked);
-    }
+    };
     // The new vault is open now, and the Argon2id derive above took a while:
     // put it on the idle clock from here rather than from whenever the webview
     // next reports activity.
@@ -401,6 +414,7 @@ pub async fn workspace_create(
     Ok(UnlockResult {
         entries: vec![],
         sync_configured: syncing,
+        session: opened.into(),
     })
 }
 
@@ -728,9 +742,9 @@ async fn restore_workspace(
     // wins — the workspace exists and is recorded, and the next unlock opens it.
     let material = Zeroizing::new(key.biometric_material().to_vec());
     let (_, _, _, claim) = previous.split();
-    if !state.session.lock().unwrap().adopt(claim, key, store, true) {
+    let Some(opened) = continue_session(state, claim, key, store, true) else {
         return Err(Error::Locked);
-    }
+    };
     // As in `workspace_create`: the restored vault is open, so its idle clock
     // starts here — and it is open at the app level, sealed under the app key
     // when the ring holds one.
@@ -742,6 +756,7 @@ async fn restore_workspace(
     Ok(UnlockResult {
         entries,
         sync_configured: true,
+        session: opened.into(),
     })
 }
 
@@ -1065,7 +1080,7 @@ pub async fn workspace_delete(
     if ended_session {
         crate::session::sealed(&app);
         super::sync::switched(&app);
-        crate::events::vault_locked(&app);
+        crate::session::announce_locked(&app);
     }
     applied
 }

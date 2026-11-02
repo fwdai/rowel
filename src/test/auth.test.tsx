@@ -154,14 +154,14 @@ describe('Auth', () => {
   // card waits for the password again rather than showing the vault's list.
   it('does not enter a vault that locked during the success hold', async () => {
     subscribeToEvents()
-    mockCommand('unlock', () => ({ entries: [], syncConfigured: false }))
+    mockCommand('unlock', () => ({ entries: [], syncConfigured: false, session: 1 }))
     render(<Auth biometric={false} />)
 
     await userEvent.type(screen.getByPlaceholderText('Master Password'), 'right{Enter}')
     await waitFor(() =>
       expect(screen.getByTestId('lock-mascot')).toHaveAttribute('data-state', 'success')
     )
-    act(() => emitEvent(EVENTS.vaultLocked, undefined))
+    act(() => emitEvent(EVENTS.vaultLocked, { epoch: 2 }))
 
     await waitFor(
       () => expect(screen.getByTestId('lock-mascot')).not.toHaveAttribute('data-state', 'success'),

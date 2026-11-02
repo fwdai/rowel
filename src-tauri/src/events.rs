@@ -77,8 +77,24 @@ struct Probed {
     files: Vec<PackInfo>,
 }
 
-pub fn vault_locked(app: &AppHandle) {
-    let _ = app.emit(VAULT_LOCKED, ());
+/// Where a lock left the session. Every unlock result names the session it
+/// opened (`UnlockResult::session`), so the webview can tell a result this
+/// lock overtook — whichever of the two reached it first — and not enter it.
+#[derive(Serialize, Clone)]
+struct LockedAt {
+    epoch: u64,
+}
+
+/// The vault is locked, as of `epoch` (see [`crate::session::Epoch`]). Sent
+/// by `session::lock`, which reads it under the guard that sealed, and by
+/// `session::announce_locked` for a session ended any other way.
+pub fn vault_locked(app: &AppHandle, epoch: crate::session::Epoch) {
+    let _ = app.emit(
+        VAULT_LOCKED,
+        LockedAt {
+            epoch: epoch.into(),
+        },
+    );
 }
 
 pub fn vault_merged(app: &AppHandle, entries: Vec<EntryMetaDto>) {

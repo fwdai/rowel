@@ -15,7 +15,7 @@ use crate::session::{derive_key, open_with_key, unlock_with_password};
 use crate::state::AppState;
 use crate::store::SqliteStore;
 use crate::workspace::PRIMARY_ID;
-use crate::{appkey, biometrics, crypto, events, storage};
+use crate::{appkey, biometrics, crypto, storage};
 use std::path::Path;
 use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
@@ -106,14 +106,15 @@ pub async fn unlock(
             // Refused when a lock landed since the ticket was taken: the key
             // and store go, and nothing below runs — no ring, no extension
             // told, no result for the webview to open the vault on.
-            let opened = state
-                .session
-                .lock()
-                .unwrap()
-                .open(ticket, key, store, sync_configured);
-            if !opened {
+            let Some(opened) =
+                state
+                    .session
+                    .lock()
+                    .unwrap()
+                    .open(ticket, key, store, sync_configured)
+            else {
                 return Err(crate::session::locked_meanwhile());
-            }
+            };
             // The idle clock starts with the session, not with the frontend's
             // first activity ping: a webview that never sends one (a build
             // whose bundle failed, a page left untouched) would otherwise leave
@@ -137,6 +138,7 @@ pub async fn unlock(
             Ok(UnlockResult {
                 entries,
                 sync_configured,
+                session: opened.into(),
             })
         }
         Err(Error::InvalidPassword) => {
@@ -212,9 +214,7 @@ pub(crate) async fn open_off_thread(
 // lock screen, and a webview that somehow still shows the vault gets it.
 #[tauri::command]
 pub fn lock(app: AppHandle) -> Result<()> {
-    if !crate::session::lock(&app) {
-        events::vault_locked(&app);
-    }
+    crate::session::lock_on_request(&app);
     Ok(())
 }
 
@@ -285,14 +285,14 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     };
     let (key, store, entries) = open_off_thread(&app, key).await?;
     let sync_configured = storage::sync_configured(&app);
-    let opened = state
+    let Some(opened) = state
         .session
         .lock()
         .unwrap()
-        .open(ticket, key, store, sync_configured);
-    if !opened {
+        .open(ticket, key, store, sync_configured)
+    else {
         return Err(crate::session::locked_meanwhile());
-    }
+    };
     // As in `unlock`: the session arms its own idle clock, a connected browser
     // extension hears of it, iOS is handed its logins, and a vault named before
     // names lived inside it takes the registry's label.
@@ -305,6 +305,7 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     Ok(UnlockResult {
         entries,
         sync_configured,
+        session: opened.into(),
     })
 }
 

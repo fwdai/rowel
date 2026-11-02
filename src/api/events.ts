@@ -20,7 +20,14 @@ import type { EntryMeta } from './types'
  * failure, so it is not an error event.
  */
 export interface EventPayloads {
-  'vault:locked': void
+  /**
+   * The vault is locked, and `epoch` is where the lock left Rust's session
+   * count: later than every session opened before it, earlier than every one
+   * opened after. An unlock result names its session (`UnlockResult.session`),
+   * so one this lock overtook is never entered, whichever reached the webview
+   * first.
+   */
+  'vault:locked': { epoch: number }
   /**
    * A sync pulled entries this device did not have. Carries the whole refreshed
    * list rather than a "reload" ping so the store updates in one render, and

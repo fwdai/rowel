@@ -572,6 +572,11 @@ fn iso(ms: i64) -> Option<String> {
 pub struct UnlockResult {
     pub entries: Vec<EntryMetaDto>,
     pub sync_configured: bool,
+    /// Which session this opened, as the app counts them (its session epoch).
+    /// A lock says the same of where it left the session, so the webview can
+    /// tell a result a lock overtook — whichever reached it first — and not
+    /// open the vault's screens over a vault that is already locked again.
+    pub session: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

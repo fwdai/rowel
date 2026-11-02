@@ -10,6 +10,7 @@ import {
   refreshApp,
   showLockScreen,
   fileOpened,
+  lockHeard,
   setOsLockStatus,
   useApp
 } from './app'
@@ -78,8 +79,11 @@ export const subscribeToEvents = (): (() => void) => {
     // The one reaction to a lock, whoever asked for it: the lock command, the
     // inactivity autolock, the tray, a workspace switch. Every one of them ends
     // in `session::lock` on the Rust side, so none of them has to hand-roll
-    // this — and none of them can forget half of it.
-    on(EVENTS.vaultLocked, () => {
+    // this — and none of them can forget half of it. Where the lock left the
+    // session count is noted first, so an unlock result it overtook — still on
+    // its way to `enterMain` — is turned away there.
+    on(EVENTS.vaultLocked, ({ epoch }) => {
+      lockHeard(epoch)
       clearSession()
       void showLockScreen()
     }),
