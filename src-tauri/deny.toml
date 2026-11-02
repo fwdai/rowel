@@ -17,50 +17,22 @@ targets = [
 all-features = false
 
 [advisories]
-# RustSec advisory DB. Yanked and *vulnerable* crates still fail the build —
-# the ignores below are `unmaintained`/informational advisories (no CVE,
-# no code fix), pulled in transitively by Tauri itself with no safe upgrade
-# available, plus ONE scoped vulnerability exception (zip, at the end) that
-# names the unreachable code path and the release that lifts it.
-# Reviewed 2026-08-31; revisit when Tauri migrates off GTK3 (gtk4-rs)
-# and when the transitive proc-macro/unic crates are replaced upstream.
+# RustSec advisory DB. Vulnerable crates fail the build; yanked ones warn
+# (cargo-deny's default). The ignores below are `unmaintained`/informational
+# advisories (no CVE, no code fix) pulled in transitively with no safe upgrade
+# available, plus ONE scoped vulnerability exception (crypto-bigint, at the
+# end) that names who can reach it and the release that lifts it. An ignore
+# that stops matching shows up as `advisory-not-detected`: drop it.
+# Reviewed 2026-11-02.
 ignore = [
-  # --- Tauri's Linux GTK3 stack (gtk-rs archived; awaiting Tauri gtk4 move) ---
-  # tauri -> tray-icon/wry/webkit2gtk -> gtk 0.18. "No safe upgrade available."
-  { id = "RUSTSEC-2024-0411", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2024-0412", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2024-0413", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2024-0414", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2024-0415", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2024-0416", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2024-0417", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2024-0418", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2024-0419", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2024-0420", reason = "unmaintained gtk-rs GTK3 binding (transitive via tauri); no fix upstream — 2026-08-31" },
-  # --- Other transitive unmaintained crates (informational, no CVE) ---
+  # --- Transitive unmaintained crates (informational, no CVE) ---
   { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; transitive build-time dep, no runtime impact — 2026-08-31" },
-  { id = "RUSTSEC-2025-0075", reason = "unic-char-range unmaintained; transitive dep, no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2025-0080", reason = "unic-common unmaintained; transitive dep, no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2025-0081", reason = "unic-char-property unmaintained; transitive dep, no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version unmaintained; transitive dep, no fix upstream — 2026-08-31" },
-  { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident unmaintained; transitive dep, no fix upstream — 2026-08-31" },
   # zbus 5 split crates, folded into zbus 6 (names/zvariant modules). Linux
   # only, via tauri-plugin-opener, tauri-plugin-single-instance and the app's
   # D-Bus deps; lift when Tauri and those move to zbus 6.
   { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
-  # --- zip 4.x extraction vulnerabilities (SUID bits, symlink escape) ---
-  # The app's own zip use (1Password import) is on zip 9. The 4.x copy is
-  # tauri-plugin-updater's Windows-only `zip` feature, which extracts legacy
-  # `.zip` update bundles: Rowel ships NSIS `-setup.exe` with v2 updater
-  # artifacts, so `extract_zip` is never entered (the bytes are not a zip), and
-  # every download is minisign-verified before any extraction. The current
-  # plugin (2.14.0) still declares `zip = "4"`; lift when a release moves it to
-  # zip >= 9.
-  { id = "RUSTSEC-2026-0367", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); plugin still on zip 4 — 2026-10-22" },
-  { id = "RUSTSEC-2026-0368", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); plugin still on zip 4 — 2026-10-22" },
-  { id = "RUSTSEC-2026-0369", reason = "zip 4.x in tauri-plugin-updater (Windows legacy .zip path, unreachable: NSIS .exe + v2 artifacts, signature-verified); plugin still on zip 4 — 2026-10-22" },
   # --- crypto-bigint 0.5 timing variability (RUSTSEC-2026-0387) ---
   # Reachable: P-256 ECDSA in passkey assertions (passkey-authenticator ->
   # p256) and the P-256/384/521 paths of ssh-key, both through
