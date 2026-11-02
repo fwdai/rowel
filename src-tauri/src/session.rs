@@ -44,6 +44,21 @@ pub struct Claim {
     epoch: Epoch,
 }
 
+/// Taken before the slow part of anything that opens a session from locked —
+/// an unlock deriving its key, a first run creating or restoring its vault, a
+/// switch opening the next workspace — and presented to [`Session::open`].
+///
+/// Every lock advances the epoch, whether or not it found anything open
+/// ([`seal`]), so an open whose ticket predates a lock is refused. Without
+/// it a lock that landed while the key was still being derived — the OS
+/// locking a second after the password was submitted — found nothing to
+/// seal and left no trace, and the unlock then opened the vault behind it.
+/// The same rule as a lease's [`Claim`], for an open that starts from nothing.
+#[derive(Clone, Copy, Debug)]
+pub struct Ticket {
+    epoch: Epoch,
+}
+
 impl Lease {
     /// The key and store to work on, and the claim to hand the result back with.
     pub fn split(self) -> (VaultKey, SqliteStore, bool, Claim) {
@@ -142,8 +157,41 @@ impl Session {
         self.store()
     }
 
-    // Adopt the derived key and open store for this session.
+    /// What an open about to start its slow part takes (see [`Ticket`]).
+    pub fn ticket(&self) -> Ticket {
+        Ticket {
+            epoch: self.epoch(),
+        }
+    }
+
+    /// Install the derived key and open store as a new session — unless the
+    /// vault was locked, or changed hands, since `ticket` was taken. Then the
+    /// lock wins: the key and store are dropped here and the vault stays as
+    /// the lock left it. Returns whether the session opened, and an open that
+    /// did not must not go on as if it had.
+    #[must_use]
+    pub fn open(
+        &mut self,
+        ticket: Ticket,
+        key: VaultKey,
+        store: SqliteStore,
+        sync_configured: bool,
+    ) -> bool {
+        if self.epoch() != ticket.epoch {
+            return false;
+        }
+        self.install(key, store, sync_configured);
+        true
+    }
+
+    /// [`open`](Self::open) with nothing to race: a test's vault, set up
+    /// before anything could lock it. Production code opens with a ticket.
+    #[cfg(test)]
     pub fn set(&mut self, key: VaultKey, store: SqliteStore, sync_configured: bool) {
+        self.install(key, store, sync_configured);
+    }
+
+    fn install(&mut self, key: VaultKey, store: SqliteStore, sync_configured: bool) {
         self.advance();
         self.key = Some(key);
         self.store = Some(store);
@@ -249,14 +297,47 @@ impl Session {
 /// everything and show the lock screen" ended up written three times over
 /// there.
 ///
-/// The check and the clear happen under one guard. Checked first and cleared
-/// later, an idle timer coming due in the gap between an unlock's check and
-/// its `set` would clear the session that unlock had just opened and send the
-/// user straight back to the lock screen. Returns whether anything was sealed;
-/// a vault already locked has nothing to announce.
+/// The check and the clear happen under one guard ([`seal`]). Checked first
+/// and cleared later, an idle timer coming due in the gap between an unlock's
+/// check and its open would clear the session that unlock had just opened and
+/// send the user straight back to the lock screen. Returns whether anything
+/// was sealed; a vault already locked has nothing to announce — but the lock
+/// is still recorded, so an unlock on its way in is refused (see [`Ticket`]).
 pub fn lock(app: &AppHandle) -> bool {
-    let state = app.state::<AppState>();
     let workspace = crate::workspace::active_id(app);
+    let Sealed { live, held, count } = seal(&app.state::<AppState>());
+    if let Some(count) = count {
+        crate::workspace::record_item_count(app, &workspace, count);
+    }
+    if !live && !held {
+        return false;
+    }
+    sealed(app);
+    events::vault_locked(app);
+    true
+}
+
+/// The answer of an open its ticket refused: the vault is locked, by the lock
+/// that landed while the open was on its way. That lock has already said so,
+/// or — with nothing open to seal — had nothing to say.
+pub fn locked_meanwhile() -> Error {
+    log::info!("the vault was locked while it was being opened; it stays locked");
+    Error::Locked
+}
+
+/// What a lock found under the session guard.
+struct Sealed {
+    /// A session was open, or out on a lease.
+    live: bool,
+    /// The ring held keys: the app was open at its own level.
+    held: bool,
+    /// The size the vault was left at, for the lock screen to show.
+    count: Option<u32>,
+}
+
+/// The part of a lock that happens under the session guard: the session and
+/// the ring cleared, in one step.
+fn seal(state: &AppState) -> Sealed {
     let mut session = state.session.lock().unwrap();
     let live = session.is_live();
     // The size the vault is left at, for the lock screen to show while it is
@@ -267,9 +348,11 @@ pub fn lock(app: &AppHandle) -> bool {
         .store()
         .ok()
         .and_then(|store| store.count_live().ok());
-    if live {
-        session.clear();
-    }
+    // Open or not: clearing advances the epoch, and that is the lock's record.
+    // An unlock still deriving its key when the lock lands — the OS locking a
+    // moment after the password went in — has nothing here to seal yet, and
+    // its ticket is what finds out it lost (`Session::open`).
+    session.clear();
     // The app-level unlock ends with every lock, whichever workspace was open
     // — and whether or not one was: a ring kept across a switch to a workspace
     // it did not hold (`workspace_select`) is a vault open at this level with
@@ -281,16 +364,7 @@ pub fn lock(app: &AppHandle) -> bool {
     // this either runs wholly before such a step, which then finds the ring
     // empty and stands down, or wholly after it, which it then ends.
     let held = state.keyring.lock().unwrap().clear();
-    drop(session);
-    if let Some(count) = count {
-        crate::workspace::record_item_count(app, &workspace, count);
-    }
-    if !live && !held {
-        return false;
-    }
-    sealed(app);
-    events::vault_locked(app);
-    true
+    Sealed { live, held, count }
 }
 
 /// What follows every open of a session — a password or biometric unlock, a
@@ -548,7 +622,9 @@ pub fn live_records(store: &SqliteStore) -> Result<Vec<Record>> {
 /// too long is a shape, not an error. So these are tripwires rather than proofs.
 /// They read the source of the four functions that had it wrong and assert the
 /// order their statements are in, so re-introducing the old shape fails the
-/// build with the reason attached.
+/// build with the reason attached. The same for the other side of that rule:
+/// with no guard held across the slow part of an open, the open takes a
+/// [`Ticket`] before it, so a lock that lands during it still wins.
 #[cfg(test)]
 mod lock_scope {
     // Everything above the test module: the fakes below it borrow nothing from
@@ -630,6 +706,51 @@ mod lock_scope {
             !reclaim.contains("pack_store"),
             "the reclaim runs under the guard, so the pack may not move into it"
         );
+    }
+
+    // Every open from locked takes its ticket before its slow part — the
+    // derive, the biometric prompt, the download, the restore — and opens
+    // with it, so a lock that lands during that part wins (`Ticket`).
+    #[test]
+    fn every_open_takes_its_ticket_before_the_slow_part() {
+        let auth = include_str!("commands/auth.rs");
+        let opens = [
+            (body_of(auth, "pub async fn unlock("), "unlock_off_thread("),
+            (
+                body_of(auth, "pub async fn unlock_biometric("),
+                ".retrieve(",
+            ),
+            (
+                body_of(
+                    include_str!("commands/workspace.rs"),
+                    "pub async fn workspace_select(",
+                ),
+                "open_off_thread(",
+            ),
+        ];
+        for (body, slow) in &opens {
+            assert!(
+                at(body, ".ticket()") < at(body, slow),
+                "the ticket is taken before `{slow}`, which a lock can land during"
+            );
+            at(body, ".open(ticket");
+        }
+
+        let setup = include_str!("commands/setup.rs");
+        for (signature, slow) in [
+            ("pub async fn setup_restore_from_account(", "download("),
+            ("pub async fn setup_restore_from_file(", "blocking("),
+            ("pub async fn setup_restore_from_legacy(", "blocking("),
+            ("pub async fn setup_create(", "create_off_thread("),
+        ] {
+            let body = body_of(setup, signature);
+            assert!(
+                at(&body, ".ticket()") < at(&body, slow),
+                "{signature}: the ticket is taken before `{slow}`"
+            );
+            at(&body, "adopt(&app, &state, ticket,");
+        }
+        at(&body_of(setup, "fn adopt("), ".open(ticket");
     }
 
     #[test]
@@ -854,5 +975,84 @@ mod epoch_tests {
             session.store_at(prepared),
             Err(Error::StaleSession)
         ));
+    }
+
+    // The unlock as the commands run it: the ticket first, the key derived
+    // with no guard held, the open last.
+    #[test]
+    fn an_undisturbed_unlock_opens() {
+        let state = AppState::default();
+        let ticket = state.session.lock().unwrap().ticket();
+
+        let dir = tempfile::tempdir().unwrap();
+        let key = key("first");
+        let store = store_in(&dir, &key);
+
+        assert!(state
+            .session
+            .lock()
+            .unwrap()
+            .open(ticket, key, store, false));
+        assert!(state.session.lock().unwrap().is_unlocked());
+    }
+
+    // The regression: the password is in, the key is being derived, and the
+    // OS locks. Nothing is open yet, so the lock has nothing to seal — and it
+    // used to leave no trace either, so the unlock then opened the vault
+    // behind the locked OS. The lock now wins over the open still on its way.
+    #[test]
+    fn a_lock_while_an_unlock_derives_wins_with_nothing_open() {
+        let state = AppState::default();
+        let ticket = state.session.lock().unwrap().ticket();
+
+        let sealed = seal(&state);
+        assert!(!sealed.live && !sealed.held, "nothing was open to seal");
+
+        let dir = tempfile::tempdir().unwrap();
+        let key = key("first");
+        let store = store_in(&dir, &key);
+        let mut session = state.session.lock().unwrap();
+        assert!(!session.open(ticket, key, store, false));
+        assert!(!session.is_live(), "the vault stays as the lock left it");
+    }
+
+    // The app open at its own level — a ring kept across a switch — with no
+    // session behind it: the lock ends the ring and refuses the open too.
+    #[test]
+    fn a_lock_while_a_switch_opens_wins_over_the_ring_it_opened_from() {
+        let state = AppState::default();
+        state.keyring.lock().unwrap().insert("w2", b"material");
+        let ticket = state.session.lock().unwrap().ticket();
+
+        let sealed = seal(&state);
+        assert!(sealed.held && !sealed.live);
+        assert!(state.keyring.lock().unwrap().is_empty());
+
+        let dir = tempfile::tempdir().unwrap();
+        let key = key("first");
+        let store = store_in(&dir, &key);
+        assert!(!state
+            .session
+            .lock()
+            .unwrap()
+            .open(ticket, key, store, false));
+    }
+
+    // A lock is a lock however often it lands: a ticket taken after it is
+    // good, so an unlock started once the OS is unlocked again opens.
+    #[test]
+    fn a_ticket_taken_after_a_lock_opens() {
+        let state = AppState::default();
+        seal(&state);
+        let ticket = state.session.lock().unwrap().ticket();
+
+        let dir = tempfile::tempdir().unwrap();
+        let key = key("first");
+        let store = store_in(&dir, &key);
+        assert!(state
+            .session
+            .lock()
+            .unwrap()
+            .open(ticket, key, store, false));
     }
 }

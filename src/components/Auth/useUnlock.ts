@@ -39,6 +39,10 @@ const biometricError = (t: TFunction, error: unknown): string =>
 const lockedMessage = (t: TFunction, seconds: number) =>
   t('Too many failed attempts. Try again in {{seconds}}s', { seconds })
 
+// Whether a session has been dropped since `locks` was read: a `vault:locked`
+// has landed (see `pending` below).
+const lockedSince = (locks: number) => useApp.getState().locks !== locks
+
 // One attempt-lifecycle slot instead of separate success/pending booleans:
 // only one of these can be true at a time, and everything below derives from
 // the same precedence.
@@ -108,8 +112,13 @@ export function useUnlock(): Unlock {
   const holdTimer = useRef(0)
   // The unlock the hold is sitting on. The backend has already opened the vault
   // by the time this is set, so it must reach `enterMain` whatever happens to
-  // this hook — see the unmount cleanup below.
-  const pending = useRef<UnlockResult | null>(null)
+  // this hook — see the unmount cleanup below — unless a lock has ended that
+  // session since: `locks` is the count of sessions dropped (`clearSession`,
+  // on every `vault:locked`) as the attempt began, and a count that has moved
+  // on is a lock that landed while the result was on its way in. The OS
+  // locking during the hold is that: Rust has sealed the vault, and entering
+  // would put its list on screen over a locked backend.
+  const pending = useRef<{ result: UnlockResult; locks: number } | null>(null)
   const vault = useApp(selectActiveWorkspace)
   const switching = useApp(state => state.switching)
 
@@ -149,23 +158,28 @@ export function useUnlock(): Unlock {
   useEffect(
     () => () => {
       clearTimeout(holdTimer.current)
-      const result = pending.current
+      const held = pending.current
       pending.current = null
-      if (result && useApp.getState().flow === 'auth') void enterMain(result)
+      if (held && useApp.getState().flow === 'auth' && !lockedSince(held.locks)) {
+        void enterMain(held.result)
+      }
     },
     []
   )
 
   // Let the mascot celebrate, then wait for the window to be in front, before
   // the vault takes over. Whoever clears `pending` first — this, or the
-  // unmount above — is the one that enters.
-  const holdThenEnter = (result: UnlockResult) => {
+  // unmount above — is the one that enters; and nobody does once a lock has
+  // landed since the attempt began, which leaves the card waiting again.
+  const holdThenEnter = (result: UnlockResult, locks: number) => {
     setPhase('success')
-    pending.current = result
+    const held = { result, locks }
+    pending.current = held
     holdTimer.current = window.setTimeout(() => {
       void untilFocused(FOCUS_WAIT_MS).then(() => {
-        if (pending.current !== result) return
+        if (pending.current !== held) return
         pending.current = null
+        if (lockedSince(locks)) return setPhase('idle')
         void enterMain(result)
       })
     }, SUCCESS_HOLD_MS)
@@ -179,6 +193,7 @@ export function useUnlock(): Unlock {
     // (and drop any stale error — this attempt owns the eyebrow now).
     setError(null)
     setPhase('verifying')
+    const locks = useApp.getState().locks
     // Asking for the vault password: move the lockbox onto it, then open it
     // with it — the one password every lockbox opens with from here on. Once
     // moved, only the unlock is left to do.
@@ -194,10 +209,14 @@ export function useUnlock(): Unlock {
     attempt
       .then(result => {
         setMoving(null)
-        holdThenEnter(result)
+        holdThenEnter(result, locks)
       })
       .catch((err: unknown) => {
         setPhase('idle')
+        // A lock landed while the key was being derived, and Rust kept the
+        // vault locked: not a failure of the password, just the card waiting
+        // again.
+        if (errorKind(err) === 'locked') return
         const workspaceId = vaultPasswordRequiredFor(err)
         if (workspaceId) {
           // The card is keyed on the question, so it comes back empty.
@@ -218,13 +237,16 @@ export function useUnlock(): Unlock {
     if (phase !== 'idle' || switching) return
     setError(null)
     setPhase('verifying')
+    const locks = useApp.getState().locks
     unlockBiometric()
-      .then(holdThenEnter)
+      .then(result => holdThenEnter(result, locks))
       .catch((err: unknown) => {
         setPhase('idle')
-        // A prompt the user dismissed is their choice, not a failure to
-        // report in red: the screen goes back to waiting, passphrase at hand.
-        if (errorKind(err) !== 'cancelled') setError(biometricError(t, err))
+        // A prompt the user dismissed is their choice, and a lock that landed
+        // during it kept the vault locked: neither is a failure to report in
+        // red — the screen goes back to waiting, passphrase at hand.
+        const kind = errorKind(err)
+        if (kind !== 'cancelled' && kind !== 'locked') setError(biometricError(t, err))
       })
   }
 

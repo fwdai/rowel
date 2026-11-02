@@ -46,6 +46,10 @@ pub async fn unlock(
     // saga), and the recovery below would read that change's snapshot as an
     // interrupted one and copy it over a database the saga still has open.
     let _step = super::setup::begin_step(&state)?;
+    // Before the derive: a lock that lands while it runs — the OS locking a
+    // moment after the password went in — finds nothing to seal yet, and this
+    // is what tells the open below that it lost (`session::Ticket`).
+    let ticket = state.session.lock().unwrap().ticket();
     // Before the lockout check and before anything reads the sidecar: a crash
     // during a password change can leave the DB and the sidecar disagreeing, and
     // the rollback has to land before either is consulted.
@@ -99,11 +103,17 @@ pub async fn unlock(
             };
             let sync_configured = storage::sync_configured(&app);
             let material = Zeroizing::new(key.biometric_material().to_vec());
-            state
+            // Refused when a lock landed since the ticket was taken: the key
+            // and store go, and nothing below runs — no ring, no extension
+            // told, no result for the webview to open the vault on.
+            let opened = state
                 .session
                 .lock()
                 .unwrap()
-                .set(key, store, sync_configured);
+                .open(ticket, key, store, sync_configured);
+            if !opened {
+                return Err(crate::session::locked_meanwhile());
+            }
             // The idle clock starts with the session, not with the frontend's
             // first activity ping: a webview that never sends one (a build
             // whose bundle failed, a page left untouched) would otherwise leave
@@ -234,6 +244,9 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     // and an interrupted change rolled back before the sidecar decides how to
     // read the stored material.
     let _step = super::setup::begin_step(&state)?;
+    // Before the prompt and the open, as in `unlock`: a lock that lands while
+    // either runs is what this finds out about at the end.
+    let ticket = state.session.lock().unwrap().ticket();
     auth::recover_interrupted_rekey(&app, &state)?;
 
     let Some(marker) = storage::biometric_marker(&app) else {
@@ -272,11 +285,14 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     };
     let (key, store, entries) = open_off_thread(&app, key).await?;
     let sync_configured = storage::sync_configured(&app);
-    state
+    let opened = state
         .session
         .lock()
         .unwrap()
-        .set(key, store, sync_configured);
+        .open(ticket, key, store, sync_configured);
+    if !opened {
+        return Err(crate::session::locked_meanwhile());
+    }
     // As in `unlock`: the session arms its own idle clock, a connected browser
     // extension hears of it, iOS is handed its logins, and a vault named before
     // names lived inside it takes the registry's label.

@@ -71,7 +71,7 @@ pub async fn workspace_select(
     let _step = begin_step(&state)?;
     let root = storage::root_dir(&app)?;
 
-    let material = {
+    let (material, ticket) = {
         // Read under the lock too: every writer of the registry holds it, so
         // what is saved below is a change to the current file, never to a
         // stale copy.
@@ -112,10 +112,20 @@ pub async fn workspace_select(
         // hold one workspace's key against another's database. The ring is
         // untouched — the open workspace's key stays in it, which is what
         // lets a switch back open it without a prompt.
-        let material = state.keyring.lock().unwrap().get(&id);
-        state.session.lock().unwrap().clear();
+        //
+        // The key is read and the ticket taken under one session guard, the
+        // one a lock seals the session and the ring under (`session::seal`):
+        // a lock lands either before both — and the ring holds no key — or
+        // after both, and refuses the open below. The ticket comes after the
+        // switch's own clear, which is a change of hands of its own.
+        let (material, ticket) = {
+            let mut session = state.session.lock().unwrap();
+            let material = state.keyring.lock().unwrap().get(&id);
+            session.clear();
+            (material, session.ticket())
+        };
         *state.active_workspace.lock().unwrap() = id.clone();
-        material
+        (material, ticket)
     };
     // Ended like any other session: clipboard cleared, idle timer dropped.
     crate::session::sealed(&app);
@@ -155,20 +165,19 @@ pub async fn workspace_select(
         }
     };
     let sync_configured = storage::sync_configured(&app);
-    // The ring is what authorised this open, so it is asked once more before
-    // the vault is handed to the session — under the session lock, as a lock
-    // reads and clears it (`session::lock`). A lock that landed while the open
-    // was in flight cleared the ring, so a ring that no longer holds this key
-    // is a lock that won: the store closes and the vault stays as the lock
-    // left it, exactly as a lease `Session::adopt` refuses does for a create.
-    // The lock has already said `vault:locked`; there is nothing to add.
-    {
-        let mut session = state.session.lock().unwrap();
-        if !state.keyring.lock().unwrap().has(&id) {
-            log::info!("vault locked during the switch; workspace {id} stays locked");
-            return Ok(None);
-        }
-        session.set(key, store, sync_configured);
+    // A lock that landed while the open was in flight cleared the ring this
+    // key came from and moved the session on, so the ticket refuses the open:
+    // the store closes and the vault stays as the lock left it, as for any
+    // open (`session::Ticket`). The lock has already said `vault:locked` — it
+    // ended a ring that held keys — so there is nothing to add.
+    let opened = state
+        .session
+        .lock()
+        .unwrap()
+        .open(ticket, key, store, sync_configured);
+    if !opened {
+        log::info!("vault locked during the switch; workspace {id} stays locked");
+        return Ok(None);
     }
     // As after any unlock: the session arms its own idle clock, a connected
     // browser extension hears of it (and, re-checking the hash, of the switch),
