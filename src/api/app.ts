@@ -8,15 +8,8 @@ import type { Accent, ThemePreference } from '@/theme'
 export type DateFormat = 'MM/DD/YYYY' | 'DD.MM.YYYY' | 'YYYY-MM-DD'
 
 /**
- * Whether Rust hears the OS locking here — the screen lock, sleep, a switch to
- * another user. Where it does, the vault seals with it whatever the timeout,
- * and Settings offers to follow it instead of a timeout. Never on a phone.
- *
- * On a desktop it changes at run time: the listener comes up on a thread of
- * its own, possibly before the app listens, and can be lost later. So it
- * arrives as an `oslock:status` event on every change, and as `osLockStatus`
- * asked once the app listens for that event — in either order, and the store
- * keeps whichever has the higher `seq` (`setOsLockStatus`).
+ * Whether Rust hears the OS locking. Arrives as `oslock:status` and as one
+ * `osLockStatus` asked after subscribing; `seq` orders the two.
  */
 export interface OsLockStatus {
   supported: boolean
@@ -48,11 +41,7 @@ export interface Settings {
   breachCheck: boolean
   /** Idle seconds before the vault seals itself; enforced by Rust. */
   autolockSecs: number
-  /**
-   * Follow the OS instead: the vault seals when the computer locks or sleeps,
-   * and idles out only after a day. Counts only while the OS locking is heard
-   * (`OsLockStatus`); `autolockSecs` stays the timeout everywhere else.
-   */
+  /** Lock with the OS instead of `autolockSecs`, which stays the fallback. */
   autolockFollowsOs: boolean
   /** How long a copied secret lingers before the clipboard is cleared (ms). */
   clipboardTimeoutMs: number
@@ -161,5 +150,4 @@ export const hideWindow = (): Promise<void> => call('hide_window')
  */
 export const takeOpenedFile = (): Promise<string | null> => call('take_opened_file')
 
-/** Whether the OS locking is heard now (see `OsLockStatus`). */
 export const osLockStatus = (): Promise<OsLockStatus> => call('os_lock_status')

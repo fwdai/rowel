@@ -1,7 +1,5 @@
-//! Windows: the session-change and power broadcasts, to a hidden window of the
-//! listener's own on a thread of its own. Tauri has no hook into the main
-//! window's messages, and this window outlives that one being hidden to the
-//! tray or closed.
+//! Windows: session-change and power broadcasts to a hidden window of our own,
+//! since Tauri exposes no hook into the main window's messages.
 
 use std::sync::OnceLock;
 
@@ -22,7 +20,6 @@ use super::{Event, Sink};
 
 const CLASS: PCWSTR = w!("RowelOsLock");
 
-// The window procedure is a plain function, so this is where it finds the sink.
 static SINK: OnceLock<Sink> = OnceLock::new();
 
 pub(super) fn watch(sink: Sink) {
@@ -48,15 +45,13 @@ fn run() {
             return;
         }
     };
-    // Sleep and wake reach the window without this; a lock of the session or
-    // a switch away only once it is registered for them.
     // SAFETY: a window this thread owns, for as long as the process runs.
     match unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) } {
         Ok(()) => sink(Event::Watching),
         Err(error) => log::warn!("the session locking is not heard: {error}"),
     }
     let mut message = MSG::default();
-    // `GetMessageW` is -1 on an error and 0 on `WM_QUIT`; either ends the loop.
+    // -1 is an error and 0 is `WM_QUIT`; either ends the loop.
     // SAFETY: the message loop of the thread that owns the window.
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
         unsafe { DispatchMessageW(&message) };
@@ -64,8 +59,7 @@ fn run() {
     sink(Event::Lost);
 }
 
-/// A top-level window that is never shown. Not a message-only one: power
-/// broadcasts do not reach those.
+/// Never shown. Top-level, since message-only windows miss power broadcasts.
 fn window() -> windows::core::Result<HWND> {
     // SAFETY: plain Win32 calls with a class whose procedure is below.
     unsafe {
@@ -109,7 +103,6 @@ unsafe extern "system" fn procedure(
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
 }
 
-/// What a message to the window says the OS did, if anything.
 fn event(message: u32, wparam: WPARAM) -> Option<Event> {
     let code = u32::try_from(wparam.0).ok()?;
     match (message, code) {

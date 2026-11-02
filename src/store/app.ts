@@ -89,12 +89,7 @@ export interface AppState {
    * local until the next lock.
    */
   sync: SyncStatus
-  /**
-   * Whether Rust hears the OS locking, and so whether Settings offers to
-   * follow it. Not on `status`: it changes between probes (the listener comes
-   * up late, or is lost), so it arrives as `oslock:status` and as the answer
-   * to asking once listening, reconciled by `seq` (see `OsLockStatus`).
-   */
+  /** Whether Rust hears the OS locking; changes between probes (`OsLockStatus`). */
   osLock: OsLockStatus
   setupAccount: SetupAccountState
   /**
@@ -112,13 +107,7 @@ export interface AppState {
    * asked for it. The Rust side keeps the same check around its own awaits.
    */
   locks: number
-  /**
-   * Where the latest lock the webview has heard of (`vault:locked`) left
-   * Rust's session count. An unlock result opened a session numbered before
-   * it is one that lock overtook, and `enterMain` turns it away: the response
-   * and the event travel apart, and the result can land after the lock that
-   * ended its session.
-   */
+  /** The latest `vault:locked` epoch; `enterMain` refuses results older than it. */
   lockedAt: number
   /**
    * A backup the OS asked the app to open (`file:opened`), waiting for a
@@ -197,13 +186,12 @@ export const setApp = (status: AppStatus, mark?: number) => {
 }
 
 /**
- * Of two snapshots of the same backend state, the one the backend produced
- * later. The probe and the state's event are two routes for the same fact, and
- * a probe taken just before a transition can resolve after the event that
- * transition emitted; without this it would put the older state back on
- * screen. Equal sequence numbers mean the same transition, and the incoming
- * copy is taken so a sync `configured` that changed without a transition
- * still lands.
+ * Of two snapshots, the one the backend produced later. The probe and the
+ * `sync:status` event are two routes for the same fact, and a probe taken just
+ * before a transition can resolve after the event that transition emitted;
+ * without this it would put the older state back on screen. Equal sequence
+ * numbers mean the same transition, and the incoming copy is taken so a
+ * `configured` that changed without a transition still lands.
  */
 const newer = <T extends { seq: number }>(held: T, incoming: T): T =>
   incoming.seq >= held.seq ? incoming : held
@@ -310,17 +298,12 @@ export const setRemoteVaults = (files: RemotePack[]) => useApp.setState({ remote
 // screen — for this, for the autolock, for the tray and for a workspace switch.
 export const lockVault = () => lock().catch(() => {})
 
-/** A `vault:locked`: the lock's place in Rust's session count (see `lockedAt`). */
 export const lockHeard = (epoch: number) =>
   useApp.setState(state => ({ lockedAt: Math.max(state.lockedAt, epoch) }))
 
 /**
- * Open the vault's screens on what an unlock — a password, biometrics, a first
- * run, a switch, a create, a restore — handed back. The one way in, so the one
- * place a stale result is turned away: one whose session a lock has since
- * ended, which can reach the webview after that lock's `vault:locked` (the OS
- * locking a moment after the open). It stays on the lock screen the lock put
- * up. Resolves with whether it entered.
+ * The one way into the vault's screens. Refuses a result whose session a lock
+ * has since ended, as its response can arrive after the lock's event.
  */
 export const enterMain = async (result: UnlockResult): Promise<boolean> => {
   if (result.session < useApp.getState().lockedAt) return false
@@ -329,9 +312,7 @@ export const enterMain = async (result: UnlockResult): Promise<boolean> => {
   // A backup the OS opened while the vault was locked (or before it existed)
   // has waited for this: the only screen that can import it is now reachable.
   if (useApp.getState().openedFile) openSettings('import')
-  // Otherwise the caret starts in the search field, so the first keystroke
-  // after an unlock is already a query. Not on a phone or tablet: a focused
-  // field there raises the on-screen keyboard over the vault just opened.
+  // Not on mobile, where focusing raises the on-screen keyboard.
   else if (!isMobile) focusSearch()
   // The unlock result carries whether this vault syncs; everything else about
   // sync arrives as `sync:status` once a flow or a run happens. No re-probe:
@@ -418,7 +399,6 @@ export const scheduleSync = () => {
 export const setSyncStatus = (sync: SyncStatus) =>
   useApp.setState(state => ({ sync: newer(state.sync, sync) }))
 
-/** An `oslock:status`, or the answer to asking for one (see `OsLockStatus`). */
 export const setOsLockStatus = (osLock: OsLockStatus) =>
   useApp.setState(state => ({ osLock: newer(state.osLock, osLock) }))
 

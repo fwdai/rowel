@@ -43,7 +43,6 @@ pub const AGENTS_CHANGED: &str = "agents:changed";
 #[cfg(desktop)]
 pub const ORG_CONNECT: &str = "org:connect";
 pub const ORG_CHANGED: &str = "org:changed";
-// Desktop only, like the listener whose state it carries (`crate::oslock`).
 #[cfg(desktop)]
 pub const OS_LOCK_STATUS: &str = "oslock:status";
 
@@ -77,17 +76,12 @@ struct Probed {
     files: Vec<PackInfo>,
 }
 
-/// Where a lock left the session. Every unlock result names the session it
-/// opened (`UnlockResult::session`), so the webview can tell a result this
-/// lock overtook — whichever of the two reached it first — and not enter it.
 #[derive(Serialize, Clone)]
 struct LockedAt {
     epoch: u64,
 }
 
-/// The vault is locked, as of `epoch` (see [`crate::session::Epoch`]). Sent
-/// by `session::lock`, which reads it under the guard that sealed, and by
-/// `session::announce_locked` for a session ended any other way.
+/// `epoch` is where the lock left the session; the webview compares results to it.
 pub fn vault_locked(app: &AppHandle, epoch: crate::session::Epoch) {
     let _ = app.emit(
         VAULT_LOCKED,
@@ -108,9 +102,6 @@ pub fn sync_status(app: &AppHandle, status: SyncStatus) {
     let _ = app.emit(SYNC_STATUS, status);
 }
 
-/// Whether the OS locking is heard, every time that changes: the listener came
-/// up, or was lost. A snapshot with its sequence number, as sync's is, so it
-/// and the webview's own ask (`os_lock_status`) can arrive in either order.
 #[cfg(desktop)]
 pub fn os_lock_status(app: &AppHandle, status: crate::autolock::OsLockStatus) {
     let _ = app.emit(OS_LOCK_STATUS, status);

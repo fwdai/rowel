@@ -126,11 +126,7 @@ impl Default for BrowserSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub autolock_secs: u64,
-    /// "Follow the OS": no idle lock of the app's own short of the day-long
-    /// ceiling, the OS locking being the lock (`autolock`). Off by default, so
-    /// a file written before it existed keeps its timeout. `autolock_secs` is
-    /// kept beside it — the timeout in force wherever the OS is not heard, and
-    /// the one Settings goes back to.
+    /// "Follow the OS" instead of `autolock_secs`, which stays as the fallback.
     pub autolock_follows_os: bool,
     pub clipboard_timeout_ms: u64,
     pub date_format: String,
@@ -532,9 +528,6 @@ mod tests {
         assert_eq!(stored.normalize().autolock_secs, DEFAULT_AUTOLOCK_SECS);
     }
 
-    // Following the OS is its own key, not a timeout of zero: a file written
-    // before it existed keeps the timeout it chose, and turning it on keeps
-    // that timeout to come back to.
     #[test]
     fn following_the_os_keeps_the_timeout_beside_it() {
         assert!(!Settings::default().autolock_follows_os);

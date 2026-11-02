@@ -64,10 +64,7 @@ export default function ListColumn({
   footer
 }: Props) {
   const view = useUi(state => state.view)
-  // Which session this is (`clearSession` counts them). The field is mounted
-  // afresh for each one: it remembers the focus requests it has applied, and a
-  // session's end resets the store's count to 0 under it — a switch between
-  // open workspaces keeps the shell, and this column, mounted throughout.
+  // Remounted per session, so its applied-focus count resets with the store's.
   const session = useApp(state => state.locks)
   const health = view === 'health'
   // Rows are picked in batches on the wide shell only (see List/Manager).

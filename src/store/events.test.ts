@@ -163,8 +163,6 @@ describe('sync:status', () => {
   })
 })
 
-// Whether Rust hears the OS locking changes after the launch probe: the
-// listener comes up on a thread of its own, and can be lost later.
 describe('oslock:status', () => {
   it('follows the listener coming up, then being lost', () => {
     setApp(appStatusDefault())
@@ -177,8 +175,6 @@ describe('oslock:status', () => {
     expect(useApp.getState().osLock.supported).toBe(false)
   })
 
-  // Not part of the probe, so a re-probe — every lock runs one — leaves it as
-  // the listener last said.
   it('is left alone by a later probe', () => {
     handlerFor(EVENTS.oslockStatus)({ supported: true, seq: 1 })
 
@@ -187,8 +183,6 @@ describe('oslock:status', () => {
     expect(useApp.getState().osLock.supported).toBe(true)
   })
 
-  // The listener came up after the probe was read but before anything was
-  // listening: its event went unheard. Asking once listening is what lands it.
   it('asks once listening, for a change no one was listening for', async () => {
     setApp(appStatusDefault())
     mockCommand('os_lock_status', () => ({ supported: true, seq: 1 }))
@@ -200,7 +194,6 @@ describe('oslock:status', () => {
     expect(calls('os_lock_status')).toHaveLength(1)
   })
 
-  // That answer and an event can cross on the way: the newer wins either way.
   it('keeps a later event over an earlier answer that lands after it', async () => {
     const answer = deferred<{ supported: boolean; seq: number }>()
     mockCommand('os_lock_status', () => answer.promise)
@@ -210,7 +203,7 @@ describe('oslock:status', () => {
 
     handlerFor(EVENTS.oslockStatus)({ supported: false, seq: 2 })
     answer.resolve({ supported: true, seq: 1 })
-    // A macrotask: every microtask the answer's delivery takes has run.
+    // A macrotask, so the answer's delivery has fully run.
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(useApp.getState().osLock).toEqual({ supported: false, seq: 2 })
@@ -276,11 +269,6 @@ describe('vault:locked', () => {
     expect(useApp.getState().status).toBeNull()
   })
 
-  // The response and the lock's event travel apart. A lock that landed after
-  // an open — the OS locking a moment after the password went in — can reach
-  // the webview before the open's result does; the result names the session it
-  // opened, the event where the lock left the count, and the result the lock
-  // overtook is not entered, whatever brought it.
   it('turns away a result the lock overtook, though it arrives after the lock', async () => {
     handlerFor(EVENTS.vaultLocked)({ epoch: 5 })
 
@@ -300,9 +288,7 @@ describe('vault:locked', () => {
     expect(useApp.getState().flow).toBe('main')
   })
 
-  // The sequence as the review put it, through the workspace switch: Rust
-  // opens the next workspace, the OS locks, the lock's event lands, and only
-  // then does the switch's own answer.
+  // The switch opens, the OS locks, and the lock's event lands before the answer.
   it('keeps a switch whose result a lock overtook on the lock screen', async () => {
     flowMain()
     const answer = deferred<{ entries: EntryMeta[]; syncConfigured: boolean; session: number }>()

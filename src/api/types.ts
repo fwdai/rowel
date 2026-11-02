@@ -224,12 +224,7 @@ export interface AttachmentUsage {
 export interface UnlockResult {
   entries: EntryMeta[]
   syncConfigured: boolean
-  /**
-   * Which session this opened, as Rust counts them (its session epoch). Every
-   * `vault:locked` says where its lock left the count, so a result a lock has
-   * overtaken — whichever of the two arrived first — is told apart and never
-   * entered (`enterMain`).
-   */
+  /** The session epoch this opened (see `vault:locked`). */
   session: number
 }
 

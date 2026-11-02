@@ -22,11 +22,7 @@ use crate::store::{EntryMeta, Record, SqliteStore, StoreError, VaultStore};
 /// The alternative, holding the session mutex from preparation to write, is
 /// what stalled every single-row command behind an import or a rekey.
 ///
-/// It is also how the webview tells the order of an open and a lock apart:
-/// every unlock result says which session it opened (`UnlockResult::session`)
-/// and every `vault:locked` the epoch the lock left (`events::vault_locked`).
-/// The response and the event travel apart and can land in either order; a
-/// result older than a lock the webview has heard of is not entered.
+/// The webview compares it too: unlock results and `vault:locked` carry it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Epoch(u64);
 
@@ -58,16 +54,8 @@ pub struct Claim {
     epoch: Epoch,
 }
 
-/// Taken before the slow part of anything that opens a session from locked —
-/// an unlock deriving its key, a first run creating or restoring its vault, a
-/// switch opening the next workspace — and presented to [`Session::open`].
-///
-/// Every lock advances the epoch, whether or not it found anything open
-/// ([`lock`]), so an open whose ticket predates a lock is refused. Without
-/// it a lock that landed while the key was still being derived — the OS
-/// locking a second after the password was submitted — found nothing to
-/// seal and left no trace, and the unlock then opened the vault behind it.
-/// The same rule as a lease's [`Claim`], for an open that starts from nothing.
+/// Taken before an open's slow part (derive, prompt, restore); the open is
+/// refused if a lock landed since, even one that found nothing to seal.
 #[derive(Clone, Copy, Debug)]
 pub struct Ticket {
     epoch: Epoch,
@@ -171,21 +159,13 @@ impl Session {
         self.store()
     }
 
-    /// What an open about to start its slow part takes (see [`Ticket`]).
     pub fn ticket(&self) -> Ticket {
         Ticket {
             epoch: self.epoch(),
         }
     }
 
-    /// Install the derived key and open store as a new session — unless the
-    /// vault was locked, or changed hands, since `ticket` was taken. Then the
-    /// lock wins: the key and store are dropped here and the vault stays as
-    /// the lock left it. The session it opened, for the result to carry
-    /// (see [`Epoch`]); `None` when it did not, and an open that did not must
-    /// not go on as if it had.
-    ///
-    /// The state change alone: [`open`] is the open, with what it tells.
+    /// Installs the key and store unless the session moved since `ticket`.
     #[must_use]
     fn open(
         &mut self,
@@ -201,8 +181,6 @@ impl Session {
         Some(self.epoch())
     }
 
-    /// [`open`](Self::open) with nothing to race: a test's vault, set up
-    /// before anything could lock it. Production code opens with a ticket.
     #[cfg(test)]
     pub fn set(&mut self, key: VaultKey, store: SqliteStore, sync_configured: bool) {
         self.install(key, store, sync_configured);
@@ -248,8 +226,7 @@ impl Session {
 
     // Drop the in-memory key and close the store. Every lock path ends here,
     // including one that lands while a lease is out: the lease then has nothing
-    // to come back to. The state change alone: [`lock`] and [`end_in`] are the
-    // ends, with what they tell.
+    // to come back to.
     fn clear(&mut self) {
         self.advance();
         self.key = None;
@@ -257,7 +234,6 @@ impl Session {
         self.sync_configured = false;
     }
 
-    /// [`clear`](Self::clear), for a test elsewhere standing in for a lock.
     #[cfg(test)]
     pub fn clear_for_test(&mut self) {
         self.clear();
@@ -321,33 +297,22 @@ impl Session {
 /// everything and show the lock screen" ended up written three times over
 /// there.
 ///
-/// The check and the clear happen under one guard ([`seal_in`]). Checked first
-/// and cleared later, an idle timer coming due in the gap between an unlock's
-/// check and its open would clear the session that unlock had just opened and
-/// send the user straight back to the lock screen. Returns whether anything
-/// was sealed; a vault already locked has nothing to announce — but the lock
-/// is still recorded, so an unlock on its way in is refused (see [`Ticket`]).
+/// The check and the clear happen under one guard. Checked first and cleared
+/// later, an idle timer coming due in the gap between an unlock's check and
+/// its open would clear the session that unlock had just opened and send the
+/// user straight back to the lock screen. Returns whether anything was sealed;
+/// a vault already locked has nothing to announce.
 pub fn lock(app: &AppHandle) -> bool {
     end(app, false, |_| true)
 }
 
-/// The lock the user asked for (the `lock` command): announced even when there
-/// was nothing left to seal — the user asked for the lock screen, and a webview
-/// that somehow still shows the vault gets it.
+/// [`lock`], announced even with nothing to seal: the user asked for the lock screen.
 pub fn lock_on_request(app: &AppHandle) {
     end(app, true, |_| true);
 }
 
-/// A lock decided earlier and taken now — the idle timer's deadline coming due,
-/// a return to a window left for longer than the timeout — taken only if that
-/// decision still holds ([`lock_applies`]). Whether it sealed.
-///
-/// [`lock`] is a lock *now*, whatever is open, and it is recorded even with
-/// nothing open, so an unlock on its way in loses to it (`Ticket`): the OS
-/// locking, the user asking. A decision made earlier is not that. It may
-/// have been overtaken by the time it runs — activity re-armed the clock, a
-/// session opened — and then it must lock nothing, and leave no trace for
-/// an unlock on its way in to be refused by.
+/// A lock decided earlier (an idle deadline, a long absence): seals only if
+/// `still` holds under the guard, and otherwise leaves no trace.
 pub fn lock_if(app: &AppHandle, still: impl FnOnce(&Session) -> bool) -> bool {
     let state = app.state::<AppState>();
     end(app, false, |session| {
@@ -355,12 +320,7 @@ pub fn lock_if(app: &AppHandle, still: impl FnOnce(&Session) -> bool) -> bool {
     })
 }
 
-/// Whether a lock decided earlier applies, asked under the session guard
-/// (`session`) — where every open, every end and every arming of the idle
-/// clock is made, so nothing can change between this answer and the seal it
-/// allows. `still` is the decision's own question, and it is always asked,
-/// so what it consumes is consumed either way (a blur, say); it applies only
-/// over something open to seal: a session, or a ring of keys.
+/// `still` is always asked, so what it consumes (a blur) is consumed either way.
 pub(crate) fn lock_applies(
     session: &Session,
     keyring: &Mutex<crate::appkey::Keyring>,
@@ -371,8 +331,6 @@ pub(crate) fn lock_applies(
     holds && open
 }
 
-// `applies`, asked under the guard before anything is sealed: always yes for
-// a lock now, the decision's own question for a lock decided earlier.
 fn end(app: &AppHandle, announce: bool, applies: impl FnOnce(&Session) -> bool) -> bool {
     let workspace = crate::workspace::active_id(app);
     let state = app.state::<AppState>();
@@ -392,19 +350,13 @@ fn end(app: &AppHandle, announce: bool, applies: impl FnOnce(&Session) -> bool) 
     if let Some(ended) = ended {
         ended.finish(app);
     }
-    // With the epoch read under the guard that sealed: read any later, it
-    // could be an open's that landed since, and the webview would take the
-    // result of that open for one this lock overtook.
+    // The epoch read under the sealing guard; a later read could be a newer open's.
     if was_open || announce {
         events::vault_locked(app, sealed.epoch);
     }
     was_open
 }
 
-/// Open a session from locked: the key and store installed — unless a lock
-/// landed since `ticket` was taken ([`Ticket`]) — and, under the same guard,
-/// everything that follows the session told ([`announce_opened`]). The only
-/// way a session opens; the session it opened, for the result to carry.
 #[must_use]
 pub fn open(
     app: &AppHandle,
@@ -420,10 +372,7 @@ pub fn open(
     Some(opened)
 }
 
-/// Continue the session a lease was taken from with another vault — a
-/// workspace created or restored beside the one that was open — told as an
-/// open, since it is a different vault now. `None` when a lock landed while
-/// the lease was out: the lock wins (`Session::adopt`).
+/// A created or restored workspace takes over the leased session, announced as an open.
 #[must_use]
 pub fn continue_lease(
     app: &AppHandle,
@@ -441,47 +390,31 @@ pub fn continue_lease(
     Some(session.epoch())
 }
 
-/// End the session under the caller's guard — a switch, a deletion, which
-/// read and change more under it — and tell it ([`announce_ended`]). What is
-/// left for after the guard comes back; the caller finishes it.
+/// Ends the session under the caller's guard; the caller finishes the [`Ended`].
 pub fn end_in(app: &AppHandle, session: &mut Session) -> Ended {
     session.clear();
     announce_ended(app)
 }
 
-/// Say `vault:locked` for a session ended other than by [`lock`] — a switch
-/// landing on the lock screen, a deletion, an open its ticket refused — at
-/// the epoch the session stands at now. Only under a step (`begin_step`):
-/// every open holds one too, so none can land between that end and this, and
-/// the epoch said is never a later open's.
+/// `vault:locked` for an end not made by [`lock`]. Only under `begin_step`, so
+/// no open can land between that end and the epoch read here.
 pub fn announce_locked(app: &AppHandle) {
     let epoch = app.state::<AppState>().session.lock().unwrap().epoch();
     events::vault_locked(app, epoch);
 }
 
-/// The answer of an open its ticket refused: the vault is locked, by the lock
-/// that landed while the open was on its way. That lock has already said so,
-/// or — with nothing open to seal — had nothing to say.
 pub fn locked_meanwhile() -> Error {
     log::info!("the vault was locked while it was being opened; it stays locked");
     Error::Locked
 }
 
-/// What a lock found under the session guard.
 struct Sealed {
-    /// A session was open, or out on a lease.
     live: bool,
-    /// The ring held keys: the app was open at its own level.
     held: bool,
-    /// The size the vault was left at, for the lock screen to show.
     count: Option<u32>,
-    /// Where the lock left the session: later than every session opened
-    /// before it, earlier than every one opened after.
     epoch: Epoch,
 }
 
-/// The state change of a lock, under the session guard the caller holds: the
-/// session and the ring cleared, in one step.
 fn seal_in(session: &mut Session, keyring: &Mutex<crate::appkey::Keyring>) -> Sealed {
     let live = session.is_live();
     // The size the vault is left at, for the lock screen to show while it is
@@ -492,10 +425,7 @@ fn seal_in(session: &mut Session, keyring: &Mutex<crate::appkey::Keyring>) -> Se
         .store()
         .ok()
         .and_then(|store| store.count_live().ok());
-    // Open or not: clearing advances the epoch, and that is the lock's record.
-    // An unlock still deriving its key when the lock lands — the OS locking a
-    // moment after the password went in — has nothing here to seal yet, and
-    // its ticket is what finds out it lost (`Session::open`).
+    // Even with nothing open: the advanced epoch refuses an unlock still deriving.
     session.clear();
     // The app-level unlock ends with every lock, whichever workspace was open
     // — and whether or not one was: a ring kept across a switch to a workspace
@@ -516,29 +446,13 @@ fn seal_in(session: &mut Session, keyring: &Mutex<crate::appkey::Keyring>) -> Se
     }
 }
 
-/// [`seal_in`] for a test, with the guard taken here.
 #[cfg(test)]
 fn seal(state: &AppState) -> Sealed {
     seal_in(&mut state.session.lock().unwrap(), &state.keyring)
 }
 
-// What a change of session tells everything that has to follow it: the idle
-// timer, the browser extensions (`database-unlocked`, `database-locked`), the
-// approvals a Rowel Server routes here, the agents' grants and the clipboard.
-//
-// Told under the guard that made the change, as part of it. Told after the
-// guard was let go, as it used to be, two changes could be told in the other
-// order: a lock landing a moment after an open told the extensions
-// `database-locked`, and the open's late `database-unlocked` followed it over
-// a vault that was locked; a late disarm could stop the next session's idle
-// clock. Under the guard the telling is in the order of the changes, because
-// the changes are. So it is memory only — a signal queued, a flag set, a
-// timer re-pointed, a list emptied — and nothing here takes the session lock
-// (the agents' lock comes after it, as everywhere). What is not memory, the
-// clipboard, is left for after the guard, bounded by what was decided under
-// it (`Ended`).
-
-/// A session opened, or another vault took its place.
+// Called under the session guard that made the change, so announcements keep
+// its order. Memory only, and nothing here may take the session lock.
 fn announce_opened(app: &AppHandle) {
     crate::autolock::arm(app);
     #[cfg(desktop)]
@@ -548,11 +462,6 @@ fn announce_opened(app: &AppHandle) {
     }
 }
 
-/// A session ended. A secret copied out of the vault does not outlive it; the
-/// idle timer armed for it must not come due inside the next one; a browser
-/// extension filling from it is told it has gone; the approvals a Rowel Server
-/// routes here stop, and the grants agents held — and the grant ask up on
-/// screen — go with it.
 fn announce_ended(app: &AppHandle) -> Ended {
     crate::autolock::disarm(app);
     #[cfg(desktop)]
@@ -566,10 +475,8 @@ fn announce_ended(app: &AppHandle) -> Ended {
     }
 }
 
-/// What an ended session leaves for after its guard: the clipboard, which is
-/// the OS's to read and write and too slow for the guard. Only the copies
-/// made before the end are cleared, so one made in a session opened since is
-/// left alone, however late this runs.
+/// The clipboard clear, too slow for the guard: run after it, limited to the
+/// copies made before the end.
 #[must_use]
 pub struct Ended {
     copies: u64,
@@ -800,15 +707,11 @@ pub fn live_records(store: &SqliteStore) -> Result<Vec<Record>> {
 /// too long is a shape, not an error. So these are tripwires rather than proofs.
 /// They read the source of the four functions that had it wrong and assert the
 /// order their statements are in, so re-introducing the old shape fails the
-/// build with the reason attached. The same for the other side of that rule:
-/// with no guard held across the slow part of an open, the open takes a
-/// [`Ticket`] before it, so a lock that lands during it still wins.
+/// build with the reason attached.
 #[cfg(test)]
 mod lock_scope {
     // Everything above the test module: the fakes below it borrow nothing from
     // the real session and would only confuse the search.
-    // The test module, not the first `#[cfg(test)]`: a test-only item can sit
-    // among the production code (`Session::set`).
     fn production(source: &str) -> &str {
         match source.find("#[cfg(test)]\nmod ") {
             Some(at) => &source[..at],
@@ -888,9 +791,6 @@ mod lock_scope {
         );
     }
 
-    // Every open from locked takes its ticket before its slow part — the
-    // derive, the biometric prompt, the download, the restore — and opens
-    // with it, so a lock that lands during that part wins (`Ticket`).
     #[test]
     fn every_open_takes_its_ticket_before_the_slow_part() {
         let auth = include_str!("commands/auth.rs");
@@ -929,8 +829,7 @@ mod lock_scope {
                 at(&body, ".ticket()") < at(&body, slow),
                 "{signature}: the ticket is taken before `{slow}`"
             );
-            // Without whitespace: rustfmt lays a long call out one argument
-            // to a line.
+            // Whitespace dropped: rustfmt may split the call across lines.
             let squeezed: String = body.split_whitespace().collect();
             at(&squeezed, "adopt(&app,&state,ticket,");
         }
@@ -938,12 +837,6 @@ mod lock_scope {
         at(&adopt, "session::open(app,ticket,");
     }
 
-    // Every change of session tells what follows it — the timer, the
-    // extensions, the approvals, the grants — under the guard that made the
-    // change, so two changes are never told in the other order (a stale
-    // `database-unlocked` after the lock that ended it). The raw changes are
-    // private to this module (`Session::open`, `Session::clear`), so these
-    // are the only ways a session opens or ends.
     #[test]
     fn every_change_of_session_is_told_under_its_guard() {
         let source = include_str!("session.rs");
@@ -967,13 +860,9 @@ mod lock_scope {
                 "{signature}: and before its guard is let go"
             );
         }
-        // `end` lets its guard go with the block it took it in, and only then
-        // finishes what is not memory.
         let end = body_of(source, "\nfn end(");
         assert!(at(&end, "announce_ended(app)") < at(&end, "ended.finish(app)"));
 
-        // The idle clock's own arming checks for a session under the same
-        // guard, and the approvals' restart stops and starts under it.
         let touch = body_of(include_str!("autolock.rs"), "pub fn touch(");
         assert!(at(&touch, "session.lock()") < at(&touch, "arm(app)"));
         let restart = body_of(include_str!("org/approvals.rs"), "fn restart(");
@@ -981,10 +870,6 @@ mod lock_scope {
         assert!(at(&restart, "stop()") < at(&restart, "start(app)"));
     }
 
-    // A lock decided earlier — the idle deadline, a return to a window left
-    // too long — is asked again under the guard (`lock_if`), never taken as
-    // a lock now (`lock`): by the time it runs it may have been overtaken,
-    // and the timer cannot call back a deadline already coming due.
     #[test]
     fn a_lock_decided_earlier_is_asked_again_under_the_guard() {
         let autolock = include_str!("autolock.rs");
@@ -1221,8 +1106,6 @@ mod epoch_tests {
         ));
     }
 
-    // The unlock as the commands run it: the ticket first, the key derived
-    // with no guard held, the open last.
     #[test]
     fn an_undisturbed_unlock_opens() {
         let state = AppState::default();
@@ -1241,10 +1124,7 @@ mod epoch_tests {
         assert!(state.session.lock().unwrap().is_unlocked());
     }
 
-    // The regression: the password is in, the key is being derived, and the
-    // OS locks. Nothing is open yet, so the lock has nothing to seal — and it
-    // used to leave no trace either, so the unlock then opened the vault
-    // behind the locked OS. The lock now wins over the open still on its way.
+    // The OS locks while the key is still being derived.
     #[test]
     fn a_lock_while_an_unlock_derives_wins_with_nothing_open() {
         let state = AppState::default();
@@ -1261,8 +1141,6 @@ mod epoch_tests {
         assert!(!session.is_live(), "the vault stays as the lock left it");
     }
 
-    // The app open at its own level — a ring kept across a switch — with no
-    // session behind it: the lock ends the ring and refuses the open too.
     #[test]
     fn a_lock_while_a_switch_opens_wins_over_the_ring_it_opened_from() {
         let state = AppState::default();
@@ -1284,8 +1162,6 @@ mod epoch_tests {
             .is_none());
     }
 
-    // A lock is a lock however often it lands: a ticket taken after it is
-    // good, so an unlock started once the OS is unlocked again opens.
     #[test]
     fn a_ticket_taken_after_a_lock_opens() {
         let state = AppState::default();
@@ -1303,11 +1179,7 @@ mod epoch_tests {
             .is_some());
     }
 
-    // What the webview reads off the numbers (`UnlockResult::session` against
-    // `vault:locked`'s epoch): a lock is later than every session opened
-    // before it and earlier than every one opened after, so a result is stale
-    // exactly when a lock the webview has heard of is later than it — in
-    // whatever order the result and the lock's event reached it.
+    // The order `enterMain` relies on to turn away stale results.
     #[test]
     fn a_lock_is_numbered_between_the_session_before_it_and_the_one_after() {
         let state = AppState::default();

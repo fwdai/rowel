@@ -79,9 +79,7 @@ export const subscribeToEvents = (): (() => void) => {
     // The one reaction to a lock, whoever asked for it: the lock command, the
     // inactivity autolock, the tray, a workspace switch. Every one of them ends
     // in `session::lock` on the Rust side, so none of them has to hand-roll
-    // this — and none of them can forget half of it. Where the lock left the
-    // session count is noted first, so an unlock result it overtook — still on
-    // its way to `enterMain` — is turned away there.
+    // this — and none of them can forget half of it.
     on(EVENTS.vaultLocked, ({ epoch }) => {
       lockHeard(epoch)
       clearSession()
@@ -104,10 +102,7 @@ export const subscribeToEvents = (): (() => void) => {
     on(EVENTS.agentsChanged, () => agentsChanged()),
     on(EVENTS.orgConnect, orgConnectReported),
     on(EVENTS.orgChanged, () => orgChanged()),
-    // Whether the OS locking is heard. Its listener comes up on a thread of its
-    // own, so it may have reported before this was listening — an event no one
-    // heard. Once listening, ask once; the sequence numbers keep the newer of
-    // that answer and any event, whatever order they land in.
+    // Asked once listening, for a change reported before this subscribed.
     on(EVENTS.oslockStatus, setOsLockStatus).then(unlisten => {
       osLockStatus()
         .then(setOsLockStatus)

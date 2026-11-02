@@ -173,10 +173,8 @@ pub(crate) fn grants_changed(app: &AppHandle) {
     browser::server::hub(app).notify_signals();
 }
 
-/// Every seal ends here — a lock, the auto-lock, a lockbox switch — under
-/// the session guard that ended it (`session::announce_ended`), so before any
-/// session opened after it: the agents' lock comes after the session's, as
-/// everywhere. Nothing is served from
+/// Every seal ends here — a lock, the auto-lock, a lockbox switch
+/// (`session::announce_ended`, under the session lock): nothing is served from
 /// a locked vault, the switches are read afresh by the next session's first
 /// request, a client that was being slowed down starts afresh, and what
 /// decided under the session settles no more ([`AgentState::reset`]). The

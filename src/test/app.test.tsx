@@ -94,8 +94,6 @@ describe('App', () => {
   })
 })
 
-// Where the caret lands once the vault opens: in the search field on desktop,
-// so the first keystroke after an unlock is already a query.
 describe('unlocking', () => {
   it('puts the caret in the search field', async () => {
     seedApp({ initialized: true })
@@ -109,8 +107,6 @@ describe('unlocking', () => {
     })
   })
 
-  // The backup is what the unlock was for, and Settings › Import is open over
-  // the list: the caret belongs in that dialog, not in the field behind it.
   it('leaves the search field alone when a waiting backup opens Settings', async () => {
     useApp.setState({ openedFile: '/tmp/Rowel backup.rowel' })
 
@@ -120,8 +116,6 @@ describe('unlocking', () => {
     expect(useUi.getState().searchFocus).toBe(0)
   })
 
-  // A focused field on a phone or tablet raises the on-screen keyboard over
-  // the vault that just opened.
   it('leaves the search field alone on mobile', async () => {
     vi.resetModules()
     vi.doMock('@/lib/platform', () => ({ isIOS: true, isAndroid: false, isMobile: true }))

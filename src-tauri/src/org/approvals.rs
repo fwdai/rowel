@@ -11,16 +11,16 @@
 //! server times it out for itself and must not be told "no". No audit row is
 //! written here: the server's log is authoritative for its own grants.
 //!
-//! The threads start when a session opens and stop when it ends, as part of
-//! the change, under its guard (`session::announce_opened`, `announce_ended`):
-//! a stop flag every thread reads between frames, which is why the server has
-//! to keep sending keepalive comments — a frame is the moment the flag is
-//! looked at, and the stream's read timeout (60 s) is the longest a thread can
-//! sit without one. A stream that ends or fails is reconnected with backoff,
-//! 5 s doubling to 60 s, for as long as the session is live; a session the
-//! server no longer accepts is refreshed once per attempt. A sign-in, an
-//! approval or a forgotten server restarts the set ([`restart`]), so the
-//! threads always match the connections on disk.
+//! The threads start when a session opens (`session::announce_opened`) and
+//! stop when it ends (`announce_ended`): a stop flag every thread reads between
+//! frames, which is why the server has to keep sending keepalive comments —
+//! a frame is the moment the flag is looked at, and the stream's read
+//! timeout (60 s) is the longest a thread can sit without one. A stream that
+//! ends or fails is reconnected with backoff, 5 s doubling to 60 s, for as
+//! long as the session is live; a session the server no longer accepts is
+//! refreshed once per attempt. A sign-in, an approval or a forgotten server
+//! restarts the set ([`restart`]), so the threads always match the
+//! connections on disk.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError};
@@ -84,10 +84,7 @@ pub(crate) fn stop() {
 /// The connections changed under a live session: the set is rebuilt from
 /// what is on disk now.
 ///
-/// Under the session guard, as the start and stop of a session's open and end
-/// are: apart, a lock landing between this stop and start would stop the set
-/// first and see it started again after, over a locked vault. Only started
-/// again while there is a session to serve.
+/// Under the session guard, so a lock can't land between the stop and the start.
 pub(crate) fn restart(app: &AppHandle) {
     let state = app.state::<crate::state::AppState>();
     let session = state.session.lock().unwrap();

@@ -28,9 +28,7 @@ const meta = (id: string, type = 'login', title = '', favorite = false) => ({
 
 const session = { entries: [], syncConfigured: false }
 
-// Rust's session count (`session::Epoch`): every open and every lock moves it
-// on, an unlock result names where its open left it and `vault:locked` where
-// the lock did — so a result a lock overtook can be told apart (`enterMain`).
+// Rust's session epoch: every open and every lock moves it on.
 let epoch = 0
 const opened = () => ({ ...session, session: ++epoch })
 const locked = () => emitEventSoon(EVENTS.vaultLocked, { epoch: ++epoch })
@@ -129,8 +127,6 @@ const DEFAULTS: Record<string, Handler> = {
   app_ready: () => undefined,
   // Nothing was double-clicked to launch the app, which is every ordinary run.
   take_opened_file: () => null,
-  // Not heard, so the auto-lock row reads as it always has. A suite about
-  // following the OS reports it heard (`oslock:status`).
   os_lock_status: () => ({ supported: false, seq: 0 }),
 
   setup: () => undefined,

@@ -1,9 +1,5 @@
-//! Linux: logind, on the system bus. The session's `LockedHint` is what the
-//! desktops' lock screens set as they come up (GNOME, KDE Plasma, Cinnamon,
-//! Xfce's), `Lock` is a lock asked for (`loginctl lock-session`, a power
-//! manager before sleep), `Active` going false a switch to another session or
-//! terminal, and the manager's `PrepareForSleep` sleep and wake. A screen
-//! saver that only blanks tells logind nothing, and is not a lock.
+//! Linux: logind on the system bus. Desktop lock screens set `LockedHint`;
+//! a screen saver that only blanks does not, and is not treated as a lock.
 
 use std::collections::HashMap;
 
@@ -19,8 +15,6 @@ const MANAGER_PATH: &str = "/org/freedesktop/login1";
 const MANAGER: &str = "org.freedesktop.login1.Manager";
 const SESSION: &str = "org.freedesktop.login1.Session";
 
-/// Off the main thread from the start: connecting is a round trip to a
-/// daemon, and the window has better things to wait for.
 pub(super) fn watch(sink: Sink) {
     let spawned = std::thread::Builder::new()
         .name("os-lock".into())
@@ -38,7 +32,7 @@ fn run(sink: &Sink) {
             return;
         }
     };
-    // Sleep is the manager's and heard either way; a lock is the session's.
+    // Without a session only sleep is heard.
     match &session {
         Some(_) => sink(Event::Watching),
         None => log::warn!("no logind session found, so only sleep is heard"),
@@ -48,14 +42,12 @@ fn run(sink: &Sink) {
             sink(event);
         }
     }
-    // The connection closed under it: the bus went away.
     sink(Event::Lost);
 }
 
 fn subscribe() -> zbus::Result<(MessageIterator, Option<OwnedObjectPath>)> {
     let bus = Connection::system()?;
-    // Every signal logind sends, sorted in `event`: one subscription and one
-    // thread, and logind is not a chatty sender.
+    // One subscription to all of logind's signals, sorted in `event`.
     let rule = MatchRule::builder()
         .msg_type(Type::Signal)
         .sender(LOGIND)?
@@ -64,9 +56,7 @@ fn subscribe() -> zbus::Result<(MessageIterator, Option<OwnedObjectPath>)> {
     Ok((messages, session(&bus)))
 }
 
-/// The login session this process runs in: the one it was started from, or —
-/// started outside one, as a systemd user unit is — the user's graphical
-/// session, which is what logind resolves `auto` to.
+/// Our session, or outside one (a systemd user unit) the user's graphical one.
 fn session(bus: &Connection) -> Option<OwnedObjectPath> {
     let get = |id: &str| -> zbus::Result<OwnedObjectPath> {
         let reply =
@@ -79,7 +69,6 @@ fn session(bus: &Connection) -> Option<OwnedObjectPath> {
         .or_else(|| get("auto").ok())
 }
 
-/// What a signal from logind says the OS did, if anything.
 fn event(message: &Message, session: Option<&OwnedObjectPath>) -> Option<Event> {
     let header = message.header();
     let ours = || match (header.path(), session) {

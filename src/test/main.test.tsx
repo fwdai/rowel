@@ -72,10 +72,6 @@ describe('Main', () => {
     expect(screen.getByTestId('search-input')).toHaveFocus()
   })
 
-  // A switch between open workspaces ends one session and lands the next with
-  // the shell still mounted, and the end resets the store's request count. The
-  // field used to keep its own count across that and ignore ⌘F until the new
-  // session's requests caught up with the old one's.
   it('still focuses the search field on ⌘F after a workspace switch', async () => {
     seed()
     render(<Main />)

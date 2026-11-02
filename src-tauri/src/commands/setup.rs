@@ -273,7 +273,6 @@ pub async fn setup_restore_from_account(
 ) -> Result<UnlockResult> {
     guard_no_vault(&app)?;
     let _step = begin_step(&state)?;
-    // Before the slow part, which a lock can land in the middle of (`session::Ticket`).
     let ticket = state.session.lock().unwrap().ticket();
     let mut tokens = peek_pending(&state)?;
 
@@ -326,7 +325,6 @@ pub async fn setup_restore_from_file(
 ) -> Result<UnlockResult> {
     guard_no_vault(&app)?;
     let _step = begin_step(&state)?;
-    // Before the slow part, which a lock can land in the middle of (`session::Ticket`).
     let ticket = state.session.lock().unwrap().ticket();
     let chosen = PathBuf::from(&path);
     if !grants.holds(&chosen, Purpose::Backup) {
@@ -368,7 +366,6 @@ pub async fn setup_restore_from_legacy(
 ) -> Result<UnlockResult> {
     guard_no_vault(&app)?;
     let _step = begin_step(&state)?;
-    // Before the slow part, which a lock can land in the middle of (`session::Ticket`).
     let ticket = state.session.lock().unwrap().ticket();
     let chosen = PathBuf::from(&path);
     if !grants.holds(&chosen, Purpose::Backup) {
@@ -479,7 +476,6 @@ pub async fn setup_create(
     // so running it over an existing vault would leave that vault unopenable.
     guard_no_vault(&app)?;
     let _step = begin_step(&state)?;
-    // Before the slow part, which a lock can land in the middle of (`session::Ticket`).
     let ticket = state.session.lock().unwrap().ticket();
     // Creating without Drive is valid; a stale result from a cancelled or
     // replaced attempt is not.
@@ -515,10 +511,8 @@ pub(crate) async fn create_off_thread(
 /// from `Vaults/<id>.rowel`. Stamped here, inside the all-or-nothing, rather
 /// than after the fact.
 ///
-/// A lock that landed while the vault was being made — taken before that work
-/// began, `ticket` says so — wins over the open, but not over the vault: it is
-/// whole on disk by now, so it stays, and the app goes to its lock screen,
-/// where the password just chosen opens it.
+/// A lock during the slow part refuses the open but keeps the vault, and the
+/// app goes to its lock screen.
 fn adopt(
     app: &AppHandle,
     state: &AppState,
@@ -559,14 +553,11 @@ fn adopt(
             // Copied before the key goes into the session: this is the app
             // key, and the ring is what every later workspace is sealed under.
             let material = Zeroizing::new(key.biometric_material().to_vec());
-            // Opened, it is on the idle clock and the extensions and
-            // approvals are told, as part of the open (`session::open`).
             let Some(opened) = crate::session::open(app, ticket, key, store, sync_configured)
             else {
-                // The account is this vault's now, sealed under its key above.
+                // The pending account is already sealed into this vault.
                 take_pending(state);
-                // Said here: the lock found nothing open to announce, and the
-                // webview is still on setup, for a vault that now exists.
+                // The lock had nothing open to announce; the webview is still on setup.
                 crate::session::announce_locked(app);
                 return Err(crate::session::locked_meanwhile());
             };

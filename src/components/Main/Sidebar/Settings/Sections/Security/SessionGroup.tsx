@@ -16,9 +16,7 @@ const LOCK_OPTIONS = [
   { value: '3600', label: '1 h' }
 ]
 
-// The segment after the timeouts: follow the OS rather than an idle clock of
-// the app's own. A flag of its own in the settings (`autolockFollowsOs`), not
-// a timeout, so the minutes chosen before are still there to go back to.
+// Its own setting (`autolockFollowsOs`), so the chosen minutes are kept.
 const FOLLOW_OS = 'os'
 
 // Built per render so a locale switch retranslates. The unit values read the
@@ -35,17 +33,12 @@ export default function SessionGroup() {
   const lock = usePrefs(state => state.autolockSecs)
   const followsOs = usePrefs(state => state.autolockFollowsOs)
   const clipboard = usePrefs(state => state.clipboardTimeoutMs)
-  // Whether Rust hears the OS lock here, as it last said — live, since the
-  // listener can come up after the launch probe or be lost later. Where it
-  // does, the vault seals with it whatever the timeout, and following it is
-  // offered; where it does not (a phone, a desktop it could not listen on, one
-  // whose listener was lost), the row is the timeouts alone and a stored
+  // Unheard (phone, no listener, listener lost): timeouts only, and a stored
   // "follow" shows the minutes Rust falls back to.
   const osLock = useApp(state => state.osLock.supported)
   const following = osLock && followsOs
 
-  // Rust re-arms the auto-lock itself when either preference lands
-  // (`set_settings`).
+  // Rust re-arms the auto-lock itself when either preference lands.
   const onLock = (value: string) => {
     if (value === FOLLOW_OS) return setPref('autolockFollowsOs', true)
     setPref('autolockSecs', Number(value))

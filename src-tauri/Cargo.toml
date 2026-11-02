@@ -200,8 +200,7 @@ tauri-plugin-deep-link = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # NSWindow, NSAnimationContext and its block-based completion: the zoom the
-# webview can follow (see `zoom`). NSWorkspace: the sleep, wake and
-# user-switch notifications the vault seals on (see `oslock`).
+# webview can follow (see `zoom`). NSWorkspace: sleep and wake (`oslock`).
 objc2-app-kit = { version = "0.3", features = [
   "NSPasteboard",
   "NSWindow",
@@ -211,9 +210,7 @@ objc2-app-kit = { version = "0.3", features = [
   "block2",
 ] }
 
-# logind on the system bus: the session locking and the machine sleeping, which
-# the vault seals on (see `oslock::logind`). Already in the locked graph under
-# the opener and single-instance plugins, with the same default features.
+# logind's lock and sleep signals (`oslock::logind`); already in the graph.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
 
@@ -256,10 +253,8 @@ objc2-authentication-services = { version = "0.3", default-features = false, fea
 # plaintext exports, and `Win32_Storage_FileSystem` is the `CreateFileW` that
 # takes it at creation (`crates/core/src/owner_only.rs`).
 # `Win32_UI_WindowsAndMessaging` is the `WM_SETTINGCHANGE` broadcast that
-# tells Explorer the user's PATH changed (`cli::user_path`), and the hidden
-# window the session-lock and power broadcasts reach (`oslock::win32`), which
-# `Win32_Graphics_Gdi` (its class), `Win32_System_LibraryLoader` (its module
-# handle) and `Win32_System_RemoteDesktop` (the session registration) complete.
+# tells Explorer the user's PATH changed (`cli::user_path`). With
+# `Win32_Graphics_Gdi`, `_LibraryLoader` and `_RemoteDesktop`: `oslock::win32`.
 windows = { version = "0.62", features = ["Security_Credentials", "Security_Credentials_UI", "Security_Cryptography_Core", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Media_Ocr", "Graphics_Imaging", "Storage", "Storage_Streams"] }
 # Credential Manager storage. It holds only the Hello-wrapped blob — Credential
 # Manager itself has no biometric gate (see `secure_store::GateMode::HelloKey`).

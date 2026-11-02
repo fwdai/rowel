@@ -111,10 +111,7 @@ fn forget_if(last: &mut Option<Remembered>, generation: u64) {
 /// something of their own since, and that is theirs to keep. The pending timer
 /// is dropped either way: the value it was armed for is gone or was never ours.
 ///
-/// Only a copy made before the lock — counted under the guard that sealed
-/// (`copies`, read in `session::Ended`) — is the lock's to clear: this runs
-/// after that guard is let go, and a copy made since, in a session opened
-/// after the lock, is that session's. Its timer, too, is its own.
+/// Only copies numbered up to `copies` are the lock's; a later one is a newer session's.
 ///
 /// Not on iOS, where nothing is read back from the pasteboard (see
 /// `copy_to_clipboard`): the expiry set at write time is the clear there.
@@ -138,9 +135,7 @@ pub fn clear_on_lock(app: &AppHandle, copies: u64) {
     let _ = (app, copies);
 }
 
-/// How many copies have been made so far: read when a session ends, under its
-/// guard, to bound what the lock's clear may touch ([`clear_on_lock`]). An
-/// atomic read, so it takes none of this module's locks under that guard.
+/// Read under the session guard when a session ends; an atomic, no lock taken.
 pub fn copies(app: &AppHandle) -> u64 {
     #[cfg(not(target_os = "ios"))]
     {

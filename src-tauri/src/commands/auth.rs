@@ -46,9 +46,7 @@ pub async fn unlock(
     // saga), and the recovery below would read that change's snapshot as an
     // interrupted one and copy it over a database the saga still has open.
     let _step = super::setup::begin_step(&state)?;
-    // Before the derive: a lock that lands while it runs — the OS locking a
-    // moment after the password went in — finds nothing to seal yet, and this
-    // is what tells the open below that it lost (`session::Ticket`).
+    // Before the derive, so a lock during it refuses the open.
     let ticket = state.session.lock().unwrap().ticket();
     // Before the lockout check and before anything reads the sidecar: a crash
     // during a password change can leave the DB and the sidecar disagreeing, and
@@ -103,13 +101,6 @@ pub async fn unlock(
             };
             let sync_configured = storage::sync_configured(&app);
             let material = Zeroizing::new(key.biometric_material().to_vec());
-            // Refused when a lock landed since the ticket was taken: the key
-            // and store go, and nothing below runs — no ring, no result for
-            // the webview to open the vault on. Opened, the session has its
-            // idle clock and the extensions and approvals are told, all as
-            // part of the open (`session::open`): a webview that never pings
-            // (a build whose bundle failed, a page left untouched) does not
-            // leave the vault open for good.
             let Some(opened) = crate::session::open(&app, ticket, key, store, sync_configured)
             else {
                 return Err(crate::session::locked_meanwhile());
@@ -237,8 +228,6 @@ pub async fn unlock_biometric(app: AppHandle, state: State<'_, AppState>) -> Res
     // and an interrupted change rolled back before the sidecar decides how to
     // read the stored material.
     let _step = super::setup::begin_step(&state)?;
-    // Before the prompt and the open, as in `unlock`: a lock that lands while
-    // either runs is what this finds out about at the end.
     let ticket = state.session.lock().unwrap().ticket();
     auth::recover_interrupted_rekey(&app, &state)?;
 

@@ -111,14 +111,8 @@ pub async fn workspace_select(
         // Together, and in this order: a session outliving the switch would
         // hold one workspace's key against another's database. The ring is
         // untouched — the open workspace's key stays in it, which is what
-        // lets a switch back open it without a prompt.
-        //
-        // The key is read, the session ended and the ticket taken under one
-        // session guard, the one a lock seals the session and the ring under
-        // (`session::seal_in`): a lock lands either before all three — and the
-        // ring holds no key — or after, and refuses the open below. The end
-        // is told as any end is, under that guard (`session::end_in`); the
-        // ticket comes after it, since it is a change of hands of its own.
+        // lets a switch back open it without a prompt. All under one guard, so a
+        // lock lands before this or refuses the open below.
         let (material, ended, ticket) = {
             let mut session = state.session.lock().unwrap();
             let material = state.keyring.lock().unwrap().get(&id);
@@ -128,7 +122,6 @@ pub async fn workspace_select(
         *state.active_workspace.lock().unwrap() = id.clone();
         (material, ended, ticket)
     };
-    // What the end left for after the guard: a secret it copied, cleared.
     ended.finish(&app);
     // Sync is per workspace, and what the frontend is holding belongs to the one
     // that just closed. Said now rather than left to the re-probe or the entry
@@ -166,21 +159,13 @@ pub async fn workspace_select(
         }
     };
     let sync_configured = storage::sync_configured(&app);
-    // A lock that landed while the open was in flight cleared the ring this
-    // key came from and moved the session on, so the ticket refuses the open:
-    // the store closes and the vault stays as the lock left it, as for any
-    // open (`session::Ticket`). The lock has already said `vault:locked` — it
-    // ended a ring that held keys — so there is nothing to add.
-    // Opened as any session is (`session::open`): its idle clock armed and a
-    // connected browser extension told — which, re-checking the hash, hears of
-    // the switch.
+    // A lock since the ticket already said `vault:locked` (it ended the ring).
     let Some(opened) = crate::session::open(&app, ticket, key, store, sync_configured) else {
         log::info!("vault locked during the switch; workspace {id} stays locked");
         return Ok(None);
     };
-    // As after any unlock: iOS is handed this vault's logins in place of the
-    // last one's, and a vault named before names lived inside it takes the
-    // registry's label.
+    // As after any unlock: iOS gets this vault's logins, and a vault named before
+    // names lived inside it takes the registry's label.
     crate::credential_identities::publish(&app);
     super::auth::seed_vault_name(&app, &state);
     Ok(Some(UnlockResult {
@@ -377,9 +362,6 @@ pub async fn workspace_create(
     let syncing = inherited.is_some();
     let material = Zeroizing::new(key.biometric_material().to_vec());
     let (_, _, _, claim) = previous.split();
-    // The new vault is open as the continuation (`session::continue_lease`),
-    // on the idle clock from here — the Argon2id derive above took a while —
-    // and told to the extensions and approvals as any open is.
     let Some(opened) = crate::session::continue_lease(&app, claim, key, store, syncing) else {
         return Err(Error::Locked);
     };
@@ -719,9 +701,6 @@ async fn restore_workspace(
     // wins — the workspace exists and is recorded, and the next unlock opens it.
     let material = Zeroizing::new(key.biometric_material().to_vec());
     let (_, _, _, claim) = previous.split();
-    // As in `workspace_create`: the restored vault is open, its idle clock
-    // started and the extensions told as part of that — and it is open at the
-    // app level, sealed under the app key when the ring holds one.
     let Some(opened) = crate::session::continue_lease(app, claim, key, store, true) else {
         return Err(Error::Locked);
     };
@@ -1002,8 +981,6 @@ pub async fn workspace_delete(
         // root. Either way its store has to close before the files move.
         let active = state.active_workspace.lock().unwrap().clone();
         let ends_session = active == id || deletion.promoted.as_deref() == Some(active.as_str());
-        // Ended as any session is, and told under the guard that ends it
-        // (`session::end_in`).
         let ended =
             ends_session.then(|| crate::session::end_in(&app, &mut state.session.lock().unwrap()));
 

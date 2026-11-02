@@ -148,10 +148,6 @@ describe('Auth', () => {
     expect(useApp.getState().flow).toBe('setup')
   })
 
-  // The vault opened, and then locked while the mascot was still celebrating —
-  // the OS locking a moment after the password went in. Rust has sealed it, so
-  // the result describes a session that has ended: the hold drops it, and the
-  // card waits for the password again rather than showing the vault's list.
   it('does not enter a vault that locked during the success hold', async () => {
     subscribeToEvents()
     mockCommand('unlock', () => ({ entries: [], syncConfigured: false, session: 1 }))
@@ -171,8 +167,6 @@ describe('Auth', () => {
     expect(screen.queryByTestId('unlock-error')).not.toBeInTheDocument()
   })
 
-  // The lock landed earlier, while the key was being derived, and Rust kept the
-  // vault locked (`locked`). Nothing failed: the card just waits again.
   it('waits again, with no error, when the vault locked while the key was derived', async () => {
     mockCommand('unlock', () => Promise.reject({ kind: 'locked', message: 'vault is locked' }))
     render(<Auth biometric={false} />)

@@ -192,10 +192,7 @@ pub fn take_opened_file(app: AppHandle) -> Option<String> {
     crate::opened::take(&app)
 }
 
-/// Whether the OS locking is heard, asked once the webview listens for
-/// `oslock:status`: the listener comes up on a thread of its own and may have
-/// reported before anyone was listening. Versioned like the event, so either
-/// may land first.
+/// Asked once the webview listens for `oslock:status`, for a change it missed.
 #[tauri::command]
 pub fn os_lock_status(app: AppHandle) -> crate::autolock::OsLockStatus {
     crate::autolock::os_lock_status(&app)

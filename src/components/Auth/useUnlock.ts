@@ -108,9 +108,7 @@ export function useUnlock(): Unlock {
   const holdTimer = useRef(0)
   // The unlock the hold is sitting on. The backend has already opened the vault
   // by the time this is set, so it must reach `enterMain` whatever happens to
-  // this hook — see the unmount cleanup below. A lock that lands during the
-  // hold (the OS locking a moment after the password went in) has ended that
-  // session, and `enterMain` is what turns the result away then.
+  // this hook — see the unmount cleanup below.
   const pending = useRef<UnlockResult | null>(null)
   const vault = useApp(selectActiveWorkspace)
   const switching = useApp(state => state.switching)
@@ -160,8 +158,7 @@ export function useUnlock(): Unlock {
 
   // Let the mascot celebrate, then wait for the window to be in front, before
   // the vault takes over. Whoever clears `pending` first — this, or the
-  // unmount above — is the one that enters. A result a lock overtook is not
-  // entered (`enterMain`), and the card waits again.
+  // unmount above — is the one that enters.
   const holdThenEnter = (result: UnlockResult) => {
     setPhase('success')
     pending.current = result
@@ -201,9 +198,7 @@ export function useUnlock(): Unlock {
       })
       .catch((err: unknown) => {
         setPhase('idle')
-        // A lock landed while the key was being derived, and Rust kept the
-        // vault locked: not a failure of the password, just the card waiting
-        // again.
+        // Locked while the key was derived: not a password failure.
         if (errorKind(err) === 'locked') return
         const workspaceId = vaultPasswordRequiredFor(err)
         if (workspaceId) {
@@ -229,9 +224,8 @@ export function useUnlock(): Unlock {
       .then(holdThenEnter)
       .catch((err: unknown) => {
         setPhase('idle')
-        // A prompt the user dismissed is their choice, and a lock that landed
-        // during it kept the vault locked: neither is a failure to report in
-        // red — the screen goes back to waiting, passphrase at hand.
+        // A prompt the user dismissed is their choice, not a failure to
+        // report in red: the screen goes back to waiting, passphrase at hand.
         const kind = errorKind(err)
         if (kind !== 'cancelled' && kind !== 'locked') setError(biometricError(t, err))
       })

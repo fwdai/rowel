@@ -20,13 +20,7 @@ import type { EntryMeta } from './types'
  * failure, so it is not an error event.
  */
 export interface EventPayloads {
-  /**
-   * The vault is locked, and `epoch` is where the lock left Rust's session
-   * count: later than every session opened before it, earlier than every one
-   * opened after. An unlock result names its session (`UnlockResult.session`),
-   * so one this lock overtook is never entered, whichever reached the webview
-   * first.
-   */
+  /** `epoch`: where the lock left the session; older unlock results are stale. */
   'vault:locked': { epoch: number }
   /**
    * A sync pulled entries this device did not have. Carries the whole refreshed
@@ -121,11 +115,7 @@ export interface EventPayloads {
    * expired. Settings › Lockboxes re-reads what it has on screen; no payload.
    */
   'org:changed': void
-  /**
-   * Whether Rust hears the OS locking, every time that changes: the listener
-   * came up — possibly after the launch probe — or was lost. Versioned like
-   * `sync:status`. Desktop only.
-   */
+  /** Whether Rust hears the OS locking, on every change. Desktop only. */
   'oslock:status': OsLockStatus
 }
 
