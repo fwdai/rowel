@@ -1,7 +1,6 @@
 //! What the session manager needs from the app, and nothing more: which
 //! lockboxes this device holds and their keys, a run on one of them under the
-//! process's run claim, the end of that run, forgetting a device, and the
-//! clock. The app's is `nearby::app::host`, over `AppState`; the tests
+//! process's run claim, the end of that run, and the clock. The app's is `nearby::app::host`, over `AppState`; the tests
 //! run two of their own in one process.
 
 use std::ops::Deref;
@@ -60,11 +59,6 @@ pub trait Host: Send + Sync + 'static {
     /// A run ended, having done `outcome` here: the claim goes, and what the
     /// merge changed is announced as a cloud run's would be.
     fn finish(&self, run: Self::Run, outcome: PeerOutcome);
-
-    /// Stop holding tombstones back for the device `device_id` in every
-    /// lockbox (`engine::forget_peer`): it was removed. Blocking; called on a
-    /// thread of its own.
-    fn forget(&self, device_id: &str);
 
     /// The clock every merge stamp and every converge is read from, in ms
     /// since the Unix epoch.

@@ -146,17 +146,13 @@ pub(super) fn set_paused(app: &AppHandle, device_id: &str, paused: bool) {
     }
 }
 
-/// Remove `device_id`: through the manager when one runs; otherwise kept,
-/// and its rows forgotten in every lockbox open now.
+/// Remove `device_id`: through the manager when one runs; otherwise kept
+/// for the next one.
 pub(super) fn remove(app: &AppHandle, device_id: &str) {
     let state = state(app);
-    if let Some(manager) = &state.running.lock().unwrap().manager {
-        manager.remove(device_id);
-        return;
-    }
-    if !state.book.remove(&[device_id.to_string()]).is_empty() {
-        let (host, id) = (AppHost::new(app), device_id.to_string());
-        std::thread::spawn(move || super::session::Host::forget(&host, &id));
+    match &state.running.lock().unwrap().manager {
+        Some(manager) => manager.remove(device_id),
+        None => drop(state.book.remove(&[device_id.to_string()])),
     }
 }
 

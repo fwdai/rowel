@@ -80,10 +80,6 @@ pub struct Channel {
     tls: Tls,
     peer: DeviceId,
     binding: [u8; 32],
-    /// The length prefix of the next message, as far as it has arrived: a
-    /// [`Channel::recv_within`] that gave up waiting keeps what it read here.
-    header: [u8; 4],
-    header_len: usize,
 }
 
 /// [`connect_over`] a socket of its own, for tests.
@@ -182,13 +178,7 @@ fn handshake(mut conn: rustls::Connection, mut sock: TcpStream) -> Result<Channe
         rustls::Connection::Client(c) => Tls::Client(StreamOwned::new(c, sock)),
         rustls::Connection::Server(s) => Tls::Server(StreamOwned::new(s, sock)),
     };
-    Ok(Channel {
-        tls,
-        peer,
-        binding,
-        header: [0; 4],
-        header_len: 0,
-    })
+    Ok(Channel { tls, peer, binding })
 }
 
 fn set_timeouts(sock: &TcpStream, timeout: Duration) -> Result<()> {
@@ -246,54 +236,9 @@ impl Channel {
     /// and the buffer grows only as frames arrive, so a peer that declares a
     /// long message and stops costs what it sent.
     pub fn recv(&mut self, max_len: usize) -> Result<Vec<u8>> {
-        let total = self.read_header()?;
-        self.recv_body(total, max_len)
-    }
-
-    /// [`Channel::recv`], waiting at most `wait` for a message to begin:
-    /// `None` when none has, with nothing lost, and the next receive going on
-    /// from where this one stopped. Once a message has begun, the rest of it
-    /// is read under the channel's ordinary deadline. What lets one thread
-    /// both answer its peer and act on its own between that peer's messages.
-    ///
-    /// The read timeout is the channel's own, [`TIMEOUT`], again afterwards.
-    pub fn recv_within(&mut self, max_len: usize, wait: Duration) -> Result<Option<Vec<u8>>> {
-        self.tls.socket().set_read_timeout(Some(wait))?;
-        let header = self.read_header();
-        self.tls.socket().set_read_timeout(Some(TIMEOUT))?;
-        match header {
-            Ok(total) => self.recv_body(total, max_len).map(Some),
-            Err(Error::TimedOut) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
-    /// [`Channel::recv_within`] for a control message.
-    pub fn recv_control_within(&mut self, wait: Duration) -> Result<Option<Control>> {
-        match self.recv_within(MAX_CONTROL, wait)? {
-            Some(bytes) => parse_control(&bytes).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    // The next message's length, read on from whatever part of it an earlier
-    // wait left behind. A rustls read that times out keeps the partial TLS
-    // record it took off the socket, and this keeps the partial prefix, so a
-    // wait that ends mid-prefix loses nothing either.
-    fn read_header(&mut self) -> Result<usize> {
-        while self.header_len < self.header.len() {
-            match self.tls.read(&mut self.header[self.header_len..]) {
-                Ok(0) => return Err(Error::Io(io::ErrorKind::UnexpectedEof.into())),
-                Ok(n) => self.header_len += n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e.into()),
-            }
-        }
-        self.header_len = 0;
-        Ok(u32::from_be_bytes(self.header) as usize)
-    }
-
-    fn recv_body(&mut self, total: usize, max_len: usize) -> Result<Vec<u8>> {
+        let mut total = [0u8; 4];
+        self.tls.read_exact(&mut total)?;
+        let total = u32::from_be_bytes(total) as usize;
         if total > max_len {
             return Err(Error::TooLarge {
                 len: total,
@@ -351,6 +296,7 @@ enum Tls {
 }
 
 impl Tls {
+    #[cfg(test)]
     fn socket(&self) -> &TcpStream {
         match self {
             Self::Client(s) => &s.sock,
@@ -541,9 +487,6 @@ pub enum Control {
         #[serde(with = "hex32")]
         proof: [u8; 32],
     },
-    /// The sender will not go on, and says why, so the other side can show it.
-    #[serde(rename = "trust/refused")]
-    Refused { reason: String },
     /// A proof made with a key the sender has retired (`trust::own_proof` over
     /// that key): it holds the lockbox under a newer password now, and a
     /// receiver this proof verifies for is the one behind.
@@ -579,12 +522,10 @@ pub enum Control {
     /// The answer to `sync/absorb`: the revision after the merge.
     #[serde(rename = "sync/absorbed")]
     Absorbed { revision: String },
-    /// The run of `vault` ended: the running side's revision afterwards, or
-    /// what the run failed with.
+    /// The run of `vault` ended, and what it failed with if it did.
     #[serde(rename = "sync/done")]
     Done {
         vault: String,
-        revision: Option<String>,
         error: Option<Failure>,
     },
     /// The answer to a run the answering side will not take on now: another
@@ -594,9 +535,6 @@ pub enum Control {
     /// The answer to a request that failed on the answering side.
     #[serde(rename = "sync/error")]
     Failed(Failure),
-    /// From the answering side: its lockbox changed, a run would be welcome.
-    #[serde(rename = "sync/poke")]
-    Poke,
     /// A `t` this build does not speak: an area or a message added later.
     /// Received, never sent, and not an error, so a newer peer does not break
     /// its connection to an older one.
@@ -849,42 +787,12 @@ pub(super) mod tests {
         }
     }
 
-    // A wait that ends before a message begins loses nothing, even with part
-    // of the message's length already read: the next receive finds it whole.
-    #[test]
-    fn a_wait_for_a_message_gives_up_without_losing_any_of_it() {
-        let (a, b) = (identity(), identity());
-        let (mut dialled, mut answered) = pair(&a, &b);
-        let wait = Duration::from_millis(50);
-        assert_eq!(answered.recv_within(16, wait).unwrap(), None);
-
-        dialled.tls.write_all(&[0, 0]).unwrap();
-        dialled.tls.flush().unwrap();
-        assert_eq!(answered.recv_within(16, wait).unwrap(), None);
-        dialled.tls.write_all(&[0, 4, 0, 0, 0, 4]).unwrap();
-        dialled.tls.write_all(b"ping").unwrap();
-        dialled.tls.flush().unwrap();
-        assert_eq!(
-            answered.recv_within(16, Duration::from_secs(5)).unwrap(),
-            Some(b"ping".to_vec())
-        );
-
-        dialled.send_control(&Control::Poke).unwrap();
-        assert_eq!(
-            answered
-                .recv_control_within(Duration::from_secs(5))
-                .unwrap(),
-            Some(Control::Poke)
-        );
-    }
-
     #[test]
     fn a_sync_message_crosses_with_its_failure() {
         let (a, b) = (identity(), identity());
         let (mut dialled, mut answered) = pair(&a, &b);
         let done = Control::Done {
             vault: "v1".into(),
-            revision: None,
             error: Some(Failure {
                 kind: "clockSkew".into(),
                 message: "6 minutes apart".into(),

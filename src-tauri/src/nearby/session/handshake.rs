@@ -1,7 +1,6 @@
 //! The first exchange on a connection: who each side is, which lockboxes the
 //! two prove they hold, and the devices each refuses (design §5,
-//! "Connections"). A device removed on either side is told so here, and
-//! nothing else.
+//! "Connections").
 //!
 //! The side that dialled proves first, and only the lockboxes it recognised
 //! in the other's advertisement. The side that answered then proves back the
@@ -26,18 +25,11 @@ use crate::nearby::{Error, Result};
 /// The most proofs one side may send: more lockboxes than anyone holds.
 const MAX_PROOFS: usize = 64;
 
-/// The most removed ids one `sync/removed` carries, which keeps it inside a
-/// control message.
-pub(super) const MAX_REMOVED: usize = 256;
-
 /// The longest device name kept from a `hello`, in characters.
 const MAX_NAME_CHARS: usize = 64;
 
-/// The `trust/refused` reason a removed device is told.
-const REMOVED: &str = "removed";
-
 pub(super) enum Handshake {
-    /// Lockbox keys were proved one way or the other: the connection stays.
+    /// Lockbox keys were proved one way or the other.
     Established {
         /// The lockboxes proved both ways under their current keys, by vault
         /// id: the ones this connection syncs.
@@ -45,7 +37,7 @@ pub(super) enum Handshake {
         /// A lockbox one of the two holds under a key the other retired.
         behind: bool,
     },
-    /// Over: nothing in common, or a refusal.
+    /// Over: nothing in common.
     Over,
 }
 
@@ -74,11 +66,13 @@ impl Proved {
     }
 }
 
-/// Run the handshake on a fresh channel. `matches` are what the dialling side
-/// recognised in the other's advertisement; the answering side has none.
+/// Run the handshake on a fresh channel, with the keys in `lockboxes`.
+/// `matches` are what the dialling side recognised in the other's
+/// advertisement; the answering side has none.
 pub(super) fn run<H: Host>(
     shared: &Shared<H>,
     channel: &mut Channel,
+    lockboxes: &[Lockbox],
     matches: &[Match],
 ) -> Result<Handshake> {
     channel.send_control(&Control::hello(shared.book.device_name()))?;
@@ -92,15 +86,14 @@ pub(super) fn run<H: Host>(
         }
         other => return Err(out_of_step(&other)),
     };
-    let lockboxes = shared.lockboxes();
     let proved = match channel.role() {
         Role::Connector => {
-            let sent = send_proofs(channel, &lockboxes, matches)?;
-            read_proofs(channel, &lockboxes, Some(&sent))?
+            let sent = send_proofs(channel, lockboxes, matches)?;
+            read_proofs(channel, lockboxes, Some(&sent))?
         }
         Role::Acceptor => {
-            let proved = read_proofs(channel, &lockboxes, None)?;
-            answer_proofs(channel, &lockboxes, &proved)?;
+            let proved = read_proofs(channel, lockboxes, None)?;
+            answer_proofs(channel, lockboxes, &proved)?;
             proved
         }
     };
@@ -109,54 +102,22 @@ pub(super) fn run<H: Host>(
     }
 
     // Each keeps the union of the two removed sets, so a Remove on one of the
-    // owner's devices reaches the others as they meet. A side that removed
-    // the other says `trust/refused` instead, and takes nothing from it. That
-    // comes only now the two have proved a key to each other, so it is the
-    // word of a device that holds the lockbox: a stranger cannot switch a
-    // device off by claiming to refuse it.
-    //
-    // The answering side speaks first and the dialling side second, so
-    // neither writes while a refusal may be on its way: the refusing side
-    // closes straight after it, and a close that crossed a write from the
-    // other end could reset the connection and lose it.
-    let refuses = shared.book.is_removed(&channel.peer().to_string());
-    let mine = if refuses {
-        Control::Refused {
-            reason: REMOVED.into(),
-        }
-    } else {
-        Control::Removed {
-            ids: shared
-                .removed_batches()
-                .into_iter()
-                .next()
-                .unwrap_or_default(),
-        }
+    // owner's devices reaches the others as they meet. Taken only now the two
+    // have proved a key to each other: it is the word of a device that holds
+    // the lockbox. One message carries every id, some nine hundred at most.
+    let mine = Control::Removed {
+        ids: shared.book.removed(),
     };
-    let first = channel.role() == Role::Acceptor;
-    if first {
+    if channel.role() == Role::Acceptor {
         channel.send_control(&mine)?;
-        if refuses {
-            return Ok(Handshake::Over);
-        }
     }
-    let theirs = match channel.recv_control()? {
-        Control::Removed { ids } => ids,
-        Control::Refused { reason } => {
-            if reason == REMOVED {
-                shared.removed_here();
-            }
-            return Ok(Handshake::Over);
-        }
+    match channel.recv_control()? {
+        Control::Removed { ids } => shared.learn_removed(&ids),
         other => return Err(out_of_step(&other)),
-    };
-    if !first {
-        channel.send_control(&mine)?;
-        if refuses {
-            return Ok(Handshake::Over);
-        }
     }
-    shared.learn_removed(&theirs);
+    if channel.role() == Role::Connector {
+        channel.send_control(&mine)?;
+    }
     shared
         .book
         .seen(&channel.peer().to_string(), &name, &platform);

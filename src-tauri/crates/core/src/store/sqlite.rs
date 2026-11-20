@@ -716,24 +716,6 @@ impl SqliteStore {
         )?)
     }
 
-    /// Every `meta` row whose key starts with `prefix`, as `(key, value)` in
-    /// key order. Matched as [`SqliteStore::meta_delete_prefix`] matches.
-    pub fn meta_under(&self, prefix: &str) -> Result<Vec<(String, String)>> {
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(
-            "SELECT key, value FROM meta WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key",
-        )?;
-        let rows = stmt.query_map(params![prefix], |r| Ok((r.get(0)?, r.get(1)?)))?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
-    }
-
-    /// Delete the `meta` row `key`; a key with no row is not an error.
-    pub fn meta_delete(&self, key: &str) -> Result<()> {
-        self.lock()?
-            .execute("DELETE FROM meta WHERE key = ?1", params![key])?;
-        Ok(())
-    }
-
     /// Hard-delete tombstones deleted before `cutoff_ms`, returning the number
     /// of rows reclaimed.
     ///

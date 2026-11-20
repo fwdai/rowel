@@ -72,26 +72,24 @@ pub trait PeerLink {
 - A peer run must not write the cloud bookkeeping (`sync_remote_rev`,
   `sync_last_ms`): `note_push` is a no-op for it.
 
-`sync_with_peer(link, local, device_id, now_ms)`:
+`sync_with_peer(link, local, now_ms)`:
 
 1. `head`. Clocks more than 5 minutes apart: stop with a clock error naming
    the difference. Last-writer-wins is only as good as the clocks.
 2. Equal revisions: done.
 3. `engine::sync`. Its errors mean what they mean for a cloud run
    (`PasswordChangedRemotely`, `VaultUnderRetiredPassword`, a foreign vault).
-4. Record that this lockbox converged with `device_id` at `now_ms`.
 
-**Tombstones.** `engine::reclaim` drops tombstones older than 90 days on the
-assumption they were pushed long ago. Between peers that may not be true. So
-each lockbox keeps, in `meta` under `SYNC_META_PREFIX` (local bookkeeping,
-scrubbed by a restore), the time it last converged with each known device,
-and the reclaim cutoff is never later than the oldest of those. That time
-covers the deletes made here since, which this device's own clock stamped. It
-says nothing of a delete that arrived since from somewhere else, whatever its
-stamp (one brought the long way round, or made on a device whose clock runs
-behind), so a merge that writes rows resets every device's time, and a device
-whose time is reset holds every tombstone back until it converges again.
-Forgetting a device (§5, Remove) deletes its row.
+It returns what the run merged here however it ended, so a run that merged
+and then failed is still announced.
+
+**Tombstones** are the engine's to reclaim, on the rule it has for an account:
+after 90 days. Nearby sync adds nothing to it. A device that syncs with
+nothing for longer than that, over the network or through an account, can
+bring back what was deleted meanwhile; it never loses anything. Holding
+tombstones for each device met was tried and taken out: it needed a clock
+and a record per device, and was wrong whenever a delete arrived by another
+route. A stronger rule belongs in the engine, for both paths at once.
 
 Not in this version: sending only the rows that changed. Every exchange that
 finds a difference moves whole packs.
@@ -163,11 +161,17 @@ A ceremony makes a device *connected* and nothing more.
 Desktop only for now. Everything is under `src-tauri/src/nearby/`; the app
 reaches it at the session's start and end (`session::announce_opened`,
 `announce_ended`), at `sync_now` (a local change) and after a cloud run that
-merged rows (`commands::sync`). The session logic runs against a small `Host`
-trait (the lockboxes and their keys, a run on one under the run claim, its
-end, forgetting a device, the clock), so its tests run two managers in one
-process over loopback with an in-memory discovery; the app's host is
+merged rows or took a newer name (`commands::sync`). The session logic runs
+against a small `Host` trait (the lockboxes and their keys, a run on one
+under the run claim, its end, the clock), so its tests run several managers
+in one process over loopback with an in-memory discovery; the app's host is
 `nearby::app::host`.
+
+**One connection is one sync.** The device with something to say dials, the
+two prove their keys, every lockbox they hold under the same key is run, and
+the connection closes. Nothing is said on it but a request and its answer,
+and nothing outlives it but what Settings shows. There is no standing
+connection to keep in step with the keys, the removed set or the network.
 
 **Which lockboxes.** The open one (`SessionVault`) and every other lockbox
 whose key is in `AppState.keyring` (`WorkspaceVault`), org lockboxes and
@@ -175,10 +179,12 @@ lockboxes without a KDF descriptor or a vault id left out. A run opens the open
 one through the session, and any other on a connection of its own; never the
 open one's database a second time. The set is read again every 3 seconds (the
 unlock fills the keyring a moment after the session opens; a password change
-changes the keys): when its keys changed, the advertisement follows and every
-connection is closed, to be proved again under the new keys. Each side reads
-it again as a run begins too, under the run claim, which a password change
-waits for: no run goes ahead under keys its connection was not proved under.
+changes the keys): when its keys changed, the advertisement follows, every
+advertisement seen is read again with them, and a sync with each device is
+owed. A connection proves the keys as they were read when it opened, and each
+side reads the lockbox's keys again as a run on it begins, under the run
+claim, which a password change waits for: a run under other keys than the
+ones its connection proved is not begun.
 
 **Discovery.** Service `_rowel-sync._tcp`, advertised only while unlocked and
 enabled, through `mdns-sd` on Windows, Linux and macOS (iOS will need the
@@ -190,18 +196,28 @@ the tag `HMAC(discovery key, nonce)` truncated to 8 bytes, followed by the
 device id XOR `HMAC(discovery key, label ‖ nonce)`. A device that holds the
 lockbox recomputes the tag, recognises it, and unmasks the id; nobody else can
 link two sessions, tell which lockboxes a device holds, or which device it is.
-Knowing the id before dialling is what lets a device apply the rule below
-and dial expecting that id (so a record copied and
-pointed at another address fails at the handshake). The device's name is not
+Knowing the id before dialling is what lets a device skip one it removed or
+paused, and dial expecting that id (so a record copied and pointed at another
+address fails at the handshake). The device's name is not
 in the TXT; showing it while "Add a device" is open comes with §6.
 
 **Connections.** One IPv4 listener on every interface; a connection from an
 address that is not private, link-local or this machine is closed before TLS.
 At most 16 connections are open at once, and each has 15 seconds from its first
-byte to the end of its handshake. Of two devices that see each other, the one
-with the smaller device id dials; of two connections between one pair, each
-side keeps the one the smaller id dialled (else the newer), so both keep the
-same one.
+byte to the end of its handshake.
+
+**When a device dials.** For each advertisement it recognises, a device keeps
+one thing: when a sync with that device is owed. It is owed on first sight
+(the smaller device id dials at once, the larger two seconds later, by when
+the two are usually level and its dial finds nothing to do), when a lockbox
+changes here (the signal that schedules a cloud run: `sync_now`, which the
+frontend's debounce sends whenever cloud or nearby sync is on), after a merge
+from the account or from another device, when the keys or the removed set
+change, and on a resume. A dial that could not go through (nothing answered,
+the connection failed, a run claim was held on either side) is owed again
+after 250 ms, doubling to 30 seconds, with a random part so two devices that
+dialled each other at once do not do it again. A device shows as here while
+its advertisement is seen.
 
 After `hello`, the dialling side sends a `trust/proof` for every lockbox it
 recognised in the other's advertisement (and a `trust/proof-retired` under
@@ -220,46 +236,37 @@ removed sets (`sync/removed`).
 `nearby::exchange::sync_with_peer` over a `PeerLink` that speaks `sync/head` (with
 the asker's clock; answered by `sync/head-reply`), `sync/fetch` (answered by
 `sync/pack` and the pack as the next message), `sync/absorb` (the pack
-follows it; answered by `sync/absorbed`) and, when a run ends, `sync/done`
-with the dialler's revision, or the error the run failed with: the answering
-side records the converge (`note_converged`) when its own revision equals it,
-and shows the error. A request that fails on the answering side is answered
-`sync/error` with its kind. The answering side asks for a run with `sync/poke`
-when its lockbox changed. A run starts on connect, on a local change (the
-signal that schedules a cloud run: `sync_now`, which the frontend's debounce
-now sends whenever cloud or nearby sync is on), and on a merge from the cloud
-or from another nearby device.
+follows it; answered by `sync/absorbed`) and, when a run ends, `sync/done`,
+with the error the run failed with if it did, which the answering side
+shows. A request that fails on the answering side is answered `sync/error`
+with its kind. When every lockbox has run, the dialling side closes.
 
 Each side takes the process's one run claim (`AppState::syncing`) for a run:
 the dialler before it asks, the answering side from `sync/head` to
-`sync/done` (or 30 seconds without a request). A side that cannot take it
-answers `sync/busy`, and the run is asked again, waiting 250 ms and doubling
-to 30 seconds; a cloud run asked for while a nearby run holds the claim runs
-when it lets go. A peer merge that changed rows of the open lockbox emits
-`vault:merged` and requests a cloud run; a newer name is mirrored into the
-registry as a cloud run's is, and passed on the same way. A run that failed
-after it merged announces and passes on what it merged all the same. There
-is no keepalive: a device that leaves
-without closing its connection shows as connected until a run with it fails.
+`sync/done` (or the end of the connection, which a read stalled for 30
+seconds also brings). A side that cannot take it answers `sync/busy`, and the
+dial is tried again later; a cloud run asked for while a nearby run holds the
+claim runs when it lets go. A run that merged rows into the open lockbox
+emits `vault:merged` through the function a cloud run uses
+(`commands::sync::announce_merged`) and requests a cloud run; a newer name is
+mirrored into the registry as a cloud run's is. Either is passed on to the
+other devices here, and a run that failed after it merged does the same.
 
 **Pause and Remove.** Kept per install in `nearby/state.json` under the app's
 data root, beside `settings.json` and kept the same way (a JSON file with
 defaults, written atomically), next to the identity key `nearby/identity.key`:
 enabled, paused device ids, removed device ids, and the devices seen (id, name,
-platform, last converge). Pause is local: this side runs nothing with the
-paused device and answers its `sync/head` with `sync/busy`, so the other side
-keeps asking, at most every 30 seconds, and shows nothing of it. Remove adds
-the id to the removed set, which only grows: its connections close, its
-tombstone rows are forgotten in every lockbox whose key is held
-(`engine::forget_peer`, under the run claim), and the grown set goes to every
-connected device at once and at every later handshake (256 ids to a
-`sync/removed`, the rest after the handshake), each keeping the union, so one
-Remove reaches the owner's other devices as they meet. The next connection
-with the removed device, which the smaller id of the two dials as ever, is
-refused (`trust/refused`) by the side that removed it, after the two have
-proved a key to each other, so the refusal is a holder's word. The device
-refused turns nearby sync off. Remove does not erase
-what the device holds; that takes a master-password change.
+platform, last sync). Pause is local: this side does not dial the paused
+device and answers its `sync/head` with `sync/busy`, so the other side keeps
+trying, at most every 30 seconds, and shows nothing of it. Remove adds the id
+to the removed set, which only grows: the device is not dialled, its
+connections close, and a connection from it is closed as soon as TLS says
+whose it is. It is not told; it sees the others as offline. Every handshake
+that proved a key carries the removed set (`sync/removed`, one message of up
+to some nine hundred ids), each side keeping the union, and a set that grows
+makes a sync with every device owed, so one Remove reaches the owner's other
+devices as they meet. Remove does not erase what the device holds; that takes
+a master-password change.
 
 **Locking** (and a lockbox switch, which ends the session) stops the manager
 under the session guard: the advertisement goes, the listener and every
@@ -308,7 +315,7 @@ interface NearbyDevice {
   platform: 'macos' | 'windows' | 'linux' | 'ios'
   state:
     | 'syncing'        // a run is in flight
-    | 'upToDate'       // connected, nothing to send
+    | 'upToDate'       // on the network, nothing to send
     | 'offline'        // known, not on the network now
     | 'paused'
     | 'needsPassword'  // the master password changed on one side

@@ -1,13 +1,22 @@
 //! The session manager (design §5, "Discovery and sessions"): while the app
 //! is unlocked and nearby sync is on, this device advertises itself, listens,
-//! dials the devices it shares a lockbox with, proves the keys, and runs
-//! every lockbox the two hold under the same key, through `exchange`.
+//! and syncs with the devices it shares a lockbox with.
+//!
+//! A sync is one short connection: the device with something to say dials,
+//! the two prove their keys, every lockbox they hold under the same key is
+//! run through `exchange`, and the connection closes. Nothing outlives it but
+//! what the book shows, so there is no connection to keep in step with the
+//! keys, the removed set or the network.
+//!
+//! What is kept per device seen is when a sync with it is owed
+//! ([`Seen::due`]): on first sight, when a lockbox changes here (an edit, a
+//! merge from the account or from another device), and again after a try
+//! that could not go through.
 //!
 //! - [`advert`]: what this device's advertisement says, and what another's
 //!   says to it.
 //! - [`listener`] and [`connection`]: one listener and one thread per
-//!   connection; [`conns`] keeps their count, their deadlines and the one
-//!   connection a pair of devices keeps.
+//!   connection; [`conns`] keeps their count and their deadlines.
 //! - [`handshake`]: `hello`, the key proofs, the removed sets.
 //! - [`link`] and [`answer`]: a run, from the side that dialled and from the
 //!   side that answers.
@@ -38,7 +47,9 @@ use std::time::{Duration, Instant};
 
 use rand::RngCore;
 
-use self::conns::{Conns, Signal};
+use self::advert::Recognised;
+use self::connection::Dialled;
+use self::conns::Conns;
 use crate::nearby::discovery::{Advert, Discovery, Event, Txt};
 use crate::nearby::identity::{DeviceId, Identity};
 use crate::nearby::trust::NONCE_LEN;
@@ -47,18 +58,26 @@ use crate::nearby::{Error, Result};
 pub use book::{Book, NearbyStatus, Stored};
 pub use host::{Host, Keys, Lockbox};
 
-/// How often the manager looks for an overdue handshake.
+/// How often the manager looks for a sync that is due and a handshake that
+/// is overdue.
 const TICK: Duration = Duration::from_millis(200);
 
-/// How often the lockboxes are read again, and the devices seen but not
-/// connected are dialled again. The unlock puts every lockbox but the open
-/// one into the keyring a moment after the session opens, and a password
-/// change or a new lockbox changes the keys; nothing announces either.
+/// How often the lockboxes are read again. The unlock puts every lockbox but
+/// the open one into the keyring a moment after the session opens, and a
+/// password change or a new lockbox changes the keys; nothing announces
+/// either.
 const REFRESH: Duration = Duration::from_secs(3);
 
-/// How long after a dial a device seen is dialled again, if it is still not
-/// connected.
-const REDIAL: Duration = Duration::from_secs(10);
+/// The first wait before a sync that could not go through is tried again,
+/// doubling up to the second. A device that paused this one answers as busy,
+/// so the ceiling is also how often a paused device is asked.
+const RETRY_FIRST: Duration = Duration::from_millis(250);
+const RETRY_MOST: Duration = Duration::from_secs(30);
+
+/// How long the device with the larger id waits on first sight. Whichever
+/// sees the other dials; the smaller dials at once, and by then the two are
+/// usually level.
+const SECOND_DIAL: Duration = Duration::from_secs(2);
 
 /// What a manager runs with.
 pub struct Config<H: Host> {
@@ -96,10 +115,18 @@ struct Shared<H: Host> {
     counts: tests::Counts,
 }
 
+/// An advertisement on the network.
 struct Seen {
     txt: Txt,
     addrs: Vec<SocketAddr>,
-    next_dial: Instant,
+    /// The device behind it and the lockboxes it shares with this one, as
+    /// read with the lockboxes last read. `None` for a stranger's.
+    found: Option<Recognised>,
+    /// When a sync with it is owed. `None` once one went through.
+    due: Option<Instant>,
+    /// The wait before the next try, should this one not go through.
+    backoff: Duration,
+    dialling: bool,
 }
 
 impl<H: Host> Manager<H> {
@@ -155,19 +182,17 @@ impl<H: Host> Manager<H> {
         self.shared.stop();
     }
 
-    /// This device's lockboxes changed here: every connection runs, or asks
-    /// the other side to.
+    /// This device's lockboxes changed: a sync with every device here is
+    /// owed.
     pub fn request_runs(&self) {
-        self.shared.conns().signal(None, Signal::Run);
+        self.shared.owe_all();
     }
 
-    /// Stop running with `device_id`, or start again; a resume runs at once.
+    /// Stop syncing with `device_id`, or start again; a resume syncs at once.
     pub fn set_paused(&self, device_id: &str, paused: bool) {
         self.shared.book.set_paused(device_id, paused);
         if !paused {
-            if let Ok(peer) = device_id.parse::<DeviceId>() {
-                self.shared.conns().signal(Some(&peer), Signal::Run);
-            }
+            self.shared.owe_all();
         }
     }
 
@@ -209,6 +234,10 @@ impl<H: Host> Shared<H> {
         self.conns.lock().unwrap()
     }
 
+    fn seen(&self) -> MutexGuard<'_, HashMap<String, Seen>> {
+        self.seen.lock().unwrap()
+    }
+
     /// Change what the book knows now, as this manager.
     fn live(&self, change: impl FnOnce(&mut book::Live)) {
         self.book.live(self.generation, change);
@@ -240,125 +269,168 @@ impl<H: Host> Shared<H> {
             if refreshed.elapsed() >= REFRESH {
                 refreshed = Instant::now();
                 self.refresh();
-                self.redial();
             }
+            self.dial_due();
         }
     }
 
     /// Read the lockboxes again. When their keys changed, the advertisement
-    /// follows and every connection is closed, to be proved again from the
-    /// new advertisements: what a connection syncs was proved under the keys
-    /// it was opened with. `true` when they had changed.
-    fn refresh(&self) -> bool {
+    /// follows, every advertisement seen is read again with them, and a sync
+    /// with each device is owed.
+    fn refresh(&self) {
         let fresh = self.host.lockboxes();
         if fresh == *self.lockboxes() {
-            return false;
+            return;
         }
         *self.lockboxes.lock().unwrap() = Arc::new(fresh);
         self.advertise();
-        self.conns().shut_all();
-        self.redial_soon();
-        true
+        let lockboxes = self.lockboxes();
+        let now = Instant::now();
+        for seen in self.seen().values_mut() {
+            seen.found = advert::recognise(&seen.txt, &lockboxes);
+            seen.due = Some(now);
+        }
+        self.show_here();
     }
 
-    /// A run on `vault` for a connection ([`Host::begin`]). The keys are read
-    /// again under the run's claim, which a password change waits for: when
-    /// they are no longer the ones the connections were proved under, every
-    /// connection closes ([`Shared::refresh`]) and the run is not begun.
-    fn begin(&self, vault: &str) -> crate::error::Result<H::Run> {
+    /// A run on `vault` for a connection that proved the keys in `proved`
+    /// ([`Host::begin`]). The lockbox's keys are read again under the run's
+    /// claim, which a password change waits for: a run under keys other than
+    /// the ones its connection proved is not begun, and is tried again on a
+    /// connection of its own.
+    fn begin(&self, vault: &str, proved: &[Lockbox]) -> crate::error::Result<H::Run> {
         let run = self.host.begin(vault)?;
-        if self.refresh() {
+        let now = self.host.lockboxes();
+        let of = |lockboxes: &[Lockbox]| lockboxes.iter().find(|l| l.vault_id == vault).cloned();
+        if of(&now) != of(proved) {
             return Err(crate::error::Error::SyncBusy);
         }
         Ok(run)
     }
 
-    /// Every device seen and not connected is dialled at the next look.
-    fn redial_soon(&self) {
-        let now = Instant::now();
-        for seen in self.seen.lock().unwrap().values_mut() {
-            seen.next_dial = now;
-        }
-    }
-
-    fn on_event(self: &Arc<Self>, event: Event) {
+    fn on_event(&self, event: Event) {
         match event {
             Event::Seen(peer) => {
-                self.seen.lock().unwrap().insert(
-                    peer.instance,
-                    Seen {
-                        txt: peer.txt.clone(),
-                        addrs: peer.addrs.clone(),
-                        next_dial: Instant::now() + REDIAL,
-                    },
-                );
-                self.consider(&peer.txt, peer.addrs);
+                let mut seen = self.seen();
+                let found = advert::recognise(&peer.txt, &self.lockboxes());
+                match seen.get_mut(&peer.instance) {
+                    // The same advertisement, changed.
+                    Some(known) => {
+                        known.txt = peer.txt;
+                        known.addrs = peer.addrs;
+                        known.found = found;
+                    }
+                    None => {
+                        let larger = found
+                            .as_ref()
+                            .is_some_and(|found| found.device < *self.identity.device_id());
+                        let wait = if larger { SECOND_DIAL } else { Duration::ZERO };
+                        seen.insert(
+                            peer.instance,
+                            Seen {
+                                txt: peer.txt,
+                                addrs: peer.addrs,
+                                found,
+                                due: Some(Instant::now() + wait),
+                                backoff: RETRY_FIRST,
+                                dialling: false,
+                            },
+                        );
+                    }
+                }
             }
             Event::Gone { instance } => {
-                self.seen.lock().unwrap().remove(&instance);
+                self.seen().remove(&instance);
+            }
+        }
+        self.show_here();
+    }
+
+    /// Show as here the devices whose advertisements are recognised.
+    fn show_here(&self) {
+        let here = self
+            .seen()
+            .values()
+            .filter_map(|seen| seen.found.as_ref())
+            .map(|found| found.device.to_string())
+            .collect();
+        self.live(|live| live.here = here);
+    }
+
+    /// A sync with every device seen is owed now.
+    fn owe_all(&self) {
+        let now = Instant::now();
+        for seen in self.seen().values_mut() {
+            seen.due = Some(now);
+        }
+    }
+
+    /// Dial every device a sync is due with: one that shares a lockbox with
+    /// this device, and is neither paused nor removed here.
+    fn dial_due(self: &Arc<Self>) {
+        let now = Instant::now();
+        let me = *self.identity.device_id();
+        let mut due = Vec::new();
+        for (instance, seen) in self.seen().iter_mut() {
+            let Some(found) = &seen.found else {
+                continue;
+            };
+            let id = found.device.to_string();
+            if seen.dialling
+                || !seen.due.is_some_and(|at| now >= at)
+                || found.device == me
+                || self.book.is_removed(&id)
+                || self.book.is_paused(&id)
+            {
+                continue;
+            }
+            seen.dialling = true;
+            seen.due = None;
+            due.push((instance.clone(), found.clone(), seen.addrs.clone()));
+        }
+        for (instance, found, addrs) in due {
+            let shared = self.clone();
+            let dialling = instance.clone();
+            let spawned = spawn("nearby-dial", move || {
+                let dialled = connection::dial(&shared, &found, addrs);
+                shared.dialled(&dialling, dialled);
+            });
+            if spawned.is_err() {
+                self.dialled(&instance, Dialled::Later);
             }
         }
     }
 
-    /// Dial again every device seen and not connected whose time has come.
-    fn redial(self: &Arc<Self>) {
-        let now = Instant::now();
-        let due: Vec<(Txt, Vec<SocketAddr>)> = self
-            .seen
-            .lock()
-            .unwrap()
-            .values_mut()
-            .filter(|seen| now >= seen.next_dial)
-            .map(|seen| {
-                seen.next_dial = now + REDIAL;
-                (seen.txt.clone(), seen.addrs.clone())
-            })
-            .collect();
-        for (txt, addrs) in due {
-            self.consider(&txt, addrs);
-        }
-    }
-
-    /// Dial the device behind `txt` if it shares a lockbox with this one, is
-    /// not this device, and has the larger id: of two devices that see each
-    /// other, the smaller dials. A removed device is dialled too, to be told
-    /// so: the handshake refuses it once the keys are proved.
-    fn consider(self: &Arc<Self>, txt: &Txt, mut addrs: Vec<SocketAddr>) {
-        if self.stopped() {
-            return;
-        }
-        let Some(found) = advert::recognise(txt, &self.lockboxes()) else {
+    /// The dial to the advertisement `instance` ended. One that could not go
+    /// through is owed again after a wait that doubles, and that has a random
+    /// part, so two devices that dialled each other at once do not again.
+    fn dialled(&self, instance: &str, dialled: Dialled) {
+        let mut seen = self.seen();
+        let Some(seen) = seen.get_mut(instance) else {
             return;
         };
-        let me = *self.identity.device_id();
-        if found.device <= me {
-            return;
-        }
-        if !self.conns().start_dial(found.device) {
-            return;
-        }
-        // The listener is IPv4; an IPv6 address is a fallback at best.
-        addrs.sort_by_key(SocketAddr::is_ipv6);
-        let shared = self.clone();
-        let dialled = spawn("nearby-dial", move || {
-            connection::dial(shared, found.device, addrs, found.matches)
-        });
-        if dialled.is_err() {
-            self.conns().end_dial(&found.device);
+        seen.dialling = false;
+        match dialled {
+            Dialled::Done => seen.backoff = RETRY_FIRST,
+            Dialled::Later => {
+                let wait = seen.backoff.mul_f64(1.0 + rand::random::<f64>());
+                let at = Instant::now() + wait;
+                seen.due = Some(seen.due.map_or(at, |due| due.min(at)));
+                seen.backoff = (seen.backoff * 2).min(RETRY_MOST);
+            }
         }
     }
 
     /// Add `ids` to the removed set. Each one new to it is refused from now
-    /// on: its connections close, its tombstone rows are forgotten in every
-    /// lockbox, and every other connection is told, so the removal reaches
-    /// the owner's other devices. The device itself is told at the handshake
-    /// of the connection that follows, whichever of the two dials it. This
-    /// device's own id is never taken.
+    /// on: it is not dialled, its connections close, and a connection from it
+    /// is closed as soon as it says whose it is. A sync with every other
+    /// device is owed, and every handshake carries the set, so the removal
+    /// reaches the owner's other devices. This device's own id is never
+    /// taken.
     fn learn_removed(&self, ids: &[String]) {
         let me = self.identity.device_id().to_string();
         let ids: Vec<String> = ids
             .iter()
-            .take(handshake::MAX_REMOVED)
             .filter(|id| **id != me && id.parse::<DeviceId>().is_ok())
             .cloned()
             .collect();
@@ -368,39 +440,11 @@ impl<H: Host> Shared<H> {
         }
         {
             let mut conns = self.conns();
-            for id in &added {
-                if let Ok(peer) = id.parse::<DeviceId>() {
-                    conns.shut_peer(&peer);
-                }
+            for peer in added.iter().filter_map(|id| id.parse::<DeviceId>().ok()) {
+                conns.shut_peer(&peer);
             }
-            conns.signal(None, Signal::Removed);
         }
-        self.redial_soon();
-        let host = self.host.clone();
-        let forgetting = spawn("nearby-forget", move || {
-            added.iter().for_each(|id| host.forget(id));
-        });
-        if let Err(e) = forgetting {
-            log::warn!("nearby: a removed device's rows are kept for now: {e}");
-        }
-    }
-
-    /// The removed set, in the batches `sync/removed` carries it in. The
-    /// handshake has room for the first; an established connection sends the
-    /// rest.
-    fn removed_batches(&self) -> Vec<Vec<String>> {
-        let ids = self.book.removed();
-        ids.chunks(handshake::MAX_REMOVED)
-            .map(<[String]>::to_vec)
-            .collect()
-    }
-
-    /// A device that holds one of this device's lockboxes says this device
-    /// was removed: nearby sync goes off here, as the owner asked.
-    fn removed_here(&self) {
-        log::info!("nearby: this device was removed on another of the owner's devices");
-        self.book.set_enabled(false);
-        self.stop();
+        self.owe_all();
     }
 
     #[cfg(not(test))]

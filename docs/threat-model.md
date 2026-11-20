@@ -774,7 +774,7 @@ the app opens a socket for it.
   first byte to the end of its handshake before it is shut, whatever the
   per-read deadlines would allow.
 - **Who is shown what.** A device dials only a device whose advertisement it
-  recognised, only when its own id is the smaller, and expecting the id the
+  recognised, and expecting the id the
   advertisement named, so a record copied from a real device and pointed at
   another address fails at the handshake. The dialling side proves first, and
   only the lockboxes it recognised; the answering side proves back exactly
@@ -789,14 +789,12 @@ the app opens a socket for it.
   under that old key (`trust/proof-retired`) rather than from the other's
   word, and sent nothing else.
 - **The removed set.** Removing a device puts its id in a set kept per install
-  that only grows. Its connections close, its tombstone rows are forgotten
-  in every lockbox whose key is held then, and the next connection with it,
-  whichever of the two dials, is refused: after the two have proved a key to
-  each other, so a refusal is always the word of a device that holds the
-  lockbox, and a refused device turns nearby sync off. After every handshake that proved a key the two
-  sides exchange their removed sets and each keeps the union, and a set that
-  grows is passed to every connected device at once. A removed set is taken
-  only from a device that proved a key on the same connection.
+  that only grows. The device is not dialled, its connections close, and a
+  connection from it is closed as soon as TLS says whose it is; it is told
+  nothing. Every handshake that proved a key carries the removed set, each
+  side keeping the union, so a removal reaches the owner's other devices as
+  they meet. A removed set is taken only from a device that proved a key on
+  the same connection.
 - **One writer at a time.** Every run takes the process's one run claim on
   each side, the claim a cloud run, a password change and a "delete
   everywhere" take; a side that cannot have it answers `sync/busy`. It is
@@ -833,8 +831,8 @@ What each of them can and cannot do:
   not which device: the tags and the masked id change with every session's
   nonce. Turning nearby sync off hides even that.
 - **One of the owner's devices, removed.** Keeps what it holds and can still
-  prove the key, which is exactly what lets the others refuse it with a word
-  it can trust. It learns that it was removed and nothing else.
+  prove the key, to any device the removal has not reached yet. From those it
+  has reached it gets a closed connection and nothing else.
 Residuals:
 
 - **Removing a device will not erase what it holds.** Once a device has
@@ -846,24 +844,26 @@ Residuals:
   below. The id alone is trusted with no lockbox, which still takes a proof
   of its key.
 - **The removed set reaches only who meets it.** A device that never meets
-  one that knows of a removal keeps syncing with the removed device. Forgetting
-  its tombstone rows reaches only the lockboxes whose keys are held at the
-  time, and a lost wait for the run claim leaves them held until a later
-  removal. Removal is by device id: the same person on a new install is a new
-  device, and only a master-password change keeps a copy from proving the key.
+  one that knows of a removal keeps syncing with the removed device. Removal
+  is by device id: the same person on a new install is a new device, and only
+  a master-password change keeps a copy from proving the key.
+- **Deleted items can come back after 90 days apart.** Tombstones are
+  reclaimed after 90 days, as for an account. A device that syncs with
+  nothing for longer, then meets another, hands back what was deleted
+  meanwhile. Nothing is lost by it.
 - **A device of the owner's can hold this one up.** Between `sync/head` and
-  `sync/done` the answering side holds its run claim, for at most 30 seconds
-  without a request; a device that stops mid-run delays this one's cloud run
-  and keeps a lockbox switch refused for that long. Pause is local and not
-  announced: the paused device keeps asking, at most every 30 seconds, and is
-  told `sync/busy`.
+  `sync/done` the answering side holds its run claim, until the connection
+  ends or a read stalls for 30 seconds; a device that stops mid-run delays
+  this one's cloud run and keeps a lockbox switch refused for that long.
+  Pause is local and not announced: the paused device keeps trying, at most
+  every 30 seconds, and is told `sync/busy`.
 - **Clocks.** A run between devices whose clocks are more than five minutes
   apart is refused before anything moves. Within five minutes, a fast clock
   still decides which of two close edits survives, as it does through an
   account.
-- **No keepalive.** A device that leaves the network without closing its
-  connection shows as connected until a run with it fails at the 30-second
-  stall deadline.
+- **Here means advertised.** A device shows as here while its mDNS record
+  is seen, which can outlast the device by the record's lifetime; a sync
+  tried with it meanwhile fails and is tried again later.
 
 ## The browser extension
 

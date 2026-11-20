@@ -17,7 +17,6 @@
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
@@ -30,14 +29,11 @@ use crate::nearby::session::{Host, Keys, Lockbox};
 use crate::org::lockboxes::is_org_lockbox_dir;
 use crate::session::store_err;
 use crate::state::AppState;
-use crate::store::{identity, SqliteStore};
-use crate::sync::engine::{self, LocalVault, SessionVault, WorkspaceVault};
+use crate::store::identity;
+use crate::sync::engine::{LocalVault, SessionVault, WorkspaceVault};
 use crate::sync::Provider;
 use crate::workspace::{dir_of, Registry, Workspace};
 use crate::{events, retired, storage};
-
-/// How long forgetting a removed device waits for the run claim.
-const FORGET_WAIT: Duration = Duration::from_secs(120);
 
 pub(super) struct AppHost {
     app: AppHandle,
@@ -92,7 +88,6 @@ impl AppHost {
                     dir,
                     vault_id,
                     material,
-                    is_open,
                 })
             })
             .collect()
@@ -146,23 +141,6 @@ impl AppHost {
             _then: Rerun(self.app.clone()),
         })
     }
-
-    /// The run claim for a step that is not a run, waited for while another
-    /// holds it.
-    fn wait_for_claim(&self) -> Option<Claim> {
-        let deadline = Instant::now() + FORGET_WAIT;
-        loop {
-            let claim = {
-                let state = self.app.state::<AppState>();
-                let _paths = state.workspace_lock.lock().unwrap();
-                self.claim().ok()
-            };
-            if claim.is_some() || Instant::now() >= deadline {
-                return claim;
-            }
-            std::thread::sleep(Duration::from_millis(250));
-        }
-    }
 }
 
 struct Held {
@@ -170,7 +148,6 @@ struct Held {
     dir: PathBuf,
     vault_id: String,
     material: Zeroizing<Vec<u8>>,
-    is_open: bool,
 }
 
 enum Target {
@@ -295,10 +272,7 @@ impl Host for AppHost {
         }
         if is_open {
             if outcome.merged > 0 {
-                // What a cloud run that merged says: the refreshed list, and
-                // iOS's logins.
-                events::vault_merged(&self.app, crate::commands::sync::entry_metas(&self.app));
-                crate::credential_identities::publish(&self.app);
+                crate::commands::sync::announce_merged(&self.app);
             }
             // The account has not seen what came from the other device.
             let state = self.app.state::<AppState>();
@@ -307,34 +281,6 @@ impl Host for AppHost {
         // Nor have the other devices here; the one it came from has nothing
         // left to say and moves no pack.
         super::request_run(&self.app);
-    }
-
-    fn forget(&self, device_id: &str) {
-        let Some(claim) = self.wait_for_claim() else {
-            log::warn!("nearby: a removed device's rows are kept for now");
-            return;
-        };
-        for held in self.held() {
-            let forgotten = if held.is_open {
-                let state = self.app.state::<AppState>();
-                let session = state.session.lock().unwrap();
-                session
-                    .store()
-                    .and_then(|store| engine::forget_peer(store, device_id))
-            } else {
-                let key = VaultKey::from_material(held.material, true);
-                SqliteStore::open(&held.dir.join(storage::DB_FILE), &*key.sqlcipher_key())
-                    .map_err(store_err)
-                    .and_then(|store| engine::forget_peer(&store, device_id))
-            };
-            if let Err(e) = forgotten {
-                log::warn!(
-                    "nearby: lockbox {} keeps a removed device's row: {e}",
-                    held.workspace_id
-                );
-            }
-        }
-        drop(claim);
     }
 
     fn now_ms(&self) -> i64 {

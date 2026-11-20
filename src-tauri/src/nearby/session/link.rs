@@ -1,6 +1,5 @@
 //! The running side's [`PeerLink`] over a channel: every call one request and
-//! its answer, with whatever else the other side says meanwhile kept for the
-//! connection's loop.
+//! its answer.
 
 use std::cell::RefCell;
 
@@ -13,24 +12,13 @@ use crate::sync::pack::MAX_PACK_BYTES;
 /// The longest error sentence kept from the other side, in bytes.
 const MAX_MESSAGE: usize = 300;
 
-/// What a run over the link heard besides its answers.
-#[derive(Default)]
-pub(super) struct Heard {
-    /// The other side answered `sync/busy`: ask again later.
-    pub busy: bool,
-    /// The channel failed: the connection is over, whatever the run says.
-    pub broken: Option<crate::nearby::Error>,
-    /// The other side asked for a run meanwhile.
-    pub poked: bool,
-    /// Removed ids it sent meanwhile.
-    pub removed: Vec<String>,
-}
-
 pub(super) struct ChannelLink<'a> {
     channel: RefCell<&'a mut Channel>,
     vault: &'a str,
     now_ms: i64,
-    heard: RefCell<Heard>,
+    /// The channel failed or the other side broke step: the connection is
+    /// over, whatever the run says.
+    broken: RefCell<Option<crate::nearby::Error>>,
 }
 
 impl<'a> ChannelLink<'a> {
@@ -40,49 +28,35 @@ impl<'a> ChannelLink<'a> {
             channel: RefCell::new(channel),
             vault,
             now_ms,
-            heard: RefCell::default(),
+            broken: RefCell::default(),
         }
     }
 
-    pub fn into_heard(self) -> Heard {
-        self.heard.into_inner()
+    /// What ended the connection under the run, if anything did.
+    pub fn into_broken(self) -> Option<crate::nearby::Error> {
+        self.broken.into_inner()
     }
 
-    /// Send `request` (and `body` after it), then read up to its answer.
+    /// Send `request` (and `body` after it), then read its answer.
     fn request(&self, request: &Control, body: Option<&[u8]>) -> Result<Control> {
         let mut channel = self.channel.borrow_mut();
-        let sent = channel
+        let answer = channel
             .send_control(request)
-            .and_then(|()| body.map_or(Ok(()), |body| channel.send(body)));
-        if let Err(e) = sent {
-            return Err(self.broke(e));
-        }
-        loop {
-            let mut heard = self.heard.borrow_mut();
-            match channel.recv_control() {
-                Err(e) => {
-                    drop(heard);
-                    return Err(self.broke(e));
-                }
-                Ok(Control::Unsupported) => {}
-                Ok(Control::Poke) => heard.poked = true,
-                Ok(Control::Removed { ids }) => heard.removed.extend(ids),
-                Ok(Control::Busy) => {
-                    heard.busy = true;
-                    return Err(Error::SyncBusy);
-                }
-                Ok(Control::Failed(failure)) => return Err(peer_error(failure)),
-                Ok(answer) => return Ok(answer),
-            }
+            .and_then(|()| body.map_or(Ok(()), |body| channel.send(body)))
+            .and_then(|()| channel.recv_control());
+        match answer {
+            Err(e) => Err(self.broke(e)),
+            Ok(Control::Busy) => Err(Error::SyncBusy),
+            Ok(Control::Failed(failure)) => Err(peer_error(failure)),
+            Ok(answer) => Ok(answer),
         }
     }
 
-    // The channel failed or the other side broke step: kept as the reason the
-    // connection ends (the first failure; the rest follow from it), and an
-    // error for the engine to stop on.
+    // Kept as the reason the connection ends (the first failure; the rest
+    // follow from it), and an error for the engine to stop on.
     fn broke(&self, e: crate::nearby::Error) -> Error {
         let message = e.to_string();
-        self.heard.borrow_mut().broken.get_or_insert(e);
+        self.broken.borrow_mut().get_or_insert(e);
         Error::Other(message)
     }
 

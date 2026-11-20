@@ -85,15 +85,10 @@ impl Reclaim {
 /// next scheduled run settle it, not to spin.
 const MAX_ATTEMPTS: usize = 3;
 
-// All under `SYNC_META_PREFIX`, so a restore onto a fresh install scrubs them
+// Both under `SYNC_META_PREFIX`, so a restore onto a fresh install scrubs them
 // (the source device's bookkeeping means nothing on the target).
 const META_REMOTE_REV: &str = "sync_remote_rev";
 const META_LAST_MS: &str = "sync_last_ms";
-// One row per device this vault syncs with directly, `sync_peer:<device id>`,
-// holding the ms-epoch time the two last held the same state, or
-// `PEER_UNSETTLED` once rows have come in from elsewhere since.
-const META_PEER_PREFIX: &str = "sync_peer:";
-const PEER_UNSETTLED: &str = "0";
 
 // Surfaced verbatim by the sync indicator, so it has to read as a sentence.
 fn foreign_vault_error(provider: Provider) -> String {
@@ -160,14 +155,6 @@ pub trait LocalVault {
     fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>>;
     /// Record a completed push: the revision it landed at, and when.
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()>;
-    /// Record that this vault and the device `device_id` held the same state
-    /// at `at_ms`, as a direct exchange with it proves (`nearby::exchange`). Until
-    /// that device is recorded again or forgotten, no tombstone stamped after
-    /// `at_ms` is reclaimed, and none at all once a merge has brought rows in
-    /// from elsewhere (see [`tombstone_cutoff`]): it may not have seen it yet.
-    /// Called by nearby sync alone, which a mobile build does not have.
-    #[cfg_attr(not(desktop), allow(dead_code))]
-    fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()>;
 
     // The two below are the vault's *identity* rather than its contents. The
     // provider reads the id before a run, to learn which remote pack this vault
@@ -558,10 +545,6 @@ impl LocalVault for SessionVault {
         self.with_store(|store| note_push(store, revision, at_ms))
     }
 
-    fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()> {
-        self.with_store(|store| note_converged(store, device_id, at_ms))
-    }
-
     fn vault_id(&self) -> Result<Option<String>> {
         self.with_store(vault_id_of)
     }
@@ -667,10 +650,6 @@ impl LocalVault for WorkspaceVault {
         note_push(&self.store, revision, at_ms)
     }
 
-    fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()> {
-        note_converged(&self.store, device_id, at_ms)
-    }
-
     fn vault_id(&self) -> Result<Option<String>> {
         vault_id_of(&self.store)
     }
@@ -743,12 +722,10 @@ fn digest_of(store: &SqliteStore) -> Result<[u8; 32]> {
     store.state_digest().map_err(store_err)
 }
 
-/// The step before every pack: reclaim the tombstones past their TTL (less
-/// those held back for a device this vault syncs with directly, see
-/// [`tombstone_cutoff`]), and the audit rows past retention of *every* chain
-/// the vault holds — noted, when this device has a writer id and its own rows
-/// were among them, by a `pruned_through` row in its own chain
-/// (`rowel_broker::audit::prune`).
+/// The step before every pack: reclaim the tombstones past their TTL, and the
+/// audit rows past retention of *every* chain the vault holds — noted, when
+/// this device has a writer id and its own rows were among them, by a
+/// `pruned_through` row in its own chain (`rowel_broker::audit::prune`).
 ///
 /// Every chain, on every platform, because the log merges as a union: a device
 /// that reclaimed only its own rows would be handed them back by any peer
@@ -764,32 +741,9 @@ pub(crate) fn reclaim(
     writer_id: Option<&str>,
 ) -> Result<()> {
     store
-        .purge_tombstones_before(tombstone_cutoff(store, reclaim.tombstones_before)?)
+        .purge_tombstones_before(reclaim.tombstones_before)
         .map_err(store_err)?;
     prune_audit(store, reclaim, writer_id)
-}
-
-/// The TTL's cutoff, held back to the oldest time this vault last converged
-/// with a device it syncs with directly.
-///
-/// The TTL assumes a tombstone that old reached every device long ago, through
-/// the account. A device met only on the local network may not have been met
-/// since the delete, and reclaiming the tombstone before it has seen it would
-/// let its live copy of the entry come back.
-///
-/// The time of the last converge covers the deletes made here since, which
-/// this device's own clock stamped. It says nothing of a delete that arrived
-/// since from somewhere else, whatever its stamp: one made earlier and
-/// brought the long way round, or made on a device whose clock runs behind.
-/// So a merge that writes rows unsettles every device ([`unsettle_peers`]),
-/// and an unsettled device holds every tombstone back until it converges
-/// again. So does a row that does not parse: the safe way to be wrong.
-fn tombstone_cutoff(store: &SqliteStore, ttl_cutoff: i64) -> Result<i64> {
-    let peers = store.meta_under(META_PEER_PREFIX).map_err(store_err)?;
-    Ok(peers
-        .iter()
-        .map(|(_, at_ms)| at_ms.parse().unwrap_or(i64::MIN))
-        .fold(ttl_cutoff, i64::min))
 }
 
 #[cfg(desktop)]
@@ -925,24 +879,10 @@ pub(crate) fn records_from_snapshot(
 
 // One transaction for all three tables, so a file never lands without the
 // entry state it is checked against (see `SqliteStore::merge`).
-pub(crate) fn merge_snapshot(store: &SqliteStore, incoming: &Snapshot) -> Result<usize> {
-    let merged = store
+fn merge_snapshot(store: &SqliteStore, incoming: &Snapshot) -> Result<usize> {
+    store
         .merge(&incoming.records, &incoming.attachments, &incoming.audit)
-        .map_err(store_err)?;
-    if merged > 0 {
-        unsettle_peers(store)?;
-    }
-    Ok(merged)
-}
-
-/// Rows came in from elsewhere: no device this vault syncs with directly is
-/// known to hold them yet, the one they came from included until the run
-/// records the converge (see [`tombstone_cutoff`]).
-fn unsettle_peers(store: &SqliteStore) -> Result<()> {
-    for (key, _) in store.meta_under(META_PEER_PREFIX).map_err(store_err)? {
-        store.meta_set(&key, PEER_UNSETTLED).map_err(store_err)?;
-    }
-    Ok(())
+        .map_err(store_err)
 }
 
 // A pack this build cannot parse is corruption, except for a format stamped by
@@ -962,24 +902,6 @@ pub(crate) fn note_push(store: &SqliteStore, revision: &str, at_ms: i64) -> Resu
     store
         .meta_set(META_LAST_MS, &at_ms.to_string())
         .map_err(store_err)
-}
-
-fn peer_key(device_id: &str) -> String {
-    format!("{META_PEER_PREFIX}{device_id}")
-}
-
-#[cfg_attr(not(desktop), allow(dead_code))]
-pub(crate) fn note_converged(store: &SqliteStore, device_id: &str, at_ms: i64) -> Result<()> {
-    store
-        .meta_set(&peer_key(device_id), &at_ms.to_string())
-        .map_err(store_err)
-}
-
-/// Stop holding tombstones back for `device_id`: the vault no longer syncs
-/// with it directly. Nearby sync's Remove, desktop only like it.
-#[cfg(desktop)]
-pub(crate) fn forget_peer(store: &SqliteStore, device_id: &str) -> Result<()> {
-    store.meta_delete(&peer_key(device_id)).map_err(store_err)
 }
 
 #[cfg(test)]
@@ -1167,9 +1089,6 @@ mod tests {
         }
         fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
             note_push(&self.store, revision, at_ms)
-        }
-        fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()> {
-            note_converged(&self.store, device_id, at_ms)
         }
         fn vault_id(&self) -> Result<Option<String>> {
             identity::vault_id(&self.store).map_err(store_err)

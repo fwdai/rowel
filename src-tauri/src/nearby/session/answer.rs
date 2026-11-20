@@ -5,14 +5,13 @@
 //! A run is open from its first `sync/head` to its `sync/done`, holding the
 //! lockbox and the run claim across the requests in between, so a cloud run
 //! or a switch cannot land in the middle of it. A side that cannot take the
-//! claim answers `sync/busy`, and the other asks again later; so does a side
+//! claim answers `sync/busy`, and the other tries again later; so does a side
 //! that paused the asker, which keeps a pause local. A run whose `sync/done`
-//! never comes is let go after [`IDLE`].
+//! never comes ends with its connection.
 
 use std::ops::Deref;
-use std::time::{Duration, Instant};
 
-use super::host::Host;
+use super::host::{Host, Lockbox};
 use super::link::{bounded, failure_of};
 use super::Shared;
 use crate::error::Error;
@@ -22,10 +21,29 @@ use crate::nearby::Result;
 use crate::sync::engine::LocalVault;
 use crate::sync::pack::MAX_PACK_BYTES;
 
-/// How long an open run waits for its next request before it is let go.
-const IDLE: Duration = Duration::from_secs(30);
+/// Answer the device `peer`, which dialled, until the connection ends: it
+/// closes it when it has run every lockbox, and a read past the channel's
+/// deadline ends it too. `lockboxes` are the ones this connection proved, of
+/// which it syncs `vaults`.
+pub(super) fn serve<H: Host>(
+    shared: &Shared<H>,
+    channel: &mut Channel,
+    peer: &str,
+    lockboxes: &[Lockbox],
+    vaults: &[String],
+) -> Result<()> {
+    let mut answerer = Answerer::default();
+    let ended = (|| loop {
+        let request = channel.recv_control()?;
+        answerer.answer(shared, channel, peer, lockboxes, vaults, request)?;
+    })();
+    // A run left open goes back to the host, claim and all, with whatever it
+    // merged here.
+    answerer.end(shared, peer);
+    ended
+}
 
-pub(super) struct Answerer<R> {
+struct Answerer<R> {
     open: Option<Open<R>>,
 }
 
@@ -33,7 +51,6 @@ struct Open<R> {
     vault: String,
     run: R,
     outcome: PeerOutcome,
-    last: Instant,
 }
 
 impl<R> Default for Answerer<R> {
@@ -43,18 +60,20 @@ impl<R> Default for Answerer<R> {
 }
 
 impl<R: Deref<Target = dyn LocalVault>> Answerer<R> {
-    /// Answer `request` from `peer`, which syncs `vaults` on this connection.
-    /// An error is the channel's, or a request that breaks the protocol; what
-    /// fails in the lockbox is answered with `sync/error` instead.
-    pub fn answer<H: Host<Run = R>>(
+    /// Answer `request`. An error is the channel's, or a request that breaks
+    /// the protocol; what fails in the lockbox is answered with `sync/error`
+    /// instead.
+    fn answer<H: Host<Run = R>>(
         &mut self,
         shared: &Shared<H>,
         channel: &mut Channel,
         peer: &str,
+        lockboxes: &[Lockbox],
         vaults: &[String],
         request: Control,
     ) -> Result<()> {
         match request {
+            Control::Unsupported => Ok(()),
             Control::Head { vault, .. } => {
                 if !vaults.contains(&vault) {
                     return Err(crate::nearby::Error::Protocol(
@@ -69,7 +88,7 @@ impl<R: Deref<Target = dyn LocalVault>> Answerer<R> {
                     self.end(shared, peer);
                 }
                 if self.open.is_none() {
-                    match shared.begin(&vault) {
+                    match shared.begin(&vault, lockboxes) {
                         Ok(run) => {
                             shared.live(|live| {
                                 live.syncing.insert(peer.to_string());
@@ -79,7 +98,6 @@ impl<R: Deref<Target = dyn LocalVault>> Answerer<R> {
                                 vault: vault.clone(),
                                 run,
                                 outcome: PeerOutcome::default(),
-                                last: Instant::now(),
                             });
                         }
                         Err(Error::SyncBusy | Error::Locked) => {
@@ -132,27 +150,15 @@ impl<R: Deref<Target = dyn LocalVault>> Answerer<R> {
                     Err(e) => channel.send_control(&Control::Failed(failure_of(&e))),
                 }
             }
-            Control::Done {
-                vault,
-                revision,
-                error,
-            } => {
-                let now_ms = shared.host.now_ms();
-                if let Some(open) = self.open_for(&vault) {
-                    // Converged only if this side's revision is the one the
-                    // other ended on: a write here since then is not in it.
-                    let level = error.is_none()
-                        && revision.is_some()
-                        && exchange::revision(&*open.run).ok() == revision;
-                    if level && open.run.note_converged(peer, now_ms).is_ok() {
-                        shared.book.converged(peer, now_ms);
+            Control::Done { vault, error } => {
+                if self.open_for(&vault).is_some() {
+                    self.end(shared, peer);
+                    match error {
+                        None => shared.book.converged(peer, shared.host.now_ms()),
+                        Some(failure) => shared.live(|live| {
+                            live.failed.insert(peer.to_string(), bounded(failure));
+                        }),
                     }
-                }
-                self.end(shared, peer);
-                if let Some(failure) = error {
-                    shared.live(|live| {
-                        live.failed.insert(peer.to_string(), bounded(failure));
-                    });
                 }
                 Ok(())
             }
@@ -160,20 +166,9 @@ impl<R: Deref<Target = dyn LocalVault>> Answerer<R> {
         }
     }
 
-    /// Let go of a run whose next request is overdue.
-    pub fn expire<H: Host<Run = R>>(&mut self, shared: &Shared<H>, peer: &str) {
-        if self
-            .open
-            .as_ref()
-            .is_some_and(|open| open.last.elapsed() >= IDLE)
-        {
-            self.end(shared, peer);
-        }
-    }
-
     /// The open run ends: the lockbox and the claim go back to the host with
     /// what the run merged here.
-    pub fn end<H: Host<Run = R>>(&mut self, shared: &Shared<H>, peer: &str) {
+    fn end<H: Host<Run = R>>(&mut self, shared: &Shared<H>, peer: &str) {
         if let Some(open) = self.open.take() {
             shared.host.finish(open.run, open.outcome);
             shared.live(|live| {
@@ -183,9 +178,7 @@ impl<R: Deref<Target = dyn LocalVault>> Answerer<R> {
     }
 
     fn open_for(&mut self, vault: &str) -> Option<&mut Open<R>> {
-        let open = self.open.as_mut().filter(|open| open.vault == vault)?;
-        open.last = Instant::now();
-        Some(open)
+        self.open.as_mut().filter(|open| open.vault == vault)
     }
 }
 

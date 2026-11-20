@@ -256,7 +256,9 @@ impl LocalVault for Device {
         )
     }
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
-        engine::merge_snapshot(self.store(), incoming)
+        self.store()
+            .merge(&incoming.records, &incoming.attachments, &incoming.audit)
+            .map_err(store_err)
     }
     fn digest(&self) -> Result<[u8; 32]> {
         self.store().state_digest().map_err(store_err)
@@ -272,9 +274,6 @@ impl LocalVault for Device {
     }
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
         engine::note_push(self.store(), revision, at_ms)
-    }
-    fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()> {
-        engine::note_converged(self.store(), device_id, at_ms)
     }
     fn vault_id(&self) -> Result<Option<String>> {
         identity::vault_id(self.store()).map_err(store_err)

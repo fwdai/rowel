@@ -12,13 +12,13 @@ use super::book::{NearbyDevice, NearbyDeviceState};
 use super::*;
 use crate::commands::password_sync::two_devices::{derive, params, Device, NEW, OLD};
 use crate::error::{Error as AppError, Result as AppResult};
-use crate::nearby::channel::{self, Control, Role};
+use crate::nearby::channel::{self, Control};
 use crate::nearby::discovery::memory::Network;
 use crate::nearby::exchange::PeerOutcome;
 use crate::nearby::identity::tests::identity;
 use crate::nearby::trust::own_proof;
 use crate::retired;
-use crate::sync::engine::{self, LocalVault, Reclaim, Snapshot};
+use crate::sync::engine::{LocalVault, Reclaim, Snapshot};
 
 /// What the tests count on a manager.
 #[derive(Default)]
@@ -41,34 +41,8 @@ impl<H: Host> Manager<H> {
         *self.shared.identity.device_id()
     }
 
-    fn connections(&self) -> Vec<(DeviceId, Role)> {
-        self.shared.conns().established_peers()
-    }
-
     fn dials(&self) -> usize {
         self.shared.counts.dials.load(Ordering::SeqCst)
-    }
-
-    /// Dial `peer` at `port` on loopback, whoever has the smaller id, with
-    /// every lockbox this device holds: what a device does when it cannot
-    /// tell, or when it means to.
-    fn dial_anyway(&self, peer: DeviceId, port: u16) {
-        let matches = self
-            .shared
-            .lockboxes()
-            .iter()
-            .map(|lockbox| advert::Match {
-                vault_id: lockbox.vault_id.clone(),
-                current: true,
-                retired: Vec::new(),
-            })
-            .collect();
-        if !self.shared.conns().start_dial(peer) {
-            return;
-        }
-        let shared = self.shared.clone();
-        let addrs = vec![SocketAddr::from((Ipv4Addr::LOCALHOST, port))];
-        std::thread::spawn(move || connection::dial(shared, peer, addrs, matches));
     }
 }
 
@@ -150,9 +124,6 @@ impl LocalVault for TestRun {
     fn note_push(&self, revision: &str, at_ms: i64) -> AppResult<()> {
         self.held.device.note_push(revision, at_ms)
     }
-    fn note_converged(&self, device_id: &str, at_ms: i64) -> AppResult<()> {
-        self.held.device.note_converged(device_id, at_ms)
-    }
     fn vault_id(&self) -> AppResult<Option<String>> {
         self.held.device.vault_id()
     }
@@ -207,12 +178,6 @@ impl Host for TestHost {
         let vault = run.held.vault.to_string();
         drop(run);
         self.finished.lock().unwrap().push((vault, outcome));
-    }
-
-    fn forget(&self, device_id: &str) {
-        for device in self.lockboxes.lock().unwrap().iter() {
-            engine::forget_peer(device.store(), device_id).unwrap();
-        }
     }
 
     fn now_ms(&self) -> i64 {
@@ -286,11 +251,9 @@ impl Node {
         self.row(other).map(|row| row.state)
     }
 
-    fn connected_to(&self, other: &Node) -> bool {
-        self.manager
-            .connections()
-            .iter()
-            .any(|(peer, _)| *peer == other.manager.id())
+    /// Whether this node shows `other` as here and level with it.
+    fn level_with(&self, other: &Node) -> bool {
+        self.state_of(other) == Some(NearbyDeviceState::UpToDate)
     }
 
     fn runs_ended(&self) -> usize {
@@ -330,16 +293,6 @@ fn hold(node: &Node) -> Claim {
 /// Long enough for anything that was going to happen to have happened.
 fn settle() {
     std::thread::sleep(Duration::from_millis(1500));
-}
-
-fn peer_rows(device: &Device) -> Vec<String> {
-    device
-        .store()
-        .meta_under("sync_peer:")
-        .unwrap()
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect()
 }
 
 #[test]
@@ -391,7 +344,6 @@ fn a_device_on_another_key_is_never_dialled_and_is_shown_nothing() {
     let (na, nc) = (node(&network, &[&a]), node(&network, &[&other]));
     settle();
     assert_eq!((na.manager.dials(), nc.manager.dials()), (0, 0));
-    assert!(na.manager.connections().is_empty() && nc.manager.connections().is_empty());
     assert!(na.book.status().devices.is_empty());
 
     // It dials in anyway, proves its own key for the same vault id, and asks
@@ -407,7 +359,6 @@ fn a_device_on_another_key_is_never_dialled_and_is_shown_nothing() {
             proof,
         },
         Control::ProofsDone,
-        Control::Removed { ids: Vec::new() },
         Control::Head {
             vault: "v1".into(),
             now_ms: 0,
@@ -465,49 +416,27 @@ fn two_shared_lockboxes_sync_each_into_its_own_and_one_held_alone_is_untouched()
     assert_eq!(b1.device.vault_id().unwrap().as_deref(), Some("v1"));
     assert_eq!(b2.device.vault_id().unwrap().as_deref(), Some("v2"));
     assert_eq!(a3.digest(), alone);
-    assert!(peer_rows(&a3).is_empty());
 }
 
 #[test]
-fn the_smaller_id_dials_and_a_pair_keeps_one_connection() {
+fn edits_made_on_both_at_once_cross_though_each_dials_the_other() {
     let network = Network::default();
     let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
-    let (small, large) = if na.manager.id() < nb.manager.id() {
-        (&na, &nb)
-    } else {
-        (&nb, &na)
-    };
-    eventually("connected", || {
-        small.connected_to(large) && large.connected_to(small)
-    });
-    assert_eq!(small.manager.connections()[0].1, Role::Connector);
-    assert_eq!(large.manager.connections()[0].1, Role::Acceptor);
-    assert_eq!(large.manager.dials(), 0);
+    eventually("level", || na.level_with(&nb) && nb.level_with(&na));
 
-    // Two devices that cannot see each other's advertisements dial each
-    // other at once: each keeps the connection the smaller one dialled.
-    let (c, d) = (lockbox("c", "v1", 1), lockbox("d", "v1", 1));
-    let (nc, nd) = (
-        node(&Network::default(), &[&c]),
-        node(&Network::default(), &[&d]),
-    );
-    nc.manager.dial_anyway(nd.manager.id(), nd.manager.port());
-    nd.manager.dial_anyway(nc.manager.id(), nc.manager.port());
-    eventually("one connection each", || {
-        nc.manager.connections().len() == 1 && nd.manager.connections().len() == 1
-    });
-    settle();
-    let smaller_dials = |n: &Node, other: &Node| {
-        let role = if n.manager.id() < other.manager.id() {
-            Role::Connector
-        } else {
-            Role::Acceptor
-        };
-        n.manager.connections() == [(other.manager.id(), role)]
-    };
-    assert!(smaller_dials(&nc, &nd) && smaller_dials(&nd, &nc));
-    eventually("they converge over it", || c.digest() == d.digest());
+    // Each dials the other and finds its claim held by the other's own dial:
+    // both try again, apart, and the first through carries both edits.
+    for round in ["1", "2", "3"] {
+        a.write(&format!("a{round}"), "made on a");
+        b.write(&format!("b{round}"), "made on b");
+        na.manager.request_runs();
+        nb.manager.request_runs();
+        eventually("both edits cross", || {
+            b.title(&format!("a{round}")).is_some() && a.title(&format!("b{round}")).is_some()
+        });
+    }
+    eventually("level again", || a.digest() == b.digest());
 }
 
 #[test]
@@ -539,72 +468,47 @@ fn pause_stops_runs_with_that_device_and_resume_starts_them_again() {
 }
 
 #[test]
-fn a_removed_device_with_the_larger_id_is_cut_off_forgotten_and_told() {
-    removal(true);
-}
-
-#[test]
-fn a_removed_device_with_the_smaller_id_is_cut_off_forgotten_and_told() {
-    removal(false);
-}
-
-/// A removes C, B learns it from A, and C is told at the handshake of the
-/// next connection, which the smaller of each pair opens: the device that
-/// refuses when C's id is the larger of the three, C itself when it is the
-/// smaller.
-fn removal(removed_is_larger: bool) {
+fn a_removed_device_is_refused_by_every_device_the_removal_reaches() {
     let network = Network::default();
-    let lockboxes = [
+    let (a, b, c) = (
         lockbox("a", "v1", 1),
         lockbox("b", "v1", 1),
         lockbox("c", "v1", 1),
-    ];
-    lockboxes[0].write("1", "from one of them");
-    let mut nodes: Vec<(Node, &Arc<Held>)> = lockboxes
-        .iter()
-        .map(|held| (node(&network, &[held]), held))
-        .collect();
-    nodes.sort_by_key(|(node, _)| node.manager.id());
-    if !removed_is_larger {
-        nodes.reverse();
-    }
-    let [(na, a), (nb, b), (nc, _)] = &nodes[..] else {
-        unreachable!("three devices");
-    };
-    let c_row = format!("sync_peer:{}", nc.id());
-    eventually("all three converge with each other", || {
-        a.title("1").is_some()
-            && b.title("1").is_some()
-            && peer_rows(a).contains(&c_row)
-            && peer_rows(b).contains(&c_row)
-            && na.connected_to(nb)
-            && nb.connected_to(nc)
+    );
+    c.write("1", "from c, before");
+    let (na, nb, nc) = (
+        node(&network, &[&a]),
+        node(&network, &[&b]),
+        node(&network, &[&c]),
+    );
+    eventually("all three converge", || {
+        a.title("1").is_some() && b.title("1").is_some() && na.row(&nc).is_some()
     });
 
     na.manager.remove(&nc.id());
-    eventually("a drops c and forgets its row", || {
-        !na.connected_to(nc) && !peer_rows(a).contains(&c_row)
-    });
-    assert!(na.row(nc).is_none());
-    eventually("b learns it from a, drops c and forgets its row", || {
-        nb.book.is_removed(&nc.id()) && !nb.connected_to(nc) && !peer_rows(b).contains(&c_row)
-    });
+    assert!(na.row(&nc).is_none());
+    eventually("b learns it from a", || nb.book.is_removed(&nc.id()));
 
-    eventually("c is told and turns off", || !nc.book.enabled());
+    // Nothing crosses between C and the other two from now on, whichever
+    // side has something to say; A and B go on as before.
+    c.write("2", "from c, after");
+    a.write("3", "from a, after");
+    for node in [&na, &nb, &nc] {
+        node.manager.request_runs();
+    }
+    eventually("a's edit reaches b", || b.title("3").is_some());
     settle();
-    assert!(!na.connected_to(nc) && !nb.connected_to(nc));
-    assert!(nc.manager.connections().is_empty());
+    assert!(a.title("2").is_none() && b.title("2").is_none());
+    assert!(c.title("3").is_none());
 }
 
 #[test]
-fn a_removed_set_longer_than_one_message_reaches_the_other_device_whole() {
+fn a_long_removed_set_reaches_the_other_device_whole() {
     let network = Network::default();
     let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
     let na = node(&network, &[&a]);
     let ids: Vec<String> = (0..600).map(|i| format!("{i:064x}")).collect();
-    na.manager.shared.learn_removed(&ids[..200]);
-    na.manager.shared.learn_removed(&ids[200..400]);
-    na.manager.shared.learn_removed(&ids[400..]);
+    na.book.remove(&ids);
     let nb = node(&network, &[&b]);
     eventually("b holds every id", || nb.book.removed().len() == ids.len());
 }
@@ -619,18 +523,17 @@ fn a_device_whose_shared_lockbox_went_is_shown_offline() {
             && nb.state_of(&na) == Some(NearbyDeviceState::UpToDate)
     });
 
-    // A no longer holds the lockbox: its connections close, and there is
-    // nothing to prove again, so no new one takes the closed one's place.
+    // A no longer holds the lockbox: neither recognises the other's
+    // advertisement any more.
     na.host.lockboxes.lock().unwrap().clear();
     eventually("each shows the other offline", || {
         na.state_of(&nb) == Some(NearbyDeviceState::Offline)
             && nb.state_of(&na) == Some(NearbyDeviceState::Offline)
     });
-    assert!(na.manager.connections().is_empty());
 }
 
 #[test]
-fn a_run_is_not_begun_under_keys_the_connection_was_not_proved_under() {
+fn no_run_is_begun_under_keys_its_connection_did_not_prove() {
     let network = Network::default();
     let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
@@ -642,8 +545,8 @@ fn a_run_is_not_begun_under_keys_the_connection_was_not_proved_under() {
     let packs = na.manager.packs() + nb.manager.packs();
 
     // A's lockbox is under another key, as after a password change, and a
-    // run is asked for on both before the manager has looked at the keys
-    // again: whichever side runs, no pack moves on the old connection.
+    // sync is asked for on both before A's manager has looked at the keys
+    // again: whichever side dials, no pack moves.
     let rekeyed = held(
         "v1",
         Device::create("a2", "v1", "another password", &params(1, 0)),
@@ -653,8 +556,9 @@ fn a_run_is_not_begun_under_keys_the_connection_was_not_proved_under() {
     *na.host.lockboxes.lock().unwrap() = vec![rekeyed.clone()];
     na.manager.request_runs();
     nb.manager.request_runs();
-    eventually("the connection closes", || {
-        !na.connected_to(&nb) && !nb.connected_to(&na)
+    eventually("each shows the other offline", || {
+        na.state_of(&nb) == Some(NearbyDeviceState::Offline)
+            && nb.state_of(&na) == Some(NearbyDeviceState::Offline)
     });
     settle();
     assert_eq!(na.manager.packs() + nb.manager.packs(), packs);
@@ -726,34 +630,25 @@ fn a_run_asked_for_while_the_claim_is_held_runs_once_it_is_released() {
         na.state_of(&nb) == Some(NearbyDeviceState::UpToDate)
             && nb.state_of(&na) == Some(NearbyDeviceState::UpToDate)
     });
-    let (dialler, answerer) = if na.manager.id() < nb.manager.id() {
-        ((&na, &a), (&nb, &b))
-    } else {
-        ((&nb, &b), (&na, &a))
-    };
 
-    // The answering side's claim held: it answers `sync/busy`, and the run
-    // is asked again until it goes through.
-    let held = hold(answerer.0);
-    dialler.1.write("1", "while the answerer was busy");
-    dialler.0.manager.request_runs();
+    // The answering side's claim held: it answers `sync/busy`, and the sync
+    // is tried again until it goes through.
+    let held = hold(&nb);
+    a.write("1", "while b was busy");
+    na.manager.request_runs();
     settle();
-    assert!(answerer.1.title("1").is_none());
+    assert!(b.title("1").is_none());
     drop(held);
-    eventually("it arrives once released", || {
-        answerer.1.title("1").is_some()
-    });
+    eventually("it arrives once released", || b.title("1").is_some());
 
-    // The running side's own claim held: the same.
-    let held = hold(dialler.0);
-    answerer.1.write("2", "while the dialler was busy");
-    answerer.0.manager.request_runs();
+    // The dialling side's own claim held: the same.
+    let held = hold(&na);
+    a.write("2", "while a was busy");
+    na.manager.request_runs();
     settle();
-    assert!(dialler.1.title("2").is_none());
+    assert!(b.title("2").is_none());
     drop(held);
-    eventually("it arrives once released", || {
-        dialler.1.title("2").is_some()
-    });
+    eventually("it arrives once released", || b.title("2").is_some());
 }
 
 #[test]
@@ -761,7 +656,7 @@ fn stopping_closes_the_listener_and_every_connection_and_takes_the_advert_down()
     let network = Network::default();
     let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
-    eventually("connected", || na.connected_to(&nb) && nb.connected_to(&na));
+    eventually("level", || na.level_with(&nb) && nb.level_with(&na));
     let port = na.manager.port();
     assert!(network.advertised().contains(&port));
 
@@ -771,9 +666,8 @@ fn stopping_closes_the_listener_and_every_connection_and_takes_the_advert_down()
         TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err()
     });
     eventually("b sees a go", || {
-        !nb.connected_to(&na) && nb.state_of(&na) == Some(NearbyDeviceState::Offline)
+        nb.state_of(&na) == Some(NearbyDeviceState::Offline)
     });
-    assert!(na.manager.connections().is_empty());
     assert_eq!(na.state_of(&nb), Some(NearbyDeviceState::Offline));
     settle();
     assert!(!network.advertised().contains(&port));
@@ -803,7 +697,6 @@ fn the_status_moves_forward_and_says_what_happened() {
         .position(|s| *s == NearbyDeviceState::Syncing)
         .expect("a run was shown");
     assert!(states[syncing..].contains(&NearbyDeviceState::UpToDate));
-    assert_eq!(states[0], NearbyDeviceState::Offline);
 
     nb.manager.stop();
     eventually("offline, with the time it last synced", || {

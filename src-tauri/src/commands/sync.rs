@@ -879,8 +879,7 @@ fn report(app: &AppHandle, result: Result<sync::engine::SyncOutcome>) {
     match result {
         Ok(outcome) => {
             if outcome.merged > 0 {
-                events::vault_merged(app, entry_metas(app));
-                crate::credential_identities::publish(app);
+                announce_merged(app);
             }
             #[cfg(desktop)]
             if outcome.merged > 0 || outcome.renamed {
@@ -892,8 +891,15 @@ fn report(app: &AppHandle, result: Result<sync::engine::SyncOutcome>) {
     }
 }
 
+/// A run merged rows into the open lockbox, from the account or from a
+/// nearby device: the refreshed list for the page, and iOS's logins.
+pub(crate) fn announce_merged(app: &AppHandle) {
+    events::vault_merged(app, entry_metas(app));
+    crate::credential_identities::publish(app);
+}
+
 // The current entry list, or an empty one if the vault locked in the meantime.
-pub(crate) fn entry_metas(app: &AppHandle) -> Vec<EntryMetaDto> {
+fn entry_metas(app: &AppHandle) -> Vec<EntryMetaDto> {
     let state = app.state::<AppState>();
     let session = state.session.lock().unwrap();
     session

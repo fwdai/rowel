@@ -60,7 +60,7 @@ pub enum NearbyDeviceState {
     Syncing,
     /// Connected, nothing to send.
     UpToDate,
-    /// Known, not connected now.
+    /// Known, not on the network now.
     Offline,
     /// This device stopped syncing with it.
     Paused,
@@ -100,7 +100,8 @@ pub struct Known {
 /// starts and when it stops.
 #[derive(Default)]
 pub(super) struct Live {
-    pub connected: HashSet<String>,
+    /// The devices whose advertisements are seen on the network now.
+    pub here: HashSet<String>,
     pub syncing: HashSet<String>,
     /// One side of the connection is on a key the other has retired.
     pub behind: HashSet<String>,
@@ -199,7 +200,7 @@ impl Book {
         if !added.is_empty() {
             for id in &added {
                 inner.stored.paused.remove(id);
-                inner.live.connected.remove(id);
+                inner.live.here.remove(id);
                 inner.live.syncing.remove(id);
             }
             self.changed(&mut inner, true);
@@ -305,7 +306,7 @@ fn device(known: &Known, stored: &Stored, live: &Live) -> NearbyDevice {
     let failed = live.failed.get(id);
     let state = if stored.paused.contains(id) {
         NearbyDeviceState::Paused
-    } else if !live.connected.contains(id) {
+    } else if !live.here.contains(id) {
         NearbyDeviceState::Offline
     } else if live.behind.contains(id) || failed.is_some_and(|f| needs_password(&f.kind)) {
         NearbyDeviceState::NeedsPassword
@@ -392,7 +393,7 @@ mod tests {
         book.seen("d1", "Laptop", "macos");
         assert_eq!(state(&book, "d1"), NearbyDeviceState::Offline);
         book.live(generation, |live| {
-            live.connected.insert("d1".into());
+            live.here.insert("d1".into());
         });
         assert_eq!(state(&book, "d1"), NearbyDeviceState::UpToDate);
         book.live(generation, |live| {
@@ -428,18 +429,18 @@ mod tests {
         let first = book.attach();
         book.seen("d1", "Laptop", "macos");
         book.live(first, |live| {
-            live.connected.insert("d1".into());
+            live.here.insert("d1".into());
         });
         book.detach(first);
         assert_eq!(state(&book, "d1"), NearbyDeviceState::Offline);
         book.live(first, |live| {
-            live.connected.insert("d1".into());
+            live.here.insert("d1".into());
         });
         assert_eq!(state(&book, "d1"), NearbyDeviceState::Offline);
         let second = book.attach();
         book.detach(first);
         book.live(second, |live| {
-            live.connected.insert("d1".into());
+            live.here.insert("d1".into());
         });
         assert_eq!(state(&book, "d1"), NearbyDeviceState::UpToDate);
     }
@@ -451,7 +452,7 @@ mod tests {
         book.set_enabled(true);
         book.seen("d1", "Laptop", "beos");
         book.live(generation, |live| {
-            live.connected.insert("d1".into());
+            live.here.insert("d1".into());
         });
         book.converged("d1", 1_700_000_000_000);
         let shown = shown.lock().unwrap();
