@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
 import type { TKey } from '@/i18n'
@@ -6,6 +6,9 @@ import { EyeGlyph, EyeOffGlyph } from '../../Main/icons'
 import IconButton from '../IconButton'
 import { verbatimInput } from '../inputProps'
 import Mask from '../Mask'
+import Suggestions from '../Suggestions'
+import type { Suggestion } from '../Suggestions/match'
+import { useSuggestions } from '../Suggestions/useSuggestions'
 import { MASK_INPUT, VALUE_LINE } from '../tokens'
 import { useField } from './context'
 import CopyValue from './CopyValue'
@@ -44,8 +47,18 @@ export interface FieldProps {
    * the editor and what a press hands over are both untouched.
    */
   suffix?: (value: string) => string | undefined
-  /** A format complaint about a non-empty value, or ''. */
+  /**
+   * A format complaint about a non-empty value, or ''. Held back while the
+   * value is first being typed: it is shown once the box has been left, or a
+   * save attempted, and from then on follows the typing.
+   */
   check?: (value: string) => string
+  /**
+   * Editing only: values to offer back under the box as it is typed into, in
+   * the order they should be offered — the usernames the vault already holds.
+   * Picking one writes it as if it had been typed.
+   */
+  suggestions?: Suggestion[]
 }
 
 // One field, both modes. Reading, it is the detail row it has always been:
@@ -67,13 +80,19 @@ export default function Field({
   normalize,
   format,
   suffix,
-  check
+  check,
+  suggestions
 }: FieldProps) {
   const { t } = useTranslation()
   const { value, set, editing, attempted } = useField(name)
   // Typing into dots is guesswork, so the editor starts revealed; the eye still
   // takes it back.
   const [show, setShow] = useState(editing)
+  // Whether the box has been left at least once. A half-typed address is not
+  // a wrong one, so the format is only judged once the user has moved on.
+  const [left, setLeft] = useState(false)
+  const box = useRef<HTMLInputElement>(null)
+  const suggest = useSuggestions(editing ? suggestions : undefined, value, set)
   // What the row puts on screen and on the clipboard; the draft keeps `value`.
   const shown = format ? format(value) : value
 
@@ -84,7 +103,7 @@ export default function Field({
   // editing session, and a format complaint is an editor's business.
   const error =
     editing && value.trim()
-      ? (check?.(value) ?? '')
+      ? ((left || attempted) && check?.(value)) || ''
       : requiredError(value, required, attempted)
 
   const masked = secure && !show
@@ -126,23 +145,47 @@ export default function Field({
     >
       {id =>
         editing ? (
-        <input
-          id={id}
-          name={name}
-          type={type}
-          value={shown}
-          placeholder={placeholder}
-          maxLength={maxLength}
-          {...verbatimInput}
-          style={mask}
-          onChange={event => set(event.target.value)}
-          onBlur={normalize ? () => set(normalize(value)) : undefined}
-          className={cx(
-            ink,
-            'w-full border-b bg-transparent text-text outline-none transition-colors placeholder:text-text2',
-            error ? 'border-bad' : 'border-line2 focus:border-accent-line'
-          )}
-        />
+          <>
+            <input
+              ref={box}
+              id={id}
+              name={name}
+              type={type}
+              value={shown}
+              placeholder={placeholder}
+              maxLength={maxLength}
+              {...verbatimInput}
+              {...suggest.input}
+              style={mask}
+              onChange={event => {
+                set(event.target.value)
+                suggest.show()
+              }}
+              onBlur={() => {
+                setLeft(true)
+                suggest.close()
+                if (normalize) set(normalize(value))
+              }}
+              className={cx(
+                ink,
+                'w-full border-b bg-transparent text-text outline-none transition-colors placeholder:text-text2',
+                error ? 'border-bad' : 'border-line2 focus:border-accent-line'
+              )}
+            />
+            {suggest.shown && (
+              <Suggestions
+                anchor={box}
+                id={suggest.listId}
+                optionId={suggest.optionId}
+                label={label && t(label)}
+                options={suggest.options}
+                typed={value}
+                lit={suggest.lit}
+                onLight={suggest.light}
+                onPick={suggest.pick}
+              />
+            )}
+          </>
         ) : (
           // The gloss rides alongside the value rather than inside it, so the
           // testid — and everything reading it — still holds the value alone.

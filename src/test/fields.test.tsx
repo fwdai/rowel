@@ -74,11 +74,16 @@ describe('Type-aware fields', () => {
     expect(input('website').value).toBe('http://intranet')
   })
 
-  it('says so inline when an email is not one', async () => {
+  it('says so inline when an email is not one, once the box has been left', async () => {
     render(<Show type="login" editing />)
+    // Half an address is not a wrong one: nothing is said while it is typed.
     await userEvent.type(input('email'), 'me@example')
+    expect(screen.queryByText('Not an email address')).not.toBeInTheDocument()
+
+    await userEvent.tab()
     expect(screen.getByText('Not an email address')).toBeInTheDocument()
 
+    // Having complained, the row follows the fix as it is typed.
     await userEvent.type(input('email'), '.com')
     expect(screen.queryByText('Not an email address')).not.toBeInTheDocument()
   })
@@ -214,7 +219,9 @@ describe('Type-aware fields', () => {
   it('refuses an OTP secret it cannot read', async () => {
     render(<Show type="login" editing />)
     await userEvent.type(input('otp'), 'not-a-secret')
+    expect(screen.queryByText('Not a one-time-password secret')).not.toBeInTheDocument()
 
+    await userEvent.tab()
     expect(screen.getByText('Not a one-time-password secret')).toBeInTheDocument()
     expect(calls('generate_otp')).toHaveLength(0)
   })
