@@ -153,6 +153,14 @@ pub enum Error {
     #[error("the account holds this lockbox under a password this device has already replaced")]
     VaultUnderRetiredPassword,
 
+    /// Two devices about to sync a lockbox directly (the app's `nearby::exchange`)
+    /// whose clocks disagree by more than that exchange allows. Every merge is
+    /// last-writer-wins on the stamps each device's own clock wrote, so the run
+    /// is refused rather than let a fast clock decide which edit survives.
+    /// `skew_ms` is the other device's clock minus this one's.
+    #[error("this device's clock and the other device's are {} minutes apart", .skew_ms.unsigned_abs().div_ceil(60_000))]
+    ClockSkew { skew_ms: i64 },
+
     /// A lockbox other than the primary was opened (or restored) with a
     /// password that opens it but is not the vault password — the one the
     /// primary opens with. Every lockbox opens with the vault password, so this
@@ -241,6 +249,7 @@ impl Error {
             Error::VaultDeletedRemotely => "vaultDeletedRemotely",
             Error::PasswordChangedRemotely => "passwordChangedRemotely",
             Error::VaultUnderRetiredPassword => "vaultUnderRetiredPassword",
+            Error::ClockSkew { .. } => "clockSkew",
             Error::VaultPasswordRequired { .. } => "vaultPasswordRequired",
             Error::FileTooLarge => "fileTooLarge",
             Error::FileNotText => "fileNotText",
@@ -314,6 +323,19 @@ mod tests {
         assert_eq!(
             json["message"],
             "the account holds this lockbox under a password this device has already replaced"
+        );
+    }
+
+    #[test]
+    fn a_clock_skew_names_the_difference_in_whole_minutes() {
+        let json = serde_json::to_value(Error::ClockSkew {
+            skew_ms: -(5 * 60_000 + 1),
+        })
+        .unwrap();
+        assert_eq!(json["kind"], "clockSkew");
+        assert_eq!(
+            json["message"],
+            "this device's clock and the other device's are 6 minutes apart"
         );
     }
 

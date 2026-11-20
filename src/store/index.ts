@@ -2,7 +2,7 @@
  * Frontend state, split by lifetime rather than by feature:
  *
  * - `prefs` — user preferences; persisted, never wiped.
- * - `app`   — flow, lock-screen gate, backend sync/setup status, staged update;
+ * - `app`   — flow, lock-screen gate, backend sync/nearby/setup status, staged update;
  *             lives as long as the process, survives a lock.
  * - `vault` — the unlocked vault's rows, selection and audit; wiped on lock.
  * - `ui`    — surfaces open over the vault and the list's filters; wiped on lock.

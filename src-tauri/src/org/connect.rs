@@ -135,7 +135,7 @@ fn sign_in(app: &AppHandle, url: &str, attempt: u64) -> Result<()> {
 /// What this device is called in the member's device list: the machine's
 /// host name, without the `.local` a Mac appends, or the platform when the
 /// OS gives no usable name.
-fn device_name() -> String {
+pub(crate) fn device_name() -> String {
     gethostname::gethostname()
         .to_str()
         .map(|name| name.trim().trim_end_matches(".local"))

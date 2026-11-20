@@ -221,6 +221,47 @@ pub struct SyncOutcome {
     pub rekeyed_remote: bool,
 }
 
+/// A pulled pack, taken in by [`merge_pack`].
+pub(crate) struct MergedPack {
+    /// What the pack held, for the push decision that follows a pull.
+    snapshot: Snapshot,
+    /// Entry and attachment rows the merge wrote here.
+    pub(crate) merged: usize,
+    /// Whether the pack's name beat this vault's and was adopted.
+    pub(crate) renamed: bool,
+}
+
+/// Open a pack, merge it in, and take on its name if that is the newer one:
+/// the first three steps of every [`sync`], and the whole of what a device
+/// does with a pack another one hands it directly (`nearby::exchange::absorb`). A
+/// pack that does not open — another lockbox's, a password changed on one
+/// side — errors out before the local vault is touched.
+pub(crate) fn merge_pack<L: LocalVault + ?Sized>(
+    local: &L,
+    pack_bytes: &[u8],
+) -> Result<MergedPack> {
+    let snapshot = local.decode(pack_bytes)?;
+    let merged = local.merge(&snapshot)?;
+    // The name is last-writer-wins too, but on its own stamp: a rename is a
+    // change to the vault that leaves no row in the entry table.
+    // `identity::name_wins` is the whole decision — a total order, so a tie in
+    // the stamp still settles on one of the two names rather than on whatever
+    // each device happens to hold.
+    let mut renamed = false;
+    if let Some(name) = &snapshot.name {
+        let held = local.name()?;
+        if identity::name_wins((Some(name), snapshot.name_ms), (held.0.as_deref(), held.1)) {
+            local.adopt_name(name, snapshot.name_ms)?;
+            renamed = true;
+        }
+    }
+    Ok(MergedPack {
+        snapshot,
+        merged,
+        renamed,
+    })
+}
+
 /// Run one sync: pull, merge, and push if — and only if — the two sides differ,
 /// in their entries or in the vault name that travels beside them.
 ///
@@ -252,28 +293,17 @@ pub fn sync<R: Remote, L: LocalVault>(
         // Nothing on the remote yet means this run creates it, and there is no
         // snapshot to decode or merge.
         let incoming = match &pulled {
-            Some(file) => Some(local.decode(&file.bytes)?),
+            Some(file) => {
+                let taken = merge_pack(local, &file.bytes)?;
+                outcome.merged += taken.merged;
+                outcome.renamed |= taken.renamed;
+                Some(taken.snapshot)
+            }
             None => None,
         };
         // A pack under a retired epoch is pushed whatever the digests say: the
         // push is what moves the account onto the current password.
         let rekeys_remote = incoming.as_ref().is_some_and(|s| s.opened_under_retired);
-        if let Some(snapshot) = &incoming {
-            outcome.merged += local.merge(snapshot)?;
-            // The name is last-writer-wins too, but on its own stamp: a rename
-            // is a change to the vault that leaves no row in the entry table.
-            // `identity::name_wins` is the whole decision — a total order, so a
-            // tie in the stamp still settles on one of the two names rather
-            // than on whatever each device happens to hold.
-            if let Some(name) = &snapshot.name {
-                let held = local.name()?;
-                if identity::name_wins((Some(name), snapshot.name_ms), (held.0.as_deref(), held.1))
-                {
-                    local.adopt_name(name, snapshot.name_ms)?;
-                    outcome.renamed = true;
-                }
-            }
-        }
 
         // 4. Settle the identity, now that the pull is in and nothing has gone
         // out. See this function's own doc for why it is exactly here.
@@ -865,7 +895,7 @@ pub(crate) fn remote_pack_error(e: PackError) -> Error {
     }
 }
 
-fn note_push(store: &SqliteStore, revision: &str, at_ms: i64) -> Result<()> {
+pub(crate) fn note_push(store: &SqliteStore, revision: &str, at_ms: i64) -> Result<()> {
     store
         .meta_set(META_REMOTE_REV, revision)
         .map_err(store_err)?;

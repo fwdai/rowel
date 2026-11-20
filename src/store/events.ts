@@ -12,9 +12,11 @@ import {
   fileOpened,
   lockHeard,
   setOsLockStatus,
+  setNearbyStatus,
   useApp
 } from './app'
 import { osLockStatus } from '@/api/app'
+import { nearbyStatus } from '@/api/nearby'
 import { setEntries, loadArchive, runAudit } from './vault'
 import {
   useUi,
@@ -106,6 +108,14 @@ export const subscribeToEvents = (): (() => void) => {
     on(EVENTS.oslockStatus, setOsLockStatus).then(unlisten => {
       osLockStatus()
         .then(setOsLockStatus)
+        .catch(() => {})
+      return unlisten
+    }),
+    // The same, for nearby sync: a failed read leaves it unknown, which draws
+    // nothing until the next event says otherwise.
+    on(EVENTS.nearbyStatus, setNearbyStatus).then(unlisten => {
+      nearbyStatus()
+        .then(setNearbyStatus)
         .catch(() => {})
       return unlisten
     })

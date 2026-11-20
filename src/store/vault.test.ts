@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { Entry, EntryMeta, Passkey } from '@/api/types'
-import { calls, mockCommand } from '../test/ipc'
+import { calls, mockCommand, nearbyUnavailable } from '../test/ipc'
 import { toEntryMeta } from '../test/meta'
 import { subscribeToEvents } from './events'
 import {
@@ -18,6 +18,7 @@ import {
   removeAttachment,
   enterMain,
   setSyncStatus,
+  setNearbyStatus,
   setupAccountPending,
   initialApp,
   setFilterType,
@@ -198,6 +199,15 @@ describe('auto-sync', () => {
 
   it('publishes a save within a couple of seconds', async () => {
     connected()
+
+    await saveEntry({ type: 'login', title: 'One', username: 'u', password: 'p' })
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(calls('sync_now')).toHaveLength(1)
+  })
+
+  // The nearby devices take the same request, account or not.
+  it('publishes a save to nearby devices with no account connected', async () => {
+    setNearbyStatus({ ...nearbyUnavailable(), available: true, enabled: true, seq: 1 })
 
     await saveEntry({ type: 'login', title: 'One', username: 'u', password: 'p' })
     await vi.advanceTimersByTimeAsync(2_000)
