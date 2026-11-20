@@ -1,4 +1,4 @@
-import { useLayoutEffect, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, type RefObject } from 'react'
 import {
   autoUpdate,
   flip,
@@ -37,6 +37,20 @@ const EDGE = 8
 // Between the field's underline and the list: close enough to read as the
 // field's own, not as a menu that happens to be near it.
 const GAP = 3
+// Wide enough to read an address in. A field narrower than this gets a list
+// as wide as itself and no wider: the field's width is the hard limit.
+const MIN_WIDTH = 260
+// The least the list is cut down to when there is little room on either side
+// of the field: two options and the start of a third, which says it scrolls.
+const MIN_HEIGHT = 100
+
+// What the list has to stay inside: the pane the field scrolls in, not just
+// the window — on the phone that pane ends at the keyboard, which the window
+// does not.
+const within = (field: Element) => ({
+  padding: EDGE,
+  boundary: scrollParent(field) ?? ('clippingAncestors' as const)
+})
 
 // How far above the field its label starts, when the label is stacked over it
 // (the phone's row, a folded one) rather than beside it. A menu that opens
@@ -61,7 +75,9 @@ const labelRise = (field: Element): number => {
  *
  * Portaled and placed by floating-ui, as `Tooltip` is: the rows it hangs off
  * sit in cards that clip their overflow, inside a pane that scrolls. It opens
- * above a field that is too near the pane's bottom edge (or the keyboard).
+ * above a field that is too near the pane's bottom edge (or the keyboard),
+ * and where neither side has room for all of it, it is cut to the room there
+ * is and scrolls, the lit option kept in view.
  */
 export default function Suggestions({
   anchor,
@@ -90,17 +106,18 @@ export default function Suggestions({
         mainAxis:
           GAP + (placement.startsWith('top') ? labelRise(elements.reference as Element) : 0)
       })),
-      // Kept inside the pane the field scrolls in, not just the window: on the
-      // phone that pane ends at the keyboard, which the window does not.
-      flip(({ elements }) => ({
-        padding: EDGE,
-        boundary: scrollParent(elements.reference as Element) ?? 'clippingAncestors'
-      })),
-      size({
-        apply({ rects, elements }) {
-          elements.floating.style.maxWidth = `${rects.reference.width}px`
+      flip(({ elements }) => within(elements.reference as Element)),
+      size(({ elements }) => ({
+        ...within(elements.reference as Element),
+        apply({ rects, availableHeight, elements }) {
+          const field = rects.reference.width
+          Object.assign(elements.floating.style, {
+            minWidth: `${Math.min(MIN_WIDTH, field)}px`,
+            maxWidth: `${field}px`,
+            maxHeight: `${Math.max(MIN_HEIGHT, availableHeight)}px`
+          })
         }
-      }),
+      })),
       shift({ padding: EDGE })
     ]
   })
@@ -108,6 +125,14 @@ export default function Suggestions({
   useLayoutEffect(() => {
     setReference(anchor.current)
   }, [anchor, setReference])
+
+  // The arrows can walk past the fold of a list that was cut to fit.
+  // `nearest`, so an option already showing — any the pointer is on — does
+  // not move.
+  const litId = lit >= 0 ? optionId(lit) : undefined
+  useEffect(() => {
+    if (litId) document.getElementById(litId)?.scrollIntoView?.({ block: 'nearest' })
+  }, [litId])
 
   return (
     <FloatingPortal>
@@ -118,12 +143,12 @@ export default function Suggestions({
         // closes the list, and it would close before the click landed.
         onMouseDown={event => event.preventDefault()}
         className={cx(
-          'animate-drop z-50 w-max min-w-[260px]',
+          'animate-drop z-50 flex w-max flex-col',
           placement.startsWith('top') ? 'origin-bottom' : 'origin-top',
           POPOVER
         )}
       >
-        <div id={id} role="listbox" aria-label={label} className="flex flex-col gap-px p-1">
+        <div id={id} role="listbox" aria-label={label} className="flex min-h-0 flex-col gap-px overflow-y-auto p-1">
           {options.map((option, index) => (
             <Option
               key={option.value}

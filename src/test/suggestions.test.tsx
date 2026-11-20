@@ -104,6 +104,18 @@ describe('Suggestions on a login’s username and email', () => {
     expect(calls('save_entry')).toHaveLength(0)
   })
 
+  it('keeps the lit option in view', async () => {
+    seed()
+    render(<Show type="login" editing />)
+    await userEvent.type(input('username'), 'c')
+    vi.mocked(Element.prototype.scrollIntoView).mockClear()
+
+    await userEvent.keyboard('{ArrowDown}')
+
+    const lit = screen.getByTestId('suggestion-me@example.com')
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toEqual([lit])
+  })
+
   it('wraps round the ends of the list', async () => {
     seed()
     render(<Show type="login" editing />)
