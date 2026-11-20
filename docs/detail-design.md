@@ -118,11 +118,12 @@ are typed), and the same surfaces:
   `fields/Field` always has. The one-time code proves its secret with the
   read row's countdown ring in the rail, not a line under the box. A row may
   offer values back as it is typed into (`Field`'s `suggestions`, drawn by
-  `elements/Suggestions`): the menu surface hung under the box, as wide as
-  its longest option, each drawn as the lockbox picker draws a lockbox — a
-  tile, the value over how many items hold it. A login's username and email
-  offer the usernames the lockbox already holds, most used first — list
-  metadata, so nothing is revealed to build them. The list answers typing:
+  `elements/Suggestions`): a list dropped out of the box on the `POPOVER`
+  ground — the menu's quieter cousin, solid and barely lifted — starting
+  where the box starts, just under its underline, and as wide as its longest
+  option. One line each: the value, then how many items hold it. A login's
+  username and email offer the usernames the lockbox already holds, most
+  used first — list metadata, so nothing is revealed to build them. The list answers typing:
   an empty box is offered nothing, and focus alone opens nothing. The caret
   never leaves the box and nothing is lit until an arrow or the pointer
   lights it, so Enter and Tab keep their meaning.

@@ -408,6 +408,9 @@
   --shadow-card: var(--card-shadow);
   --shadow-float: var(--shadow);
   --shadow-menu: var(--menu-shadow);
+  --color-popover: var(--popover);
+  --color-popover-line: var(--popover-line);
+  --shadow-popover: var(--popover-shadow);
   --shadow-lockfield: var(--lockfield-shadow);
   --shadow-lockfield-deep: var(--lockfield-shadow-deep);
   --shadow-push: var(--push-shadow);
@@ -831,6 +834,14 @@
   --menu-shadow:
     0 18px 40px -10px rgba(22, 28, 48, 0.28), 0 4px 12px rgba(22, 28, 48, 0.08),
     0 0 0 0.5px rgba(22, 28, 48, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  /* What drops out of a field (see `POPOVER` in elements/tokens): a solid
+   * sheet with a hairline edge, lifted by a soft, short shadow — much less
+   * than a menu's, since it belongs to the row it opens under. */
+  --popover: #ffffff;
+  --popover-line: rgba(20, 24, 34, 0.09);
+  --popover-shadow:
+    0 14px 32px -12px rgba(22, 28, 48, 0.2), 0 4px 10px -4px rgba(22, 28, 48, 0.08),
+    0 1px 2px rgba(22, 28, 48, 0.04);
   --scrim: rgba(40, 43, 48, 0.3);
   /* What a pushed screen's left edge throws on the one it is dragged off. */
   --push-shadow: -6px 0 20px rgba(24, 26, 30, 0.14);
@@ -1001,6 +1012,11 @@
   --menu-shadow:
     0 18px 40px -8px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.3),
     0 0 0 0.5px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --popover: #27282c;
+  --popover-line: rgba(255, 255, 255, 0.09);
+  --popover-shadow:
+    0 16px 36px -12px rgba(0, 0, 0, 0.7), 0 4px 10px -2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
   --scrim: rgba(8, 9, 10, 0.7);
   --push-shadow: -6px 0 20px rgba(0, 0, 0, 0.5);
   --thumb: rgba(255, 255, 255, 0.14);

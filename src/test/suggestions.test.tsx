@@ -43,9 +43,7 @@ describe('Suggestions on a login’s username and email', () => {
 
     expect(screen.getByRole('listbox', { name: 'Username' })).toBeInTheDocument()
     expect(offered()).toEqual(['me@example.com', 'work@acme.com', 'octocat'])
-    expect(
-      within(screen.getByTestId('suggestion-me@example.com')).getByText('3 items')
-    ).toBeInTheDocument()
+    expect(within(screen.getByTestId('suggestion-me@example.com')).getByText('3')).toBeInTheDocument()
   })
 
   it('waits for something to be typed', async () => {
@@ -207,7 +205,7 @@ describe('matching', () => {
 
   it('offers no more than a menu can show without scrolling', () => {
     const many = Array.from({ length: 20 }, (_, index) => ({ value: `user${index}` }))
-    expect(matching(many, 'user')).toHaveLength(5)
+    expect(matching(many, 'user')).toHaveLength(6)
   })
 
   it('offers nothing to an empty box', () => {

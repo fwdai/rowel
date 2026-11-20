@@ -1,16 +1,12 @@
-import type { ReactNode } from 'react'
-
 export interface Suggestion {
   value: string
-  /** How many entries already hold it; said under it when given. */
+  /** How many entries already hold it; shown at the end of its row when given. */
   count?: number
-  /** What kind of value it is, drawn on its tile: an address, a handle. */
-  glyph?: ReactNode
 }
 
 // As many as the menu shows at once: enough for the handful of addresses one
 // person signs in with, short enough to never need a scrollbar.
-export const LIMIT = 5
+export const LIMIT = 6
 
 const fold = (text: string) => text.trim().toLocaleLowerCase()
 

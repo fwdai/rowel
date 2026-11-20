@@ -17,6 +17,13 @@ export const CARD_OPEN = 'rounded-lg border border-line bg-card shadow-card max-
 export const MENU =
   'overflow-hidden rounded-[12px] border border-menu-line bg-menu text-text shadow-menu backdrop-blur-[24px] backdrop-saturate-[1.6]'
 
+// The ground of what drops out of a field it belongs to (its suggestions): the
+// menu's quieter cousin. Solid, so nothing of the form shows through under the
+// values; a hairline edge; and a soft, short shadow — it is the field's own
+// list, lifted just clear of the rows it covers, not a menu hung over the page.
+export const POPOVER =
+  'overflow-hidden rounded-[10px] border border-popover-line bg-popover text-text shadow-popover'
+
 // A card that is one choice among a few (a theme, an export format, an app to
 // import from): PICK_CARD is the shape, and the chosen one wears PICKED — the
 // accent edge under a soft ring — while the rest wait in UNPICKED.
