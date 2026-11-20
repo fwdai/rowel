@@ -716,6 +716,155 @@ fresh random 256-bit AES-GCM key and uploaded to the sender's own Drive as an
   is revoked; revoking stops future downloads but cannot retract a credential
   already imported or erase a downloaded copy.
 
+## Nearby sync: the channel
+
+Nearby sync (`docs/nearby-sync-design.md`) is two Rowel apps on one network
+syncing the lockboxes they share directly, with no account in between. It is
+all in `src-tauri/src/nearby/`, desktop only: the channel two installs talk
+over, the proofs that decide what the device at the other end is trusted
+with, the advertisement that lets them find each other, and the session
+manager that listens, dials and runs the sync. It runs only while the app is
+unlocked and the switch in Settings › Sync is on; off or locked, nothing in
+the app opens a socket for it.
+
+- **Identity.** Each install has one Ed25519 key, made on first use and kept
+  in an owner-only file (`atomic_write_private`, `0600` or a protected DACL),
+  and a self-signed certificate over it made at every load
+  (`nearby::identity`). Its device id is the SHA-256 of the certificate's
+  public key info, so it outlives the certificate. The key is not sealed under
+  the master password: it names the install, not the user, and opens nothing.
+- **The channel.** TLS 1.3 only, ALPN `rowel-nearby/1`, both sides presenting
+  their certificate, on rustls with the app's one ring provider
+  (`nearby::channel`). There is no CA. Any single certificate is taken as the
+  peer's, and the handshake signature is verified against the key in it as
+  any TLS verifier does, with Ed25519 the only scheme offered or accepted; a
+  copied certificate without its key fails there. So the handshake proves one
+  thing: the peer holds the key its device id names. A dialler that knows the
+  device it wants (from its advertisement) names it, and the handshake fails
+  on any other before the dialler has shown its own certificate. Every connection
+  is a full handshake (no resumption, no tickets), and both ends export from
+  it a 32-byte *binding* that only they hold, new for every session. Messages
+  travel as whole messages in frames of at most 1 MiB; the receiver names the
+  most it will take and refuses a longer declared length before allocating
+  anything, and every read and write has a stall deadline (30 seconds).
+- **Mine: proof of a lockbox key.** A device proves it holds a lockbox's key
+  with `HMAC-SHA256(proof key, binding ‖ role ‖ vault id)`, compared in
+  constant time (`nearby::trust`). The proof key is a subkey of the
+  lockbox's key, as the delete marker's is (`VaultKey::nearby_proof_key`). The
+  binding makes a proof good on its own session only, so it cannot be
+  replayed later or forwarded by a device in the middle, whose two halves have
+  two bindings; the role keeps it from being handed back to the side that sent
+  it. It reveals nothing about the key, and between two devices that both hold
+  the lockbox no KDF salt is sent, so a proof is nothing to guess the master
+  password against. This is the only level meant to sync.
+- **The advertisement.** Service `_rowel-sync._tcp` over mDNS, under an
+  instance and host name that are random per session. Its TXT holds the
+  protocol version, a random 16-byte nonce, and for each lockbox key the
+  device holds (current and retired, at most 16) an 8-byte tag
+  `HMAC(discovery key, nonce)` and the device id XORed with another HMAC
+  under the same key. The discovery key is a subkey of the lockbox's key
+  (`VaultKey::nearby_discovery_key`). A device that holds the key recognises
+  the tag and reads the id; to anyone else the record is a nonce and noise,
+  new every session. It names no device, owner or lockbox, and two sessions
+  of one device cannot be linked through it.
+- **The listener.** One TCP listener on an ephemeral port, IPv4 on every
+  interface, open only while the manager runs. A connection from an address
+  that is not private, link-local or this machine is closed before TLS. At
+  most 16 connections are open at once, and each has 15 seconds from its
+  first byte to the end of its handshake before it is shut, whatever the
+  per-read deadlines would allow.
+- **Who is shown what.** A device dials only a device whose advertisement it
+  recognised, only when its own id is the smaller, and expecting the id the
+  advertisement named, so a record copied from a real device and pointed at
+  another address fails at the handshake. The dialling side proves first, and
+  only the lockboxes it recognised; the answering side proves back exactly
+  the ones that verified. A device that connects with nothing proved hears
+  `hello` and `trust/done`: no vault id, no proof, no lockbox name, no list.
+  Only a lockbox proved both ways under its current key on this connection is
+  synced; a run on any other is a protocol error that ends the connection.
+  Packs are the sealed bytes an account holds, at most `MAX_PACK_BYTES`, read
+  only after a key was proved and opened only under the lockbox's own key
+  (org lockboxes are never offered). A device on a key the other has retired
+  is shown as needing the new password on both sides, learned from a proof
+  under that old key (`trust/proof-retired`) rather than from the other's
+  word, and sent nothing else.
+- **The removed set.** Removing a device puts its id in a set kept per install
+  that only grows. Its connections close, it is not dialled, its tombstone
+  rows are forgotten in every lockbox whose key is held then, and it is
+  refused: after the two have proved a key to each other, so a refusal is
+  always the word of a device that holds the lockbox, and a refused device
+  turns nearby sync off. After every handshake that proved a key the two
+  sides exchange their removed sets and each keeps the union, and a set that
+  grows is passed to every connected device at once. A removed set is taken
+  only from a device that proved a key on the same connection.
+- **One writer at a time.** Every run takes the process's one run claim on
+  each side, the claim a cloud run, a password change and a "delete
+  everywhere" take; a side that cannot have it answers `sync/busy`. It is
+  taken under the paths' lock, so a switch is refused while it is held and
+  the lockbox a run opened stays where it is; a password change waits for it.
+  A run on the open lockbox goes through the session, so a lock ends it at
+  its next step; one on another lockbox opens its own connection with the key
+  the keyring holds, never the open lockbox's database a second time.
+- **Locking** (or a switch, which ends the session) stops the manager under
+  the session guard: the advertisement is taken down with an mDNS goodbye, and
+  the listener and every connection close. A run in flight fails at its next
+  read or write; a merge is one transaction, so nothing is left half-written.
+
+What each of them can and cannot do:
+
+- **Someone on the network path** (a hostile Wi-Fi, a spoofed ARP or DNS
+  answer). Sees that two devices talk, when, and how much; not the
+  certificates, which TLS 1.3 encrypts, and not the content. To sit in the
+  middle it has to end two TLS sessions on keys of its own. Against a dialler
+  that names the device it expects, the handshake fails; and its two halves
+  have two bindings, so a key proof it relays does not verify.
+  It can always deny service: drop the connection, or stall it until the
+  deadline.
+- **A stranger's Rowel on the same network.** Can connect: the channel takes
+  any certificate, so a connection is not trust. It gets no further: it
+  cannot prove a lockbox key it does not hold. What it can do is
+  open connections, 16 at a time and 15 seconds each before its handshake must
+  be done, which keeps the owner's own devices out for as long as it keeps
+  that up; and send messages up to the size the receiver accepts (64 KiB for
+  a control message; a pack is read only after a key was proved).
+- **Anyone on the network, listening.** Sees that a Rowel app is unlocked
+  with nearby sync on at an address, its port, for how long, and how many
+  lockbox keys it holds (the number of tags). Not which lockboxes, not whose,
+  not which device: the tags and the masked id change with every session's
+  nonce. Turning nearby sync off hides even that.
+- **One of the owner's devices, removed.** Keeps what it holds and can still
+  prove the key, which is exactly what lets the others refuse it with a word
+  it can trust. It learns that it was removed and nothing else.
+Residuals:
+
+- **Removing a device will not erase what it holds.** Once a device has
+  synced a lockbox it keeps its copy, readable with the master password. A
+  removed device is refused from then on; its copy is put out of date only by
+  a master-password change, after which it can no longer prove the key.
+- **The identity key is a file.** A process running as the same user can copy
+  it and present the device's id from elsewhere: the compromised-OS case
+  below. The id alone is trusted with no lockbox, which still takes a proof
+  of its key.
+- **The removed set reaches only who meets it.** A device that never meets
+  one that knows of a removal keeps syncing with the removed device. Forgetting
+  its tombstone rows reaches only the lockboxes whose keys are held at the
+  time, and a lost wait for the run claim leaves them held until a later
+  removal. Removal is by device id: the same person on a new install is a new
+  device, and only a master-password change keeps a copy from proving the key.
+- **A device of the owner's can hold this one up.** Between `sync/head` and
+  `sync/done` the answering side holds its run claim, for at most 30 seconds
+  without a request; a device that stops mid-run delays this one's cloud run
+  and keeps a lockbox switch refused for that long. Pause is local and not
+  announced: the paused device keeps asking, at most every 30 seconds, and is
+  told `sync/busy`.
+- **Clocks.** A run between devices whose clocks are more than five minutes
+  apart is refused before anything moves. Within five minutes, a fast clock
+  still decides which of two close edits survives, as it does through an
+  account.
+- **No keepalive.** A device that leaves the network without closing its
+  connection shows as connected until a run with it fails at the 30-second
+  stall deadline.
+
 ## The browser extension
 
 Desktop only, and off until the user turns it on in Settings. Rowel speaks the

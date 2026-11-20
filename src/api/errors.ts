@@ -38,6 +38,7 @@ export type BackendErrorKind =
   | 'vaultDeletedRemotely'
   | 'passwordChangedRemotely'
   | 'vaultUnderRetiredPassword'
+  | 'clockSkew'
   | 'vaultPasswordRequired'
   | 'fileTooLarge'
   | 'fileNotText'
@@ -156,6 +157,10 @@ export const describeError = (error: unknown): string => {
     case 'vaultUnderRetiredPassword':
       return t(
         'The account holds this lockbox under a master password this device has already replaced, so syncing has stopped.'
+      )
+    case 'clockSkew':
+      return t(
+        'The clocks on these two devices are too far apart to sync safely. Set both to the correct time.'
       )
     case 'vaultPasswordRequired':
       return t('This lockbox has a different password. Enter the vault password to move it over.')

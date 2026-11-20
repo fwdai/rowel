@@ -85,10 +85,13 @@ impl Reclaim {
 /// next scheduled run settle it, not to spin.
 const MAX_ATTEMPTS: usize = 3;
 
-// Both under `SYNC_META_PREFIX`, so a restore onto a fresh install scrubs them
+// All under `SYNC_META_PREFIX`, so a restore onto a fresh install scrubs them
 // (the source device's bookkeeping means nothing on the target).
 const META_REMOTE_REV: &str = "sync_remote_rev";
 const META_LAST_MS: &str = "sync_last_ms";
+// One row per device this vault syncs with directly, `sync_peer:<device id>`,
+// holding the ms-epoch time the two last held the same state.
+const META_PEER_PREFIX: &str = "sync_peer:";
 
 // Surfaced verbatim by the sync indicator, so it has to read as a sentence.
 fn foreign_vault_error(provider: Provider) -> String {
@@ -155,6 +158,13 @@ pub trait LocalVault {
     fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>>;
     /// Record a completed push: the revision it landed at, and when.
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()>;
+    /// Record that this vault and the device `device_id` held the same state
+    /// at `at_ms`, as a direct exchange with it proves (`nearby::exchange`). Until
+    /// that device is recorded again or forgotten, no tombstone stamped after
+    /// `at_ms` is reclaimed (see [`reclaim`]): it may not have seen it yet.
+    /// Called by nearby sync alone, which a mobile build does not have.
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()>;
 
     // The two below are the vault's *identity* rather than its contents. The
     // provider reads the id before a run, to learn which remote pack this vault
@@ -221,6 +231,47 @@ pub struct SyncOutcome {
     pub rekeyed_remote: bool,
 }
 
+/// A pulled pack, taken in by [`merge_pack`].
+pub(crate) struct MergedPack {
+    /// What the pack held, for the push decision that follows a pull.
+    snapshot: Snapshot,
+    /// Entry and attachment rows the merge wrote here.
+    pub(crate) merged: usize,
+    /// Whether the pack's name beat this vault's and was adopted.
+    pub(crate) renamed: bool,
+}
+
+/// Open a pack, merge it in, and take on its name if that is the newer one:
+/// the first three steps of every [`sync`], and the whole of what a device
+/// does with a pack another one hands it directly (`nearby::exchange::absorb`). A
+/// pack that does not open — another lockbox's, a password changed on one
+/// side — errors out before the local vault is touched.
+pub(crate) fn merge_pack<L: LocalVault + ?Sized>(
+    local: &L,
+    pack_bytes: &[u8],
+) -> Result<MergedPack> {
+    let snapshot = local.decode(pack_bytes)?;
+    let merged = local.merge(&snapshot)?;
+    // The name is last-writer-wins too, but on its own stamp: a rename is a
+    // change to the vault that leaves no row in the entry table.
+    // `identity::name_wins` is the whole decision — a total order, so a tie in
+    // the stamp still settles on one of the two names rather than on whatever
+    // each device happens to hold.
+    let mut renamed = false;
+    if let Some(name) = &snapshot.name {
+        let held = local.name()?;
+        if identity::name_wins((Some(name), snapshot.name_ms), (held.0.as_deref(), held.1)) {
+            local.adopt_name(name, snapshot.name_ms)?;
+            renamed = true;
+        }
+    }
+    Ok(MergedPack {
+        snapshot,
+        merged,
+        renamed,
+    })
+}
+
 /// Run one sync: pull, merge, and push if — and only if — the two sides differ,
 /// in their entries or in the vault name that travels beside them.
 ///
@@ -252,28 +303,17 @@ pub fn sync<R: Remote, L: LocalVault>(
         // Nothing on the remote yet means this run creates it, and there is no
         // snapshot to decode or merge.
         let incoming = match &pulled {
-            Some(file) => Some(local.decode(&file.bytes)?),
+            Some(file) => {
+                let taken = merge_pack(local, &file.bytes)?;
+                outcome.merged += taken.merged;
+                outcome.renamed |= taken.renamed;
+                Some(taken.snapshot)
+            }
             None => None,
         };
         // A pack under a retired epoch is pushed whatever the digests say: the
         // push is what moves the account onto the current password.
         let rekeys_remote = incoming.as_ref().is_some_and(|s| s.opened_under_retired);
-        if let Some(snapshot) = &incoming {
-            outcome.merged += local.merge(snapshot)?;
-            // The name is last-writer-wins too, but on its own stamp: a rename
-            // is a change to the vault that leaves no row in the entry table.
-            // `identity::name_wins` is the whole decision — a total order, so a
-            // tie in the stamp still settles on one of the two names rather
-            // than on whatever each device happens to hold.
-            if let Some(name) = &snapshot.name {
-                let held = local.name()?;
-                if identity::name_wins((Some(name), snapshot.name_ms), (held.0.as_deref(), held.1))
-                {
-                    local.adopt_name(name, snapshot.name_ms)?;
-                    outcome.renamed = true;
-                }
-            }
-        }
 
         // 4. Settle the identity, now that the pull is in and nothing has gone
         // out. See this function's own doc for why it is exactly here.
@@ -515,6 +555,10 @@ impl LocalVault for SessionVault {
         self.with_store(|store| note_push(store, revision, at_ms))
     }
 
+    fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()> {
+        self.with_store(|store| note_converged(store, device_id, at_ms))
+    }
+
     fn vault_id(&self) -> Result<Option<String>> {
         self.with_store(vault_id_of)
     }
@@ -620,6 +664,10 @@ impl LocalVault for WorkspaceVault {
         note_push(&self.store, revision, at_ms)
     }
 
+    fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()> {
+        note_converged(&self.store, device_id, at_ms)
+    }
+
     fn vault_id(&self) -> Result<Option<String>> {
         vault_id_of(&self.store)
     }
@@ -692,10 +740,12 @@ fn digest_of(store: &SqliteStore) -> Result<[u8; 32]> {
     store.state_digest().map_err(store_err)
 }
 
-/// The step before every pack: reclaim the tombstones past their TTL, and the
-/// audit rows past retention of *every* chain the vault holds — noted, when
-/// this device has a writer id and its own rows were among them, by a
-/// `pruned_through` row in its own chain (`rowel_broker::audit::prune`).
+/// The step before every pack: reclaim the tombstones past their TTL (less
+/// those held back for a device this vault syncs with directly, see
+/// [`tombstone_cutoff`]), and the audit rows past retention of *every* chain
+/// the vault holds — noted, when this device has a writer id and its own rows
+/// were among them, by a `pruned_through` row in its own chain
+/// (`rowel_broker::audit::prune`).
 ///
 /// Every chain, on every platform, because the log merges as a union: a device
 /// that reclaimed only its own rows would be handed them back by any peer
@@ -711,9 +761,25 @@ pub(crate) fn reclaim(
     writer_id: Option<&str>,
 ) -> Result<()> {
     store
-        .purge_tombstones_before(reclaim.tombstones_before)
+        .purge_tombstones_before(tombstone_cutoff(store, reclaim.tombstones_before)?)
         .map_err(store_err)?;
     prune_audit(store, reclaim, writer_id)
+}
+
+/// The TTL's cutoff, held back to the oldest time this vault last converged
+/// with a device it syncs with directly.
+///
+/// The TTL assumes a tombstone that old reached every device long ago, through
+/// the account. A device met only on the local network may not have been met
+/// since the delete, and reclaiming the tombstone before it has seen it would
+/// let its live copy of the entry come back. A row that does not parse holds
+/// every tombstone back: the safe way to be wrong.
+fn tombstone_cutoff(store: &SqliteStore, ttl_cutoff: i64) -> Result<i64> {
+    let peers = store.meta_under(META_PEER_PREFIX).map_err(store_err)?;
+    Ok(peers
+        .iter()
+        .map(|(_, at_ms)| at_ms.parse().unwrap_or(i64::MIN))
+        .fold(ttl_cutoff, i64::min))
 }
 
 #[cfg(desktop)]
@@ -865,13 +931,31 @@ pub(crate) fn remote_pack_error(e: PackError) -> Error {
     }
 }
 
-fn note_push(store: &SqliteStore, revision: &str, at_ms: i64) -> Result<()> {
+pub(crate) fn note_push(store: &SqliteStore, revision: &str, at_ms: i64) -> Result<()> {
     store
         .meta_set(META_REMOTE_REV, revision)
         .map_err(store_err)?;
     store
         .meta_set(META_LAST_MS, &at_ms.to_string())
         .map_err(store_err)
+}
+
+fn peer_key(device_id: &str) -> String {
+    format!("{META_PEER_PREFIX}{device_id}")
+}
+
+#[cfg_attr(not(desktop), allow(dead_code))]
+pub(crate) fn note_converged(store: &SqliteStore, device_id: &str, at_ms: i64) -> Result<()> {
+    store
+        .meta_set(&peer_key(device_id), &at_ms.to_string())
+        .map_err(store_err)
+}
+
+/// Stop holding tombstones back for `device_id`: the vault no longer syncs
+/// with it directly. Nearby sync's Remove, desktop only like it.
+#[cfg(desktop)]
+pub(crate) fn forget_peer(store: &SqliteStore, device_id: &str) -> Result<()> {
+    store.meta_delete(&peer_key(device_id)).map_err(store_err)
 }
 
 #[cfg(test)]
@@ -1059,6 +1143,9 @@ mod tests {
         }
         fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
             note_push(&self.store, revision, at_ms)
+        }
+        fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()> {
+            note_converged(&self.store, device_id, at_ms)
         }
         fn vault_id(&self) -> Result<Option<String>> {
             identity::vault_id(&self.store).map_err(store_err)

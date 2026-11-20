@@ -30,13 +30,13 @@ use crate::sync::engine::{self, LocalVault, Reclaim, Snapshot, SyncOutcome};
 use crate::sync::store::fake::FakeStore;
 use crate::sync::{layout, pack, restore, PackRemote, Provider};
 
-const NOW: i64 = 1_700_000_000_000;
-const OLD: &str = "old password";
-const NEW: &str = "new password";
+pub(crate) const NOW: i64 = 1_700_000_000_000;
+pub(crate) const OLD: &str = "old password";
+pub(crate) const NEW: &str = "new password";
 
 // Cheap Argon2id at a given generation, so the suite stays fast; the app's
 // own re-keys use the default costs.
-fn params(salt: u8, gen: u32) -> String {
+pub(crate) fn params(salt: u8, gen: u32) -> String {
     KdfParams::Argon2id {
         m_cost: 256,
         t_cost: 1,
@@ -53,7 +53,7 @@ fn base64_salt(salt: u8) -> String {
     STANDARD.encode([salt; 32])
 }
 
-fn derive(password: &str, params_json: &str) -> VaultKey {
+pub(crate) fn derive(password: &str, params_json: &str) -> VaultKey {
     VaultKey::Argon2 {
         master: crypto::derive(
             password.as_bytes(),
@@ -69,7 +69,8 @@ fn copy(key: &VaultKey) -> VaultKey {
 
 /// One lockbox on one device: its directory, the key its session holds, and
 /// its open store. Crate-visible so the org lockbox tests can run the same
-/// devices against a Rowel Server (`org::tests`).
+/// devices against a Rowel Server (`org::tests`), and the direct exchange
+/// against each other (`nearby::exchange`).
 pub(crate) struct Device {
     dir: TempDir,
     pub(crate) id: &'static str,
@@ -80,7 +81,7 @@ pub(crate) struct Device {
 
 impl Device {
     /// A new lockbox under `password` and descriptor `params_json`.
-    fn create(id: &'static str, vault: &str, password: &str, params_json: &str) -> Self {
+    pub(crate) fn create(id: &'static str, vault: &str, password: &str, params_json: &str) -> Self {
         Self::with_key(id, vault, derive(password, params_json), params_json)
     }
 
@@ -110,7 +111,12 @@ impl Device {
     }
 
     /// A device joining the lockbox from the account, as a restore does.
-    fn restore(id: &'static str, vault: &str, account: &FakeStore, password: &str) -> Result<Self> {
+    pub(crate) fn restore(
+        id: &'static str,
+        vault: &str,
+        account: &FakeStore,
+        password: &str,
+    ) -> Result<Self> {
         let dir = tempfile::tempdir().unwrap();
         let bytes = account.bytes(&layout::vault_file_name(vault)).unwrap();
         let (key, store) = restore::restore_at(
@@ -198,12 +204,12 @@ impl Device {
     }
 
     /// One run against the account, as `sync::run` makes it.
-    fn sync(&self, account: &FakeStore) -> Result<SyncOutcome> {
+    pub(crate) fn sync(&self, account: &FakeStore) -> Result<SyncOutcome> {
         self.sync_at(account, NOW)
     }
 
     /// [`Device::sync`] as of `now_ms`, for what a run a year on reclaims.
-    fn sync_at(&self, account: &FakeStore, now_ms: i64) -> Result<SyncOutcome> {
+    pub(crate) fn sync_at(&self, account: &FakeStore, now_ms: i64) -> Result<SyncOutcome> {
         engine::sync(&self.remote(account), self, now_ms, || Ok(()))
     }
 
@@ -266,8 +272,11 @@ impl LocalVault for Device {
             &self.scratch(),
         )?)
     }
-    fn note_push(&self, _revision: &str, _at_ms: i64) -> Result<()> {
-        Ok(())
+    fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
+        engine::note_push(self.store(), revision, at_ms)
+    }
+    fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()> {
+        engine::note_converged(self.store(), device_id, at_ms)
     }
     fn vault_id(&self) -> Result<Option<String>> {
         identity::vault_id(self.store()).map_err(store_err)

@@ -45,6 +45,9 @@ pub const ORG_CONNECT: &str = "org:connect";
 pub const ORG_CHANGED: &str = "org:changed";
 #[cfg(desktop)]
 pub const OS_LOCK_STATUS: &str = "oslock:status";
+// Desktop only, like nearby sync (`crate::nearby`), whose whole status it is.
+#[cfg(desktop)]
+pub const NEARBY_STATUS: &str = "nearby:status";
 
 #[derive(Serialize, Clone)]
 struct Entries {
@@ -100,6 +103,11 @@ pub fn vault_merged(app: &AppHandle, entries: Vec<EntryMetaDto>) {
 /// neither side has to agree on an order of events.
 pub fn sync_status(app: &AppHandle, status: SyncStatus) {
     let _ = app.emit(SYNC_STATUS, status);
+}
+
+#[cfg(desktop)]
+pub fn nearby_status(app: &AppHandle, status: crate::nearby::session::NearbyStatus) {
+    let _ = app.emit(NEARBY_STATUS, status);
 }
 
 #[cfg(desktop)]
