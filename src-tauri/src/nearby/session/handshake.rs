@@ -117,19 +117,34 @@ pub(super) fn run<H: Host>(
     }
 
     // Each keeps the union of the two removed sets, so a Remove on one of the
-    // owner's devices reaches the others as they meet.
-    channel.send_control(&Control::Removed {
+    // owner's devices reaches the others as they meet. The answering side
+    // speaks first, so the dialling side is only reading when a refusal
+    // comes: the refusing side closes straight after it, and a close that
+    // crossed a write from this end could reset the connection and lose it.
+    let removed = Control::Removed {
         ids: shared.removed_to_send(),
-    })?;
-    match channel.recv_control()? {
-        Control::Removed { ids } => shared.learn_removed(&ids),
-        Control::Refused { reason } => {
-            if reason == REMOVED {
-                shared.removed_here();
+    };
+    match channel.role() {
+        Role::Acceptor => {
+            channel.send_control(&removed)?;
+            match channel.recv_control()? {
+                Control::Removed { ids } => shared.learn_removed(&ids),
+                other => return Err(out_of_step(&other)),
             }
-            return Ok(Handshake::Over);
         }
-        other => return Err(out_of_step(&other)),
+        Role::Connector => {
+            match channel.recv_control()? {
+                Control::Removed { ids } => shared.learn_removed(&ids),
+                Control::Refused { reason } => {
+                    if reason == REMOVED {
+                        shared.removed_here();
+                    }
+                    return Ok(Handshake::Over);
+                }
+                other => return Err(out_of_step(&other)),
+            }
+            channel.send_control(&removed)?;
+        }
     }
     shared
         .book

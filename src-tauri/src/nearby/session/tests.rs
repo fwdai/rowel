@@ -565,9 +565,13 @@ fn a_removed_device_is_cut_off_forgotten_and_refused_by_the_owners_other_devices
         nb.book.is_removed(&nc.id()) && !nb.connected_to(&nc) && !peer_rows(&b).contains(&c_row)
     });
 
-    // C asks again, of each: refused, told so, and nearby sync goes off on it.
-    nc.manager.dial_anyway(na.manager.id(), na.manager.port());
-    eventually("c is told and turns off", || !nc.book.enabled());
+    // C asks again: refused, told so, and nearby sync goes off on it. Asked
+    // until it is answered, since a dial is not started while C still holds
+    // the connection A has just dropped.
+    eventually("c is told and turns off", || {
+        nc.manager.dial_anyway(na.manager.id(), na.manager.port());
+        !nc.book.enabled()
+    });
     settle();
     assert!(!na.connected_to(&nc) && !nb.connected_to(&nc));
     assert!(nc.manager.connections().is_empty());
@@ -605,9 +609,12 @@ fn clocks_six_minutes_apart_stop_the_run_and_nothing_merges() {
     a.write("1", "on a");
     b.write("2", "on b");
     let before = (a.digest(), b.digest());
+    // Half a minute short of six, so the difference each side measures (this
+    // offset, give or take the milliseconds between the two readings) rounds
+    // up to six whichever of them dials.
     let (na, nb) = (
         node(&network, &[&a]),
-        node_at(&network, &[&b], 6 * 60 * 1000),
+        node_at(&network, &[&b], 6 * 60 * 1000 - 30_000),
     );
     let skewed = |n: &Node, other: &Node| {
         n.row(other).is_some_and(|row| {
