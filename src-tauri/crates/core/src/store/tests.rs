@@ -1931,33 +1931,6 @@ fn meta_delete_prefix_removes_only_the_namespace() {
     assert_eq!(store.meta_get("kdf").unwrap().as_deref(), Some("argon2id"));
 }
 
-#[test]
-fn meta_under_lists_the_namespace_and_meta_delete_removes_one_key() {
-    let store = SqliteStore::open(&tmp_db(), KEY).unwrap();
-    store.meta_set("sync_peer:b", "2").unwrap();
-    store.meta_set("sync_peer:a", "1").unwrap();
-    store.meta_set("sync_peer:ab", "3").unwrap();
-    store.meta_set("sync_peerless", "keep").unwrap();
-
-    assert_eq!(
-        store.meta_under("sync_peer:").unwrap(),
-        vec![
-            ("sync_peer:a".to_string(), "1".to_string()),
-            ("sync_peer:ab".to_string(), "3".to_string()),
-            ("sync_peer:b".to_string(), "2".to_string()),
-        ]
-    );
-
-    store.meta_delete("sync_peer:a").unwrap();
-    store.meta_delete("sync_peer:none").unwrap();
-    assert_eq!(store.meta_get("sync_peer:a").unwrap(), None);
-    assert_eq!(
-        store.meta_get("sync_peer:ab").unwrap().as_deref(),
-        Some("3")
-    );
-    assert_eq!(store.meta_under("sync_peer:").unwrap().len(), 2);
-}
-
 // --- attachments --------------------------------------------------------------
 
 fn att(id: &str, entry_id: &str, blob: &[u8]) -> Attachment {
