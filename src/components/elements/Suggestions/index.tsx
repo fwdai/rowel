@@ -40,9 +40,6 @@ const GAP = 3
 // Wide enough to read an address in. A field narrower than this gets a list
 // as wide as itself and no wider: the field's width is the hard limit.
 const MIN_WIDTH = 260
-// The least the list is cut down to when there is little room on either side
-// of the field: two options and the start of a third, which says it scrolls.
-const MIN_HEIGHT = 100
 
 // What the list has to stay inside: the pane the field scrolls in, not just
 // the window — on the phone that pane ends at the keyboard, which the window
@@ -114,7 +111,9 @@ export default function Suggestions({
           Object.assign(elements.floating.style, {
             minWidth: `${Math.min(MIN_WIDTH, field)}px`,
             maxWidth: `${field}px`,
-            maxHeight: `${Math.max(MIN_HEIGHT, availableHeight)}px`
+            // Whatever room there is, however little: a list cut to a sliver
+            // still scrolls, one drawn past the pane's edge cannot be reached.
+            maxHeight: `${Math.max(0, availableHeight)}px`
           })
         }
       })),
