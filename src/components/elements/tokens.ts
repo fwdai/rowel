@@ -11,6 +11,12 @@ export const CARD =
 // their own, so nothing needs the corner clip.
 export const CARD_OPEN = 'rounded-lg border border-line bg-card shadow-card max-md:rounded-xl'
 
+// The ground of anything that hangs off a control and floats over the page (a
+// dropdown menu, a field's suggestions): a translucent sheet over a saturated
+// backdrop blur, a 1px line at its edge and the menu's own shadow.
+export const MENU =
+  'overflow-hidden rounded-[12px] border border-menu-line bg-menu text-text shadow-menu backdrop-blur-[24px] backdrop-saturate-[1.6]'
+
 // A card that is one choice among a few (a theme, an export format, an app to
 // import from): PICK_CARD is the shape, and the chosen one wears PICKED — the
 // accent edge under a soft ring — while the rest wait in UNPICKED.

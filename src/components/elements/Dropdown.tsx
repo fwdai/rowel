@@ -1,6 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { cx } from '@/utils/cx'
 import { CheckGlyph } from '@/components/Main/icons'
+import { MENU } from './tokens'
 
 interface DropdownProps {
   onBlur: () => void
@@ -101,7 +102,8 @@ export function Dropdown({
         role={listbox ? undefined : 'menu'}
         onKeyDown={onKeyDown}
         className={cx(
-          'animate-drop absolute z-20 flex min-w-[180px] origin-top flex-col overflow-hidden rounded-[12px] border border-menu-line bg-menu text-text shadow-menu backdrop-blur-[24px] backdrop-saturate-[1.6]',
+          'animate-drop absolute z-20 flex min-w-[180px] origin-top flex-col',
+          MENU,
           className
         )}
       >
