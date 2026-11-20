@@ -1,13 +1,16 @@
 import { useTranslation } from 'react-i18next'
 import type { TKey } from '@/i18n'
+import CopyButton from '../CopyButton'
 import { useField } from './context'
 import { requiredError } from './formats'
 import { grow } from './grow'
 import FieldRow from './Row'
 
 // The note row every kind carries under its fields, in both modes: a few lines
-// of prose that grow as they are typed. A body that is the whole entry (a
-// secure note) is not a row but a sealed block (see `elements/SealedBlock`).
+// of prose that grow as they are typed. Read, it is prose rather than a value
+// to press: its text can be selected, and the copy button in the rail takes the
+// whole. A body that is the whole entry (a secure note) is not a row but a
+// sealed block (see `elements/SealedBlock`).
 export default function NoteField({
   name = 'note',
   label = 'Note',
@@ -23,7 +26,13 @@ export default function NoteField({
   if (!editing && value === '') return null
 
   return (
-    <FieldRow label={label} error={requiredError(value, required, attempted)}>
+    <FieldRow
+      label={label}
+      error={requiredError(value, required, attempted)}
+      actions={
+        !editing && <CopyButton value={value} title={t('Copy')} testid={`copy-${name}`} />
+      }
+    >
       {id =>
         editing ? (
           <textarea
@@ -44,7 +53,7 @@ export default function NoteField({
           // At least the box's one line tall, so the row's label sits where it
           // does over the editor.
           <div
-            className="min-h-6 whitespace-pre-wrap break-words text-base leading-relaxed text-text2 max-md:text-md"
+            className="min-h-6 whitespace-pre-wrap break-words text-base leading-relaxed text-text2 select-text max-md:text-md"
             data-testid={`entry-value-${name}`}
           >
             {value}
