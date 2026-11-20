@@ -3,10 +3,11 @@ import { matching, type Suggestion } from './match'
 
 /**
  * The state of a text field that offers values back as it is typed into: a
- * combobox whose caret never leaves the field. It opens on focus and on every
- * keystroke, and nothing is lit until an arrow or the pointer lights it — so
- * Enter and Tab mean what they meant before there were suggestions, unless
- * the user has actually reached for one.
+ * combobox whose caret never leaves the field. It opens on a keystroke that
+ * leaves something in the field — never on focus alone — and nothing is lit
+ * until an arrow or the pointer lights it, so Enter and Tab mean what they
+ * meant before there were suggestions, unless the user has actually reached
+ * for one.
  *
  * With no `source` (a field that offers nothing, or a vault with nothing to
  * offer yet) it is inert: no role, no handlers, an ordinary input.
@@ -78,7 +79,6 @@ export function useSuggestions(
         'aria-expanded': shown,
         'aria-controls': shown ? listId : undefined,
         'aria-activedescendant': active >= 0 ? optionId(active) : undefined,
-        onFocus: show,
         onKeyDown
       } as const)
     : {}

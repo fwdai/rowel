@@ -13,11 +13,11 @@ import { toEntryMeta } from './meta'
 const input = (name: string) =>
   document.querySelector<HTMLInputElement>(`input[name="${name}"]`)!
 
-// What the list offers, top to bottom, without the counts beside them.
+// What the list offers, top to bottom.
 const offered = () =>
   within(screen.getByRole('listbox'))
     .getAllByRole('option')
-    .map(option => option.firstChild?.textContent)
+    .map(option => option.getAttribute('data-testid')?.replace('suggestion-', ''))
 
 // A lockbox whose logins sign in with three addresses and one bare handle.
 const seed = () =>
@@ -38,13 +38,31 @@ describe('Suggestions on a login’s username and email', () => {
   it('offers the usernames the lockbox already holds, most used first', async () => {
     seed()
     render(<Show type="login" editing />)
-    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
 
-    await userEvent.click(input('username'))
+    await userEvent.type(input('username'), 'c')
 
     expect(screen.getByRole('listbox', { name: 'Username' })).toBeInTheDocument()
     expect(offered()).toEqual(['me@example.com', 'work@acme.com', 'octocat'])
-    expect(within(screen.getByTestId('suggestion-me@example.com')).getByText('3')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('suggestion-me@example.com')).getByText('3 items')
+    ).toBeInTheDocument()
+  })
+
+  it('waits for something to be typed', async () => {
+    seed()
+    render(<Show type="login" editing />)
+
+    await userEvent.click(input('username'))
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    // Nothing to answer to, so the arrow has nothing to open either.
+    await userEvent.keyboard('{ArrowDown}')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+
+    await userEvent.keyboard('m')
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Backspace}')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 
   it('narrows to what answers to the typing', async () => {
@@ -62,7 +80,7 @@ describe('Suggestions on a login’s username and email', () => {
     seed()
     render(<Show type="login" editing />)
 
-    await userEvent.click(input('email'))
+    await userEvent.type(input('email'), 'c')
 
     expect(screen.getByRole('listbox', { name: 'Email' })).toBeInTheDocument()
     expect(offered()).toEqual(['me@example.com', 'work@acme.com'])
@@ -72,7 +90,7 @@ describe('Suggestions on a login’s username and email', () => {
     seed()
     render(<Show type="login" editing />)
     const box = input('username')
-    await userEvent.click(box)
+    await userEvent.type(box, 'c')
     // Nothing is lit until it is reached for.
     expect(box).not.toHaveAttribute('aria-activedescendant')
 
@@ -91,7 +109,7 @@ describe('Suggestions on a login’s username and email', () => {
   it('wraps round the ends of the list', async () => {
     seed()
     render(<Show type="login" editing />)
-    await userEvent.click(input('username'))
+    await userEvent.type(input('username'), 'c')
 
     await userEvent.keyboard('{ArrowUp}')
     expect(screen.getByTestId('suggestion-octocat')).toHaveAttribute('aria-selected', 'true')
@@ -131,7 +149,7 @@ describe('Suggestions on a login’s username and email', () => {
   it('goes when the box is left', async () => {
     seed()
     render(<Show type="login" editing />)
-    await userEvent.click(input('username'))
+    await userEvent.type(input('username'), 'c')
     expect(screen.getByRole('listbox')).toBeInTheDocument()
 
     await userEvent.tab()
@@ -152,7 +170,7 @@ describe('Suggestions on a login’s username and email', () => {
   it('leaves the box a plain one when the lockbox has nothing to offer', async () => {
     render(<Show type="login" editing />)
 
-    await userEvent.click(input('username'))
+    await userEvent.type(input('username'), 'c')
 
     expect(input('username')).not.toHaveAttribute('role')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
@@ -189,7 +207,12 @@ describe('matching', () => {
 
   it('offers no more than a menu can show without scrolling', () => {
     const many = Array.from({ length: 20 }, (_, index) => ({ value: `user${index}` }))
-    expect(matching(many, '')).toHaveLength(6)
+    expect(matching(many, 'user')).toHaveLength(5)
+  })
+
+  it('offers nothing to an empty box', () => {
+    expect(matching(source, '')).toEqual([])
+    expect(matching(source, '  ')).toEqual([])
   })
 })
 

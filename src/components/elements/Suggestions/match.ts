@@ -1,12 +1,16 @@
+import type { ReactNode } from 'react'
+
 export interface Suggestion {
   value: string
-  /** How many entries already hold it; shown beside it when given. */
+  /** How many entries already hold it; said under it when given. */
   count?: number
+  /** What kind of value it is, drawn on its tile: an address, a handle. */
+  glyph?: ReactNode
 }
 
 // As many as the menu shows at once: enough for the handful of addresses one
 // person signs in with, short enough to never need a scrollbar.
-export const LIMIT = 6
+export const LIMIT = 5
 
 const fold = (text: string) => text.trim().toLocaleLowerCase()
 
@@ -22,10 +26,12 @@ export const matchAt = (value: string, typed: string): number =>
  * The suggestions that answer to what was typed, in the order they came in
  * (the caller's ranking) but with the ones that *start* with it first: typing
  * "al" is asking for "alex@…" before "sales@…". The value already in the field
- * is left out — offering it back would change nothing.
+ * is left out — offering it back would change nothing — and an empty field is
+ * offered nothing at all: the list answers typing, it does not greet a caret.
  */
 export const matching = (source: Suggestion[], typed: string): Suggestion[] => {
   const held = typed.trim()
+  if (!held) return []
   const hits = source.filter(option => option.value !== held && matchAt(option.value, typed) >= 0)
   const leading = hits.filter(option => matchAt(option.value, typed) === 0)
   const inside = hits.filter(option => matchAt(option.value, typed) > 0)

@@ -15,7 +15,13 @@ export default function EmailField({
   // The addresses the vault's logins already sign in with: a username that is
   // an email is as good a guess at this row as there is.
   const usernames = useUsernames()
-  const emails = useMemo(() => usernames.filter(option => isEmail(option.value)), [usernames])
+  const emails = useMemo(
+    () =>
+      usernames
+        .filter(option => isEmail(option.value))
+        .map(option => ({ ...option, glyph: <AtGlyph size={14} /> })),
+    [usernames]
+  )
 
   return (
     <Field

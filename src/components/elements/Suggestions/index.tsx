@@ -10,12 +10,12 @@ import {
 } from '@floating-ui/react'
 import { cx } from '@/utils/cx'
 import { scrollParent } from '@/utils/scrollParent'
-import { DropdownItem, DropdownMeta } from '../Dropdown'
 import { MENU } from '../tokens'
-import { matchAt, type Suggestion } from './match'
+import type { Suggestion } from './match'
+import Option from './Option'
 
 interface Props {
-  /** The field the list hangs off and is as wide as. */
+  /** The field the list hangs off, and is never wider than. */
   anchor: RefObject<HTMLElement | null>
   /** The listbox's element id, which the field's `aria-controls` names. */
   id: string
@@ -36,10 +36,11 @@ interface Props {
 const EDGE = 8
 // Between the field's underline and the menu.
 const GAP = 6
-// How far an option's text sits inside the menu: the list's padding plus the
-// item's own. The menu starts that far left of the field, so a suggestion is
-// printed exactly under what is being typed; it ends where the field ends, so
-// it never half-covers the controls in the row's rail.
+// How far an option sits inside the menu: the list's padding plus the item's
+// own. The menu starts that far left of the field, so the options line up
+// with what is being typed. It is as wide as its longest option, and never
+// wider than the field: it ends at the field's end at most, so it cannot
+// half-cover the controls in the row's rail.
 const INSET = 14
 
 // How far above the field its label starts, when the label is stacked over it
@@ -51,22 +52,6 @@ const labelRise = (field: Element): number => {
   const top = field.getBoundingClientRect().top
   const above = label.getBoundingClientRect()
   return above.bottom <= top + 1 ? top - above.top : 0
-}
-
-// The value with the stretch that matched in the full ink and the rest a step
-// back, so the eye lands on why this one is here. Nothing typed, nothing dimmed.
-function Value({ value, typed }: { value: string; typed: string }) {
-  const length = typed.trim().length
-  const at = length ? matchAt(value, typed) : -1
-  if (at < 0) return <span className="min-w-0 flex-1 truncate">{value}</span>
-
-  return (
-    <span className="min-w-0 flex-1 truncate text-text2">
-      {value.slice(0, at)}
-      <span className="text-text">{value.slice(at, at + length)}</span>
-      {value.slice(at + length)}
-    </span>
-  )
 }
 
 /**
@@ -116,7 +101,7 @@ export default function Suggestions({
       })),
       size({
         apply({ rects, elements }) {
-          elements.floating.style.width = `${rects.reference.width + INSET}px`
+          elements.floating.style.maxWidth = `${rects.reference.width + INSET}px`
         }
       }),
       shift({ padding: EDGE })
@@ -136,25 +121,22 @@ export default function Suggestions({
         // closes the list, and it would close before the click landed.
         onMouseDown={event => event.preventDefault()}
         className={cx(
-          'animate-drop z-50 max-w-[calc(100vw-16px)] min-w-[220px]',
+          'animate-drop z-50 w-max min-w-[280px]',
           placement.startsWith('top') ? 'origin-bottom' : 'origin-top',
           MENU
         )}
       >
         <div id={id} role="listbox" aria-label={label} className="flex flex-col p-[5px]">
           {options.map((option, index) => (
-            <DropdownItem
+            <Option
               key={option.value}
               id={optionId(index)}
-              option
-              active={index === lit}
-              testid={`suggestion-${option.value}`}
-              onMouseEnter={() => onLight(index)}
-              onClick={() => onPick(option.value)}
-            >
-              <Value value={option.value} typed={typed} />
-              {option.count !== undefined && <DropdownMeta>{option.count}</DropdownMeta>}
-            </DropdownItem>
+              option={option}
+              typed={typed}
+              lit={index === lit}
+              onLight={() => onLight(index)}
+              onPick={() => onPick(option.value)}
+            />
           ))}
         </div>
       </div>
