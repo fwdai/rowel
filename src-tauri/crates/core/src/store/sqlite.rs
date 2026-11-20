@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::{params, Connection, OptionalExtension, Row, Statement};
-use rusqlite_migration::{Migrations, M};
 use zeroize::Zeroizing;
 
 use super::hash::{attachment_hash, audit_fingerprint, derived_rank, record_hash, vault_digest};
@@ -18,11 +17,27 @@ use super::{
 };
 
 // Ordered schema migrations, versioned via SQLite's `user_version` pragma. This
-// is the DDL history — append (never edit) an `M::up` for each future schema
+// is the DDL history — append (never edit) a statement for each future schema
 // change (Phase 2 KDF columns, Phase 3 sync columns). The `meta` k/v table holds
 // APP data (KDF descriptor, biometric flag, settings), not schema versioning.
-fn migrations() -> Migrations<'static> {
-    Migrations::new(migration_list())
+//
+// `migrate` runs every migration past the database's `version` and stamps the
+// new one, all in one transaction: a step that fails leaves the schema and its
+// version exactly where they were.
+fn migrate(conn: &mut Connection, version: i64) -> rusqlite::Result<()> {
+    // A negative version is no version this build ever stamped: refuse it.
+    let done = usize::try_from(version)
+        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, version))?;
+    let list = migration_list();
+    let Some(pending) = list.get(done..).filter(|p| !p.is_empty()) else {
+        return Ok(());
+    };
+    let tx = conn.transaction()?;
+    for sql in pending {
+        tx.execute_batch(sql)?;
+    }
+    tx.pragma_update(None, "user_version", schema_version())?;
+    tx.commit()
 }
 
 // After running all migrations, `user_version` equals the list length. A DB
@@ -32,10 +47,9 @@ fn schema_version() -> i64 {
     migration_list().len() as i64
 }
 
-fn migration_list() -> Vec<M<'static>> {
+fn migration_list() -> Vec<&'static str> {
     vec![
-        M::up(
-            "CREATE TABLE meta (
+        "CREATE TABLE meta (
            key   TEXT PRIMARY KEY,
            value TEXT
          );
@@ -50,29 +64,26 @@ fn migration_list() -> Vec<M<'static>> {
            deleted_at INTEGER,
            payload    BLOB
          );",
-        ),
         // Card network slug ("visa", …), derived from the number at save time
         // so listings show brand marks without touching the payload. NULL =
         // not yet derived (backfilled once on unlock).
-        M::up("ALTER TABLE entries ADD COLUMN card_brand TEXT;"),
+        "ALTER TABLE entries ADD COLUMN card_brand TEXT;",
         // The user's star. Pre-existing rows default to unstarred, which is the
         // truth for every vault written before this column existed.
-        M::up("ALTER TABLE entries ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;"),
+        "ALTER TABLE entries ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;",
         // Whether the entry holds a passkey, derived from the payload at save
         // time so the list can mark the row without unsealing it. Pre-existing
         // rows default to 0 and are corrected by a one-time unlock backfill —
         // there is no NULL here to mark the derivation as pending, since 0 is
         // also the truth for every entry that simply has no passkey.
-        M::up("ALTER TABLE entries ADD COLUMN has_passkey INTEGER NOT NULL DEFAULT 0;"),
+        "ALTER TABLE entries ADD COLUMN has_passkey INTEGER NOT NULL DEFAULT 0;",
         // An env file's name and variable count, derived from the payload at
         // save time so the list can subtitle the row without unsealing it. Both
         // nullable like `card_brand`: NULL `var_count` = not yet derived
         // (backfilled once on unlock). NULL `file_name` is also simply the truth
         // for a pasted file, so the count is the marker the backfill reads.
-        M::up(
-            "ALTER TABLE entries ADD COLUMN file_name TEXT;
+        "ALTER TABLE entries ADD COLUMN file_name TEXT;
              ALTER TABLE entries ADD COLUMN var_count INTEGER;",
-        ),
         // The website-favicon cache. It used to be loose files named after the
         // host under the app-data dir, which put the vault's host list — live
         // and deleted — in the clear beside the encrypted database, where any
@@ -81,22 +92,19 @@ fn migration_list() -> Vec<M<'static>> {
         // host has no icon), which is why the presence of the row and the
         // presence of an icon are two different questions; `fetched_at` is what
         // ages a miss out.
-        M::up(
-            "CREATE TABLE favicons (
+        "CREATE TABLE favicons (
            host       TEXT PRIMARY KEY,
            uri        TEXT,
            fetched_at INTEGER NOT NULL
          );",
-        ),
         // A login's username. NULL = not yet derived (backfilled on unlock).
-        M::up("ALTER TABLE entries ADD COLUMN username TEXT;"),
+        "ALTER TABLE entries ADD COLUMN username TEXT;",
         // Files attached to entries, a row each beside the entry rather than
         // inside its payload: an entry is sealed and revealed whole, and a file
         // must never travel that way. `name`, `mime` and `size` are metadata
         // like an entry's title; `blob` is the file sealed by the caller. Rows
         // tombstone and purge the way entry rows do, so sync can carry both.
-        M::up(
-            "CREATE TABLE attachments (
+        "CREATE TABLE attachments (
            id         TEXT PRIMARY KEY,
            entry_id   TEXT NOT NULL,
            name       TEXT,
@@ -108,36 +116,30 @@ fn migration_list() -> Vec<M<'static>> {
            blob       BLOB
          );
          CREATE INDEX attachments_entry ON attachments (entry_id);",
-        ),
         // An ID document's type and issuing country, derived from the payload
         // at save time so the list can draw a passport's cover without
         // unsealing it. Neither is a secret: a passport says what it is and who
         // issued it on its cover. NULL `doc_type` = not yet derived (backfilled
         // on unlock); NULL `doc_country` is also simply the truth for a document
         // whose country is not an ISO code, so the type is the marker.
-        M::up(
-            "ALTER TABLE entries ADD COLUMN doc_type TEXT;
+        "ALTER TABLE entries ADD COLUMN doc_type TEXT;
              ALTER TABLE entries ADD COLUMN doc_country TEXT;",
-        ),
         // The coat of arms a passport's cover is stamped with, by ISO alpha-3
         // country, fetched once and kept like a favicon (see `favicons` above):
         // in here, which countries the vault's passports are from is SQLCipher
         // at rest rather than a set of file names beside it.
-        M::up(
-            "CREATE TABLE emblems (
+        "CREATE TABLE emblems (
            country    TEXT PRIMARY KEY,
            uri        TEXT,
            fetched_at INTEGER NOT NULL
          );",
-        ),
         // What agents, people and policy did with the lockbox's secrets: one
         // row per decision and per use, inside the lockbox so it syncs and
         // restores with it. Each writer (a device, a server) keeps its own
         // hash chain — `prev_hash` is that writer's previous row's `hash`,
         // found by `(writer_id, seq - 1)` — so devices never break each
         // other's chains and no `meta` head is needed. Insert-only.
-        M::up(
-            "CREATE TABLE audit (
+        "CREATE TABLE audit (
            id          TEXT PRIMARY KEY,
            writer_id   TEXT NOT NULL,
            seq         INTEGER NOT NULL,
@@ -160,7 +162,6 @@ fn migration_list() -> Vec<M<'static>> {
            UNIQUE (writer_id, seq)
          );
          CREATE INDEX audit_ts ON audit(ts_ms);",
-        ),
         // The log merges as a union of rows, and a row is its `(id, hash)` —
         // what the vault digest reads of it. `UNIQUE (writer_id, seq)` made a
         // forked chain's second row unstorable, so two devices each holding
@@ -168,8 +169,7 @@ fn migration_list() -> Vec<M<'static>> {
         // forever, and pushed on every run. Without it both sides of a fork
         // are kept on every device and `verify` names it; a local write is
         // still refused a taken `seq` (`SqliteStore::audit_insert`).
-        M::up(
-            "CREATE TABLE audit_rows (
+        "CREATE TABLE audit_rows (
            id          TEXT NOT NULL,
            writer_id   TEXT NOT NULL,
            seq         INTEGER NOT NULL,
@@ -196,7 +196,6 @@ fn migration_list() -> Vec<M<'static>> {
          ALTER TABLE audit_rows RENAME TO audit;
          CREATE INDEX audit_ts ON audit(ts_ms);
          CREATE INDEX audit_chain ON audit(writer_id, seq);",
-        ),
         // A row is its whole contents (`hash::audit_fingerprint`), not its
         // `(id, hash)`: a row altered behind an unchanged chain hash keyed
         // the same as the original, so a peer's merge dropped it as already
@@ -204,8 +203,7 @@ fn migration_list() -> Vec<M<'static>> {
         // cannot be a stored column (a row edited in place would keep a stale
         // one), so the table carries no key of its own: the merge computes
         // fingerprints and inserts what it does not hold.
-        M::up(
-            "CREATE TABLE audit_rows (
+        "CREATE TABLE audit_rows (
            id          TEXT NOT NULL,
            writer_id   TEXT NOT NULL,
            seq         INTEGER NOT NULL,
@@ -231,7 +229,6 @@ fn migration_list() -> Vec<M<'static>> {
          ALTER TABLE audit_rows RENAME TO audit;
          CREATE INDEX audit_ts ON audit(ts_ms);
          CREATE INDEX audit_chain ON audit(writer_id, seq);",
-        ),
     ]
 }
 
@@ -464,9 +461,7 @@ fn connect(path: &Path, key: &[u8]) -> Result<Connection> {
 
     // Apply pending schema migrations on the decrypted DB (tracked via
     // `user_version`; idempotent — a no-op once the DB is at the latest).
-    migrations()
-        .to_latest(&mut conn)
-        .map_err(|e| StoreError::Other(e.to_string()))?;
+    migrate(&mut conn, version).map_err(|e| StoreError::Other(e.to_string()))?;
     Ok(conn)
 }
 

@@ -736,6 +736,21 @@ fn future_schema_fails_as_schema_newer_not_wrong_key() {
     }
 }
 
+// A version below zero is one no build ever stamped. It must fail the open,
+// not pass for a fully migrated schema.
+#[test]
+fn a_negative_schema_version_is_refused() {
+    let path = tmp_db();
+    {
+        let store = SqliteStore::open(&path, KEY).unwrap();
+        store.set_user_version(-1).unwrap();
+    }
+    assert!(matches!(
+        SqliteStore::open(&path, KEY),
+        Err(StoreError::Other(_))
+    ));
+}
+
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const MISS_TTL_MS: i64 = 7 * DAY_MS;
 
