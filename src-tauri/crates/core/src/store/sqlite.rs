@@ -21,14 +21,13 @@ use super::{
 // change (Phase 2 KDF columns, Phase 3 sync columns). The `meta` k/v table holds
 // APP data (KDF descriptor, biometric flag, settings), not schema versioning.
 //
-// `migrate` runs every migration past the database's `version` and stamps the
-// new one, all in one transaction: a step that fails leaves the schema and its
-// version exactly where they were.
-fn migrate(conn: &mut Connection, version: i64) -> rusqlite::Result<()> {
+// `migrate` runs every migration in `list` past the database's `version` and
+// stamps the new one, all in one transaction: a step that fails leaves the
+// schema and its version exactly where they were.
+fn migrate(conn: &mut Connection, version: i64, list: &[&str]) -> rusqlite::Result<()> {
     // A negative version is no version this build ever stamped: refuse it.
     let done = usize::try_from(version)
         .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, version))?;
-    let list = migration_list();
     let Some(pending) = list.get(done..).filter(|p| !p.is_empty()) else {
         return Ok(());
     };
@@ -36,7 +35,7 @@ fn migrate(conn: &mut Connection, version: i64) -> rusqlite::Result<()> {
     for sql in pending {
         tx.execute_batch(sql)?;
     }
-    tx.pragma_update(None, "user_version", schema_version())?;
+    tx.pragma_update(None, "user_version", list.len() as i64)?;
     tx.commit()
 }
 
@@ -461,7 +460,7 @@ fn connect(path: &Path, key: &[u8]) -> Result<Connection> {
 
     // Apply pending schema migrations on the decrypted DB (tracked via
     // `user_version`; idempotent — a no-op once the DB is at the latest).
-    migrate(&mut conn, version).map_err(|e| StoreError::Other(e.to_string()))?;
+    migrate(&mut conn, version, &migration_list()).map_err(|e| StoreError::Other(e.to_string()))?;
     Ok(conn)
 }
 
@@ -1851,6 +1850,45 @@ fn restrict(_path: &Path) -> Result<()> {
 
 #[cfg(not(unix))]
 fn set_mode(_path: &Path, _mode: u32) {}
+
+// `migrate` is private and takes its list as an argument, so its rollback can
+// be driven here with a list that fails partway.
+#[cfg(test)]
+mod migrate_tests {
+    use super::*;
+
+    // What `migrate` promises: a step that fails takes the steps that ran
+    // before it in the same call back out, and the version stays where it was.
+    #[test]
+    fn a_failed_migration_leaves_the_schema_and_its_version_untouched() {
+        let dir = std::env::temp_dir().join(format!("rowel-migrate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("plain.db");
+        let first = "CREATE TABLE a (x);";
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            migrate(&mut conn, 0, &[first]).unwrap();
+            // The second step succeeds; the third fails on the table the first made.
+            let failing = [first, "CREATE TABLE b (y);", first];
+            assert!(migrate(&mut conn, 1, &failing).is_err());
+        }
+
+        let conn = Connection::open(&path).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 1);
+        let tables: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(tables, ["a"]);
+    }
+}
 
 // Lives here rather than in `store::tests` because it drives a second raw
 // connection at the same key, which needs this module's private helpers.
