@@ -68,9 +68,11 @@ copy glyph at its right edge (`CopyHint`), the same on a row as on a card; on
 touch there is no hover and the value is simply pressed. A rail holds only
 what means something else — the eye, the open-link, generate, the countdown —
 so there is **no copy button** on a row or a face, and the header's primary
-action copies the headline secret. The one exception is a sealed block, whose
-body is read rather than pressed: it carries the copy in its head, beside the
-eye.
+action copies the headline secret. The one exception is prose, which is read
+rather than pressed: a sealed block's body and the note row (`NoteField`).
+Their text can be selected, so a part of it can be taken, and a copy button
+takes the whole — in a block's head, beside the eye, and in the note row's
+rail.
 
 **Copy feedback.** One behaviour, one component (`elements/Copied`): the
 value's glyphs go invisible and a single check takes their place for 1.2s, then

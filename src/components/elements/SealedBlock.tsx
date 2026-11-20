@@ -129,7 +129,7 @@ export default function SealedBlock({
           className={cx('block w-full resize-none overflow-hidden outline-none placeholder:text-text2', body)}
         />
       ) : (
-        <div className={cx('relative flex-1', body)} data-testid={`entry-value-${name}`}>
+        <div className={cx('relative flex-1 select-text', body)} data-testid={`entry-value-${name}`}>
           {head && <div className="text-text2">{head}</div>}
           {shown ? (
             lines.map((line, index) => <div key={index}>{line}</div>)
