@@ -881,7 +881,9 @@ fn report(app: &AppHandle, result: Result<sync::engine::SyncOutcome>) {
             if outcome.merged > 0 {
                 events::vault_merged(app, entry_metas(app));
                 crate::credential_identities::publish(app);
-                #[cfg(desktop)]
+            }
+            #[cfg(desktop)]
+            if outcome.merged > 0 || outcome.renamed {
                 crate::nearby::request_run(app);
             }
             finished(app, None);

@@ -248,15 +248,33 @@ impl<H: Host> Shared<H> {
     /// Read the lockboxes again. When their keys changed, the advertisement
     /// follows and every connection is closed, to be proved again from the
     /// new advertisements: what a connection syncs was proved under the keys
-    /// it was opened with.
-    fn refresh(&self) {
+    /// it was opened with. `true` when they had changed.
+    fn refresh(&self) -> bool {
         let fresh = self.host.lockboxes();
         if fresh == *self.lockboxes() {
-            return;
+            return false;
         }
         *self.lockboxes.lock().unwrap() = Arc::new(fresh);
         self.advertise();
         self.conns().shut_all();
+        self.redial_soon();
+        true
+    }
+
+    /// A run on `vault` for a connection ([`Host::begin`]). The keys are read
+    /// again under the run's claim, which a password change waits for: when
+    /// they are no longer the ones the connections were proved under, every
+    /// connection closes ([`Shared::refresh`]) and the run is not begun.
+    fn begin(&self, vault: &str) -> crate::error::Result<H::Run> {
+        let run = self.host.begin(vault)?;
+        if self.refresh() {
+            return Err(crate::error::Error::SyncBusy);
+        }
+        Ok(run)
+    }
+
+    /// Every device seen and not connected is dialled at the next look.
+    fn redial_soon(&self) {
         let now = Instant::now();
         for seen in self.seen.lock().unwrap().values_mut() {
             seen.next_dial = now;
@@ -302,8 +320,9 @@ impl<H: Host> Shared<H> {
     }
 
     /// Dial the device behind `txt` if it shares a lockbox with this one, is
-    /// not refused, is not this device, and has the larger id: of two devices
-    /// that see each other, the smaller dials.
+    /// not this device, and has the larger id: of two devices that see each
+    /// other, the smaller dials. A removed device is dialled too, to be told
+    /// so: the handshake refuses it once the keys are proved.
     fn consider(self: &Arc<Self>, txt: &Txt, mut addrs: Vec<SocketAddr>) {
         if self.stopped() {
             return;
@@ -312,7 +331,7 @@ impl<H: Host> Shared<H> {
             return;
         };
         let me = *self.identity.device_id();
-        if found.device <= me || self.book.is_removed(&found.device.to_string()) {
+        if found.device <= me {
             return;
         }
         if !self.conns().start_dial(found.device) {
@@ -332,7 +351,9 @@ impl<H: Host> Shared<H> {
     /// Add `ids` to the removed set. Each one new to it is refused from now
     /// on: its connections close, its tombstone rows are forgotten in every
     /// lockbox, and every other connection is told, so the removal reaches
-    /// the owner's other devices. This device's own id is never taken.
+    /// the owner's other devices. The device itself is told at the handshake
+    /// of the connection that follows, whichever of the two dials it. This
+    /// device's own id is never taken.
     fn learn_removed(&self, ids: &[String]) {
         let me = self.identity.device_id().to_string();
         let ids: Vec<String> = ids
@@ -354,19 +375,24 @@ impl<H: Host> Shared<H> {
             }
             conns.signal(None, Signal::Removed);
         }
-        for id in added {
-            let host = self.host.clone();
-            if let Err(e) = spawn("nearby-forget", move || host.forget(&id)) {
-                log::warn!("nearby: a removed device's rows are kept for now: {e}");
-            }
+        self.redial_soon();
+        let host = self.host.clone();
+        let forgetting = spawn("nearby-forget", move || {
+            added.iter().for_each(|id| host.forget(id));
+        });
+        if let Err(e) = forgetting {
+            log::warn!("nearby: a removed device's rows are kept for now: {e}");
         }
     }
 
-    /// The removed set as one `sync/removed` carries it.
-    fn removed_to_send(&self) -> Vec<String> {
-        let mut ids = self.book.removed();
-        ids.truncate(handshake::MAX_REMOVED);
-        ids
+    /// The removed set, in the batches `sync/removed` carries it in. The
+    /// handshake has room for the first; an established connection sends the
+    /// rest.
+    fn removed_batches(&self) -> Vec<Vec<String>> {
+        let ids = self.book.removed();
+        ids.chunks(handshake::MAX_REMOVED)
+            .map(<[String]>::to_vec)
+            .collect()
     }
 
     /// A device that holds one of this device's lockboxes says this device

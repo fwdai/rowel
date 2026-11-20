@@ -256,9 +256,7 @@ impl LocalVault for Device {
         )
     }
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
-        self.store()
-            .merge(&incoming.records, &incoming.attachments, &incoming.audit)
-            .map_err(store_err)
+        engine::merge_snapshot(self.store(), incoming)
     }
     fn digest(&self) -> Result<[u8; 32]> {
         self.store().state_digest().map_err(store_err)

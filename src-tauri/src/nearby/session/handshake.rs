@@ -1,6 +1,7 @@
 //! The first exchange on a connection: who each side is, which lockboxes the
 //! two prove they hold, and the devices each refuses (design §5,
-//! "Connections").
+//! "Connections"). A device removed on either side is told so here, and
+//! nothing else.
 //!
 //! The side that dialled proves first, and only the lockboxes it recognised
 //! in the other's advertisement. The side that answered then proves back the
@@ -100,15 +101,6 @@ pub(super) fn run<H: Host>(
         Role::Acceptor => {
             let proved = read_proofs(channel, &lockboxes, None)?;
             answer_proofs(channel, &lockboxes, &proved)?;
-            // Refused once the two have proved a key to each other, so the
-            // refusal is the word of a device that holds the lockbox: a
-            // stranger cannot switch a device off by claiming to refuse it.
-            if !proved.is_empty() && shared.book.is_removed(&channel.peer().to_string()) {
-                channel.send_control(&Control::Refused {
-                    reason: REMOVED.into(),
-                })?;
-                return Ok(Handshake::Over);
-            }
             proved
         }
     };
@@ -117,35 +109,54 @@ pub(super) fn run<H: Host>(
     }
 
     // Each keeps the union of the two removed sets, so a Remove on one of the
-    // owner's devices reaches the others as they meet. The answering side
-    // speaks first, so the dialling side is only reading when a refusal
-    // comes: the refusing side closes straight after it, and a close that
-    // crossed a write from this end could reset the connection and lose it.
-    let removed = Control::Removed {
-        ids: shared.removed_to_send(),
-    };
-    match channel.role() {
-        Role::Acceptor => {
-            channel.send_control(&removed)?;
-            match channel.recv_control()? {
-                Control::Removed { ids } => shared.learn_removed(&ids),
-                other => return Err(out_of_step(&other)),
-            }
+    // owner's devices reaches the others as they meet. A side that removed
+    // the other says `trust/refused` instead, and takes nothing from it. That
+    // comes only now the two have proved a key to each other, so it is the
+    // word of a device that holds the lockbox: a stranger cannot switch a
+    // device off by claiming to refuse it.
+    //
+    // The answering side speaks first and the dialling side second, so
+    // neither writes while a refusal may be on its way: the refusing side
+    // closes straight after it, and a close that crossed a write from the
+    // other end could reset the connection and lose it.
+    let refuses = shared.book.is_removed(&channel.peer().to_string());
+    let mine = if refuses {
+        Control::Refused {
+            reason: REMOVED.into(),
         }
-        Role::Connector => {
-            match channel.recv_control()? {
-                Control::Removed { ids } => shared.learn_removed(&ids),
-                Control::Refused { reason } => {
-                    if reason == REMOVED {
-                        shared.removed_here();
-                    }
-                    return Ok(Handshake::Over);
-                }
-                other => return Err(out_of_step(&other)),
-            }
-            channel.send_control(&removed)?;
+    } else {
+        Control::Removed {
+            ids: shared
+                .removed_batches()
+                .into_iter()
+                .next()
+                .unwrap_or_default(),
+        }
+    };
+    let first = channel.role() == Role::Acceptor;
+    if first {
+        channel.send_control(&mine)?;
+        if refuses {
+            return Ok(Handshake::Over);
         }
     }
+    let theirs = match channel.recv_control()? {
+        Control::Removed { ids } => ids,
+        Control::Refused { reason } => {
+            if reason == REMOVED {
+                shared.removed_here();
+            }
+            return Ok(Handshake::Over);
+        }
+        other => return Err(out_of_step(&other)),
+    };
+    if !first {
+        channel.send_control(&mine)?;
+        if refuses {
+            return Ok(Handshake::Over);
+        }
+    }
+    shared.learn_removed(&theirs);
     shared
         .book
         .seen(&channel.peer().to_string(), &name, &platform);

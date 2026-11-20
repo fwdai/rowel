@@ -40,6 +40,15 @@ struct Conn {
     /// pair keeps.
     dialler_smaller: bool,
     signals: Option<Sender<Signal>>,
+    /// Shut down, and waiting for its own thread to unregister it.
+    shut: bool,
+}
+
+impl Conn {
+    /// Whether this is an open connection to `peer`.
+    fn is_to(&self, peer: &DeviceId) -> bool {
+        !self.shut && self.peer.as_ref() == Some(peer)
+    }
 }
 
 #[derive(Default)]
@@ -68,6 +77,7 @@ impl Conns {
                 role,
                 dialler_smaller: false,
                 signals: None,
+                shut: false,
             },
         );
         Some(self.next)
@@ -88,7 +98,7 @@ impl Conns {
         };
         // This connection is not the peer's yet, so any connection that is
         // is the rival.
-        let kept = |c: &Conn| c.peer == Some(peer) && c.dialler_smaller;
+        let kept = |c: &Conn| c.is_to(&peer) && c.dialler_smaller;
         if !dialler_smaller && self.open.values().any(kept) {
             return false;
         }
@@ -102,22 +112,22 @@ impl Conns {
 
     /// Connection `id` is through its handshake; `signals` reaches its thread.
     pub fn established(&mut self, id: u64, signals: Sender<Signal>) {
-        if let Some(conn) = self.open.get_mut(&id) {
+        if let Some(conn) = self.open.get_mut(&id).filter(|conn| !conn.shut) {
             conn.deadline = None;
             conn.signals = Some(signals);
         }
     }
 
-    /// Connection `id` ended. The device comes back when this was the last
-    /// connection to it; not when it was shut down for another, or before it
-    /// knew whose it was.
+    /// Connection `id` ended. The device comes back when no open connection
+    /// to it is left; not when this one was shut down for another, or ended
+    /// before it knew whose it was.
     pub fn close(&mut self, id: u64) -> Option<DeviceId> {
         let peer = self.open.remove(&id)?.peer?;
         (!self.has_peer(&peer)).then_some(peer)
     }
 
     pub fn has_peer(&self, peer: &DeviceId) -> bool {
-        self.open.values().any(|c| c.peer.as_ref() == Some(peer))
+        self.open.values().any(|c| c.is_to(peer))
     }
 
     /// Start a dial to `peer`, unless one is under way or a connection to it
@@ -136,7 +146,7 @@ impl Conns {
     }
 
     pub fn shut_peer(&mut self, peer: &DeviceId) {
-        self.shut_where(|c| c.peer.as_ref() == Some(peer));
+        self.shut_where(|c| c.is_to(peer));
     }
 
     pub fn shut_all(&mut self) {
@@ -146,7 +156,7 @@ impl Conns {
     /// Tell every established connection `signal`, or only the ones to `peer`.
     pub fn signal(&self, peer: Option<&DeviceId>, signal: Signal) {
         for conn in self.open.values() {
-            if peer.is_some_and(|p| conn.peer.as_ref() != Some(p)) {
+            if peer.is_some_and(|p| !conn.is_to(p)) {
                 continue;
             }
             if let Some(signals) = &conn.signals {
@@ -166,11 +176,12 @@ impl Conns {
     }
 
     // Shut, not removed: the connection's own thread unregisters it once its
-    // read or write fails, which keeps the count true until it has.
+    // read or write fails, which keeps the count true until it has. It keeps
+    // whose it was, for `close` to say the device went.
     fn shut_where(&mut self, which: impl Fn(&Conn) -> bool) {
         for conn in self.open.values_mut().filter(|c| which(c)) {
             let _ = conn.sock.shutdown(Shutdown::Both);
-            conn.peer = None;
+            conn.shut = true;
             conn.signals = None;
         }
     }

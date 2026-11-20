@@ -85,8 +85,13 @@ pub trait PeerLink {
 assumption they were pushed long ago. Between peers that may not be true. So
 each lockbox keeps, in `meta` under `SYNC_META_PREFIX` (local bookkeeping,
 scrubbed by a restore), the time it last converged with each known device,
-and the reclaim cutoff is never later than the oldest of those. Forgetting a
-device (§5, Remove) deletes its row.
+and the reclaim cutoff is never later than the oldest of those. That time
+covers the deletes made here since, which this device's own clock stamped. It
+says nothing of a delete that arrived since from somewhere else, whatever its
+stamp (one brought the long way round, or made on a device whose clock runs
+behind), so a merge that writes rows resets every device's time, and a device
+whose time is reset holds every tombstone back until it converges again.
+Forgetting a device (§5, Remove) deletes its row.
 
 Not in this version: sending only the rows that changed. Every exchange that
 finds a difference moves whole packs.
@@ -171,7 +176,9 @@ one through the session, and any other on a connection of its own; never the
 open one's database a second time. The set is read again every 3 seconds (the
 unlock fills the keyring a moment after the session opens; a password change
 changes the keys): when its keys changed, the advertisement follows and every
-connection is closed, to be proved again under the new keys.
+connection is closed, to be proved again under the new keys. Each side reads
+it again as a run begins too, under the run claim, which a password change
+waits for: no run goes ahead under keys its connection was not proved under.
 
 **Discovery.** Service `_rowel-sync._tcp`, advertised only while unlocked and
 enabled, through `mdns-sd` on Windows, Linux and macOS (iOS will need the
@@ -183,8 +190,8 @@ the tag `HMAC(discovery key, nonce)` truncated to 8 bytes, followed by the
 device id XOR `HMAC(discovery key, label ‖ nonce)`. A device that holds the
 lockbox recomputes the tag, recognises it, and unmasks the id; nobody else can
 link two sessions, tell which lockboxes a device holds, or which device it is.
-Knowing the id before dialling is what lets a device apply the rule below,
-skip a device it refuses, and dial expecting that id (so a record copied and
+Knowing the id before dialling is what lets a device apply the rule below
+and dial expecting that id (so a record copied and
 pointed at another address fails at the handshake). The device's name is not
 in the TXT; showing it while "Add a device" is open comes with §6.
 
@@ -230,7 +237,9 @@ answers `sync/busy`, and the run is asked again, waiting 250 ms and doubling
 to 30 seconds; a cloud run asked for while a nearby run holds the claim runs
 when it lets go. A peer merge that changed rows of the open lockbox emits
 `vault:merged` and requests a cloud run; a newer name is mirrored into the
-registry as a cloud run's is. There is no keepalive: a device that leaves
+registry as a cloud run's is, and passed on the same way. A run that failed
+after it merged announces and passes on what it merged all the same. There
+is no keepalive: a device that leaves
 without closing its connection shows as connected until a run with it fails.
 
 **Pause and Remove.** Kept per install in `nearby/state.json` under the app's
@@ -240,14 +249,16 @@ enabled, paused device ids, removed device ids, and the devices seen (id, name,
 platform, last converge). Pause is local: this side runs nothing with the
 paused device and answers its `sync/head` with `sync/busy`, so the other side
 keeps asking, at most every 30 seconds, and shows nothing of it. Remove adds
-the id to the removed set, which only grows: its connections close, it is not
-dialled, connections from it are refused, its tombstone rows are forgotten in
-every lockbox whose key is held (`engine::forget_peer`, under the run claim),
-and the grown set goes to every connected device at once and at every later
-handshake, each keeping the union, so one Remove reaches the owner's other
-devices as they meet. A removed device that connects is refused
-(`trust/refused`) after the two have proved a key to each other, so the
-refusal is a holder's word, and turns nearby sync off. Remove does not erase
+the id to the removed set, which only grows: its connections close, its
+tombstone rows are forgotten in every lockbox whose key is held
+(`engine::forget_peer`, under the run claim), and the grown set goes to every
+connected device at once and at every later handshake (256 ids to a
+`sync/removed`, the rest after the handshake), each keeping the union, so one
+Remove reaches the owner's other devices as they meet. The next connection
+with the removed device, which the smaller id of the two dials as ever, is
+refused (`trust/refused`) by the side that removed it, after the two have
+proved a key to each other, so the refusal is a holder's word. The device
+refused turns nearby sync off. Remove does not erase
 what the device holds; that takes a master-password change.
 
 **Locking** (and a lockbox switch, which ends the session) stops the manager

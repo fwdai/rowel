@@ -90,8 +90,10 @@ const MAX_ATTEMPTS: usize = 3;
 const META_REMOTE_REV: &str = "sync_remote_rev";
 const META_LAST_MS: &str = "sync_last_ms";
 // One row per device this vault syncs with directly, `sync_peer:<device id>`,
-// holding the ms-epoch time the two last held the same state.
+// holding the ms-epoch time the two last held the same state, or
+// `PEER_UNSETTLED` once rows have come in from elsewhere since.
 const META_PEER_PREFIX: &str = "sync_peer:";
+const PEER_UNSETTLED: &str = "0";
 
 // Surfaced verbatim by the sync indicator, so it has to read as a sentence.
 fn foreign_vault_error(provider: Provider) -> String {
@@ -161,7 +163,8 @@ pub trait LocalVault {
     /// Record that this vault and the device `device_id` held the same state
     /// at `at_ms`, as a direct exchange with it proves (`nearby::exchange`). Until
     /// that device is recorded again or forgotten, no tombstone stamped after
-    /// `at_ms` is reclaimed (see [`reclaim`]): it may not have seen it yet.
+    /// `at_ms` is reclaimed, and none at all once a merge has brought rows in
+    /// from elsewhere (see [`tombstone_cutoff`]): it may not have seen it yet.
     /// Called by nearby sync alone, which a mobile build does not have.
     #[cfg_attr(not(desktop), allow(dead_code))]
     fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()>;
@@ -772,8 +775,15 @@ pub(crate) fn reclaim(
 /// The TTL assumes a tombstone that old reached every device long ago, through
 /// the account. A device met only on the local network may not have been met
 /// since the delete, and reclaiming the tombstone before it has seen it would
-/// let its live copy of the entry come back. A row that does not parse holds
-/// every tombstone back: the safe way to be wrong.
+/// let its live copy of the entry come back.
+///
+/// The time of the last converge covers the deletes made here since, which
+/// this device's own clock stamped. It says nothing of a delete that arrived
+/// since from somewhere else, whatever its stamp: one made earlier and
+/// brought the long way round, or made on a device whose clock runs behind.
+/// So a merge that writes rows unsettles every device ([`unsettle_peers`]),
+/// and an unsettled device holds every tombstone back until it converges
+/// again. So does a row that does not parse: the safe way to be wrong.
 fn tombstone_cutoff(store: &SqliteStore, ttl_cutoff: i64) -> Result<i64> {
     let peers = store.meta_under(META_PEER_PREFIX).map_err(store_err)?;
     Ok(peers
@@ -915,10 +925,24 @@ pub(crate) fn records_from_snapshot(
 
 // One transaction for all three tables, so a file never lands without the
 // entry state it is checked against (see `SqliteStore::merge`).
-fn merge_snapshot(store: &SqliteStore, incoming: &Snapshot) -> Result<usize> {
-    store
+pub(crate) fn merge_snapshot(store: &SqliteStore, incoming: &Snapshot) -> Result<usize> {
+    let merged = store
         .merge(&incoming.records, &incoming.attachments, &incoming.audit)
-        .map_err(store_err)
+        .map_err(store_err)?;
+    if merged > 0 {
+        unsettle_peers(store)?;
+    }
+    Ok(merged)
+}
+
+/// Rows came in from elsewhere: no device this vault syncs with directly is
+/// known to hold them yet, the one they came from included until the run
+/// records the converge (see [`tombstone_cutoff`]).
+fn unsettle_peers(store: &SqliteStore) -> Result<()> {
+    for (key, _) in store.meta_under(META_PEER_PREFIX).map_err(store_err)? {
+        store.meta_set(&key, PEER_UNSETTLED).map_err(store_err)?;
+    }
+    Ok(())
 }
 
 // A pack this build cannot parse is corruption, except for a format stamped by

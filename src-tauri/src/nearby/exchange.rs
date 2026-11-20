@@ -17,8 +17,10 @@
 //! a device met only on the local network may not have. So each lockbox records
 //! when it last converged with each device ([`LocalVault::note_converged`]),
 //! and `engine::reclaim` holds back every tombstone newer than the oldest of
-//! those, until that device converges again or is forgotten
-//! (`engine::forget_peer`).
+//! those, and every tombstone once rows have come in from elsewhere since,
+//! until that device converges again or is forgotten (`engine::forget_peer`).
+
+use std::cell::Cell;
 
 use crate::error::{Error, Result};
 use crate::sync::engine::{self, LocalVault, Reclaim, Remote, RemoteFile, Snapshot};
@@ -133,30 +135,35 @@ pub fn absorb(local: &dyn LocalVault, pack: &[u8]) -> Result<Absorbed> {
 /// under a password this device has replaced refuses this device's pack with
 /// `PasswordChangedRemotely` after this side has merged the peer's: that error
 /// is the peer's state, not this device's.
+///
+/// What the run did here comes back however it ended: one that merged the
+/// peer's pack and then failed has changed this lockbox all the same.
 pub fn sync_with_peer<P: PeerLink>(
     link: &P,
     local: &dyn LocalVault,
     device_id: &str,
     now_ms: i64,
-) -> Result<PeerOutcome> {
+) -> (PeerOutcome, Result<()>) {
+    let local = PeerLocal {
+        vault: local,
+        done: Cell::default(),
+    };
+    let ended = converge(link, &local, device_id, now_ms);
+    (local.done.get(), ended)
+}
+
+fn converge<P: PeerLink>(link: &P, local: &PeerLocal, device_id: &str, now_ms: i64) -> Result<()> {
     let head = link.head()?;
     let skew_ms = head.now_ms.saturating_sub(now_ms);
     if skew_ms.unsigned_abs() > MAX_CLOCK_SKEW_MS {
         return Err(Error::ClockSkew { skew_ms });
     }
-    let outcome = if head.revision == revision(local)? {
-        PeerOutcome::default()
-    } else {
+    if head.revision != revision(local)? {
         // Nothing to settle: the lockbox's id is what the two devices proved
         // they share before the link was opened (design §4.3).
-        let run = engine::sync(&PeerRemote(link), &PeerLocal(local), now_ms, || Ok(()))?;
-        PeerOutcome {
-            merged: run.merged,
-            renamed: run.renamed,
-        }
-    };
-    local.note_converged(device_id, now_ms)?;
-    Ok(outcome)
+        engine::sync(&PeerRemote(link), local, now_ms, || Ok(()))?;
+    }
+    local.note_converged(device_id, now_ms)
 }
 
 /// The peer as the engine's [`Remote`]. It always holds a pack, and its upload
@@ -180,23 +187,37 @@ impl<P: PeerLink> Remote for PeerRemote<'_, P> {
 /// This device's lockbox for a run with a peer: as for a cloud run, except
 /// that the push is not recorded. `sync_remote_rev` and `sync_last_ms` describe
 /// the account, and a peer's revision is none of its business.
-struct PeerLocal<'a>(&'a dyn LocalVault);
+struct PeerLocal<'a> {
+    vault: &'a dyn LocalVault,
+    /// What the run has done to the lockbox so far.
+    done: Cell<PeerOutcome>,
+}
+
+impl PeerLocal<'_> {
+    fn did(&self, change: impl FnOnce(&mut PeerOutcome)) {
+        let mut done = self.done.get();
+        change(&mut done);
+        self.done.set(done);
+    }
+}
 
 impl LocalVault for PeerLocal<'_> {
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-        self.0.decode(pack_bytes)
+        self.vault.decode(pack_bytes)
     }
 
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
-        self.0.merge(incoming)
+        let merged = self.vault.merge(incoming)?;
+        self.did(|done| done.merged += merged);
+        Ok(merged)
     }
 
     fn digest(&self) -> Result<[u8; 32]> {
-        self.0.digest()
+        self.vault.digest()
     }
 
     fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>> {
-        self.0.pack(reclaim)
+        self.vault.pack(reclaim)
     }
 
     fn note_push(&self, _revision: &str, _at_ms: i64) -> Result<()> {
@@ -204,23 +225,25 @@ impl LocalVault for PeerLocal<'_> {
     }
 
     fn note_converged(&self, device_id: &str, at_ms: i64) -> Result<()> {
-        self.0.note_converged(device_id, at_ms)
+        self.vault.note_converged(device_id, at_ms)
     }
 
     fn vault_id(&self) -> Result<Option<String>> {
-        self.0.vault_id()
+        self.vault.vault_id()
     }
 
     fn adopt_vault_id(&self, id: &str) -> Result<()> {
-        self.0.adopt_vault_id(id)
+        self.vault.adopt_vault_id(id)
     }
 
     fn name(&self) -> Result<(Option<String>, i64)> {
-        self.0.name()
+        self.vault.name()
     }
 
     fn adopt_name(&self, name: &str, at_ms: i64) -> Result<()> {
-        self.0.adopt_name(name, at_ms)
+        self.vault.adopt_name(name, at_ms)?;
+        self.did(|done| done.renamed = true);
+        Ok(())
     }
 }
 
@@ -281,9 +304,16 @@ mod tests {
         Device::create(id, "v1", OLD, &params(1, 0))
     }
 
+    /// A run `local` initiates over `link`: what it did, or the error it
+    /// ended on.
+    fn run_over(link: &InProcess, local: &Device, now_ms: i64) -> Result<PeerOutcome> {
+        let (outcome, ended) = sync_with_peer(link, local, link.peer.id, now_ms);
+        ended.map(|()| outcome)
+    }
+
     /// A run `local` initiates with `peer`, both clocks at `now_ms`.
     fn run_at(local: &Device, peer: &Device, now_ms: i64) -> Result<PeerOutcome> {
-        sync_with_peer(&InProcess::new(peer, now_ms), local, peer.id, now_ms)
+        run_over(&InProcess::new(peer, now_ms), local, now_ms)
     }
 
     fn run(local: &Device, peer: &Device) -> Result<PeerOutcome> {
@@ -341,7 +371,7 @@ mod tests {
         b.write("2", "made on b");
 
         let link = InProcess::new(&b, NOW);
-        let outcome = sync_with_peer(&link, &a, b.id, NOW).unwrap();
+        let outcome = run_over(&link, &a, NOW).unwrap();
         assert_eq!(
             outcome,
             PeerOutcome {
@@ -358,15 +388,9 @@ mod tests {
 
         // Nothing left to say, whichever side starts.
         let again = InProcess::new(&b, NOW);
-        assert_eq!(
-            sync_with_peer(&again, &a, b.id, NOW).unwrap(),
-            PeerOutcome::default()
-        );
+        assert_eq!(run_over(&again, &a, NOW).unwrap(), PeerOutcome::default());
         let back = InProcess::new(&a, NOW);
-        assert_eq!(
-            sync_with_peer(&back, &b, a.id, NOW).unwrap(),
-            PeerOutcome::default()
-        );
+        assert_eq!(run_over(&back, &b, NOW).unwrap(), PeerOutcome::default());
         assert_eq!(again.packs_moved() + back.packs_moved(), 0);
     }
 
@@ -516,7 +540,7 @@ mod tests {
 
         for skew in [6 * MINUTE_MS, -6 * MINUTE_MS] {
             let link = InProcess::new(&b, NOW + skew);
-            match sync_with_peer(&link, &a, b.id, NOW) {
+            match run_over(&link, &a, NOW) {
                 Err(Error::ClockSkew { skew_ms }) => assert_eq!(skew_ms, skew),
                 other => panic!("expected a clock skew error, got {other:?}"),
             }
@@ -527,7 +551,7 @@ mod tests {
 
         // Within the bound, the same two converge.
         let link = InProcess::new(&b, NOW + 4 * MINUTE_MS);
-        sync_with_peer(&link, &a, b.id, NOW).unwrap();
+        run_over(&link, &a, NOW).unwrap();
         assert_eq!(a.digest(), b.digest());
     }
 
@@ -579,8 +603,11 @@ mod tests {
         ));
 
         // A opens B's pack under the retired key and merges it; B refuses A's
-        // pack in turn, so A's run ends with B's error and B is unchanged.
-        assert!(matches!(run(&a, &b), Err(Error::PasswordChangedRemotely)));
+        // pack in turn, so A's run ends with B's error and B is unchanged. The
+        // run still says what it merged on A.
+        let (outcome, ended) = sync_with_peer(&InProcess::new(&b, NOW), &a, b.id, NOW);
+        assert!(matches!(ended, Err(Error::PasswordChangedRemotely)));
+        assert_eq!(outcome.merged, 1);
         assert_eq!(a.title("2").as_deref(), Some("made on b"));
         assert_eq!(b.digest(), b_before);
 
@@ -618,6 +645,33 @@ mod tests {
         engine::forget_peer(a.store(), b.id).unwrap();
         a.pack(Reclaim::at(LATER)).unwrap();
         assert!(row(&a, "1").is_none());
+    }
+
+    // The time two devices last converged says nothing of a delete that
+    // arrives afterwards with an older stamp: one brought the long way round,
+    // or made on a device whose clock runs behind.
+    #[test]
+    fn a_tombstone_that_arrives_after_a_device_was_last_met_is_held_for_it() {
+        const LATER: i64 = NOW + 100 * DAY_MS;
+        let (a, b, c) = (device("a"), device("b"), device("c"));
+        a.write("1", "deleted on c, which a meets again after b");
+        stamp(&a, "1", NOW - DAY_MS, false);
+        run(&a, &c).unwrap();
+        stamp(&c, "1", NOW, true);
+
+        // A meets B a day after the delete was stamped, and only then C.
+        run_at(&a, &b, NOW + DAY_MS).unwrap();
+        assert!(b.title("1").is_some());
+        run_at(&a, &c, NOW + 2 * DAY_MS).unwrap();
+        assert_eq!(a.title("1"), None);
+
+        // Past the TTL the tombstone stays on A: B has not been met since it
+        // came. B, back at last, takes the delete instead of undoing it.
+        a.pack(Reclaim::at(LATER)).unwrap();
+        assert!(row(&a, "1").is_some());
+        run_at(&b, &a, LATER).unwrap();
+        assert_eq!(b.title("1"), None);
+        assert_eq!(a.digest(), b.digest());
     }
 
     #[test]

@@ -69,7 +69,7 @@ impl<R: Deref<Target = dyn LocalVault>> Answerer<R> {
                     self.end(shared, peer);
                 }
                 if self.open.is_none() {
-                    match shared.host.begin(&vault) {
+                    match shared.begin(&vault) {
                         Ok(run) => {
                             shared.live(|live| {
                                 live.syncing.insert(peer.to_string());

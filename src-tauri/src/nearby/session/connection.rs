@@ -174,6 +174,8 @@ impl<H: Host> Session<'_, H> {
     }
 
     fn serve_loop(&mut self) -> Result<()> {
+        // The handshake carried the first batch of the removed set.
+        self.tell_removed(1)?;
         loop {
             if self.shared.stopped() {
                 return Ok(());
@@ -212,11 +214,16 @@ impl<H: Host> Session<'_, H> {
                 Ok(())
             }
             Signal::Run => self.channel.send_control(&Control::Poke),
-            Signal::Removed => {
-                let ids = self.shared.removed_to_send();
-                self.channel.send_control(&Control::Removed { ids })
-            }
+            Signal::Removed => self.tell_removed(0),
         }
+    }
+
+    /// Send the removed set, from its batch `from` on.
+    fn tell_removed(&mut self, from: usize) -> Result<()> {
+        for ids in self.shared.removed_batches().into_iter().skip(from) {
+            self.channel.send_control(&Control::Removed { ids })?;
+        }
+        Ok(())
     }
 
     fn on_message(&mut self, message: Control) -> Result<()> {
@@ -280,7 +287,7 @@ impl<H: Host> Session<'_, H> {
     fn run_one(&mut self, vault: &str) -> Result<bool> {
         let shared = self.shared;
         let id = self.id.clone();
-        let local = match shared.host.begin(vault) {
+        let local = match shared.begin(vault) {
             Ok(local) => local,
             Err(Error::SyncBusy | Error::Locked) => return Ok(false),
             Err(e) => {
@@ -296,16 +303,19 @@ impl<H: Host> Session<'_, H> {
         });
         let now_ms = shared.host.now_ms();
         let link = ChannelLink::new(&mut self.channel, vault, now_ms);
-        let result = exchange::sync_with_peer(&link, &*local, &id, now_ms);
+        let (outcome, result) = exchange::sync_with_peer(&link, &*local, &id, now_ms);
         let heard = link.into_heard();
-        if !heard.removed.is_empty() {
-            shared.learn_removed(&heard.removed);
+        // As they came: `learn_removed` takes one message's worth at a time.
+        for ids in heard.removed.chunks(handshake::MAX_REMOVED) {
+            shared.learn_removed(ids);
         }
         if heard.poked && !self.paused() {
             self.run_wanted = true;
         }
+        // However the run ends, what it merged here before that is announced
+        // and passed on.
         if heard.broken.is_some() || heard.busy {
-            drop(local);
+            shared.host.finish(local, outcome);
             shared.live(|live| {
                 live.syncing.remove(&id);
             });
@@ -323,13 +333,10 @@ impl<H: Host> Session<'_, H> {
             error: result.as_ref().err().map(failure_of),
         };
         let said = self.channel.send_control(&done);
+        shared.host.finish(local, outcome);
         match result {
-            Ok(outcome) => {
-                shared.host.finish(local, outcome);
-                shared.book.converged(&id, now_ms);
-            }
+            Ok(()) => shared.book.converged(&id, now_ms),
             Err(e) => {
-                drop(local);
                 log::info!("nearby: a run with {id} failed: {e}");
                 shared.live(|live| {
                     live.failed.insert(id.clone(), failure_of(&e));

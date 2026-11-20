@@ -94,7 +94,8 @@ impl std::ops::Deref for Held {
 
 /// One device's lockboxes, the run claim its runs take, and its clock.
 struct TestHost {
-    lockboxes: Vec<Arc<Held>>,
+    /// Behind a lock, for a test to change what the device holds mid-session.
+    lockboxes: Mutex<Vec<Arc<Held>>>,
     claim: Arc<AtomicBool>,
     offset_ms: i64,
     /// Every run that ended here, by vault id.
@@ -171,6 +172,8 @@ impl Host for TestHost {
 
     fn lockboxes(&self) -> Vec<Lockbox> {
         self.lockboxes
+            .lock()
+            .unwrap()
             .iter()
             .map(|device| Lockbox {
                 vault_id: device.vault.to_string(),
@@ -187,11 +190,14 @@ impl Host for TestHost {
         let claim = claim(&self.claim).ok_or(AppError::SyncBusy)?;
         let held = self
             .lockboxes
+            .lock()
+            .unwrap()
             .iter()
             .find(|held| held.vault == vault_id)
+            .cloned()
             .ok_or(AppError::NotFound)?;
         Ok(TestRun {
-            held: held.clone(),
+            held,
             packs: self.packs.clone(),
             _claim: claim,
         })
@@ -204,7 +210,7 @@ impl Host for TestHost {
     }
 
     fn forget(&self, device_id: &str) {
-        for device in &self.lockboxes {
+        for device in self.lockboxes.lock().unwrap().iter() {
             engine::forget_peer(device.store(), device_id).unwrap();
         }
     }
@@ -229,7 +235,7 @@ fn node(network: &Network, lockboxes: &[&Arc<Held>]) -> Node {
 /// A node whose clock is `offset_ms` off the others'.
 fn node_at(network: &Network, lockboxes: &[&Arc<Held>], offset_ms: i64) -> Node {
     let host = Arc::new(TestHost {
-        lockboxes: lockboxes.iter().map(|held| (*held).clone()).collect(),
+        lockboxes: Mutex::new(lockboxes.iter().map(|held| (*held).clone()).collect()),
         claim: Arc::default(),
         offset_ms,
         finished: Mutex::default(),
@@ -533,48 +539,126 @@ fn pause_stops_runs_with_that_device_and_resume_starts_them_again() {
 }
 
 #[test]
-fn a_removed_device_is_cut_off_forgotten_and_refused_by_the_owners_other_devices() {
+fn a_removed_device_with_the_larger_id_is_cut_off_forgotten_and_told() {
+    removal(true);
+}
+
+#[test]
+fn a_removed_device_with_the_smaller_id_is_cut_off_forgotten_and_told() {
+    removal(false);
+}
+
+/// A removes C, B learns it from A, and C is told at the handshake of the
+/// next connection, which the smaller of each pair opens: the device that
+/// refuses when C's id is the larger of the three, C itself when it is the
+/// smaller.
+fn removal(removed_is_larger: bool) {
     let network = Network::default();
-    let (a, b, c) = (
+    let lockboxes = [
         lockbox("a", "v1", 1),
         lockbox("b", "v1", 1),
         lockbox("c", "v1", 1),
-    );
-    c.write("1", "from c");
-    let (na, nb, nc) = (
-        node(&network, &[&a]),
-        node(&network, &[&b]),
-        node(&network, &[&c]),
-    );
+    ];
+    lockboxes[0].write("1", "from one of them");
+    let mut nodes: Vec<(Node, &Arc<Held>)> = lockboxes
+        .iter()
+        .map(|held| (node(&network, &[held]), held))
+        .collect();
+    nodes.sort_by_key(|(node, _)| node.manager.id());
+    if !removed_is_larger {
+        nodes.reverse();
+    }
+    let [(na, a), (nb, b), (nc, _)] = &nodes[..] else {
+        unreachable!("three devices");
+    };
     let c_row = format!("sync_peer:{}", nc.id());
     eventually("all three converge with each other", || {
         a.title("1").is_some()
             && b.title("1").is_some()
-            && peer_rows(&a).contains(&c_row)
-            && peer_rows(&b).contains(&c_row)
-            && na.connected_to(&nb)
-            && nb.connected_to(&nc)
+            && peer_rows(a).contains(&c_row)
+            && peer_rows(b).contains(&c_row)
+            && na.connected_to(nb)
+            && nb.connected_to(nc)
     });
 
     na.manager.remove(&nc.id());
     eventually("a drops c and forgets its row", || {
-        !na.connected_to(&nc) && !peer_rows(&a).contains(&c_row)
+        !na.connected_to(nc) && !peer_rows(a).contains(&c_row)
     });
-    assert!(na.row(&nc).is_none());
+    assert!(na.row(nc).is_none());
     eventually("b learns it from a, drops c and forgets its row", || {
-        nb.book.is_removed(&nc.id()) && !nb.connected_to(&nc) && !peer_rows(&b).contains(&c_row)
+        nb.book.is_removed(&nc.id()) && !nb.connected_to(nc) && !peer_rows(b).contains(&c_row)
     });
 
-    // C asks again: refused, told so, and nearby sync goes off on it. Asked
-    // until it is answered, since a dial is not started while C still holds
-    // the connection A has just dropped.
-    eventually("c is told and turns off", || {
-        nc.manager.dial_anyway(na.manager.id(), na.manager.port());
-        !nc.book.enabled()
+    eventually("c is told and turns off", || !nc.book.enabled());
+    settle();
+    assert!(!na.connected_to(nc) && !nb.connected_to(nc));
+    assert!(nc.manager.connections().is_empty());
+}
+
+#[test]
+fn a_removed_set_longer_than_one_message_reaches_the_other_device_whole() {
+    let network = Network::default();
+    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let na = node(&network, &[&a]);
+    let ids: Vec<String> = (0..600).map(|i| format!("{i:064x}")).collect();
+    na.manager.shared.learn_removed(&ids[..200]);
+    na.manager.shared.learn_removed(&ids[200..400]);
+    na.manager.shared.learn_removed(&ids[400..]);
+    let nb = node(&network, &[&b]);
+    eventually("b holds every id", || nb.book.removed().len() == ids.len());
+}
+
+#[test]
+fn a_device_whose_shared_lockbox_went_is_shown_offline() {
+    let network = Network::default();
+    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
+    eventually("connected", || {
+        na.state_of(&nb) == Some(NearbyDeviceState::UpToDate)
+            && nb.state_of(&na) == Some(NearbyDeviceState::UpToDate)
+    });
+
+    // A no longer holds the lockbox: its connections close, and there is
+    // nothing to prove again, so no new one takes the closed one's place.
+    na.host.lockboxes.lock().unwrap().clear();
+    eventually("each shows the other offline", || {
+        na.state_of(&nb) == Some(NearbyDeviceState::Offline)
+            && nb.state_of(&na) == Some(NearbyDeviceState::Offline)
+    });
+    assert!(na.manager.connections().is_empty());
+}
+
+#[test]
+fn a_run_is_not_begun_under_keys_the_connection_was_not_proved_under() {
+    let network = Network::default();
+    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
+    eventually("connected", || {
+        na.state_of(&nb) == Some(NearbyDeviceState::UpToDate)
+            && nb.state_of(&na) == Some(NearbyDeviceState::UpToDate)
     });
     settle();
-    assert!(!na.connected_to(&nc) && !nb.connected_to(&nc));
-    assert!(nc.manager.connections().is_empty());
+    let packs = na.manager.packs() + nb.manager.packs();
+
+    // A's lockbox is under another key, as after a password change, and a
+    // run is asked for on both before the manager has looked at the keys
+    // again: whichever side runs, no pack moves on the old connection.
+    let rekeyed = held(
+        "v1",
+        Device::create("a2", "v1", "another password", &params(1, 0)),
+    );
+    rekeyed.write("1", "under the new key");
+    b.write("2", "under the old key");
+    *na.host.lockboxes.lock().unwrap() = vec![rekeyed.clone()];
+    na.manager.request_runs();
+    nb.manager.request_runs();
+    eventually("the connection closes", || {
+        !na.connected_to(&nb) && !nb.connected_to(&na)
+    });
+    settle();
+    assert_eq!(na.manager.packs() + nb.manager.packs(), packs);
+    assert!(rekeyed.title("2").is_none() && b.title("1").is_none());
 }
 
 #[test]

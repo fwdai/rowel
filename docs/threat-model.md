@@ -789,11 +789,11 @@ the app opens a socket for it.
   under that old key (`trust/proof-retired`) rather than from the other's
   word, and sent nothing else.
 - **The removed set.** Removing a device puts its id in a set kept per install
-  that only grows. Its connections close, it is not dialled, its tombstone
-  rows are forgotten in every lockbox whose key is held then, and it is
-  refused: after the two have proved a key to each other, so a refusal is
-  always the word of a device that holds the lockbox, and a refused device
-  turns nearby sync off. After every handshake that proved a key the two
+  that only grows. Its connections close, its tombstone rows are forgotten
+  in every lockbox whose key is held then, and the next connection with it,
+  whichever of the two dials, is refused: after the two have proved a key to
+  each other, so a refusal is always the word of a device that holds the
+  lockbox, and a refused device turns nearby sync off. After every handshake that proved a key the two
   sides exchange their removed sets and each keeps the union, and a set that
   grows is passed to every connected device at once. A removed set is taken
   only from a device that proved a key on the same connection.

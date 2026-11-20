@@ -290,14 +290,16 @@ impl Host for AppHost {
                 Err(e) => log::warn!("nearby: could not record lockbox {workspace_id}'s name: {e}"),
             }
         }
-        if outcome.merged == 0 {
+        if outcome.merged == 0 && !outcome.renamed {
             return;
         }
         if is_open {
-            // What a cloud run that merged says: the refreshed list, and
-            // iOS's logins.
-            events::vault_merged(&self.app, crate::commands::sync::entry_metas(&self.app));
-            crate::credential_identities::publish(&self.app);
+            if outcome.merged > 0 {
+                // What a cloud run that merged says: the refreshed list, and
+                // iOS's logins.
+                events::vault_merged(&self.app, crate::commands::sync::entry_metas(&self.app));
+                crate::credential_identities::publish(&self.app);
+            }
             // The account has not seen what came from the other device.
             let state = self.app.state::<AppState>();
             crate::commands::sync::request_run_if_ready(&self.app, &state);
