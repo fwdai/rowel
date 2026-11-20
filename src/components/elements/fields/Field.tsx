@@ -47,7 +47,11 @@ export interface FieldProps {
    * the editor and what a press hands over are both untouched.
    */
   suffix?: (value: string) => string | undefined
-  /** A format complaint about a non-empty value, or ''. */
+  /**
+   * A format complaint about a non-empty value, or ''. Held back while the
+   * value is first being typed: it is shown once the box has been left, or a
+   * save attempted, and from then on follows the typing.
+   */
   check?: (value: string) => string
   /**
    * Editing only: values to offer back under the box as it is typed into, in
@@ -84,6 +88,9 @@ export default function Field({
   // Typing into dots is guesswork, so the editor starts revealed; the eye still
   // takes it back.
   const [show, setShow] = useState(editing)
+  // Whether the box has been left at least once. A half-typed address is not
+  // a wrong one, so the format is only judged once the user has moved on.
+  const [left, setLeft] = useState(false)
   const box = useRef<HTMLInputElement>(null)
   const suggest = useSuggestions(editing ? suggestions : undefined, value, set)
   // What the row puts on screen and on the clipboard; the draft keeps `value`.
@@ -96,7 +103,7 @@ export default function Field({
   // editing session, and a format complaint is an editor's business.
   const error =
     editing && value.trim()
-      ? (check?.(value) ?? '')
+      ? ((left || attempted) && check?.(value)) || ''
       : requiredError(value, required, attempted)
 
   const masked = secure && !show
@@ -155,6 +162,7 @@ export default function Field({
                 suggest.show()
               }}
               onBlur={() => {
+                setLeft(true)
                 suggest.close()
                 if (normalize) set(normalize(value))
               }}
