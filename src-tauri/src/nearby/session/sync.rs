@@ -238,16 +238,13 @@ impl<H: Host> Script<'_, H> {
     }
 
     fn opening(&mut self, vaults: &[String]) -> Result<(String, String, i64)> {
-        loop {
-            match self.channel.recv_control()? {
-                Control::State {
-                    vault,
-                    revision,
-                    now_ms,
-                } if vaults.contains(&vault) => return Ok((vault, revision, now_ms)),
-                Control::Unsupported => {}
-                other => return Err(out_of_step(&other)),
-            }
+        match self.channel.recv_control()? {
+            Control::State {
+                vault,
+                revision,
+                now_ms,
+            } if vaults.contains(&vault) => Ok((vault, revision, now_ms)),
+            other => Err(out_of_step(&other)),
         }
     }
 

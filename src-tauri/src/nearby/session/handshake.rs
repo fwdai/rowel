@@ -125,7 +125,6 @@ fn read_proofs<'a>(channel: &mut Channel, lockboxes: &[&'a Lockbox]) -> Result<P
             Control::ProofsDone => return Ok(proved),
             Control::Proof { vault, proof } => (vault, proof, false),
             Control::RetiredProof { vault, proof } => (vault, proof, true),
-            Control::Unsupported => continue,
             other => return Err(out_of_step(&other)),
         };
         if proved.has(&vault) {

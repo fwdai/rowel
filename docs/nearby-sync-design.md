@@ -94,22 +94,24 @@ One Ed25519 key pair per install, in an owner-only file under the app's data
 root, made on first use. The **device id** is the hex SHA-256 of its
 SubjectPublicKeyInfo. A self-signed certificate over it is generated at load.
 
-### 4.2 Channel (`channel.rs`)
+### 4.2 Channel (`channel/`)
 
 TLS 1.3 only, both sides present their certificate, ALPN `rowel-nearby/1`.
 The verifiers accept any self-signed certificate whose handshake signature
-verifies, and report the peer's device id; `connect` may be given the id it
-expects and fails on any other. The **binding** is 32 bytes of exported keying
-material; it differs for every session, and for the two halves of an
+verifies, and report the peer's device id; `connect_over` may be given the id
+it expects and fails on any other. The **binding** is 32 bytes of exported
+keying material; it differs for every session, and for the two halves of an
 interception.
 
 Messages are length-prefixed frames of at most 1 MiB; a larger message (a
 pack, up to `pack::MAX_PACK_BYTES`) is sent as consecutive frames. Reads and
 writes have deadlines.
 
-A control message is JSON, `{ "t": "<area>/<name>", … }`, with areas `hello`,
-`trust`, `sync`, `setup`, and `share` reserved. `hello` carries the protocol
-version, the device's name and platform, and the areas it speaks.
+A control message is JSON, `{ "t": "<area>/<name>", … }`, in the areas
+`hello`, `trust` and `sync`. `hello` carries the protocol version and the
+device's name and platform. Two devices sync only when their protocol versions
+are equal, and any change to the wire bumps it; a message of a type this build
+does not know is a protocol error, as a malformed one is.
 
 ### 4.3 Mine: proof of a lockbox key (`trust.rs`)
 

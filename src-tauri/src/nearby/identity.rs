@@ -1,9 +1,4 @@
-//! This install's identity on the local network: one Ed25519 key pair, kept in
-//! an owner-only file and made on first use, and a self-signed certificate
-//! over it, made again at every load. A device is known by its [`DeviceId`],
-//! the SHA-256 of its certificate's SubjectPublicKeyInfo. That depends on the
-//! key alone, so it stays the same across restarts although the certificate
-//! is new each time.
+//! This install's Ed25519 key, the self-signed certificate made over it at each load, and its device id.
 
 use std::fmt;
 use std::io;
@@ -19,15 +14,10 @@ use zeroize::Zeroizing;
 
 use super::{Error, Result};
 
-/// A device on the local network: the SHA-256 of its certificate's
-/// SubjectPublicKeyInfo, written as 64 lowercase hex digits. Ordered by its
-/// bytes, which is the order of its hex too: of two devices that see each
-/// other, the smaller dials.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct DeviceId([u8; 32]);
 
 impl DeviceId {
-    /// The id of the device whose certificate this is.
     pub fn of(cert: &CertificateDer<'_>) -> std::result::Result<Self, rustls::Error> {
         let spki = ParsedCertificate::try_from(cert)?.subject_public_key_info();
         Ok(Self(Sha256::digest(spki.as_ref()).into()))
@@ -37,8 +27,6 @@ impl DeviceId {
         &self.0
     }
 
-    /// The id these 32 bytes are. Any bytes are an id; whether a device holds
-    /// its key is for a handshake to prove.
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
@@ -56,73 +44,36 @@ impl fmt::Debug for DeviceId {
     }
 }
 
-/// Exactly the form [`DeviceId`] is displayed in, and nothing looser: an id
-/// arrives from Settings and in another device's removed set, where two
-/// spellings of one id would be two ids.
 impl FromStr for DeviceId {
     type Err = Error;
 
+    // Only the displayed form: two spellings of one id would be two ids.
     fn from_str(text: &str) -> Result<Self> {
-        let lower_hex = |b: u8| b.is_ascii_digit() || (b'a'..=b'f').contains(&b);
-        if text.len() != 64 || !text.bytes().all(lower_hex) {
-            return Err(Error::Malformed("a device id is 64 lowercase hex digits"));
-        }
         let mut id = [0u8; 32];
-        hex::decode_to_slice(text, &mut id)
-            .map_err(|_| Error::Malformed("a device id is 64 lowercase hex digits"))?;
-        Ok(Self(id))
+        match hex::decode_to_slice(text, &mut id) {
+            Ok(()) if !text.bytes().any(|b| b.is_ascii_uppercase()) => Ok(Self(id)),
+            _ => Err(Error::Malformed("a device id is 64 lowercase hex digits")),
+        }
     }
 }
 
-/// This install's key and certificate, ready to present in a handshake.
 pub struct Identity {
     id: DeviceId,
     key: Arc<CertifiedKey>,
 }
 
 impl Identity {
-    /// The identity kept at `path`, made there first if there is none. A file
-    /// that is there but does not hold an Ed25519 key is an error, not
-    /// replaced: a new key would be a new device to every device that trusts
-    /// this one.
     pub fn load_or_create(path: &Path) -> Result<Self> {
         let pkcs8 = match std::fs::read(path) {
             Ok(bytes) => Zeroizing::new(bytes),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                let key = Zeroizing::new(
-                    rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).map_err(identity)?,
-                );
-                let pkcs8 = Zeroizing::new(key.serialized_der().to_vec());
-                rowel_core::atomic::atomic_write_private(path, &pkcs8).map_err(identity)?;
-                pkcs8
-            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => create(path)?,
             Err(e) => return Err(identity(e)),
         };
-        Self::from_pkcs8(&pkcs8)
-    }
-
-    // The certificate is signed by rcgen and the handshakes by rustls, each
-    // from the same PKCS#8 bytes; rcgen's copy of them is scrubbed as it
-    // drops. Naming the algorithm refuses any key that is not Ed25519.
-    fn from_pkcs8(pkcs8: &[u8]) -> Result<Self> {
-        let der = PrivatePkcs8KeyDer::from(pkcs8);
-        let signer = Zeroizing::new(
-            rcgen::KeyPair::from_pkcs8_der_and_sign_algo(&der, &rcgen::PKCS_ED25519)
-                .map_err(identity)?,
-        );
-        let mut params = rcgen::CertificateParams::default();
-        params
-            .distinguished_name
-            .push(rcgen::DnType::CommonName, "Rowel");
-        let cert = params
-            .self_signed(&*signer)
-            .map_err(identity)?
-            .der()
-            .clone();
-        let id = DeviceId::of(&cert)?;
+        let der = PrivatePkcs8KeyDer::from(pkcs8.as_slice());
+        let cert = self_signed(&der)?;
         let key = rustls::crypto::ring::sign::any_eddsa_type(&der)?;
         Ok(Self {
-            id,
+            id: DeviceId::of(&cert)?,
             key: Arc::new(CertifiedKey::new(vec![cert], key)),
         })
     }
@@ -131,10 +82,32 @@ impl Identity {
         &self.id
     }
 
-    /// The certificate and signing key, for a TLS configuration.
     pub(super) fn certified_key(&self) -> Arc<CertifiedKey> {
         self.key.clone()
     }
+}
+
+fn create(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
+    let key = Zeroizing::new(rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).map_err(identity)?);
+    let pkcs8 = Zeroizing::new(key.serialized_der().to_vec());
+    rowel_core::atomic::atomic_write_private(path, &pkcs8).map_err(identity)?;
+    Ok(pkcs8)
+}
+
+fn self_signed(der: &PrivatePkcs8KeyDer<'_>) -> Result<CertificateDer<'static>> {
+    let signer = Zeroizing::new(
+        rcgen::KeyPair::from_pkcs8_der_and_sign_algo(der, &rcgen::PKCS_ED25519)
+            .map_err(identity)?,
+    );
+    let mut params = rcgen::CertificateParams::default();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "Rowel");
+    Ok(params
+        .self_signed(&*signer)
+        .map_err(identity)?
+        .der()
+        .clone())
 }
 
 fn identity(e: impl fmt::Display) -> Error {
@@ -145,7 +118,6 @@ fn identity(e: impl fmt::Display) -> Error {
 pub(super) mod tests {
     use super::*;
 
-    /// A fresh identity in a directory of its own.
     pub fn identity() -> Identity {
         let dir = tempfile::tempdir().unwrap();
         Identity::load_or_create(&dir.path().join("nearby.key")).unwrap()
@@ -166,7 +138,6 @@ pub(super) mod tests {
             stored,
             "loading never rewrites the key"
         );
-        // A new certificate at every load, over the same key.
         assert_eq!(
             DeviceId::of(again.certified_key().end_entity_cert().unwrap()).unwrap(),
             *first.device_id()
@@ -184,7 +155,6 @@ pub(super) mod tests {
         assert_ne!(identity().device_id(), identity().device_id());
     }
 
-    // A damaged file, or a key of another kind, is reported and left alone.
     #[test]
     fn a_file_that_is_not_an_ed25519_key_is_refused_and_kept() {
         let dir = tempfile::tempdir().unwrap();

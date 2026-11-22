@@ -371,6 +371,8 @@ fn known_platform(os: &str) -> &'static str {
 mod tests {
     use super::NearbyDeviceState::*;
     use super::*;
+    use crate::nearby::channel::{Control, MAX_CONTROL};
+    use crate::nearby::identity::DeviceId;
     use std::sync::Arc;
 
     type Kept<T> = Arc<Mutex<Vec<T>>>;
@@ -536,6 +538,16 @@ mod tests {
         assert_eq!(book.remove(&ids[MAX_REMOVED..]), Vec::<String>::new());
         assert_eq!(book.removed().len(), MAX_REMOVED);
         assert!(book.refuses(&ids[0]) && !book.refuses(&ids[MAX_REMOVED]));
+    }
+
+    #[test]
+    fn a_full_removed_set_fits_one_control_message() {
+        let id = DeviceId::from_bytes([0xff; 32]).to_string();
+        let full = Control::Removed {
+            ids: vec![id; MAX_REMOVED],
+        };
+        let len = serde_json::to_vec(&full).unwrap().len();
+        assert!(len <= MAX_CONTROL, "{len} bytes");
     }
 
     #[test]

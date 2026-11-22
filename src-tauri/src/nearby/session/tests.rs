@@ -404,7 +404,7 @@ fn a_device_on_another_key_is_never_dialled_and_is_shown_nothing() {
     // offers a sync: what it hears is `hello` and `trust/done`, and nothing more.
     let stranger = identity();
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, na.manager.port()));
-    let mut dialled = channel::connect(addr, &stranger, None).unwrap();
+    let mut dialled = channel::tests::connect(addr, &stranger, None).unwrap();
     dialled.send_control(&Control::hello("Stranger")).unwrap();
     let proof = own_proof(&dialled, &Keys::of(&other.key).proof, "v1");
     for message in [
