@@ -48,7 +48,7 @@ const MAX_CONTROL: usize = 64 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The protocol version `hello` announces.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The areas of control messages this build speaks.
 const AREAS: &[&str] = &["hello", "trust", "sync"];
@@ -502,52 +502,22 @@ pub enum Control {
     /// Every device the sender refuses, by id. Each side keeps the union.
     #[serde(rename = "sync/removed")]
     Removed { ids: Vec<String> },
-    /// From the side that runs: the answering side's revision of `vault` and
-    /// its clock, please. `now_ms` is the asker's clock.
-    #[serde(rename = "sync/head")]
-    Head { vault: String, now_ms: i64 },
-    /// The answer to `sync/head`.
-    #[serde(rename = "sync/head-reply")]
-    HeadReply { revision: String, now_ms: i64 },
-    /// The answering side's pack of `vault`, please.
-    #[serde(rename = "sync/fetch")]
-    Fetch { vault: String },
-    /// The answer to `sync/fetch`, at `revision`; the pack is the next message.
-    #[serde(rename = "sync/pack")]
-    Pack { revision: String },
-    /// A pack of `vault` for the answering side to merge; it is the next
-    /// message.
-    #[serde(rename = "sync/absorb")]
-    Absorb { vault: String },
-    /// The answer to `sync/absorb`: the revision after the merge.
-    #[serde(rename = "sync/absorbed")]
-    Absorbed { revision: String },
-    /// The run of `vault` ended, and what it failed with if it did.
-    #[serde(rename = "sync/done")]
-    Done {
+    /// The sender's revision of `vault` (`exchange::revision`) and its clock.
+    #[serde(rename = "sync/state")]
+    State {
         vault: String,
-        error: Option<Failure>,
+        revision: String,
+        now_ms: i64,
     },
-    /// The answer to a run the answering side will not take on now: another
-    /// run holds its claim, or it paused the asker. Asked again later.
-    #[serde(rename = "sync/busy")]
-    Busy,
-    /// The answer to a request that failed on the answering side.
-    #[serde(rename = "sync/error")]
-    Failed(Failure),
+    /// The sender's pack of `vault`, packed at `revision`; the pack is the
+    /// next message.
+    #[serde(rename = "sync/pack")]
+    Pack { vault: String, revision: String },
     /// A `t` this build does not speak: an area or a message added later.
     /// Received, never sent, and not an error, so a newer peer does not break
     /// its connection to an older one.
     #[serde(other, skip_serializing)]
     Unsupported,
-}
-
-/// An error that crossed the channel: the app's error kind
-/// (`crate::error::Error::kind`) and its sentence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Failure {
-    pub kind: String,
-    pub message: String,
 }
 
 impl Control {
@@ -807,25 +777,22 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_sync_message_crosses_with_its_failure() {
+    fn a_sync_state_crosses_whole() {
         let (a, b) = (identity(), identity());
         let (mut dialled, mut answered) = pair(&a, &b);
-        let done = Control::Done {
+        let state = Control::State {
             vault: "v1".into(),
-            error: Some(Failure {
-                kind: "clockSkew".into(),
-                message: "6 minutes apart".into(),
-            }),
+            revision: "r".into(),
+            now_ms: 5,
         };
-        dialled.send_control(&done).unwrap();
-        assert_eq!(answered.recv_control().unwrap(), done);
-        let json = serde_json::to_value(Control::Failed(Failure {
-            kind: "other".into(),
-            message: "no".into(),
-        }))
+        dialled.send_control(&state).unwrap();
+        assert_eq!(answered.recv_control().unwrap(), state);
+        let json = serde_json::to_value(Control::Pack {
+            vault: "v1".into(),
+            revision: "r".into(),
+        })
         .unwrap();
-        assert_eq!(json["t"], "sync/error");
-        assert_eq!(json["kind"], "other");
+        assert_eq!(json["t"], "sync/pack");
     }
 
     // What is not a control message at all is an error, not "unsupported".

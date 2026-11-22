@@ -12,7 +12,7 @@ use zeroize::Zeroizing;
 use crate::commands::sync::{claim_or_busy, RunClaim};
 use crate::crypto::VaultKey;
 use crate::error::{Error, Result};
-use crate::nearby::exchange::PeerOutcome;
+use crate::nearby::exchange::Absorbed;
 use crate::nearby::session::{Host, Keys, Lockbox};
 use crate::org::lockboxes::is_org_lockbox_dir;
 use crate::session::store_err;
@@ -86,28 +86,31 @@ impl AppHost {
         Ok(vault_id)
     }
 
-    // Under `workspace_lock`, with the claim held.
-    fn target(&self, state: &AppState, root: &Path, vault_id: &str) -> Result<Target> {
+    // Under `workspace_lock`: the workspace holding `vault_id`, and whether it is the open one.
+    fn locate(&self, state: &AppState, root: &Path, vault_id: &str) -> Result<(String, bool)> {
         let active = state.active_workspace.lock().unwrap().clone();
         let open_id =
             identity::vault_id(state.session.lock().unwrap().store()?).map_err(store_err)?;
-        let is_open = open_id.as_deref() == Some(vault_id);
-        let workspace_id = if is_open {
-            active
-        } else {
-            Registry::load(root)
-                .workspaces
-                .into_iter()
-                .find(|w| w.id != active && w.vault_id.as_deref() == Some(vault_id))
-                .ok_or(Error::NotFound)?
-                .id
-        };
+        if open_id.as_deref() == Some(vault_id) {
+            return Ok((active, true));
+        }
+        let workspace = Registry::load(root)
+            .workspaces
+            .into_iter()
+            .find(|w| w.id != active && w.vault_id.as_deref() == Some(vault_id))
+            .ok_or(Error::NotFound)?;
+        Ok((workspace.id, false))
+    }
+
+    // Under `workspace_lock`, with the claim held.
+    fn target(&self, state: &AppState, root: &Path, vault_id: &str) -> Result<Target> {
+        let (workspace_id, is_open) = self.locate(state, root, vault_id)?;
         let dir = dir_of(root, &workspace_id);
         if is_org_lockbox_dir(&dir) {
             return Err(Error::NotFound);
         }
         if is_open {
-            return Ok(Target::Open { workspace_id });
+            return Ok(Target::Open);
         }
         let material = state
             .keyring
@@ -122,8 +125,25 @@ impl AppHost {
         })
     }
 
-    /// The run claim, or `SyncBusy` while another holds it. The caller holds
-    /// `workspace_lock`.
+    fn open(&self, target: Target) -> Result<Vault> {
+        let writer = Some(storage::install_id(&self.app));
+        // Named only by a foreign-pack error, which a proved device's pack never is.
+        let provider = Provider::default();
+        Ok(match target {
+            Target::Open => Vault::Open(SessionVault::capture(&self.app, provider, writer)?),
+            Target::Closed {
+                dir,
+                workspace_id,
+                material,
+            } => {
+                let key = VaultKey::from_material(material, true);
+                let vault = WorkspaceVault::open(&dir, &workspace_id, key, provider, writer)?;
+                Vault::Closed(vault)
+            }
+        })
+    }
+
+    // The caller holds `workspace_lock`.
     fn claim(&self) -> Result<Claim> {
         let state = self.app.state::<AppState>();
         Ok(Claim {
@@ -170,9 +190,7 @@ fn lockbox(dir: &Path, workspace_id: &str, vault_id: String, material: Material)
 }
 
 enum Target {
-    Open {
-        workspace_id: String,
-    },
+    Open,
     Closed {
         dir: PathBuf,
         workspace_id: String,
@@ -180,11 +198,8 @@ enum Target {
     },
 }
 
-/// The process's one run claim, held by a nearby step. A cloud run asked for
-/// while it was held finds it taken and leaves its request raised
-/// (`AppState::sync_rerun`); [`Rerun`], dropped after the claim, answers that
-/// request, as a cloud run's own release does. Dropped outside
-/// `workspace_lock`, which the cloud run takes.
+// Its release answers a cloud run asked for meanwhile (`AppState::sync_rerun`),
+// which takes `workspace_lock`: never dropped under it.
 struct Claim {
     _held: RunClaim,
     _then: Rerun,
@@ -202,8 +217,6 @@ impl Drop for Rerun {
 }
 
 impl Host for AppHost {
-    type Run = AppRun;
-
     fn lockboxes(&self) -> Vec<Lockbox> {
         let Ok(root) = storage::root_dir(&self.app) else {
             return Vec::new();
@@ -226,84 +239,46 @@ impl Host for AppHost {
             .collect()
     }
 
-    fn begin(&self, vault_id: &str) -> Result<AppRun> {
+    fn step<T>(
+        &self,
+        vault_id: &str,
+        step: impl FnOnce(&dyn LocalVault) -> Result<T>,
+    ) -> Result<T> {
         let state = self.app.state::<AppState>();
         let root = storage::root_dir(&self.app)?;
-        // The claim and which lockbox it covers, as one step under the paths'
-        // lock. The block ends before anything below can drop the claim:
-        // releasing it may start a cloud run, which takes this lock.
-        let (claim, target) = {
+        let (_claim, target) = {
             let _paths = state.workspace_lock.lock().unwrap();
-            let claim = self.claim()?;
-            (claim, self.target(&state, &root, vault_id))
+            (self.claim()?, self.target(&state, &root, vault_id))
         };
-        let target = target?;
-        let writer = Some(storage::install_id(&self.app));
-        // The provider names an account in a foreign-pack error; a pack from
-        // a device that proved this lockbox's key is never one.
-        let provider = Provider::default();
-        let (vault, workspace_id, is_open) = match target {
-            Target::Open { workspace_id } => (
-                Vault::Open(SessionVault::capture(&self.app, provider, writer)?),
-                workspace_id,
-                true,
-            ),
-            Target::Closed {
-                dir,
-                workspace_id,
-                material,
-            } => {
-                let key = VaultKey::from_material(material, true);
-                let vault = WorkspaceVault::open(&dir, &workspace_id, key, provider, writer)?;
-                (Vault::Closed(vault), workspace_id, false)
-            }
-        };
-        let run = AppRun {
-            vault,
-            workspace_id,
-            is_open,
-            _claim: claim,
-        };
-        // The proofs were for this vault id: what opened has to be it.
-        if run.vault_id()?.as_deref() != Some(vault_id) {
+        // Dropped before the claim, so the lockbox closes before another run opens it.
+        let vault = self.open(target?)?;
+        if vault.vault_id()?.as_deref() != Some(vault_id) {
             return Err(Error::NotFound);
         }
-        Ok(run)
+        step(&*vault)
     }
 
-    fn finish(&self, run: AppRun, outcome: PeerOutcome) {
-        let name = outcome
-            .renamed
-            .then(|| run.name().ok().and_then(|(name, _)| name))
-            .flatten();
-        let (is_open, workspace_id) = (run.is_open, run.workspace_id.clone());
-        // The lockbox closes and the claim goes before anything below asks
-        // for a run of its own.
-        drop(run);
-        if let Some(name) = name {
-            let recorded = if is_open {
-                crate::workspace::record_vault_name(&self.app, &name)
-            } else {
-                crate::workspace::record_vault_name_of(&self.app, &workspace_id, &name)
-            };
-            match recorded {
+    fn announce(&self, vault_id: &str, absorbed: &Absorbed) {
+        let state = self.app.state::<AppState>();
+        let located = storage::root_dir(&self.app).and_then(|root| {
+            let _paths = state.workspace_lock.lock().unwrap();
+            self.locate(&state, &root, vault_id)
+        });
+        let Ok((workspace_id, is_open)) = located else {
+            return;
+        };
+        if let Some(name) = &absorbed.renamed {
+            match crate::workspace::record_vault_name_of(&self.app, &workspace_id, name) {
                 Ok(()) => events::workspace_renamed(&self.app),
                 Err(e) => log::warn!("nearby: could not record lockbox {workspace_id}'s name: {e}"),
             }
         }
-        if outcome.merged == 0 && !outcome.renamed {
-            return;
-        }
         if is_open {
-            if outcome.merged > 0 {
+            if absorbed.merged > 0 {
                 crate::commands::sync::announce_merged(&self.app);
             }
-            // The account has not seen what came from the other device.
-            let state = self.app.state::<AppState>();
             crate::commands::sync::request_run_if_ready(&self.app, &state);
         }
-        // Nor have the other devices here; the one it came from has nothing
-        // left to say and moves no pack.
         super::request_run(&self.app);
     }
 
@@ -312,25 +287,16 @@ impl Host for AppHost {
     }
 }
 
-/// A run on one lockbox: it open, and the claim. Dropped in that order: the
-/// lockbox's connection closes before the claim lets another run in.
-pub(crate) struct AppRun {
-    vault: Vault,
-    workspace_id: String,
-    is_open: bool,
-    _claim: Claim,
-}
-
 enum Vault {
     Open(SessionVault),
     Closed(WorkspaceVault),
 }
 
-impl Deref for AppRun {
+impl Deref for Vault {
     type Target = dyn LocalVault;
 
     fn deref(&self) -> &Self::Target {
-        match &self.vault {
+        match self {
             Vault::Open(vault) => vault,
             Vault::Closed(vault) => vault,
         }

@@ -781,7 +781,8 @@ the app opens a socket for it.
   the ones that verified. A device that connects with nothing proved hears
   `hello` and `trust/done`: no vault id, no proof, no lockbox name, no list.
   Only a lockbox proved both ways under its current key on this connection is
-  synced; a run on any other is a protocol error that ends the connection.
+  synced; a message about any other is a protocol error that ends the
+  connection.
   Packs are the sealed bytes an account holds, at most `MAX_PACK_BYTES`, read
   only after a key was proved and opened only under the lockbox's own key
   (org lockboxes are never offered). A device on a key the other has retired
@@ -795,14 +796,17 @@ the app opens a socket for it.
   side keeping the union, so a removal reaches the owner's other devices as
   they meet. A removed set is taken only from a device that proved a key on
   the same connection.
-- **One writer at a time.** Every run takes the process's one run claim on
-  each side, the claim a cloud run, a password change and a "delete
-  everywhere" take; a side that cannot have it answers `sync/busy`. It is
-  taken under the paths' lock, so a switch is refused while it is held and
-  the lockbox a run opened stays where it is; a password change waits for it.
-  A run on the open lockbox goes through the session, so a lock ends it at
-  its next step; one on another lockbox opens its own connection with the key
-  the keyring holds, never the open lockbox's database a second time.
+- **One writer at a time.** Each side writes only its own lockbox. Every
+  local step (read the state, pack, merge) takes the process's one run claim,
+  the one a cloud run, a password change and a "delete everywhere" take, for
+  that step alone, never across a network wait. It is taken under the paths'
+  lock, so a switch is refused while it is held; a password change waits for
+  it. Before every step the device must be neither removed nor paused, and
+  the lockbox's keys, read again under the claim, the ones the connection
+  proved; otherwise the connection ends without a word. No error text
+  crosses the wire. A step on the open lockbox goes through the session; one
+  on another lockbox opens its own connection with the key the keyring
+  holds, never the open lockbox's database a second time.
 - **Locking** (or a switch, which ends the session) stops the manager under
   the session guard: the advertisement is taken down with an mDNS goodbye, and
   the listener and every connection close. A run in flight fails at its next
@@ -851,12 +855,11 @@ Residuals:
   reclaimed after 90 days, as for an account. A device that syncs with
   nothing for longer, then meets another, hands back what was deleted
   meanwhile. Nothing is lost by it.
-- **A device of the owner's can hold this one up.** Between `sync/head` and
-  `sync/done` the answering side holds its run claim, until the connection
-  ends or a read stalls for 30 seconds; a device that stops mid-run delays
-  this one's cloud run and keeps a lockbox switch refused for that long.
+- **A device of the owner's can keep a connection open.** One that stops
+  mid-sync holds a connection slot until a read stalls for 30 seconds, but
+  never this device's run claim, which is held for one local step at a time.
   Pause is local and not announced: the paused device keeps trying, at most
-  every 30 seconds, and is told `sync/busy`.
+  every 30 seconds, and its connections end at their first step.
 - **Clocks.** A run between devices whose clocks are more than five minutes
   apart is refused before anything moves. Within five minutes, a fast clock
   still decides which of two close edits survives, as it does through an

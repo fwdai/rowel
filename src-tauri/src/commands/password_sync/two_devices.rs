@@ -272,8 +272,8 @@ impl LocalVault for Device {
             &self.scratch(),
         )?)
     }
-    fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
-        engine::note_push(self.store(), revision, at_ms)
+    fn note_push(&self, _revision: &str, _at_ms: i64) -> Result<()> {
+        Ok(())
     }
     fn vault_id(&self) -> Result<Option<String>> {
         identity::vault_id(self.store()).map_err(store_err)

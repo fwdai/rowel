@@ -895,7 +895,7 @@ pub(crate) fn remote_pack_error(e: PackError) -> Error {
     }
 }
 
-pub(crate) fn note_push(store: &SqliteStore, revision: &str, at_ms: i64) -> Result<()> {
+fn note_push(store: &SqliteStore, revision: &str, at_ms: i64) -> Result<()> {
     store
         .meta_set(META_REMOTE_REV, revision)
         .map_err(store_err)?;

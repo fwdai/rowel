@@ -3,7 +3,6 @@
 //! two_devices`): real SQLCipher vaults, real packs, real TLS.
 
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
-use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,7 +13,7 @@ use crate::commands::password_sync::two_devices::{derive, params, Device, NEW, O
 use crate::error::{Error as AppError, Result as AppResult};
 use crate::nearby::channel::{self, Control};
 use crate::nearby::discovery::memory::Network;
-use crate::nearby::exchange::PeerOutcome;
+use crate::nearby::exchange::Absorbed;
 use crate::nearby::identity::tests::identity;
 use crate::nearby::trust::own_proof;
 use crate::retired;
@@ -24,11 +23,16 @@ use crate::sync::engine::{LocalVault, Reclaim, Snapshot};
 #[derive(Default)]
 pub(super) struct Counts {
     dials: AtomicUsize,
+    refused: AtomicUsize,
 }
 
 impl<H: Host> Shared<H> {
     pub(super) fn count_dial(&self) {
         self.counts.dials.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(super) fn count_refused(&self) {
+        self.counts.refused.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -43,6 +47,11 @@ impl<H: Host> Manager<H> {
 
     fn dials(&self) -> usize {
         self.shared.counts.dials.load(Ordering::SeqCst)
+    }
+
+    /// Steps the gate refused.
+    fn refused(&self) -> usize {
+        self.shared.counts.refused.load(Ordering::SeqCst)
     }
 }
 
@@ -66,16 +75,29 @@ impl std::ops::Deref for Held {
     }
 }
 
-/// One device's lockboxes, the run claim its runs take, and its clock.
+type Hook = Box<dyn FnOnce(&TestHost) + Send>;
+
+/// One device's lockboxes, the run claim its steps take, and its clock.
+#[derive(Default)]
 struct TestHost {
     /// Behind a lock, for a test to change what the device holds mid-session.
     lockboxes: Mutex<Vec<Arc<Held>>>,
     claim: Arc<AtomicBool>,
     offset_ms: i64,
-    /// Every run that ended here, by vault id.
-    finished: Mutex<Vec<(String, PeerOutcome)>>,
-    /// Packs its runs made.
-    packs: Arc<AtomicUsize>,
+    /// Steps that took the claim.
+    steps: AtomicUsize,
+    packs: AtomicUsize,
+    fail_packs: AtomicBool,
+    /// Run inside the next step, under its claim, before the gate.
+    next_step: Mutex<Option<Hook>>,
+    /// Every merge announced, by vault id.
+    announced: Mutex<Vec<String>>,
+}
+
+impl TestHost {
+    fn on_next_step(&self, hook: impl FnOnce(&TestHost) + Send + 'static) {
+        *self.next_step.lock().unwrap() = Some(Box::new(hook));
+    }
 }
 
 /// The test host's run claim, as the app's is: one flag, raised while held.
@@ -93,54 +115,47 @@ fn claim(flag: &Arc<AtomicBool>) -> Option<Claim> {
         .map(|_| Claim(flag.clone()))
 }
 
-struct TestRun {
-    held: Arc<Held>,
-    packs: Arc<AtomicUsize>,
-    _claim: Claim,
+/// A lockbox as a step sees it: the device's, its packs counted.
+struct Local<'a> {
+    host: &'a TestHost,
+    device: &'a Device,
 }
 
-impl Deref for TestRun {
-    type Target = dyn LocalVault;
-
-    fn deref(&self) -> &Self::Target {
-        self
-    }
-}
-
-impl LocalVault for TestRun {
+impl LocalVault for Local<'_> {
     fn decode(&self, pack_bytes: &[u8]) -> AppResult<Snapshot> {
-        self.held.device.decode(pack_bytes)
+        self.device.decode(pack_bytes)
     }
     fn merge(&self, incoming: &Snapshot) -> AppResult<usize> {
-        self.held.device.merge(incoming)
+        self.device.merge(incoming)
     }
     fn digest(&self) -> AppResult<[u8; 32]> {
-        LocalVault::digest(&self.held.device)
+        LocalVault::digest(self.device)
     }
     fn pack(&self, reclaim: Reclaim) -> AppResult<Vec<u8>> {
-        self.packs.fetch_add(1, Ordering::SeqCst);
-        self.held.device.pack(reclaim)
+        if self.host.fail_packs.load(Ordering::SeqCst) {
+            return Err(AppError::VaultFull);
+        }
+        self.host.packs.fetch_add(1, Ordering::SeqCst);
+        self.device.pack(reclaim)
     }
     fn note_push(&self, revision: &str, at_ms: i64) -> AppResult<()> {
-        self.held.device.note_push(revision, at_ms)
+        self.device.note_push(revision, at_ms)
     }
     fn vault_id(&self) -> AppResult<Option<String>> {
-        self.held.device.vault_id()
+        self.device.vault_id()
     }
     fn adopt_vault_id(&self, id: &str) -> AppResult<()> {
-        self.held.device.adopt_vault_id(id)
+        self.device.adopt_vault_id(id)
     }
     fn name(&self) -> AppResult<(Option<String>, i64)> {
-        self.held.device.name()
+        self.device.name()
     }
     fn adopt_name(&self, name: &str, at_ms: i64) -> AppResult<()> {
-        self.held.device.adopt_name(name, at_ms)
+        self.device.adopt_name(name, at_ms)
     }
 }
 
 impl Host for TestHost {
-    type Run = TestRun;
-
     fn lockboxes(&self) -> Vec<Lockbox> {
         self.lockboxes
             .lock()
@@ -157,8 +172,17 @@ impl Host for TestHost {
             .collect()
     }
 
-    fn begin(&self, vault_id: &str) -> AppResult<TestRun> {
-        let claim = claim(&self.claim).ok_or(AppError::SyncBusy)?;
+    fn step<T>(
+        &self,
+        vault_id: &str,
+        step: impl FnOnce(&dyn LocalVault) -> AppResult<T>,
+    ) -> AppResult<T> {
+        let _claim = claim(&self.claim).ok_or(AppError::SyncBusy)?;
+        self.steps.fetch_add(1, Ordering::SeqCst);
+        let hook = self.next_step.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook(self);
+        }
         let held = self
             .lockboxes
             .lock()
@@ -167,17 +191,14 @@ impl Host for TestHost {
             .find(|held| held.vault == vault_id)
             .cloned()
             .ok_or(AppError::NotFound)?;
-        Ok(TestRun {
-            held,
-            packs: self.packs.clone(),
-            _claim: claim,
+        step(&Local {
+            host: self,
+            device: &held.device,
         })
     }
 
-    fn finish(&self, run: TestRun, outcome: PeerOutcome) {
-        let vault = run.held.vault.to_string();
-        drop(run);
-        self.finished.lock().unwrap().push((vault, outcome));
+    fn announce(&self, vault_id: &str, _absorbed: &Absorbed) {
+        self.announced.lock().unwrap().push(vault_id.to_string());
     }
 
     fn now_ms(&self) -> i64 {
@@ -201,10 +222,8 @@ fn node(network: &Network, lockboxes: &[&Arc<Held>]) -> Node {
 fn node_at(network: &Network, lockboxes: &[&Arc<Held>], offset_ms: i64) -> Node {
     let host = Arc::new(TestHost {
         lockboxes: Mutex::new(lockboxes.iter().map(|held| (*held).clone()).collect()),
-        claim: Arc::default(),
         offset_ms,
-        finished: Mutex::default(),
-        packs: Arc::default(),
+        ..TestHost::default()
     });
     let shown = Arc::<Mutex<Vec<NearbyStatus>>>::default();
     let emitted = shown.clone();
@@ -256,8 +275,19 @@ impl Node {
         self.state_of(other) == Some(NearbyDeviceState::UpToDate)
     }
 
-    fn runs_ended(&self) -> usize {
-        self.host.finished.lock().unwrap().len()
+    fn steps(&self) -> usize {
+        self.host.steps.load(Ordering::SeqCst)
+    }
+
+    fn announced(&self) -> bool {
+        !self.host.announced.lock().unwrap().is_empty()
+    }
+
+    /// Whether this node shows `other` failed with an error of `kind`.
+    fn failed_with(&self, other: &Node, kind: &str) -> bool {
+        self.row(other).is_some_and(|row| {
+            row.state == NearbyDeviceState::Error && row.detail_kind.as_deref() == Some(kind)
+        })
     }
 }
 
@@ -310,6 +340,9 @@ fn two_devices_holding_one_lockbox_converge_and_each_edit_reaches_the_other() {
         na.state_of(&nb) == Some(NearbyDeviceState::UpToDate)
             && nb.state_of(&na) == Some(NearbyDeviceState::UpToDate)
     });
+    eventually("each announced what it merged", || {
+        na.announced() && nb.announced()
+    });
 
     a.write("3", "edited on a");
     na.manager.request_runs();
@@ -319,14 +352,14 @@ fn two_devices_holding_one_lockbox_converge_and_each_edit_reaches_the_other() {
     eventually("b's edit reaches a", || a.title("4").is_some());
     eventually("level again", || a.digest() == b.digest());
 
-    // Nothing changed: a run each way moves no pack.
+    // Nothing changed: a sync each way reads both states and moves no pack.
     settle();
     let packs = na.manager.packs() + nb.manager.packs();
-    let ended = (na.runs_ended(), nb.runs_ended());
+    let steps = (na.steps(), nb.steps());
     na.manager.request_runs();
     nb.manager.request_runs();
-    eventually("a run ends on both", || {
-        na.runs_ended() > ended.0 && nb.runs_ended() > ended.1
+    eventually("both states read for a sync each way", || {
+        na.steps() >= steps.0 + 2 && nb.steps() >= steps.1 + 2
     });
     settle();
     assert_eq!(na.manager.packs() + nb.manager.packs(), packs);
@@ -346,8 +379,8 @@ fn a_device_on_another_key_is_never_dialled_and_is_shown_nothing() {
     assert_eq!((na.manager.dials(), nc.manager.dials()), (0, 0));
     assert!(na.book.status().devices.is_empty());
 
-    // It dials in anyway, proves its own key for the same vault id, and asks
-    // for a run: what it hears is `hello` and `trust/done`, and nothing more.
+    // It dials in anyway, proves its own key for the same vault id, and
+    // offers a sync: what it hears is `hello` and `trust/done`, and nothing more.
     let stranger = identity();
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, na.manager.port()));
     let mut dialled = channel::connect(addr, &stranger, None).unwrap();
@@ -359,11 +392,15 @@ fn a_device_on_another_key_is_never_dialled_and_is_shown_nothing() {
             proof,
         },
         Control::ProofsDone,
-        Control::Head {
+        Control::State {
             vault: "v1".into(),
+            revision: "r".into(),
             now_ms: 0,
         },
-        Control::Fetch { vault: "v1".into() },
+        Control::Pack {
+            vault: "v1".into(),
+            revision: "r".into(),
+        },
     ] {
         if dialled.send_control(&message).is_err() {
             break;
@@ -425,8 +462,8 @@ fn edits_made_on_both_at_once_cross_though_each_dials_the_other() {
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
     eventually("level", || na.level_with(&nb) && nb.level_with(&na));
 
-    // Each dials the other and finds its claim held by the other's own dial:
-    // both try again, apart, and the first through carries both edits.
+    // Each dials the other at once: the two connections take turns on each
+    // side's claim, a step at a time, and both go through.
     for round in ["1", "2", "3"] {
         a.write(&format!("a{round}"), "made on a");
         b.write(&format!("b{round}"), "made on b");
@@ -532,37 +569,71 @@ fn a_device_whose_shared_lockbox_went_is_shown_offline() {
     });
 }
 
+// The hook runs inside A's first step, so after the handshake and before
+// anything moved, whichever side dialled.
 #[test]
-fn no_run_is_begun_under_keys_its_connection_did_not_prove() {
+fn no_pack_moves_under_keys_the_connection_did_not_prove() {
     let network = Network::default();
     let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
-    let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
-    eventually("connected", || {
-        na.state_of(&nb) == Some(NearbyDeviceState::UpToDate)
-            && nb.state_of(&na) == Some(NearbyDeviceState::UpToDate)
-    });
-    settle();
-    let packs = na.manager.packs() + nb.manager.packs();
-
-    // A's lockbox is under another key, as after a password change, and a
-    // sync is asked for on both before A's manager has looked at the keys
-    // again: whichever side dials, no pack moves.
+    a.write("1", "under the proved key");
+    b.write("2", "under the proved key");
     let rekeyed = held(
         "v1",
         Device::create("a2", "v1", "another password", &params(1, 0)),
     );
-    rekeyed.write("1", "under the new key");
-    b.write("2", "under the old key");
-    *na.host.lockboxes.lock().unwrap() = vec![rekeyed.clone()];
-    na.manager.request_runs();
-    nb.manager.request_runs();
+    rekeyed.write("3", "under the new key");
+    let na = node(&network, &[&a]);
+    let swapped = rekeyed.clone();
+    na.host
+        .on_next_step(move |host| *host.lockboxes.lock().unwrap() = vec![swapped]);
+    let nb = node(&network, &[&b]);
+
+    eventually("a's gate refuses the step", || na.manager.refused() > 0);
     eventually("each shows the other offline", || {
         na.state_of(&nb) == Some(NearbyDeviceState::Offline)
             && nb.state_of(&na) == Some(NearbyDeviceState::Offline)
     });
-    settle();
-    assert_eq!(na.manager.packs() + nb.manager.packs(), packs);
-    assert!(rekeyed.title("2").is_none() && b.title("1").is_none());
+    assert_eq!(na.manager.packs() + nb.manager.packs(), 0);
+    assert!(a.title("2").is_none() && rekeyed.title("2").is_none());
+    assert!(b.title("1").is_none() && b.title("3").is_none());
+}
+
+// Removed in the book alone, no socket shut: the gate is what stops it.
+#[test]
+fn a_device_removed_after_the_handshake_is_sent_no_pack() {
+    let network = Network::default();
+    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    a.write("1", "only on a");
+    let na = node(&network, &[&a]);
+    let book = na.book.clone();
+    na.host.on_next_step(move |_| {
+        let seen: Vec<String> = book.status().devices.into_iter().map(|d| d.id).collect();
+        book.remove(&seen);
+    });
+    let nb = node(&network, &[&b]);
+
+    eventually("a's gate refuses b", || na.manager.refused() > 0);
+    assert!(na.book.is_removed(&nb.id()));
+    assert_eq!(na.manager.packs(), 0);
+    assert!(b.title("1").is_none());
+}
+
+// B's packs always fail; whichever side dials, the script ends in step with
+// B's own error on B and, with none of its own, "could not finish" on A.
+#[test]
+fn each_side_shows_its_own_error_and_the_other_that_the_sync_did_not_finish() {
+    let network = Network::default();
+    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    a.write("1", "on a");
+    b.write("2", "on b");
+    let nb = node(&network, &[&b]);
+    nb.host.fail_packs.store(true, Ordering::SeqCst);
+    let na = node(&network, &[&a]);
+
+    eventually("b shows its own error, a that it did not finish", || {
+        nb.failed_with(&na, "vaultFull") && na.failed_with(&nb, "other")
+    });
+    assert!(a.title("2").is_none());
 }
 
 #[test]
@@ -631,8 +702,8 @@ fn a_run_asked_for_while_the_claim_is_held_runs_once_it_is_released() {
             && nb.state_of(&na) == Some(NearbyDeviceState::UpToDate)
     });
 
-    // The answering side's claim held: it answers `sync/busy`, and the sync
-    // is tried again until it goes through.
+    // The answering side's claim held: its step waits for it, or the
+    // connection ends and is tried again, until the sync goes through.
     let held = hold(&nb);
     a.write("1", "while b was busy");
     na.manager.request_runs();

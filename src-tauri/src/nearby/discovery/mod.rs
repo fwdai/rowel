@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn another_version_or_a_missing_nonce_is_no_record() {
         let mut props = txt().properties();
-        props[0].1 = "2".into();
+        props[0].1 = (PROTOCOL_VERSION + 1).to_string();
         assert_eq!(parse(&props), None);
         let props: Vec<_> = txt()
             .properties()

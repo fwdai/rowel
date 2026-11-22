@@ -14,7 +14,12 @@ use std::sync::Mutex;
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::nearby::channel::Failure;
+/// The app's error kind (`crate::error::Error::kind`) and its sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Failure {
+    pub kind: String,
+    pub message: String,
+}
 
 /// The `seq` of every nearby status, counted once for the process, as the
 /// sync status's is: a status read before a change reads as older than the

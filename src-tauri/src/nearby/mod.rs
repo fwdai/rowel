@@ -4,8 +4,8 @@
 //! listener; no async runtime.
 //!
 //! - [`identity`]: this install's key pair, its certificate and its device id.
-//! - [`exchange`]: one lockbox synced with another device through the sync
-//!   engine, from either side.
+//! - [`exchange`]: one lockbox's revision, pack and merge, as two devices
+//!   trade them.
 //! - [`channel`]: TLS 1.3 between two identities, whole messages over it, and
 //!   the JSON control messages they exchange.
 //! - [`trust`]: the proof of a lockbox key, and the tags an advertisement
@@ -52,6 +52,9 @@ pub enum Error {
     /// out of order.
     #[error("the nearby device broke the protocol: {0}")]
     Protocol(String),
+    /// This side ended the sync, saying nothing.
+    #[error("the sync was ended here: {0}")]
+    Ended(&'static str),
     /// This install's identity file could not be read, made or used.
     #[error("nearby identity: {0}")]
     Identity(String),

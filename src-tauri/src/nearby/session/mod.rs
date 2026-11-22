@@ -18,8 +18,7 @@
 //! - [`listener`] and [`connection`]: one listener and one thread per
 //!   connection; [`conns`] keeps their count and their deadlines.
 //! - [`handshake`]: `hello`, the key proofs, the removed sets.
-//! - [`link`] and [`answer`]: a run, from the side that dialled and from the
-//!   side that answers.
+//! - [`sync`]: the lockboxes' sync, the same script on either side.
 //! - [`book`]: what is kept per install and what is known now, and the
 //!   status built from them.
 //!
@@ -28,14 +27,13 @@
 //! it runs in tests as two managers in one process.
 
 mod advert;
-mod answer;
 pub mod book;
 mod connection;
 mod conns;
 mod handshake;
 pub mod host;
-mod link;
 mod listener;
+mod sync;
 #[cfg(test)]
 mod tests;
 
@@ -69,8 +67,8 @@ const TICK: Duration = Duration::from_millis(200);
 const REFRESH: Duration = Duration::from_secs(3);
 
 /// The first wait before a sync that could not go through is tried again,
-/// doubling up to the second. A device that paused this one answers as busy,
-/// so the ceiling is also how often a paused device is asked.
+/// doubling up to the second. A device that paused this one ends the
+/// connection, so the ceiling is also how often a paused device is asked.
 const RETRY_FIRST: Duration = Duration::from_millis(250);
 const RETRY_MOST: Duration = Duration::from_secs(30);
 
@@ -298,21 +296,6 @@ impl<H: Host> Shared<H> {
         self.show_here();
     }
 
-    /// A run on `vault` for a connection that proved the keys in `proved`
-    /// ([`Host::begin`]). The lockbox's keys are read again under the run's
-    /// claim, which a password change waits for: a run under keys other than
-    /// the ones its connection proved is not begun, and is tried again on a
-    /// connection of its own.
-    fn begin(&self, vault: &str, proved: &[Lockbox]) -> crate::error::Result<H::Run> {
-        let run = self.host.begin(vault)?;
-        let now = self.host.lockboxes();
-        let of = |lockboxes: &[Lockbox]| lockboxes.iter().find(|l| l.vault_id == vault).cloned();
-        if of(&now) != of(proved) {
-            return Err(crate::error::Error::SyncBusy);
-        }
-        Ok(run)
-    }
-
     fn on_event(&self, event: Event) {
         match event {
             Event::Seen(peer) => {
@@ -459,4 +442,7 @@ impl<H: Host> Shared<H> {
 
     #[cfg(not(test))]
     fn count_dial(&self) {}
+
+    #[cfg(not(test))]
+    fn count_refused(&self) {}
 }

@@ -1,15 +1,10 @@
-//! What the session manager needs from the app, and nothing more: which
-//! lockboxes this device holds and their keys, a run on one of them under the
-//! process's run claim, the end of that run, and the clock. The app's is `nearby::app::host`, over `AppState`; the tests
-//! run two of their own in one process.
-
-use std::ops::Deref;
+//! What the session manager needs from the app; the app's is `nearby::app::host`.
 
 use zeroize::Zeroizing;
 
 use crate::crypto::VaultKey;
 use crate::error::Result;
-use crate::nearby::exchange::PeerOutcome;
+use crate::nearby::exchange::Absorbed;
 use crate::sync::engine::LocalVault;
 
 /// The two nearby subkeys of one key of a lockbox.
@@ -42,25 +37,15 @@ pub struct Lockbox {
 }
 
 pub trait Host: Send + Sync + 'static {
-    /// One run on one lockbox: the lockbox open for it, which it derefs to,
-    /// and the run claim, both held until it is dropped or handed to
-    /// [`Host::finish`].
-    type Run: Deref<Target = dyn LocalVault>;
-
-    /// Every lockbox this device can sync now.
     fn lockboxes(&self) -> Vec<Lockbox>;
 
-    /// Take the run claim and open the lockbox `vault_id` under it.
-    /// `Error::SyncBusy` while another run holds the claim, and
-    /// `Error::Locked` while there is no session to open it in: both are
-    /// asked again later.
-    fn begin(&self, vault_id: &str) -> Result<Self::Run>;
+    /// `step` on lockbox `vault_id`, opened under the run claim;
+    /// `Error::SyncBusy`, without running it, while another holds the claim.
+    fn step<T>(&self, vault_id: &str, step: impl FnOnce(&dyn LocalVault) -> Result<T>)
+        -> Result<T>;
 
-    /// A run ended, having done `outcome` here: the claim goes, and what the
-    /// merge changed is announced as a cloud run's would be.
-    fn finish(&self, run: Self::Run, outcome: PeerOutcome);
+    /// Called with the claim released.
+    fn announce(&self, vault_id: &str, absorbed: &Absorbed);
 
-    /// The clock every merge stamp and every converge is read from, in ms
-    /// since the Unix epoch.
     fn now_ms(&self) -> i64;
 }

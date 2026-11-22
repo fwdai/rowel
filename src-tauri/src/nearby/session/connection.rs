@@ -1,10 +1,4 @@
-//! One connection's life, on a thread of its own: the dial or the accept, the
-//! handshake, the runs, the end.
-//!
-//! A connection is one sync. The side that dialled runs every lockbox the
-//! two proved they share, one after another, and closes; the other answers
-//! until it does. Nothing is said on a connection but a request and its
-//! answer, and nothing of it is kept afterwards but what the book shows.
+//! One connection on its own thread: the dial or the accept, the handshake, the sync, the end.
 
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
@@ -12,13 +6,10 @@ use std::time::{Duration, Instant};
 
 use super::advert::Recognised;
 use super::handshake::{self, Handshake};
-use super::host::{Host, Lockbox};
-use super::link::{failure_of, ChannelLink};
+use super::host::Host;
 use super::listener::is_local;
-use super::{answer, Shared};
-use crate::error::Error;
-use crate::nearby::channel::{self, Channel, Control};
-use crate::nearby::exchange;
+use super::{sync, Shared};
+use crate::nearby::channel;
 use crate::nearby::Result;
 
 /// How long a connection may take from its first byte to the end of its
@@ -106,8 +97,7 @@ fn serve<H: Host>(
     if peer == *shared.identity.device_id() || shared.book.is_removed(&id) {
         return Ok(Dialled::Done);
     }
-    // The lockboxes as this connection proves them: every run on it is under
-    // these keys ([`Shared::begin`]).
+    // Every step on this connection is gated on the keys it proves.
     let lockboxes = shared.lockboxes();
     let matches = dialled.map_or(&[][..], |found| &found.matches);
     let Handshake::Established { vaults, behind } =
@@ -123,80 +113,6 @@ fn serve<H: Host>(
             live.behind.remove(&id);
         }
     });
-    if dialled.is_none() {
-        answer::serve(shared, &mut channel, &id, &lockboxes, &vaults)?;
-        return Ok(Dialled::Done);
-    }
-    for vault in &vaults {
-        if !run(shared, &mut channel, &id, &lockboxes, vault)? {
-            return Ok(Dialled::Later);
-        }
-    }
+    sync::run(shared, &mut channel, &id, &lockboxes, &vaults)?;
     Ok(Dialled::Done)
-}
-
-/// One run of `vault` with the device `id`, driven from here. `false` when it
-/// could not start for a claim held on either side.
-fn run<H: Host>(
-    shared: &Shared<H>,
-    channel: &mut Channel,
-    id: &str,
-    lockboxes: &[Lockbox],
-    vault: &str,
-) -> Result<bool> {
-    let local = match shared.begin(vault, lockboxes) {
-        Ok(local) => local,
-        Err(Error::SyncBusy | Error::Locked) => return Ok(false),
-        Err(e) => {
-            shared.live(|live| {
-                live.failed.insert(id.to_string(), failure_of(&e));
-            });
-            return Ok(true);
-        }
-    };
-    shared.live(|live| {
-        live.syncing.insert(id.to_string());
-        live.failed.remove(id);
-    });
-    let now_ms = shared.host.now_ms();
-    let link = ChannelLink::new(channel, vault, now_ms);
-    let (outcome, result) = exchange::sync_with_peer(&link, &*local, now_ms);
-    let broken = link.into_broken();
-    let busy = matches!(result, Err(Error::SyncBusy));
-    // The other side ends its half of the run on this. One that answered
-    // busy opened none.
-    let said = if broken.is_none() && !busy {
-        channel.send_control(&Control::Done {
-            vault: vault.to_string(),
-            error: result.as_ref().err().map(failure_of),
-        })
-    } else {
-        Ok(())
-    };
-    // However the run ended, what it merged here is announced and passed on.
-    shared.host.finish(local, outcome);
-    shared.live(|live| {
-        live.syncing.remove(id);
-    });
-    if let Some(e) = broken {
-        return Err(e);
-    }
-    said?;
-    match result {
-        Ok(()) => {
-            log::info!(
-                "nearby: run {vault:.8} with {id:.8}: {} rows merged",
-                outcome.merged
-            );
-            shared.book.converged(id, now_ms);
-        }
-        Err(Error::SyncBusy) => return Ok(false),
-        Err(e) => {
-            log::info!("nearby: run {vault:.8} with {id:.8} failed: {e}");
-            shared.live(|live| {
-                live.failed.insert(id.to_string(), failure_of(&e));
-            });
-        }
-    }
-    Ok(true)
 }

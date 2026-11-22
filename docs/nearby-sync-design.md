@@ -34,7 +34,7 @@ beside cloud sync, not instead of it: a lockbox may use both.
 |---|---|
 | Merge that converges in any order | `SqliteStore::merge` (a join: last writer wins, purge shells absorbing, audit rows as a union) |
 | "Are we equal?" | `SqliteStore::state_digest` |
-| Pull, merge, decide, push | `sync::engine::sync` over `Remote` and `LocalVault` |
+| Open a pack, merge it, take a newer name | `sync::engine::merge_pack` over `LocalVault` |
 | Opening a pack, key epochs after a password change | `engine::decode_pack`, `retired` |
 | The open lockbox / one that is not open | `SessionVault`, `WorkspaceVault`, keys from `AppState.keyring` |
 | A pack into a new lockbox | `sync::restore::restore_at` |
@@ -43,45 +43,34 @@ beside cloud sync, not instead of it: a lockbox may use both.
 | TLS | `rustls` 0.23 (ring) |
 | Whole-status events | the `sync:status` pattern in `commands/sync.rs` |
 
-## 3. Exchange (`src-tauri/src/nearby/exchange.rs`)
+## 3. Exchange (`src-tauri/src/nearby/exchange.rs`, `session/sync.rs`)
 
-A peer is driven through the existing engine. One side initiates; the other
-answers three calls about one lockbox.
+Each device only ever locks and writes its own lockbox. Per lockbox, on a
+connection that proved its key, one script, mirrored on the two sides and
+strictly in turns (a pack can be large; each side writes on one thread):
 
-```rust
-pub trait PeerLink {
-    /// The peer's revision and its clock.
-    fn head(&self) -> Result<PeerHead>;            // { revision, now_ms }
-    /// The peer's pack, with the revision it was packed at.
-    fn fetch(&self) -> Result<RemoteFile>;
-    /// Hand the peer a pack to merge; its revision afterwards.
-    fn absorb(&self, pack: &[u8]) -> Result<String>;
-}
-```
+1. The dialling side sends `sync/state { vault, revision, now_ms }`; the
+   other answers with its own.
+2. Clocks more than 5 minutes apart: both stop with a clock error.
+   Last-writer-wins is only as good as the clocks. Equal revisions: done.
+3. The dialling side sends `sync/pack { vault, revision }` and its pack,
+   the revision read after packing, whose reclaim can move it.
+4. The other merges it, then answers `sync/state` if its revision now equals
+   the packed one, or else its own `sync/pack`, packed after the merge.
+5. Given a pack back, the dialling side merges it and sends a last
+   `sync/state`.
 
-- A **revision** is the state digest plus the lockbox name and its stamp, as
-  one string. Equal revisions mean nothing to do, and no pack moves.
-- The answering side is three functions over its own `LocalVault`: `head`,
-  `fetch` (`LocalVault::pack`, revision read after the pack's reclaim) and
-  `absorb` (decode, merge, adopt a newer name). `absorb` is the first three
-  steps of `engine::sync`, extracted so both use one implementation.
-- The initiating side wraps the link as an `engine::Remote` (`fetch` is the
-  peer's pack, `head_revision` its revision, `upload` is `absorb`) and calls
-  `engine::sync`. `upload` being a merge rather than a replace is always safe:
-  the merge is a join.
-- A peer run must not write the cloud bookkeeping (`sync_remote_rev`,
-  `sync_last_ms`): `note_push` is a no-op for it.
+A **revision** is the state digest plus the lockbox name and its stamp, as
+one string. The two are in sync exactly when the last two revisions stated
+are equal; otherwise each side shows its own error, or, having none, that the
+sync could not finish. No error crosses the wire: a side whose step fails
+states its last revision in its turn, and an answering side that cannot read
+its lockbox at all ends the connection.
 
-`sync_with_peer(link, local, now_ms)`:
-
-1. `head`. Clocks more than 5 minutes apart: stop with a clock error naming
-   the difference. Last-writer-wins is only as good as the clocks.
-2. Equal revisions: done.
-3. `engine::sync`. Its errors mean what they mean for a cloud run
-   (`PasswordChangedRemotely`, `VaultUnderRetiredPassword`, a foreign vault).
-
-It returns what the run merged here however it ended, so a run that merged
-and then failed is still announced.
+A merge is `engine::merge_pack`, the first steps of a cloud pull: a pack that
+does not open (another lockbox's, a password changed on one side) is refused
+before the store is touched, with the error a cloud run gets. Nothing writes
+the cloud bookkeeping.
 
 **Tombstones** are the engine's to reclaim, on the rule it has for an account:
 after 90 days. Nearby sync adds nothing to it. A device that syncs with
@@ -162,29 +151,26 @@ Desktop only for now. Everything is under `src-tauri/src/nearby/`; the app
 reaches it at the session's start and end (`session::announce_opened`,
 `announce_ended`), at `sync_now` (a local change) and after a cloud run that
 merged rows or took a newer name (`commands::sync`). The session logic runs
-against a small `Host` trait (the lockboxes and their keys, a run on one
-under the run claim, its end, the clock), so its tests run several managers
-in one process over loopback with an in-memory discovery; the app's host is
-`nearby::app::host`.
+against a small `Host` trait (the lockboxes and their keys, a step on one
+under the run claim, a merge announced, the clock), so its tests run several
+managers in one process over loopback with an in-memory discovery; the app's
+host is `nearby::app::host`.
 
 **One connection is one sync.** The device with something to say dials, the
-two prove their keys, every lockbox they hold under the same key is run, and
-the connection closes. Nothing is said on it but a request and its answer,
-and nothing outlives it but what Settings shows. There is no standing
-connection to keep in step with the keys, the removed set or the network.
+two prove their keys, every lockbox they hold under the same key is synced
+(§3), and the connection closes. Nothing outlives it but what Settings shows.
+There is no standing connection to keep in step with the keys, the removed
+set or the network.
 
 **Which lockboxes.** The open one (`SessionVault`) and every other lockbox
 whose key is in `AppState.keyring` (`WorkspaceVault`), org lockboxes and
-lockboxes without a KDF descriptor or a vault id left out. A run opens the open
-one through the session, and any other on a connection of its own; never the
-open one's database a second time. The set is read again every 3 seconds (the
-unlock fills the keyring a moment after the session opens; a password change
-changes the keys): when its keys changed, the advertisement follows, every
-advertisement seen is read again with them, and a sync with each device is
-owed. A connection proves the keys as they were read when it opened, and each
-side reads the lockbox's keys again as a run on it begins, under the run
-claim, which a password change waits for: a run under other keys than the
-ones its connection proved is not begun.
+lockboxes without a KDF descriptor or a vault id left out. A step opens the
+open one through the session, and any other on a connection of its own; never
+the open one's database a second time. The set is read again every 3 seconds
+(the unlock fills the keyring a moment after the session opens; a password
+change changes the keys): when its keys changed, the advertisement follows,
+every advertisement seen is read again with them, and a sync with each device
+is owed. A connection proves the keys as they were read when it opened.
 
 **Discovery.** Service `_rowel-sync._tcp`, advertised only while unlocked and
 enabled, through `mdns-sd` on Windows, Linux and macOS (iOS will need the
@@ -214,7 +200,7 @@ changes here (the signal that schedules a cloud run: `sync_now`, which the
 frontend's debounce sends whenever cloud or nearby sync is on), after a merge
 from the account or from another device, when the keys or the removed set
 change, and on a resume. A dial that could not go through (nothing answered,
-the connection failed, a run claim was held on either side) is owed again
+the connection failed or was ended by either side) is owed again
 after 250 ms, doubling to 30 seconds, with a random part so two devices that
 dialled each other at once do not do it again. A device shows as here while
 its advertisement is seen.
@@ -232,32 +218,30 @@ from a proof; that device shows as `needsPassword` on both sides and is sent
 nothing else. Whenever anything was proved, the two then exchange their
 removed sets (`sync/removed`).
 
-**Runs.** The dialling side drives every run, one lockbox at a time, with
-`nearby::exchange::sync_with_peer` over a `PeerLink` that speaks `sync/head` (with
-the asker's clock; answered by `sync/head-reply`), `sync/fetch` (answered by
-`sync/pack` and the pack as the next message), `sync/absorb` (the pack
-follows it; answered by `sync/absorbed`) and, when a run ends, `sync/done`,
-with the error the run failed with if it did, which the answering side
-shows. A request that fails on the answering side is answered `sync/error`
-with its kind. When every lockbox has run, the dialling side closes.
+**Steps.** The dialling side names each lockbox in turn with its
+`sync/state` (§3) and closes when all are done. Every local step (read the
+state, pack, merge) takes the process's one run claim (`AppState::syncing`)
+for that step alone, never across a wait on the network, and opens the
+lockbox itself. A claim held elsewhere is waited for up to 5 seconds; then
+the connection ends and the dial is tried again later. A cloud run asked for
+while a step held the claim runs when it lets go.
 
-Each side takes the process's one run claim (`AppState::syncing`) for a run:
-the dialler before it asks, the answering side from `sync/head` to
-`sync/done` (or the end of the connection, which a read stalled for 30
-seconds also brings). A side that cannot take it answers `sync/busy`, and the
-dial is tried again later; a cloud run asked for while a nearby run holds the
-claim runs when it lets go. A run that merged rows into the open lockbox
-emits `vault:merged` through the function a cloud run uses
-(`commands::sync::announce_merged`) and requests a cloud run; a newer name is
+One gate comes before every step: the device is neither removed nor paused
+here, and the lockbox's keys, read again under the claim (which a password
+change waits for), are the ones the connection proved. A gate that fails ends
+the connection without a word.
+
+A merge that wrote rows into the open lockbox emits `vault:merged`
+(`commands::sync::announce_merged`) and asks for a cloud run; a newer name is
 mirrored into the registry as a cloud run's is. Either is passed on to the
-other devices here, and a run that failed after it merged does the same.
+other devices here.
 
 **Pause and Remove.** Kept per install in `nearby/state.json` under the app's
 data root, beside `settings.json` and kept the same way (a JSON file with
 defaults, written atomically), next to the identity key `nearby/identity.key`:
 enabled, paused device ids, removed device ids, and the devices seen (id, name,
 platform, last sync). Pause is local: this side does not dial the paused
-device and answers its `sync/head` with `sync/busy`, so the other side keeps
+device and its gate ends that device's connections, so the other side keeps
 trying, at most every 30 seconds, and shows nothing of it. Remove adds the id
 to the removed set, which only grows: the device is not dialled, its
 connections close, and a connection from it is closed as soon as TLS says
@@ -270,8 +254,8 @@ a master-password change.
 
 **Locking** (and a lockbox switch, which ends the session) stops the manager
 under the session guard: the advertisement goes, the listener and every
-connection close, and a run in flight ends at its next read or write. While a
-nearby run holds the claim, a switch is refused (`SyncBusy`) as it is during a
+connection close, and a sync in flight ends at its next read or write. While a
+nearby step holds the claim, a switch is refused (`SyncBusy`) as it is during a
 cloud run.
 
 ## 6. Setting up a new device (next)

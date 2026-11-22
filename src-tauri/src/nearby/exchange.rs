@@ -1,245 +1,58 @@
-//! Sync between two devices directly: one lockbox, no account in between
-//! (design §3, "Exchange").
-//!
-//! One side initiates ([`sync_with_peer`]); the other answers three calls about
-//! the lockbox ([`head`], [`fetch`], [`absorb`]) over whatever carries them, a
-//! [`PeerLink`]. The initiator runs [`engine::sync`] with the peer standing in
-//! for the account: the peer's pack is the pull, and the push is this device's
-//! pack, which the peer merges. A merge where an account would replace is
-//! always safe, because the merge is a join: nothing the peer holds is lost to
-//! it, whatever it wrote since its pack was taken.
-//!
-//! Every exchange that finds a difference moves whole packs; [`revision`] is
-//! what lets one that finds none move nothing.
-//!
-//! Tombstones are the engine's to reclaim, on the rule it has for an account:
-//! after 90 days. A device that syncs with nothing for longer than that can
-//! bring back what was deleted meanwhile, over this path as over that one.
-
-use std::cell::Cell;
+//! One lockbox between two devices, without the channel (design §3).
 
 use crate::error::{Error, Result};
-use crate::sync::engine::{self, LocalVault, Reclaim, Remote, RemoteFile, Snapshot};
+use crate::sync::engine::{self, LocalVault, Reclaim};
+use crate::sync::pack::MAX_PACK_BYTES;
 
-/// How far apart two devices' clocks may be for a run between them. Every
-/// merge is last-writer-wins on the stamps each device's own clock wrote; past
-/// this, a fast clock rather than the later edit would decide what survives.
+// Every merge is last-writer-wins on each device's own clock: past this, a
+// fast clock rather than the later edit would decide what survives.
 const MAX_CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;
 
-/// What the answering side says about its lockbox before anything moves.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PeerHead {
-    /// See [`revision`].
-    pub revision: String,
-    /// The answering device's clock, in ms since the Unix epoch.
-    pub now_ms: i64,
-}
-
-/// The other device, as the initiating side reaches it: three calls about the
-/// lockbox both hold, answered on that device by [`head`], [`fetch`] and
-/// [`absorb`].
-pub trait PeerLink {
-    /// The peer's revision and its clock.
-    fn head(&self) -> Result<PeerHead>;
-    /// The peer's pack, with the revision it was packed at.
-    fn fetch(&self) -> Result<RemoteFile>;
-    /// Hand the peer a pack to merge; its revision afterwards.
-    fn absorb(&self, pack: &[u8]) -> Result<String>;
-}
-
-/// What one run with a peer did here, for the caller's events.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct PeerOutcome {
-    /// Rows the merge wrote here. Non-zero means the entry list changed.
+pub struct Absorbed {
     pub merged: usize,
-    /// Whether the peer's pack carried a newer name for the lockbox, which the
-    /// caller mirrors into the workspace registry.
-    pub renamed: bool,
+    /// The pack's name, when it beat this lockbox's and was taken.
+    pub renamed: Option<String>,
+    pub revision: String,
 }
 
-/// The lockbox's state as one comparable string: the state digest, and the
-/// name with the stamp it was set at, which the digest does not cover. Two
-/// devices whose revisions are equal have nothing to say to each other.
 pub fn revision(local: &dyn LocalVault) -> Result<String> {
     let digest = hex::encode(local.digest()?);
     Ok(match local.name()? {
         (Some(name), at_ms) => format!("{digest}.{at_ms}.{name}"),
-        // Distinct from every named revision, an empty name's included.
         (None, at_ms) => format!("{digest}.{at_ms}"),
     })
 }
 
-// --- the answering side -----------------------------------------------------
-
-/// [`PeerLink::head`], answered.
-pub fn head(local: &dyn LocalVault, now_ms: i64) -> Result<PeerHead> {
-    Ok(PeerHead {
-        revision: revision(local)?,
-        now_ms,
-    })
-}
-
-/// [`PeerLink::fetch`], answered: the lockbox packed as it is for an upload.
-/// The revision is read after the pack, because the pack reclaims first and
-/// that may have moved it.
-pub fn fetch(local: &dyn LocalVault, now_ms: i64) -> Result<RemoteFile> {
-    let bytes = local.pack(Reclaim::at(now_ms))?;
-    Ok(RemoteFile {
-        bytes,
-        revision: revision(local)?,
-    })
-}
-
-/// What [`absorb`] did here.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Absorbed {
-    /// Rows the merge wrote. Non-zero means the entry list changed.
-    pub merged: usize,
-    /// Whether the pack's name beat this lockbox's and was adopted.
-    pub renamed: bool,
-    /// This lockbox's revision afterwards: the answer the initiator gets.
-    pub revision: String,
-}
-
-/// [`PeerLink::absorb`], answered: the pack taken in exactly as a pull is
-/// ([`engine::merge_pack`]). One that does not open here — another lockbox's,
-/// or one sealed under a password this device has not taken on yet — is an
-/// error before the store is touched, as it is for a pull.
-pub fn absorb(local: &dyn LocalVault, pack: &[u8]) -> Result<Absorbed> {
-    let taken = engine::merge_pack(local, pack)?;
-    Ok(Absorbed {
-        merged: taken.merged,
-        renamed: taken.renamed,
-        revision: revision(local)?,
-    })
-}
-
-// --- the initiating side ----------------------------------------------------
-
-/// One run over `link`, initiated here:
-///
-/// 1. The peer's head. Clocks more than five minutes apart stop the run with
-///    [`Error::ClockSkew`], before anything moves.
-/// 2. Equal revisions: nothing moves.
-/// 3. Otherwise [`engine::sync`], the peer standing in for the account. Its
-///    errors mean what they mean for a cloud run: `PasswordChangedRemotely`,
-///    `VaultUnderRetiredPassword`, another lockbox's pack.
-///
-/// An error from the peer's own [`absorb`] is the run's error too. A peer still
-/// under a password this device has replaced refuses this device's pack with
-/// `PasswordChangedRemotely` after this side has merged the peer's: that error
-/// is the peer's state, not this device's.
-///
-/// What the run did here comes back however it ended: one that merged the
-/// peer's pack and then failed has changed this lockbox all the same.
-pub fn sync_with_peer<P: PeerLink>(
-    link: &P,
-    local: &dyn LocalVault,
-    now_ms: i64,
-) -> (PeerOutcome, Result<()>) {
-    let local = PeerLocal {
-        vault: local,
-        done: Cell::default(),
-    };
-    let ended = converge(link, &local, now_ms);
-    (local.done.get(), ended)
-}
-
-fn converge<P: PeerLink>(link: &P, local: &PeerLocal, now_ms: i64) -> Result<()> {
-    let head = link.head()?;
-    let skew_ms = head.now_ms.saturating_sub(now_ms);
+pub fn check_clocks(mine_ms: i64, theirs_ms: i64) -> Result<()> {
+    let skew_ms = theirs_ms.saturating_sub(mine_ms);
     if skew_ms.unsigned_abs() > MAX_CLOCK_SKEW_MS {
         return Err(Error::ClockSkew { skew_ms });
-    }
-    if head.revision != revision(local)? {
-        // Nothing to settle: the lockbox's id is what the two devices proved
-        // they share before the link was opened (design §4.3).
-        engine::sync(&PeerRemote(link), local, now_ms, || Ok(()))?;
     }
     Ok(())
 }
 
-/// The peer as the engine's [`Remote`]. It always holds a pack, and its upload
-/// is a merge, so there is nothing to make the write conditional on.
-struct PeerRemote<'a, P>(&'a P);
-
-impl<P: PeerLink> Remote for PeerRemote<'_, P> {
-    fn fetch(&self) -> Result<Option<RemoteFile>> {
-        self.0.fetch().map(Some)
+// The revision is read after the pack, whose reclaim may move it.
+pub fn pack(local: &dyn LocalVault, now_ms: i64) -> Result<(Vec<u8>, String)> {
+    let bytes = local.pack(Reclaim::at(now_ms))?;
+    if bytes.len() > MAX_PACK_BYTES {
+        return Err(Error::Other("this lockbox is too large to sync".into()));
     }
-
-    fn head_revision(&self) -> Result<Option<String>> {
-        Ok(Some(self.0.head()?.revision))
-    }
-
-    fn upload(&self, bytes: &[u8], _base_revision: Option<&str>) -> Result<String> {
-        self.0.absorb(bytes)
-    }
+    Ok((bytes, revision(local)?))
 }
 
-/// This device's lockbox for a run with a peer: as for a cloud run, except
-/// that the push is not recorded. `sync_remote_rev` and `sync_last_ms` describe
-/// the account, and a peer's revision is none of its business.
-struct PeerLocal<'a> {
-    vault: &'a dyn LocalVault,
-    /// What the run has done to the lockbox so far.
-    done: Cell<PeerOutcome>,
-}
-
-impl PeerLocal<'_> {
-    fn did(&self, change: impl FnOnce(&mut PeerOutcome)) {
-        let mut done = self.done.get();
-        change(&mut done);
-        self.done.set(done);
-    }
-}
-
-impl LocalVault for PeerLocal<'_> {
-    fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-        self.vault.decode(pack_bytes)
-    }
-
-    fn merge(&self, incoming: &Snapshot) -> Result<usize> {
-        let merged = self.vault.merge(incoming)?;
-        self.did(|done| done.merged += merged);
-        Ok(merged)
-    }
-
-    fn digest(&self) -> Result<[u8; 32]> {
-        self.vault.digest()
-    }
-
-    fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>> {
-        self.vault.pack(reclaim)
-    }
-
-    fn note_push(&self, _revision: &str, _at_ms: i64) -> Result<()> {
-        Ok(())
-    }
-
-    fn vault_id(&self) -> Result<Option<String>> {
-        self.vault.vault_id()
-    }
-
-    fn adopt_vault_id(&self, id: &str) -> Result<()> {
-        self.vault.adopt_vault_id(id)
-    }
-
-    fn name(&self) -> Result<(Option<String>, i64)> {
-        self.vault.name()
-    }
-
-    fn adopt_name(&self, name: &str, at_ms: i64) -> Result<()> {
-        self.vault.adopt_name(name, at_ms)?;
-        self.did(|done| done.renamed = true);
-        Ok(())
-    }
+pub fn absorb(local: &dyn LocalVault, pack: &[u8]) -> Result<Absorbed> {
+    let taken = engine::merge_pack(local, pack)?;
+    let renamed = if taken.renamed { local.name()?.0 } else { None };
+    Ok(Absorbed {
+        merged: taken.merged,
+        renamed,
+        revision: revision(local)?,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
-
     use super::*;
     use crate::commands::password_sync::two_devices::{derive, params, Device, NEW, NOW, OLD};
     use crate::store::{Attachment, AttachmentMeta, Record, VaultStore};
@@ -248,68 +61,24 @@ mod tests {
     const MINUTE_MS: i64 = 60 * 1000;
     const DAY_MS: i64 = 24 * 60 * MINUTE_MS;
 
-    /// The other device in process: the answering side's three functions,
-    /// called on it at its own clock, counting the packs that move.
-    struct InProcess<'a> {
-        peer: &'a Device,
-        now_ms: i64,
-        fetches: Cell<usize>,
-        absorbs: Cell<usize>,
-    }
-
-    impl<'a> InProcess<'a> {
-        fn new(peer: &'a Device, now_ms: i64) -> Self {
-            Self {
-                peer,
-                now_ms,
-                fetches: Cell::new(0),
-                absorbs: Cell::new(0),
-            }
-        }
-
-        fn packs_moved(&self) -> usize {
-            self.fetches.get() + self.absorbs.get()
-        }
-    }
-
-    impl PeerLink for InProcess<'_> {
-        fn head(&self) -> Result<PeerHead> {
-            head(self.peer, self.now_ms)
-        }
-
-        fn fetch(&self) -> Result<RemoteFile> {
-            self.fetches.set(self.fetches.get() + 1);
-            fetch(self.peer, self.now_ms)
-        }
-
-        fn absorb(&self, pack: &[u8]) -> Result<String> {
-            self.absorbs.set(self.absorbs.get() + 1);
-            Ok(absorb(self.peer, pack)?.revision)
-        }
-    }
-
-    /// One lockbox, `v1` under the old password, on the device named `id`.
     fn device(id: &'static str) -> Device {
         Device::create(id, "v1", OLD, &params(1, 0))
     }
 
-    /// A run `local` initiates over `link`: what it did, or the error it
-    /// ended on.
-    fn run_over(link: &InProcess, local: &Device, now_ms: i64) -> Result<PeerOutcome> {
-        let (outcome, ended) = sync_with_peer(link, local, now_ms);
-        ended.map(|()| outcome)
+    fn rev(device: &Device) -> String {
+        revision(device).unwrap()
     }
 
-    /// A run `local` initiates with `peer`, both clocks at `now_ms`.
-    fn run_at(local: &Device, peer: &Device, now_ms: i64) -> Result<PeerOutcome> {
-        run_over(&InProcess::new(peer, now_ms), local, now_ms)
+    fn pack_of(device: &Device) -> Vec<u8> {
+        pack(device, NOW).unwrap().0
     }
 
-    fn run(local: &Device, peer: &Device) -> Result<PeerOutcome> {
-        run_at(local, peer, NOW)
+    // Each takes in the other's pack, the second packed after its merge.
+    fn meet(x: &Device, y: &Device) {
+        absorb(y, &pack_of(x)).unwrap();
+        absorb(x, &pack_of(y)).unwrap();
     }
 
-    /// The row for `id`, tombstones included.
     fn row(device: &Device, id: &str) -> Option<Record> {
         device
             .store()
@@ -319,9 +88,7 @@ mod tests {
             .find(|r| r.id == id)
     }
 
-    /// `id` as `device` holds it, re-stamped: edited at `at_ms`, or with
-    /// `deleted`, deleted then. The stamps a run compares are then the test's,
-    /// not the wall clock's.
+    // Re-stamped at `at_ms`, so the merge compares the test's stamps.
     fn stamp(device: &Device, id: &str, at_ms: i64, deleted: bool) {
         let rec = row(device, id).unwrap();
         device
@@ -344,47 +111,81 @@ mod tests {
             .collect()
     }
 
-    // The account bookkeeping a cloud run writes, as `device` holds it.
-    fn account_marks(device: &Device) -> (Option<String>, Option<String>) {
-        let store = device.store();
-        (
-            store.meta_get("sync_remote_rev").unwrap(),
-            store.meta_get("sync_last_ms").unwrap(),
-        )
+    #[test]
+    fn revisions_are_equal_exactly_when_nothing_differs() {
+        let (a, b) = (device("a"), device("b"));
+        assert_eq!(rev(&a), rev(&b));
+        a.write("1", "made on a");
+        assert_ne!(rev(&a), rev(&b));
+        meet(&a, &b);
+        assert_eq!(rev(&a), rev(&b));
+        assert_eq!(pack(&a, NOW).unwrap().1, rev(&b));
     }
 
     #[test]
-    fn two_devices_converge_in_one_run_and_the_next_moves_no_pack() {
+    fn a_pack_states_the_revision_after_its_reclaim() {
+        let a = device("a");
+        a.write("1", "deleted long ago");
+        stamp(&a, "1", NOW - 100 * DAY_MS, true);
+        let before = rev(&a);
+        let (_, packed) = pack(&a, NOW).unwrap();
+        assert!(row(&a, "1").is_none());
+        assert_ne!(packed, before);
+        assert_eq!(packed, rev(&a));
+    }
+
+    #[test]
+    fn a_newer_name_moves_the_revision_and_is_taken_and_an_older_one_is_not() {
+        let (a, b) = (device("a"), device("b"));
+        a.adopt_name("Work", NOW).unwrap();
+        b.adopt_name("Personal", NOW - 1).unwrap();
+        assert_ne!(rev(&a), rev(&b));
+
+        let kept = absorb(&a, &pack_of(&b)).unwrap();
+        assert_eq!((kept.merged, kept.renamed), (0, None));
+        let taken = absorb(&b, &pack_of(&a)).unwrap();
+        assert_eq!(taken.renamed.as_deref(), Some("Work"));
+        assert_eq!(taken.revision, rev(&a));
+    }
+
+    #[test]
+    fn two_devices_end_level_with_one_pack_each_way() {
         let (a, b) = (device("a"), device("b"));
         a.write("1", "made on a");
         b.write("2", "made on b");
 
-        let link = InProcess::new(&b, NOW);
-        let outcome = run_over(&link, &a, NOW).unwrap();
-        assert_eq!(
-            outcome,
-            PeerOutcome {
-                merged: 1,
-                renamed: false,
-            }
-        );
-        assert_eq!((link.fetches.get(), link.absorbs.get()), (1, 1));
+        let (to_b, a_at) = pack(&a, NOW).unwrap();
+        let taken = absorb(&b, &to_b).unwrap();
+        assert!(taken.merged > 0);
+        assert_ne!(taken.revision, a_at);
+        let (to_a, b_at) = pack(&b, NOW).unwrap();
+        let back = absorb(&a, &to_a).unwrap();
+        assert!(back.merged > 0);
+        assert_eq!(back.revision, b_at);
         for device in [&a, &b] {
             assert_eq!(device.title("1").as_deref(), Some("made on a"));
             assert_eq!(device.title("2").as_deref(), Some("made on b"));
         }
-        assert_eq!(a.digest(), b.digest());
+    }
 
-        // Nothing left to say, whichever side starts.
-        let again = InProcess::new(&b, NOW);
-        assert_eq!(run_over(&again, &a, NOW).unwrap(), PeerOutcome::default());
-        let back = InProcess::new(&a, NOW);
-        assert_eq!(run_over(&back, &b, NOW).unwrap(), PeerOutcome::default());
-        assert_eq!(again.packs_moved() + back.packs_moved(), 0);
+    // Merging the peer's pack adds nothing here, so only the revisions say
+    // the peer is behind; this side's pack brings it level.
+    #[test]
+    fn a_strict_superset_merges_nothing_and_its_pack_brings_the_other_level() {
+        let (a, b) = (device("a"), device("b"));
+        a.write("1", "on both");
+        meet(&a, &b);
+        a.write("2", "only on a");
+
+        let kept = absorb(&a, &pack_of(&b)).unwrap();
+        assert_eq!(kept.merged, 0);
+        assert_ne!(kept.revision, rev(&b));
+        assert_eq!(absorb(&b, &pack_of(&a)).unwrap().revision, rev(&a));
+        assert_eq!(b.title("2").as_deref(), Some("only on a"));
     }
 
     #[test]
-    fn three_devices_converge_whatever_order_the_pairs_sync_in() {
+    fn three_devices_converge_whatever_order_the_pairs_meet_in() {
         let pairs = [(0, 1), (1, 2), (0, 2)];
         let orders = [
             [0, 1, 2],
@@ -399,14 +200,13 @@ mod tests {
             for (n, device) in devices.iter().enumerate() {
                 device.write(&n.to_string(), device.id);
             }
-            // Each pair once, the initiator alternating.
             for (step, &pair) in order.iter().enumerate() {
                 let (x, y) = pairs[pair];
-                let (local, peer) = if step % 2 == 0 { (x, y) } else { (y, x) };
-                run(&devices[local], &devices[peer]).unwrap();
+                let (first, second) = if step % 2 == 0 { (x, y) } else { (y, x) };
+                meet(&devices[first], &devices[second]);
             }
             for device in &devices {
-                assert_eq!(device.digest(), devices[0].digest(), "order {order:?}");
+                assert_eq!(rev(device), rev(&devices[0]), "order {order:?}");
                 for (n, writer) in ["a", "b", "c"].iter().enumerate() {
                     assert_eq!(device.title(&n.to_string()).as_deref(), Some(*writer));
                 }
@@ -421,7 +221,7 @@ mod tests {
         a.write("2", "second");
         stamp(&a, "1", NOW, false);
         stamp(&a, "2", NOW, false);
-        run(&a, &b).unwrap();
+        meet(&a, &b);
 
         // 1: deleted on A, then edited on B. 2: edited on B, then deleted on A.
         stamp(&a, "1", NOW + 10, true);
@@ -431,22 +231,22 @@ mod tests {
         stamp(&b, "2", NOW + 10, false);
         stamp(&a, "2", NOW + 20, true);
 
-        run(&b, &a).unwrap();
+        meet(&b, &a);
         for device in [&a, &b] {
             assert_eq!(device.title("1").as_deref(), Some("edited on b"));
             assert_eq!(device.title("2"), None);
             assert_eq!(row(device, "2").unwrap().deleted_at, Some(NOW + 20));
         }
-        assert_eq!(a.digest(), b.digest());
+        assert_eq!(rev(&a), rev(&b));
     }
 
-    // "Delete forever" beats an edit made after it, whichever device starts.
+    // "Delete forever" beats an edit made after it, whichever device packs first.
     #[test]
     fn a_purged_shell_wins_both_ways() {
-        for purger_starts in [true, false] {
+        for purger_first in [true, false] {
             let (a, b) = (device("a"), device("b"));
             a.write("1", "first");
-            run(&a, &b).unwrap();
+            meet(&a, &b);
 
             a.store().delete("1").unwrap();
             a.store().purge("1").unwrap();
@@ -454,16 +254,16 @@ mod tests {
             b.write("1", "edited after the purge");
             stamp(&b, "1", purged_at + DAY_MS, false);
 
-            if purger_starts {
-                run(&a, &b).unwrap();
+            if purger_first {
+                meet(&a, &b);
             } else {
-                run(&b, &a).unwrap();
+                meet(&b, &a);
             }
             for device in [&a, &b] {
                 let shell = row(device, "1").unwrap();
                 assert!(shell.deleted_at.is_some() && shell.payload.is_empty());
             }
-            assert_eq!(a.digest(), b.digest());
+            assert_eq!(rev(&a), rev(&b));
         }
     }
 
@@ -471,7 +271,7 @@ mod tests {
     fn an_attachment_follows_its_entry() {
         let (a, b) = (device("a"), device("b"));
         a.write("1", "with a file");
-        run(&a, &b).unwrap();
+        meet(&a, &b);
 
         a.store()
             .insert_attachment(&Attachment {
@@ -488,66 +288,33 @@ mod tests {
                 blob: b"sealed".to_vec(),
             })
             .unwrap();
-        run(&b, &a).unwrap();
+        meet(&b, &a);
         assert_eq!(files(&b, "1"), ["f1"]);
 
-        // Into the Trash with its entry, on both.
         a.store().delete("1").unwrap();
-        run(&a, &b).unwrap();
+        meet(&a, &b);
         assert!(files(&b, "1").is_empty());
         assert!(b.store().get_attachment("f1").unwrap().is_none());
-        assert_eq!(a.digest(), b.digest());
-    }
-
-    // Merging the peer's pack adds nothing here, so only the digests say the
-    // peer is behind; they do, and the push brings it level.
-    #[test]
-    fn a_peer_this_device_is_a_strict_superset_of_ends_up_equal() {
-        let (a, b) = (device("a"), device("b"));
-        a.write("1", "on both");
-        run(&a, &b).unwrap();
-        a.write("2", "only on a");
-
-        let outcome = run(&a, &b).unwrap();
-        assert_eq!(
-            outcome,
-            PeerOutcome {
-                merged: 0,
-                renamed: false,
-            }
-        );
-        assert_eq!(b.title("2").as_deref(), Some("only on a"));
-        assert_eq!(a.digest(), b.digest());
+        assert_eq!(rev(&a), rev(&b));
     }
 
     #[test]
-    fn clocks_six_minutes_apart_are_refused_and_nothing_changes() {
-        let (a, b) = (device("a"), device("b"));
-        a.write("1", "on a");
-        b.write("2", "on b");
-        let before = (a.digest(), b.digest());
-
+    fn clocks_more_than_five_minutes_apart_are_refused() {
         for skew in [6 * MINUTE_MS, -6 * MINUTE_MS] {
-            let link = InProcess::new(&b, NOW + skew);
-            match run_over(&link, &a, NOW) {
+            match check_clocks(NOW, NOW + skew) {
                 Err(Error::ClockSkew { skew_ms }) => assert_eq!(skew_ms, skew),
                 other => panic!("expected a clock skew error, got {other:?}"),
             }
-            assert_eq!(link.packs_moved(), 0);
         }
-        assert_eq!((a.digest(), b.digest()), before);
-
-        // Within the bound, the same two converge.
-        let link = InProcess::new(&b, NOW + 4 * MINUTE_MS);
-        run_over(&link, &a, NOW).unwrap();
-        assert_eq!(a.digest(), b.digest());
+        for skew in [0, 4 * MINUTE_MS, 5 * MINUTE_MS, -5 * MINUTE_MS] {
+            assert!(check_clocks(NOW, NOW + skew).is_ok());
+        }
     }
 
-    // Another lockbox's pack does not open, whichever way it travels: under
-    // another password and salt (another descriptor), or another password
-    // alone (the same descriptor, another key).
+    // Under another password and salt (another descriptor), or another
+    // password alone (the same descriptor, another key).
     #[test]
-    fn a_pack_from_another_lockbox_is_refused_and_nothing_merges() {
+    fn a_pack_from_another_lockbox_does_not_open_and_nothing_merges() {
         let a = device("a");
         a.write("1", "mine");
         for other in [
@@ -555,34 +322,32 @@ mod tests {
             Device::create("y", "v1", "another password", &params(1, 0)),
         ] {
             other.write("2", "theirs");
-            let before = (a.digest(), other.digest());
-
-            assert!(run(&a, &other).is_err());
-            assert!(run(&other, &a).is_err());
-            let theirs = fetch(&other, NOW).unwrap().bytes;
-            assert!(absorb(&a, &theirs).is_err());
-
-            assert_eq!((a.digest(), other.digest()), before);
+            let before = (rev(&a), rev(&other));
+            assert!(absorb(&a, &pack_of(&other)).is_err());
+            assert!(absorb(&other, &pack_of(&a)).is_err());
+            assert_eq!((rev(&a), rev(&other)), before);
             assert_eq!(a.title("2"), None);
         }
     }
 
     #[test]
-    fn a_password_change_on_one_device_stops_the_other_as_a_cloud_run_does() {
+    fn after_a_password_change_only_the_side_that_took_it_opens_both_packs() {
         let gen1 = params(2, 1);
         let mut a = device("a");
         let mut b = device("b");
         a.write("1", "first");
-        run(&a, &b).unwrap();
+        meet(&a, &b);
 
         a.rekey(derive(NEW, &gen1), &gen1);
         b.write("2", "made on b");
-        let b_before = b.digest();
+        let b_before = rev(&b);
 
-        // B, still on the old password, cannot open A's pack: the error a
-        // cloud run gets, and nothing merged.
-        assert!(matches!(run(&b, &a), Err(Error::PasswordChangedRemotely)));
-        assert_eq!(b.digest(), b_before);
+        // B, still on the old password: the error a cloud run gets.
+        assert!(matches!(
+            absorb(&b, &pack_of(&a)),
+            Err(Error::PasswordChangedRemotely)
+        ));
+        assert_eq!(rev(&b), b_before);
         let account = FakeStore::default();
         a.sync(&account).unwrap();
         assert!(matches!(
@@ -590,23 +355,17 @@ mod tests {
             Err(Error::PasswordChangedRemotely)
         ));
 
-        // A opens B's pack under the retired key and merges it; B refuses A's
-        // pack in turn, so A's run ends with B's error and B is unchanged. The
-        // run still says what it merged on A.
-        let (outcome, ended) = sync_with_peer(&InProcess::new(&b, NOW), &a, NOW);
-        assert!(matches!(ended, Err(Error::PasswordChangedRemotely)));
-        assert!(outcome.merged > 0);
+        // A opens B's pack under the retired key.
+        assert!(absorb(&a, &pack_of(&b)).unwrap().merged > 0);
         assert_eq!(a.title("2").as_deref(), Some("made on b"));
-        assert_eq!(b.digest(), b_before);
 
-        // Once B takes the new password, one run brings them level.
         b.rekey(derive(NEW, &gen1), &gen1);
-        run(&a, &b).unwrap();
-        assert_eq!(a.digest(), b.digest());
+        meet(&a, &b);
+        assert_eq!(rev(&a), rev(&b));
     }
 
     #[test]
-    fn a_lockbox_on_an_account_and_a_peer_converges_and_the_peer_run_leaves_the_account_marks() {
+    fn a_lockbox_synced_through_an_account_and_nearby_converges_everywhere() {
         let account = FakeStore::default();
         let a = device("a");
         a.write("1", "from a");
@@ -614,20 +373,11 @@ mod tests {
         let b = Device::restore("b", "v1", &account, OLD).unwrap();
         a.write("3", "from a, not yet pushed");
         b.write("2", "from b, met nearby");
-        let (a_marks, b_marks) = (account_marks(&a), account_marks(&b));
-        assert!(a_marks.0.is_some());
 
-        // Each has a row the other lacks, so the run pulls and pushes.
-        let outcome = run(&a, &b).unwrap();
-        assert_eq!(outcome.merged, 1);
-        assert_eq!(account_marks(&a), a_marks);
-        assert_eq!(account_marks(&b), b_marks);
-
-        // A now differs from the account and pushes; B already matches it.
+        meet(&a, &b);
         assert!(a.sync(&account).unwrap().pushed);
-        assert_ne!(account_marks(&a), a_marks);
         assert!(!b.sync(&account).unwrap().pushed);
-        assert_eq!(a.digest(), b.digest());
+        assert_eq!(rev(&a), rev(&b));
         let c = Device::restore("c", "v1", &account, OLD).unwrap();
         assert_eq!(c.title("2").as_deref(), Some("from b, met nearby"));
         assert_eq!(c.title("3").as_deref(), Some("from a, not yet pushed"));
