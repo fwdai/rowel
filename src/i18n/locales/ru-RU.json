@@ -170,6 +170,7 @@
   "Copy .env": "Скопировать .env",
   "Copy username": "Скопировать логин",
   "Copy one-time code": "Скопировать одноразовый код",
+  "Copy password and one-time code": "Скопировать пароль и одноразовый код",
   "Copy URL": "Скопировать URL",
   "Save as file…": "Сохранить в файл…",
   "Copied": "Скопировано",

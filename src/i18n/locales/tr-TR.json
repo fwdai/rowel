@@ -170,6 +170,7 @@
   "Copy .env": ".env kopyala",
   "Copy username": "Kullanıcı adını kopyala",
   "Copy one-time code": "Tek kullanımlık kodu kopyala",
+  "Copy password and one-time code": "Şifreyi ve tek kullanımlık kodu kopyala",
   "Copy URL": "URL'yi kopyala",
   "Save as file…": "Dosya olarak kaydet…",
   "Copied": "Kopyalandı",

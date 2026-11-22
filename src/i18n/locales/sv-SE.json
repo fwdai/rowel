@@ -170,6 +170,7 @@
   "Copy .env": "Kopiera .env",
   "Copy username": "Kopiera användarnamn",
   "Copy one-time code": "Kopiera engångskod",
+  "Copy password and one-time code": "Kopiera lösenord och engångskod",
   "Copy URL": "Kopiera URL",
   "Save as file…": "Spara som fil…",
   "Copied": "Kopierat",
