@@ -102,6 +102,13 @@ impl AppHost {
         Ok((workspace.id, false))
     }
 
+    fn located(&self, vault_id: &str) -> Option<(String, bool)> {
+        let state = self.app.state::<AppState>();
+        let root = storage::root_dir(&self.app).ok()?;
+        let _paths = state.workspace_lock.lock().unwrap();
+        self.locate(&state, &root, vault_id).ok()
+    }
+
     // Under `workspace_lock`, with the claim held.
     fn target(&self, state: &AppState, root: &Path, vault_id: &str) -> Result<Target> {
         let (workspace_id, is_open) = self.locate(state, root, vault_id)?;
@@ -258,13 +265,8 @@ impl Host for AppHost {
         step(&*vault)
     }
 
-    fn announce(&self, vault_id: &str, absorbed: &Absorbed) {
-        let state = self.app.state::<AppState>();
-        let located = storage::root_dir(&self.app).and_then(|root| {
-            let _paths = state.workspace_lock.lock().unwrap();
-            self.locate(&state, &root, vault_id)
-        });
-        let Ok((workspace_id, is_open)) = located else {
+    fn merged(&self, vault_id: &str, absorbed: &Absorbed) {
+        let Some((workspace_id, is_open)) = self.located(vault_id) else {
             return;
         };
         if let Some(name) = &absorbed.renamed {
@@ -273,10 +275,14 @@ impl Host for AppHost {
                 Err(e) => log::warn!("nearby: could not record lockbox {workspace_id}'s name: {e}"),
             }
         }
-        if is_open {
-            if absorbed.merged > 0 {
-                crate::commands::sync::announce_merged(&self.app);
-            }
+        if is_open && absorbed.merged > 0 {
+            crate::commands::sync::announce_merged(&self.app);
+        }
+    }
+
+    fn pass_on(&self, vault_id: &str) {
+        if self.located(vault_id).is_some_and(|(_, is_open)| is_open) {
+            let state = self.app.state::<AppState>();
             crate::commands::sync::request_run_if_ready(&self.app, &state);
         }
         super::request_run(&self.app);

@@ -38,8 +38,11 @@ pub trait Host: Send + Sync + 'static {
     fn step<T>(&self, vault_id: &str, step: impl FnOnce(&dyn LocalVault) -> Result<T>)
         -> Result<T>;
 
-    /// Called with the claim released.
-    fn announce(&self, vault_id: &str, absorbed: &Absorbed);
+    // Both with the claim released: `merged` right after a merge that changed the
+    // lockbox, `pass_on` once that lockbox's exchange is over.
+    fn merged(&self, vault_id: &str, absorbed: &Absorbed);
+
+    fn pass_on(&self, vault_id: &str);
 
     fn now_ms(&self) -> i64;
 }

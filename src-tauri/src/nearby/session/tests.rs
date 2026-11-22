@@ -95,6 +95,7 @@ struct TestHost {
     next_step: Mutex<Option<Hook>>,
     /// Every merge announced, by vault id.
     announced: Mutex<Vec<String>>,
+    passed_on: AtomicUsize,
 }
 
 impl TestHost {
@@ -200,7 +201,11 @@ impl Host for TestHost {
         })
     }
 
-    fn announce(&self, vault_id: &str, _absorbed: &Absorbed) {
+    fn pass_on(&self, _vault_id: &str) {
+        self.passed_on.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn merged(&self, vault_id: &str, _absorbed: &Absorbed) {
         self.announced.lock().unwrap().push(vault_id.to_string());
     }
 
@@ -302,6 +307,7 @@ impl Node {
 
     fn announced(&self) -> bool {
         !self.host.announced.lock().unwrap().is_empty()
+            && self.host.passed_on.load(Ordering::SeqCst) > 0
     }
 
     /// Whether this node shows `other` failed with an error of `kind`.

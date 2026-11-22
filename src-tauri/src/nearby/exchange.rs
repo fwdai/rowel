@@ -16,6 +16,12 @@ pub struct Absorbed {
     pub revision: String,
 }
 
+impl Absorbed {
+    pub fn changed(&self) -> bool {
+        self.merged > 0 || self.renamed.is_some()
+    }
+}
+
 pub fn revision(local: &dyn LocalVault) -> Result<String> {
     let digest = hex::encode(local.digest()?);
     Ok(match local.name()? {

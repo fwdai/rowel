@@ -231,10 +231,11 @@ here, and the lockbox's keys, read again under the claim (which a password
 change waits for), are the ones the connection proved. A gate that fails ends
 the connection without a word.
 
-A merge that wrote rows into the open lockbox emits `vault:merged`
-(`commands::sync::announce_merged`) and asks for a cloud run; a newer name is
-mirrored into the registry as a cloud run's is. Either is passed on to the
-other devices here.
+Right after a merge, its step done, rows written into the open lockbox emit
+`vault:merged` (`commands::sync::announce_merged`) and a newer name is
+mirrored into the registry as a cloud run's is. Once that lockbox's exchange
+is over, a cloud run is asked for and a sync with the other devices here is
+due: not sooner, since the cloud run takes the claim the exchange still needs.
 
 **Pause and Remove.** Kept per install in `nearby/state.json` under the app's
 data root, beside `settings.json` and kept the same way (a JSON file with

@@ -132,7 +132,7 @@ impl<H: Host> Script<'_, H> {
 
     fn one(&mut self, vault: &str, script: impl FnOnce(&mut Self) -> Turn<()>) -> Result<()> {
         let ended = script(self);
-        let merged = self.announce(vault);
+        let merged = self.pass_on(vault);
         match ended {
             Ok(()) => self.record(vault, Ok(merged)),
             Err(Stop::Failed(e)) => self.record(vault, Err(e)),
@@ -142,12 +142,12 @@ impl<H: Host> Script<'_, H> {
     }
 
     // After the lockbox's last step: the cloud run this asks for takes the claim.
-    fn announce(&mut self, vault: &str) -> usize {
+    fn pass_on(&mut self, vault: &str) -> usize {
         let Some(absorbed) = self.absorbed.take() else {
             return 0;
         };
-        if absorbed.merged > 0 || absorbed.renamed.is_some() {
-            self.shared.host.announce(vault, &absorbed);
+        if absorbed.changed() {
+            self.shared.host.pass_on(vault);
         }
         absorbed.merged
     }
@@ -214,6 +214,9 @@ impl<H: Host> Script<'_, H> {
     fn merge(&mut self, vault: &str, last: &str, pack: &[u8]) -> Turn<String> {
         let absorbed = self.step(vault, |local| exchange::absorb(local, pack));
         let absorbed = self.or_state(vault, last, absorbed)?;
+        if absorbed.changed() {
+            self.shared.host.merged(vault, &absorbed);
+        }
         let revision = absorbed.revision.clone();
         self.absorbed = Some(absorbed);
         Ok(revision)
