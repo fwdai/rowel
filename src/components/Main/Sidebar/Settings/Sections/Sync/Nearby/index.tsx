@@ -5,18 +5,7 @@ import { CARD_OPEN, LABEL } from '@/components/elements/tokens'
 import Devices from './Devices'
 import EnabledRow from './EnabledRow'
 
-/**
- * The owner's devices on the same network, syncing with this one directly.
- * It runs beside the cloud account rather than as one of its providers — a
- * lockbox may use both — so it is a group of its own and leaves the account
- * card alone.
- *
- * Drawn only once the backend has said this build can do it at all; until its
- * status arrives there is nothing true to show.
- *
- * A SettingsGroup, spelled out: the card's overflow stays open so a device
- * row's menu can hang past the last row, as on Settings › Lockboxes.
- */
+// A SettingsGroup spelled out: CARD_OPEN lets a device row's menu hang past the last row.
 export default function Nearby() {
   const { t } = useTranslation()
   const nearby = useApp(state => state.nearby)

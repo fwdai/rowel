@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use rand::RngCore;
 
+use self::book::Outcome;
 use self::conns::Conns;
 use self::schedule::{Dial, Schedule};
 use crate::nearby::discovery::{Advert, Discovery, Event};
@@ -167,8 +168,13 @@ impl<H: Host> Shared<H> {
         self.schedule.lock().unwrap()
     }
 
-    fn live(&self, change: impl FnOnce(&mut book::Live)) {
-        self.book.live(self.generation, change);
+    fn syncing(&self, id: &str) {
+        self.book.syncing(self.generation, id);
+    }
+
+    fn record(&self, id: &str, outcome: Option<Outcome>) {
+        self.book
+            .record(self.generation, id, outcome, self.host.now_ms());
     }
 
     fn lockboxes(&self) -> Arc<Vec<Lockbox>> {
@@ -228,7 +234,7 @@ impl<H: Host> Shared<H> {
 
     fn show_here(&self) {
         let here = self.schedule().here();
-        self.live(|live| live.here = here);
+        self.book.here(self.generation, here);
     }
 
     fn dial_due(self: &Arc<Self>) {
@@ -243,10 +249,7 @@ impl<H: Host> Shared<H> {
     }
 
     fn may_dial(&self, device: &DeviceId) -> bool {
-        let id = device.to_string();
-        device != self.identity.device_id()
-            && !self.book.is_removed(&id)
-            && !self.book.is_paused(&id)
+        device != self.identity.device_id() && !self.book.refuses(&device.to_string())
     }
 
     fn dial(&self, dial: Dial) {

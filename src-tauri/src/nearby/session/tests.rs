@@ -2,12 +2,13 @@
 //! lockboxes of the two-devices harness (`commands::password_sync::
 //! two_devices`): real SQLCipher vaults, real packs, real TLS.
 
-use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+use std::collections::BTreeSet;
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::book::{NearbyDevice, NearbyDeviceState};
+use super::book::{NearbyDevice, NearbyDeviceState, MAX_REMOVED};
 use super::*;
 use crate::commands::password_sync::two_devices::{derive, params, Device, NEW, OLD};
 use crate::error::{Error as AppError, Result as AppResult};
@@ -216,23 +217,25 @@ struct Node {
     manager: Manager<TestHost>,
 }
 
-fn node(network: &Network, lockboxes: &[&Arc<Held>]) -> Node {
-    node_at(network, lockboxes, 0)
+fn host(lockboxes: &[&Arc<Held>]) -> TestHost {
+    TestHost {
+        lockboxes: Mutex::new(lockboxes.iter().map(|held| (*held).clone()).collect()),
+        ..TestHost::default()
+    }
 }
 
-/// A node whose clock is `offset_ms` off the others'.
-fn node_at(network: &Network, lockboxes: &[&Arc<Held>], offset_ms: i64) -> Node {
-    let host = Arc::new(TestHost {
-        lockboxes: Mutex::new(lockboxes.iter().map(|held| (*held).clone()).collect()),
-        offset_ms,
-        ..TestHost::default()
-    });
+fn node(network: &Network, lockboxes: &[&Arc<Held>]) -> Node {
+    node_on(network, host(lockboxes), Stored::default())
+}
+
+fn node_on(network: &Network, host: TestHost, stored: Stored) -> Node {
+    let host = Arc::new(host);
     let shown = Arc::<Mutex<Vec<NearbyStatus>>>::default();
     let emitted = shown.clone();
     let book = Arc::new(Book::new(
         Stored {
             enabled: true,
-            ..Stored::default()
+            ..stored
         },
         "Test device".into(),
         Box::new(|_| {}),
@@ -262,15 +265,30 @@ impl Node {
 
     /// This node's row for `other`.
     fn row(&self, other: &Node) -> Option<NearbyDevice> {
+        self.row_of(&other.id())
+    }
+
+    fn row_of(&self, id: &str) -> Option<NearbyDevice> {
         self.book
             .status()
             .devices
             .into_iter()
-            .find(|device| device.id == other.id())
+            .find(|device| device.id == id)
     }
 
     fn state_of(&self, other: &Node) -> Option<NearbyDeviceState> {
         self.row(other).map(|row| row.state)
+    }
+
+    /// Every state this node has shown for the device `id`, in order.
+    fn history(&self, id: &str) -> Vec<NearbyDeviceState> {
+        self.shown
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|status| status.devices.iter().find(|d| d.id == id))
+            .map(|row| row.state)
+            .collect()
     }
 
     /// Whether this node shows `other` as here and level with it.
@@ -548,7 +566,9 @@ fn a_removed_device_is_refused_by_every_device_the_removal_reaches() {
 
     na.manager.remove(&nc.id());
     assert!(na.row(&nc).is_none());
-    eventually("b learns it from a", || nb.book.is_removed(&nc.id()));
+    eventually("b learns it from a", || {
+        nb.book.removed().contains(&nc.id())
+    });
 
     // Nothing crosses between C and the other two from now on, whichever
     // side has something to say; A and B go on as before.
@@ -563,15 +583,29 @@ fn a_removed_device_is_refused_by_every_device_the_removal_reaches() {
     assert!(c.title("3").is_none());
 }
 
+// Every handshake carries a whole set, so a full one has to fit the receiver's
+// limit on a control message: these sync only if it does.
 #[test]
-fn a_long_removed_set_reaches_the_other_device_whole() {
+fn full_removed_sets_cross_every_handshake_and_grow_no_further() {
     let network = Network::default();
     let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
-    let na = node(&network, &[&a]);
-    let ids: Vec<String> = (0..600).map(|i| format!("{i:064x}")).collect();
-    na.book.remove(&ids);
-    let nb = node(&network, &[&b]);
-    eventually("b holds every id", || nb.book.removed().len() == ids.len());
+    let ids = |from: usize, n: usize| -> BTreeSet<String> {
+        (from..from + n).map(|i| format!("{i:064x}")).collect()
+    };
+    let removing = |removed| Stored {
+        removed,
+        ..Stored::default()
+    };
+    let na = node_on(&network, host(&[&a]), removing(ids(0, MAX_REMOVED)));
+    let nb = node_on(&network, host(&[&b]), removing(ids(MAX_REMOVED, 10)));
+
+    eventually("both sync, b's set filled from a's", || {
+        na.level_with(&nb) && nb.level_with(&na) && nb.book.removed().len() == MAX_REMOVED
+    });
+    let removed = |node: &Node| node.book.removed().into_iter().collect::<BTreeSet<_>>();
+    assert_eq!(removed(&na), ids(0, MAX_REMOVED));
+    assert!(removed(&nb).is_superset(&ids(MAX_REMOVED, 10)));
+    assert!(na.book.remove(&["f".repeat(64)]).is_empty());
 }
 
 #[test]
@@ -591,6 +625,52 @@ fn a_device_whose_shared_lockbox_went_is_shown_offline() {
         na.state_of(&nb) == Some(NearbyDeviceState::Offline)
             && nb.state_of(&na) == Some(NearbyDeviceState::Offline)
     });
+}
+
+// Met in an earlier session: its advertisement is seen, but nothing answers at its address.
+#[test]
+fn a_device_seen_but_never_reached_waits_and_is_never_shown_up_to_date() {
+    let network = Network::default();
+    let a = lockbox("a", "v1", 1);
+    let na = node(&network, &[&a]);
+    let ghost = identity();
+    let id = ghost.device_id().to_string();
+    na.book.seen(&id, "Laptop", "macos");
+    let closed = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .and_then(|listener| listener.local_addr())
+        .unwrap()
+        .port();
+    let txt = advert::txt(ghost.device_id(), [0; 16], &na.host.lockboxes());
+    let member = network.join();
+    member.advertise(&Advert { port: closed, txt }).unwrap();
+
+    eventually("a dialled it, and again", || na.manager.dials() >= 2);
+    let state = na.row_of(&id).map(|row| row.state);
+    assert_eq!(state, Some(NearbyDeviceState::Waiting));
+    assert!(!na.history(&id).contains(&NearbyDeviceState::UpToDate));
+}
+
+// B's run claim is never free, so every connection ends before a verdict, whichever side dialled.
+#[test]
+fn a_device_whose_syncs_always_end_early_waits_and_is_never_shown_up_to_date() {
+    let network = Network::default();
+    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let busy = host(&[&b]);
+    let _held = claim(&busy.claim).unwrap();
+    let na = node(&network, &[&a]);
+    let nb = node_on(&network, busy, Stored::default());
+
+    eventually("each dialled the other, and again", || {
+        na.manager.dials() >= 2 && nb.manager.dials() >= 2
+    });
+    for (node, other) in [(&na, &nb), (&nb, &na)] {
+        eventually("waiting", || {
+            node.state_of(other) == Some(NearbyDeviceState::Waiting)
+        });
+        assert!(!node
+            .history(&other.id())
+            .contains(&NearbyDeviceState::UpToDate));
+    }
 }
 
 // The hook runs inside A's first step, so after the handshake and before
@@ -637,7 +717,7 @@ fn a_device_removed_after_the_handshake_is_sent_no_pack() {
     let nb = node(&network, &[&b]);
 
     eventually("a's gate refuses b", || na.manager.refused() > 0);
-    assert!(na.book.is_removed(&nb.id()));
+    assert!(na.book.removed().contains(&nb.id()));
     assert_eq!(na.manager.packs(), 0);
     assert!(b.title("1").is_none());
 }
@@ -660,6 +740,31 @@ fn each_side_shows_its_own_error_and_the_other_that_the_sync_did_not_finish() {
     assert!(a.title("2").is_none());
 }
 
+// B cannot pack: v1, where it holds a row A lacks, always fails; v2 syncs after it.
+#[test]
+fn a_failure_on_one_lockbox_is_shown_though_the_next_one_synced() {
+    let network = Network::default();
+    let (a1, a2) = (lockbox("a1", "v1", 1), lockbox("a2", "v2", 2));
+    let (b1, b2) = (lockbox("b1", "v1", 1), lockbox("b2", "v2", 2));
+    b1.write("1", "only b can send this");
+    a2.write("2", "a sends this");
+    let nb = node(&network, &[&b1, &b2]);
+    nb.host.fail_packs.store(true, Ordering::SeqCst);
+    let na = node(&network, &[&a1, &a2]);
+
+    eventually("v2 is level while both show v1's failure", || {
+        a2.digest() == b2.digest()
+            && nb.failed_with(&na, "vaultFull")
+            && na.failed_with(&nb, "other")
+    });
+    assert!(b2.title("2").is_some() && a1.title("1").is_none());
+    for (node, other) in [(&na, &nb), (&nb, &na)] {
+        assert!(!node
+            .history(&other.id())
+            .contains(&NearbyDeviceState::UpToDate));
+    }
+}
+
 // Each side dials once on first sight; every dial after that is the timer's.
 #[test]
 fn a_sync_that_failed_is_tried_again_at_the_next_period() {
@@ -671,8 +776,9 @@ fn a_sync_that_failed_is_tried_again_at_the_next_period() {
     nb.host.fail_packs.store(true, Ordering::SeqCst);
     let na = node(&network, &[&a]);
 
-    eventually("both dialled again after a failed sync", || {
-        nb.failed_with(&na, "vaultFull") && na.manager.dials() >= 2 && nb.manager.dials() >= 2
+    // Each dials once on first sight; a third dial is a later period's.
+    eventually("one of them dialled again after a failed sync", || {
+        nb.failed_with(&na, "vaultFull") && na.manager.dials() + nb.manager.dials() >= 3
     });
     assert!(a.title("2").is_none());
     nb.host.fail_packs.store(false, Ordering::SeqCst);
@@ -716,9 +822,13 @@ fn clocks_six_minutes_apart_stop_the_run_and_nothing_merges() {
     // Half a minute short of six, so the difference each side measures (this
     // offset, give or take the milliseconds between the two readings) rounds
     // up to six whichever of them dials.
+    let skewed_host = TestHost {
+        offset_ms: 6 * 60 * 1000 - 30_000,
+        ..host(&[&b])
+    };
     let (na, nb) = (
         node(&network, &[&a]),
-        node_at(&network, &[&b], 6 * 60 * 1000 - 30_000),
+        node_on(&network, skewed_host, Stored::default()),
     );
     let skewed = |n: &Node, other: &Node| {
         n.row(other).is_some_and(|row| {
@@ -803,11 +913,7 @@ fn the_status_moves_forward_and_says_what_happened() {
     });
     let shown = na.shown.lock().unwrap().clone();
     assert!(shown.windows(2).all(|w| w[0].seq < w[1].seq));
-    let states: Vec<NearbyDeviceState> = shown
-        .iter()
-        .filter_map(|status| status.devices.iter().find(|d| d.id == nb.id()))
-        .map(|row| row.state)
-        .collect();
+    let states = na.history(&nb.id());
     let syncing = states
         .iter()
         .position(|s| *s == NearbyDeviceState::Syncing)

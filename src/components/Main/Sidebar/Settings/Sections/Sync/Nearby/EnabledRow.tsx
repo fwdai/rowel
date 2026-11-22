@@ -9,20 +9,15 @@ import { NearbyGlyph } from '@/components/Main/icons'
 
 interface Props {
   enabled: boolean
-  /** The status the switch was drawn from; a newer one ends the wait on a press. */
   seq: number
 }
 
-/**
- * The one switch. The press flips it at once, and it holds that position
- * until the backend's next status says where it stands — so the switch does
- * not snap back between the command's answer and the event that follows it.
- */
 export default function EnabledRow({ enabled, seq }: Props) {
   const { t } = useTranslation()
   const [pressed, setPressed] = useState<{ enabled: boolean; seq: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const label = t('Sync with nearby devices')
+  // A press holds until a newer status, so the switch does not snap back before the event.
   const checked = pressed?.seq === seq ? pressed.enabled : enabled
 
   const toggle = (next: boolean) => {

@@ -59,10 +59,12 @@ describe('syncView', () => {
       expect(syncView(cloud(), nearby([device('upToDate')], { enabled: false }))).toEqual(local)
     })
 
-    it('waits for a nearby device while none is here', () => {
+    it('waits for a nearby device while none is up to date', () => {
       const waiting = { tone: 'idle', message: 'Waiting for a nearby device' }
       expect(syncView(cloud(), nearby([]))).toEqual(waiting)
-      expect(syncView(cloud(), nearby([device('offline'), device('paused')]))).toEqual(waiting)
+      expect(
+        syncView(cloud(), nearby([device('offline'), device('paused'), device('waiting')]))
+      ).toEqual(waiting)
     })
 
     it('is up to date once a nearby device is', () => {

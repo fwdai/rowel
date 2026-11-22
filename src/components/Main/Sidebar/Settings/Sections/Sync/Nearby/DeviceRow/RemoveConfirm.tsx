@@ -7,11 +7,6 @@ interface Props {
   onClose: () => void
 }
 
-/**
- * Remove, said plainly: every one of the owner's devices refuses this one
- * from now on, and nothing it already holds is erased — that takes a new
- * master password, which is what a lost or stolen device calls for.
- */
 export default function RemoveConfirm({ name, onConfirm, onClose }: Props) {
   const { t } = useTranslation()
 

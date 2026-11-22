@@ -25,7 +25,13 @@ pub fn nearby_pause(app: AppHandle, device_id: String, paused: bool) -> Result<(
 
 #[tauri::command]
 pub fn nearby_remove(app: AppHandle, device_id: String) -> Result<()> {
-    app::remove(&app, &canonical(&device_id)?);
+    let id = canonical(&device_id)?;
+    app::remove(&app, &id);
+    if !app::state(&app).book.removed().contains(&id) {
+        return Err(Error::Other(
+            "no more devices can be removed: the list of removed devices is full".into(),
+        ));
+    }
     Ok(())
 }
 

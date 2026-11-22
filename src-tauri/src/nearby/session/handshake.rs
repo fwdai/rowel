@@ -101,10 +101,10 @@ pub(super) fn run<H: Host>(
         return Ok(Handshake::Over);
     }
 
-    // Each keeps the union of the two removed sets, so a Remove on one of the
-    // owner's devices reaches the others as they meet. Taken only now the two
-    // have proved a key to each other: it is the word of a device that holds
-    // the lockbox. One message carries every id, some nine hundred at most.
+    // Each keeps the union of the two removed sets, up to the book's cap, so a
+    // Remove on one of the owner's devices reaches the others as they meet.
+    // Taken only now the two have proved a key to each other: it is the word
+    // of a device that holds the lockbox.
     let mine = Control::Removed {
         ids: shared.book.removed(),
     };

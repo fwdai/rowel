@@ -11,8 +11,6 @@ interface Props {
   onRemove: () => void
 }
 
-// A device's actions, behind the row's ⋯: there is nothing to do on a row
-// that is syncing as it should.
 export default function Menu({ id, paused, onPause, onRemove }: Props) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)

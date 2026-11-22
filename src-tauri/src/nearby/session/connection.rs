@@ -4,6 +4,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 use super::advert::Recognised;
+use super::book::Outcome;
 use super::handshake::{self, Handshake};
 use super::host::Host;
 use super::listener::is_local;
@@ -21,12 +22,19 @@ pub(super) fn accept<H: Host>(shared: &Shared<H>, sock: TcpStream) {
 
 pub(super) fn dial<H: Host>(shared: &Shared<H>, found: &Recognised, addrs: &[SocketAddr]) {
     shared.count_dial();
-    let outcome = match reach(addrs).map(|sock| connected(shared, sock, Some(found))) {
-        None => "could not connect".to_string(),
-        Some(Ok(())) => "done".to_string(),
-        Some(Err(e)) => e.to_string(),
+    let device = found.device.to_string();
+    let failed = match reach(addrs).map(|sock| connected(shared, sock, Some(found))) {
+        Some(Ok(())) => None,
+        None => Some("could not connect".to_string()),
+        Some(Err(e)) => Some(e.to_string()),
     };
-    log::info!("nearby: dial {:.8}: {outcome}", found.device.to_string());
+    if failed.is_some() {
+        shared.record(&device, None);
+    }
+    log::info!(
+        "nearby: dial {device:.8}: {}",
+        failed.as_deref().unwrap_or("done")
+    );
 }
 
 fn reach(addrs: &[SocketAddr]) -> Option<TcpStream> {
@@ -38,6 +46,7 @@ fn reach(addrs: &[SocketAddr]) -> Option<TcpStream> {
         .find_map(|a| TcpStream::connect_timeout(a, DIAL_TIMEOUT).ok())
 }
 
+// An error only before the channel: past it, the outcome is recorded instead.
 fn connected<H: Host>(
     shared: &Shared<H>,
     sock: TcpStream,
@@ -47,7 +56,11 @@ fn connected<H: Host>(
         .conns()
         .open(&sock)
         .ok_or(Error::Ended("too many connections are open"))?;
-    let served = serve(shared, conn, sock, dialled);
+    let opened = match dialled {
+        Some(found) => channel::connect_over(sock, &shared.identity, Some(&found.device)),
+        None => channel::accept(sock, &shared.identity),
+    };
+    let served = opened.map(|mut channel| serve(shared, conn, &mut channel, dialled));
     shared.conns().close(conn);
     served
 }
@@ -55,16 +68,16 @@ fn connected<H: Host>(
 fn serve<H: Host>(
     shared: &Shared<H>,
     conn: u64,
-    sock: TcpStream,
+    channel: &mut Channel,
     dialled: Option<&Recognised>,
-) -> Result<()> {
-    let mut channel = match dialled {
-        Some(found) => channel::connect_over(sock, &shared.identity, Some(&found.device)),
-        None => channel::accept(sock, &shared.identity),
-    }?;
-    let synced = sync_with(shared, conn, &mut channel, dialled);
-    shared.schedule().ended(channel.peer());
-    synced
+) {
+    let peer = channel.peer().to_string();
+    let outcome = sync_with(shared, conn, channel, dialled).unwrap_or_else(|e| {
+        log::info!("nearby: with {peer:.8}: {e}");
+        None
+    });
+    shared.record(&peer, outcome);
+    shared.schedule().ended(channel.peer(), dialled.is_none());
 }
 
 fn sync_with<H: Host>(
@@ -72,25 +85,20 @@ fn sync_with<H: Host>(
     conn: u64,
     channel: &mut Channel,
     dialled: Option<&Recognised>,
-) -> Result<()> {
+) -> Result<Option<Outcome>> {
     let peer = channel.peer().to_string();
-    if channel.peer() == shared.identity.device_id() || shared.book.is_removed(&peer) {
-        return Ok(());
+    if channel.peer() == shared.identity.device_id() || shared.book.refuses(&peer) {
+        return Ok(None);
     }
     let lockboxes = shared.lockboxes();
     let matches = dialled.map_or(&[][..], |found| &found.matches);
     let Handshake::Established { vaults, behind } =
         handshake::run(shared, channel, &lockboxes, matches)?
     else {
-        return Ok(());
+        return Ok(None);
     };
     shared.conns().established(conn);
-    shared.live(|live| {
-        if behind {
-            live.behind.insert(peer.clone());
-        } else {
-            live.behind.remove(&peer);
-        }
-    });
-    sync::run(shared, channel, &peer, &lockboxes, &vaults)
+    shared.syncing(&peer);
+    let synced = sync::run(shared, channel, &peer, &lockboxes, &vaults);
+    Ok(behind.then_some(Outcome::Behind).or(synced))
 }

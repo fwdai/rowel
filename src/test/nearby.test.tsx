@@ -128,6 +128,7 @@ describe('Settings › Sync › Nearby devices', () => {
 
   it.each<[string, NearbyDevice['state'], Partial<NearbyDevice>]>([
     ['Syncing…', 'syncing', {}],
+    ['Waiting to sync', 'waiting', {}],
     ['Up to date', 'upToDate', {}],
     ['Not nearby', 'offline', {}],
     [

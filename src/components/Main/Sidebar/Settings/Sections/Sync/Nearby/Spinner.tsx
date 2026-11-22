@@ -1,4 +1,3 @@
-/** Waiting on the network: the sync chip's accent ring, on its own. */
 export default function Spinner() {
   return (
     <span

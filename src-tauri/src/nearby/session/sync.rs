@@ -3,7 +3,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::book::Failure;
+use super::book::{Failure, Outcome};
 use super::handshake::out_of_step;
 use super::host::{Host, Lockbox};
 use super::Shared;
@@ -41,28 +41,19 @@ pub(super) fn run<H: Host>(
     peer: &str,
     proved: &[Lockbox],
     vaults: &[String],
-) -> Result<()> {
-    let role = channel.role();
+) -> Option<Outcome> {
     let mut script = Script {
         shared,
         channel,
         peer,
         proved,
         absorbed: None,
+        outcomes: Vec::new(),
     };
-    match role {
-        Role::Connector => vaults
-            .iter()
-            .try_for_each(|vault| script.one(vault, |s| s.dial(vault))),
-        Role::Acceptor => loop {
-            let (vault, theirs, their_ms) = match script.opening(vaults) {
-                // The dialler closes when it has run every lockbox.
-                Err(Error::Io(_)) => return Ok(()),
-                opened => opened?,
-            };
-            script.one(&vault, |s| s.answer(&vault, &theirs, their_ms))?;
-        },
+    if let Err(e) = script.every(vaults) {
+        log::info!("nearby: sync with {peer:.8} ended: {e}");
     }
+    Outcome::of(script.outcomes, vaults.len())
 }
 
 struct Script<'a, H: Host> {
@@ -71,10 +62,27 @@ struct Script<'a, H: Host> {
     peer: &'a str,
     proved: &'a [Lockbox],
     absorbed: Option<Absorbed>,
+    outcomes: Vec<Outcome>,
 }
 
 // Strictly in turns: a pack can be large, and each side writes on one blocking thread.
 impl<H: Host> Script<'_, H> {
+    fn every(&mut self, vaults: &[String]) -> Result<()> {
+        match self.channel.role() {
+            Role::Connector => vaults
+                .iter()
+                .try_for_each(|vault| self.one(vault, |s| s.dial(vault))),
+            Role::Acceptor => loop {
+                let (vault, theirs, their_ms) = match self.opening(vaults) {
+                    // The dialler closes when it has run every lockbox.
+                    Err(Error::Io(_)) => return Ok(()),
+                    opened => opened?,
+                };
+                self.one(&vault, |s| s.answer(&vault, &theirs, their_ms))?;
+            },
+        }
+    }
+
     fn dial(&mut self, vault: &str) -> Turn<()> {
         let mine = self.step(vault, exchange::revision)?;
         let mine_ms = self.send_state(vault, &mine)?;
@@ -123,14 +131,7 @@ impl<H: Host> Script<'_, H> {
     }
 
     fn one(&mut self, vault: &str, script: impl FnOnce(&mut Self) -> Turn<()>) -> Result<()> {
-        self.shared.live(|live| {
-            live.syncing.insert(self.peer.to_string());
-            live.failed.remove(self.peer);
-        });
         let ended = script(self);
-        self.shared.live(|live| {
-            live.syncing.remove(self.peer);
-        });
         let merged = self.announce(vault);
         match ended {
             Ok(()) => self.record(vault, Ok(merged)),
@@ -151,24 +152,18 @@ impl<H: Host> Script<'_, H> {
         absorbed.merged
     }
 
-    fn record(&self, vault: &str, verdict: AppResult<usize>) {
+    fn record(&mut self, vault: &str, verdict: AppResult<usize>) {
         let peer = self.peer;
-        match verdict {
+        self.outcomes.push(match verdict {
             Ok(merged) => {
                 log::info!("nearby: run {vault:.8} with {peer:.8}: {merged} rows merged");
-                self.shared.book.converged(peer, self.shared.host.now_ms());
+                Outcome::Synced
             }
             Err(e) => {
                 log::info!("nearby: run {vault:.8} with {peer:.8} failed: {e}");
-                let failure = Failure {
-                    kind: e.kind().to_string(),
-                    message: e.to_string(),
-                };
-                self.shared.live(|live| {
-                    live.failed.insert(peer.to_string(), failure);
-                });
+                Outcome::Failed(Failure::from(&e))
             }
-        }
+        });
     }
 
     fn step<T>(
@@ -197,10 +192,8 @@ impl<H: Host> Script<'_, H> {
 
     // The gate, before every step: the device may still sync, under the keys it proved.
     fn may_sync(&self, vault: &str) -> bool {
-        let book = &self.shared.book;
         let keys = |lockboxes: &[Lockbox]| lockboxes.iter().find(|l| l.vault_id == vault).cloned();
-        !book.is_removed(self.peer)
-            && !book.is_paused(self.peer)
+        !self.shared.book.refuses(self.peer)
             && keys(&self.shared.host.lockboxes()) == keys(self.proved)
     }
 

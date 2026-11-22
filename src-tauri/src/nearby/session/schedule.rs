@@ -105,12 +105,18 @@ impl Schedule {
         }
     }
 
-    // A sync asked for while this one ran stays due.
-    pub fn ended(&mut self, device: &DeviceId) {
+    // A sync asked for while this one ran stays due. The side that answered waits
+    // half a period longer, so one of a pair keeps dialling and the other stands by.
+    pub fn ended(&mut self, device: &DeviceId, answered: bool) {
         let now = Instant::now();
+        let wait = if answered {
+            self.period * 3 / 2
+        } else {
+            self.period
+        };
         for seen in self.seen.values_mut() {
             if seen.due > now && seen.found.as_ref().is_some_and(|f| f.device == *device) {
-                seen.due = now + self.period;
+                seen.due = now + wait;
             }
         }
     }
@@ -160,7 +166,7 @@ mod tests {
     ) {
         assert_eq!(schedule.take_due(|_| true).len(), 1);
         meanwhile(schedule);
-        schedule.ended(device);
+        schedule.ended(device, false);
         schedule.dialled(INSTANCE);
     }
 
@@ -178,5 +184,16 @@ mod tests {
         let mut schedule = seeing(&device);
         dial_once(&mut schedule, &device, Schedule::due_now);
         assert_eq!(schedule.take_due(|_| true).len(), 1);
+    }
+
+    #[test]
+    fn the_side_that_answered_waits_longer_than_the_one_that_dialled() {
+        let device = DeviceId::from_bytes([7; 32]);
+        let mut schedule = seeing(&device);
+        schedule.take_due(|_| true);
+        schedule.ended(&device, false);
+        let dialled = schedule.seen[INSTANCE].due;
+        schedule.ended(&device, true);
+        assert!(schedule.seen[INSTANCE].due > dialled + schedule.period / 4);
     }
 }

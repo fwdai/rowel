@@ -198,8 +198,10 @@ the keys or the removed set change here, when a lockbox changes here
 (`sync_now`, which the frontend's debounce sends whenever cloud or nearby sync
 is on, or a merge from the account or another device), and on a resume. Each
 dial puts the next sync 30 seconds off, and so does the end of every
-connection with the device, dialled or answered, however it ended. A device
-shows as here while its advertisement is seen.
+connection with the device, however it ended: 30 seconds for the side that
+dialled and 45 for the side that answered, so one of a pair keeps dialling and
+the other stands by. A sync asked for while a connection was open stays due.
+A device shows as here while its advertisement is seen.
 
 After `hello`, the dialling side sends a `trust/proof` for every lockbox it
 recognised in the other's advertisement (and a `trust/proof-retired` under
@@ -236,17 +238,19 @@ other devices here.
 data root, beside `settings.json` and kept the same way (a JSON file with
 defaults, written atomically), next to the identity key `nearby/identity.key`:
 enabled, paused device ids, removed device ids, and the devices seen (id,
-name, platform, last sync). Pause is local: this side does not dial the paused
-device and its gate ends that device's connections, so the other side keeps
-trying every 30 seconds and shows nothing of it. Remove adds the id to the
-removed set, which only grows: the device is not dialled, a connection with it
-ends before its next step, and one from it is closed as soon as TLS says whose
-it is. It is not told; it sees the others as offline. Every handshake that
-proved a key carries the removed set (`sync/removed`, one message of up to
-some nine hundred ids), each side keeping the union, and a set that grows
-makes a sync with every device due at once, so one Remove reaches the owner's
-other devices as they meet. Remove does not erase what the device holds; that
-takes a master-password change.
+name, platform, last sync). A paused or removed device is refused through one
+check in three places: it is not dialled, a connection from it is closed as
+soon as TLS says whose it is, and the gate ends one with it before its next
+step. Pause is local: the other side keeps trying every 30 seconds and shows
+this one as `waiting`. Remove adds the id to the removed set, which only grows
+and holds at most 900 ids (`book::MAX_REMOVED`), so a full set fits one
+control message; past that, a Remove is refused with an error and ids learned
+from another device are dropped. The removed device is not told; it sees the
+others as `waiting`. Every handshake that proved a key carries the removed set
+(`sync/removed`), each side keeping the union up to that cap, and a set that
+grows makes a sync with every device due at once, so one Remove reaches the
+owner's other devices as they meet. Remove does not erase what the device
+holds; that takes a master-password change.
 
 **Locking** (and a lockbox switch, which ends the session) stops the manager
 under the session guard: the advertisement goes, the listener and every
@@ -277,7 +281,15 @@ fails, and the frontend draws nothing of nearby sync):
 One event, `nearby:status`, carrying the whole status on every transition,
 as `sync:status` does; the store keeps the one with the higher `seq`. "Add a
 device" and its invite come with §6: neither its commands nor its fields are
-in this contract yet.
+in this contract yet. `nearby_remove` fails when the removed set is full.
+
+A device's state is derived in this order: `paused`; `offline` while its
+advertisement is not seen; `syncing` while a connection with it syncs; then
+the outcome of the last attempt with it. An attempt that reached no verdict
+(none yet, could not connect, or either side ended it) leaves none, shown as
+`waiting`. A connection's outcome is its first lockbox that failed, or a
+success only when every lockbox synced, so `upToDate` follows only a sync that
+succeeded.
 
 ```ts
 interface NearbyStatus {
@@ -294,10 +306,11 @@ interface NearbyDevice {
   name: string
   platform: 'macos' | 'windows' | 'linux' | 'ios'
   state:
-    | 'syncing'        // a run is in flight
-    | 'upToDate'       // on the network, nothing to send
-    | 'offline'        // known, not on the network now
     | 'paused'
+    | 'offline'        // known, its advertisement not seen now
+    | 'syncing'        // a connection with it is syncing
+    | 'waiting'        // here, no verdict from the last attempt
+    | 'upToDate'       // here, the last attempt synced every lockbox
     | 'needsPassword'  // the master password changed on one side
     | 'clockSkew'
     | 'error'

@@ -790,9 +790,10 @@ the app opens a socket for it.
   under that old key (`trust/proof-retired`) rather than from the other's
   word, and sent nothing else.
 - **The removed set.** Removing a device puts its id in a set kept per install
-  that only grows. The device is not dialled, a connection with it ends before
-  its next step, and one from it is closed as soon as TLS says whose it is; it
-  is told nothing. Every handshake that proved a key carries the removed set,
+  that only grows, to at most 900 ids so a full set fits one control message;
+  past that a Remove is refused. The device is not dialled, a connection with
+  it ends before its next step, and one from it is closed as soon as TLS says
+  whose it is; it is told nothing. Every handshake that proved a key carries the removed set,
   each side keeping the union, so a removal reaches the owner's other devices
   as they meet. A removed set is taken only from a device that proved a key on
   the same connection.
@@ -859,14 +860,15 @@ Residuals:
   mid-sync holds a connection slot until a read stalls for 30 seconds, but
   never this device's run claim, which is held for one local step at a time.
   Pause is local and not announced: the paused device keeps trying every 30
-  seconds, and its connections end at their first step.
+  seconds, and its connections are closed as soon as TLS names it.
 - **Clocks.** A run between devices whose clocks are more than five minutes
   apart is refused before anything moves. Within five minutes, a fast clock
   still decides which of two close edits survives, as it does through an
   account.
 - **Here means advertised.** A device shows as here while its mDNS record
   is seen, which can outlast the device by the record's lifetime; a sync
-  tried with it meanwhile fails and is tried again later.
+  tried with it meanwhile fails and is tried again later, and it shows as
+  waiting, never up to date, until one succeeds.
 
 ## The browser extension
 
