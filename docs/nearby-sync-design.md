@@ -156,11 +156,10 @@ under the run claim, a merge announced, the clock), so its tests run several
 managers in one process over loopback with an in-memory discovery; the app's
 host is `nearby::app::host`.
 
-**One connection is one sync.** The device with something to say dials, the
-two prove their keys, every lockbox they hold under the same key is synced
-(§3), and the connection closes. Nothing outlives it but what Settings shows.
-There is no standing connection to keep in step with the keys, the removed
-set or the network.
+**One connection is one sync.** One device dials, the two prove their keys,
+every lockbox they hold under the same key is synced (§3), and the connection
+closes. Nothing outlives it but what Settings shows. There is no standing
+connection to keep in step with the keys, the removed set or the network.
 
 **Which lockboxes.** The open one (`SessionVault`) and every other lockbox
 whose key is in `AppState.keyring` (`WorkspaceVault`), org lockboxes and
@@ -170,7 +169,7 @@ the open one's database a second time. The set is read again every 3 seconds
 (the unlock fills the keyring a moment after the session opens; a password
 change changes the keys): when its keys changed, the advertisement follows,
 every advertisement seen is read again with them, and a sync with each device
-is owed. A connection proves the keys as they were read when it opened.
+is due at once. A connection proves the keys as they were read when it opened.
 
 **Discovery.** Service `_rowel-sync._tcp`, advertised only while unlocked and
 enabled, through `mdns-sd` on Windows, Linux and macOS (iOS will need the
@@ -192,18 +191,15 @@ address that is not private, link-local or this machine is closed before TLS.
 At most 16 connections are open at once, and each has 15 seconds from its first
 byte to the end of its handshake.
 
-**When a device dials.** For each advertisement it recognises, a device keeps
-one thing: when a sync with that device is owed. It is owed on first sight
-(the smaller device id dials at once, the larger two seconds later, by when
-the two are usually level and its dial finds nothing to do), when a lockbox
-changes here (the signal that schedules a cloud run: `sync_now`, which the
-frontend's debounce sends whenever cloud or nearby sync is on), after a merge
-from the account or from another device, when the keys or the removed set
-change, and on a resume. A dial that could not go through (nothing answered,
-the connection failed or was ended by either side) is owed again
-after 250 ms, doubling to 30 seconds, with a random part so two devices that
-dialled each other at once do not do it again. A device shows as here while
-its advertisement is seen.
+**When a device dials.** A sync with each device it recognises and has not
+removed or paused is due every 30 seconds, and at once on first sight of its
+advertisement, when what that advertisement lets it recognise changes, when
+the keys or the removed set change here, when a lockbox changes here
+(`sync_now`, which the frontend's debounce sends whenever cloud or nearby sync
+is on, or a merge from the account or another device), and on a resume. Each
+dial puts the next sync 30 seconds off, and so does the end of every
+connection with the device, dialled or answered, however it ended. A device
+shows as here while its advertisement is seen.
 
 After `hello`, the dialling side sends a `trust/proof` for every lockbox it
 recognised in the other's advertisement (and a `trust/proof-retired` under
@@ -239,18 +235,18 @@ other devices here.
 **Pause and Remove.** Kept per install in `nearby/state.json` under the app's
 data root, beside `settings.json` and kept the same way (a JSON file with
 defaults, written atomically), next to the identity key `nearby/identity.key`:
-enabled, paused device ids, removed device ids, and the devices seen (id, name,
-platform, last sync). Pause is local: this side does not dial the paused
+enabled, paused device ids, removed device ids, and the devices seen (id,
+name, platform, last sync). Pause is local: this side does not dial the paused
 device and its gate ends that device's connections, so the other side keeps
-trying, at most every 30 seconds, and shows nothing of it. Remove adds the id
-to the removed set, which only grows: the device is not dialled, its
-connections close, and a connection from it is closed as soon as TLS says
-whose it is. It is not told; it sees the others as offline. Every handshake
-that proved a key carries the removed set (`sync/removed`, one message of up
-to some nine hundred ids), each side keeping the union, and a set that grows
-makes a sync with every device owed, so one Remove reaches the owner's other
-devices as they meet. Remove does not erase what the device holds; that takes
-a master-password change.
+trying every 30 seconds and shows nothing of it. Remove adds the id to the
+removed set, which only grows: the device is not dialled, a connection with it
+ends before its next step, and one from it is closed as soon as TLS says whose
+it is. It is not told; it sees the others as offline. Every handshake that
+proved a key carries the removed set (`sync/removed`, one message of up to
+some nine hundred ids), each side keeping the union, and a set that grows
+makes a sync with every device due at once, so one Remove reaches the owner's
+other devices as they meet. Remove does not erase what the device holds; that
+takes a master-password change.
 
 **Locking** (and a lockbox switch, which ends the session) stops the manager
 under the session guard: the advertisement goes, the listener and every

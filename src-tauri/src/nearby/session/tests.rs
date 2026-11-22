@@ -19,6 +19,8 @@ use crate::nearby::trust::own_proof;
 use crate::retired;
 use crate::sync::engine::{LocalVault, Reclaim, Snapshot};
 
+const PERIOD: Duration = Duration::from_millis(500);
+
 /// What the tests count on a manager.
 #[derive(Default)]
 pub(super) struct Counts {
@@ -242,6 +244,7 @@ fn node_at(network: &Network, lockboxes: &[&Arc<Held>], offset_ms: i64) -> Node 
         discovery: Box::new(network.join()),
         book: book.clone(),
         listen: Ipv4Addr::LOCALHOST.into(),
+        period: PERIOD,
     })
     .unwrap();
     Node {
@@ -456,6 +459,27 @@ fn two_shared_lockboxes_sync_each_into_its_own_and_one_held_alone_is_untouched()
 }
 
 #[test]
+fn a_lockbox_shared_after_the_two_met_syncs_unasked() {
+    let network = Network::default();
+    let (a1, a2, b1) = (
+        lockbox("a1", "v1", 1),
+        lockbox("a2", "v2", 2),
+        lockbox("b1", "v1", 1),
+    );
+    a2.write("x", "on a, before b held it");
+    let (na, nb) = (node(&network, &[&a1, &a2]), node(&network, &[&b1]));
+    eventually("level on the one they share", || {
+        na.level_with(&nb) && nb.level_with(&na)
+    });
+
+    let b2 = lockbox("b2", "v2", 2);
+    nb.host.lockboxes.lock().unwrap().push(b2.clone());
+    eventually("the lockbox shared later syncs", || {
+        b2.title("x").is_some() && a2.digest() == b2.digest()
+    });
+}
+
+#[test]
 fn edits_made_on_both_at_once_cross_though_each_dials_the_other() {
     let network = Network::default();
     let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
@@ -634,6 +658,27 @@ fn each_side_shows_its_own_error_and_the_other_that_the_sync_did_not_finish() {
         nb.failed_with(&na, "vaultFull") && na.failed_with(&nb, "other")
     });
     assert!(a.title("2").is_none());
+}
+
+// Each side dials once on first sight; every dial after that is the timer's.
+#[test]
+fn a_sync_that_failed_is_tried_again_at_the_next_period() {
+    let network = Network::default();
+    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    a.write("1", "on a");
+    b.write("2", "on b");
+    let nb = node(&network, &[&b]);
+    nb.host.fail_packs.store(true, Ordering::SeqCst);
+    let na = node(&network, &[&a]);
+
+    eventually("both dialled again after a failed sync", || {
+        nb.failed_with(&na, "vaultFull") && na.manager.dials() >= 2 && nb.manager.dials() >= 2
+    });
+    assert!(a.title("2").is_none());
+    nb.host.fail_packs.store(false, Ordering::SeqCst);
+    eventually("a later period's sync goes through", || {
+        a.title("2").is_some() && a.digest() == b.digest()
+    });
 }
 
 #[test]

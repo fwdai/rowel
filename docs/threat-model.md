@@ -790,11 +790,11 @@ the app opens a socket for it.
   under that old key (`trust/proof-retired`) rather than from the other's
   word, and sent nothing else.
 - **The removed set.** Removing a device puts its id in a set kept per install
-  that only grows. The device is not dialled, its connections close, and a
-  connection from it is closed as soon as TLS says whose it is; it is told
-  nothing. Every handshake that proved a key carries the removed set, each
-  side keeping the union, so a removal reaches the owner's other devices as
-  they meet. A removed set is taken only from a device that proved a key on
+  that only grows. The device is not dialled, a connection with it ends before
+  its next step, and one from it is closed as soon as TLS says whose it is; it
+  is told nothing. Every handshake that proved a key carries the removed set,
+  each side keeping the union, so a removal reaches the owner's other devices
+  as they meet. A removed set is taken only from a device that proved a key on
   the same connection.
 - **One writer at a time.** Each side writes only its own lockbox. Every
   local step (read the state, pack, merge) takes the process's one run claim,
@@ -858,8 +858,8 @@ Residuals:
 - **A device of the owner's can keep a connection open.** One that stops
   mid-sync holds a connection slot until a read stalls for 30 seconds, but
   never this device's run claim, which is held for one local step at a time.
-  Pause is local and not announced: the paused device keeps trying, at most
-  every 30 seconds, and its connections end at their first step.
+  Pause is local and not announced: the paused device keeps trying every 30
+  seconds, and its connections end at their first step.
 - **Clocks.** A run between devices whose clocks are more than five minutes
   apart is refused before anything moves. Within five minutes, a fast clock
   still decides which of two close edits survives, as it does through an

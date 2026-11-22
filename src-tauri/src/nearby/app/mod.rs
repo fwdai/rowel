@@ -5,6 +5,7 @@ mod host;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use tauri::{AppHandle, Manager as _};
 
@@ -19,6 +20,7 @@ use crate::{events, storage};
 const DIR: &str = "nearby";
 const IDENTITY_FILE: &str = "identity.key";
 const STATE_FILE: &str = "state.json";
+const PERIOD: Duration = Duration::from_secs(30);
 
 pub(super) struct NearbyState {
     pub book: Arc<Book>,
@@ -180,6 +182,7 @@ fn start_manager(app: &AppHandle, book: &Arc<Book>) -> Result<Manager<AppHost>> 
         discovery: Box::new(discovery),
         book: book.clone(),
         listen: Ipv4Addr::UNSPECIFIED.into(),
+        period: PERIOD,
     })
     .map_err(nearby)
 }
