@@ -1,195 +1,124 @@
-//! The first exchange on a connection: who each side is, which lockboxes the
-//! two prove they hold, and the devices each refuses (design §5,
-//! "Connections").
-//!
-//! The side that dialled proves first, and only the lockboxes it recognised
-//! in the other's advertisement. The side that answered then proves back the
-//! ones it verified and no others, so a device that dialled in on a guess, or
-//! with nothing in common, is shown no vault id, no proof and no list: what it
-//! hears is `hello` and `trust/done`, and the connection ends.
-//!
-//! A proof that verifies only under a key one side has retired means the
-//! other is still on the old password. The newer side answers with a proof
-//! under that old key (`trust/proof-retired`), which the older one verifies
-//! under its current key, so each learns it from a proof rather than from the
-//! other's word; neither syncs the lockbox, and the device shows as needing
-//! the new password on both.
+//! The first exchange on a connection: hello, the lockbox key proofs, the removed sets.
+
+use std::iter::once;
 
 use super::advert::Match;
-use super::host::{Host, Lockbox};
+use super::host::{Host, Keys, Lockbox};
 use super::Shared;
 use crate::nearby::channel::{Channel, Control, Role, PROTOCOL_VERSION};
 use crate::nearby::trust::{own_proof, verify_peer};
 use crate::nearby::{Error, Result};
 
-/// The most proofs one side may send: more lockboxes than anyone holds.
 const MAX_PROOFS: usize = 64;
 
-/// The longest device name kept from a `hello`, in characters.
 const MAX_NAME_CHARS: usize = 64;
 
 pub(super) enum Handshake {
-    /// Lockbox keys were proved one way or the other.
-    Established {
-        /// The lockboxes proved both ways under their current keys, by vault
-        /// id: the ones this connection syncs.
-        vaults: Vec<String>,
-        /// A lockbox one of the two holds under a key the other retired.
-        behind: bool,
-    },
-    /// Over: nothing in common.
+    Established { vaults: Vec<String>, behind: bool },
     Over,
 }
 
-/// The verdict on the other side's proofs.
-#[derive(Default)]
-struct Proved {
-    /// Proved under this side's current key.
-    mine: Vec<String>,
-    /// Proved under one of this side's retired keys (its place in
-    /// `Lockbox::retired`): the other side is behind.
-    peer_behind: Vec<(String, usize)>,
-    /// The other side proved, as retired, this side's current key: this
-    /// side is behind.
-    self_behind: Vec<String>,
-}
-
-impl Proved {
-    fn is_empty(&self) -> bool {
-        self.mine.is_empty() && self.peer_behind.is_empty() && self.self_behind.is_empty()
-    }
-
-    fn has(&self, vault: &str) -> bool {
-        self.mine.iter().any(|v| v == vault)
-            || self.peer_behind.iter().any(|(v, _)| v == vault)
-            || self.self_behind.iter().any(|v| v == vault)
-    }
-}
-
-/// Run the handshake on a fresh channel, with the keys in `lockboxes`.
-/// `matches` are what the dialling side recognised in the other's
-/// advertisement; the answering side has none.
 pub(super) fn run<H: Host>(
     shared: &Shared<H>,
     channel: &mut Channel,
     lockboxes: &[Lockbox],
     matches: &[Match],
 ) -> Result<Handshake> {
-    channel.send_control(&Control::hello(shared.book.device_name()))?;
-    let (name, platform) = match channel.recv_control()? {
-        // Another version of the protocol: nothing this build can say to it.
-        Control::Hello { version, .. } if version != PROTOCOL_VERSION => {
-            return Ok(Handshake::Over)
-        }
-        Control::Hello { name, platform, .. } => {
-            (clean_name(&name, &channel.peer().to_string()), platform)
-        }
-        other => return Err(out_of_step(&other)),
+    let Some((name, platform)) = hello(channel, shared.book.device_name())? else {
+        return Ok(Handshake::Over);
     };
-    let proved = match channel.role() {
-        Role::Connector => {
-            let sent = send_proofs(channel, lockboxes, matches)?;
-            read_proofs(channel, lockboxes, Some(&sent))?
-        }
-        Role::Acceptor => {
-            let proved = read_proofs(channel, lockboxes, None)?;
-            answer_proofs(channel, lockboxes, &proved)?;
-            proved
-        }
-    };
+    let proved = prove(channel, lockboxes, matches)?;
     if proved.is_empty() {
         return Ok(Handshake::Over);
     }
-
-    // Each keeps the union of the two removed sets, up to the book's cap, so a
-    // Remove on one of the owner's devices reaches the others as they meet.
-    // Taken only now the two have proved a key to each other: it is the word
-    // of a device that holds the lockbox.
-    let mine = Control::Removed {
-        ids: shared.book.removed(),
-    };
-    if channel.role() == Role::Acceptor {
-        channel.send_control(&mine)?;
-    }
-    match channel.recv_control()? {
-        Control::Removed { ids } => shared.learn_removed(&ids),
-        other => return Err(out_of_step(&other)),
-    }
-    if channel.role() == Role::Connector {
-        channel.send_control(&mine)?;
-    }
+    exchange_removed(shared, channel)?;
     shared
         .book
         .seen(&channel.peer().to_string(), &name, &platform);
     Ok(Handshake::Established {
+        vaults: proved.mine.iter().map(|l| l.vault_id.clone()).collect(),
         behind: !proved.peer_behind.is_empty() || !proved.self_behind.is_empty(),
-        vaults: proved.mine,
     })
 }
 
-/// The dialling side's proofs: under the current key for every lockbox it
-/// recognised, and under each of its retired keys the advertisement carried
-/// too, for the other side to learn it is behind. The vault ids sent come
-/// back: the only ones an answer is taken for.
-fn send_proofs(
-    channel: &mut Channel,
-    lockboxes: &[Lockbox],
-    matches: &[Match],
-) -> Result<Vec<String>> {
-    let mut sent = Vec::new();
-    for found in matches {
-        let Some(lockbox) = lockboxes.iter().find(|l| l.vault_id == found.vault_id) else {
-            continue;
-        };
-        let vault = &lockbox.vault_id;
-        channel.send_control(&Control::Proof {
-            vault: vault.clone(),
-            proof: own_proof(channel, &lockbox.current.proof, vault),
-        })?;
-        for keys in found.retired.iter().filter_map(|&i| lockbox.retired.get(i)) {
-            channel.send_control(&Control::RetiredProof {
-                vault: vault.clone(),
-                proof: own_proof(channel, &keys.proof, vault),
-            })?;
-        }
-        sent.push(vault.clone());
+// The peer's name and platform; None when it speaks another protocol version.
+fn hello(channel: &mut Channel, name: &str) -> Result<Option<(String, String)>> {
+    channel.send_control(&Control::hello(name))?;
+    match channel.recv_control()? {
+        Control::Hello { version, .. } if version != PROTOCOL_VERSION => Ok(None),
+        Control::Hello { name, platform, .. } => Ok(Some((
+            clean_name(&name, &channel.peer().to_string()),
+            platform,
+        ))),
+        other => Err(out_of_step(&other)),
     }
-    channel.send_control(&Control::ProofsDone)?;
-    Ok(sent)
 }
 
-/// The answering side's proofs, for exactly what it verified: its current
-/// key for a lockbox both hold under it, and for one where it is the one
-/// behind; the retired key the other proved, for one where the other is.
-fn answer_proofs(channel: &mut Channel, lockboxes: &[Lockbox], proved: &Proved) -> Result<()> {
-    let find = |vault: &str| lockboxes.iter().find(|l| l.vault_id == vault);
-    for vault in proved.mine.iter().chain(&proved.self_behind) {
-        if let Some(lockbox) = find(vault) {
-            channel.send_control(&Control::Proof {
-                vault: vault.clone(),
-                proof: own_proof(channel, &lockbox.current.proof, vault),
-            })?;
+// The dialling side proves what it recognised; the answering side proves back only what
+// verified, so a device that dialled on a guess hears no vault id.
+fn prove<'a>(
+    channel: &mut Channel,
+    lockboxes: &'a [Lockbox],
+    matches: &[Match],
+) -> Result<Proved<'a>> {
+    match channel.role() {
+        Role::Connector => {
+            let sent: Vec<(&Lockbox, &Match)> = matches
+                .iter()
+                .filter_map(|found| Some((find(lockboxes, &found.vault_id)?, found)))
+                .collect();
+            send_proofs(
+                channel,
+                sent.iter().flat_map(|&(l, found)| proofs_of(l, found)),
+            )?;
+            read_proofs(channel, &sent.iter().map(|&(l, _)| l).collect::<Vec<_>>())
+        }
+        Role::Acceptor => {
+            let proved = read_proofs(channel, &lockboxes.iter().collect::<Vec<_>>())?;
+            send_proofs(channel, proved.answers())?;
+            Ok(proved)
         }
     }
-    for (vault, retired) in &proved.peer_behind {
-        if let Some(keys) = find(vault).and_then(|l| l.retired.get(*retired)) {
-            channel.send_control(&Control::RetiredProof {
-                vault: vault.clone(),
-                proof: own_proof(channel, &keys.proof, vault),
-            })?;
+}
+
+fn find<'a>(lockboxes: impl IntoIterator<Item = &'a Lockbox>, vault: &str) -> Option<&'a Lockbox> {
+    lockboxes.into_iter().find(|l| l.vault_id == vault)
+}
+
+enum Proof<'a> {
+    Current(&'a Lockbox),
+    Retired(&'a Lockbox, &'a Keys),
+}
+
+// Under the current key, and under each retired key the advertisement carried.
+fn proofs_of<'a>(lockbox: &'a Lockbox, found: &'a Match) -> impl Iterator<Item = Proof<'a>> {
+    let retired = found.retired.iter().filter_map(|&i| lockbox.retired.get(i));
+    once(Proof::Current(lockbox)).chain(retired.map(|keys| Proof::Retired(lockbox, keys)))
+}
+
+impl Proof<'_> {
+    fn message(&self, channel: &Channel) -> Control {
+        match *self {
+            Self::Current(lockbox) => Control::Proof {
+                vault: lockbox.vault_id.clone(),
+                proof: own_proof(channel, &lockbox.current.proof, &lockbox.vault_id),
+            },
+            Self::Retired(lockbox, keys) => Control::RetiredProof {
+                vault: lockbox.vault_id.clone(),
+                proof: own_proof(channel, &keys.proof, &lockbox.vault_id),
+            },
         }
+    }
+}
+
+fn send_proofs<'a>(channel: &mut Channel, proofs: impl Iterator<Item = Proof<'a>>) -> Result<()> {
+    for proof in proofs {
+        channel.send_control(&proof.message(channel))?;
     }
     channel.send_control(&Control::ProofsDone)
 }
 
-/// Read the other side's proofs up to its `trust/done` and judge each with
-/// this side's keys. With `only`, a proof for any other vault id is ignored.
-/// One verdict per lockbox: the first proof that verifies.
-fn read_proofs(
-    channel: &mut Channel,
-    lockboxes: &[Lockbox],
-    only: Option<&[String]>,
-) -> Result<Proved> {
+fn read_proofs<'a>(channel: &mut Channel, lockboxes: &[&'a Lockbox]) -> Result<Proved<'a>> {
     let mut proved = Proved::default();
     for _ in 0..=MAX_PROOFS {
         let (vault, proof, retired) = match channel.recv_control()? {
@@ -199,25 +128,11 @@ fn read_proofs(
             Control::Unsupported => continue,
             other => return Err(out_of_step(&other)),
         };
-        if only.is_some_and(|only| !only.contains(&vault)) || proved.has(&vault) {
+        if proved.has(&vault) {
             continue;
         }
-        let Some(lockbox) = lockboxes.iter().find(|l| l.vault_id == vault) else {
-            continue;
-        };
-        let current = verify_peer(channel, &lockbox.current.proof, &vault, &proof);
-        if retired {
-            if current {
-                proved.self_behind.push(vault);
-            }
-        } else if current {
-            proved.mine.push(vault);
-        } else if let Some(at) = lockbox
-            .retired
-            .iter()
-            .position(|keys| verify_peer(channel, &keys.proof, &vault, &proof))
-        {
-            proved.peer_behind.push((vault, at));
+        if let Some(lockbox) = find(lockboxes.iter().copied(), &vault) {
+            proved.judge(channel, lockbox, &proof, retired);
         }
     }
     Err(Error::Protocol(
@@ -225,9 +140,75 @@ fn read_proofs(
     ))
 }
 
-/// A name from the network, for a row in Settings: trimmed, without control
-/// characters, at most [`MAX_NAME_CHARS`]; the start of the device id when
-/// nothing is left.
+#[derive(Default)]
+struct Proved<'a> {
+    mine: Vec<&'a Lockbox>,
+    // Proved under one of this side's retired keys: the other side is behind.
+    peer_behind: Vec<(&'a Lockbox, &'a Keys)>,
+    // This side's current key, proved as retired: this side is behind.
+    self_behind: Vec<&'a Lockbox>,
+}
+
+impl<'a> Proved<'a> {
+    fn judge(&mut self, channel: &Channel, lockbox: &'a Lockbox, proof: &[u8], retired: bool) {
+        let holds = |keys: &Keys| verify_peer(channel, &keys.proof, &lockbox.vault_id, proof);
+        match (retired, holds(&lockbox.current)) {
+            (false, true) => self.mine.push(lockbox),
+            (true, true) => self.self_behind.push(lockbox),
+            (false, false) => {
+                if let Some(keys) = lockbox.retired.iter().find(|&keys| holds(keys)) {
+                    self.peer_behind.push((lockbox, keys));
+                }
+            }
+            (true, false) => {}
+        }
+    }
+
+    fn all(&self) -> impl Iterator<Item = &'a Lockbox> + '_ {
+        let behind = self.peer_behind.iter().map(|&(lockbox, _)| lockbox);
+        self.mine
+            .iter()
+            .chain(&self.self_behind)
+            .copied()
+            .chain(behind)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.all().next().is_none()
+    }
+
+    fn has(&self, vault: &str) -> bool {
+        self.all().any(|lockbox| lockbox.vault_id == vault)
+    }
+
+    fn answers(&self) -> impl Iterator<Item = Proof<'a>> + '_ {
+        let current = self.mine.iter().chain(&self.self_behind);
+        let retired = self.peer_behind.iter();
+        current
+            .map(|&lockbox| Proof::Current(lockbox))
+            .chain(retired.map(|&(lockbox, keys)| Proof::Retired(lockbox, keys)))
+    }
+}
+
+// Only once a key is proved: the removed set is the word of a device that holds the lockbox.
+fn exchange_removed<H: Host>(shared: &Shared<H>, channel: &mut Channel) -> Result<()> {
+    let mine = Control::Removed {
+        ids: shared.book.removed(),
+    };
+    let answering = channel.role() == Role::Acceptor;
+    if answering {
+        channel.send_control(&mine)?;
+    }
+    match channel.recv_control()? {
+        Control::Removed { ids } => shared.learn_removed(&ids),
+        other => return Err(out_of_step(&other)),
+    }
+    if !answering {
+        channel.send_control(&mine)?;
+    }
+    Ok(())
+}
+
 fn clean_name(name: &str, device_id: &str) -> String {
     let cleaned: String = name
         .trim()

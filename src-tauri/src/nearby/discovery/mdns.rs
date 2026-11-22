@@ -1,47 +1,43 @@
-//! Discovery over multicast DNS, for the desktop app (`mdns-sd`, which runs
-//! its own thread and needs no async runtime).
-//!
-//! The instance name and the host name the record points at are random per
-//! session, like the TXT's nonce: the machine's own host name in them would
-//! let anyone on the network follow the device from session to session, which
-//! everything else in the advertisement is built not to allow. The addresses
-//! are the daemon's to fill in, interface by interface.
+//! Discovery over multicast DNS (`mdns-sd`, on its own thread), for the desktop app.
 
-use std::net::{IpAddr, SocketAddr, SocketAddrV6};
+use std::net::{SocketAddr, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use mdns_sd::{ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{
+    RecvTimeoutError, ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo,
+};
 use rand::RngCore;
 
 use super::{Advert, Discovery, Event, OnEvent, Peer, Txt, SERVICE_TYPE};
 use crate::nearby::{Error, Result};
 
-/// How often the browsing thread looks at the stop flag between events.
 const STOP_POLL: Duration = Duration::from_millis(250);
 
 pub struct Mdns {
     daemon: ServiceDaemon,
     instance: String,
-    /// The full name this session's record is registered under, once it is.
-    registered: Mutex<Option<String>>,
+    advertised: AtomicBool,
     stopped: Arc<AtomicBool>,
 }
 
 impl Mdns {
-    /// A daemon of this session's own. Fails when the multicast sockets
-    /// cannot be had.
     pub fn new() -> Result<Self> {
         let daemon = ServiceDaemon::new().map_err(discovery)?;
         let mut bytes = [0u8; 8];
         rand::thread_rng().fill_bytes(&mut bytes);
         Ok(Self {
             daemon,
+            // Random per session, as is the host name: the machine's own would let anyone follow it.
             instance: format!("rowel-{}", hex::encode(bytes)),
-            registered: Mutex::new(None),
+            advertised: AtomicBool::new(false),
             stopped: Arc::default(),
         })
+    }
+
+    fn fullname(&self) -> String {
+        format!("{}.{SERVICE_TYPE}", self.instance)
     }
 }
 
@@ -49,8 +45,6 @@ fn discovery(e: impl std::fmt::Display) -> Error {
     Error::Discovery(e.to_string())
 }
 
-/// The service record for `advert` under `instance`, its addresses left for
-/// the daemon to fill in from the interfaces it announces on.
 fn service_info(instance: &str, advert: &Advert) -> Result<ServiceInfo> {
     let props = advert.txt.properties();
     let host = format!("{instance}.local.");
@@ -66,8 +60,18 @@ fn service_info(instance: &str, advert: &Advert) -> Result<ServiceInfo> {
     .enable_addr_auto())
 }
 
-/// A resolved record, as a [`Peer`]. `None` for one whose TXT this build
-/// cannot read.
+fn event(found: ServiceEvent, own: &str) -> Option<Event> {
+    match found {
+        ServiceEvent::ServiceResolved(service)
+            if !service.get_fullname().eq_ignore_ascii_case(own) =>
+        {
+            peer(&service).map(Event::Seen)
+        }
+        ServiceEvent::ServiceRemoved(_, instance) => Some(Event::Gone { instance }),
+        _ => None,
+    }
+}
+
 fn peer(service: &ResolvedService) -> Option<Peer> {
     let txt = Txt::parse(service.get_properties().iter().filter_map(|prop| {
         let value = std::str::from_utf8(prop.val()?).ok()?;
@@ -77,15 +81,11 @@ fn peer(service: &ResolvedService) -> Option<Peer> {
     let addrs = service
         .get_addresses()
         .iter()
-        .filter_map(|ip| match ip {
-            ScopedIp::V4(v4) => Some(SocketAddr::new(IpAddr::V4(*v4.addr()), port)),
-            ScopedIp::V6(v6) => Some(SocketAddr::V6(SocketAddrV6::new(
-                *v6.addr(),
-                port,
-                0,
-                v6.scope_id().index,
-            ))),
-            _ => None,
+        .map(|ip| match ip {
+            ScopedIp::V6(v6) => {
+                SocketAddr::V6(SocketAddrV6::new(*v6.addr(), port, 0, v6.scope_id().index))
+            }
+            ip => SocketAddr::new(ip.to_ip_addr(), port),
         })
         .collect();
     Some(Peer {
@@ -96,42 +96,29 @@ fn peer(service: &ResolvedService) -> Option<Peer> {
 }
 
 impl Discovery for Mdns {
+    // Registered again under the same name, the record is replaced.
     fn advertise(&self, advert: &Advert) -> Result<()> {
         let info = service_info(&self.instance, advert)?;
-        let fullname = info.get_fullname().to_string();
-        // Registered again under the same name, the record is replaced.
         self.daemon.register(info).map_err(discovery)?;
-        *self.registered.lock().unwrap() = Some(fullname);
+        self.advertised.store(true, Ordering::SeqCst);
         Ok(())
     }
 
     fn browse(&self, on_event: OnEvent) -> Result<()> {
         let events = self.daemon.browse(SERVICE_TYPE).map_err(discovery)?;
         let stopped = self.stopped.clone();
-        let own = format!("{}.{SERVICE_TYPE}", self.instance).to_lowercase();
+        let own = self.fullname();
         std::thread::Builder::new()
             .name("nearby-mdns".into())
             .spawn(move || {
                 while !stopped.load(Ordering::SeqCst) {
-                    let event = match events.recv_timeout(STOP_POLL) {
-                        Ok(event) => event,
-                        Err(mdns_sd::RecvTimeoutError::Timeout) => continue,
-                        Err(mdns_sd::RecvTimeoutError::Disconnected) => return,
-                    };
-                    if stopped.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    match event {
-                        ServiceEvent::ServiceResolved(service)
-                            if service.get_fullname().to_lowercase() != own =>
-                        {
-                            if let Some(peer) = peer(&service) {
-                                on_event(Event::Seen(peer));
+                    match events.recv_timeout(STOP_POLL) {
+                        Ok(found) if !stopped.load(Ordering::SeqCst) => {
+                            if let Some(event) = event(found, &own) {
+                                on_event(event);
                             }
                         }
-                        ServiceEvent::ServiceRemoved(_, fullname) => {
-                            on_event(Event::Gone { instance: fullname });
-                        }
+                        Err(RecvTimeoutError::Disconnected) => return,
                         _ => {}
                     }
                 }
@@ -140,12 +127,11 @@ impl Discovery for Mdns {
         Ok(())
     }
 
-    // Unregistering sends the goodbye that tells the others at once, rather
-    // than leaving them to wait out the record's lifetime.
+    // Unregistering sends the goodbye that drops the record from the others at once.
     fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
-        if let Some(fullname) = self.registered.lock().unwrap().take() {
-            if let Err(e) = self.daemon.unregister(&fullname) {
+        if self.advertised.swap(false, Ordering::SeqCst) {
+            if let Err(e) = self.daemon.unregister(&self.fullname()) {
                 log::warn!("nearby: could not take the advertisement down: {e}");
             }
         }
@@ -159,7 +145,7 @@ mod tests {
     use super::*;
     use crate::nearby::discovery::Tag;
     use crate::nearby::trust::{NONCE_LEN, TAG_LEN};
-    use std::sync::mpsc;
+    use std::sync::{mpsc, Mutex};
 
     fn advert(port: u16) -> Advert {
         Advert {
@@ -174,8 +160,6 @@ mod tests {
         }
     }
 
-    // The record the daemon is handed: the service type, a random instance on
-    // a random host, the port, and the TXT exactly as encoded.
     #[test]
     fn the_record_carries_the_port_and_the_txt_under_a_random_name() {
         let info = service_info("rowel-0123456789abcdef", &advert(48712)).unwrap();
@@ -191,10 +175,7 @@ mod tests {
         assert_eq!(read, Some(advert(48712).txt));
     }
 
-    // A real advertisement and browse on this machine's interfaces. Multicast
-    // may be refused where the tests run (a sandbox, a CI runner with no
-    // interfaces); that is reported rather than failed, since it is the
-    // environment that is under test then, not this code.
+    // Multicast may be refused where tests run: that is reported, not failed.
     #[test]
     fn two_daemons_on_this_machine_see_each_other() {
         let (a, b) = match (Mdns::new(), Mdns::new()) {

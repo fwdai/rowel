@@ -1,13 +1,13 @@
 //! What this device's advertisement says, and what another's says to it.
 
-use super::host::Lockbox;
+use std::iter::once;
+
+use super::host::{Keys, Lockbox};
 use crate::nearby::discovery::{Tag, Txt, MAX_TAGS};
 use crate::nearby::identity::DeviceId;
 use crate::nearby::trust::{discovery_tag, mask_device_id, NONCE_LEN};
 
-/// This device's TXT: a tag and the masked id for every key of every
-/// lockbox, the current keys first so that a device with more than
-/// [`MAX_TAGS`] keys drops retired ones before anything it syncs.
+// Current keys first, so that past MAX_TAGS retired ones go before anything this device syncs.
 pub(super) fn txt(device: &DeviceId, nonce: [u8; NONCE_LEN], lockboxes: &[Lockbox]) -> Txt {
     let current = lockboxes.iter().map(|lockbox| &lockbox.current);
     let retired = lockboxes.iter().flat_map(|lockbox| &lockbox.retired);
@@ -22,67 +22,31 @@ pub(super) fn txt(device: &DeviceId, nonce: [u8; NONCE_LEN], lockboxes: &[Lockbo
     Txt { nonce, tags }
 }
 
-/// One of this device's lockboxes, recognised in another's advertisement.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Match {
     pub vault_id: String,
-    /// Its current key is among the ones advertised.
     pub current: bool,
-    /// Which of its retired keys are, by their place in `Lockbox::retired`:
-    /// the other device is still on a key this one has replaced.
+    // Places in `Lockbox::retired`: the other device is still on a key this one replaced.
     pub retired: Vec<usize>,
 }
 
-/// Another device's advertisement, read with this device's keys.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Recognised {
-    /// The device, as the masks under the recognised keys name it.
     pub device: DeviceId,
     pub matches: Vec<Match>,
 }
 
-/// Which of `lockboxes` the advertisement `txt` carries a key of, and the
-/// device it names. `None` when it carries none: it is a stranger's, or a
-/// device's that shares nothing with this one, and the two are not told
-/// apart. Every recognised tag of one advertisement has to unmask to the same
-/// device; one that names another is not believed.
 pub(super) fn recognise(txt: &Txt, lockboxes: &[Lockbox]) -> Option<Recognised> {
-    let mut device: Option<DeviceId> = None;
-    let mut matches: Vec<Match> = Vec::new();
+    let mut device = None;
+    let mut matches = Vec::new();
     for tag in &txt.tags {
-        for lockbox in lockboxes {
-            let keys = std::iter::once((None, &lockbox.current)).chain(
-                lockbox
-                    .retired
-                    .iter()
-                    .enumerate()
-                    .map(|(i, k)| (Some(i), k)),
-            );
-            for (retired, keys) in keys {
-                if discovery_tag(&keys.discovery, &txt.nonce) != tag.tag {
-                    continue;
-                }
-                let named =
-                    DeviceId::from_bytes(mask_device_id(&keys.discovery, &txt.nonce, &tag.device));
-                if *device.get_or_insert(named) != named {
-                    continue;
-                }
-                let found = match matches.iter().position(|m| m.vault_id == lockbox.vault_id) {
-                    Some(at) => &mut matches[at],
-                    None => {
-                        matches.push(Match {
-                            vault_id: lockbox.vault_id.clone(),
-                            current: false,
-                            retired: Vec::new(),
-                        });
-                        matches.last_mut().expect("just pushed")
-                    }
-                };
-                match retired {
-                    None => found.current = true,
-                    Some(i) if !found.retired.contains(&i) => found.retired.push(i),
-                    Some(_) => {}
-                }
+        for (lockbox, retired, keys) in every_key(lockboxes) {
+            let Some(named) = unmask(tag, keys, &txt.nonce) else {
+                continue;
+            };
+            // A tag that names another device than the first was lifted from another advertisement.
+            if *device.get_or_insert(named) == named {
+                add(&mut matches, &lockbox.vault_id, retired);
             }
         }
     }
@@ -92,11 +56,45 @@ pub(super) fn recognise(txt: &Txt, lockboxes: &[Lockbox]) -> Option<Recognised> 
     })
 }
 
+// With None for the current key and Some(i) for `retired[i]`.
+fn every_key(lockboxes: &[Lockbox]) -> impl Iterator<Item = (&Lockbox, Option<usize>, &Keys)> {
+    lockboxes.iter().flat_map(|lockbox| {
+        let retired = lockbox.retired.iter().enumerate();
+        once((None, &lockbox.current))
+            .chain(retired.map(|(i, keys)| (Some(i), keys)))
+            .map(move |(retired, keys)| (lockbox, retired, keys))
+    })
+}
+
+fn unmask(tag: &Tag, keys: &Keys, nonce: &[u8; NONCE_LEN]) -> Option<DeviceId> {
+    (discovery_tag(&keys.discovery, nonce) == tag.tag)
+        .then(|| DeviceId::from_bytes(mask_device_id(&keys.discovery, nonce, &tag.device)))
+}
+
+fn add(matches: &mut Vec<Match>, vault_id: &str, retired: Option<usize>) {
+    let at = match matches.iter().position(|m| m.vault_id == vault_id) {
+        Some(at) => at,
+        None => {
+            matches.push(Match {
+                vault_id: vault_id.into(),
+                current: false,
+                retired: Vec::new(),
+            });
+            matches.len() - 1
+        }
+    };
+    let found = &mut matches[at];
+    match retired {
+        None => found.current = true,
+        Some(i) if !found.retired.contains(&i) => found.retired.push(i),
+        Some(_) => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::nearby::discovery::Txt;
-    use crate::nearby::session::host::Keys;
     use zeroize::Zeroizing;
 
     fn keys(n: u8) -> Keys {
@@ -117,8 +115,8 @@ mod tests {
     const ME: [u8; 32] = [0xaa; 32];
     const THEM: [u8; 32] = [0xbb; 32];
 
+    // Through the properties, as another device reads it off the network.
     fn advertised(lockboxes: &[Lockbox], nonce: u8) -> Txt {
-        // Through the properties, as another device reads it off the network.
         let txt = txt(&DeviceId::from_bytes(THEM), [nonce; NONCE_LEN], lockboxes);
         let props = txt.properties();
         Txt::parse(props.iter().map(|(k, v)| (k.as_str(), v.as_str()))).unwrap()
@@ -148,8 +146,6 @@ mod tests {
         assert_eq!(recognise(&advertised(&[], 1), &mine), None);
     }
 
-    // A device that changed the password advertises its retired key too; one
-    // still on that key recognises it as current, and the other way round.
     #[test]
     fn a_retired_key_is_recognised_both_ways() {
         let moved_on = [lockbox("v1", 2, &[1])];
@@ -173,14 +169,11 @@ mod tests {
                 retired: vec![0],
             }]
         );
-        // Both on the new key, one still carrying the old: current, and the
-        // retired one recognised as well.
         let both = recognise(&advertised(&moved_on, 1), &moved_on).unwrap();
         assert!(both.matches[0].current);
         assert_eq!(both.matches[0].retired, [0]);
     }
 
-    // The same lockboxes under another nonce: other tags, other masks.
     #[test]
     fn two_sessions_of_one_device_share_no_tag() {
         let lockboxes = [lockbox("v1", 1, &[3])];
@@ -195,8 +188,6 @@ mod tests {
         );
     }
 
-    // A tag lifted from another advertisement and put beside one's own does
-    // not change whose advertisement it is.
     #[test]
     fn tags_naming_two_devices_count_for_the_first() {
         let lockboxes = [lockbox("v1", 1, &[]), lockbox("v2", 2, &[])];
@@ -219,5 +210,29 @@ mod tests {
         let read = recognise(&txt, &lockboxes).unwrap();
         assert_eq!(read.matches.len(), 10);
         assert!(read.matches.iter().all(|m| m.current));
+    }
+
+    #[test]
+    fn a_key_seen_twice_counts_once() {
+        let mut matches = Vec::new();
+        for retired in [Some(1), None, Some(1), Some(0)] {
+            add(&mut matches, "v1", retired);
+        }
+        add(&mut matches, "v2", Some(0));
+        assert_eq!(
+            matches,
+            [
+                Match {
+                    vault_id: "v1".into(),
+                    current: true,
+                    retired: vec![1, 0],
+                },
+                Match {
+                    vault_id: "v2".into(),
+                    current: false,
+                    retired: vec![0],
+                },
+            ]
+        );
     }
 }
