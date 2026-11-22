@@ -45,6 +45,12 @@ const copyCommands = (entry: EntryMeta | null): Command[] => {
     { value: 'username', label: 'Copy username', key: 'B', has: !!kind.username },
     { value: 'secret', label: kind.primaryActionLabel, key: 'C', has: true },
     { value: 'otp', label: 'Copy one-time code', key: 'T', has: !!kind.otpSecret },
+    {
+      value: 'secretOtp',
+      label: 'Copy password and one-time code',
+      key: 'Y',
+      has: !!kind.otpSecret
+    },
     { value: 'url', label: 'Copy URL', key: 'U', has: !!kind.url }
   ]
   return offers

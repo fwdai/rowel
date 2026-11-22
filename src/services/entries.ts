@@ -7,16 +7,26 @@ import { flashCopied } from '@/store'
 import { copy } from './copy'
 
 /** What a copy shortcut can lift off an entry without opening it. */
-export type EntryValue = 'secret' | 'username' | 'otp' | 'url'
+export type EntryValue = 'secret' | 'username' | 'otp' | 'secretOtp' | 'url'
+
+// The seed is never what gets pasted: the backend cuts the current code from it.
+const otpCode = (entry: Entry): string | Promise<string> => {
+  const secret = kindOf(entry.type).otpSecret?.(entry)
+  return secret ? generateOtp(secret).then(otp => otp.code) : ''
+}
 
 const VALUES: Record<EntryValue, (entry: Entry) => string | Promise<string>> = {
   secret: entry => kindOf(entry.type).primarySecret(entry),
   username: entry => kindOf(entry.type).username?.(entry) ?? '',
   url: entry => kindOf(entry.type).url?.(entry) ?? '',
-  // The seed is never what gets pasted: the backend cuts the current code from it.
-  otp: entry => {
-    const secret = kindOf(entry.type).otpSecret?.(entry)
-    return secret ? generateOtp(secret).then(otp => otp.code) : ''
+  otp: otpCode,
+  // The secret with the current code on its end, as one string: what a sign-in
+  // with a single field for both takes (an OpenVPN client, a RADIUS login).
+  // Nothing unless the entry has both, as half of it signs nobody in.
+  secretOtp: async entry => {
+    const secret = kindOf(entry.type).primarySecret(entry)
+    const code = secret && (await otpCode(entry))
+    return code ? secret + code : ''
   }
 }
 

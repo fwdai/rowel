@@ -9,6 +9,7 @@ const COPY_KEYS: Record<string, EntryValue> = {
   KeyB: 'username',
   KeyC: 'secret',
   KeyT: 'otp',
+  KeyY: 'secretOtp',
   KeyU: 'url'
 }
 
