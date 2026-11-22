@@ -161,7 +161,7 @@ host is `nearby::app::host`.
 **One connection is one sync.** One device dials, the two prove their keys,
 every lockbox they hold under the same key is synced (§3), and the connection
 closes. Nothing outlives it but what Settings shows. There is no standing
-connection to keep in step with the keys, the removed set or the network.
+connection to keep in step with the keys or the network.
 
 **Which lockboxes.** The open one (`SessionVault`) and every other lockbox
 whose key is in `AppState.keyring` (`WorkspaceVault`), org lockboxes and
@@ -196,7 +196,7 @@ byte to the end of its handshake.
 **When a device dials.** A sync with each device it recognises and has not
 removed or paused is due every 30 seconds, and at once on first sight of its
 advertisement, when what that advertisement lets it recognise changes, when
-the keys or the removed set change here, when a lockbox changes here
+the keys change here, when a lockbox changes here
 (`sync_now`, which the frontend's debounce sends whenever cloud or nearby sync
 is on, or a merge from the account or another device), and on a resume. Each
 dial puts the next sync 30 seconds off, and so does the end of every
@@ -215,8 +215,7 @@ connection syncs. A proof that verifies only under a retired key means that
 side is behind: the newer side answers with a `trust/proof-retired` under that
 old key, which the older side verifies under its current one, so both learn it
 from a proof; that device shows as `needsPassword` on both sides and is sent
-nothing else. Whenever anything was proved, the two then exchange their
-removed sets (`sync/removed`).
+nothing else.
 
 **Steps.** The dialling side names each lockbox in turn with its
 `sync/state` (§3) and closes when all are done. Every local step (read the
@@ -246,16 +245,12 @@ enabled, paused device ids, removed device ids, and the devices seen (id,
 name, platform, last sync). A paused or removed device is refused through one
 check in three places: it is not dialled, a connection from it is closed as
 soon as TLS says whose it is, and the gate ends one with it before its next
-step. Pause is local: the other side keeps trying every 30 seconds and shows
-this one as `waiting`. Remove adds the id to the removed set, which only grows
-and holds at most 900 ids (`book::MAX_REMOVED`), so a full set fits one
-control message; past that, a Remove is refused with an error and ids learned
-from another device are dropped. The removed device is not told; it sees the
-others as `waiting`. Every handshake that proved a key carries the removed set
-(`sync/removed`), each side keeping the union up to that cap, and a set that
-grows makes a sync with every device due at once, so one Remove reaches the
-owner's other devices as they meet. Remove does not erase what the device
-holds; that takes a master-password change.
+step. Both are local and neither is announced: the other side keeps trying
+every 30 seconds and shows this one as `waiting`. Remove is a Pause for good,
+its row hidden. Nothing about it is sent to or taken from another device (a
+list that travelled would let any key holder cut the owner's devices off from
+each other), so the others sync with it until it is removed on each. Remove
+does not erase what the device holds; that takes a master-password change.
 
 **Locking** (and a lockbox switch, which ends the session) stops the manager
 under the session guard: the advertisement goes, the listener and every
@@ -286,7 +281,7 @@ fails, and the frontend draws nothing of nearby sync):
 One event, `nearby:status`, carrying the whole status on every transition,
 as `sync:status` does; the store keeps the one with the higher `seq`. "Add a
 device" and its invite come with §6: neither its commands nor its fields are
-in this contract yet. `nearby_remove` fails when the removed set is full.
+in this contract yet.
 
 A device's state is derived in this order: `paused`; `offline` while its
 advertisement is not seen; `syncing` while a connection with it syncs; then

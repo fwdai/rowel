@@ -1,4 +1,4 @@
-//! The first exchange on a connection: hello, the lockbox key proofs, the removed sets.
+//! The first exchange on a connection: hello, then the lockbox key proofs.
 
 use std::iter::once;
 
@@ -31,7 +31,6 @@ pub(super) fn run<H: Host>(
     if proved.is_empty() {
         return Ok(Handshake::Over);
     }
-    exchange_removed(shared, channel)?;
     shared
         .book
         .seen(&channel.peer().to_string(), &name, &platform);
@@ -187,25 +186,6 @@ impl<'a> Proved<'a> {
             .map(|&lockbox| Proof::Current(lockbox))
             .chain(retired.map(|&(lockbox, keys)| Proof::Retired(lockbox, keys)))
     }
-}
-
-// Only once a key is proved: the removed set is the word of a device that holds the lockbox.
-fn exchange_removed<H: Host>(shared: &Shared<H>, channel: &mut Channel) -> Result<()> {
-    let mine = Control::Removed {
-        ids: shared.book.removed(),
-    };
-    let answering = channel.role() == Role::Acceptor;
-    if answering {
-        channel.send_control(&mine)?;
-    }
-    match channel.recv_control()? {
-        Control::Removed { ids } => shared.learn_removed(&ids),
-        other => return Err(out_of_step(&other)),
-    }
-    if !answering {
-        channel.send_control(&mine)?;
-    }
-    Ok(())
 }
 
 fn clean_name(name: &str, device_id: &str) -> String {

@@ -925,7 +925,7 @@
   "Pause syncing": "Pausa synkning",
   "Resume syncing": "Återuppta synkning",
   "Remove…": "Ta bort…",
-  "None of your devices will sync with it again. This doesn’t erase what’s already on it: if it was lost or stolen, also change your master password in Settings › Security.": "Ingen av dina enheter kommer att synka med den igen. Det som redan finns på den raderas inte: om den har tappats bort eller stulits, byt också huvudlösenord under Inställningar › Säkerhet.",
+  "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "Den här enheten synkar inte längre med den; dina andra enheter gör det tills du tar bort den på dem också. Om den har tappats bort eller stulits, byt också huvudlösenord under Inställningar › Säkerhet.",
   "Remove device": "Ta bort enhet",
   "Syncing with a nearby device…": "Synkar med en enhet i närheten…",
   "A nearby device needs the new master password": "En enhet i närheten behöver det nya huvudlösenordet",

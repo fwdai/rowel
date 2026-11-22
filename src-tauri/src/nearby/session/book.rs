@@ -9,9 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error as AppError;
 
-// 64-hex ids are 67 bytes each in `sync/removed`: a full set stays under the channel's 64 KiB.
-pub const MAX_REMOVED: usize = 900;
-
 // One count for the process, so a status read before a change is older than the one it announced.
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -161,11 +158,6 @@ impl Book {
         stored.removed.contains(id) || stored.paused.contains(id)
     }
 
-    pub fn removed(&self) -> Vec<String> {
-        let inner = self.inner.lock().unwrap();
-        inner.stored.removed.iter().cloned().collect()
-    }
-
     pub fn set_enabled(&self, enabled: bool) {
         self.change(|stored| stored.enabled = enabled);
     }
@@ -180,21 +172,11 @@ impl Book {
         });
     }
 
-    // Returns the ids it added; none past `MAX_REMOVED`.
-    pub fn remove(&self, ids: &[String]) -> Vec<String> {
-        let mut inner = self.inner.lock().unwrap();
-        let stored = &mut inner.stored;
-        let mut added = Vec::new();
-        for id in ids {
-            if stored.removed.len() < MAX_REMOVED && stored.removed.insert(id.clone()) {
-                stored.paused.remove(id);
-                added.push(id.clone());
-            }
-        }
-        if !added.is_empty() {
-            self.changed(&mut inner, true);
-        }
-        added
+    pub fn remove(&self, id: &str) {
+        self.change(|stored| {
+            stored.paused.remove(id);
+            stored.removed.insert(id.to_string());
+        });
     }
 
     pub(super) fn seen(&self, id: &str, name: &str, platform: &str) {
@@ -371,8 +353,6 @@ fn known_platform(os: &str) -> &'static str {
 mod tests {
     use super::NearbyDeviceState::*;
     use super::*;
-    use crate::nearby::channel::{Control, MAX_CONTROL};
-    use crate::nearby::identity::DeviceId;
     use std::sync::Arc;
 
     type Kept<T> = Arc<Mutex<Vec<T>>>;
@@ -521,33 +501,13 @@ mod tests {
         let (book, kept, _) = book();
         book.seen("d1", "Laptop", "macos");
         book.set_paused("d1", true);
-        assert_eq!(book.remove(&["d1".into(), "d2".into()]), ["d1", "d2"]);
-        assert_eq!(book.remove(&["d1".into()]), Vec::<String>::new());
-        assert!(book.refuses("d1") && book.refuses("d2"));
+        book.remove("d1");
+        book.seen("d1", "Laptop", "macos");
+        assert!(book.refuses("d1"));
         assert!(book.status().devices.is_empty());
         let last = kept.lock().unwrap().last().cloned().unwrap();
-        assert_eq!(last.removed, ["d1".to_string(), "d2".to_string()].into());
+        assert_eq!(last.removed, ["d1".to_string()].into());
         assert!(last.paused.is_empty());
-    }
-
-    #[test]
-    fn the_removed_set_stops_at_its_cap() {
-        let (book, _, _) = book();
-        let ids: Vec<String> = (0..MAX_REMOVED + 5).map(|i| format!("{i:064x}")).collect();
-        assert_eq!(book.remove(&ids).len(), MAX_REMOVED);
-        assert_eq!(book.remove(&ids[MAX_REMOVED..]), Vec::<String>::new());
-        assert_eq!(book.removed().len(), MAX_REMOVED);
-        assert!(book.refuses(&ids[0]) && !book.refuses(&ids[MAX_REMOVED]));
-    }
-
-    #[test]
-    fn a_full_removed_set_fits_one_control_message() {
-        let id = DeviceId::from_bytes([0xff; 32]).to_string();
-        let full = Control::Removed {
-            ids: vec![id; MAX_REMOVED],
-        };
-        let len = serde_json::to_vec(&full).unwrap().len();
-        assert!(len <= MAX_CONTROL, "{len} bytes");
     }
 
     #[test]

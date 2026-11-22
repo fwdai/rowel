@@ -12,9 +12,9 @@ use super::{Error, Result};
 pub use control::Control;
 pub use tls::{accept, connect_over};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const MAX_FRAME: usize = 1024 * 1024;
-pub(super) const MAX_CONTROL: usize = 64 * 1024;
+const MAX_CONTROL: usize = 64 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -908,7 +908,7 @@
   "Pause syncing": "暂停同步",
   "Resume syncing": "恢复同步",
   "Remove…": "移除…",
-  "None of your devices will sync with it again. This doesn’t erase what’s already on it: if it was lost or stolen, also change your master password in Settings › Security.": "你的所有设备都将不再与它同步。这不会抹掉它上面已有的数据：如果它丢失或被盗，请同时在“设置 › 安全”中更改主密码。",
+  "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "此设备将不再与它同步；你的其他设备仍会与它同步，直到你也在那些设备上将其移除。如果它丢失或被盗，请同时在“设置 › 安全”中更改主密码。",
   "Remove device": "移除设备",
   "Syncing with a nearby device…": "正在与附近的设备同步…",
   "A nearby device needs the new master password": "附近的一台设备需要新的主密码",

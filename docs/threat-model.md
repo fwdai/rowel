@@ -779,7 +779,7 @@ the app opens a socket for it.
   another address fails at the handshake. The dialling side proves first, and
   only the lockboxes it recognised; the answering side proves back exactly
   the ones that verified. A device that connects with nothing proved hears
-  `hello` and `trust/done`: no vault id, no proof, no lockbox name, no list.
+  `hello` and `trust/done`: no vault id, no proof, no lockbox name.
   Only a lockbox proved both ways under its current key on this connection is
   synced; a message about any other is a protocol error that ends the
   connection.
@@ -789,14 +789,11 @@ the app opens a socket for it.
   is shown as needing the new password on both sides, learned from a proof
   under that old key (`trust/proof-retired`) rather than from the other's
   word, and sent nothing else.
-- **The removed set.** Removing a device puts its id in a set kept per install
-  that only grows, to at most 900 ids so a full set fits one control message;
-  past that a Remove is refused. The device is not dialled, a connection with
-  it ends before its next step, and one from it is closed as soon as TLS says
-  whose it is; it is told nothing. Every handshake that proved a key carries the removed set,
-  each side keeping the union, so a removal reaches the owner's other devices
-  as they meet. A removed set is taken only from a device that proved a key on
-  the same connection.
+- **Remove.** A removed device's id is kept per install. It is not dialled, a
+  connection with it ends before its next step, and one from it is closed as
+  soon as TLS says whose it is; it is told nothing. Remove is local and never
+  crosses the wire: a list that travelled would let any key holder, a removed
+  device included, cut the owner's devices off from each other for good.
 - **One writer at a time.** Each side writes only its own lockbox. Every
   local step (read the state, pack, merge) takes the process's one run claim,
   the one a cloud run, a password change and a "delete everywhere" take, for
@@ -836,8 +833,8 @@ What each of them can and cannot do:
   not which device: the tags and the masked id change with every session's
   nonce. Turning nearby sync off hides even that.
 - **One of the owner's devices, removed.** Keeps what it holds and can still
-  prove the key, to any device the removal has not reached yet. From those it
-  has reached it gets a closed connection and nothing else.
+  prove the key, to any device it was not removed on. From one it was removed
+  on it gets a closed connection and nothing else.
 Residuals:
 
 - **Removing a device will not erase what it holds.** Once a device has
@@ -848,10 +845,10 @@ Residuals:
   it and present the device's id from elsewhere: the compromised-OS case
   below. The id alone is trusted with no lockbox, which still takes a proof
   of its key.
-- **The removed set reaches only who meets it.** A device that never meets
-  one that knows of a removal keeps syncing with the removed device. Removal
-  is by device id: the same person on a new install is a new device, and only
-  a master-password change keeps a copy from proving the key.
+- **Remove holds only where it was made.** The owner's other devices sync
+  with a removed device until it is removed on each, and pass on what it
+  writes. Removal is by device id: the same person on a new install is a new
+  device, and only a master-password change keeps a copy from proving the key.
 - **Deleted items can come back after 90 days apart.** Tombstones are
   reclaimed after 90 days, as for an account. A device that syncs with
   nothing for longer, then meets another, hands back what was deleted

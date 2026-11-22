@@ -17,7 +17,7 @@ export default function RemoveConfirm({ name, onConfirm, onClose }: Props) {
       actionTestid="settings-nearby-remove-confirm"
       title={t('Remove “{{name}}”?', { name })}
       message={t(
-        'None of your devices will sync with it again. This doesn’t erase what’s already on it: if it was lost or stolen, also change your master password in Settings › Security.'
+        'This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.'
       )}
       action={t('Remove device')}
       onConfirm={onConfirm}

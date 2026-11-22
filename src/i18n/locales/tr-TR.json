@@ -925,7 +925,7 @@
   "Pause syncing": "Eşitlemeyi duraklat",
   "Resume syncing": "Eşitlemeyi sürdür",
   "Remove…": "Kaldır…",
-  "None of your devices will sync with it again. This doesn’t erase what’s already on it: if it was lost or stolen, also change your master password in Settings › Security.": "Cihazlarınızın hiçbiri artık onunla eşitlenmeyecek. Üzerinde zaten bulunanlar silinmez: kaybolduysa veya çalındıysa, Ayarlar › Güvenlik bölümünden ana şifrenizi de değiştirin.",
+  "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "Bu cihaz artık onunla eşitlenmeyecek; diğer cihazlarınız ise siz onu onlardan da kaldırana kadar eşitlenmeye devam edecek. Kaybolduysa veya çalındıysa, Ayarlar › Güvenlik bölümünden ana şifrenizi de değiştirin.",
   "Remove device": "Cihazı kaldır",
   "Syncing with a nearby device…": "Yakındaki bir cihazla eşitleniyor…",
   "A nearby device needs the new master password": "Yakındaki bir cihaz yeni ana şifreyi istiyor",

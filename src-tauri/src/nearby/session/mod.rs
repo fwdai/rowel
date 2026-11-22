@@ -125,10 +125,6 @@ impl<H: Host> Manager<H> {
             self.shared.schedule().due_now();
         }
     }
-
-    pub fn remove(&self, device_id: &str) {
-        self.shared.learn_removed(&[device_id.to_string()]);
-    }
 }
 
 impl<H: Host> Drop for Manager<H> {
@@ -255,18 +251,6 @@ impl<H: Host> Shared<H> {
     fn dial(&self, dial: Dial) {
         connection::dial(self, &dial.found, &dial.addrs);
         self.schedule().dialled(&dial.instance);
-    }
-
-    fn learn_removed(&self, ids: &[String]) {
-        let me = self.identity.device_id().to_string();
-        let ids: Vec<String> = ids
-            .iter()
-            .filter(|id| **id != me && id.parse::<DeviceId>().is_ok())
-            .cloned()
-            .collect();
-        if !self.book.remove(&ids).is_empty() {
-            self.schedule().due_now();
-        }
     }
 
     #[cfg(not(test))]

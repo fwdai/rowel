@@ -123,14 +123,6 @@ pub(super) fn set_paused(app: &AppHandle, device_id: &str, paused: bool) {
     );
 }
 
-pub(super) fn remove(app: &AppHandle, device_id: &str) {
-    through_manager(
-        app,
-        |manager| manager.remove(device_id),
-        |book| drop(book.remove(&[device_id.to_string()])),
-    );
-}
-
 fn through_manager(
     app: &AppHandle,
     running: impl FnOnce(&Manager<AppHost>),

@@ -2,13 +2,12 @@
 //! lockboxes of the two-devices harness (`commands::password_sync::
 //! two_devices`): real SQLCipher vaults, real packs, real TLS.
 
-use std::collections::BTreeSet;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::book::{NearbyDevice, NearbyDeviceState, MAX_REMOVED};
+use super::book::{NearbyDevice, NearbyDeviceState};
 use super::*;
 use crate::commands::password_sync::two_devices::{derive, params, Device, NEW, OLD};
 use crate::error::{Error as AppError, Result as AppResult};
@@ -231,6 +230,13 @@ fn host(lockboxes: &[&Arc<Held>]) -> TestHost {
 
 fn node(network: &Network, lockboxes: &[&Arc<Held>]) -> Node {
     node_on(network, host(lockboxes), Stored::default())
+}
+
+fn removing(id: String) -> Stored {
+    Stored {
+        removed: [id].into(),
+        ..Stored::default()
+    }
 }
 
 fn node_on(network: &Network, host: TestHost, stored: Stored) -> Node {
@@ -552,66 +558,76 @@ fn pause_stops_runs_with_that_device_and_resume_starts_them_again() {
     });
 }
 
+// C dials A again and again; it never gets as far as a step on A, or a row on C.
 #[test]
-fn a_removed_device_is_refused_by_every_device_the_removal_reaches() {
+fn a_device_removed_here_is_never_dialled_and_its_dials_end_before_the_handshake() {
+    let network = Network::default();
+    let (a, c) = (lockbox("a", "v1", 1), lockbox("c", "v1", 1));
+    a.write("1", "on a");
+    c.write("2", "on c");
+    let nc = node(&network, &[&c]);
+    let na = node_on(&network, host(&[&a]), removing(nc.id()));
+
+    eventually("c dialled a, and again", || nc.manager.dials() >= 2);
+    assert_eq!((na.manager.dials(), na.steps()), (0, 0));
+    assert!(nc.row(&na).is_none());
+    assert!(a.title("2").is_none() && c.title("1").is_none());
+}
+
+// "1" reaches B only from A, so B has met A by then.
+#[test]
+fn a_removal_stays_on_the_device_that_made_it() {
     let network = Network::default();
     let (a, b, c) = (
         lockbox("a", "v1", 1),
         lockbox("b", "v1", 1),
         lockbox("c", "v1", 1),
     );
-    c.write("1", "from c, before");
-    let (na, nb, nc) = (
-        node(&network, &[&a]),
-        node(&network, &[&b]),
-        node(&network, &[&c]),
-    );
-    eventually("all three converge", || {
-        a.title("1").is_some() && b.title("1").is_some() && na.row(&nc).is_some()
-    });
+    a.write("1", "on a");
+    c.write("2", "on c");
+    let nc = node(&network, &[&c]);
+    let na = node_on(&network, host(&[&a]), removing(nc.id()));
+    let nb = node(&network, &[&b]);
 
-    na.manager.remove(&nc.id());
-    assert!(na.row(&nc).is_none());
-    eventually("b learns it from a", || {
-        nb.book.removed().contains(&nc.id())
+    eventually("b syncs with both", || {
+        b.title("1").is_some() && b.title("2").is_some() && nb.level_with(&na) && nb.level_with(&nc)
     });
-
-    // Nothing crosses between C and the other two from now on, whichever
-    // side has something to say; A and B go on as before.
-    c.write("2", "from c, after");
-    a.write("3", "from a, after");
-    for node in [&na, &nb, &nc] {
-        node.manager.request_runs();
-    }
-    eventually("a's edit reaches b", || b.title("3").is_some());
-    settle();
-    assert!(a.title("2").is_none() && b.title("2").is_none());
-    assert!(c.title("3").is_none());
+    assert!(!nb.book.refuses(&nc.id()));
 }
 
-// Every handshake carries a whole set, so a full one has to fit the receiver's
-// limit on a control message: these sync only if it does.
 #[test]
-fn full_removed_sets_cross_every_handshake_and_grow_no_further() {
+fn a_handshake_carries_nothing_about_removed_devices() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
-    let ids = |from: usize, n: usize| -> BTreeSet<String> {
-        (from..from + n).map(|i| format!("{i:064x}")).collect()
-    };
-    let removing = |removed| Stored {
-        removed,
-        ..Stored::default()
-    };
-    let na = node_on(&network, host(&[&a]), removing(ids(0, MAX_REMOVED)));
-    let nb = node_on(&network, host(&[&b]), removing(ids(MAX_REMOVED, 10)));
+    let a = lockbox("a", "v1", 1);
+    let removed = removing(identity().device_id().to_string());
+    let na = node_on(&network, host(&[&a]), removed);
 
-    eventually("both sync, b's set filled from a's", || {
-        na.level_with(&nb) && nb.level_with(&na) && nb.book.removed().len() == MAX_REMOVED
-    });
-    let removed = |node: &Node| node.book.removed().into_iter().collect::<BTreeSet<_>>();
-    assert_eq!(removed(&na), ids(0, MAX_REMOVED));
-    assert!(removed(&nb).is_superset(&ids(MAX_REMOVED, 10)));
-    assert!(na.book.remove(&["f".repeat(64)]).is_empty());
+    let peer = identity();
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, na.manager.port()));
+    let mut dialled = channel::tests::connect(addr, &peer, None).unwrap();
+    let proof = own_proof(&dialled, &Keys::of(&a.key).proof, "v1");
+    for message in [
+        Control::hello("Peer"),
+        Control::Proof {
+            vault: "v1".into(),
+            proof,
+        },
+        Control::ProofsDone,
+        Control::State {
+            vault: "v1".into(),
+            revision: "r".into(),
+            now_ms: 0,
+        },
+    ] {
+        dialled.send_control(&message).unwrap();
+    }
+    let heard: Vec<&str> = (0..4)
+        .map(|_| dialled.recv_control().unwrap().kind())
+        .collect();
+    assert_eq!(
+        heard,
+        ["hello/hello", "trust/proof", "trust/done", "sync/state"]
+    );
 }
 
 #[test]
@@ -717,13 +733,14 @@ fn a_device_removed_after_the_handshake_is_sent_no_pack() {
     let na = node(&network, &[&a]);
     let book = na.book.clone();
     na.host.on_next_step(move |_| {
-        let seen: Vec<String> = book.status().devices.into_iter().map(|d| d.id).collect();
-        book.remove(&seen);
+        for device in book.status().devices {
+            book.remove(&device.id);
+        }
     });
     let nb = node(&network, &[&b]);
 
     eventually("a's gate refuses b", || na.manager.refused() > 0);
-    assert!(na.book.removed().contains(&nb.id()));
+    assert!(na.book.refuses(&nb.id()));
     assert_eq!(na.manager.packs(), 0);
     assert!(b.title("1").is_none());
 }

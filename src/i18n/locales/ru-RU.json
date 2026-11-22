@@ -959,7 +959,7 @@
   "Pause syncing": "Приостановить синхронизацию",
   "Resume syncing": "Возобновить синхронизацию",
   "Remove…": "Удалить…",
-  "None of your devices will sync with it again. This doesn’t erase what’s already on it: if it was lost or stolen, also change your master password in Settings › Security.": "Ни одно из ваших устройств больше не будет с ним синхронизироваться. То, что на нём уже есть, не стирается: если оно потеряно или украдено, смените также мастер-пароль в разделе Настройки › Безопасность.",
+  "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "Это устройство больше не будет с ним синхронизироваться, а другие ваши устройства будут, пока вы не удалите его и на них. Если оно потеряно или украдено, смените также мастер-пароль в разделе Настройки › Безопасность.",
   "Remove device": "Удалить устройство",
   "Syncing with a nearby device…": "Синхронизация с устройством поблизости…",
   "A nearby device needs the new master password": "Устройству поблизости нужен новый мастер-пароль",

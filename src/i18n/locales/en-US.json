@@ -925,7 +925,7 @@
   "Pause syncing": "Pause syncing",
   "Resume syncing": "Resume syncing",
   "Remove…": "Remove…",
-  "None of your devices will sync with it again. This doesn’t erase what’s already on it: if it was lost or stolen, also change your master password in Settings › Security.": "None of your devices will sync with it again. This doesn’t erase what’s already on it: if it was lost or stolen, also change your master password in Settings › Security.",
+  "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.",
   "Remove device": "Remove device",
   "Syncing with a nearby device…": "Syncing with a nearby device…",
   "A nearby device needs the new master password": "A nearby device needs the new master password",

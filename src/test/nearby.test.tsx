@@ -217,8 +217,8 @@ describe('Settings › Sync › Nearby devices', () => {
 
     const sheet = screen.getByTestId('settings-nearby-remove-sheet')
     expect(sheet).toHaveTextContent('Remove “Alex’s iPhone”?')
-    expect(sheet).toHaveTextContent('None of your devices will sync with it again.')
-    expect(sheet).toHaveTextContent('This doesn’t erase what’s already on it')
+    expect(sheet).toHaveTextContent('This device will no longer sync with it')
+    expect(sheet).toHaveTextContent('your other devices still will until you remove it on them too')
     expect(sheet).toHaveTextContent('change your master password in Settings › Security')
     expect(calls('nearby_remove')).toEqual([])
 

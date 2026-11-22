@@ -29,8 +29,6 @@ pub enum Control {
     },
     #[serde(rename = "trust/done")]
     ProofsDone,
-    #[serde(rename = "sync/removed")]
-    Removed { ids: Vec<String> },
     #[serde(rename = "sync/state")]
     State {
         vault: String,
@@ -56,7 +54,6 @@ impl Control {
             Self::Proof { .. } => "trust/proof",
             Self::RetiredProof { .. } => "trust/proof-retired",
             Self::ProofsDone => "trust/done",
-            Self::Removed { .. } => "sync/removed",
             Self::State { .. } => "sync/state",
             Self::Pack { .. } => "sync/pack",
         }
@@ -94,7 +91,7 @@ mod tests {
     use crate::nearby::channel::tests::pair;
     use crate::nearby::identity::tests::identity;
 
-    fn one_of_each() -> [Control; 7] {
+    fn one_of_each() -> [Control; 6] {
         [
             Control::hello("Laptop"),
             Control::Proof {
@@ -106,9 +103,6 @@ mod tests {
                 proof: [0xcd; 32],
             },
             Control::ProofsDone,
-            Control::Removed {
-                ids: vec!["f".repeat(64)],
-            },
             Control::State {
                 vault: "v1".into(),
                 revision: "r".into(),

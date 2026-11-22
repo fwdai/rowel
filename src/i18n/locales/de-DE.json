@@ -925,7 +925,7 @@
   "Pause syncing": "Synchronisierung pausieren",
   "Resume syncing": "Synchronisierung fortsetzen",
   "Remove…": "Entfernen…",
-  "None of your devices will sync with it again. This doesn’t erase what’s already on it: if it was lost or stolen, also change your master password in Settings › Security.": "Keines Ihrer Geräte synchronisiert danach noch mit ihm. Was bereits darauf ist, wird nicht gelöscht: Wenn es verloren oder gestohlen wurde, ändern Sie auch Ihr Hauptpasswort unter Einstellungen › Sicherheit.",
+  "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "Dieses Gerät synchronisiert nicht mehr mit ihm; Ihre anderen Geräte tun es weiterhin, bis Sie es auch dort entfernen. Wenn es verloren oder gestohlen wurde, ändern Sie auch Ihr Hauptpasswort unter Einstellungen › Sicherheit.",
   "Remove device": "Gerät entfernen",
   "Syncing with a nearby device…": "Synchronisiert mit einem Gerät in der Nähe…",
   "A nearby device needs the new master password": "Ein Gerät in der Nähe braucht das neue Hauptpasswort",
