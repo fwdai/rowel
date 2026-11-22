@@ -1,13 +1,4 @@
-//! Nearby sync in the app's life: the manager runs while a session is open
-//! and nearby sync is on — started when a session opens, stopped when it ends
-//! (a lock, the auto-lock, a switch), and started or stopped by the switch in
-//! Settings ([`set_enabled`]). The book, what nearby sync keeps per install,
-//! lives for the whole process.
-//!
-//! The app reaches this module at three places only: the session's start and
-//! end (`session::announce_opened`, `announce_ended`), and a change that asks
-//! for a run (`commands::sync`'s `sync_now`, and its report of a cloud run
-//! that merged rows). [`host`] is the app as the manager's host.
+//! The manager's life in the app: it runs while a session is open and nearby sync is on.
 
 mod host;
 
@@ -25,16 +16,10 @@ use crate::error::{Error, Result};
 use crate::state::AppState;
 use crate::{events, storage};
 
-/// Nearby sync's own directory under the app's data root: this install's key
-/// ([`IDENTITY_FILE`]) and what it keeps ([`STATE_FILE`]).
 const DIR: &str = "nearby";
 const IDENTITY_FILE: &str = "identity.key";
-/// On or off, the devices paused, removed and seen. Not secret, like
-/// `settings.json`, and kept the same way: one JSON file with defaults,
-/// written atomically, a missing or unreadable one read as the defaults.
 const STATE_FILE: &str = "state.json";
 
-/// The book, for the process's whole life, and the manager while one runs.
 pub(super) struct NearbyState {
     pub book: Arc<Book>,
     running: Mutex<Running>,
@@ -42,18 +27,15 @@ pub(super) struct NearbyState {
 
 #[derive(Default)]
 struct Running {
-    /// Moved by every start and stop, so a start that finishes after a stop
-    /// (or a later start) finds it moved and stands its manager down.
     generation: u64,
     manager: Option<Manager<AppHost>>,
 }
 
 static STATE: OnceLock<NearbyState> = OnceLock::new();
 
-/// The state, read from disk the first time anything asks.
 pub(super) fn state(app: &AppHandle) -> &'static NearbyState {
     STATE.get_or_init(|| {
-        let path = storage::root_dir(app).map(|root| root.join(DIR).join(STATE_FILE));
+        let path = dir(app).map(|dir| dir.join(STATE_FILE));
         let stored = path.as_deref().map(load).unwrap_or_default();
         let emitter = app.clone();
         let book = Book::new(
@@ -70,6 +52,10 @@ pub(super) fn state(app: &AppHandle) -> &'static NearbyState {
             running: Mutex::default(),
         }
     })
+}
+
+fn dir(app: &AppHandle) -> Result<PathBuf> {
+    Ok(storage::root_dir(app)?.join(DIR))
 }
 
 fn load(path: &Path) -> Stored {
@@ -98,9 +84,7 @@ fn save(path: &Path, stored: &Stored) {
     }
 }
 
-/// A session opened: start the manager if nearby sync is on. Under the
-/// session guard, so nothing here takes the session lock; the start itself is
-/// on a thread of its own.
+// Under the session guard: nothing here may take the session lock.
 pub(crate) fn session_opened(app: &AppHandle) {
     let state = state(app);
     if state.book.enabled() {
@@ -108,26 +92,19 @@ pub(crate) fn session_opened(app: &AppHandle) {
     }
 }
 
-/// A session ended: the manager stops, and with it the listener, the
-/// advertisement and every connection. Under the session guard; returns at
-/// once.
 pub(crate) fn session_ended(app: &AppHandle) {
     stop(state(app));
 }
 
-/// This device's lockboxes changed: every connected device runs.
 pub(crate) fn request_run(app: &AppHandle) {
-    if let Some(manager) = &state(app).running.lock().unwrap().manager {
-        manager.request_runs();
-    }
+    through_manager(app, Manager::request_runs, |_| {});
 }
 
-/// Turn nearby sync on or off: kept, then acted on under the session guard,
-/// so a lock cannot land between the look at the session and the start.
 pub(super) fn set_enabled(app: &AppHandle, enabled: bool) {
     let state = state(app);
     state.book.set_enabled(enabled);
     let app_state = app.state::<AppState>();
+    // Held across the start, so a lock cannot land between the look and it.
     let session = app_state.session.lock().unwrap();
     if enabled && session.is_unlocked() {
         start(app, state);
@@ -136,23 +113,31 @@ pub(super) fn set_enabled(app: &AppHandle, enabled: bool) {
     }
 }
 
-/// Pause or resume `device_id`: through the manager when one runs, so a
-/// resume runs at once.
 pub(super) fn set_paused(app: &AppHandle, device_id: &str, paused: bool) {
-    let state = state(app);
-    match &state.running.lock().unwrap().manager {
-        Some(manager) => manager.set_paused(device_id, paused),
-        None => state.book.set_paused(device_id, paused),
-    }
+    through_manager(
+        app,
+        |manager| manager.set_paused(device_id, paused),
+        |book| book.set_paused(device_id, paused),
+    );
 }
 
-/// Remove `device_id`: through the manager when one runs; otherwise kept
-/// for the next one.
 pub(super) fn remove(app: &AppHandle, device_id: &str) {
+    through_manager(
+        app,
+        |manager| manager.remove(device_id),
+        |book| drop(book.remove(&[device_id.to_string()])),
+    );
+}
+
+fn through_manager(
+    app: &AppHandle,
+    running: impl FnOnce(&Manager<AppHost>),
+    stopped: impl FnOnce(&Book),
+) {
     let state = state(app);
     match &state.running.lock().unwrap().manager {
-        Some(manager) => manager.remove(device_id),
-        None => drop(state.book.remove(&[device_id.to_string()])),
+        Some(manager) => running(manager),
+        None => stopped(&state.book),
     }
 }
 
@@ -176,8 +161,6 @@ fn start(app: &AppHandle, state: &'static NearbyState) {
     }
 }
 
-/// Stop the manager if one runs. The generation that comes back is the one a
-/// start begun now may install its manager under.
 fn stop(state: &NearbyState) -> u64 {
     let mut running = state.running.lock().unwrap();
     running.generation += 1;
@@ -202,7 +185,7 @@ fn start_manager(app: &AppHandle, book: &Arc<Book>) -> Result<Manager<AppHost>> 
 }
 
 fn identity_path(app: &AppHandle) -> Result<PathBuf> {
-    let dir = storage::root_dir(app)?.join(DIR);
+    let dir = dir(app)?;
     crate::store::create_private_dir(&dir).map_err(Error::Io)?;
     Ok(dir.join(IDENTITY_FILE))
 }

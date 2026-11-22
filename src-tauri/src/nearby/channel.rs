@@ -551,6 +551,15 @@ pub struct Failure {
 }
 
 impl Control {
+    // The variant's name only: its fields can hold proofs, ids and names.
+    pub fn kind(&self) -> String {
+        let debug = format!("{self:?}");
+        let end = debug
+            .find(|c: char| !c.is_alphanumeric())
+            .unwrap_or(debug.len());
+        debug[..end].to_string()
+    }
+
     /// This build's `hello`, under the device name `name`.
     pub fn hello(name: &str) -> Self {
         Self::Hello {
@@ -585,6 +594,16 @@ pub(super) mod tests {
     use crate::nearby::identity::tests::identity;
     use std::net::TcpListener;
     use std::time::Instant;
+
+    #[test]
+    fn a_message_names_its_kind_without_its_fields() {
+        let proof = Control::Proof {
+            vault: "v".into(),
+            proof: [7; 32],
+        };
+        assert_eq!(proof.kind(), "Proof");
+        assert_eq!(Control::ProofsDone.kind(), "ProofsDone");
+    }
 
     /// A connected pair over loopback: (the connector's end, the acceptor's).
     pub fn pair(connector: &Identity, acceptor: &Identity) -> (Channel, Channel) {

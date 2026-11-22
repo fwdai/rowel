@@ -1,22 +1,10 @@
-//! The app as the nearby session manager's [`Host`]: its lockboxes, its run
-//! claim, its announcements.
-//!
-//! Which lockboxes: the open one, through the session, and every other whose
-//! key the app keyring holds; org lockboxes are left out, since their server
-//! is their one source (design §1). A run opens the open lockbox as a cloud
-//! run does ([`SessionVault`], every step under the session lock, so a lock
-//! ends it at its next step), and any other on a connection of its own
-//! ([`WorkspaceVault`]), never the open one's database a second time.
-//!
-//! The run claim is the process's one (`AppState::syncing`, the flag a cloud
-//! run's claim raises), taken under `workspace_lock` as a cloud run takes it:
-//! a switch refuses to move the paths while it is held, so the lockbox a run
-//! opened stays the open one, or stays closed, until the run lets go; and a
-//! password change waits for it before re-keying anything under it.
+//! The app as the nearby manager's [`Host`].
 
+use std::collections::HashSet;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
@@ -35,89 +23,91 @@ use crate::sync::Provider;
 use crate::workspace::{dir_of, Registry, Workspace};
 use crate::{events, retired, storage};
 
+type Material = Zeroizing<Vec<u8>>;
+
 pub(super) struct AppHost {
     app: AppHandle,
+    // Closed lockboxes whose database gave no vault id, not reopened on every refresh.
+    missing: Mutex<HashSet<String>>,
 }
 
 impl AppHost {
     pub fn new(app: &AppHandle) -> Self {
-        Self { app: app.clone() }
+        Self {
+            app: app.clone(),
+            missing: Mutex::default(),
+        }
     }
 
-    /// Every lockbox this device can sync now, with what opens it: the open
-    /// one's key from the session, the others' from the keyring.
-    fn held(&self) -> Vec<Held> {
-        let Ok(root) = storage::root_dir(&self.app) else {
-            return Vec::new();
-        };
+    fn open_lockbox(&self) -> Option<(Material, Option<String>)> {
         let state = self.app.state::<AppState>();
-        let active = crate::workspace::active_id(&self.app);
-        let mut open = {
-            let session = state.session.lock().unwrap();
-            match (session.key(), session.store()) {
-                (Ok(key), Ok(store)) => Some((
-                    Zeroizing::new(key.biometric_material().to_vec()),
-                    identity::vault_id(store).ok().flatten(),
-                )),
-                _ => None,
-            }
-        };
-        let registry = Registry::load(&root);
-        let ring: Vec<_> = {
-            let ring = state.keyring.lock().unwrap();
-            let with_key = |workspace: Workspace| (ring.get(&workspace.id), workspace);
-            registry.workspaces.into_iter().map(with_key).collect()
-        };
-        ring.into_iter()
-            .filter_map(|(material, workspace)| {
-                let dir = dir_of(&root, &workspace.id);
-                // A lockbox with no descriptor cannot be packed, and an org
-                // lockbox is its server's to sync.
-                if is_org_lockbox_dir(&dir) || !dir.join(storage::KDF_SIDECAR_FILE).exists() {
-                    return None;
-                }
-                let is_open = workspace.id == active;
-                let (material, vault_id) = if is_open {
-                    let (material, vault_id) = open.take()?;
-                    (material, vault_id.or(workspace.vault_id)?)
-                } else {
-                    (material?, workspace.vault_id?)
-                };
-                Some(Held {
-                    workspace_id: workspace.id,
-                    dir,
-                    vault_id,
-                    material,
-                })
-            })
+        let session = state.session.lock().unwrap();
+        let (key, store) = (session.key().ok()?, session.store().ok()?);
+        let vault_id = identity::vault_id(store).ok().flatten();
+        Some((Zeroizing::new(key.biometric_material().to_vec()), vault_id))
+    }
+
+    fn keyed_workspaces(&self, root: &Path) -> Vec<(Option<Material>, Workspace)> {
+        let workspaces = Registry::load(root).workspaces;
+        let state = self.app.state::<AppState>();
+        let ring = state.keyring.lock().unwrap();
+        workspaces
+            .into_iter()
+            .map(|w| (ring.get(&w.id), w))
             .collect()
     }
 
-    /// Which lockbox `vault_id` is, read under `workspace_lock` with the claim
-    /// held: the open one, or a closed one and its key.
+    fn closed_vault_id(
+        &self,
+        dir: &Path,
+        workspace: &Workspace,
+        material: &Material,
+    ) -> Option<String> {
+        workspace.vault_id.clone().or_else(|| {
+            look_up_once(&self.missing, &workspace.id, || {
+                self.learn_vault_id(dir, &workspace.id, material)
+            })
+        })
+    }
+
+    // Must run holding no lock: recording takes `workspace_lock`.
+    fn learn_vault_id(
+        &self,
+        dir: &Path,
+        workspace_id: &str,
+        material: &Material,
+    ) -> Result<Option<String>> {
+        let key = VaultKey::from_material(material.clone(), true);
+        let vault_id =
+            WorkspaceVault::open(dir, workspace_id, key, Provider::default(), None)?.vault_id()?;
+        if let Some(vault_id) = &vault_id {
+            crate::workspace::record_vault_id_of(&self.app, workspace_id, vault_id)?;
+        }
+        Ok(vault_id)
+    }
+
+    // Under `workspace_lock`, with the claim held.
     fn target(&self, state: &AppState, root: &Path, vault_id: &str) -> Result<Target> {
         let active = state.active_workspace.lock().unwrap().clone();
-        let open_id = {
-            let session = state.session.lock().unwrap();
-            identity::vault_id(session.store()?).map_err(store_err)?
+        let open_id =
+            identity::vault_id(state.session.lock().unwrap().store()?).map_err(store_err)?;
+        let is_open = open_id.as_deref() == Some(vault_id);
+        let workspace_id = if is_open {
+            active
+        } else {
+            Registry::load(root)
+                .workspaces
+                .into_iter()
+                .find(|w| w.id != active && w.vault_id.as_deref() == Some(vault_id))
+                .ok_or(Error::NotFound)?
+                .id
         };
-        if open_id.as_deref() == Some(vault_id) {
-            if is_org_lockbox_dir(&dir_of(root, &active)) {
-                return Err(Error::NotFound);
-            }
-            return Ok(Target::Open {
-                workspace_id: active,
-            });
-        }
-        let workspace_id = Registry::load(root)
-            .workspaces
-            .into_iter()
-            .find(|w| w.id != active && w.vault_id.as_deref() == Some(vault_id))
-            .ok_or(Error::NotFound)?
-            .id;
         let dir = dir_of(root, &workspace_id);
         if is_org_lockbox_dir(&dir) {
             return Err(Error::NotFound);
+        }
+        if is_open {
+            return Ok(Target::Open { workspace_id });
         }
         let material = state
             .keyring
@@ -143,11 +133,40 @@ impl AppHost {
     }
 }
 
-struct Held {
-    workspace_id: String,
-    dir: PathBuf,
-    vault_id: String,
-    material: Zeroizing<Vec<u8>>,
+fn look_up_once(
+    missing: &Mutex<HashSet<String>>,
+    workspace_id: &str,
+    look_up: impl FnOnce() -> Result<Option<String>>,
+) -> Option<String> {
+    if missing.lock().unwrap().contains(workspace_id) {
+        return None;
+    }
+    let found = look_up().unwrap_or_else(|e| {
+        log::warn!("nearby: no vault id for lockbox {workspace_id}: {e}");
+        None
+    });
+    if found.is_none() {
+        missing.lock().unwrap().insert(workspace_id.to_string());
+    }
+    found
+}
+
+// No descriptor, no pack; and an org lockbox is its server's to sync.
+fn syncable_dir(root: &Path, workspace_id: &str) -> Option<PathBuf> {
+    let dir = dir_of(root, workspace_id);
+    (!is_org_lockbox_dir(&dir) && dir.join(storage::KDF_SIDECAR_FILE).exists()).then_some(dir)
+}
+
+fn lockbox(dir: &Path, workspace_id: &str, vault_id: String, material: Material) -> Lockbox {
+    let key = VaultKey::from_material(material, true);
+    Lockbox {
+        retired: retired::load(dir, &key, workspace_id)
+            .iter()
+            .map(|epoch| Keys::of(&epoch.key()))
+            .collect(),
+        current: Keys::of(&key),
+        vault_id,
+    }
 }
 
 enum Target {
@@ -157,7 +176,7 @@ enum Target {
     Closed {
         dir: PathBuf,
         workspace_id: String,
-        material: Zeroizing<Vec<u8>>,
+        material: Material,
     },
 }
 
@@ -186,18 +205,23 @@ impl Host for AppHost {
     type Run = AppRun;
 
     fn lockboxes(&self) -> Vec<Lockbox> {
-        self.held()
+        let Ok(root) = storage::root_dir(&self.app) else {
+            return Vec::new();
+        };
+        let active = crate::workspace::active_id(&self.app);
+        let mut open = self.open_lockbox();
+        self.keyed_workspaces(&root)
             .into_iter()
-            .map(|held| {
-                let key = VaultKey::from_material(held.material, true);
-                Lockbox {
-                    retired: retired::load(&held.dir, &key, &held.workspace_id)
-                        .iter()
-                        .map(|epoch| Keys::of(&epoch.key()))
-                        .collect(),
-                    current: Keys::of(&key),
-                    vault_id: held.vault_id,
-                }
+            .filter_map(|(material, workspace)| {
+                let dir = syncable_dir(&root, &workspace.id)?;
+                let (vault_id, material) = if workspace.id == active {
+                    let (material, vault_id) = open.take()?;
+                    (vault_id.or(workspace.vault_id)?, material)
+                } else {
+                    let material = material?;
+                    (self.closed_vault_id(&dir, &workspace, &material)?, material)
+                };
+                Some(lockbox(&dir, &workspace.id, vault_id, material))
             })
             .collect()
     }
@@ -310,5 +334,45 @@ impl Deref for AppRun {
             Vault::Open(vault) => vault,
             Vault::Closed(vault) => vault,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    #[test]
+    fn a_vault_id_found_is_returned() {
+        let missing = Mutex::default();
+        let found = look_up_once(&missing, "work", || Ok(Some("cafe".into())));
+        assert_eq!(found.as_deref(), Some("cafe"));
+        assert!(missing.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_lockbox_with_no_vault_id_is_looked_up_once() {
+        let missing = Mutex::default();
+        let asked = Cell::new(0);
+        for _ in 0..3 {
+            let found = look_up_once(&missing, "legacy", || {
+                asked.set(asked.get() + 1);
+                Ok(None)
+            });
+            assert_eq!(found, None);
+        }
+        assert_eq!(asked.get(), 1);
+    }
+
+    #[test]
+    fn a_lookup_that_fails_is_not_tried_again() {
+        let missing = Mutex::default();
+        assert_eq!(
+            look_up_once(&missing, "work", || Err(Error::InvalidPassword)),
+            None
+        );
+        let again = look_up_once(&missing, "work", || panic!("looked up again"));
+        assert_eq!(again, None);
     }
 }

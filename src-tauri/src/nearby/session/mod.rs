@@ -172,6 +172,10 @@ impl<H: Host> Manager<H> {
             let shared = shared.clone();
             move || shared.tick()
         })?;
+        log::info!(
+            "nearby: started on port {port} with {} lockboxes",
+            shared.lockboxes().len()
+        );
         Ok(Self { shared })
     }
 
@@ -225,6 +229,7 @@ impl<H: Host> Shared<H> {
         if self.stopped.swap(true, Ordering::SeqCst) {
             return;
         }
+        log::info!("nearby: stopped");
         self.discovery.stop();
         self.conns().shut_all();
         self.book.detach(self.generation);
@@ -321,6 +326,11 @@ impl<H: Host> Shared<H> {
                         known.found = found;
                     }
                     None => {
+                        log::info!(
+                            "nearby: saw {}, recognised: {}",
+                            peer.instance,
+                            found.is_some()
+                        );
                         let larger = found
                             .as_ref()
                             .is_some_and(|found| found.device < *self.identity.device_id());

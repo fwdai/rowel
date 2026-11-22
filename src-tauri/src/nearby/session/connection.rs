@@ -31,6 +31,7 @@ const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(15);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How a dial ended.
+#[derive(Debug)]
 pub(super) enum Dialled {
     /// The sync went through, or there is nothing to try again for.
     Done,
@@ -42,7 +43,7 @@ pub(super) enum Dialled {
 /// Answer a connection the listener accepted.
 pub(super) fn accept<H: Host>(shared: Arc<Shared<H>>, sock: TcpStream) {
     if let Err(e) = connected(&shared, sock, None) {
-        log::debug!("nearby: a connection ended: {e}");
+        log::info!("nearby: a connection ended: {e}");
     }
 }
 
@@ -60,13 +61,17 @@ pub(super) fn dial<H: Host>(
         .iter()
         .filter(|addr| is_local(addr.ip()))
         .find_map(|addr| TcpStream::connect_timeout(addr, DIAL_TIMEOUT).ok());
+    let device = found.device.to_string();
     let Some(sock) = sock else {
+        log::info!("nearby: dial {device:.8}: could not connect");
         return Dialled::Later;
     };
-    connected(shared, sock, Some(found)).unwrap_or_else(|e| {
-        log::debug!("nearby: a sync did not go through: {e}");
+    let dialled = connected(shared, sock, Some(found)).unwrap_or_else(|e| {
+        log::info!("nearby: a sync did not go through: {e}");
         Dialled::Later
-    })
+    });
+    log::info!("nearby: dial {device:.8}: {dialled:?}");
+    dialled
 }
 
 /// A connection from its first byte to its end, as the side that dialled
@@ -178,10 +183,16 @@ fn run<H: Host>(
     }
     said?;
     match result {
-        Ok(()) => shared.book.converged(id, now_ms),
+        Ok(()) => {
+            log::info!(
+                "nearby: run {vault:.8} with {id:.8}: {} rows merged",
+                outcome.merged
+            );
+            shared.book.converged(id, now_ms);
+        }
         Err(Error::SyncBusy) => return Ok(false),
         Err(e) => {
-            log::info!("nearby: a run with {id} failed: {e}");
+            log::info!("nearby: run {vault:.8} with {id:.8} failed: {e}");
             shared.live(|live| {
                 live.failed.insert(id.to_string(), failure_of(&e));
             });

@@ -62,7 +62,8 @@ impl<'a> ChannelLink<'a> {
 
     fn out_of_step(&self, answer: Control) -> Error {
         self.broke(crate::nearby::Error::Protocol(format!(
-            "{answer:?} is not the answer asked for"
+            "{} is not the answer asked for",
+            answer.kind()
         )))
     }
 }

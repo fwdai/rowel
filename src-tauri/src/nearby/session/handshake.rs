@@ -243,7 +243,7 @@ fn clean_name(name: &str, device_id: &str) -> String {
 }
 
 pub(super) fn out_of_step(message: &Control) -> Error {
-    Error::Protocol(format!("{message:?} out of step"))
+    Error::Protocol(format!("{} out of step", message.kind()))
 }
 
 #[cfg(test)]
