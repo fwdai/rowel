@@ -21,7 +21,7 @@ use crate::store::identity;
 use crate::sync::engine::{LocalVault, SessionVault, WorkspaceVault};
 use crate::sync::Provider;
 use crate::workspace::{dir_of, Registry, Workspace};
-use crate::{events, retired, storage};
+use crate::{retired, storage};
 
 type Material = Zeroizing<Vec<u8>>;
 
@@ -265,15 +265,12 @@ impl Host for AppHost {
         step(&*vault)
     }
 
-    fn merged(&self, vault_id: &str, absorbed: &Absorbed) {
+    fn merged(&self, vault_id: &str, local: &dyn LocalVault, absorbed: &Absorbed) {
         let Some((workspace_id, is_open)) = self.located(vault_id) else {
             return;
         };
-        if let Some(name) = &absorbed.renamed {
-            match crate::workspace::record_vault_name_of(&self.app, &workspace_id, name) {
-                Ok(()) => events::workspace_renamed(&self.app),
-                Err(e) => log::warn!("nearby: could not record lockbox {workspace_id}'s name: {e}"),
-            }
+        if absorbed.renamed {
+            crate::sync::mirror_name(&self.app, &workspace_id, local);
         }
         if is_open && absorbed.merged > 0 {
             crate::commands::sync::announce_merged(&self.app);

@@ -11,14 +11,13 @@ const MAX_CLOCK_SKEW_MS: u64 = 5 * 60 * 1000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Absorbed {
     pub merged: usize,
-    /// The pack's name, when it beat this lockbox's and was taken.
-    pub renamed: Option<String>,
+    pub renamed: bool,
     pub revision: String,
 }
 
 impl Absorbed {
     pub fn changed(&self) -> bool {
-        self.merged > 0 || self.renamed.is_some()
+        self.merged > 0 || self.renamed
     }
 }
 
@@ -49,10 +48,9 @@ pub fn pack(local: &dyn LocalVault, now_ms: i64) -> Result<(Vec<u8>, String)> {
 
 pub fn absorb(local: &dyn LocalVault, pack: &[u8]) -> Result<Absorbed> {
     let taken = engine::merge_pack(local, pack)?;
-    let renamed = if taken.renamed { local.name()?.0 } else { None };
     Ok(Absorbed {
         merged: taken.merged,
-        renamed,
+        renamed: taken.renamed,
         revision: revision(local)?,
     })
 }
@@ -148,9 +146,9 @@ mod tests {
         assert_ne!(rev(&a), rev(&b));
 
         let kept = absorb(&a, &pack_of(&b)).unwrap();
-        assert_eq!((kept.merged, kept.renamed), (0, None));
+        assert_eq!((kept.merged, kept.renamed), (0, false));
         let taken = absorb(&b, &pack_of(&a)).unwrap();
-        assert_eq!(taken.renamed.as_deref(), Some("Work"));
+        assert!(taken.renamed);
         assert_eq!(taken.revision, rev(&a));
     }
 

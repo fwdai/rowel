@@ -231,9 +231,11 @@ here, and the lockbox's keys, read again under the claim (which a password
 change waits for), are the ones the connection proved. A gate that fails ends
 the connection without a word.
 
-Right after a merge, its step done, rows written into the open lockbox emit
-`vault:merged` (`commands::sync::announce_merged`) and a newer name is
-mirrored into the registry as a cloud run's is. Once that lockbox's exchange
+Inside a merge's step, the claim still held, rows written into the open
+lockbox emit `vault:merged` (`commands::sync::announce_merged`) and a newer
+name is mirrored into the registry by the function a cloud run uses
+(`sync::mirror_name`), which reads the name the lockbox holds then. Once that
+lockbox's exchange
 is over, a cloud run is asked for and a sync with the other devices here is
 due: not sooner, since the cloud run takes the claim the exchange still needs.
 

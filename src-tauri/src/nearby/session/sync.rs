@@ -212,11 +212,14 @@ impl<H: Host> Script<'_, H> {
     }
 
     fn merge(&mut self, vault: &str, last: &str, pack: &[u8]) -> Turn<String> {
-        let absorbed = self.step(vault, |local| exchange::absorb(local, pack));
+        let absorbed = self.step(vault, |local| {
+            let absorbed = exchange::absorb(local, pack)?;
+            if absorbed.changed() {
+                self.shared.host.merged(vault, local, &absorbed);
+            }
+            Ok(absorbed)
+        });
         let absorbed = self.or_state(vault, last, absorbed)?;
-        if absorbed.changed() {
-            self.shared.host.merged(vault, &absorbed);
-        }
         let revision = absorbed.revision.clone();
         self.absorbed = Some(absorbed);
         Ok(revision)

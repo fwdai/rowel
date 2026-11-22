@@ -205,7 +205,7 @@ impl Host for TestHost {
         self.passed_on.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn merged(&self, vault_id: &str, _absorbed: &Absorbed) {
+    fn merged(&self, vault_id: &str, _local: &dyn LocalVault, _absorbed: &Absorbed) {
         self.announced.lock().unwrap().push(vault_id.to_string());
     }
 
