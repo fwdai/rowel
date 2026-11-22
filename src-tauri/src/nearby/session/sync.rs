@@ -40,7 +40,7 @@ pub(super) fn run<H: Host>(
     channel: &mut Channel,
     peer: &str,
     proved: &[Lockbox],
-    vaults: &[String],
+    ids: &[String],
 ) -> Option<Outcome> {
     let mut script = Script {
         shared,
@@ -50,10 +50,10 @@ pub(super) fn run<H: Host>(
         absorbed: None,
         outcomes: Vec::new(),
     };
-    if let Err(e) = script.every(vaults) {
+    if let Err(e) = script.every(ids) {
         log::info!("nearby: sync with {peer:.8} ended: {e}");
     }
-    Outcome::of(script.outcomes, vaults.len())
+    Outcome::of(script.outcomes, ids.len())
 }
 
 struct Script<'a, H: Host> {
@@ -67,121 +67,115 @@ struct Script<'a, H: Host> {
 
 // Strictly in turns: a pack can be large, and each side writes on one blocking thread.
 impl<H: Host> Script<'_, H> {
-    fn every(&mut self, vaults: &[String]) -> Result<()> {
+    fn every(&mut self, ids: &[String]) -> Result<()> {
         match self.channel.role() {
-            Role::Connector => vaults
-                .iter()
-                .try_for_each(|vault| self.one(vault, |s| s.dial(vault))),
+            Role::Connector => ids.iter().try_for_each(|id| self.one(id, |s| s.dial(id))),
             Role::Acceptor => loop {
-                let (vault, theirs, their_ms) = match self.opening(vaults) {
+                let (id, theirs, their_ms) = match self.opening(ids) {
                     // The dialler closes when it has run every lockbox.
                     Err(Error::Io(_)) => return Ok(()),
                     opened => opened?,
                 };
-                self.one(&vault, |s| s.answer(&vault, &theirs, their_ms))?;
+                self.one(&id, |s| s.answer(&id, &theirs, their_ms))?;
             },
         }
     }
 
-    fn dial(&mut self, vault: &str) -> Turn<()> {
-        let mine = self.step(vault, exchange::revision)?;
-        let mine_ms = self.send_state(vault, &mine)?;
-        let (theirs, their_ms) = self.recv_state(vault)?;
+    fn dial(&mut self, id: &str) -> Turn<()> {
+        let mine = self.step(id, exchange::revision)?;
+        let mine_ms = self.send_state(id, &mine)?;
+        let (theirs, their_ms) = self.recv_state(id)?;
         if level(&mine, mine_ms, &theirs, their_ms)? {
             return Ok(());
         }
-        let (bytes, packed) = self.pack(vault, &mine)?;
-        self.send_pack(vault, &packed, &bytes)?;
-        match self.recv(vault)? {
+        let (bytes, packed) = self.pack(id, &mine)?;
+        self.send_pack(id, &packed, &bytes)?;
+        match self.recv(id)? {
             Said::State(theirs, _) => agree(&packed, &theirs),
             Said::Pack(theirs, bytes) => {
-                let merged = self.merge(vault, &packed, &bytes)?;
-                self.send_state(vault, &merged)?;
+                let merged = self.merge(id, &packed, &bytes)?;
+                self.send_state(id, &merged)?;
                 agree(&merged, &theirs)
             }
         }
     }
 
-    fn answer(&mut self, vault: &str, theirs: &str, their_ms: i64) -> Turn<()> {
-        let mine = match self.step(vault, exchange::revision) {
+    fn answer(&mut self, id: &str, theirs: &str, their_ms: i64) -> Turn<()> {
+        let mine = match self.step(id, exchange::revision) {
             // The dialler waits for this side's state: with none to give, the connection ends.
             Err(Stop::Failed(e)) => {
-                self.record(vault, Err(e));
+                self.record(id, Err(e));
                 return Err(Error::Ended("a lockbox could not be read").into());
             }
             mine => mine?,
         };
-        let mine_ms = self.send_state(vault, &mine)?;
+        let mine_ms = self.send_state(id, &mine)?;
         if level(&mine, mine_ms, theirs, their_ms)? {
             return Ok(());
         }
-        let (theirs, bytes) = match self.recv(vault)? {
+        let (theirs, bytes) = match self.recv(id)? {
             Said::State(theirs, _) => return agree(&mine, &theirs),
             Said::Pack(theirs, bytes) => (theirs, bytes),
         };
-        let merged = self.merge(vault, &mine, &bytes)?;
+        let merged = self.merge(id, &mine, &bytes)?;
         if merged == theirs {
-            self.send_state(vault, &merged)?;
+            self.send_state(id, &merged)?;
             return Ok(());
         }
-        let (bytes, packed) = self.pack(vault, &merged)?;
-        self.send_pack(vault, &packed, &bytes)?;
-        let (theirs, _) = self.recv_state(vault)?;
+        let (bytes, packed) = self.pack(id, &merged)?;
+        self.send_pack(id, &packed, &bytes)?;
+        let (theirs, _) = self.recv_state(id)?;
         agree(&packed, &theirs)
     }
 
-    fn one(&mut self, vault: &str, script: impl FnOnce(&mut Self) -> Turn<()>) -> Result<()> {
+    fn one(&mut self, id: &str, script: impl FnOnce(&mut Self) -> Turn<()>) -> Result<()> {
         let ended = script(self);
-        let merged = self.pass_on(vault);
+        let merged = self.pass_on(id);
         match ended {
-            Ok(()) => self.record(vault, Ok(merged)),
-            Err(Stop::Failed(e)) => self.record(vault, Err(e)),
+            Ok(()) => self.record(id, Ok(merged)),
+            Err(Stop::Failed(e)) => self.record(id, Err(e)),
             Err(Stop::Gone(e)) => return Err(e),
         }
         Ok(())
     }
 
     // After the lockbox's last step: the cloud run this asks for takes the claim.
-    fn pass_on(&mut self, vault: &str) -> usize {
+    fn pass_on(&mut self, id: &str) -> usize {
         let Some(absorbed) = self.absorbed.take() else {
             return 0;
         };
         if absorbed.changed() {
-            self.shared.host.pass_on(vault);
+            self.shared.host.pass_on(id);
         }
         absorbed.merged
     }
 
-    fn record(&mut self, vault: &str, verdict: AppResult<usize>) {
+    fn record(&mut self, id: &str, verdict: AppResult<usize>) {
         let peer = self.peer;
         self.outcomes.push(match verdict {
             Ok(merged) => {
-                log::info!("nearby: run {vault:.8} with {peer:.8}: {merged} rows merged");
+                log::info!("nearby: run {id:.8} with {peer:.8}: {merged} rows merged");
                 Outcome::Synced
             }
             Err(e) => {
-                log::info!("nearby: run {vault:.8} with {peer:.8} failed: {e}");
+                log::info!("nearby: run {id:.8} with {peer:.8} failed: {e}");
                 Outcome::Failed(Failure::from(&e))
             }
         });
     }
 
-    fn step<T>(
-        &self,
-        vault: &str,
-        mut step: impl FnMut(&dyn LocalVault) -> AppResult<T>,
-    ) -> Turn<T> {
+    fn step<T>(&self, id: &str, mut step: impl FnMut(&dyn LocalVault) -> AppResult<T>) -> Turn<T> {
         let deadline = Instant::now() + CLAIM_WAIT;
         loop {
-            let ran = self.shared.host.step(vault, |local| {
-                self.may_sync(vault).then(|| step(local)).transpose()
+            let ran = self.shared.host.step(id, |local| {
+                self.may_sync(id).then(|| step(local)).transpose()
             });
             let busy = matches!(ran, Err(AppError::SyncBusy));
             match ran {
                 Ok(Some(done)) => return Ok(done),
                 _ if busy && Instant::now() < deadline => thread::sleep(CLAIM_POLL),
                 _ if busy => return Err(Error::Ended("the run claim stayed held").into()),
-                Err(e) if self.may_sync(vault) => return Err(Stop::Failed(e)),
+                Err(e) if self.may_sync(id) => return Err(Stop::Failed(e)),
                 _ => {
                     self.shared.count_refused();
                     return Err(Error::Ended("the device or its lockbox keys changed").into());
@@ -191,86 +185,85 @@ impl<H: Host> Script<'_, H> {
     }
 
     // The gate, before every step: the device may still sync, under the keys it proved.
-    fn may_sync(&self, vault: &str) -> bool {
-        let keys = |lockboxes: &[Lockbox]| lockboxes.iter().find(|l| l.vault_id == vault).cloned();
+    fn may_sync(&self, id: &str) -> bool {
+        let keys = |lockboxes: &[Lockbox]| lockboxes.iter().find(|l| l.id() == id).cloned();
         !self.shared.book.refuses(self.peer)
             && keys(&self.shared.host.lockboxes()) == keys(self.proved)
     }
 
     // A step that fails states `last` in its turn, so the other side ends in step.
-    fn or_state<T>(&mut self, vault: &str, last: &str, done: Turn<T>) -> Turn<T> {
+    fn or_state<T>(&mut self, id: &str, last: &str, done: Turn<T>) -> Turn<T> {
         if let Err(Stop::Failed(_)) = done {
-            self.send_state(vault, last)?;
+            self.send_state(id, last)?;
         }
         done
     }
 
-    fn pack(&mut self, vault: &str, last: &str) -> Turn<(Vec<u8>, String)> {
+    fn pack(&mut self, id: &str, last: &str) -> Turn<(Vec<u8>, String)> {
         let now_ms = self.shared.host.now_ms();
-        let packed = self.step(vault, |local| exchange::pack(local, now_ms));
-        self.or_state(vault, last, packed)
+        let packed = self.step(id, |local| exchange::pack(local, now_ms));
+        self.or_state(id, last, packed)
     }
 
-    fn merge(&mut self, vault: &str, last: &str, pack: &[u8]) -> Turn<String> {
-        let absorbed = self.step(vault, |local| {
+    fn merge(&mut self, id: &str, last: &str, pack: &[u8]) -> Turn<String> {
+        let absorbed = self.step(id, |local| {
             let absorbed = exchange::absorb(local, pack)?;
             if absorbed.changed() {
-                self.shared.host.merged(vault, local, &absorbed);
+                self.shared.host.merged(id, local, &absorbed);
             }
             Ok(absorbed)
         });
-        let absorbed = self.or_state(vault, last, absorbed)?;
+        let absorbed = self.or_state(id, last, absorbed)?;
         let revision = absorbed.revision.clone();
         self.absorbed = Some(absorbed);
         Ok(revision)
     }
 
-    fn send_state(&mut self, vault: &str, revision: &str) -> Result<i64> {
+    fn send_state(&mut self, id: &str, revision: &str) -> Result<i64> {
         let now_ms = self.shared.host.now_ms();
         self.channel.send_control(&Control::State {
-            vault: vault.to_string(),
+            lockbox: id.to_string(),
             revision: revision.to_string(),
             now_ms,
         })?;
         Ok(now_ms)
     }
 
-    fn send_pack(&mut self, vault: &str, revision: &str, bytes: &[u8]) -> Result<()> {
+    fn send_pack(&mut self, id: &str, revision: &str, bytes: &[u8]) -> Result<()> {
         self.channel.send_control(&Control::Pack {
-            vault: vault.to_string(),
+            lockbox: id.to_string(),
             revision: revision.to_string(),
         })?;
         self.channel.send(bytes)
     }
 
-    fn opening(&mut self, vaults: &[String]) -> Result<(String, String, i64)> {
+    fn opening(&mut self, ids: &[String]) -> Result<(String, String, i64)> {
         match self.channel.recv_control()? {
             Control::State {
-                vault,
+                lockbox,
                 revision,
                 now_ms,
-            } if vaults.contains(&vault) => Ok((vault, revision, now_ms)),
+            } if ids.contains(&lockbox) => Ok((lockbox, revision, now_ms)),
             other => Err(out_of_step(&other)),
         }
     }
 
-    fn recv(&mut self, vault: &str) -> Result<Said> {
+    fn recv(&mut self, id: &str) -> Result<Said> {
         match self.channel.recv_control()? {
             Control::State {
-                vault: of,
+                lockbox,
                 revision,
                 now_ms,
-            } if of == vault => Ok(Said::State(revision, now_ms)),
-            Control::Pack {
-                vault: of,
-                revision,
-            } if of == vault => Ok(Said::Pack(revision, self.channel.recv(MAX_PACK_BYTES)?)),
+            } if lockbox == id => Ok(Said::State(revision, now_ms)),
+            Control::Pack { lockbox, revision } if lockbox == id => {
+                Ok(Said::Pack(revision, self.channel.recv(MAX_PACK_BYTES)?))
+            }
             other => Err(out_of_step(&other)),
         }
     }
 
-    fn recv_state(&mut self, vault: &str) -> Result<(String, i64)> {
-        match self.recv(vault)? {
+    fn recv_state(&mut self, id: &str) -> Result<(String, i64)> {
+        match self.recv(id)? {
             Said::State(revision, now_ms) => Ok((revision, now_ms)),
             Said::Pack(..) => Err(Error::Protocol("a pack out of turn".into())),
         }

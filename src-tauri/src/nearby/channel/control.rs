@@ -17,13 +17,13 @@ pub enum Control {
     },
     #[serde(rename = "trust/proof")]
     Proof {
-        vault: String,
+        lockbox: String,
         #[serde(with = "hex32")]
         proof: [u8; 32],
     },
     #[serde(rename = "trust/proof-retired")]
     RetiredProof {
-        vault: String,
+        lockbox: String,
         #[serde(with = "hex32")]
         proof: [u8; 32],
     },
@@ -31,12 +31,12 @@ pub enum Control {
     ProofsDone,
     #[serde(rename = "sync/state")]
     State {
-        vault: String,
+        lockbox: String,
         revision: String,
         now_ms: i64,
     },
     #[serde(rename = "sync/pack")]
-    Pack { vault: String, revision: String },
+    Pack { lockbox: String, revision: String },
 }
 
 impl Control {
@@ -95,21 +95,21 @@ mod tests {
         [
             Control::hello("Laptop"),
             Control::Proof {
-                vault: "v1".into(),
+                lockbox: "k1".into(),
                 proof: [0xab; 32],
             },
             Control::RetiredProof {
-                vault: "v1".into(),
+                lockbox: "k1".into(),
                 proof: [0xcd; 32],
             },
             Control::ProofsDone,
             Control::State {
-                vault: "v1".into(),
+                lockbox: "k1".into(),
                 revision: "r".into(),
                 now_ms: 5,
             },
             Control::Pack {
-                vault: "v1".into(),
+                lockbox: "k1".into(),
                 revision: "r".into(),
             },
         ]
@@ -151,7 +151,7 @@ mod tests {
             br#"{"t":"trust/something-new"}"#,
             br#"{"no":"tag"}"#,
             b"not json",
-            br#"{"t":"trust/proof","vault":"v","proof":"zz"}"#,
+            br#"{"t":"trust/proof","lockbox":"k","proof":"zz"}"#,
         ] {
             let (a, b) = (identity(), identity());
             let (mut dialled, mut answered) = pair(&a, &b);

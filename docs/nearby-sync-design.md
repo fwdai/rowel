@@ -21,9 +21,11 @@ beside cloud sync, not instead of it: a lockbox may use both.
 3. **Keys never travel.** Only packs do (`rowel_core::sync::pack`), the same
    bytes a cloud account holds. A new device derives its keys from the master
    password typed on it.
-4. **A lockbox is addressed by its vault id and proved by its key.** Never by
-   name. Each lockbox has its own KDF salt and so its own key, so a pack for
-   another lockbox does not open, and nothing is merged from it.
+4. **A lockbox is addressed and proved by its key.** Never by name. Each
+   lockbox has its own KDF salt and so its own key, so a pack for another
+   lockbox does not open, and nothing is merged from it. Not by its vault id
+   either: that lives inside the encrypted database, where it cannot be read
+   while the lockbox is closed.
 5. **Only while unlocked.** A locked app does not advertise, listen or dial.
 6. **Org lockboxes are excluded** (`org::lockboxes::is_org_lockbox_dir`): the
    Rowel Server is their one source.
@@ -49,11 +51,12 @@ Each device only ever locks and writes its own lockbox. Per lockbox, on a
 connection that proved its key, one script, mirrored on the two sides and
 strictly in turns (a pack can be large; each side writes on one thread):
 
-1. The dialling side sends `sync/state { vault, revision, now_ms }`; the
-   other answers with its own.
+1. The dialling side sends `sync/state { lockbox, revision, now_ms }`, the
+   lockbox named by its current key's id (§4.3); the other answers with its
+   own.
 2. Clocks more than 5 minutes apart: both stop with a clock error.
    Last-writer-wins is only as good as the clocks. Equal revisions: done.
-3. The dialling side sends `sync/pack { vault, revision }` and its pack,
+3. The dialling side sends `sync/pack { lockbox, revision }` and its pack,
    the revision read after packing, whose reclaim can move it.
 4. The other merges it, then answers `sync/state` if its revision now equals
    the packed one, or else its own `sync/pack`, packed after the merge.
@@ -116,13 +119,16 @@ does not know is a protocol error, as a malformed one is.
 ### 4.3 Mine: proof of a lockbox key (`trust.rs`)
 
 Two subkeys of a lockbox's key, derived as `delete_marker_key` is:
-`nearby-proof-key` and `nearby-discovery-key` (§5).
+`nearby-proof-key` and `nearby-discovery-key` (§5). Every key, current or
+retired, has a **key id**: the hex of the first 16 bytes of
+`HMAC(discovery key, "rowel-nearby lockbox id\0")`.
 
-`proof = HMAC-SHA256(proof key, binding ‖ role ‖ vault id)`, compared in
-constant time. Each side sends its proof for a vault id and checks the
-other's. Bound to the session, a proof cannot be replayed or forwarded. The
-KDF salt is never sent between devices that both hold the lockbox, so a proof
-is not a guessing target for the password.
+`proof = HMAC-SHA256(proof key, binding ‖ role ‖ key id)`, compared in
+constant time. A proof names the id of the key it is made under; the receiver
+looks that key up among its own and checks the proof under it alone. Bound to
+the session, a proof cannot be replayed or forwarded. The KDF salt is never
+sent between devices that both hold the lockbox, so a proof is not a guessing
+target for the password.
 
 A device at an older key epoch proves a retired key. It is told the password
 changed, and sent nothing else.
@@ -165,16 +171,14 @@ connection to keep in step with the keys or the network.
 
 **Which lockboxes.** The open one (`SessionVault`) and every other lockbox
 whose key is in `AppState.keyring` (`WorkspaceVault`), org lockboxes and
-lockboxes without a KDF descriptor or a vault id left out. A closed lockbox's
-vault id is the registry's copy (`Workspace::vault_id`), which the app writes
-when a lockbox is created, restored, opened, left for another, or synced to an
-account; nearby sync never opens a lockbox to learn it. A step opens the
-open one through the session, and any other on a connection of its own; never
-the open one's database a second time. The set is read again every 3 seconds
-(the unlock fills the keyring a moment after the session opens; a password
-change changes the keys): when its keys changed, the advertisement follows,
-every advertisement seen is read again with them, and a sync with each device
-is due at once. A connection proves the keys as they were read when it opened.
+lockboxes without a KDF descriptor left out. A step finds its lockbox by the
+current key's id, opens the open one through the session, and any other on a
+connection of its own; never the open one's database a second time. The set is
+read again every 3 seconds (the unlock fills the keyring a moment after the
+session opens; a password change changes the keys): when its keys changed, the
+advertisement follows, every advertisement seen is read again with them, and a
+sync with each device is due at once. A connection proves the keys as they
+were read when it opened.
 
 **Discovery.** Service `_rowel-sync._tcp`, advertised only while unlocked and
 enabled, through `mdns-sd` on Windows, Linux and macOS (iOS will need the
@@ -210,15 +214,15 @@ A device shows as here while its advertisement is seen.
 
 After `hello`, the dialling side sends a `trust/proof` for every lockbox it
 recognised in the other's advertisement (and a `trust/proof-retired` under
-each of its retired keys the advertisement carried), then `trust/done`. The
-answering side verifies them and proves back exactly the ones that verified,
-then `trust/done`; a device that proved nothing hears nothing else, not even a
-vault id. The lockboxes proved both ways under current keys are the ones the
-connection syncs. A proof that verifies only under a retired key means that
-side is behind: the newer side answers with a `trust/proof-retired` under that
-old key, which the older side verifies under its current one, so both learn it
-from a proof; that device shows as `needsPassword` on both sides and is sent
-nothing else.
+each of its retired keys the advertisement carried), then `trust/done`. Each
+proof names its key's id (§4.3). The answering side proves back exactly the
+ones that verified, then `trust/done`; a device that proved nothing hears
+nothing else, not even a key id. The lockboxes proved both ways under current
+keys are the ones the connection syncs. A `trust/proof` under a key the
+receiver has retired means the other side is behind: the newer side answers
+with a `trust/proof-retired` under that old key, which is the older side's
+current one, so both learn it from a proof; that device shows as
+`needsPassword` on both sides and is sent nothing else.
 
 **Steps.** The dialling side names each lockbox in turn with its
 `sync/state` (§3) and closes when all are done. Every local step (read the

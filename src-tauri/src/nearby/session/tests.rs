@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use zeroize::Zeroizing;
+
 use super::book::{NearbyDevice, NearbyDeviceState};
 use super::*;
 use crate::commands::password_sync::two_devices::{derive, params, Device, NEW, OLD};
@@ -64,26 +66,28 @@ impl Manager<TestHost> {
     }
 }
 
-/// A lockbox on one device, and the vault id it was made under.
-struct Held {
-    vault: &'static str,
-    device: Device,
+/// Keys numbered `n`, for tests that need no lockbox behind them.
+pub(super) fn keys(n: u8) -> Keys {
+    Keys::new(
+        Zeroizing::new([n; 32]),
+        Zeroizing::new([n.wrapping_add(100); 32]),
+    )
 }
 
-impl std::ops::Deref for Held {
-    type Target = Device;
-    fn deref(&self) -> &Device {
-        &self.device
+pub(super) fn keyed(current: u8, retired: &[u8]) -> Lockbox {
+    Lockbox {
+        current: keys(current),
+        retired: retired.iter().map(|&n| keys(n)).collect(),
     }
 }
 
 type Hook = Box<dyn FnOnce(&TestHost) + Send>;
 
-/// One device's lockboxes, the run claim its steps take, and its clock.
+/// One device's lockboxes, known by their keys, the run claim its steps take, and its clock.
 #[derive(Default)]
 struct TestHost {
     /// Behind a lock, for a test to change what the device holds mid-session.
-    lockboxes: Mutex<Vec<Arc<Held>>>,
+    lockboxes: Mutex<Vec<Arc<Device>>>,
     claim: Arc<AtomicBool>,
     offset_ms: i64,
     /// Steps that took the claim.
@@ -92,7 +96,7 @@ struct TestHost {
     fail_packs: AtomicBool,
     /// Run inside the next step, under its claim, before the gate.
     next_step: Mutex<Option<Hook>>,
-    /// Every merge announced, by vault id.
+    /// Every merge announced, by lockbox id.
     announced: Mutex<Vec<String>>,
     passed_on: AtomicUsize,
 }
@@ -165,7 +169,6 @@ impl Host for TestHost {
             .unwrap()
             .iter()
             .map(|device| Lockbox {
-                vault_id: device.vault.to_string(),
                 current: Keys::of(&device.key),
                 retired: retired::load(device.path(), &device.key, device.id)
                     .iter()
@@ -177,7 +180,7 @@ impl Host for TestHost {
 
     fn step<T>(
         &self,
-        vault_id: &str,
+        id: &str,
         step: impl FnOnce(&dyn LocalVault) -> AppResult<T>,
     ) -> AppResult<T> {
         let _claim = claim(&self.claim).ok_or(AppError::SyncBusy)?;
@@ -186,26 +189,26 @@ impl Host for TestHost {
         if let Some(hook) = hook {
             hook(self);
         }
-        let held = self
+        let device = self
             .lockboxes
             .lock()
             .unwrap()
             .iter()
-            .find(|held| held.vault == vault_id)
+            .find(|device| Keys::of(&device.key).id == id)
             .cloned()
             .ok_or(AppError::NotFound)?;
         step(&Local {
             host: self,
-            device: &held.device,
+            device: &device,
         })
     }
 
-    fn pass_on(&self, _vault_id: &str) {
+    fn pass_on(&self, _id: &str) {
         self.passed_on.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn merged(&self, vault_id: &str, _local: &dyn LocalVault, _absorbed: &Absorbed) {
-        self.announced.lock().unwrap().push(vault_id.to_string());
+    fn merged(&self, id: &str, _local: &dyn LocalVault, _absorbed: &Absorbed) {
+        self.announced.lock().unwrap().push(id.to_string());
     }
 
     fn now_ms(&self) -> i64 {
@@ -221,14 +224,14 @@ struct Node {
     manager: Manager<TestHost>,
 }
 
-fn host(lockboxes: &[&Arc<Held>]) -> TestHost {
+fn host(lockboxes: &[&Arc<Device>]) -> TestHost {
     TestHost {
         lockboxes: Mutex::new(lockboxes.iter().map(|held| (*held).clone()).collect()),
         ..TestHost::default()
     }
 }
 
-fn node(network: &Network, lockboxes: &[&Arc<Held>]) -> Node {
+fn node(network: &Network, lockboxes: &[&Arc<Device>]) -> Node {
     node_on(network, host(lockboxes), Stored::default())
 }
 
@@ -324,12 +327,9 @@ impl Node {
     }
 }
 
-fn lockbox(id: &'static str, vault: &'static str, salt: u8) -> Arc<Held> {
-    held(vault, Device::create(id, vault, OLD, &params(salt, 0)))
-}
-
-fn held(vault: &'static str, device: Device) -> Arc<Held> {
-    Arc::new(Held { vault, device })
+/// One salt, one key, one lockbox; its vault id is the device's, so no two devices share one.
+fn lockbox(id: &'static str, salt: u8) -> Arc<Device> {
+    Arc::new(Device::create(id, id, OLD, &params(salt, 0)))
 }
 
 /// Wait for `done`, up to a deadline long enough for a slow machine.
@@ -361,7 +361,7 @@ fn settle() {
 #[test]
 fn two_devices_holding_one_lockbox_converge_and_each_edit_reaches_the_other() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     a.write("1", "made on a");
     b.write("2", "made on b");
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
@@ -401,37 +401,35 @@ fn two_devices_holding_one_lockbox_converge_and_each_edit_reaches_the_other() {
 #[test]
 fn a_device_on_another_key_is_never_dialled_and_is_shown_nothing() {
     let network = Network::default();
-    let a = lockbox("a", "v1", 1);
-    let other = held(
-        "v1",
-        Device::create("c", "v1", "another password", &params(1, 0)),
-    );
+    let a = lockbox("a", 1);
+    let other = Arc::new(Device::create("c", "c", "another password", &params(1, 0)));
     a.write("1", "secret");
     let (na, nc) = (node(&network, &[&a]), node(&network, &[&other]));
     settle();
     assert_eq!((na.manager.dials(), nc.manager.dials()), (0, 0));
     assert!(na.book.status().devices.is_empty());
 
-    // It dials in anyway, proves its own key for the same vault id, and
+    // It dials in anyway, names A's lockbox with a proof under its own key, and
     // offers a sync: what it hears is `hello` and `trust/done`, and nothing more.
     let stranger = identity();
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, na.manager.port()));
     let mut dialled = channel::tests::connect(addr, &stranger, None).unwrap();
     dialled.send_control(&Control::hello("Stranger")).unwrap();
-    let proof = own_proof(&dialled, &Keys::of(&other.key).proof, "v1");
+    let id = Keys::of(&a.key).id;
+    let proof = own_proof(&dialled, &Keys::of(&other.key).proof, &id);
     for message in [
         Control::Proof {
-            vault: "v1".into(),
+            lockbox: id.clone(),
             proof,
         },
         Control::ProofsDone,
         Control::State {
-            vault: "v1".into(),
+            lockbox: id.clone(),
             revision: "r".into(),
             now_ms: 0,
         },
         Control::Pack {
-            vault: "v1".into(),
+            lockbox: id,
             revision: "r".into(),
         },
     ] {
@@ -452,12 +450,8 @@ fn a_device_on_another_key_is_never_dialled_and_is_shown_nothing() {
 #[test]
 fn two_shared_lockboxes_sync_each_into_its_own_and_one_held_alone_is_untouched() {
     let network = Network::default();
-    let (a1, a2, a3) = (
-        lockbox("a1", "v1", 1),
-        lockbox("a2", "v2", 2),
-        lockbox("a3", "v3", 3),
-    );
-    let (b1, b2) = (lockbox("b1", "v1", 1), lockbox("b2", "v2", 2));
+    let (a1, a2, a3) = (lockbox("a1", 1), lockbox("a2", 2), lockbox("a3", 3));
+    let (b1, b2) = (lockbox("b1", 1), lockbox("b2", 2));
     a1.write("1", "one on a");
     b1.write("2", "one on b");
     a2.write("x", "two on a");
@@ -483,26 +477,22 @@ fn two_shared_lockboxes_sync_each_into_its_own_and_one_held_alone_is_untouched()
         assert!(two.title("x").is_some() && two.title("y").is_some());
         assert!(two.title("1").is_none() && two.title("z").is_none());
     }
-    assert_eq!(b1.device.vault_id().unwrap().as_deref(), Some("v1"));
-    assert_eq!(b2.device.vault_id().unwrap().as_deref(), Some("v2"));
+    assert_eq!(b1.vault_id().unwrap().as_deref(), Some("b1"));
+    assert_eq!(b2.vault_id().unwrap().as_deref(), Some("b2"));
     assert_eq!(a3.digest(), alone);
 }
 
 #[test]
 fn a_lockbox_shared_after_the_two_met_syncs_unasked() {
     let network = Network::default();
-    let (a1, a2, b1) = (
-        lockbox("a1", "v1", 1),
-        lockbox("a2", "v2", 2),
-        lockbox("b1", "v1", 1),
-    );
+    let (a1, a2, b1) = (lockbox("a1", 1), lockbox("a2", 2), lockbox("b1", 1));
     a2.write("x", "on a, before b held it");
     let (na, nb) = (node(&network, &[&a1, &a2]), node(&network, &[&b1]));
     eventually("level on the one they share", || {
         na.level_with(&nb) && nb.level_with(&na)
     });
 
-    let b2 = lockbox("b2", "v2", 2);
+    let b2 = lockbox("b2", 2);
     nb.host.lockboxes.lock().unwrap().push(b2.clone());
     eventually("the lockbox shared later syncs", || {
         b2.title("x").is_some() && a2.digest() == b2.digest()
@@ -512,7 +502,7 @@ fn a_lockbox_shared_after_the_two_met_syncs_unasked() {
 #[test]
 fn edits_made_on_both_at_once_cross_though_each_dials_the_other() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
     eventually("level", || na.level_with(&nb) && nb.level_with(&na));
 
@@ -533,7 +523,7 @@ fn edits_made_on_both_at_once_cross_though_each_dials_the_other() {
 #[test]
 fn pause_stops_runs_with_that_device_and_resume_starts_them_again() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
     eventually("connected", || {
         na.state_of(&nb) == Some(NearbyDeviceState::UpToDate)
@@ -562,7 +552,7 @@ fn pause_stops_runs_with_that_device_and_resume_starts_them_again() {
 #[test]
 fn a_device_removed_here_is_never_dialled_and_its_dials_end_before_the_handshake() {
     let network = Network::default();
-    let (a, c) = (lockbox("a", "v1", 1), lockbox("c", "v1", 1));
+    let (a, c) = (lockbox("a", 1), lockbox("c", 1));
     a.write("1", "on a");
     c.write("2", "on c");
     let nc = node(&network, &[&c]);
@@ -578,11 +568,7 @@ fn a_device_removed_here_is_never_dialled_and_its_dials_end_before_the_handshake
 #[test]
 fn a_removal_stays_on_the_device_that_made_it() {
     let network = Network::default();
-    let (a, b, c) = (
-        lockbox("a", "v1", 1),
-        lockbox("b", "v1", 1),
-        lockbox("c", "v1", 1),
-    );
+    let (a, b, c) = (lockbox("a", 1), lockbox("b", 1), lockbox("c", 1));
     a.write("1", "on a");
     c.write("2", "on c");
     let nc = node(&network, &[&c]);
@@ -598,23 +584,24 @@ fn a_removal_stays_on_the_device_that_made_it() {
 #[test]
 fn a_handshake_carries_nothing_about_removed_devices() {
     let network = Network::default();
-    let a = lockbox("a", "v1", 1);
+    let a = lockbox("a", 1);
     let removed = removing(identity().device_id().to_string());
     let na = node_on(&network, host(&[&a]), removed);
 
     let peer = identity();
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, na.manager.port()));
     let mut dialled = channel::tests::connect(addr, &peer, None).unwrap();
-    let proof = own_proof(&dialled, &Keys::of(&a.key).proof, "v1");
+    let keys = Keys::of(&a.key);
+    let proof = own_proof(&dialled, &keys.proof, &keys.id);
     for message in [
         Control::hello("Peer"),
         Control::Proof {
-            vault: "v1".into(),
+            lockbox: keys.id.clone(),
             proof,
         },
         Control::ProofsDone,
         Control::State {
-            vault: "v1".into(),
+            lockbox: keys.id.clone(),
             revision: "r".into(),
             now_ms: 0,
         },
@@ -633,7 +620,7 @@ fn a_handshake_carries_nothing_about_removed_devices() {
 #[test]
 fn a_device_whose_shared_lockbox_went_is_shown_offline() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
     eventually("connected", || {
         na.state_of(&nb) == Some(NearbyDeviceState::UpToDate)
@@ -653,7 +640,7 @@ fn a_device_whose_shared_lockbox_went_is_shown_offline() {
 #[test]
 fn a_device_seen_but_never_reached_waits_and_is_never_shown_up_to_date() {
     let network = Network::default();
-    let a = lockbox("a", "v1", 1);
+    let a = lockbox("a", 1);
     let na = node(&network, &[&a]);
     let ghost = identity();
     let id = ghost.device_id().to_string();
@@ -676,7 +663,7 @@ fn a_device_seen_but_never_reached_waits_and_is_never_shown_up_to_date() {
 #[test]
 fn a_device_whose_syncs_always_end_early_waits_and_is_never_shown_up_to_date() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     let busy = host(&[&b]);
     let _held = claim(&busy.claim).unwrap();
     let na = node(&network, &[&a]);
@@ -700,13 +687,15 @@ fn a_device_whose_syncs_always_end_early_waits_and_is_never_shown_up_to_date() {
 #[test]
 fn no_pack_moves_under_keys_the_connection_did_not_prove() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     a.write("1", "under the proved key");
     b.write("2", "under the proved key");
-    let rekeyed = held(
-        "v1",
-        Device::create("a2", "v1", "another password", &params(1, 0)),
-    );
+    let rekeyed = Arc::new(Device::create(
+        "a2",
+        "a2",
+        "another password",
+        &params(1, 0),
+    ));
     rekeyed.write("3", "under the new key");
     let na = node(&network, &[&a]);
     let swapped = rekeyed.clone();
@@ -728,7 +717,7 @@ fn no_pack_moves_under_keys_the_connection_did_not_prove() {
 #[test]
 fn a_device_removed_after_the_handshake_is_sent_no_pack() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     a.write("1", "only on a");
     let na = node(&network, &[&a]);
     let book = na.book.clone();
@@ -750,7 +739,7 @@ fn a_device_removed_after_the_handshake_is_sent_no_pack() {
 #[test]
 fn each_side_shows_its_own_error_and_the_other_that_the_sync_did_not_finish() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     a.write("1", "on a");
     b.write("2", "on b");
     let nb = node(&network, &[&b]);
@@ -767,8 +756,8 @@ fn each_side_shows_its_own_error_and_the_other_that_the_sync_did_not_finish() {
 #[test]
 fn a_failure_on_one_lockbox_is_shown_though_the_next_one_synced() {
     let network = Network::default();
-    let (a1, a2) = (lockbox("a1", "v1", 1), lockbox("a2", "v2", 2));
-    let (b1, b2) = (lockbox("b1", "v1", 1), lockbox("b2", "v2", 2));
+    let (a1, a2) = (lockbox("a1", 1), lockbox("a2", 2));
+    let (b1, b2) = (lockbox("b1", 1), lockbox("b2", 2));
     b1.write("1", "only b can send this");
     a2.write("2", "a sends this");
     let nb = node(&network, &[&b1, &b2]);
@@ -792,7 +781,7 @@ fn a_failure_on_one_lockbox_is_shown_though_the_next_one_synced() {
 #[test]
 fn a_sync_that_failed_is_tried_again_at_the_next_period() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     a.write("1", "on a");
     b.write("2", "on b");
     let nb = node(&network, &[&b]);
@@ -813,12 +802,12 @@ fn a_sync_that_failed_is_tried_again_at_the_next_period() {
 #[test]
 fn a_device_on_a_retired_key_needs_the_password_on_both_sides_and_gets_no_pack() {
     let network = Network::default();
-    let mut moved_on = Device::create("a", "v1", OLD, &params(1, 0));
+    let mut moved_on = Device::create("a", "a", OLD, &params(1, 0));
     moved_on.write("1", "made before the change");
     let gen1 = params(2, 1);
     moved_on.rekey(derive(NEW, &gen1), &gen1);
     moved_on.write("2", "made after the change");
-    let (a, b) = (held("v1", moved_on), lockbox("b", "v1", 1));
+    let (a, b) = (Arc::new(moved_on), lockbox("b", 1));
     b.write("3", "made on the old password");
     let before = (a.digest(), b.digest());
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
@@ -838,7 +827,7 @@ fn a_device_on_a_retired_key_needs_the_password_on_both_sides_and_gets_no_pack()
 #[test]
 fn clocks_six_minutes_apart_stop_the_run_and_nothing_merges() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     a.write("1", "on a");
     b.write("2", "on b");
     let before = (a.digest(), b.digest());
@@ -873,7 +862,7 @@ fn clocks_six_minutes_apart_stop_the_run_and_nothing_merges() {
 #[test]
 fn a_run_asked_for_while_the_claim_is_held_runs_once_it_is_released() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
     eventually("connected", || {
         na.state_of(&nb) == Some(NearbyDeviceState::UpToDate)
@@ -903,7 +892,7 @@ fn a_run_asked_for_while_the_claim_is_held_runs_once_it_is_released() {
 #[test]
 fn stopping_closes_the_listener_and_every_connection_and_takes_the_advert_down() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
     eventually("level", || na.level_with(&nb) && nb.level_with(&na));
     let port = na.manager.port();
@@ -925,7 +914,7 @@ fn stopping_closes_the_listener_and_every_connection_and_takes_the_advert_down()
 #[test]
 fn the_status_moves_forward_and_says_what_happened() {
     let network = Network::default();
-    let (a, b) = (lockbox("a", "v1", 1), lockbox("b", "v1", 1));
+    let (a, b) = (lockbox("a", 1), lockbox("b", 1));
     a.write("1", "on a");
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
     eventually("synced", || {

@@ -132,23 +132,13 @@ impl Schedule {
 
 #[cfg(test)]
 mod tests {
-    use zeroize::Zeroizing;
-
     use super::*;
-    use crate::nearby::session::host::Keys;
+    use crate::nearby::session::tests::keyed;
 
     const INSTANCE: &str = "rowel-1";
 
     fn seeing(device: &DeviceId) -> Schedule {
-        let keys = Keys {
-            proof: Zeroizing::new([1; 32]),
-            discovery: Zeroizing::new([2; 32]),
-        };
-        let lockboxes = [Lockbox {
-            vault_id: "v".into(),
-            current: keys,
-            retired: Vec::new(),
-        }];
+        let lockboxes = [keyed(1, &[])];
         let peer = Peer {
             instance: INSTANCE.into(),
             txt: advert::txt(device, [0; 16], &lockboxes),

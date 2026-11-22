@@ -13,12 +13,10 @@ use crate::error::{Error, Result};
 use crate::nearby::exchange::Absorbed;
 use crate::nearby::session::{Host, Keys, Lockbox};
 use crate::org::lockboxes::is_org_lockbox_dir;
-use crate::session::store_err;
 use crate::state::AppState;
-use crate::store::identity;
 use crate::sync::engine::{LocalVault, SessionVault, WorkspaceVault};
 use crate::sync::Provider;
-use crate::workspace::{dir_of, Registry, Workspace};
+use crate::workspace::{active_id, dir_of, Registry};
 use crate::{retired, storage};
 
 type Material = Zeroizing<Vec<u8>>;
@@ -32,86 +30,51 @@ impl AppHost {
         Self { app: app.clone() }
     }
 
-    fn open_lockbox(&self) -> Option<(Material, Option<String>)> {
-        let state = self.app.state::<AppState>();
-        let session = state.session.lock().unwrap();
-        let (key, store) = (session.key().ok()?, session.store().ok()?);
-        let vault_id = identity::vault_id(store).ok().flatten();
-        Some((Zeroizing::new(key.biometric_material().to_vec()), vault_id))
-    }
-
-    fn keyed_workspaces(&self, root: &Path) -> Vec<(Option<Material>, Workspace)> {
+    // The open one's key is the session's, the others' the keyring's.
+    fn held(&self, root: &Path) -> Vec<Held> {
         let workspaces = Registry::load(root).workspaces;
+        let active = active_id(&self.app);
         let state = self.app.state::<AppState>();
+        let open = state.session.lock().unwrap().key().ok().map(material);
         let ring = state.keyring.lock().unwrap();
         workspaces
             .into_iter()
-            .map(|w| (ring.get(&w.id), w))
+            .filter_map(|w| {
+                let dir = syncable_dir(root, &w.id)?;
+                let is_open = w.id == active;
+                let material = if is_open {
+                    open.clone()?
+                } else {
+                    ring.get(&w.id)?
+                };
+                Some(Held {
+                    workspace_id: w.id,
+                    dir,
+                    material,
+                    is_open,
+                })
+            })
             .collect()
     }
 
-    // Under `workspace_lock`: the workspace holding `vault_id`, and whether it is the open one.
-    fn locate(&self, state: &AppState, root: &Path, vault_id: &str) -> Result<(String, bool)> {
-        let active = state.active_workspace.lock().unwrap().clone();
-        let open_id =
-            identity::vault_id(state.session.lock().unwrap().store()?).map_err(store_err)?;
-        if open_id.as_deref() == Some(vault_id) {
-            return Ok((active, true));
-        }
-        let workspace = Registry::load(root)
-            .workspaces
-            .into_iter()
-            .find(|w| w.id != active && w.vault_id.as_deref() == Some(vault_id))
-            .ok_or(Error::NotFound)?;
-        Ok((workspace.id, false))
-    }
-
-    fn located(&self, vault_id: &str) -> Option<(String, bool)> {
-        let state = self.app.state::<AppState>();
+    fn located(&self, id: &str) -> Option<Held> {
         let root = storage::root_dir(&self.app).ok()?;
+        let state = self.app.state::<AppState>();
         let _paths = state.workspace_lock.lock().unwrap();
-        self.locate(&state, &root, vault_id).ok()
+        find(self.held(&root), id)
     }
 
-    // Under `workspace_lock`, with the claim held.
-    fn target(&self, state: &AppState, root: &Path, vault_id: &str) -> Result<Target> {
-        let (workspace_id, is_open) = self.locate(state, root, vault_id)?;
-        let dir = dir_of(root, &workspace_id);
-        if is_org_lockbox_dir(&dir) {
-            return Err(Error::NotFound);
-        }
-        if is_open {
-            return Ok(Target::Open);
-        }
-        let material = state
-            .keyring
-            .lock()
-            .unwrap()
-            .get(&workspace_id)
-            .ok_or(Error::Locked)?;
-        Ok(Target::Closed {
-            dir,
-            workspace_id,
-            material,
-        })
-    }
-
-    fn open(&self, target: Target) -> Result<Vault> {
+    fn open(&self, held: Held) -> Result<Vault> {
         let writer = Some(storage::install_id(&self.app));
         // Named only by a foreign-pack error, which a proved device's pack never is.
         let provider = Provider::default();
-        Ok(match target {
-            Target::Open => Vault::Open(SessionVault::capture(&self.app, provider, writer)?),
-            Target::Closed {
-                dir,
-                workspace_id,
-                material,
-            } => {
-                let key = VaultKey::from_material(material, true);
-                let vault = WorkspaceVault::open(&dir, &workspace_id, key, provider, writer)?;
-                Vault::Closed(vault)
-            }
-        })
+        if held.is_open {
+            let vault = SessionVault::capture(&self.app, provider, writer)?;
+            return Ok(Vault::Open(vault));
+        }
+        let key = held.key();
+        let vault = WorkspaceVault::open(&held.dir, &held.workspace_id, key, provider, writer)?;
+        Ok(Vault::Closed(vault))
     }
 
     // The caller holds `workspace_lock`.
@@ -124,31 +87,42 @@ impl AppHost {
     }
 }
 
+fn material(key: &VaultKey) -> Material {
+    Zeroizing::new(key.biometric_material().to_vec())
+}
+
 // No descriptor, no pack; and an org lockbox is its server's to sync.
 fn syncable_dir(root: &Path, workspace_id: &str) -> Option<PathBuf> {
     let dir = dir_of(root, workspace_id);
     (!is_org_lockbox_dir(&dir) && dir.join(storage::KDF_SIDECAR_FILE).exists()).then_some(dir)
 }
 
-fn lockbox(dir: &Path, workspace_id: &str, vault_id: String, material: Material) -> Lockbox {
-    let key = VaultKey::from_material(material, true);
-    Lockbox {
-        retired: retired::load(dir, &key, workspace_id)
-            .iter()
-            .map(|epoch| Keys::of(&epoch.key()))
-            .collect(),
-        current: Keys::of(&key),
-        vault_id,
+struct Held {
+    workspace_id: String,
+    dir: PathBuf,
+    material: Material,
+    is_open: bool,
+}
+
+impl Held {
+    fn key(&self) -> VaultKey {
+        VaultKey::from_material(self.material.clone(), true)
+    }
+
+    fn lockbox(&self) -> Lockbox {
+        let key = self.key();
+        Lockbox {
+            retired: retired::load(&self.dir, &key, &self.workspace_id)
+                .iter()
+                .map(|epoch| Keys::of(&epoch.key()))
+                .collect(),
+            current: Keys::of(&key),
+        }
     }
 }
 
-enum Target {
-    Open,
-    Closed {
-        dir: PathBuf,
-        workspace_id: String,
-        material: Material,
-    },
+fn find(held: Vec<Held>, id: &str) -> Option<Held> {
+    held.into_iter().find(|h| Keys::of(&h.key()).id == id)
 }
 
 // Its release answers a cloud run asked for meanwhile (`AppState::sync_rerun`),
@@ -174,56 +148,35 @@ impl Host for AppHost {
         let Ok(root) = storage::root_dir(&self.app) else {
             return Vec::new();
         };
-        let active = crate::workspace::active_id(&self.app);
-        let mut open = self.open_lockbox();
-        self.keyed_workspaces(&root)
-            .into_iter()
-            .filter_map(|(material, workspace)| {
-                let dir = syncable_dir(&root, &workspace.id)?;
-                let (vault_id, material) = if workspace.id == active {
-                    let (material, vault_id) = open.take()?;
-                    (vault_id.or(workspace.vault_id)?, material)
-                } else {
-                    (workspace.vault_id?, material?)
-                };
-                Some(lockbox(&dir, &workspace.id, vault_id, material))
-            })
-            .collect()
+        self.held(&root).iter().map(Held::lockbox).collect()
     }
 
-    fn step<T>(
-        &self,
-        vault_id: &str,
-        step: impl FnOnce(&dyn LocalVault) -> Result<T>,
-    ) -> Result<T> {
+    fn step<T>(&self, id: &str, step: impl FnOnce(&dyn LocalVault) -> Result<T>) -> Result<T> {
         let state = self.app.state::<AppState>();
         let root = storage::root_dir(&self.app)?;
-        let (_claim, target) = {
+        let (_claim, held) = {
             let _paths = state.workspace_lock.lock().unwrap();
-            (self.claim()?, self.target(&state, &root, vault_id))
+            (self.claim()?, find(self.held(&root), id))
         };
         // Dropped before the claim, so the lockbox closes before another run opens it.
-        let vault = self.open(target?)?;
-        if vault.vault_id()?.as_deref() != Some(vault_id) {
-            return Err(Error::NotFound);
-        }
+        let vault = self.open(held.ok_or(Error::NotFound)?)?;
         step(&*vault)
     }
 
-    fn merged(&self, vault_id: &str, local: &dyn LocalVault, absorbed: &Absorbed) {
-        let Some((workspace_id, is_open)) = self.located(vault_id) else {
+    fn merged(&self, id: &str, local: &dyn LocalVault, absorbed: &Absorbed) {
+        let Some(held) = self.located(id) else {
             return;
         };
         if absorbed.renamed {
-            crate::sync::mirror_name(&self.app, &workspace_id, local);
+            crate::sync::mirror_name(&self.app, &held.workspace_id, local);
         }
-        if is_open && absorbed.merged > 0 {
+        if held.is_open && absorbed.merged > 0 {
             crate::commands::sync::announce_merged(&self.app);
         }
     }
 
-    fn pass_on(&self, vault_id: &str) {
-        if self.located(vault_id).is_some_and(|(_, is_open)| is_open) {
+    fn pass_on(&self, id: &str) {
+        if self.located(id).is_some_and(|held| held.is_open) {
             let state = self.app.state::<AppState>();
             crate::commands::sync::request_run_if_ready(&self.app, &state);
         }
@@ -248,5 +201,27 @@ impl Deref for Vault {
             Vault::Open(vault) => vault,
             Vault::Closed(vault) => vault,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn held(workspace_id: &str, byte: u8) -> Held {
+        Held {
+            workspace_id: workspace_id.into(),
+            dir: PathBuf::new(),
+            material: Zeroizing::new(vec![byte; 32]),
+            is_open: false,
+        }
+    }
+
+    #[test]
+    fn a_held_lockbox_is_found_by_its_current_keys_id() {
+        let id = Keys::of(&held("b", 2).key()).id;
+        let found = find(vec![held("a", 1), held("b", 2)], &id);
+        assert_eq!(found.map(|h| h.workspace_id).as_deref(), Some("b"));
+        assert!(find(vec![held("a", 1)], &id).is_none());
     }
 }

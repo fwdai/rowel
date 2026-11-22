@@ -92,13 +92,13 @@ fn sync_with<H: Host>(
     }
     let lockboxes = shared.lockboxes();
     let matches = dialled.map_or(&[][..], |found| &found.matches);
-    let Handshake::Established { vaults, behind } =
+    let Handshake::Established { ids, behind } =
         handshake::run(shared, channel, &lockboxes, matches)?
     else {
         return Ok(None);
     };
     shared.conns().established(conn);
     shared.syncing(&peer);
-    let synced = sync::run(shared, channel, &peer, &lockboxes, &vaults);
+    let synced = sync::run(shared, channel, &peer, &lockboxes, &ids);
     Ok(behind.then_some(Outcome::Behind).or(synced))
 }

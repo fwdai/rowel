@@ -24,7 +24,8 @@ pub(super) fn txt(device: &DeviceId, nonce: [u8; NONCE_LEN], lockboxes: &[Lockbo
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Match {
-    pub vault_id: String,
+    // This side's lockbox, by its current key's id, whichever of its keys matched.
+    pub id: String,
     pub current: bool,
     // Places in `Lockbox::retired`: the other device is still on a key this one replaced.
     pub retired: Vec<usize>,
@@ -46,7 +47,7 @@ pub(super) fn recognise(txt: &Txt, lockboxes: &[Lockbox]) -> Option<Recognised> 
             };
             // A tag that names another device than the first was lifted from another advertisement.
             if *device.get_or_insert(named) == named {
-                add(&mut matches, &lockbox.vault_id, retired);
+                add(&mut matches, lockbox.id(), retired);
             }
         }
     }
@@ -71,12 +72,12 @@ fn unmask(tag: &Tag, keys: &Keys, nonce: &[u8; NONCE_LEN]) -> Option<DeviceId> {
         .then(|| DeviceId::from_bytes(mask_device_id(&keys.discovery, nonce, &tag.device)))
 }
 
-fn add(matches: &mut Vec<Match>, vault_id: &str, retired: Option<usize>) {
-    let at = match matches.iter().position(|m| m.vault_id == vault_id) {
+fn add(matches: &mut Vec<Match>, id: &str, retired: Option<usize>) {
+    let at = match matches.iter().position(|m| m.id == id) {
         Some(at) => at,
         None => {
             matches.push(Match {
-                vault_id: vault_id.into(),
+                id: id.into(),
                 current: false,
                 retired: Vec::new(),
             });
@@ -95,22 +96,7 @@ fn add(matches: &mut Vec<Match>, vault_id: &str, retired: Option<usize>) {
 mod tests {
     use super::*;
     use crate::nearby::discovery::Txt;
-    use zeroize::Zeroizing;
-
-    fn keys(n: u8) -> Keys {
-        Keys {
-            proof: Zeroizing::new([n; 32]),
-            discovery: Zeroizing::new([n.wrapping_add(100); 32]),
-        }
-    }
-
-    fn lockbox(vault: &str, current: u8, retired: &[u8]) -> Lockbox {
-        Lockbox {
-            vault_id: vault.into(),
-            current: keys(current),
-            retired: retired.iter().map(|&n| keys(n)).collect(),
-        }
-    }
+    use crate::nearby::session::tests::{keyed, keys};
 
     const ME: [u8; 32] = [0xaa; 32];
     const THEM: [u8; 32] = [0xbb; 32];
@@ -124,14 +110,14 @@ mod tests {
 
     #[test]
     fn a_shared_lockbox_is_recognised_and_names_the_device() {
-        let theirs = [lockbox("v1", 1, &[]), lockbox("v9", 9, &[])];
-        let mine = [lockbox("v1", 1, &[]), lockbox("v2", 2, &[])];
+        let theirs = [keyed(1, &[]), keyed(9, &[])];
+        let mine = [keyed(1, &[]), keyed(2, &[])];
         let read = recognise(&advertised(&theirs, 1), &mine).unwrap();
         assert_eq!(read.device, DeviceId::from_bytes(THEM));
         assert_eq!(
             read.matches,
             [Match {
-                vault_id: "v1".into(),
+                id: keys(1).id,
                 current: true,
                 retired: vec![],
             }]
@@ -140,22 +126,22 @@ mod tests {
 
     #[test]
     fn nothing_in_common_is_nothing_recognised() {
-        let theirs = [lockbox("v1", 7, &[])];
-        let mine = [lockbox("v1", 1, &[]), lockbox("v2", 2, &[])];
+        let theirs = [keyed(7, &[])];
+        let mine = [keyed(1, &[]), keyed(2, &[])];
         assert_eq!(recognise(&advertised(&theirs, 1), &mine), None);
         assert_eq!(recognise(&advertised(&[], 1), &mine), None);
     }
 
     #[test]
     fn a_retired_key_is_recognised_both_ways() {
-        let moved_on = [lockbox("v1", 2, &[1])];
-        let behind = [lockbox("v1", 1, &[])];
+        let moved_on = [keyed(2, &[1])];
+        let behind = [keyed(1, &[])];
 
         let seen_by_behind = recognise(&advertised(&moved_on, 1), &behind).unwrap();
         assert_eq!(
             seen_by_behind.matches,
             [Match {
-                vault_id: "v1".into(),
+                id: keys(1).id,
                 current: true,
                 retired: vec![],
             }]
@@ -164,7 +150,7 @@ mod tests {
         assert_eq!(
             seen_by_moved_on.matches,
             [Match {
-                vault_id: "v1".into(),
+                id: keys(2).id,
                 current: false,
                 retired: vec![0],
             }]
@@ -176,7 +162,7 @@ mod tests {
 
     #[test]
     fn two_sessions_of_one_device_share_no_tag() {
-        let lockboxes = [lockbox("v1", 1, &[3])];
+        let lockboxes = [keyed(1, &[3])];
         let (one, two) = (advertised(&lockboxes, 1), advertised(&lockboxes, 2));
         for (a, b) in one.tags.iter().zip(&two.tags) {
             assert_ne!(a.tag, b.tag);
@@ -190,21 +176,19 @@ mod tests {
 
     #[test]
     fn tags_naming_two_devices_count_for_the_first() {
-        let lockboxes = [lockbox("v1", 1, &[]), lockbox("v2", 2, &[])];
+        let lockboxes = [keyed(1, &[]), keyed(2, &[])];
         let mut forged = txt(&DeviceId::from_bytes(ME), [1; NONCE_LEN], &lockboxes[..1]);
         let other = txt(&DeviceId::from_bytes(THEM), [1; NONCE_LEN], &lockboxes[1..]);
         forged.tags.extend(other.tags);
         let read = recognise(&forged, &lockboxes).unwrap();
         assert_eq!(read.device, DeviceId::from_bytes(ME));
         assert_eq!(read.matches.len(), 1);
-        assert_eq!(read.matches[0].vault_id, "v1");
+        assert_eq!(read.matches[0].id, lockboxes[0].id());
     }
 
     #[test]
     fn current_keys_go_first_and_past_the_limit_retired_ones_go() {
-        let lockboxes: Vec<Lockbox> = (0..10)
-            .map(|n| lockbox(&format!("v{n}"), n, &[n + 20, n + 40]))
-            .collect();
+        let lockboxes: Vec<Lockbox> = (0..10).map(|n| keyed(n, &[n + 20, n + 40])).collect();
         let txt = txt(&DeviceId::from_bytes(ME), [1; NONCE_LEN], &lockboxes);
         assert_eq!(txt.tags.len(), MAX_TAGS);
         let read = recognise(&txt, &lockboxes).unwrap();
@@ -216,19 +200,19 @@ mod tests {
     fn a_key_seen_twice_counts_once() {
         let mut matches = Vec::new();
         for retired in [Some(1), None, Some(1), Some(0)] {
-            add(&mut matches, "v1", retired);
+            add(&mut matches, "k1", retired);
         }
-        add(&mut matches, "v2", Some(0));
+        add(&mut matches, "k2", Some(0));
         assert_eq!(
             matches,
             [
                 Match {
-                    vault_id: "v1".into(),
+                    id: "k1".into(),
                     current: true,
                     retired: vec![1, 0],
                 },
                 Match {
-                    vault_id: "v2".into(),
+                    id: "k2".into(),
                     current: false,
                     retired: vec![0],
                 },

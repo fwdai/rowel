@@ -748,15 +748,19 @@ the app opens a socket for it.
   most it will take and refuses a longer declared length before allocating
   anything, and every read and write has a stall deadline (30 seconds).
 - **Mine: proof of a lockbox key.** A device proves it holds a lockbox's key
-  with `HMAC-SHA256(proof key, binding ‖ role ‖ vault id)`, compared in
-  constant time (`nearby::trust`). The proof key is a subkey of the
-  lockbox's key, as the delete marker's is (`VaultKey::nearby_proof_key`). The
-  binding makes a proof good on its own session only, so it cannot be
-  replayed later or forwarded by a device in the middle, whose two halves have
-  two bindings; the role keeps it from being handed back to the side that sent
-  it. It reveals nothing about the key, and between two devices that both hold
-  the lockbox no KDF salt is sent, so a proof is nothing to guess the master
-  password against. This is the only level meant to sync.
+  with `HMAC-SHA256(proof key, binding ‖ role ‖ key id)`, compared in constant
+  time (`nearby::trust`). The proof key is a subkey of the lockbox's key, as
+  the delete marker's is (`VaultKey::nearby_proof_key`). The key id, which
+  names the lockbox on the wire, is derived from its key (an HMAC under
+  another subkey) and says nothing about it. It is sent only inside TLS: by a
+  dialler to a device whose advertisement it recognised, and by an answerer
+  only for a proof that verified. The binding makes a proof good on its own
+  session only, so it cannot be replayed later or forwarded by a device in the
+  middle, whose two halves have two bindings; the role keeps it from being
+  handed back to the side that sent it. It reveals nothing about the key, and
+  between two devices that both hold the lockbox no KDF salt is sent, so a
+  proof is nothing to guess the master password against. This is the only
+  level meant to sync.
 - **The advertisement.** Service `_rowel-sync._tcp` over mDNS, under an
   instance and host name that are random per session. Its TXT holds the
   protocol version, a random 16-byte nonce, and for each lockbox key the
@@ -779,7 +783,7 @@ the app opens a socket for it.
   another address fails at the handshake. The dialling side proves first, and
   only the lockboxes it recognised; the answering side proves back exactly
   the ones that verified. A device that connects with nothing proved hears
-  `hello` and `trust/done`: no vault id, no proof, no lockbox name.
+  `hello` and `trust/done`: no key id, no proof, no lockbox name.
   Only a lockbox proved both ways under its current key on this connection is
   synced; a message about any other is a protocol error that ends the
   connection.

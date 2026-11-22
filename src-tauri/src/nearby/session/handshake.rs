@@ -14,7 +14,7 @@ const MAX_PROOFS: usize = 64;
 const MAX_NAME_CHARS: usize = 64;
 
 pub(super) enum Handshake {
-    Established { vaults: Vec<String>, behind: bool },
+    Established { ids: Vec<String>, behind: bool },
     Over,
 }
 
@@ -28,15 +28,15 @@ pub(super) fn run<H: Host>(
         return Ok(Handshake::Over);
     };
     let proved = prove(channel, lockboxes, matches)?;
-    if proved.is_empty() {
+    if proved.verified.is_empty() {
         return Ok(Handshake::Over);
     }
     shared
         .book
         .seen(&channel.peer().to_string(), &name, &platform);
     Ok(Handshake::Established {
-        vaults: proved.mine.iter().map(|l| l.vault_id.clone()).collect(),
-        behind: !proved.peer_behind.is_empty() || !proved.self_behind.is_empty(),
+        ids: proved.mine().map(|l| l.id().to_owned()).collect(),
+        behind: proved.behind(),
     })
 }
 
@@ -54,7 +54,7 @@ fn hello(channel: &mut Channel, name: &str) -> Result<Option<(String, String)>> 
 }
 
 // The dialling side proves what it recognised; the answering side proves back only what
-// verified, so a device that dialled on a guess hears no vault id.
+// verified, so a device that dialled on a guess hears no key id.
 fn prove<'a>(
     channel: &mut Channel,
     lockboxes: &'a [Lockbox],
@@ -64,7 +64,7 @@ fn prove<'a>(
         Role::Connector => {
             let sent: Vec<(&Lockbox, &Match)> = matches
                 .iter()
-                .filter_map(|found| Some((find(lockboxes, &found.vault_id)?, found)))
+                .filter_map(|found| Some((lockboxes.iter().find(|l| l.id() == found.id)?, found)))
                 .collect();
             send_proofs(
                 channel,
@@ -80,39 +80,55 @@ fn prove<'a>(
     }
 }
 
-fn find<'a>(lockboxes: impl IntoIterator<Item = &'a Lockbox>, vault: &str) -> Option<&'a Lockbox> {
-    lockboxes.into_iter().find(|l| l.vault_id == vault)
-}
-
-enum Proof<'a> {
+#[derive(Clone, Copy)]
+enum Key<'a> {
     Current(&'a Lockbox),
     Retired(&'a Lockbox, &'a Keys),
 }
 
-// Under the current key, and under each retired key the advertisement carried.
-fn proofs_of<'a>(lockbox: &'a Lockbox, found: &'a Match) -> impl Iterator<Item = Proof<'a>> {
-    let retired = found.retired.iter().filter_map(|&i| lockbox.retired.get(i));
-    once(Proof::Current(lockbox)).chain(retired.map(|keys| Proof::Retired(lockbox, keys)))
-}
+impl<'a> Key<'a> {
+    fn lockbox(self) -> &'a Lockbox {
+        match self {
+            Self::Current(lockbox) | Self::Retired(lockbox, _) => lockbox,
+        }
+    }
 
-impl Proof<'_> {
-    fn message(&self, channel: &Channel) -> Control {
-        match *self {
-            Self::Current(lockbox) => Control::Proof {
-                vault: lockbox.vault_id.clone(),
-                proof: own_proof(channel, &lockbox.current.proof, &lockbox.vault_id),
-            },
-            Self::Retired(lockbox, keys) => Control::RetiredProof {
-                vault: lockbox.vault_id.clone(),
-                proof: own_proof(channel, &keys.proof, &lockbox.vault_id),
-            },
+    fn keys(self) -> &'a Keys {
+        match self {
+            Self::Current(lockbox) => &lockbox.current,
+            Self::Retired(_, keys) => keys,
+        }
+    }
+
+    fn proof(self, channel: &Channel) -> Control {
+        let keys = self.keys();
+        let (lockbox, proof) = (keys.id.clone(), own_proof(channel, &keys.proof, &keys.id));
+        match self {
+            Self::Current(_) => Control::Proof { lockbox, proof },
+            Self::Retired(..) => Control::RetiredProof { lockbox, proof },
         }
     }
 }
 
-fn send_proofs<'a>(channel: &mut Channel, proofs: impl Iterator<Item = Proof<'a>>) -> Result<()> {
-    for proof in proofs {
-        channel.send_control(&proof.message(channel))?;
+fn key_named<'a>(lockboxes: &[&'a Lockbox], id: &str) -> Option<Key<'a>> {
+    lockboxes.iter().find_map(|&lockbox| {
+        if lockbox.id() == id {
+            return Some(Key::Current(lockbox));
+        }
+        let retired = lockbox.retired.iter().find(|keys| keys.id == id);
+        retired.map(|keys| Key::Retired(lockbox, keys))
+    })
+}
+
+// Under the current key, and under each retired key the advertisement carried.
+fn proofs_of<'a>(lockbox: &'a Lockbox, found: &'a Match) -> impl Iterator<Item = Key<'a>> {
+    let retired = found.retired.iter().filter_map(|&i| lockbox.retired.get(i));
+    once(Key::Current(lockbox)).chain(retired.map(|keys| Key::Retired(lockbox, keys)))
+}
+
+fn send_proofs<'a>(channel: &mut Channel, keys: impl Iterator<Item = Key<'a>>) -> Result<()> {
+    for key in keys {
+        channel.send_control(&key.proof(channel))?;
     }
     channel.send_control(&Control::ProofsDone)
 }
@@ -120,17 +136,14 @@ fn send_proofs<'a>(channel: &mut Channel, proofs: impl Iterator<Item = Proof<'a>
 fn read_proofs<'a>(channel: &mut Channel, lockboxes: &[&'a Lockbox]) -> Result<Proved<'a>> {
     let mut proved = Proved::default();
     for _ in 0..=MAX_PROOFS {
-        let (vault, proof, retired) = match channel.recv_control()? {
+        let (id, proof, retired) = match channel.recv_control()? {
             Control::ProofsDone => return Ok(proved),
-            Control::Proof { vault, proof } => (vault, proof, false),
-            Control::RetiredProof { vault, proof } => (vault, proof, true),
+            Control::Proof { lockbox, proof } => (lockbox, proof, false),
+            Control::RetiredProof { lockbox, proof } => (lockbox, proof, true),
             other => return Err(out_of_step(&other)),
         };
-        if proved.has(&vault) {
-            continue;
-        }
-        if let Some(lockbox) = find(lockboxes.iter().copied(), &vault) {
-            proved.judge(channel, lockbox, &proof, retired);
+        if let Some(key) = key_named(lockboxes, &id) {
+            proved.judge(channel, key, &proof, retired);
         }
     }
     Err(Error::Protocol(
@@ -138,53 +151,45 @@ fn read_proofs<'a>(channel: &mut Channel, lockboxes: &[&'a Lockbox]) -> Result<P
     ))
 }
 
+// Each proof that verified: the key here it verified under, and whether it came as retired.
 #[derive(Default)]
 struct Proved<'a> {
-    mine: Vec<&'a Lockbox>,
-    // Proved under one of this side's retired keys: the other side is behind.
-    peer_behind: Vec<(&'a Lockbox, &'a Keys)>,
-    // This side's current key, proved as retired: this side is behind.
-    self_behind: Vec<&'a Lockbox>,
+    verified: Vec<(Key<'a>, bool)>,
 }
 
 impl<'a> Proved<'a> {
-    fn judge(&mut self, channel: &Channel, lockbox: &'a Lockbox, proof: &[u8], retired: bool) {
-        let holds = |keys: &Keys| verify_peer(channel, &keys.proof, &lockbox.vault_id, proof);
-        match (retired, holds(&lockbox.current)) {
-            (false, true) => self.mine.push(lockbox),
-            (true, true) => self.self_behind.push(lockbox),
-            (false, false) => {
-                if let Some(keys) = lockbox.retired.iter().find(|&keys| holds(keys)) {
-                    self.peer_behind.push((lockbox, keys));
-                }
-            }
-            (true, false) => {}
+    // A retired proof counts only under this side's current key; one verdict per lockbox.
+    fn judge(&mut self, channel: &Channel, key: Key<'a>, proof: &[u8], retired: bool) {
+        let ignored = (retired && matches!(key, Key::Retired(..))) || self.has(key.lockbox());
+        let keys = key.keys();
+        if !ignored && verify_peer(channel, &keys.proof, &keys.id, proof) {
+            self.verified.push((key, retired));
         }
     }
 
-    fn all(&self) -> impl Iterator<Item = &'a Lockbox> + '_ {
-        let behind = self.peer_behind.iter().map(|&(lockbox, _)| lockbox);
-        self.mine
+    fn mine(&self) -> impl Iterator<Item = &'a Lockbox> + '_ {
+        self.verified
             .iter()
-            .chain(&self.self_behind)
-            .copied()
-            .chain(behind)
+            .filter_map(|&(key, retired)| match key {
+                Key::Current(lockbox) if !retired => Some(lockbox),
+                _ => None,
+            })
     }
 
-    fn is_empty(&self) -> bool {
-        self.all().next().is_none()
+    // Anything else that verified puts one side on a retired key.
+    fn behind(&self) -> bool {
+        self.mine().count() < self.verified.len()
     }
 
-    fn has(&self, vault: &str) -> bool {
-        self.all().any(|lockbox| lockbox.vault_id == vault)
+    fn has(&self, lockbox: &Lockbox) -> bool {
+        self.verified
+            .iter()
+            .any(|(key, _)| key.lockbox().id() == lockbox.id())
     }
 
-    fn answers(&self) -> impl Iterator<Item = Proof<'a>> + '_ {
-        let current = self.mine.iter().chain(&self.self_behind);
-        let retired = self.peer_behind.iter();
-        current
-            .map(|&lockbox| Proof::Current(lockbox))
-            .chain(retired.map(|&(lockbox, keys)| Proof::Retired(lockbox, keys)))
+    // Each under the key its proof verified under.
+    fn answers(&self) -> impl Iterator<Item = Key<'a>> + '_ {
+        self.verified.iter().map(|&(key, _)| key)
     }
 }
 
@@ -208,7 +213,14 @@ pub(super) fn out_of_step(message: &Control) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+
     use super::*;
+    use crate::nearby::channel::tests::pair;
+    use crate::nearby::identity::tests::identity;
+    use crate::nearby::session::advert;
+    use crate::nearby::session::tests::{keyed, keys};
+    use crate::nearby::trust::NONCE_LEN;
 
     #[test]
     fn a_name_from_the_network_is_cleaned_and_bounded() {
@@ -219,5 +231,57 @@ mod tests {
             clean_name(&"é".repeat(100), "x").chars().count(),
             MAX_NAME_CHARS
         );
+    }
+
+    #[test]
+    fn a_key_is_found_by_its_id_whether_current_or_retired() {
+        let (one, two) = (keyed(1, &[2, 3]), keyed(4, &[]));
+        let held = [&one, &two];
+        assert!(matches!(
+            key_named(&held, &keys(4).id),
+            Some(Key::Current(l)) if l.id() == two.id()
+        ));
+        assert!(matches!(
+            key_named(&held, &keys(3).id),
+            Some(Key::Retired(l, k)) if l.id() == one.id() && k.id == keys(3).id
+        ));
+        assert!(key_named(&held, &keys(5).id).is_none());
+    }
+
+    // What each side syncs and whether it found a side behind, the dialler's first.
+    fn shake(dialler: &[Lockbox], answerer: &[Lockbox]) -> [(Vec<String>, bool); 2] {
+        let (a, b) = (identity(), identity());
+        let (mut dialled, mut answered) = pair(&a, &b);
+        let txt = advert::txt(b.device_id(), [1; NONCE_LEN], answerer);
+        let matches = advert::recognise(&txt, dialler).map_or_else(Vec::new, |found| found.matches);
+        thread::scope(|s| {
+            let answering = s.spawn(|| verdict(prove(&mut answered, answerer, &[])));
+            [
+                verdict(prove(&mut dialled, dialler, &matches)),
+                answering.join().unwrap(),
+            ]
+        })
+    }
+
+    fn verdict(proved: Result<Proved>) -> (Vec<String>, bool) {
+        let proved = proved.unwrap();
+        let mine = proved.mine().map(|l| l.id().to_owned()).collect();
+        (mine, proved.behind())
+    }
+
+    #[test]
+    fn a_device_on_a_retired_key_is_behind_on_both_sides_whichever_dials() {
+        let (moved_on, behind) = ([keyed(2, &[1])], [keyed(1, &[])]);
+        let needs_password = (Vec::new(), true);
+        assert_eq!(
+            shake(&moved_on, &behind),
+            [needs_password.clone(), needs_password.clone()]
+        );
+        assert_eq!(
+            shake(&behind, &moved_on),
+            [needs_password.clone(), needs_password]
+        );
+        let level = (vec![keys(2).id], false);
+        assert_eq!(shake(&moved_on, &moved_on), [level.clone(), level]);
     }
 }

@@ -1,4 +1,4 @@
-//! Lockbox key proofs over a channel's binding, and an advertisement's tags and masked device ids.
+//! Key ids, key proofs over a channel's binding, and an advertisement's tags and masked device ids.
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -11,37 +11,35 @@ pub const NONCE_LEN: usize = 16;
 pub const TAG_LEN: usize = 8;
 
 const MASK_LABEL: &[u8] = b"rowel-nearby device id\0";
+const LOCKBOX_ID_LABEL: &[u8] = b"rowel-nearby lockbox id\0";
 
-pub fn own_proof(channel: &Channel, proof_key: &[u8; 32], vault_id: &str) -> [u8; 32] {
-    proof_mac(proof_key, channel.binding(), channel.role(), vault_id)
+pub fn lockbox_id(discovery_key: &[u8; 32]) -> String {
+    let digest = hmac(discovery_key, &[LOCKBOX_ID_LABEL])
+        .finalize()
+        .into_bytes();
+    hex::encode(&digest[..16])
+}
+
+pub fn own_proof(channel: &Channel, proof_key: &[u8; 32], id: &str) -> [u8; 32] {
+    proof_mac(proof_key, channel.binding(), channel.role(), id)
         .finalize()
         .into_bytes()
         .into()
 }
 
-pub fn verify_peer(
-    channel: &Channel,
-    proof_key: &[u8; 32],
-    vault_id: &str,
-    claimed: &[u8],
-) -> bool {
-    proof_mac(
-        proof_key,
-        channel.binding(),
-        channel.role().other(),
-        vault_id,
-    )
-    .verify_slice(claimed)
-    .is_ok()
+pub fn verify_peer(channel: &Channel, proof_key: &[u8; 32], id: &str, claimed: &[u8]) -> bool {
+    proof_mac(proof_key, channel.binding(), channel.role().other(), id)
+        .verify_slice(claimed)
+        .is_ok()
 }
 
 // The role keeps a proof from being reflected back to the side that sent it.
-fn proof_mac(proof_key: &[u8; 32], binding: &[u8; 32], role: Role, vault_id: &str) -> HmacSha256 {
+fn proof_mac(proof_key: &[u8; 32], binding: &[u8; 32], role: Role, id: &str) -> HmacSha256 {
     let role = match role {
         Role::Connector => 1,
         Role::Acceptor => 2,
     };
-    hmac(proof_key, &[binding, &[role], vault_id.as_bytes()])
+    hmac(proof_key, &[binding, &[role], id.as_bytes()])
 }
 
 pub fn discovery_tag(discovery_key: &[u8; 32], nonce: &[u8; NONCE_LEN]) -> [u8; TAG_LEN] {
@@ -85,15 +83,23 @@ mod tests {
         let (dialled, answered) = pair(&a, &b);
         let (_, replayed_on) = pair(&a, &b);
 
-        let sent = own_proof(&dialled, &KEY, "vault-1");
-        assert!(verify_peer(&answered, &KEY, "vault-1", &sent));
-        assert!(!verify_peer(&answered, &OTHER_KEY, "vault-1", &sent));
-        assert!(!verify_peer(&answered, &KEY, "vault-2", &sent));
-        assert!(!verify_peer(&replayed_on, &KEY, "vault-1", &sent));
+        let sent = own_proof(&dialled, &KEY, "id-1");
+        assert!(verify_peer(&answered, &KEY, "id-1", &sent));
+        assert!(!verify_peer(&answered, &OTHER_KEY, "id-1", &sent));
+        assert!(!verify_peer(&answered, &KEY, "id-2", &sent));
+        assert!(!verify_peer(&replayed_on, &KEY, "id-1", &sent));
         // Reflected back to the side that sent it.
-        assert!(!verify_peer(&dialled, &KEY, "vault-1", &sent));
-        assert!(!verify_peer(&answered, &KEY, "vault-1", &sent[..16]));
-        assert!(!verify_peer(&answered, &KEY, "vault-1", &[]));
+        assert!(!verify_peer(&dialled, &KEY, "id-1", &sent));
+        assert!(!verify_peer(&answered, &KEY, "id-1", &sent[..16]));
+        assert!(!verify_peer(&answered, &KEY, "id-1", &[]));
+    }
+
+    #[test]
+    fn a_lockbox_id_is_its_keys_alone() {
+        let id = lockbox_id(&KEY);
+        assert_eq!(id, lockbox_id(&KEY));
+        assert_ne!(id, lockbox_id(&OTHER_KEY));
+        assert_eq!(id.len(), 32);
     }
 
     #[test]
@@ -122,15 +128,15 @@ mod tests {
 
         a_end
             .send_control(&Control::Proof {
-                vault: "vault-1".into(),
-                proof: own_proof(&a_end, &KEY, "vault-1"),
+                lockbox: "id-1".into(),
+                proof: own_proof(&a_end, &KEY, "id-1"),
             })
             .unwrap();
         let relayed = middle_to_a.recv(MAX_FRAME).unwrap();
         middle_to_b.send(&relayed).unwrap();
-        let Control::Proof { vault, proof } = b_end.recv_control().unwrap() else {
+        let Control::Proof { lockbox, proof } = b_end.recv_control().unwrap() else {
             panic!("expected the relayed proof");
         };
-        assert!(!verify_peer(&b_end, &KEY, &vault, &proof));
+        assert!(!verify_peer(&b_end, &KEY, &lockbox, &proof));
     }
 }
