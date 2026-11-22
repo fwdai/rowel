@@ -1,10 +1,8 @@
 //! The app as the nearby manager's [`Host`].
 
-use std::collections::HashSet;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
@@ -27,16 +25,11 @@ type Material = Zeroizing<Vec<u8>>;
 
 pub(super) struct AppHost {
     app: AppHandle,
-    // Closed lockboxes whose database gave no vault id, not reopened on every refresh.
-    missing: Mutex<HashSet<String>>,
 }
 
 impl AppHost {
     pub fn new(app: &AppHandle) -> Self {
-        Self {
-            app: app.clone(),
-            missing: Mutex::default(),
-        }
+        Self { app: app.clone() }
     }
 
     fn open_lockbox(&self) -> Option<(Material, Option<String>)> {
@@ -55,35 +48,6 @@ impl AppHost {
             .into_iter()
             .map(|w| (ring.get(&w.id), w))
             .collect()
-    }
-
-    fn closed_vault_id(
-        &self,
-        dir: &Path,
-        workspace: &Workspace,
-        material: &Material,
-    ) -> Option<String> {
-        workspace.vault_id.clone().or_else(|| {
-            look_up_once(&self.missing, &workspace.id, || {
-                self.learn_vault_id(dir, &workspace.id, material)
-            })
-        })
-    }
-
-    // Must run holding no lock: recording takes `workspace_lock`.
-    fn learn_vault_id(
-        &self,
-        dir: &Path,
-        workspace_id: &str,
-        material: &Material,
-    ) -> Result<Option<String>> {
-        let key = VaultKey::from_material(material.clone(), true);
-        let vault_id =
-            WorkspaceVault::open(dir, workspace_id, key, Provider::default(), None)?.vault_id()?;
-        if let Some(vault_id) = &vault_id {
-            crate::workspace::record_vault_id_of(&self.app, workspace_id, vault_id)?;
-        }
-        Ok(vault_id)
     }
 
     // Under `workspace_lock`: the workspace holding `vault_id`, and whether it is the open one.
@@ -160,24 +124,6 @@ impl AppHost {
     }
 }
 
-fn look_up_once(
-    missing: &Mutex<HashSet<String>>,
-    workspace_id: &str,
-    look_up: impl FnOnce() -> Result<Option<String>>,
-) -> Option<String> {
-    if missing.lock().unwrap().contains(workspace_id) {
-        return None;
-    }
-    let found = look_up().unwrap_or_else(|e| {
-        log::warn!("nearby: no vault id for lockbox {workspace_id}: {e}");
-        None
-    });
-    if found.is_none() {
-        missing.lock().unwrap().insert(workspace_id.to_string());
-    }
-    found
-}
-
 // No descriptor, no pack; and an org lockbox is its server's to sync.
 fn syncable_dir(root: &Path, workspace_id: &str) -> Option<PathBuf> {
     let dir = dir_of(root, workspace_id);
@@ -238,8 +184,7 @@ impl Host for AppHost {
                     let (material, vault_id) = open.take()?;
                     (vault_id.or(workspace.vault_id)?, material)
                 } else {
-                    let material = material?;
-                    (self.closed_vault_id(&dir, &workspace, &material)?, material)
+                    (workspace.vault_id?, material?)
                 };
                 Some(lockbox(&dir, &workspace.id, vault_id, material))
             })
@@ -303,45 +248,5 @@ impl Deref for Vault {
             Vault::Open(vault) => vault,
             Vault::Closed(vault) => vault,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::cell::Cell;
-
-    use super::*;
-
-    #[test]
-    fn a_vault_id_found_is_returned() {
-        let missing = Mutex::default();
-        let found = look_up_once(&missing, "work", || Ok(Some("cafe".into())));
-        assert_eq!(found.as_deref(), Some("cafe"));
-        assert!(missing.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_lockbox_with_no_vault_id_is_looked_up_once() {
-        let missing = Mutex::default();
-        let asked = Cell::new(0);
-        for _ in 0..3 {
-            let found = look_up_once(&missing, "legacy", || {
-                asked.set(asked.get() + 1);
-                Ok(None)
-            });
-            assert_eq!(found, None);
-        }
-        assert_eq!(asked.get(), 1);
-    }
-
-    #[test]
-    fn a_lookup_that_fails_is_not_tried_again() {
-        let missing = Mutex::default();
-        assert_eq!(
-            look_up_once(&missing, "work", || Err(Error::InvalidPassword)),
-            None
-        );
-        let again = look_up_once(&missing, "work", || panic!("looked up again"));
-        assert_eq!(again, None);
     }
 }

@@ -528,9 +528,16 @@ pub fn open_with_key(app: &AppHandle, key: &VaultKey) -> Result<(SqliteStore, Ve
     backfill_derived_columns(&store, key);
     let metas = list_metas(&store)?;
     // Every open lands here — password, biometrics, a switch the ring allows —
-    // so the lock screen knows the size of any vault opened on this device.
+    // so the lock screen knows the size of any vault opened on this device,
+    // and nearby sync which vault it is once it is closed again.
     // No lock held: this runs on the opening thread, ahead of the session.
-    crate::workspace::record_item_count(app, &crate::workspace::active_id(app), metas.len() as u32);
+    let vault_id = crate::store::identity::vault_id(&store).ok().flatten();
+    crate::workspace::record_opened(
+        app,
+        &crate::workspace::active_id(app),
+        metas.len() as u32,
+        vault_id.as_deref(),
+    );
     Ok((store, metas))
 }
 

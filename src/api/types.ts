@@ -236,9 +236,10 @@ export interface Workspace {
   id: string
   name: string | null
   /**
-   * The vault id of the vault inside, once a sync has settled one. The UI
-   * shows nothing of it; the backend keeps it to turn away a restore of a pack
-   * that is already a workspace here.
+   * The vault id of the vault inside, once it is known: at creation, on an
+   * open, or when a sync settles one. The UI shows nothing of it; the backend
+   * keeps it to turn away a restore of a pack that is already a workspace
+   * here, and for nearby sync to recognise a closed lockbox.
    */
   vaultId?: string
   /**

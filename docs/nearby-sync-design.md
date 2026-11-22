@@ -165,7 +165,10 @@ connection to keep in step with the keys or the network.
 
 **Which lockboxes.** The open one (`SessionVault`) and every other lockbox
 whose key is in `AppState.keyring` (`WorkspaceVault`), org lockboxes and
-lockboxes without a KDF descriptor or a vault id left out. A step opens the
+lockboxes without a KDF descriptor or a vault id left out. A closed lockbox's
+vault id is the registry's copy (`Workspace::vault_id`), which the app writes
+when a lockbox is created, restored, opened, left for another, or synced to an
+account; nearby sync never opens a lockbox to learn it. A step opens the
 open one through the session, and any other on a connection of its own; never
 the open one's database a second time. The set is read again every 3 seconds
 (the unlock fills the keyring a moment after the session opens; a password

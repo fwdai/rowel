@@ -88,21 +88,14 @@ pub async fn workspace_select(
         // install is the only case there is — so selecting the primary never
         // conjures a registry file for a user who has no second vault.
         if registry.active != id {
-            // The workspace being left keeps its size on the lock screen, as a
-            // lock would have recorded it: this switch clears the session
+            // The workspace being left keeps its size on the lock screen and
+            // its vault id for nearby sync, as an open would have recorded them: this switch clears the session
             // itself rather than going through one. Saved with the choice, in
             // the one write. Nothing to count from the lock screen, where the
             // lock already did.
-            let leaving = state
-                .session
-                .lock()
-                .unwrap()
-                .store()
-                .ok()
-                .map(|s| s.count_live());
-            if let Some(Ok(count)) = leaving {
-                let left = registry.active.clone();
-                workspace::count_into(&mut registry, &left, count);
+            let left = registry.active.clone();
+            if let Ok(store) = state.session.lock().unwrap().store() {
+                workspace::leave_into(&mut registry, &left, store);
             }
             registry.active = id.clone();
             registry.save(&root)?;
@@ -331,13 +324,14 @@ pub async fn workspace_create(
     // fails the vault goes too — a database no registry names would otherwise
     // be one with no way back to it.
     let recorded = update_registry(&state, &root, |registry| {
+        workspace::leave_into(registry, &previous_active, &previous.store);
         registry.workspaces.push(Workspace {
             id: id.clone(),
             name: Some(name),
-            // A vault that will sync is recorded by its id now, as a restored
-            // one is: its pack exists after the first run, and the record is
-            // what turns a restore of that pack away. A local vault has no id
-            // and no pack, so there is nothing to record.
+            // Recorded by its id now, as a restored one is. For a vault that
+            // will sync, its pack exists after the first run and the record is
+            // what turns a restore of that pack away; for any vault, it is how
+            // nearby sync recognises the lockbox once it is closed.
             vault_id: vault_id.clone(),
             item_count: None,
             color,
@@ -663,6 +657,7 @@ async fn restore_workspace(
     // Registry last, for the reason `workspace_create` records it last: an
     // entry only once there is a vault behind it.
     let recorded = update_registry(state, &root, |registry| {
+        workspace::leave_into(registry, &previous_active, &previous.store);
         registry.workspaces.push(Workspace {
             id: id.clone(),
             name: Some(name),
@@ -1121,7 +1116,7 @@ pub(crate) fn derive_in(dir: &Path, password: &str) -> Result<VaultKey> {
 //
 // With an account to inherit, the vault is also named and connected here, so a
 // failure in either leaves the caller one `discard` from a clean slate. The id
-// is returned for the registry; `None` is a local vault, which has none.
+// is returned for the registry.
 async fn create_vault_in(
     app: &AppHandle,
     root: &Path,
@@ -1133,7 +1128,8 @@ async fn create_vault_in(
     crate::store::create_private_dir(&dir)?;
     let (key, store) = create_off_thread(app, password).await?;
     let Some(tokens) = inherited else {
-        return Ok((key, store, None));
+        let vault_id = crate::store::identity::vault_id(&store).map_err(store_err)?;
+        return Ok((key, store, vault_id));
     };
     // The id before the tokens, as every other stamp-and-seal here orders them:
     // nothing is sealed under a key a failure would then discard.

@@ -359,13 +359,7 @@ pub fn recover_interrupted_delete(root: &Path) {
 /// Under `workspace_lock`, as every registry writer is: a rename or a create
 /// landing beside this must not save a copy that lacks the other's change.
 pub fn record_vault_id(app: &AppHandle, vault_id: &str) -> Result<()> {
-    update_active(app, |workspace| {
-        if workspace.vault_id.as_deref() == Some(vault_id) {
-            return false;
-        }
-        workspace.vault_id = Some(vault_id.to_string());
-        true
-    })
+    update_active(app, identified(vault_id))
 }
 
 /// Mirror a name a sync just adopted from another device into the registry.
@@ -380,14 +374,18 @@ pub fn record_vault_name(app: &AppHandle, name: &str) -> Result<()> {
 /// [`record_vault_id`] for workspace `id` rather than the active one: a run of
 /// a lockbox the session does not have open (`sync::run_workspace`).
 pub fn record_vault_id_of(app: &AppHandle, id: &str, vault_id: &str) -> Result<()> {
-    update_of(app, id, |workspace| {
+    update_of(app, id, identified(vault_id)).map(drop)
+}
+
+// The single edit every record of a vault id makes.
+fn identified(vault_id: &str) -> impl FnOnce(&mut Workspace) -> bool + '_ {
+    move |workspace| {
         if workspace.vault_id.as_deref() == Some(vault_id) {
             return false;
         }
         workspace.vault_id = Some(vault_id.to_string());
         true
-    })
-    .map(drop)
+    }
 }
 
 /// [`record_vault_name`] for workspace `id` rather than the active one.
@@ -431,31 +429,61 @@ fn named(name: &str) -> impl FnOnce(&mut Workspace) -> bool + '_ {
 /// Takes `workspace_lock`, so never call it holding the session lock: every
 /// reader of the two takes the registry's first.
 pub fn record_item_count(app: &AppHandle, id: &str, count: u32) {
+    record(app, id, counted(count));
+}
+
+/// [`record_item_count`] for an open, which also knows which vault it opened
+/// (see [`Workspace::vault_id`]): the registry is the only place that is
+/// readable once the workspace is closed again, and nearby sync recognises a
+/// closed lockbox by it. A vault from before ids existed has none to record.
+pub fn record_opened(app: &AppHandle, id: &str, count: u32, vault_id: Option<&str>) {
+    record(app, id, held(count, vault_id));
+}
+
+/// [`record_opened`] for a caller that already holds `workspace_lock` and the
+/// registry it is about to save, about the workspace it is leaving for
+/// another: the registry may have come into being since that vault was opened,
+/// and this is the last moment it can be read.
+pub(crate) fn leave_into(registry: &mut Registry, id: &str, store: &crate::store::SqliteStore) {
+    let Ok(count) = store.count_live() else {
+        return;
+    };
+    let vault_id = crate::store::identity::vault_id(store).ok().flatten();
+    held_into(registry, id, count, vault_id.as_deref());
+}
+
+fn held_into(registry: &mut Registry, id: &str, count: u32, vault_id: Option<&str>) {
+    if let Some(workspace) = registry.workspaces.iter_mut().find(|w| w.id == id) {
+        held(count, vault_id)(workspace);
+    }
+}
+
+// What an open vault says of itself. One without an id leaves the record alone.
+fn held(count: u32, vault_id: Option<&str>) -> impl FnOnce(&mut Workspace) -> bool + '_ {
+    move |workspace| {
+        let counted = counted(count)(workspace);
+        let identified = vault_id.is_some_and(|vault_id| identified(vault_id)(workspace));
+        counted || identified
+    }
+}
+
+fn record(app: &AppHandle, id: &str, change: impl FnOnce(&mut Workspace) -> bool) {
     let state = app.state::<AppState>();
     let recorded = storage::root_dir(app).and_then(|root| {
         let _paths = state.workspace_lock.lock().unwrap();
-        count_in(&root, id, count)
+        record_in(&root, id, change)
     });
     if let Err(e) = recorded {
-        log::warn!("could not record workspace {id}'s item count: {e}");
+        log::warn!("could not record what workspace {id}'s vault holds: {e}");
     }
 }
 
-// [`record_item_count`]'s write, under the caller's `workspace_lock`.
-fn count_in(root: &Path, id: &str, count: u32) -> Result<()> {
+// [`record`]'s write, under the caller's `workspace_lock`.
+fn record_in(root: &Path, id: &str, change: impl FnOnce(&mut Workspace) -> bool) -> Result<()> {
     if Registry::read(root)?.is_none() {
         return Ok(());
     }
-    update_active_locked(root, id, counted(count)).map(drop)
-}
-
-/// [`record_item_count`] for a caller that already holds `workspace_lock` and
-/// the registry it is about to save (`workspace_select`, leaving one
-/// workspace for another).
-pub(crate) fn count_into(registry: &mut Registry, id: &str, count: u32) {
-    if let Some(workspace) = registry.workspaces.iter_mut().find(|w| w.id == id) {
-        counted(count)(workspace);
-    }
+    update_active_locked(root, id, change).map(drop)
 }
 
 fn counted(count: u32) -> impl FnOnce(&mut Workspace) -> bool {
@@ -569,7 +597,7 @@ mod tests {
         let malformed = r#"{"active":"a1b2","workspaces":[{"id":"#;
         fs::write(root.join(REGISTRY_FILE), malformed).unwrap();
 
-        assert!(count_in(&root, PRIMARY_ID, 12).is_err());
+        assert!(record_in(&root, PRIMARY_ID, counted(12)).is_err());
         assert!(update_active_locked(&root, PRIMARY_ID, named("Home")).is_err());
 
         assert_eq!(
@@ -578,16 +606,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_open_records_the_vault_it_opened_and_one_without_an_id_keeps_the_record() {
+        let mut workspace = Registry::default().workspaces.remove(0);
+        assert!(held(3, Some("cafe"))(&mut workspace));
+        assert_eq!(workspace.vault_id.as_deref(), Some("cafe"));
+        assert_eq!(workspace.item_count, Some(3));
+
+        assert!(!held(3, None)(&mut workspace));
+        assert_eq!(workspace.vault_id.as_deref(), Some("cafe"));
+    }
+
     // An install that never made a second workspace has no registry file, and
     // an unlock recording its size must not be what creates one.
     #[test]
     fn an_item_count_never_creates_the_registry() {
         let root = tmp_root();
-        count_in(&root, PRIMARY_ID, 12).unwrap();
+        record_in(&root, PRIMARY_ID, counted(12)).unwrap();
         assert!(!root.join(REGISTRY_FILE).exists());
 
         Registry::default().save(&root).unwrap();
-        count_in(&root, PRIMARY_ID, 12).unwrap();
+        record_in(&root, PRIMARY_ID, counted(12)).unwrap();
         assert_eq!(Registry::load(&root).workspaces[0].item_count, Some(12));
     }
 
@@ -619,7 +658,7 @@ mod tests {
                 },
             ],
         };
-        count_into(&mut registry, PRIMARY_ID, 284);
+        held_into(&mut registry, PRIMARY_ID, 284, None);
         registry.save(&root).unwrap();
 
         let loaded = Registry::load(&root);

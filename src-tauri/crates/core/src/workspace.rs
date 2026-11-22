@@ -30,15 +30,16 @@ pub struct Workspace {
     /// whatever language the install was first run in.
     pub name: Option<String>,
     /// The vault id (see [`crate::store::identity`]) of the vault inside, as of
-    /// its last sync or its restore — `None` for a vault that has never had one,
-    /// which is a vault with no pack on Drive.
+    /// its creation, its restore, its last open here or its last sync — `None`
+    /// for a vault from before ids existed that has not synced since. It says
+    /// which vault this is, not that a pack of it exists in an account.
     ///
-    /// Recorded here, outside the vault, for one reader: a Drive restore asking
-    /// whether the pack it was pointed at is already a workspace on this
-    /// device. Every workspace but the active one is locked, and the id inside
-    /// a locked vault is unreadable — so without this the check could only see
-    /// the open workspace, and a duplicate of a locked one went through. Not a
-    /// secret: the same id is the pack's file name in the user's own Drive.
+    /// Recorded here, outside the vault, because every workspace but the
+    /// active one is closed and the id inside a closed vault is unreadable.
+    /// Two readers: a Drive restore asking whether the pack it was pointed at
+    /// is already a workspace on this device, and nearby sync, which
+    /// recognises a closed lockbox by it. Not a secret: the same id is the
+    /// pack's file name in the user's own Drive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_id: Option<String>,
     /// How many live entries the vault held when it was last open here — the
