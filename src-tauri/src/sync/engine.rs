@@ -666,6 +666,13 @@ impl WorkspaceVault {
     pub fn retired_marker_keys(&self) -> Vec<MarkerKey> {
         self.keys.retired_marker_keys()
     }
+
+    /// The pack a run would push, with nothing reclaimed first: the `.rowel`
+    /// backup of this lockbox (`commands::vault::export_vault`), which keeps
+    /// every tombstone and audit row a sync pack would have let go.
+    pub fn backup(&self) -> Result<Vec<u8>> {
+        self.keys.pack(&self.store)
+    }
 }
 
 impl LocalVault for WorkspaceVault {

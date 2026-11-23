@@ -16,6 +16,7 @@ import NavBar from '../NavBar'
 import Stack from '../Stack'
 import { PUSHED_SCREEN, SCREEN_SCROLLER, TAB_BAR_CLEARANCE } from '../chrome'
 import { useSwipeBack } from '../useSwipeBack'
+import PaneHeading from './PaneHeading'
 
 /**
  * One settings section, pushed from the root — and, pushed from it in turn,
@@ -57,13 +58,11 @@ export default function Pane({
           />
 
           <div className={cx(SCREEN_SCROLLER, 'px-4 pt-1', TAB_BAR_CLEARANCE)}>
-            {/* The pane names itself the way a root does — there is no room for
-                a centred nav title beside a back control that already carries
-                one. */}
-            <h1 className="truncate text-2xl font-semibold tracking-display text-text">
-              {titleOf(section)}
-            </h1>
-            <p className="mt-1 mb-5 text-base text-text2">{descriptionOf(section)}</p>
+            <PaneHeading
+              title={titleOf(section)}
+              description={descriptionOf(section)}
+              className="mb-5"
+            />
             <Section section={section} />
           </div>
           <div {...swipe.edge} />
@@ -93,12 +92,11 @@ function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean })
           />
         }
       />
-      <div className="flex-none px-4 pt-1 pb-4">
-        <h1 className="truncate text-2xl font-semibold tracking-display text-text">
-          {subpageTitleOf(subpage)}
-        </h1>
-        <p className="mt-1 text-base text-text2">{subpageDescriptionOf(subpage)}</p>
-      </div>
+      <PaneHeading
+        title={subpageTitleOf(subpage)}
+        description={subpageDescriptionOf(subpage)}
+        className="flex-none px-4 pt-1 pb-4"
+      />
       <div className="flex min-h-0 flex-1 flex-col">
         <SubpageBody subpage={subpage} />
       </div>

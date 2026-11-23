@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useApp, forgetAccount, setupAccountFailed, setupAccountReset } from '@/store'
+import { useApp, setupAccountFailed, setupAccountReset } from '@/store'
 import { syncAdoptPending, syncErrorText, syncProvider } from '@/api/sync'
 import { providerShares } from '@/api/provider'
 import { describeError, errorKind } from '@/api/errors'
+import { useForgetAccountOnLeave } from '@/hooks/useForgetAccountOnLeave'
 import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SubpageScroller from '../../../SubpageScroller'
 import AccountCard from './AccountCard'
+import Lockboxes from './Lockboxes'
 import Providers from './Providers'
 import SharesRow from './SharesRow'
 
@@ -19,7 +21,8 @@ const ErrorNote = ({ message }: { message: string }) => (
 )
 
 // Sync & backup › Your cloud storage: the account this vault syncs through,
-// and what only a connected account has (the links shared out of it).
+// and what only a connected account has (the lockboxes in it beside the
+// others, the links shared out of it).
 export default function CloudSubpage() {
   const { t } = useTranslation()
   const sync = useApp(state => state.sync)
@@ -31,16 +34,8 @@ export default function CloudSubpage() {
   // the frontend has words for, and in Rust's own words otherwise.
   const syncFailure = syncErrorText(sync)
 
-  // Leaving the page forgets a probe's pending account, as Settings ›
-  // Workspaces does: a sign-in the user walked away from is never adopted later.
-  // Only when there is one to forget, so that leaving costs no backend call
-  // otherwise.
-  useEffect(
-    () => () => {
-      if (useApp.getState().setupAccount.status !== 'idle') forgetAccount()
-    },
-    []
-  )
+  // Leaving the page is backing out of a connect it started.
+  useForgetAccountOnLeave()
 
   // Every probe is put to the backend once: it adopts the account (empty, or
   // already holding this vault) or refuses it, and only a refusal shows the
@@ -86,6 +81,8 @@ export default function CloudSubpage() {
           <ErrorNote message={account.error || t('Something went wrong')} />
         )}
       </section>
+
+      <Lockboxes />
 
       {/* Shares are Drive files: another provider has nowhere to put one yet. */}
       {providerShares(syncProvider(sync)) && (

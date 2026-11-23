@@ -79,7 +79,7 @@ describe("settings", () => {
     await section("sync");
     await $('[data-testid="settings-sync-open-backup"]').click();
     await expect($('input[name="export_password"]')).not.toBeDisplayed();
-    await $('[data-testid="settings-backup-row"]').$("button").click();
+    await $('[data-testid="settings-backup-row-default-toggle"]').click();
     await expect($('input[name="export_password"]')).toBeDisplayed();
   });
 

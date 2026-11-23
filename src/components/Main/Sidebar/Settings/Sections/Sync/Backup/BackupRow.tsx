@@ -1,28 +1,28 @@
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { Workspace } from '@/api/types'
 import { describeError } from '@/api/errors'
-import { selectActiveWorkspace, selectWorkspaces, useApp } from '@/store'
-import { workspaceLabel } from '@/lib/workspace'
 import { exportVault } from '@/api/vault'
-import { BACKUP_EXTENSION } from '@/lib/backup'
+import { refreshApp } from '@/store'
+import { useDates } from '@/hooks/useDates'
+import { workspaceLabel } from '@/lib/workspace'
 import Button from '@/components/elements/Button'
-import Chip from '@/components/elements/Chip'
 import Field from '@/components/elements/Field'
+import Monogram from '@/components/elements/Monogram'
 import Note from '@/components/elements/Note'
 import { inputClass } from '@/components/elements/formStyles'
 import { verbatimInput } from '@/components/elements/inputProps'
-import { DiskGlyph } from '@/components/Main/icons'
 import ExpandableRow from '../../ExpandableRow'
 
-// The open lockbox as one backup file, resealed under the master password the
-// user re-types here (the open session's key is never handed to the exporter).
-// The row names the lockbox: the file holds that one, not every lockbox here.
-export default function BackupRow() {
+// One lockbox as a backup file of its own: its tile and name over when it was
+// last saved here, and Save… unfolding the master password that seals it. The
+// password proves whoever is typing may carry the lockbox away, whichever one
+// it is; the file holds this lockbox and nothing else.
+export default function BackupRow({ workspace }: { workspace: Workspace }) {
   const { t } = useTranslation()
+  const { relativeLong } = useDates()
   const id = useId()
-  const active = useApp(selectActiveWorkspace)
-  const workspace = useApp(selectWorkspaces).find(workspace => workspace.id === active)
-  const lockbox = workspace ? workspaceLabel(workspace, t) : t('Personal')
+  const label = workspaceLabel(workspace, t)
   const [password, setPassword] = useState('')
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -33,10 +33,15 @@ export default function BackupRow() {
     setExporting(true)
     setError(null)
     setSaved(false)
-    exportVault(password)
-      .then(() => {
+    exportVault(workspace.id, password)
+      .then(path => {
+        // A dismissed dialog saved nothing, and keeps the password for another go.
+        if (path === null) return
         setPassword('')
         setSaved(true)
+        // The probe is what carries when each lockbox was last saved, so
+        // re-reading it is what moves the line under this row's name.
+        return refreshApp()
       })
       .catch((e: unknown) => setError(describeError(e)))
       .finally(() => setExporting(false))
@@ -44,16 +49,15 @@ export default function BackupRow() {
 
   return (
     <ExpandableRow
-      label={
-        <span className="flex items-center gap-2">
-          {t('Save a backup')}
-          <Chip>{BACKUP_EXTENSION}</Chip>
-        </span>
+      tile={<Monogram name={label} seed={workspace.id} color={workspace.color} size={32} />}
+      label={label}
+      description={
+        workspace.backedUpAt
+          ? t('Last saved {{when}}', { when: relativeLong(workspace.backedUpAt) })
+          : t('Never saved')
       }
-      description={t('Everything in {{lockbox}}, sealed with your master password', { lockbox })}
-      icon={<DiskGlyph size={16} />}
       action={t('Save…')}
-      testid="settings-backup-row"
+      testid={`settings-backup-row-${workspace.id}`}
     >
       <div className="flex max-w-sm flex-col gap-3">
         <Field id={id} label={t('Master password')}>
@@ -76,7 +80,7 @@ export default function BackupRow() {
             disabled={!password}
             loading={exporting}
             onClick={onExport}
-            testid="settings-backup-save"
+            testid={`settings-backup-save-${workspace.id}`}
           >
             {t('Save')}
           </Button>

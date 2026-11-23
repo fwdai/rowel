@@ -19,6 +19,11 @@ interface Props {
    * says so before the control does (a biometric unlock that is enrolled).
    */
   iconActive?: boolean
+  /**
+   * A mark that is a 32px tile of its own (a lockbox's monogram), drawn where
+   * `icon`'s tile would be, for a row that stands for a thing with a face.
+   */
+  tile?: ReactNode
   // Full-width content below the label/control line, inside the same row — for
   // expandable extras such as an inline change-password form.
   children?: ReactNode
@@ -38,13 +43,14 @@ export default function SettingsRow({
   control,
   icon,
   iconActive,
+  tile,
   children,
   testid
 }: Props) {
   return (
     <div data-testid={testid} className={cx('px-4 py-3.5', ROW_HAIRLINE)}>
       <div className="flex items-center gap-3.5">
-        {icon && (
+        {icon ? (
           <div
             className={cx(
               'grid h-8 w-8 flex-none place-items-center rounded-sm transition-colors',
@@ -53,6 +59,8 @@ export default function SettingsRow({
           >
             {icon}
           </div>
+        ) : (
+          tile
         )}
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3.5 gap-y-2.5">
           <div className="min-w-0 flex-1 basis-40">
@@ -72,7 +80,7 @@ export default function SettingsRow({
         </div>
       </div>
       {/* Unfolded content lines up under the label, past the tile. */}
-      {children && <div className={cx('mt-3', !!icon && 'pl-[46px]')}>{children}</div>}
+      {children && <div className={cx('mt-3', !!(icon || tile) && 'pl-[46px]')}>{children}</div>}
     </div>
   )
 }

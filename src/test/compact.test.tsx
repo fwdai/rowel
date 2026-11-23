@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
+import { changeLocale } from '@/i18n'
 import AuthShell from '@/components/elements/AuthShell'
 import Frame, { FrameProvider } from '@/components/elements/Frame'
 import Sheet from '@/components/elements/Sheet'
@@ -13,6 +14,7 @@ import {
   selectCurrent,
   editEntry,
   focusSearch,
+  initialApp,
   lockSettings,
   openPalette,
   openSettings,
@@ -20,10 +22,12 @@ import {
   openGenerator,
   setCurrentEntry,
   setEntries,
+  setRemoteVaults,
+  setSyncStatus,
   setView,
   startEntry
 } from '@/store'
-import { withEntries, loginEntry, loginMeta } from './utils'
+import { withEntries, loginEntry, loginMeta, seedApp } from './utils'
 import { setLayout } from './layout'
 import { calls, mockCommand } from './ipc'
 
@@ -546,6 +550,37 @@ describe('compact shell', () => {
     expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
   })
 
+  // The backup page is the same list on the phone, pushed over the overview
+  // that says where backups stand: a row per lockbox, each unfolding its own
+  // form inside itself rather than in a sheet.
+  it('pushes the backup page with a row per lockbox to save', async () => {
+    seed()
+    seedApp({
+      workspaces: [
+        { id: 'default', name: null, backedUpAt: '2024-01-15T12:00:00.000Z' },
+        { id: 'w2', name: 'Work' }
+      ],
+      activeWorkspace: 'default'
+    })
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-sync'))
+    expect(screen.getByTestId('settings-sync-open-backup-status')).toHaveTextContent(
+      'Some lockboxes never saved'
+    )
+    await userEvent.click(screen.getByTestId('settings-sync-open-backup'))
+
+    const page = screen.getByTestId('settings-subpage')
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
+    const work = within(page).getByTestId('settings-backup-row-w2')
+    expect(within(page).getByTestId('settings-backup-row-default')).toHaveTextContent(
+      'Last saved 01/15/2024'
+    )
+    await userEvent.click(within(work).getByTestId('settings-backup-row-w2-toggle'))
+    expect(within(work).getByLabelText('Master password')).toBeInTheDocument()
+  })
+
   // Sync & backup is an overview whose rows push a page each: root, section,
   // page, with each Back naming the screen under it.
   it('drills from the Sync overview into a page and back out', async () => {
@@ -565,6 +600,51 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
     expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-sync-open-cloud').closest('[inert]')).toBeNull()
+  })
+
+  // The cloud page's list is the same on the phone, each row's standing under
+  // its name; a lockbox not on this device leads out of the pushed page to the
+  // Lockboxes pane, where it is restored.
+  it('lists the lockboxes beside the account, and leads one not here to Lockboxes', async () => {
+    seedApp({
+      workspaces: [
+        { id: 'default', name: null },
+        { id: 'w2', name: 'Scratch', synced: false }
+      ],
+      activeWorkspace: 'default'
+    })
+    seed()
+    setSyncStatus({ ...initialApp.sync, configured: true, provider: 'googleDrive' })
+    setRemoteVaults([
+      {
+        id: 'drive-file-1',
+        name: 'cafe.rowel',
+        vaultId: 'cafe',
+        size: 64_512,
+        modifiedTime: '2024-01-01T00:00:00.000Z',
+        provider: 'googleDrive'
+      }
+    ])
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-sync'))
+    await userEvent.click(screen.getByTestId('settings-sync-open-cloud'))
+
+    const list = within(screen.getByTestId('settings-subpage')).getByTestId(
+      'settings-cloud-lockboxes'
+    )
+    expect(within(list).getByTestId('settings-cloud-lockbox-default')).toHaveTextContent('Open now')
+    expect(within(list).getByTestId('settings-cloud-lockbox-w2-status')).toHaveTextContent(
+      'This device'
+    )
+
+    await userEvent.click(within(list).getByTestId('settings-cloud-remote-drive-file-1'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-remote-row')).toBeInTheDocument()
+    // One level deep again: the section's own Back, to the settings root.
+    expect(screen.getByTestId('settings-back').closest('[inert]')).toBeNull()
   })
 
   // The pane's section is local state, so the store's guard on the wide
@@ -633,6 +713,31 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
     expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+  })
+
+  // A pushed screen's title has the row to itself, so it is said in full
+  // rather than cut to fit — on the section's pane and on a page pushed over
+  // it alike, which is where a translated title runs longest.
+  it('names a pushed settings screen in full, however long its title', async () => {
+    seed()
+    render(<Main />)
+    await act(() => changeLocale('de-DE'))
+    try {
+      act(() => openSettings())
+      await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+      const section = screen.getByRole('heading', { name: 'Schließfächer' })
+      await userEvent.click(screen.getByTestId('workspace-restore-open'))
+      const page = within(screen.getByTestId('settings-subpage')).getByRole('heading', {
+        name: 'Aus einem Cloud-Konto wiederherstellen'
+      })
+
+      for (const heading of [section, page]) {
+        expect(heading).not.toHaveClass('truncate')
+        expect(heading).toHaveClass('break-words')
+      }
+    } finally {
+      await act(() => changeLocale('en-US'))
+    }
   })
 
   // The sub-page's action is the slab every pushed screen puts where a thumb

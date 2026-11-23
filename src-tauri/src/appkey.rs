@@ -51,7 +51,6 @@ impl Keyring {
         self.keys.get(id).cloned()
     }
 
-    #[cfg(test)]
     pub fn has(&self, id: &str) -> bool {
         self.keys.contains_key(id)
     }

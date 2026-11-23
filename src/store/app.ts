@@ -4,7 +4,7 @@ import { appStatus, type AppStatus, type OsLockStatus } from '@/api/app'
 import { lock } from '@/api/auth'
 import type { Provider } from '@/api/provider'
 import type { RemotePack } from '@/api/setup'
-import { syncNow, type SyncStatus } from '@/api/sync'
+import { syncNow, syncProvider, type SyncStatus } from '@/api/sync'
 import type { NearbyStatus } from '@/api/nearby'
 import { checkForUpdate } from '@/api/autoUpdate'
 import { resetEmblems } from '@/hooks/useEmblem'
@@ -103,8 +103,10 @@ export interface AppState {
   /**
    * The account's vaults that are not workspaces on this device, as the last
    * sync run reported them (`workspaces:remote`). Settings › Workspaces offers
-   * to restore them. Dropped with the session: they are the open workspace's
-   * account's, and the next unlock's sync says again.
+   * to restore them. They are one connection's listing, and last no longer
+   * than it does: dropped with the session, since they are the open
+   * workspace's account's, and dropped when that connection ends or becomes
+   * another (`adoptSync`). The next run of whatever is connected says again.
    */
   remoteVaults: RemotePack[]
   /**
@@ -189,7 +191,7 @@ export const useApp = create<AppState>()(() => initialApp)
  * boot path passes none, since nothing can have been written before it.
  */
 export const setApp = (status: AppStatus, mark?: number) => {
-  useApp.setState(state => ({ status, sync: newer(state.sync, status.sync) }))
+  useApp.setState(state => ({ status, ...adoptSync(state, newer(state.sync, status.sync)) }))
   if (mark === undefined) hydratePrefs(status.settings)
   else hydrateFromProbe(status.settings, mark)
 }
@@ -204,6 +206,28 @@ export const setApp = (status: AppStatus, mark?: number) => {
  */
 const newer = <T extends { seq: number }>(held: T, incoming: T): T =>
   incoming.seq >= held.seq ? incoming : held
+
+/**
+ * The one way a sync status enters the store, whichever route brought it (the
+ * probe, the `sync:status` event, an unlock's result), so that what belongs to
+ * a connection goes when the connection does.
+ *
+ * `remoteVaults` is the listing of the account that was connected when a run
+ * reported it. Once the status says that connection has ended, or names
+ * another provider, the listing describes an account this vault no longer
+ * reaches: kept, it would be offered for restore with no credentials behind
+ * it, and counted as the next account's until a run of that one succeeded. A
+ * status names a provider, not an account, which is enough: moving to another
+ * account of the same provider passes through a disconnect.
+ */
+const adoptSync = (
+  state: AppState,
+  sync: SyncStatus
+): Pick<AppState, 'sync' | 'remoteVaults'> => {
+  const was = syncProvider(state.sync)
+  const kept = was === null || was === syncProvider(sync)
+  return { sync, remoteVaults: kept ? state.remoteVaults : [] }
+}
 
 /**
  * Whether this platform has a text recognizer at all — a build-time fact about
@@ -334,15 +358,15 @@ export const enterMain = async (result: UnlockResult): Promise<boolean> => {
   // connect was for. Without that, the gap until the first run's status read
   // as Google Drive (`syncProvider`'s fallback) and showed Drive-only controls
   // over a Dropbox vault.
-  useApp.setState(state => ({
-    sync: {
+  useApp.setState(state =>
+    adoptSync(state, {
       ...state.sync,
       configured: result.syncConfigured,
       provider: result.syncConfigured
         ? (state.sync.provider ?? state.setupAccount.provider)
         : null
-    }
-  }))
+    })
+  )
   // One run on unlock: this device may have been off while another pushed,
   // and it may itself be holding writes a previous session never published.
   if (result.syncConfigured) syncNow().catch(() => {})
@@ -406,7 +430,7 @@ export const scheduleSync = () => {
 }
 
 export const setSyncStatus = (sync: SyncStatus) =>
-  useApp.setState(state => ({ sync: newer(state.sync, sync) }))
+  useApp.setState(state => adoptSync(state, newer(state.sync, sync)))
 
 export const setNearbyStatus = (nearby: NearbyStatus) =>
   useApp.setState(state => ({ nearby: state.nearby ? newer(state.nearby, nearby) : nearby }))

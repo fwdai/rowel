@@ -20,6 +20,14 @@ pub use rowel_core::layout::{
 // so the attempt counter cannot live in the `meta` table. Public by design —
 // it only ever holds a counter and a timestamp, nothing secret.
 pub const LOCKOUT_SIDECAR_FILE: &str = "vault.lock.json";
+// When a backup of the vault was last saved from this device, as one RFC 3339
+// timestamp (`workspace::record_backup`). Beside the vault rather than in the
+// registry for two reasons: an install with one lockbox has no registry file
+// and does not get one for this, and the vault's file set is what a delete
+// takes away and a promotion carries, so the stamp goes and moves with the
+// lockbox it is about. Plaintext and readable while locked, like the backoff:
+// a date, nothing about what the vault holds.
+pub const LAST_BACKUP_FILE: &str = "vault.last-backup";
 // User preferences (theme, locale, auto-lock, …). Plaintext and readable while
 // locked by design: the shell has to know what to draw before the vault opens.
 pub const SETTINGS_FILE: &str = "settings.json";
@@ -68,12 +76,13 @@ const SYNC_SCRATCH_DIR: &str = "sync-scratch";
 // whatever `-wal`/`-shm` siblings it has (see `db_files`), a sidecar is the one
 // file.
 const VAULT_DB_FILES: [&str; 2] = [DB_FILE, DB_REKEY_BACKUP_FILE];
-const VAULT_SIDECAR_FILES: [&str; 10] = [
+const VAULT_SIDECAR_FILES: [&str; 11] = [
     KDF_SIDECAR_FILE,
     KDF_SIDECAR_REKEY_BACKUP_FILE,
     RETIRED_KEYS_FILE,
     RETIRED_KEYS_REKEY_BACKUP_FILE,
     LOCKOUT_SIDECAR_FILE,
+    LAST_BACKUP_FILE,
     GDRIVE_FILE,
     DROPBOX_FILE,
     ICLOUD_FILE,
@@ -852,7 +861,7 @@ mod tests {
         move_data_dir, move_vault_files, move_workspace_files, read_backup,
         read_regular_file_capped, remove_if_present, settle_data_dir, Error, BIOMETRIC_FILE,
         DB_FILE, DB_REKEY_BACKUP_FILE, DROPBOX_FILE, GDRIVE_FILE, ICLOUD_FILE, KDF_SIDECAR_FILE,
-        KDF_SIDECAR_REKEY_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, RETIRED_KEYS_FILE,
+        KDF_SIDECAR_REKEY_BACKUP_FILE, LAST_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, RETIRED_KEYS_FILE,
         RETIRED_KEYS_REKEY_BACKUP_FILE, ROWEL_SERVER_FILE, STALE_SUFFIX, SYNC_SCRATCH_DIR,
         WRAPPED_KEY_FILE,
     };
@@ -927,7 +936,7 @@ mod tests {
     }
 
     // Every file of the set, laid out as a workspace holds them.
-    fn seed_vault(dir: &Path) -> [&'static str; 12] {
+    fn seed_vault(dir: &Path) -> [&'static str; 13] {
         let files = [
             DB_FILE,
             DB_REKEY_BACKUP_FILE,
@@ -936,6 +945,7 @@ mod tests {
             RETIRED_KEYS_FILE,
             RETIRED_KEYS_REKEY_BACKUP_FILE,
             LOCKOUT_SIDECAR_FILE,
+            LAST_BACKUP_FILE,
             GDRIVE_FILE,
             DROPBOX_FILE,
             ICLOUD_FILE,
@@ -952,8 +962,8 @@ mod tests {
 
     // The set is this module's answer to "what a vault is", and a move has to
     // take all of it: the database with its WAL, the pair an interrupted
-    // password change left behind, the backoff state, the sealed account and
-    // the key sealed under the app key.
+    // password change left behind, the backoff state, the last backup's
+    // stamp, the sealed account and the key sealed under the app key.
     #[test]
     fn a_moved_vault_takes_every_file_it_is_made_of() {
         let from = tmp_sidecar().parent().unwrap().to_path_buf();

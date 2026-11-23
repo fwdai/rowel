@@ -6,6 +6,7 @@ import {
   switchWorkspaceAccount
 } from '@/store'
 import { syncProvider } from '@/api/sync'
+import { cloudStanding } from '@/lib/syncView'
 import { cx } from '@/utils/cx'
 import { CARD, HERO_WASH } from '@/components/elements/tokens'
 import AccountRestoreForm from '@/components/elements/AccountRestoreForm'
@@ -37,11 +38,8 @@ export default function AccountCard({ probing, offered, restoring }: Props) {
   const busy = sync.pending || probing || offered
   const provider = syncProvider(sync) ?? (busy ? account.provider : null)
 
-  const lastSynced = sync.inProgress
-    ? t('Syncing…')
-    : sync.error === null
-      ? t('Up to date')
-      : t('Last attempt failed')
+  // The account's standing, in the words the header's pill says it in.
+  const lastSynced = t(cloudStanding(sync).label)
 
   return (
     <div data-testid="settings-drive-row" className={cx(CARD, HERO_WASH)}>

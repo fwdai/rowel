@@ -32,9 +32,11 @@ const DOT: Record<StatusTone, string | null> = {
  * row's tile, type and inset, and the two can share a card.
  *
  * A grid rather than a line, because the status moves: beside the label and
- * its description on the wide shell, and up onto the label's own line on the
+ * its description on the wide shell, and onto the label's own line on the
  * phone, where a status standing beside both would squeeze the description
- * into a column a few words wide.
+ * into a column a few words wide. There the two share a line that wraps, so a
+ * status too long to sit beside the label (a sentence, in German) drops under
+ * it rather than pushing it out of its column.
  */
 export default function SettingsNavRow({
   label,
@@ -66,22 +68,26 @@ export default function SettingsNavRow({
       >
         {icon}
       </span>
-      <span className="col-start-2 row-start-1 text-base font-medium text-text max-md:text-md">
-        {label}
-      </span>
-      {status && (
-        <span
-          data-testid={testid && `${testid}-status`}
-          data-tone={statusTone}
-          className={cx(
-            'col-start-3 row-start-1 flex items-center gap-1.5 text-sm md:row-span-2 max-md:text-base',
-            statusTone === 'bad' ? 'text-bad' : 'text-text2'
-          )}
-        >
-          {dot && <span aria-hidden className={cx('h-1.5 w-1.5 flex-none rounded-full', dot)} />}
-          {status}
+      {/* One wrapping line on the phone; on the wide shell the wrapper steps
+          aside (`contents`) and its two children take their own grid cells. */}
+      <span className="col-start-2 row-start-1 flex flex-wrap items-baseline justify-between gap-x-3 max-md:col-end-4 md:contents">
+        <span className="text-base font-medium text-text max-md:text-md md:col-start-2 md:row-start-1">
+          {label}
         </span>
-      )}
+        {status && (
+          <span
+            data-testid={testid && `${testid}-status`}
+            data-tone={statusTone}
+            className={cx(
+              'flex items-center gap-1.5 text-sm max-md:text-base md:col-start-3 md:row-span-2 md:row-start-1',
+              statusTone === 'bad' ? 'text-bad' : 'text-text2'
+            )}
+          >
+            {dot && <span aria-hidden className={cx('h-1.5 w-1.5 flex-none rounded-full', dot)} />}
+            {status}
+          </span>
+        )}
+      </span>
       {description && (
         <span className="col-start-2 row-start-2 mt-0.5 text-sm text-text2 max-md:col-end-4 max-md:text-base">
           {description}

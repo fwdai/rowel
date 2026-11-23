@@ -46,6 +46,11 @@ pub struct WorkspaceStatus {
     /// The registry's agent-access switch, lifted beside `synced` so the
     /// frontend reads it off every row (see [`Workspace::agents`]).
     pub agents: bool,
+    /// When a backup of it was last saved on this device (RFC 3339), read off
+    /// the stamp beside its vault ([`storage::LAST_BACKUP_FILE`]). Left out for
+    /// one never saved here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backed_up_at: Option<String>,
 }
 
 /// Every workspace in `registry` with its live sync state, for `app_status`.
@@ -54,15 +59,61 @@ pub fn statuses(registry: &Registry, root: &Path) -> Vec<WorkspaceStatus> {
         .workspaces
         .iter()
         .map(|workspace| {
-            let provider = storage::sync_provider_in(&dir_of(root, &workspace.id));
+            let dir = dir_of(root, &workspace.id);
+            let provider = storage::sync_provider_in(&dir);
             WorkspaceStatus {
                 synced: provider.is_some(),
                 provider,
                 agents: workspace.agents,
+                backed_up_at: backed_up_at_in(&dir),
                 workspace: workspace.clone(),
             }
         })
         .collect()
+}
+
+/// Note that a backup of workspace `id` has just been saved, `at` (RFC 3339):
+/// what the Encrypted backup page and the Sync & backup overview read back
+/// through [`statuses`]. For a caller holding `workspace_lock`, which a delete
+/// and a promotion move a vault's files under, so the stamp never lands in a
+/// directory on its way out. `NotFound` when the registry no longer names the
+/// workspace: a stamp must not make a directory for a lockbox that has gone.
+pub fn record_backup_in(root: &Path, id: &str, at: &str) -> Result<()> {
+    if !Registry::load(root).contains(id) {
+        return Err(Error::NotFound);
+    }
+    storage::atomic_write_file(&dir_of(root, id).join(storage::LAST_BACKUP_FILE), at)
+}
+
+/// The workspace whose vault is sealed under `descriptor` (its key descriptor,
+/// as its sidecar holds it), by the id the registry has it under now, or
+/// `None` when no workspace here is.
+///
+/// How a lockbox is found again by something that picked it earlier and held
+/// no step since. An id does not last that long: `default` is whichever
+/// lockbox is the primary, and a delete of the primary moves a survivor's files
+/// into it. The descriptor moves with those files and carries the lockbox's own
+/// random salt, so it names the lockbox rather than the slot — until its
+/// password changes, which writes a new one. For a caller holding
+/// `workspace_lock`, which a delete and a promotion move the files under.
+pub fn sealed_under(root: &Path, descriptor: &str) -> Option<String> {
+    Registry::load(root)
+        .workspaces
+        .into_iter()
+        .map(|workspace| workspace.id)
+        .find(|id| {
+            fs::read_to_string(dir_of(root, id).join(storage::KDF_SIDECAR_FILE))
+                .is_ok_and(|held| held == descriptor)
+        })
+}
+
+// The stamp beside the vault in `dir`, if there is one that reads as a time: a
+// file that does not is no more a backup than no file.
+fn backed_up_at_in(dir: &Path) -> Option<String> {
+    let stamp = fs::read_to_string(dir.join(storage::LAST_BACKUP_FILE)).ok()?;
+    let stamp = stamp.trim();
+    chrono::DateTime::parse_from_rfc3339(stamp).ok()?;
+    Some(stamp.to_string())
 }
 
 /// Whether agents may use items in workspace `id`, as the registry at `root`
@@ -652,6 +703,7 @@ mod tests {
             (storage::KDF_SIDECAR_REKEY_BACKUP_FILE, "kdf-backup"),
             (storage::RETIRED_KEYS_FILE, "retired"),
             (storage::LOCKOUT_SIDECAR_FILE, "lockout"),
+            (storage::LAST_BACKUP_FILE, "backup"),
             (
                 crate::sync::Provider::GoogleDrive.token_file_name(),
                 "token",
@@ -799,6 +851,7 @@ mod tests {
             read(root.join(storage::LOCKOUT_SIDECAR_FILE)),
             "work-lockout"
         );
+        assert_eq!(read(root.join(storage::LAST_BACKUP_FILE)), "work-backup");
         // Nothing of the survivor's is left at its old address, and nothing of
         // the deleted vault's in the root — its enrollment marker included,
         // whose keychain item goes with the key that is gone.
@@ -834,6 +887,60 @@ mod tests {
         assert_eq!(Registry::load(&root).workspaces.len(), 1);
         assert!(!staging(&root).exists());
         assert!(!DeleteJournal::path(&root).exists());
+    }
+
+    // When a lockbox was last saved is the lockbox's own: a delete takes it
+    // away with the rest, and a promotion carries the survivor's into the root
+    // in place of the deleted primary's — never the other way round.
+    #[test]
+    fn a_backup_stamp_goes_with_its_lockbox() {
+        const PRIMARY_AT: &str = "2026-01-01T00:00:00.000Z";
+        const WORK_AT: &str = "2026-02-02T00:00:00.000Z";
+        let stamped = |root: &Path| {
+            statuses(&Registry::load(root), root)
+                .into_iter()
+                .map(|s| (s.workspace.id, s.backed_up_at))
+                .collect::<Vec<_>>()
+        };
+
+        let root = tmp_root();
+        seed_vault(&root, "primary");
+        seed_vault(&dir_of(&root, "a1b2"), "work");
+        let deletion = two_workspaces(&root).without("a1b2").unwrap();
+        record_backup_in(&root, PRIMARY_ID, PRIMARY_AT).unwrap();
+        record_backup_in(&root, "a1b2", WORK_AT).unwrap();
+        apply_deletion(&root, "a1b2", &deletion).unwrap();
+        assert_eq!(
+            stamped(&root),
+            [(PRIMARY_ID.to_string(), Some(PRIMARY_AT.to_string()))]
+        );
+        assert!(matches!(
+            record_backup_in(&root, "a1b2", WORK_AT),
+            Err(Error::NotFound)
+        ));
+        assert!(!dir_of(&root, "a1b2").exists());
+
+        let root = tmp_root();
+        seed_vault(&root, "primary");
+        seed_vault(&dir_of(&root, "a1b2"), "work");
+        let deletion = two_workspaces(&root).without(PRIMARY_ID).unwrap();
+        record_backup_in(&root, PRIMARY_ID, PRIMARY_AT).unwrap();
+        record_backup_in(&root, "a1b2", WORK_AT).unwrap();
+        apply_deletion(&root, PRIMARY_ID, &deletion).unwrap();
+        assert_eq!(
+            stamped(&root),
+            [(PRIMARY_ID.to_string(), Some(WORK_AT.to_string()))]
+        );
+
+        // A survivor never saved comes into the root never saved.
+        let root = tmp_root();
+        seed_vault(&root, "primary");
+        seed_vault(&dir_of(&root, "a1b2"), "work");
+        fs::remove_file(dir_of(&root, "a1b2").join(storage::LAST_BACKUP_FILE)).unwrap();
+        let deletion = two_workspaces(&root).without(PRIMARY_ID).unwrap();
+        record_backup_in(&root, PRIMARY_ID, PRIMARY_AT).unwrap();
+        apply_deletion(&root, PRIMARY_ID, &deletion).unwrap();
+        assert_eq!(stamped(&root), [(PRIMARY_ID.to_string(), None)]);
     }
 
     // The registry write is the last step before anything is removed, and here

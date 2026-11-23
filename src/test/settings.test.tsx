@@ -31,7 +31,7 @@ import Footer from '@/components/Main/Body/Aside/Show/Footer'
 import { EVENTS } from '@/api/events'
 import { subscribeToEvents } from '@/store/events'
 import { emitEvent } from './events'
-import { appStatusDefault, calls, mockCommand, mockCommandOnce } from './ipc'
+import { appStatusDefault, calls, clearCalls, mockCommand, mockCommandOnce } from './ipc'
 import { loginMeta, seedApp, withEntries } from './utils'
 
 beforeEach(() => vi.clearAllMocks())
@@ -75,6 +75,9 @@ const openSyncPage = async (page: 'nearby' | 'cloud' | 'backup') => {
 }
 const openCloud = () => openSyncPage('cloud')
 const openBackup = () => openSyncPage('backup')
+
+// An ISO stamp whole days before now, as a backup saved then is recorded.
+const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
 
 // A workspace row's ⋯, which is where Edit and Delete live.
 const openMenu = (id: string) => userEvent.click(screen.getByTestId(`workspace-menu-${id}`))
@@ -184,7 +187,7 @@ describe('Settings › sync overview', () => {
     // No nearby row until the backend says this build can do it.
     expect(screen.queryByTestId('settings-sync-open-nearby')).not.toBeInTheDocument()
     expect(screen.queryByTestId('settings-drive-connect')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('settings-backup-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('settings-backup-saves')).not.toBeInTheDocument()
   })
 
   it('says a vault that syncs nowhere is on this device, and offers a backup', async () => {
@@ -195,7 +198,63 @@ describe('Settings › sync overview', () => {
 
     await userEvent.click(screen.getByTestId('settings-sync-backup'))
     expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-backup-row')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-backup-saves')).toBeInTheDocument()
+  })
+
+  // The backup row says where backups stand across every lockbox that can
+  // have one: none saved, some, or all — then how far back the oldest goes.
+  // The org lockbox is not one of them, never saved or not.
+  it('says on the backup row whether each lockbox has been saved', async () => {
+    const backupStatus = () => screen.getByTestId('settings-sync-open-backup-status')
+    const lockboxes = (personal?: string, work?: string) =>
+      seedApp({
+        workspaces: [
+          { id: 'default', name: null, backedUpAt: personal },
+          { id: 'w2', name: 'Work', backedUpAt: work },
+          { id: 'w-org', name: 'Deploy', server: 'https://rowel.acme.example' }
+        ],
+        activeWorkspace: 'default'
+      })
+
+    lockboxes()
+    await openSync()
+    expect(backupStatus()).toHaveTextContent('Never saved')
+
+    act(() => lockboxes(daysAgo(1)))
+    expect(backupStatus()).toHaveTextContent('Some lockboxes never saved')
+
+    act(() => lockboxes(daysAgo(1), daysAgo(3)))
+    expect(backupStatus()).toHaveTextContent('Oldest backup 3 days ago')
+  })
+
+  // A vault of one lockbox has no "oldest" to speak of: its own last save.
+  it('says when the one lockbox was last saved', async () => {
+    seedApp({ workspaces: [{ id: 'default', name: null, backedUpAt: daysAgo(2) }] })
+    await openSync()
+    expect(screen.getByTestId('settings-sync-open-backup-status')).toHaveTextContent(
+      'Last saved 2 days ago'
+    )
+  })
+
+  // The offer is for a vault with nothing to fall back on: once every
+  // lockbox has a backup saved, the card says where it stands and no more.
+  it('stops offering a backup once every lockbox has one', async () => {
+    const lockboxes = (work?: string) =>
+      seedApp({
+        workspaces: [
+          { id: 'default', name: null, backedUpAt: daysAgo(1) },
+          { id: 'w2', name: 'Work', backedUpAt: work }
+        ],
+        activeWorkspace: 'default'
+      })
+
+    lockboxes()
+    await openSync()
+    expect(screen.getByTestId('settings-sync-backup')).toBeInTheDocument()
+
+    act(() => lockboxes(daysAgo(5)))
+    expect(summary()).toHaveTextContent('On this device only')
+    expect(screen.queryByTestId('settings-sync-backup')).not.toBeInTheDocument()
   })
 
   it('says where the cloud account stands on its row and in the summary', async () => {
@@ -206,6 +265,14 @@ describe('Settings › sync overview', () => {
     )
     expect(cloudStatus()).toHaveTextContent('Dropbox')
     expect(cloudStatus()).toHaveAttribute('data-tone', 'good')
+
+    // Connected a moment ago, with no run landed: not yet the green name.
+    act(() => report({ configured: true, provider: 'dropbox' }))
+    expect(cloudStatus()).toHaveTextContent('Waiting to sync')
+    expect(cloudStatus()).toHaveAttribute('data-tone', 'neutral')
+    act(() =>
+      report({ configured: true, provider: 'dropbox', lastSyncedAt: '2026-01-01T00:00:00Z' })
+    )
     expect(summary()).toHaveTextContent('Your vault is in sync')
     expect(summary()).toHaveTextContent('Through Dropbox')
     expect(screen.queryByTestId('settings-sync-backup')).not.toBeInTheDocument()
@@ -521,6 +588,21 @@ describe('Settings › sync', () => {
       expect(screen.getByTestId('settings-drive-connect')).toBeInTheDocument()
     })
 
+    // The rule restoring under Lockboxes keeps too: a connect walked away from
+    // goes with the page, and a page left with none started calls nothing.
+    it('forgets a connect the page is left with, and calls nothing without one', async () => {
+      await openCloud()
+      await userEvent.click(screen.getByTestId('settings-subpage-back'))
+      expect(calls('setup_disconnect')).toHaveLength(0)
+
+      await userEvent.click(screen.getByTestId('settings-sync-open-cloud'))
+      await userEvent.click(screen.getByTestId('settings-drive-connect'))
+      await userEvent.click(screen.getByTestId('settings-subpage-back'))
+
+      expect(calls('setup_disconnect')).toHaveLength(1)
+      expect(useApp.getState().setupAccount.status).toBe('idle')
+    })
+
     // Any other reason the backend could not adopt (the account did not answer,
     // the vault locked) is a failure like the probe's, not an offer.
     it('reports an adopt that failed for another reason', async () => {
@@ -551,16 +633,119 @@ describe('Settings › sync', () => {
     })
   })
 
+  // One lockbox, one row: the page still reads as saving the vault there is.
   it('offers the encrypted backup behind its own control', async () => {
     await openBackup()
-    expect(screen.getByTestId('settings-backup-row')).toHaveTextContent('.rowel')
-    // It says which lockbox the file holds: the open one, not the whole vault.
-    expect(screen.getByTestId('settings-backup-row')).toHaveTextContent(
-      'Everything in Personal, sealed with your master password'
-    )
+    const saves = screen.getByTestId('settings-backup-saves')
+    expect(saves).toHaveTextContent('.rowel')
+    expect(saves).toHaveTextContent('One file per lockbox, sealed with your master password.')
+    // It says which lockbox the file holds, and that it has none yet.
+    expect(screen.getByTestId('settings-backup-row-default')).toHaveTextContent('Personal')
+    expect(screen.getByTestId('settings-backup-row-default')).toHaveTextContent('Never saved')
     expect(document.querySelector('input[name="export_password"]')).toBeNull()
     await userEvent.click(screen.getByText('Save…'))
     expect(document.querySelector('input[name="export_password"]')).toBeInTheDocument()
+  })
+
+  describe('with several lockboxes', () => {
+    const status = (work?: string, activeWorkspace = 'default') => ({
+      workspaces: [
+        { id: 'default', name: null, backedUpAt: '2024-01-15T12:00:00.000Z' },
+        { id: 'w-org', name: 'Deploy', server: 'https://rowel.acme.example' },
+        { id: 'w2', name: 'Work', backedUpAt: work }
+      ],
+      activeWorkspace
+    })
+    const rows = () =>
+      [
+        ...screen
+          .getByTestId('settings-backup-saves')
+          .querySelectorAll('[data-testid^="settings-backup-row-"]')
+      ]
+        .map(node => node.getAttribute('data-testid'))
+        .filter(id => !id?.endsWith('-toggle'))
+
+    const saveWork = async (password: string) => {
+      await userEvent.click(screen.getByTestId('settings-backup-row-w2-toggle'))
+      await userEvent.type(
+        within(screen.getByTestId('settings-backup-row-w2')).getByLabelText('Master password'),
+        password
+      )
+      await userEvent.click(screen.getByTestId('settings-backup-save-w2'))
+    }
+
+    // Every lockbox that can be saved, the open one first, each saying when
+    // it last was; the org lockbox is its server's, and is not offered.
+    it('lists each lockbox with when it was last saved', async () => {
+      seedApp(status(undefined, 'w2'))
+      await openBackup()
+
+      expect(rows()).toEqual(['settings-backup-row-w2', 'settings-backup-row-default'])
+      expect(screen.queryByTestId('settings-backup-row-w-org')).not.toBeInTheDocument()
+      const work = screen.getByTestId('settings-backup-row-w2')
+      expect(work).toHaveTextContent('Work')
+      expect(work).toHaveTextContent('Never saved')
+      const personal = screen.getByTestId('settings-backup-row-default')
+      expect(personal).toHaveTextContent('Personal')
+      expect(personal).toHaveTextContent('Last saved 01/15/2024')
+      // The chip is said once, over the list, not on every row.
+      expect(screen.getAllByText('.rowel')).toHaveLength(1)
+    })
+
+    // A lockbox that is not open is saved by its id, with the password typed
+    // beside it, and its row says so as soon as the probe has it.
+    it('saves a lockbox that is not open, and says when', async () => {
+      seedApp(status())
+      mockCommand('export_vault', () => '/Users/me/Rowel backup Work 2026-11-23.rowel')
+      mockCommand('app_status', () => ({ ...appStatusDefault(), ...status(daysAgo(0)) }))
+      await openBackup()
+      expect(screen.getByTestId('settings-backup-row-w2')).toHaveTextContent('Never saved')
+
+      await saveWork('vault password')
+
+      expect(calls('export_vault')).toEqual([{ workspaceId: 'w2', password: 'vault password' }])
+      const row = screen.getByTestId('settings-backup-row-w2')
+      expect(await within(row).findByText('Last saved just now')).toBeInTheDocument()
+      expect(within(row).getByText('Saved')).toBeInTheDocument()
+    })
+
+    // A dialog dismissed saved nothing: nothing is said, nothing re-read, and
+    // the password stays for another go.
+    it('says nothing was saved when the dialog is dismissed', async () => {
+      seedApp(status())
+      await openBackup()
+      clearCalls('app_status')
+
+      await saveWork('vault password')
+
+      expect(calls('export_vault')).toHaveLength(1)
+      const row = screen.getByTestId('settings-backup-row-w2')
+      await waitFor(() => expect(screen.getByTestId('settings-backup-save-w2')).toBeEnabled())
+      expect(row).toHaveTextContent('Never saved')
+      expect(within(row).queryByText('Saved')).not.toBeInTheDocument()
+      expect(calls('app_status')).toHaveLength(0)
+      expect(within(row).getByLabelText('Master password')).toHaveValue('vault password')
+    })
+
+    // Why a lockbox cannot be saved is the backend's to say, in its words.
+    it('shows why a lockbox could not be saved', async () => {
+      seedApp(status())
+      mockCommand('export_vault', () =>
+        Promise.reject({
+          kind: 'unsupported',
+          message: 'this lockbox is not unlocked on this device'
+        })
+      )
+      await openBackup()
+
+      await saveWork('vault password')
+
+      expect(
+        await within(screen.getByTestId('settings-backup-row-w2')).findByText(
+          'this lockbox is not unlocked on this device'
+        )
+      ).toBeInTheDocument()
+    })
   })
 
   // The portable export lives with Import now; this section keeps only the
@@ -589,7 +774,14 @@ describe('Settings › sync', () => {
     // No account, no card to carry a pill: the list of providers stands there.
     expect(screen.queryByTestId('settings-drive-status')).not.toBeInTheDocument()
 
+    // Connected, but no run has landed: nothing is anywhere yet, so neither
+    // the pill nor the card's figure claims the account is up to date.
     act(() => report({ configured: true }))
+    expect(pill()).toHaveTextContent('Waiting to sync')
+    expect(pill()).toHaveAttribute('data-tone', 'neutral')
+    expect(screen.getByTestId('settings-drive-row')).not.toHaveTextContent('Up to date')
+
+    act(() => report({ configured: true, lastSyncedAt: '2026-01-01T00:00:00Z' }))
     expect(pill()).toHaveTextContent('Up to date')
     expect(pill()).toHaveAttribute('data-tone', 'good')
 
@@ -601,6 +793,48 @@ describe('Settings › sync', () => {
     expect(pill()).toHaveTextContent('Last attempt failed')
     expect(pill()).toHaveAttribute('data-tone', 'bad')
     expect(screen.getByTestId('settings-sync-error')).toHaveTextContent('Drive API 503')
+  })
+
+  // The card's count is of the lockboxes this account's provider holds, read
+  // the way Settings › Lockboxes reads each one, so the two pages agree: not
+  // every lockbox on the device, and not the open one once the account's copy
+  // of it is gone.
+  it('counts the lockboxes that live in the account’s provider, as Lockboxes does', async () => {
+    seedApp({
+      workspaces: [
+        { id: 'default', name: null },
+        { id: 'w2', name: 'Work', synced: true, provider: 'googleDrive' },
+        { id: 'w3', name: 'Family', synced: true, provider: 'dropbox' },
+        { id: 'w4', name: 'Scratch', synced: false }
+      ],
+      activeWorkspace: 'default'
+    })
+    await openCloud()
+    const lockboxes = () =>
+      within(screen.getByTestId('settings-drive-row')).getByText('Lockboxes').nextElementSibling
+
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    expect(lockboxes()).toHaveTextContent(/^2$/)
+
+    act(() =>
+      report({
+        configured: true,
+        provider: 'googleDrive',
+        error: 'gone',
+        errorKind: 'vaultDeletedRemotely'
+      })
+    )
+    expect(lockboxes()).toHaveTextContent(/^1$/)
+
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    await go('workspaces')
+    const onDrive = screen
+      .getAllByTestId(/^workspace-row-/)
+      .filter(row => row.textContent?.includes('Google Drive'))
+    expect(onDrive.map(row => row.dataset.testid)).toEqual([
+      'workspace-row-default',
+      'workspace-row-w2'
+    ])
   })
 
   it('shows what a connected account holds, and the way out', async () => {
@@ -616,6 +850,159 @@ describe('Settings › sync', () => {
     expect(calls('sync_now')).toHaveLength(1)
     await userEvent.click(screen.getByTestId('settings-drive-disconnect'))
     expect(calls('sync_disconnect')).toHaveLength(1)
+  })
+})
+
+// The cloud page lists the lockboxes beside the account: the ones it holds
+// (here or not yet here) and the ones that sync nowhere. Lockboxes in another
+// provider's account, and org lockboxes, are not this account's.
+describe('Settings › sync › lockboxes beside the account', () => {
+  const pack = (id: string, provider: RemotePack['provider']): RemotePack => ({
+    id,
+    name: `${id}.rowel`,
+    vaultId: id,
+    size: 64_512,
+    modifiedTime: '2024-01-01T00:00:00.000Z',
+    provider
+  })
+
+  const several = () =>
+    seedApp({
+      workspaces: [
+        { id: 'default', name: null },
+        { id: 'w2', name: 'Work', synced: true, provider: 'googleDrive' },
+        { id: 'w3', name: 'Family', synced: true, provider: 'dropbox' },
+        { id: 'w4', name: 'Scratch', synced: false },
+        { id: 'w5', name: 'Acme', server: 'https://vault.acme.test' }
+      ],
+      activeWorkspace: 'default'
+    })
+
+  const list = () => screen.getByTestId('settings-cloud-lockboxes')
+  // The rows in the order drawn, by test id.
+  const rows = () =>
+    within(list())
+      .getAllByTestId(/^settings-cloud-(lockbox|remote)-/)
+      .map(row => row.dataset.testid!)
+      .filter(id => !id.endsWith('-status'))
+  const status = (row: string) => screen.getByTestId(`${row}-status`)
+  const figure = () =>
+    within(screen.getByTestId('settings-drive-row')).getByText('Lockboxes').nextElementSibling
+
+  // The listing a run reported is that account's. After a disconnect, the
+  // next account connected starts with none of it, on the list and the figure.
+  it('lists nothing of an account that was disconnected', async () => {
+    several()
+    await openCloud()
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+    expect(rows()).toContain('settings-cloud-remote-drive-file-1')
+    expect(figure()).toHaveTextContent('3')
+
+    act(() => report({ configured: false }))
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+
+    expect(rows()).not.toContain('settings-cloud-remote-drive-file-1')
+    expect(figure()).toHaveTextContent('2')
+  })
+
+  it('says where each lockbox stands, the open one first', async () => {
+    several()
+    await openCloud()
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+
+    expect(rows()).toEqual([
+      'settings-cloud-lockbox-default',
+      'settings-cloud-lockbox-w2',
+      'settings-cloud-lockbox-w4',
+      'settings-cloud-remote-drive-file-1'
+    ])
+
+    expect(screen.getByTestId('settings-cloud-lockbox-default')).toHaveTextContent('Personal')
+    expect(screen.getByTestId('settings-cloud-lockbox-default')).toHaveTextContent('Open now')
+    expect(status('settings-cloud-lockbox-default')).toHaveTextContent(/^Google Drive$/)
+
+    expect(screen.getByTestId('settings-cloud-lockbox-w2')).not.toHaveTextContent('Open now')
+    expect(status('settings-cloud-lockbox-w2')).toHaveTextContent(/^Google Drive$/)
+
+    // Syncs nowhere: said in the words Lockboxes uses, and nothing to press —
+    // no command brings a lockbox that is not open into the account.
+    expect(status('settings-cloud-lockbox-w4')).toHaveTextContent(/^This device$/)
+    expect(
+      within(screen.getByTestId('settings-cloud-lockbox-w4')).queryByRole('button')
+    ).not.toBeInTheDocument()
+
+    // In the account and not here: told apart by date and size.
+    expect(screen.getByTestId('settings-cloud-remote-drive-file-1')).toHaveTextContent(
+      'Rowel lockbox'
+    )
+    expect(status('settings-cloud-remote-drive-file-1')).toHaveTextContent(
+      /^Not on this device yet · .+/
+    )
+  })
+
+  // One reading feeds both: the account holds what is in its provider here,
+  // and what is in it and not here yet — never what syncs nowhere.
+  it('agrees with the card on how many lockboxes the account holds', async () => {
+    several()
+    await openCloud()
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+
+    const held = () => rows().filter(row => status(row).textContent !== 'This device')
+    expect(held()).toHaveLength(3)
+    expect(figure()).toHaveTextContent(/^3$/)
+
+    // The account's copy of the open one is gone: it is on this device alone,
+    // on the card and in the list alike.
+    act(() =>
+      report({
+        configured: true,
+        provider: 'googleDrive',
+        error: 'gone',
+        errorKind: 'vaultDeletedRemotely'
+      })
+    )
+    expect(status('settings-cloud-lockbox-default')).toHaveTextContent(/^This device$/)
+    expect(held()).toHaveLength(2)
+    expect(figure()).toHaveTextContent(/^2$/)
+  })
+
+  it('leads from a lockbox not on this device to Lockboxes, where it is restored', async () => {
+    several()
+    await openCloud()
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+
+    await userEvent.click(screen.getByTestId('settings-cloud-remote-drive-file-1'))
+    expect(useUi.getState().settingsSection).toBe('workspaces')
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-remote-row')).toBeInTheDocument()
+  })
+
+  it('lists nothing before an account is connected, nor the open lockbox alone', async () => {
+    several()
+    await openCloud()
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+
+    // The choice of provider stands alone.
+    expect(screen.getByTestId('settings-providers')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-cloud-lockboxes')).not.toBeInTheDocument()
+
+    // Connected, with nothing on the device or in the account but the open
+    // one: the card already says everything the list would.
+    act(() => {
+      seedApp({ workspaces: [{ id: 'default', name: null }], activeWorkspace: 'default' })
+      setRemoteVaults([])
+      report({ configured: true, provider: 'googleDrive' })
+    })
+    expect(figure()).toHaveTextContent(/^1$/)
+    expect(screen.queryByTestId('settings-cloud-lockboxes')).not.toBeInTheDocument()
+
+    // Something else in the account is worth the list.
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+    expect(rows()).toEqual(['settings-cloud-lockbox-default', 'settings-cloud-remote-drive-file-1'])
   })
 })
 
@@ -1364,7 +1751,7 @@ describe('Settings › export', () => {
     expect(useUi.getState().settingsSection).toBe('sync')
     // Straight to the backup's own page, not the overview above it.
     expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-backup-row')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-backup-saves')).toBeInTheDocument()
   })
 })
 
@@ -1785,18 +2172,32 @@ describe('Settings › workspaces › list', () => {
   })
 
   // The third tile names the account a new lockbox would join; with none
-  // connected there is none to name, so it says where one is set up.
-  it('says where sync is set up until an account is connected', async () => {
+  // connected there is none to name, so it leads to where one is connected.
+  // Its title claims no syncing either way.
+  it('leads to connecting an account until one is connected', async () => {
     await open()
     act(() => report({ configured: false }))
     await go('workspaces')
 
-    expect(screen.getByText('Set up in Sync & backup.')).toBeInTheDocument()
+    expect(screen.getByText('Separate sync')).toBeInTheDocument()
+    expect(screen.queryByText(/^Synced/)).not.toBeInTheDocument()
+    expect(screen.getByText(/^No cloud account yet\./)).toBeInTheDocument()
     expect(screen.queryByText(/^Stored in the same/)).not.toBeInTheDocument()
 
     act(() => report({ configured: true, provider: 'dropbox' }))
+    expect(screen.getByText('Separate sync')).toBeInTheDocument()
     expect(screen.getByText('Stored in the same Dropbox account.')).toBeInTheDocument()
-    expect(screen.queryByText('Set up in Sync & backup.')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-info-sync-link')).not.toBeInTheDocument()
+
+    act(() => report({ configured: false }))
+    await userEvent.click(screen.getByTestId('workspace-info-sync-link'))
+    expect(useUi.getState().settingsSection).toBe('sync')
+    expect(screen.getByRole('heading', { name: 'Your cloud storage' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-providers')).toBeInTheDocument()
+
+    // A page of Sync & backup, so Back is the overview.
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
   })
 
   it('names the provider a locked workspace syncs to', async () => {
@@ -2487,6 +2888,16 @@ describe('Settings › workspaces › restore from an account', () => {
 
     expect(calls('setup_disconnect')).toHaveLength(1)
     expect(useApp.getState().setupAccount.status).toBe('idle')
+  })
+
+  // With no sign-in started there is nothing to forget, so the backend is not
+  // asked to.
+  it('leaves without a backend call when no sign-in was started', async () => {
+    await openRestore()
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+
+    expect(calls('setup_disconnect')).toHaveLength(0)
   })
 
   it('restores the vault the user picked as a workspace of its own', async () => {

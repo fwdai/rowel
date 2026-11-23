@@ -11,14 +11,14 @@ import {
 } from '@/store'
 import { workspaceRename, workspaceSetAgents, workspaceSetColor } from '@/api/workspace'
 import { describeError } from '@/api/errors'
-import { workspaceLabel } from '@/lib/workspace'
+import { workspaceLabel, workspaceProvider } from '@/lib/workspace'
 import { isWorkspaceColor, type WorkspaceColor } from '@/lib/workspaceColor'
 import Note from '@/components/elements/Note'
 import SubpageFrame from '../../../SubpageFrame'
 import { useSubpage } from '../../../sectionNav'
 import WorkspaceForm from '../WorkspaceForm'
 import { nameTaken } from '../WorkspaceForm/nameTaken'
-import { workspaceAbout, workspaceProvider } from '../about'
+import { workspaceAbout } from '../about'
 
 // Any workspace can be edited, the locked ones included — the backend writes a
 // locked vault's name into the registry, and the open one's into the vault as

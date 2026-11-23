@@ -18,13 +18,14 @@ import {
   syncReupload,
   syncUnderRetiredPassword
 } from '@/api/sync'
+import { workspaceProvider } from '@/lib/workspace'
 import Button from '@/components/elements/Button'
 import ConfirmSheet from '@/components/elements/ConfirmSheet'
 import Note from '@/components/elements/Note'
 import { useSubpage } from '../../sectionNav'
 import WorkspaceRow from './WorkspaceRow'
 import SyncProblem from './SyncProblem'
-import { workspaceAbout, workspaceProvider } from './about'
+import { workspaceAbout } from './about'
 
 const REPLACE_TITLE_ID = 'workspace-replace-remote-title'
 

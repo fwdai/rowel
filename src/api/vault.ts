@@ -40,11 +40,14 @@ export interface SwftxImport {
 export const importSwftx = (path: string, password: string): Promise<SwftxImport> =>
   call('import_swftx', { path, password })
 
-// Save a `.rowel` backup: the vault's own encrypted snapshot, restorable on a
-// fresh install via `setupRestoreFromFile`. The `password` must match the
-// unlocked vault; it proves the exporter can open what they are carrying away.
-export const exportVault = (password: string): Promise<string | null> =>
-  call('export_vault', { password })
+// Save a `.rowel` backup of the lockbox `workspaceId`: its own encrypted
+// snapshot, restorable on a fresh install via `setupRestoreFromFile`. Any
+// lockbox the app holds a key for, open or not; the `password` must match the
+// unlocked vault, and proves the exporter can open what they are carrying away.
+// Resolves to where it went, or null if the dialog was dismissed — only a save
+// that happened is recorded as the lockbox's `backedUpAt`.
+export const exportVault = (workspaceId: string, password: string): Promise<string | null> =>
+  call('export_vault', { workspaceId, password })
 
 // Write a revealed env file back to disk through the save dialog, defaulting
 // to the name it came in with (or ".env"). Resolves to the chosen path, or
