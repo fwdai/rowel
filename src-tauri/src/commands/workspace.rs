@@ -602,6 +602,20 @@ impl Source<'_> {
         match self {
             Source::Account { .. } => Ok(()),
             Source::File { .. } => {
+                // Both checks read lockboxes that no unlock opened for this
+                // restore: their descriptors, and for some their databases.
+                // So each is first put back as an interrupted password change
+                // left it, as every opener of a lockbox outside an unlock does
+                // (`auth::recover_interrupted_rekey_in`): a descriptor on its
+                // way to a new key is not the one the backup was taken under,
+                // and would let the backup in beside its own source. Under the
+                // setup step the restore holds. The open lockbox is left
+                // alone: it passed through this when it was opened.
+                for held in Registry::load(root).workspaces {
+                    if held.id != previous_active {
+                        auth::recover_interrupted_rekey_in(&workspace::dir_of(root, &held.id))?;
+                    }
+                }
                 guard_restored_vault(state, previous, previous_active, root, vault_id)?;
                 guard_backup_source(root, restored)
             }
@@ -2364,6 +2378,57 @@ mod tests {
             grants: &grants,
         };
         assert!(matches!(guard(&file), Err(Error::Other(_))));
+    }
+
+    // A password change that crashed on the backup's source left that lockbox's
+    // descriptor on the way to a new key. Read as it stood, it is not the one
+    // the backup was taken under, and the backup would pass as another vault's:
+    // the lockbox is rolled back before the checks read it.
+    #[test]
+    fn a_source_caught_mid_password_change_is_rolled_back_before_it_is_compared() {
+        let root = tmp_root();
+        let source_dir = workspace::dir_of(&root, "b2c3");
+        let (_, backup) = lockbox_in(&source_dir, None);
+        record(
+            &root,
+            vec![
+                lockbox(PRIMARY_ID, None, None),
+                lockbox(
+                    "b2c3",
+                    Some("Work"),
+                    Some("0123456789abcdef0123456789abcdef"),
+                ),
+            ],
+        );
+        fs::copy(
+            source_dir.join(storage::DB_FILE),
+            source_dir.join(storage::DB_REKEY_BACKUP_FILE),
+        )
+        .unwrap();
+        fs::copy(
+            source_dir.join(storage::KDF_SIDECAR_FILE),
+            source_dir.join(storage::KDF_SIDECAR_REKEY_BACKUP_FILE),
+        )
+        .unwrap();
+        fs::write(source_dir.join(storage::KDF_SIDECAR_FILE), "new-params").unwrap();
+        let state = open_vault("a1b2");
+
+        let grants = chosen(&backup);
+        let bytes = read(&backup, &grants).unwrap();
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let dir = new_dir(&root, "c3d4");
+        let (_, store, _, vault_id) = install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+
+        let file = Source::File {
+            path: backup.clone(),
+            grants: &grants,
+        };
+        assert!(matches!(
+            file.guard_opened(&state, &previous, &previous_active, &root, &dir, &vault_id),
+            Err(Error::VaultAlreadyOpen)
+        ));
+        assert!(!source_dir.join(storage::DB_REKEY_BACKUP_FILE).exists());
+        drop(store);
     }
 
     // The first restore of a backup with no vault id recorded the id its
