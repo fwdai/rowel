@@ -3,13 +3,14 @@ import { cx } from '@/utils/cx'
 import SettingsNavRow from '@/components/elements/SettingsNavRow'
 import { CARD } from '@/components/elements/tokens'
 import { DownloadGlyph } from '@/components/Main/icons'
-import { useSectionNav } from '../../../sectionNav'
+import { useSubpage } from '../../../sectionNav'
 
-// What a saved backup is for. Restoring one makes a lockbox, so its page is
-// under Lockboxes, and this row goes there rather than restoring in place.
+// What a saved backup is for. Restoring one makes a lockbox, on the page
+// Lockboxes offers for it too; from here it opens over this one, so Back leads
+// to the backup page it was asked from.
 export default function RestoreRow() {
   const { t } = useTranslation()
-  const go = useSectionNav()
+  const { open } = useSubpage()
 
   return (
     <div className={cx(CARD, 'mt-3')}>
@@ -17,7 +18,7 @@ export default function RestoreRow() {
         icon={<DownloadGlyph size={16} />}
         label={t('Restore a backup')}
         description={t('A backup file and the master password it was sealed with')}
-        onClick={() => go('workspaces', { key: 'restore-backup' })}
+        onClick={() => open({ key: 'restore-backup' })}
         testid="settings-backup-restore"
       />
     </div>

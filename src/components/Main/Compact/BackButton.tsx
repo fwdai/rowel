@@ -7,7 +7,7 @@ interface Props {
    * caller passes the title that screen draws itself with.
    */
   label: string
-  testid: string
+  testid?: string
   onClick: () => void
   /** The screen cannot be left right now; shown, but inert. */
   disabled?: boolean

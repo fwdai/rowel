@@ -19,22 +19,29 @@ export const SectionNavProvider = SectionNavContext.Provider
 export const useSectionNav = () => useContext(SectionNavContext)
 
 export interface SubpageNav {
-  /** The sub-page drawn in place of the section body, if any. */
+  /** Every sub-page open under the section, bottom first. */
+  pages: Subpage[]
+  /** The one on top, drawn in place of the section body, if any. */
   subpage: Subpage | null
+  /** Whether the page on top was stepped into, or come back to. */
+  turn: 'forward' | 'back'
+  /** Over whatever is showing: the section's own page, or a sub-page of it. */
   open: (subpage: Subpage) => void
-  /** Back to the section the sub-page was opened from. */
+  /** Back to what the sub-page on top was opened from. */
   close: () => void
 }
 
 /**
- * A step below a section ("New lockbox" under Lockboxes), opened by the
- * section's own body. Each shell holds it in local state, not the store: the
- * store's section persists so the modal reopens where it was left, and a form
- * half-filled last time is not a place to reopen into. Outside a shell nothing
- * is listening, so the default does nothing.
+ * A step below a section ("Add a lockbox" under Lockboxes), opened by the
+ * section's own body or by a sub-page of it. Each shell holds them in local
+ * state, not the store: the store's section persists so the modal reopens
+ * where it was left, and a form half-filled last time is not a place to reopen
+ * into. Outside a shell nothing is listening, so the default does nothing.
  */
 const SubpageContext = createContext<SubpageNav>({
+  pages: [],
   subpage: null,
+  turn: 'forward',
   open: () => {},
   close: () => {}
 })

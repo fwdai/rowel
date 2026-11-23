@@ -12,9 +12,9 @@ interface Props {
   testid: string
 }
 
-// A row under the list that leads to one more lockbox, on a sub-page of its
-// own. The card these close leaves its overflow open (for the rows' menus), so
-// the last row rounds its own bottom corners to match.
+// The row under a list that leads to one more of what it lists, on a sub-page
+// of its own. The card it closes leaves its overflow open (for the rows'
+// menus), so the row rounds its own bottom corners to match.
 export default function AddRow({ icon, label, description, onClick, testid }: Props) {
   return (
     <button

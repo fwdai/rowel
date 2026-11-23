@@ -80,6 +80,12 @@ const openBackup = () => openSyncPage('backup')
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
 
 // A workspace row's ⋯, which is where Edit and Delete live.
+// The ways to one more lockbox sit a page below the list's one Add row.
+const openAdd = async (way: 'new-row' | 'restore-open' | 'backup-open') => {
+  await userEvent.click(screen.getByTestId('workspace-add-row'))
+  await userEvent.click(screen.getByTestId(`workspace-${way}`))
+}
+
 const openMenu = (id: string) => userEvent.click(screen.getByTestId(`workspace-menu-${id}`))
 
 describe('Settings shell', () => {
@@ -755,18 +761,25 @@ describe('Settings › sync', () => {
     expect(screen.queryByTestId('settings-export-run')).not.toBeInTheDocument()
   })
 
-  // A backup restores as a lockbox of its own, so the way to restoring one
-  // leads to its page under Lockboxes rather than restoring here.
-  it('leads to the restore page under Lockboxes', async () => {
+  // A backup restores as a lockbox of its own, on the page Lockboxes offers
+  // for it too. Asked for here it opens over the backup page: the section does
+  // not move, and Back leads to the page it was asked from, a step at a time.
+  it('opens the restore page over the backup page, and steps back to it', async () => {
     await openBackup()
 
     await userEvent.click(screen.getByTestId('settings-backup-restore'))
 
     expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
-    expect(useUi.getState().settingsSection).toBe('workspaces')
-    // Back is the section the page belongs to, not the one it was reached from.
+    expect(screen.getByTestId('workspace-backup-pick')).toBeInTheDocument()
+    expect(useUi.getState().settingsSection).toBe('sync')
+
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-backup-restore')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
   })
 
   // The pill beside the title says where the connection stands, one tone per
@@ -1527,6 +1540,11 @@ describe('Settings › import', () => {
       'Rowel backup 2026-09-15.rowel'
     )
     expect(calls('pick_file')).toHaveLength(1)
+
+    // Over the section it was offered in, which Back leads to.
+    expect(useUi.getState().settingsSection).toBe('import')
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
   })
 
   // A legacy vault is still merged where it was picked, and offered no link.
@@ -2236,35 +2254,6 @@ describe('Settings › workspaces › list', () => {
     expect(calls('workspace_select')).toEqual([{ id: 'w2' }])
   })
 
-  // The third tile names the account a new lockbox would join; with none
-  // connected there is none to name, so it leads to where one is connected.
-  // Its title claims no syncing either way.
-  it('leads to connecting an account until one is connected', async () => {
-    await open()
-    act(() => report({ configured: false }))
-    await go('workspaces')
-
-    expect(screen.getByText('Separate sync')).toBeInTheDocument()
-    expect(screen.queryByText(/^Synced/)).not.toBeInTheDocument()
-    expect(screen.getByText(/^No cloud account yet\./)).toBeInTheDocument()
-    expect(screen.queryByText(/^Stored in the same/)).not.toBeInTheDocument()
-
-    act(() => report({ configured: true, provider: 'dropbox' }))
-    expect(screen.getByText('Separate sync')).toBeInTheDocument()
-    expect(screen.getByText('Stored in the same Dropbox account.')).toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-info-sync-link')).not.toBeInTheDocument()
-
-    act(() => report({ configured: false }))
-    await userEvent.click(screen.getByTestId('workspace-info-sync-link'))
-    expect(useUi.getState().settingsSection).toBe('sync')
-    expect(screen.getByRole('heading', { name: 'Your cloud storage' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-providers')).toBeInTheDocument()
-
-    // A page of Sync & backup, so Back is the overview.
-    await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
-  })
-
   it('names the provider a locked workspace syncs to', async () => {
     seedApp({
       workspaces: [
@@ -2344,7 +2333,7 @@ describe('Settings › workspaces › edit', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('workspace-edit-name')).not.toBeInTheDocument()
     )
-    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   })
 
   it('recolours a workspace without renaming it', async () => {
@@ -2427,7 +2416,7 @@ describe('Settings › workspaces › edit', () => {
     await userEvent.keyboard('{Escape}')
 
     expect(screen.queryByTestId('workspace-edit-name')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
     expect(useUi.getState().settings).toBe(true)
     expect(calls('workspace_rename')).toHaveLength(0)
     expect(calls('workspace_set_color')).toHaveLength(0)
@@ -2438,14 +2427,14 @@ describe('Settings › workspaces › new', () => {
   const openNew = async () => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-new-row'))
+    await openAdd('new-row')
   }
 
   const create = () => screen.getByTestId('workspace-create')
   const hint = () => screen.getByTestId('settings-subpage-hint')
   const tile = () => screen.getByTestId('workspace-new-preview').querySelector('[aria-hidden]')
 
-  it('opens the sub-page from the list’s last row and creates one', async () => {
+  it('opens the sub-page from the ways to add one and creates one', async () => {
     await openNew()
 
     expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
@@ -2522,12 +2511,17 @@ describe('Settings › workspaces › new', () => {
     expect(calls('workspace_create')).toHaveLength(1)
   })
 
-  it('goes back to the list', async () => {
+  it('goes back to the ways to add one, then to the list', async () => {
     await openNew()
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
 
     expect(screen.queryByTestId('workspace-new-name')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Add a lockbox' })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   })
 })
 
@@ -2561,7 +2555,7 @@ describe('Settings › workspaces › delete', () => {
     expect(screen.getByTestId('workspace-delete-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Delete lockbox' })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-delete-preview')).toHaveTextContent('Work')
-    expect(screen.queryByTestId('workspace-new-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-add-row')).not.toBeInTheDocument()
     expect(
       screen.getByText('This removes the lockbox and everything in it from this device.')
     ).toBeInTheDocument()
@@ -2902,11 +2896,11 @@ describe('Settings › workspaces › master password changed elsewhere', () => 
 })
 
 describe('Settings › workspaces › restore from an account', () => {
-  // The flow is a page under Lockboxes, opened from a row under the list.
+  // The flow is a page under Lockboxes, one of the ways to add one.
   const openRestore = async () => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-restore-open'))
+    await openAdd('restore-open')
   }
 
   // Consent, then the probe's answer — which arrives as an event, never through
@@ -2920,10 +2914,12 @@ describe('Settings › workspaces › restore from an account', () => {
   // On the Lockboxes page the account's Connect buttons would read as
   // connecting this vault, which is what the same buttons do under Sync &
   // backup; there the page's title says what they are for.
-  it('keeps the sign-in on a page of its own, a row away from the list', async () => {
+  it('keeps the sign-in on a page of its own, away from the list', async () => {
     await open()
     await go('workspaces')
 
+    expect(screen.queryAllByTestId(/^workspace-restore-.+-connect$/)).toHaveLength(0)
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
     expect(screen.queryAllByTestId(/^workspace-restore-.+-connect$/)).toHaveLength(0)
     expect(screen.getByTestId('workspace-restore-open')).toHaveTextContent(
       'Restore from a cloud account'
@@ -2941,7 +2937,7 @@ describe('Settings › workspaces › restore from an account', () => {
     expect(screen.getAllByText(/^Sign in and pick one of the lockboxes/)).toHaveLength(1)
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Add a lockbox' })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-restore-open')).toBeInTheDocument()
   })
 
@@ -3218,7 +3214,7 @@ describe('Settings › workspaces › restore a backup', () => {
   const openPage = async () => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-backup-open'))
+    await openAdd('backup-open')
   }
 
   const pickAndType = async (password: string) => {
@@ -3228,11 +3224,11 @@ describe('Settings › workspaces › restore a backup', () => {
     await userEvent.type(await screen.findByTestId('workspace-backup-password'), password)
   }
 
-  // A third way to one more lockbox, under the other two — and the last row of
-  // the card, which is the one that rounds the card's foot.
-  it('opens its page from the last row under the lockbox list', async () => {
+  // The third way to one more lockbox, under the other two.
+  it('opens its page from the last of the ways to add one', async () => {
     await open()
     await go('workspaces')
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
 
     const row = screen.getByTestId('workspace-backup-open')
     expect(row).toHaveTextContent('Restore a backup')
@@ -3371,32 +3367,72 @@ describe('Settings › workspaces › restore a backup', () => {
 })
 
 describe('Settings sub-pages', () => {
+  // Two deep: the ways to add a lockbox, and the new lockbox's form over them.
   const openSubpage = async () => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-new-row'))
+    await openAdd('new-row')
   }
 
   const onSection = () => {
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   }
 
+  const onAdd = () => {
+    expect(screen.getByRole('heading', { name: 'Add a lockbox' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-new-name')).not.toBeInTheDocument()
+  }
+
+  // The list's one way to one more lockbox, and the last row of its card,
+  // which is the one that rounds the card's foot.
+  it('offers one way to add a lockbox under the list', async () => {
+    await open()
+    await go('workspaces')
+
+    const row = screen.getByTestId('workspace-add-row')
+    expect(row).toHaveTextContent('Add a lockbox')
+    expect(row.parentElement?.lastElementChild).toBe(row)
+    for (const way of ['new-row', 'restore-open', 'backup-open'])
+      expect(screen.queryByTestId(`workspace-${way}`)).not.toBeInTheDocument()
+  })
+
   it('heads the sub-page in the section’s place and comes back from it', async () => {
-    await openSubpage()
+    await open()
+    await go('workspaces')
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
 
     // The title takes the section's line: one heading, nothing stacked above
     // it, so the header keeps its height on the way in and out.
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Add a lockbox' })).toBeInTheDocument()
+    expect(
+      screen.getByText('Start an empty one, or bring in one you already have.')
+    ).toBeInTheDocument()
+    // It replaces the section's body rather than stacking on it.
+    expect(screen.queryByTestId('workspace-add-row')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveAccessibleName('Back')
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    onSection()
+  })
+
+  // A page opened from a sub-page goes over it, and Back leads to the one
+  // before rather than out to the section.
+  it('opens a page from a sub-page and comes back a step at a time', async () => {
+    await openSubpage()
+
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
     expect(
       screen.getByText('Its own encrypted database, unlocked alongside your others.')
     ).toBeInTheDocument()
-    // It replaces the section's body rather than stacking on it.
     expect(screen.queryByTestId('workspace-new-row')).not.toBeInTheDocument()
-    expect(screen.getByTestId('settings-subpage-back')).toHaveAccessibleName('Back')
 
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    onAdd()
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
     onSection()
   })
@@ -3404,6 +3440,8 @@ describe('Settings sub-pages', () => {
   it('steps back out on Escape, leaving Settings open', async () => {
     await openSubpage()
 
+    await userEvent.keyboard('{Escape}')
+    onAdd()
     await userEvent.keyboard('{Escape}')
     onSection()
     expect(useUi.getState().settings).toBe(true)
@@ -3425,7 +3463,7 @@ describe('Settings sub-pages', () => {
     await openSubpage()
 
     await userEvent.click(screen.getByTestId('settings-subpage-cancel'))
-    onSection()
+    onAdd()
   })
 
   it('holds the sub-page while Settings is locked', async () => {

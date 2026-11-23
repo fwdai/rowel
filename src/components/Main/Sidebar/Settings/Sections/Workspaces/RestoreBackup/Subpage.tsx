@@ -3,8 +3,8 @@ import type { Subpage } from '../../../subpages'
 import SubpageScroller from '../../../SubpageScroller'
 import RestoreBackup from '.'
 
-// Lockboxes › Restore a backup: the file, and the master password it was
-// sealed with.
+// Restore a backup, under Lockboxes, Encrypted backup or Import: the file, and
+// the master password it was sealed with.
 export default function RestoreBackupSubpage({
   subpage
 }: {

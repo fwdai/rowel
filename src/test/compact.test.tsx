@@ -679,28 +679,55 @@ describe('compact shell', () => {
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
-    await userEvent.click(screen.getByTestId('workspace-new-row'))
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
 
-    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Add a lockbox' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
     // The section stays under its sub-page, inert, as the root stays under it.
     expect(screen.getByTestId('settings-back').closest('[inert]')).not.toBeNull()
     expect(screen.getByTestId('settings-subpage-back').closest('[inert]')).toBeNull()
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-back').closest('[inert]')).toBeNull()
   })
 
+  // A page opened from a sub-page is pushed over it in turn: each Back names
+  // the screen under it, and the one under stays there, inert.
+  it('pushes a page over the sub-page it was opened from, and pops them in turn', async () => {
+    seed()
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
+    await userEvent.click(screen.getByTestId('workspace-new-row'))
+
+    const page = screen.getByTestId('settings-subpage')
+    expect(within(page).getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Add a lockbox')
+    expect(screen.getByTestId('workspace-new-row').closest('[inert]')).not.toBeNull()
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.queryByTestId('workspace-new-name')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
+    expect(screen.getByTestId('workspace-new-row').closest('[inert]')).toBeNull()
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+  })
+
   // Restoring from a cloud account is a page under Lockboxes too, its sign-in
   // there rather than on the section's own screen.
-  it('pushes the restore page from its row under the lockbox list', async () => {
+  it('pushes the restore page from the ways to add a lockbox', async () => {
     seed()
     render(<Main />)
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
     expect(screen.queryAllByTestId(/^workspace-restore-.+-connect$/)).toHaveLength(0)
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
     await userEvent.click(screen.getByTestId('workspace-restore-open'))
 
     const page = screen.getByTestId('settings-subpage')
@@ -708,17 +735,17 @@ describe('compact shell', () => {
       within(page).getByRole('heading', { name: 'Restore from a cloud account' })
     ).toBeInTheDocument()
     expect(within(page).getByTestId('workspace-restore-drive-connect')).toBeInTheDocument()
-    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Add a lockbox')
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-restore-drive-connect')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
   })
 
-  // The backup page's restore row leads to a page of another section: pushed
-  // over Lockboxes, its Back named after the section it belongs to, and the
-  // picked file and the form drawn on it as on the wide shell.
-  it('follows the backup page’s restore row to the restore page under Lockboxes', async () => {
+  // The backup page's restore row pushes the restore page over itself: the
+  // pane stays Sync & backup's, Back is named after the backup page it leads
+  // to, and the picked file and the form are drawn as on the wide shell.
+  it('pushes the restore page over the backup page it was asked from', async () => {
     mockCommand('pick_file', () => '/tmp/Rowel backup 2026-11-20.rowel')
     seed()
     render(<Main />)
@@ -730,7 +757,7 @@ describe('compact shell', () => {
 
     const page = screen.getByTestId('settings-subpage')
     expect(within(page).getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Encrypted backup')
     await userEvent.click(within(page).getByTestId('workspace-backup-pick'))
     expect(within(page).getByTestId('workspace-backup-file')).toHaveTextContent(
       'Rowel backup 2026-11-20.rowel'
@@ -738,8 +765,13 @@ describe('compact shell', () => {
     expect(within(page).getByTestId('workspace-backup-password')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-backup-password')).not.toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('settings-subpage')).getByRole('heading', {
+        name: 'Encrypted backup'
+      })
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
   })
 
   // A pushed screen's title has the row to itself, so it is said in full
@@ -753,6 +785,7 @@ describe('compact shell', () => {
       act(() => openSettings())
       await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
       const section = screen.getByRole('heading', { name: 'Schließfächer' })
+      await userEvent.click(screen.getByTestId('workspace-add-row'))
       await userEvent.click(screen.getByTestId('workspace-restore-open'))
       const page = within(screen.getByTestId('settings-subpage')).getByRole('heading', {
         name: 'Aus einem Cloud-Konto wiederherstellen'
@@ -775,6 +808,7 @@ describe('compact shell', () => {
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
     await userEvent.click(screen.getByTestId('workspace-new-row'))
 
     const create = screen.getByTestId('workspace-create')
@@ -1081,6 +1115,7 @@ describe('swipe back', () => {
     render(<Main />)
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
     await userEvent.click(screen.getByTestId('workspace-new-row'))
 
     act(() => lockSettings(true))
@@ -1088,11 +1123,15 @@ describe('swipe back', () => {
     await act(() => new Promise(resolve => setTimeout(resolve, 200)))
     expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
 
+    // A sub-page at a time: the form, then the page it was opened from.
     act(() => lockSettings(false))
     swipe(screen.getByTestId('settings-subpage'), { dx: 200 })
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'New lockbox' })).not.toBeInTheDocument()
     )
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
+    swipe(screen.getByTestId('settings-subpage'), { dx: 200 })
+    await waitFor(() => expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument())
     swipe(screen.getByTestId('settings-pane'), { dx: 200 })
     await waitFor(() => expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument())
   })
