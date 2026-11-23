@@ -240,6 +240,7 @@
   "On": "开",
   "Off": "关",
   "Your cloud storage": "你的云存储",
+  "Choose a provider": "选择服务商",
   "Through storage you already own, such as Google Drive or Dropbox.": "通过你已有的存储空间，例如 Google Drive 或 Dropbox。",
   "Backup": "备份",
   "A file you keep yourself, sealed with your master password.": "由你自己保管的文件，用主密码加密封存。",

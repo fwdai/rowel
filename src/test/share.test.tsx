@@ -385,7 +385,7 @@ describe('Settings › Shared links', () => {
     render(<Settings />)
     await openCloud()
 
-    expect(await screen.findByTestId('settings-drive-row')).toBeInTheDocument()
+    expect(await screen.findByTestId('settings-providers')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-shares-row')).not.toBeInTheDocument()
   })
 

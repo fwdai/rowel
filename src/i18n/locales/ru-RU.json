@@ -240,6 +240,7 @@
   "On": "Вкл.",
   "Off": "Выкл.",
   "Your cloud storage": "Ваш облачный диск",
+  "Choose a provider": "Выберите провайдера",
   "Through storage you already own, such as Google Drive or Dropbox.": "Через облачный диск, который у вас уже есть, например Google Drive или Dropbox.",
   "Backup": "Резервная копия",
   "A file you keep yourself, sealed with your master password.": "Файл, который вы храните сами, запечатанный вашим мастер-паролем.",

@@ -68,8 +68,8 @@ describe("settings", () => {
   it("offers each sync provider while not connected", async () => {
     await section("sync");
     await $('[data-testid="settings-sync-open-cloud"]').click();
-    await expect($('[data-testid="settings-drive-row"]')).toHaveText(
-      /Not connected/,
+    await expect($('[data-testid="settings-providers"]')).toHaveText(
+      /Choose a provider/i,
     );
     await expect($('[data-testid="settings-drive-connect"]')).toBeDisplayed();
     await expect($('[data-testid="settings-dropbox-connect"]')).toBeDisplayed();

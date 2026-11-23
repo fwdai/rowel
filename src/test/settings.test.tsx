@@ -230,7 +230,7 @@ describe('Settings › sync overview', () => {
 
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'Your cloud storage' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-drive-row')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-cloud')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-sync-open-cloud')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
@@ -250,7 +250,11 @@ describe('Settings › sync', () => {
   // one pressed is the one the wait and the probe are about.
   it('offers every provider, and connects the one picked', async () => {
     await openCloud()
-    expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Cloud sync')
+    const providers = screen.getByTestId('settings-providers')
+    expect(providers).toHaveTextContent('Choose a provider')
+    expect(providers).toHaveTextContent('Dropbox')
+    // No account yet, so no account card: the list stands in its place.
+    expect(screen.queryByTestId('settings-drive-row')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-drive-connect')).toHaveTextContent('Connect Google Drive')
     // Only the two every build has: a third needs the build to report it.
     expect(screen.queryByTestId('settings-icloud-connect')).not.toBeInTheDocument()
@@ -269,7 +273,7 @@ describe('Settings › sync', () => {
     seedApp({ providers: ['googleDrive', 'dropbox', 'iCloud'] })
     await openCloud()
 
-    const row = screen.getByTestId('settings-drive-row')
+    const row = screen.getByTestId('settings-providers')
     const ids = [...row.querySelectorAll('[data-testid$="-connect"]')].map(node =>
       node.getAttribute('data-testid')
     )
@@ -540,8 +544,8 @@ describe('Settings › sync', () => {
     await openCloud()
     const pill = () => screen.getByTestId('settings-drive-status')
 
-    expect(pill()).toHaveTextContent('Not connected')
-    expect(pill()).toHaveAttribute('data-tone', 'neutral')
+    // No account, no card to carry a pill: the list of providers stands there.
+    expect(screen.queryByTestId('settings-drive-status')).not.toBeInTheDocument()
 
     act(() => report({ configured: true }))
     expect(pill()).toHaveTextContent('Up to date')

@@ -558,7 +558,7 @@ describe('compact shell', () => {
 
     const page = screen.getByTestId('settings-subpage')
     expect(within(page).getByRole('heading', { name: 'Your cloud storage' })).toBeInTheDocument()
-    expect(within(page).getByTestId('settings-drive-row')).toBeInTheDocument()
+    expect(within(page).getByTestId('settings-providers')).toBeInTheDocument()
     // The overview stays under it, out of reach until the page is popped.
     expect(screen.getByTestId('settings-sync-open-cloud').closest('[inert]')).not.toBeNull()
 

@@ -240,6 +240,7 @@
   "On": "Açık",
   "Off": "Kapalı",
   "Your cloud storage": "Bulut depolamanız",
+  "Choose a provider": "Bir sağlayıcı seçin",
   "Through storage you already own, such as Google Drive or Dropbox.": "Google Drive veya Dropbox gibi zaten sahip olduğunuz bir depolama alanı üzerinden.",
   "Backup": "Yedekleme",
   "A file you keep yourself, sealed with your master password.": "Kendi sakladığınız, ana şifrenizle mühürlenmiş bir dosya.",

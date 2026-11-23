@@ -240,6 +240,7 @@
   "On": "Activé",
   "Off": "Désactivé",
   "Your cloud storage": "Votre stockage cloud",
+  "Choose a provider": "Choisissez un fournisseur",
   "Through storage you already own, such as Google Drive or Dropbox.": "Via un stockage que vous possédez déjà, comme Google Drive ou Dropbox.",
   "Backup": "Sauvegarde",
   "A file you keep yourself, sealed with your master password.": "Un fichier que vous conservez vous-même, scellé par votre mot de passe principal.",

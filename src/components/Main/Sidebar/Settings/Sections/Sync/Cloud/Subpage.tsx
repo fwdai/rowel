@@ -8,6 +8,7 @@ import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SubpageScroller from '../../../SubpageScroller'
 import AccountCard from './AccountCard'
+import Providers from './Providers'
 import SharesRow from './SharesRow'
 
 // Under the card, at its own inset.
@@ -69,11 +70,17 @@ export default function CloudSubpage() {
   const probing = account.status === 'pending' || deciding
   const offered = refused && (account.status === 'found' || account.status === 'restoring')
   const restoring = account.status === 'restoring'
+  // Nothing connected and no connect under way: the choice of provider.
+  const choosing = !sync.configured && !sync.pending && !probing && !offered
 
   return (
     <SubpageScroller testid="settings-cloud">
       <section className="mb-7">
-        <AccountCard probing={probing} offered={offered} restoring={restoring} />
+        {choosing ? (
+          <Providers />
+        ) : (
+          <AccountCard probing={probing} offered={offered} restoring={restoring} />
+        )}
         {syncFailure && <ErrorNote message={syncFailure} />}
         {account.status === 'error' && (
           <ErrorNote message={account.error || t('Something went wrong')} />

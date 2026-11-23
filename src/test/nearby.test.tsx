@@ -87,7 +87,7 @@ describe('Settings › Sync › Nearby devices', () => {
     openSync()
     fireEvent.click(screen.getByTestId('settings-sync-open-cloud'))
 
-    expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Cloud sync')
+    expect(screen.getByTestId('settings-providers')).toBeInTheDocument()
     expect(screen.getByTestId('settings-drive-connect')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-nearby-toggle')).not.toBeInTheDocument()
   })
