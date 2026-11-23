@@ -18,6 +18,10 @@ import { fileNameOf } from '@/components/Start/shared/describe'
 // opened: a backup picked or dropped on Import, or opened with the app, whose
 // grant is still standing. Either way it is read only when Restore is pressed,
 // and a wrong password leaves it chosen for the retry.
+//
+// Choosing the first file is the row's own control. Choosing another is the
+// form's (`aside`), which is what stands it down for every step the form has
+// in flight, the move onto the vault password and the open after it included.
 export default function RestoreBackup({ chosen }: { chosen: string | null }) {
   const { t } = useTranslation()
   const [path, setPath] = useState(chosen)
@@ -49,14 +53,14 @@ export default function RestoreBackup({ chosen }: { chosen: string | null }) {
       description={t('Use the master password you had when this backup was made.')}
       testid="workspace-backup-row"
       control={
-        busy ? null : (
+        !path && (
           <Button
             variant="pale"
             size="md"
             testid="workspace-backup-pick"
             onClick={() => void pick()}
           >
-            {path ? t('Pick another file') : t('Choose file…')}
+            {t('Choose file…')}
           </Button>
         )
       }
@@ -67,6 +71,11 @@ export default function RestoreBackup({ chosen }: { chosen: string | null }) {
           busy={busy}
           onRestore={restore}
           wrongPassword={t('Invalid password for backup')}
+          aside={
+            <Button variant="pale" testid="workspace-backup-pick" onClick={() => void pick()}>
+              {t('Pick another file')}
+            </Button>
+          }
           testid="workspace-backup"
         >
           <FoundFileCard

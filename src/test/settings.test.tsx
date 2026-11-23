@@ -2164,6 +2164,21 @@ describe('Settings › workspaces › vaults in the account', () => {
       expect(useUi.getState().settingsLocked).toBe(false)
     })
 
+    // The form is shared by every restore, so the account's picker is held
+    // the same way a backup's is: no other vault is picked under a move that
+    // ends by opening the lockbox the first one made.
+    it('holds the vault picker while the move runs', async () => {
+      mockCommandOnce('workspace_adopt_vault_password', () => new Promise(() => {}))
+      const field = await restoreOffPassword()
+      expect(screen.getByTestId('workspace-remote-target')).not.toHaveAttribute('inert')
+
+      await userEvent.type(field, 'the-vault-pass')
+      await userEvent.click(screen.getByTestId('workspace-remote-submit'))
+
+      expect(screen.getByTestId('workspace-remote-submit')).toHaveTextContent('Restoring…')
+      expect(screen.getByTestId('workspace-remote-target')).toHaveAttribute('inert')
+    })
+
     // The move re-keys the lockbox for good; a switch that fails after it must
     // not send the spent lockbox password back to the move.
     it('retries only the switch when it fails after the move', async () => {
@@ -3324,6 +3339,34 @@ describe('Settings › workspaces › restore a backup', () => {
     ])
     expect(calls('workspace_select')).toEqual([{ id: 'w9' }])
     expect(calls('workspace_restore_from_file')).toHaveLength(1)
+  })
+
+  // The move and the open after it are steps of the same restore: they end by
+  // opening the lockbox the first file made, so no other file is picked under
+  // them, and none while the lockbox waits, closed, for the vault password.
+  it('offers no other file while the move onto the vault password runs', async () => {
+    mockCommandOnce('workspace_restore_from_file', () =>
+      Promise.reject({
+        kind: 'vaultPasswordRequired',
+        message: 'this lockbox has a different password; enter the vault password to move it over',
+        workspaceId: 'w9'
+      })
+    )
+    mockCommandOnce('workspace_adopt_vault_password', () => new Promise(() => {}))
+    await pickAndType('its-own-pass{Enter}')
+
+    const field = await screen.findByTestId('workspace-backup-vault-password')
+    expect(screen.queryByTestId('workspace-backup-pick')).not.toBeInTheDocument()
+
+    await userEvent.type(field, 'the-vault-pass')
+    await userEvent.click(screen.getByTestId('workspace-backup-submit'))
+
+    expect(screen.getByTestId('workspace-backup-submit')).toHaveTextContent('Restoring…')
+    expect(screen.queryByTestId('workspace-backup-pick')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-backup-target')).toHaveAttribute('inert')
+    expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent(
+      'Rowel backup 2026-11-20.rowel'
+    )
   })
 })
 

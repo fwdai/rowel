@@ -29,7 +29,12 @@ interface Props {
   onRestore: (name: string, password: string, target: string) => Promise<void>
   /** What a wrong password is told, which depends on where the pack came from. */
   wrongPassword: string
-  /** A second action beside Restore, drawn while nothing runs or is being moved. */
+  /**
+   * A second action beside Restore, drawn while nothing runs or is being
+   * moved. Whatever would change `target` from outside the picker above
+   * (another account, another file) belongs here, so that it stands down with
+   * the form: a step in flight ends by opening the lockbox it started on.
+   */
   aside?: ReactNode
   /** Test id base for the form's controls. */
   testid?: string
@@ -50,7 +55,11 @@ type Moving =
  * Name, password, Restore: the last step of every "make a workspace out of a
  * vault" flow, wherever the vault came from — an account, or a backup file.
  * What is being restored is the caller's to draw and to pick — it outlives a
- * wrong password — so this only draws it above the fields.
+ * wrong password — so this only draws it above the fields. When it may be
+ * picked is the form's to say, though: only the form knows every step it has
+ * in flight (the restore, the move, the open), so the picker goes inert for
+ * all of them, and nothing swaps the target under a step that is about to
+ * open the lockbox it began with.
  *
  * The name is optional: a vault carries its own, given wherever it was made,
  * and most restores want exactly that one. Typing one renames it everywhere.
@@ -156,7 +165,9 @@ export default function RestoreForm({
 
   return (
     <div className="flex max-w-sm flex-col gap-3">
-      {children}
+      <div inert={working} data-testid={`${testid}-target`}>
+        {children}
+      </div>
       <Field id={`${id}-name`} label={t('Lockbox name (optional)')}>
         <input
           id={`${id}-name`}
