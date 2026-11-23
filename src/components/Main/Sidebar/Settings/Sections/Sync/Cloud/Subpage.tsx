@@ -9,6 +9,7 @@ import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import SubpageScroller from '../../../SubpageScroller'
 import AccountCard from './AccountCard'
+import Lockboxes from './Lockboxes'
 import Providers from './Providers'
 import SharesRow from './SharesRow'
 
@@ -20,7 +21,8 @@ const ErrorNote = ({ message }: { message: string }) => (
 )
 
 // Sync & backup › Your cloud storage: the account this vault syncs through,
-// and what only a connected account has (the links shared out of it).
+// and what only a connected account has (the lockboxes in it beside the
+// others, the links shared out of it).
 export default function CloudSubpage() {
   const { t } = useTranslation()
   const sync = useApp(state => state.sync)
@@ -79,6 +81,8 @@ export default function CloudSubpage() {
           <ErrorNote message={account.error || t('Something went wrong')} />
         )}
       </section>
+
+      <Lockboxes />
 
       {/* Shares are Drive files: another provider has nowhere to put one yet. */}
       {providerShares(syncProvider(sync)) && (

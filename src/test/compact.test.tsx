@@ -14,6 +14,7 @@ import {
   selectCurrent,
   editEntry,
   focusSearch,
+  initialApp,
   lockSettings,
   openPalette,
   openSettings,
@@ -21,10 +22,12 @@ import {
   openGenerator,
   setCurrentEntry,
   setEntries,
+  setRemoteVaults,
+  setSyncStatus,
   setView,
   startEntry
 } from '@/store'
-import { withEntries, loginEntry, loginMeta } from './utils'
+import { withEntries, loginEntry, loginMeta, seedApp } from './utils'
 import { setLayout } from './layout'
 import { calls, mockCommand } from './ipc'
 
@@ -566,6 +569,51 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
     expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-sync-open-cloud').closest('[inert]')).toBeNull()
+  })
+
+  // The cloud page's list is the same on the phone, each row's standing under
+  // its name; a lockbox not on this device leads out of the pushed page to the
+  // Lockboxes pane, where it is restored.
+  it('lists the lockboxes beside the account, and leads one not here to Lockboxes', async () => {
+    seedApp({
+      workspaces: [
+        { id: 'default', name: null },
+        { id: 'w2', name: 'Scratch', synced: false }
+      ],
+      activeWorkspace: 'default'
+    })
+    seed()
+    setSyncStatus({ ...initialApp.sync, configured: true, provider: 'googleDrive' })
+    setRemoteVaults([
+      {
+        id: 'drive-file-1',
+        name: 'cafe.rowel',
+        vaultId: 'cafe',
+        size: 64_512,
+        modifiedTime: '2024-01-01T00:00:00.000Z',
+        provider: 'googleDrive'
+      }
+    ])
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-sync'))
+    await userEvent.click(screen.getByTestId('settings-sync-open-cloud'))
+
+    const list = within(screen.getByTestId('settings-subpage')).getByTestId(
+      'settings-cloud-lockboxes'
+    )
+    expect(within(list).getByTestId('settings-cloud-lockbox-default')).toHaveTextContent('Open now')
+    expect(within(list).getByTestId('settings-cloud-lockbox-w2-status')).toHaveTextContent(
+      'This device'
+    )
+
+    await userEvent.click(within(list).getByTestId('settings-cloud-remote-drive-file-1'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-remote-row')).toBeInTheDocument()
+    // One level deep again: the section's own Back, to the settings root.
+    expect(screen.getByTestId('settings-back').closest('[inert]')).toBeNull()
   })
 
   // The pane's section is local state, so the store's guard on the wide
