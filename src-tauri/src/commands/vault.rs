@@ -10,7 +10,7 @@ use crate::state::AppState;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
 use crate::sync::engine::WorkspaceVault;
 use crate::workspace::{self, Registry};
-use crate::{credential_identities, crypto, save, storage, sync};
+use crate::{auth, credential_identities, crypto, save, storage, sync};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
@@ -468,6 +468,9 @@ struct BackupTarget {
 /// for (`held`, asked of the ring), whose files nothing here opens without its
 /// own password. Settled before the password is asked about, so a refusal
 /// costs no Argon2id wait and no attempt against the backoff.
+///
+/// The caller holds the setup step: a lockbox that is not open is first put
+/// back as an interrupted password change left it (see below).
 fn backup_target(
     root: &Path,
     registry: &Registry,
@@ -482,6 +485,20 @@ fn backup_target(
         .find(|w| w.id == id)
         .ok_or(Error::NotFound)?;
     let dir = workspace::dir_of(root, id);
+    let open = id == active;
+    // The rollback every unlock runs first, for a lockbox this save reaches
+    // without one: a password change re-keys every lockbox that shares the
+    // password, and a crash during it can leave this one's entries resealed
+    // under a key its database and descriptor do not name yet. The key the
+    // ring holds would still open that database, and the pack would carry
+    // entries nothing decrypts. Before anything here reads the descriptor,
+    // since the rollback decides what it says; under the caller's setup step,
+    // as every rollback runs, so a change still in flight is never taken for
+    // an interrupted one. The open lockbox passed through this when it was
+    // opened, and its store is in use.
+    if !open {
+        auth::recover_interrupted_rekey_in(&dir)?;
+    }
     // Told by its descriptor, as a delete and nearby sync tell one: the
     // registry's `server` is a note beside it.
     if is_org_lockbox_dir(&dir) {
@@ -494,7 +511,6 @@ fn backup_target(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(no_descriptor()),
         Err(e) => return Err(e.into()),
     };
-    let open = id == active;
     if !open && !held(id) {
         return Err(Error::Unsupported(
             "this lockbox is not unlocked on this device; switch to it once to unlock it, \
@@ -1066,6 +1082,54 @@ mod tests {
         assert!(!target.open);
         assert_eq!(target.dir, dir_of(root.path(), "a1b2"));
         assert_eq!(target.name.as_deref(), Some("Work"));
+    }
+
+    // A password change that crashed on a lockbox nobody had open left its
+    // database and descriptor on the way to a new key. The save rolls that back
+    // before it reads either, as a switch to the lockbox would, so the file it
+    // writes is the lockbox as the held key opens it, entries and all.
+    #[test]
+    fn an_interrupted_password_change_is_rolled_back_before_a_lockbox_is_saved() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = lockboxes(root.path());
+        let dir = dir_of(root.path(), "a1b2");
+        let key = closed_lockbox(&dir, VAULT_PASSWORD, &["Gone", "Bank"]);
+        let sealed_under = std::fs::read_to_string(dir.join(storage::KDF_SIDECAR_FILE)).unwrap();
+
+        // The crash: the pre-change pair snapshotted, the live pair half moved.
+        std::fs::copy(
+            dir.join(storage::DB_FILE),
+            dir.join(storage::DB_REKEY_BACKUP_FILE),
+        )
+        .unwrap();
+        std::fs::copy(
+            dir.join(storage::KDF_SIDECAR_FILE),
+            dir.join(storage::KDF_SIDECAR_REKEY_BACKUP_FILE),
+        )
+        .unwrap();
+        std::fs::write(dir.join(storage::DB_FILE), "half re-keyed").unwrap();
+        std::fs::write(dir.join(storage::KDF_SIDECAR_FILE), "new-params").unwrap();
+
+        let target =
+            backup_target(root.path(), &registry, PRIMARY_ID, Some("a1b2"), |_| true).unwrap();
+        assert_eq!(target.sealed_under, sealed_under);
+        assert!(!dir.join(storage::DB_REKEY_BACKUP_FILE).exists());
+
+        let bytes = pack_lockbox(&target.dir, &target.id, key).unwrap();
+        let fresh = tempfile::tempdir().unwrap();
+        let (_, store) = sync::restore::restore_at(
+            &fresh.path().join(storage::DB_FILE),
+            &fresh.path().join(storage::KDF_SIDECAR_FILE),
+            &bytes,
+            VAULT_PASSWORD,
+        )
+        .unwrap();
+        let titles: Vec<String> = list_metas(&store)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.title)
+            .collect();
+        assert_eq!(titles, ["Bank"]);
     }
 
     // What this device cannot save is refused by what it is: an id nobody
