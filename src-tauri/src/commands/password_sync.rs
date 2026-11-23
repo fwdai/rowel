@@ -9,8 +9,9 @@
 //!   account's descriptor, verbatim, through the same crash-safe saga a local
 //!   change runs. Lockboxes beside it on the same password follow.
 //! - [`sync_replace_remote`]: the account's copy is not one the user can (or
-//!   wants to) open — a password they never set, or an epoch this device has
-//!   retired and lost the key of — and this device's pack goes up over it.
+//!   wants to) open — a password they never set, an epoch this device has
+//!   retired and lost the key of, or one it retired after already seeing the
+//!   account on the current epoch — and this device's pack goes up over it.
 //!
 //! See `docs/password-change-sync-design.md`.
 

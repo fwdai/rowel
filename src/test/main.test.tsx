@@ -72,6 +72,25 @@ describe('Main', () => {
     expect(screen.getByTestId('search-input')).toHaveFocus()
   })
 
+  it('selects the existing query on ⌘F so typing replaces it', async () => {
+    withEntries([loginMeta({ id: 'a', title: 'Airbnb' }), loginMeta({ id: 'g', title: 'Google' })])
+    render(<Main />)
+    const field = screen.getByTestId<HTMLInputElement>('search-input')
+    const selected = () => field.value.slice(field.selectionStart ?? 0, field.selectionEnd ?? 0)
+
+    await userEvent.type(field, 'air')
+    await userEvent.keyboard('{Meta>}f{/Meta}')
+    expect(selected()).toBe('air')
+
+    await userEvent.keyboard('goo')
+    expect(field).toHaveValue('goo')
+
+    act(() => field.blur())
+    await userEvent.keyboard('{Meta>}f{/Meta}')
+    expect(field).toHaveFocus()
+    expect(selected()).toBe('goo')
+  })
+
   it('still focuses the search field on ⌘F after a workspace switch', async () => {
     seed()
     render(<Main />)

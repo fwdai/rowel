@@ -228,7 +228,9 @@ The `Approval`:
 
 `mode` is `fill`, `passkey`, `header`, `token` or `env`. A target is one of
 `{ "kind": "origin", "origin": "https://…" }`, `{ "kind": "http", "host",
-"path", "methods": [] }` or `{ "kind": "command", "line" }`. `candidates` are
+"path", "methods": [] }` or `{ "kind": "command", "line" }`, and `targets`
+holds exactly one: the dialog shows one place, so an approval naming any
+other number is dropped unread and left to its deadline. `candidates` are
 `rowel_broker::grant::VisibleItem`: what the person picks from, titles and
 usernames only. `reason` is optional, the agent's own words, at most 300
 characters. `stepUp` says the rule wants the master password (or biometrics)

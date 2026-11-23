@@ -9,8 +9,9 @@ import { calls, clearCalls, mockCommand } from './ipc'
 
 /*
  * The KeePass copy chords (ListColumn/copyKeys): ⌘B username, ⌘C password,
- * ⌘T one-time code, ⌘U URL — on a focused row only, so ⌘C everywhere else is
- * still the system copy of whatever text is selected.
+ * ⌘T one-time code, ⌘Y password and code as one string, ⌘U URL — on a
+ * focused row only, so ⌘C everywhere else is still the system copy of whatever
+ * text is selected.
  */
 
 const entry = loginEntry({
@@ -46,6 +47,7 @@ describe('copy chords on a list row', () => {
     ['KeyB', 'ada@example.com'],
     ['KeyC', 'hunter2'],
     ['KeyT', '123456'],
+    ['KeyY', 'hunter2123456'],
     ['KeyU', 'https://google.com']
   ])('%s copies its value and raises the pill', async (code, value) => {
     await pickRow()
@@ -84,6 +86,23 @@ describe('copy chords on a list row', () => {
     await vi.waitFor(() => expect(calls('reveal_entry')).toHaveLength(1))
     expect(calls('generate_otp')).toHaveLength(0)
     expect(copied()).toEqual([])
+  })
+})
+
+describe('the password and code together', () => {
+  it.each([
+    ['one-time code', { otp: '' }],
+    ['password', { password: '' }]
+  ])('copy nothing for a login with no %s', async (_missing, without) => {
+    mockCommand('reveal_entry', () => ({ ...entry, ...without }))
+    await pickRow()
+    clearCalls('reveal_entry')
+
+    chord(screen.getByTestId('entry-item'), 'KeyY')
+
+    await vi.waitFor(() => expect(calls('reveal_entry')).toHaveLength(1))
+    expect(copied()).toEqual([])
+    expect(useUi.getState().copied).toBe(false)
   })
 })
 
@@ -146,6 +165,23 @@ describe('the palette', () => {
     await userEvent.keyboard('{Enter}')
 
     await vi.waitFor(() => expect(copied()).toEqual(['ada@example.com']))
+  })
+
+  it('lists the password and code together, under ⌘Y', async () => {
+    withEntries([loginMeta({ id: 'l1' })])
+    render(<Main />)
+    await userEvent.click(screen.getByTestId('entry-item'))
+    clearCalls('copy_to_clipboard')
+
+    await userEvent.keyboard('{Meta>}k{/Meta}')
+    await userEvent.keyboard('copy password and')
+    const palette = within(screen.getByTestId('command-palette'))
+    expect(palette.getByText('Copy password and one-time code')).toBeInTheDocument()
+    expect(palette.getByText('⌘Y')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Enter}')
+
+    await vi.waitFor(() => expect(copied()).toEqual(['hunter2123456']))
   })
 
   it('offers no copies with nothing selected', async () => {

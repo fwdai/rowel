@@ -176,14 +176,21 @@ page.clearAllLogins = function() {
 // Retrieves the credentials. Returns cached values when found.
 // Page reload or tab switch clears the cache.
 // If the retrieval is forced (from Credential Banner), get new credentials normally.
-page.retrieveCredentials = async function(tab, args = []) {
+page.retrieveCredentials = async function(tab, args = [], sender) {
     if (!tab?.active || !tab?.id) {
         return [];
     }
 
     const [ url, submitUrl, force ] = args;
+
+    // Rowel: a document is served only logins fetched for its own origin, as the browser reports it (sender.url)
+    const origin = grants.originOf(sender?.url);
+    if (!origin || origin === 'null' || grants.originOf(url) !== origin) {
+        return [];
+    }
+
     const currentTab = tabs.getTabFromId(tab.id);
-    if (currentTab?.credentials?.length > 0 && !force) {
+    if (currentTab?.credentials?.length > 0 && currentTab.credentialsOrigin === origin && !force) {
         return currentTab.credentials;
     }
 
@@ -200,22 +207,27 @@ page.retrieveCredentials = async function(tab, args = []) {
     }
 
     const credentials = await keepass.retrieveCredentials(tab, args);
-    tabs.updateTabValues(tab.id, { credentials: credentials });
+    tabs.updateTabValues(tab.id, { credentials: credentials, credentialsOrigin: origin });
     return credentials;
 };
 
-page.getLoginId = async function(tab, returnSingle = true) {
-    // If there's only one credential available and loginId is not set
+page.getLoginId = async function(tab, returnSingle = true, sender) {
+    // Rowel: the selected login, like the cached ones, is told only to a document of the origin it belongs to
     const currentTab = tabs.getTabFromId(tab.id);
-    if (currentTab && returnSingle && !currentTab.loginId && currentTab.credentials.length === 1) {
+    const origin = grants.originOf(sender?.url);
+    const loginId = currentTab?.loginIdOrigin === origin ? currentTab.loginId : undefined;
+
+    // If there's only one credential available and loginId is not set
+    if (currentTab && returnSingle && !loginId && currentTab.credentials.length === 1
+        && currentTab.credentialsOrigin === origin) {
         return currentTab.credentials[0].uuid;
     }
 
-    return currentTab ? currentTab.loginId : undefined;
+    return loginId;
 };
 
-page.setLoginId = async function(tab, loginId) {
-    tabs.updateTabValues(tab?.id, { loginId: loginId });
+page.setLoginId = async function(tab, loginId, sender) {
+    tabs.updateTabValues(tab?.id, { loginId: loginId, loginIdOrigin: grants.originOf(sender?.url) });
 };
 
 page.getManualFill = async function(tab) {
@@ -357,7 +369,8 @@ page.isIframeAllowed = async function(tab, args = []) {
 
     // Allow iframe if the base domain is included in iframes' and tab's hostname
     const tabUrl = new URL(tab?.url);
-    return hostname.endsWith(baseDomain) && tabUrl.hostname?.endsWith(baseDomain);
+    const onBaseDomain = (name) => name === baseDomain || name?.endsWith('.' + baseDomain); // Rowel: whole labels, so evilbank.com is not bank.com
+    return onBaseDomain(hostname) && onBaseDomain(tabUrl.hostname);
 };
 
 /**

@@ -146,8 +146,10 @@ pub enum Error {
     PasswordChangedRemotely,
 
     /// The account's pack is sealed under an earlier generation this device
-    /// has re-keyed away from and no longer holds the key of. It can neither
-    /// be opened nor pushed over without losing what is in it; the run stops
+    /// has re-keyed away from: one it no longer holds the key of, or one it
+    /// does after it has already seen the account on its current generation
+    /// (an old revision put back, or a pack sealed with a replaced password).
+    /// Nothing of it is merged and nothing is pushed over it; the run stops
     /// until that device catches up or the user replaces the account's copy
     /// (`sync_replace_remote` in the app).
     #[error("the account holds this lockbox under a password this device has already replaced")]

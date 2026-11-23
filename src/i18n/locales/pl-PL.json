@@ -170,6 +170,7 @@
   "Copy .env": "Kopiuj .env",
   "Copy username": "Kopiuj nazwę użytkownika",
   "Copy one-time code": "Kopiuj kod jednorazowy",
+  "Copy password and one-time code": "Kopiuj hasło i kod jednorazowy",
   "Copy URL": "Kopiuj URL",
   "Save as file…": "Zapisz jako plik…",
   "Copied": "Skopiowano",

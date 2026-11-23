@@ -12,8 +12,8 @@ use rowel_core::store::{EntryMeta, SqliteStore, VaultStore};
 use crate::actions::{self, Client, ClientKind, VisibleRef};
 use crate::audit::{Draft, Event};
 use crate::grant::{
-    Approval, CandidateItem, Grant, GrantReply, GrantRequest, ItemSelector, Mode, Probe,
-    ResolveContext, State, Target, VisibleItem,
+    command_is_literal, Approval, CandidateItem, Grant, GrantReply, GrantRequest, ItemSelector,
+    Mode, Probe, ResolveContext, State, Target, VisibleItem,
 };
 use crate::lockbox::{clients_in, field_value, item_by_name, live_rules, write_rules_in};
 use crate::policy::{self, defaults, AgentSelector, Decision, Floors, Limits};
@@ -468,27 +468,25 @@ fn is_secret(modes: &[Mode]) -> bool {
     modes.iter().any(|mode| mode.is_secret())
 }
 
-/// Whether every target of `req` is the kind of place every one of its modes
-/// is performed at: an origin for `fill` and `passkey`, an HTTP pattern for
-/// `header`, a command line for `env`. A `token` mode fits nothing, since
-/// nothing serves it yet; a request mixing a site mode with a secret one, or
-/// naming a page for a header, fits nothing either — a grant is never wider
-/// than its request, and such a request has no one shape to be.
+/// Whether `req` names exactly one target and one mode, the target being the
+/// kind of place the mode is performed at: an origin for `fill` and
+/// `passkey`, an HTTP pattern for `header`, a command line for `env` — one
+/// with no bare `*`, so it covers the line as written and no other
+/// ([`command_is_literal`]). The dialog, Settings and the log name one place
+/// and one mode, and a grant is never wider than its request, so every grant
+/// and every rule an answer writes covers exactly what the person was shown.
+/// A `token` mode fits nothing, since nothing serves it yet.
 fn well_targeted(req: &GrantRequest) -> bool {
-    let fits = |target: &Target, mode: Mode| {
-        matches!(
-            (target, mode),
-            (Target::Origin(_), Mode::Fill | Mode::Passkey)
-                | (Target::Http { .. }, Mode::Header)
-                | (Target::Command(_), Mode::Env)
-        )
+    let ([target], [mode]) = (req.targets.as_slice(), req.modes.as_slice()) else {
+        return false;
     };
-    !req.targets.is_empty()
-        && !req.modes.is_empty()
-        && req
-            .targets
-            .iter()
-            .all(|target| req.modes.iter().all(|mode| fits(target, *mode)))
+    match (target, mode) {
+        (Target::Origin(_), Mode::Fill | Mode::Passkey) | (Target::Http { .. }, Mode::Header) => {
+            true
+        }
+        (Target::Command(line), Mode::Env) => command_is_literal(line),
+        _ => false,
+    }
 }
 
 /// The user has answered (or not): the grant becomes active for the one
@@ -609,13 +607,12 @@ pub fn settle(
 /// `grant` admits, where it is for, in its mode. For a fill that is the one
 /// login picked at the site — not the page, since the rule outlives this
 /// visit. For a secret grant it is every item the request named and the
-/// request's own targets, every one of them, so a standing `env` rule names
-/// the full command line and lifts the floor for that line alone, and
-/// answers the whole request next time (`policy::evaluate`). `standing_for`
-/// takes one item and one target, so it is given the first of each and the
-/// whole lists put in their place; a settled grant has at least one of each
-/// ([`well_targeted`], `outcome`), and the fallbacks are only so that this
-/// cannot panic.
+/// request's one target, so a standing `env` rule names the full command
+/// line and lifts the floor for that line alone, and answers the whole
+/// request next time (`policy::evaluate`). `standing_for` takes one item, so
+/// it is given the first and the whole list put in its place; a settled
+/// grant has one target, one mode and at least one item ([`well_targeted`],
+/// `outcome`), and the fallbacks are only so that this cannot panic.
 fn standing_rule(client_key: &str, grant: &Grant, days: u32, now: i64) -> policy::Rule {
     let first_id = match &grant.items {
         ItemSelector::Ids(ids) => ids.first().cloned().unwrap_or_default(),
@@ -626,14 +623,13 @@ fn standing_rule(client_key: &str, grant: &Grant, days: u32, now: i64) -> policy
         return defaults::standing(client_key, &first_id, &site_origin(origin), days, now);
     }
     let mode = grant.modes.first().copied().unwrap_or(Mode::Header);
-    let first = grant
+    let target = grant
         .targets
         .first()
         .cloned()
         .unwrap_or(Target::Command(String::new()));
-    let mut rule = defaults::standing_for(client_key, &first_id, first, mode, days, now);
+    let mut rule = defaults::standing_for(client_key, &first_id, target, mode, days, now);
     rule.items = grant.items.clone();
-    rule.targets = grant.targets.clone();
     rule
 }
 

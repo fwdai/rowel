@@ -170,6 +170,7 @@
   "Copy .env": "复制 .env",
   "Copy username": "复制用户名",
   "Copy one-time code": "复制一次性验证码",
+  "Copy password and one-time code": "复制密码和一次性验证码",
   "Copy URL": "复制 URL",
   "Save as file…": "保存为文件…",
   "Copied": "已复制",

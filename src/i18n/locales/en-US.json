@@ -167,6 +167,7 @@
   "Copy .env": "Copy .env",
   "Copy username": "Copy username",
   "Copy one-time code": "Copy one-time code",
+  "Copy password and one-time code": "Copy password and one-time code",
   "Copy URL": "Copy URL",
   "Save as file…": "Save as file…",
   "Copied": "Copied",

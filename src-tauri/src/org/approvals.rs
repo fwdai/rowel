@@ -135,11 +135,11 @@ fn supervise(app: AppHandle, stop: Arc<AtomicBool>) {
 }
 
 /// Follow the approvals of the server at `url` under `resolver` until
-/// `stop`: every approval is put to `ask`, and what it decides is posted
-/// back; one it leaves unanswered posts nothing. The stream is reconnected
-/// with backoff for as long as this runs, and a session the server no longer
-/// accepts is refreshed once per attempt. Blocking: the caller's thread is
-/// the one that asks.
+/// `stop`: every live approval naming one target is put to `ask`, and what
+/// it decides is posted back; one it leaves unanswered posts nothing. The
+/// stream is reconnected with backoff for as long as this runs, and a session
+/// the server no longer accepts is refreshed once per attempt. Blocking: the
+/// caller's thread is the one that asks.
 pub(crate) fn follow(
     resolver: &SessionResolver,
     url: &str,
@@ -222,6 +222,16 @@ fn attempt(
                 // Decided by the server already; a dialog for it would be
                 // answering nothing.
                 if approval.expires_at_ms <= now_ms() {
+                    continue;
+                }
+                // The dialog shows one place and the answer would cover every
+                // one named, so any other number is not put to the person;
+                // the server's own deadline decides it.
+                if approval.targets.len() != 1 {
+                    log::warn!(
+                        "org approvals: an approval from {url} names {} targets, not one, and is not shown",
+                        approval.targets.len()
+                    );
                     continue;
                 }
                 if let Verdict::Answered(answer) = ask(&approval) {

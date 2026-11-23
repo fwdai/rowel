@@ -19,11 +19,12 @@ all-features = false
 [advisories]
 # RustSec advisory DB. Vulnerable crates fail the build; yanked ones warn
 # (cargo-deny's default). The ignores below are `unmaintained`/informational
-# advisories (no CVE, no code fix) pulled in transitively with no safe upgrade
-# available, plus ONE scoped vulnerability exception (crypto-bigint, at the
-# end) that names who can reach it and the release that lifts it. An ignore
-# that stops matching shows up as `advisory-not-detected`: drop it.
-# Reviewed 2026-11-02.
+# advisories (no CVE, no code fix) with no safe upgrade available — pulled in
+# transitively, except chrono, which is a direct dependency — plus ONE scoped
+# vulnerability exception (crypto-bigint, at the end) that names who can reach
+# it and the release that lifts it. An ignore that stops matching shows up as
+# `advisory-not-detected`: drop it.
+# Reviewed 2026-11-20.
 ignore = [
   # --- Transitive unmaintained crates (informational, no CVE) ---
   { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; transitive build-time dep, no runtime impact — 2026-08-31" },
@@ -33,6 +34,12 @@ ignore = [
   { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); transitive via tauri's Linux stack, no fix upstream — 2026-10-22" },
+  # --- chrono unmaintained (RUSTSEC-2026-0543) ---
+  # A direct dependency of the app, core, cli and serve crates (timestamps and
+  # date formatting, `clock` feature only). Every version is affected and
+  # there is no release to move to; the way out is a port to `jiff` or `time`.
+  # Lift with that port.
+  { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, all versions affected; direct dep with no fixed release, needs a port to jiff or time — 2026-11-20" },
   # --- crypto-bigint 0.5 timing variability (RUSTSEC-2026-0387) ---
   # Reachable: P-256 ECDSA in passkey assertions (passkey-authenticator ->
   # p256) and the P-256/384/521 paths of ssh-key, both through
@@ -64,6 +71,16 @@ allow = [
   # Zero-clause BSD: public-domain-equivalent (`recvmsg`, `doctest-file`,
   # transitive via `interprocess`).
   "0BSD",
+]
+# Licenses allowed for one crate only, so the list above stays as narrow as it
+# is for everything else.
+exceptions = [
+  # The SQLCipher source libsqlite3-sys compiles (`bundled-sqlcipher`). Its
+  # expression adds SQLite's public-domain `blessing` and the `WTFPL` of the
+  # libtomcrypt provider it also ships. That provider is for targets with no
+  # system crypto library; this build links vendored OpenSSL instead, so no
+  # libtomcrypt code is compiled in.
+  { crate = "sqlcipher-src", allow = ["blessing", "WTFPL"] },
 ]
 
 # The rowel crate itself is a private application, never published to

@@ -25,7 +25,7 @@ use crate::models::Entry;
 use crate::retired;
 use crate::session::store_err;
 use crate::storage;
-use crate::store::{identity, migrate, SqliteStore, VaultStore};
+use crate::store::{identity, migrate, Record, SqliteStore, VaultStore};
 use crate::sync::engine::{self, LocalVault, Reclaim, Snapshot, SyncOutcome};
 use crate::sync::store::fake::FakeStore;
 use crate::sync::{layout, pack, restore, PackRemote, Provider};
@@ -246,7 +246,8 @@ impl Device {
 
 impl LocalVault for Device {
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-        engine::decode_pack(
+        engine::decode_in(
+            self.store(),
             pack_bytes,
             &self.sidecar(),
             &self.key,
@@ -272,8 +273,8 @@ impl LocalVault for Device {
             &self.scratch(),
         )?)
     }
-    fn note_push(&self, _revision: &str, _at_ms: i64) -> Result<()> {
-        Ok(())
+    fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
+        engine::note_push(self.store(), revision, at_ms, &self.sidecar())
     }
     fn vault_id(&self) -> Result<Option<String>> {
         identity::vault_id(self.store()).map_err(store_err)
@@ -368,8 +369,10 @@ fn a_password_change_on_one_device_reaches_the_other() {
     // Adopting again is a no-op: the account is on B's descriptor now.
     assert!(b.key_for_account(&account, NEW).unwrap().is_none());
 
-    // 6. A device still on generation 0 puts its copy back, with an entry of
-    //    its own. A and B merge it with their retired key and re-seal it.
+    // 6. A copy under generation 0 is put back over the account, with an entry
+    //    of its own. A and B have both seen the account on generation 1, so it
+    //    is an old revision or a pack made with the old password: neither
+    //    merges it nor pushes, and the way out is the replace.
     let old_account = FakeStore::default();
     old_account.put(&layout::vault_file_name("v1"), &gen0_pack);
     let c = Device::restore("c", "v1", &old_account, OLD).unwrap();
@@ -382,12 +385,17 @@ fn a_password_change_on_one_device_reaches_the_other() {
     )
     .unwrap();
     account.put(&layout::vault_file_name("v1"), &c_pack);
-    let outcome = a.sync(&account).unwrap();
-    assert!(outcome.pushed && outcome.rekeyed_remote);
-    assert_eq!(a.title("3").as_deref(), Some("from the old epoch"));
+    for device in [&a, &b] {
+        assert!(matches!(
+            device.sync(&account),
+            Err(Error::VaultUnderRetiredPassword)
+        ));
+        assert_eq!(device.title("3"), None);
+    }
+    assert_eq!(account.bytes(&layout::vault_file_name("v1")), Some(c_pack));
+    engine::replace(&a.remote(&account), &a, NOW).unwrap();
     assert_eq!(header(&account, "v1"), gen1);
-    b.sync(&account).unwrap();
-    assert_eq!(b.title("3").as_deref(), Some("from the old epoch"));
+    assert!(!b.sync(&account).unwrap().pushed);
     assert_eq!(a.digest(), b.digest());
     // ...and C, on the retired epoch, is told the password changed.
     assert!(matches!(
@@ -463,6 +471,150 @@ fn a_pack_under_an_epoch_this_device_cannot_open_waits_for_the_replace() {
         stale.sync(&account),
         Err(Error::PasswordChangedRemotely)
     ));
+}
+
+/// A pack under the epoch of `revision` (an old pack the provider's history
+/// kept), made by whoever still knows that epoch's `password`: a purge shell
+/// for entry "1" stamped a year ahead, so it would win every later merge too,
+/// and an entry of its own, packed under the old header verbatim.
+fn forged(revision: &[u8], password: &str) -> Vec<u8> {
+    let old = FakeStore::default();
+    old.put(&layout::vault_file_name("v1"), revision);
+    let forger = Device::restore("f", "v1", &old, password).unwrap();
+    let later = NOW + 365 * 24 * 60 * 60 * 1000;
+    let entry = Entry {
+        id: "1".into(),
+        ..Default::default()
+    };
+    let shell = Record {
+        updated_at: later,
+        deleted_at: Some(later),
+        ..migrate::build_record(&entry, Vec::new()).unwrap()
+    };
+    forger.store().merge(&[shell], &[], &[]).unwrap();
+    forger.write("planted", "planted");
+    pack::pack_store(
+        forger.store(),
+        &*forger.key.sqlcipher_key(),
+        &forger.sidecar(),
+        &forger.scratch(),
+    )
+    .unwrap()
+}
+
+// Refused, and nothing moved: the entry the forgery purges is still here, the
+// one it plants is not, and the account still holds the forgery (no push).
+fn assert_refused(device: &Device, account: &FakeStore, forgery: &[u8]) {
+    assert!(matches!(
+        device.sync(account),
+        Err(Error::VaultUnderRetiredPassword)
+    ));
+    assert_eq!(device.title("1").as_deref(), Some("kept"));
+    assert_eq!(device.title("planted"), None);
+    assert_eq!(
+        account.bytes(&layout::vault_file_name("v1")).as_deref(),
+        Some(forgery)
+    );
+}
+
+// A retired epoch is merged from a password change until this device first
+// sees the account on the new one: a slower device's push that landed before
+// then is carried forward, a pack under a replaced password after it is
+// refused on every device that saw the account move. A second change opens
+// the window again for its own transition only, and closes it the same way.
+#[test]
+fn a_replaced_password_is_merged_only_until_the_account_moves_on() {
+    let account = FakeStore::default();
+    let gen0 = params(21, 0);
+    let mut a = Device::create("a", "v1", OLD, &gen0);
+    a.write("1", "kept");
+    a.sync(&account).unwrap();
+    let gen0_revision = account.bytes(&layout::vault_file_name("v1")).unwrap();
+    let mut b = Device::restore("b", "v1", &account, OLD).unwrap();
+    b.sync(&account).unwrap();
+
+    // A changes the password; B, still on the old one, pushes an edit before
+    // A's first run under the new one. That run merges it and re-seals.
+    let gen1 = params(22, 1);
+    a.rekey(derive(NEW, &gen1), &gen1);
+    b.write("2", "from b, old password");
+    assert!(b.sync(&account).unwrap().pushed);
+    let outcome = a.sync(&account).unwrap();
+    assert!(outcome.pushed && outcome.rekeyed_remote);
+    assert_eq!(a.title("2").as_deref(), Some("from b, old password"));
+    assert_eq!(header(&account, "v1"), gen1);
+
+    // B adopts; its run after the adopt opens the account under generation 1.
+    assert!(matches!(
+        b.sync(&account),
+        Err(Error::PasswordChangedRemotely)
+    ));
+    let (adopted, key) = b.key_for_account(&account, NEW).unwrap().unwrap();
+    b.rekey(key, &adopted);
+    b.sync(&account).unwrap();
+    a.sync(&account).unwrap();
+
+    // Someone who still knows the old password writes a pack under it.
+    let forgery = forged(&gen0_revision, OLD);
+    account.put(&layout::vault_file_name("v1"), &forgery);
+    assert_refused(&a, &account, &forgery);
+    assert_refused(&b, &account, &forgery);
+
+    // The way out: A replaces the account's copy with its own.
+    engine::replace(&a.remote(&account), &a, NOW).unwrap();
+    assert_eq!(header(&account, "v1"), gen1);
+    let gen1_revision = account.bytes(&layout::vault_file_name("v1")).unwrap();
+    b.sync(&account).unwrap();
+
+    // A second change. B, still on generation 1, pushes before A's first run
+    // under generation 2, and that run merges it like the first transition.
+    let gen2 = params(23, 2);
+    a.rekey(derive("newer password", &gen2), &gen2);
+    assert_eq!(a.retired(), [gen1.clone(), gen0]);
+    b.write("3", "from b, generation 1");
+    assert!(b.sync(&account).unwrap().pushed);
+    let outcome = a.sync(&account).unwrap();
+    assert!(outcome.pushed && outcome.rekeyed_remote);
+    assert_eq!(a.title("3").as_deref(), Some("from b, generation 1"));
+    assert_eq!(header(&account, "v1"), gen2);
+
+    // From here neither replaced password gets a pack merged.
+    for forgery in [forged(&gen1_revision, NEW), forged(&gen0_revision, OLD)] {
+        account.put(&layout::vault_file_name("v1"), &forgery);
+        assert_refused(&a, &account, &forgery);
+    }
+}
+
+// The note is this device's own. A restore does not take it from the pack it
+// is made from (which carries the source device's), and neither a first pull
+// of the account it came from nor a first push to an empty account is refused.
+#[test]
+fn a_restore_or_a_new_account_is_not_refused() {
+    let account = FakeStore::default();
+    let gen0 = params(31, 0);
+    let mut a = Device::create("a", "v1", OLD, &gen0);
+    a.write("1", "kept");
+    a.sync(&account).unwrap();
+    let gen1 = params(32, 1);
+    a.rekey(derive(NEW, &gen1), &gen1);
+    assert!(a.sync(&account).unwrap().rekeyed_remote);
+    // One more push, so the pack in the account carries A's note.
+    a.write("2", "second");
+    assert!(a.sync(&account).unwrap().pushed);
+    assert_eq!(
+        engine::remote_kdf_of(a.store()).unwrap(),
+        Some(gen1.clone())
+    );
+
+    let d = Device::restore("d", "v1", &account, NEW).unwrap();
+    assert_eq!(engine::remote_kdf_of(d.store()).unwrap(), None);
+    assert!(!d.sync(&account).unwrap().pushed);
+    assert_eq!(d.title("2").as_deref(), Some("second"));
+    assert_eq!(engine::remote_kdf_of(d.store()).unwrap(), Some(gen1));
+
+    let elsewhere = FakeStore::default();
+    assert!(a.sync(&elsewhere).unwrap().pushed);
+    assert!(!d.sync(&elsewhere).unwrap().pushed);
 }
 
 // A lockbox that is not open, synced as a change or an adopt syncs it

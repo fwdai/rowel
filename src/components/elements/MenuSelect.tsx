@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { cx } from '@/utils/cx'
+import { scrollParent } from '@/utils/scrollParent'
 import { ChevronDownGlyph } from '@/components/Main/icons'
 import { Dropdown, DropdownCheck, DropdownItem } from './Dropdown'
 import { META } from './tokens'
@@ -28,13 +29,8 @@ const MARGIN = 8
 // settings modal's section scroller, the phone's pane), else the window. A
 // menu that runs past a scroller's starting edge is cut off for good — nothing
 // scrolls up to it — so the window's room is not the room there is.
-const roomOf = (el: HTMLElement) => {
-  for (let node = el.parentElement; node; node = node.parentElement) {
-    const overflow = getComputedStyle(node).overflowY
-    if (overflow === 'auto' || overflow === 'scroll') return node.getBoundingClientRect()
-  }
-  return { top: 0, bottom: window.innerHeight }
-}
+const roomOf = (el: HTMLElement) =>
+  scrollParent(el)?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight }
 
 // A single choice from a field-shaped trigger naming the current option, opening
 // a menu of all of them. For options too many or too wide to sit side by side.

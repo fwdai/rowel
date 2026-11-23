@@ -25,8 +25,10 @@ export const hostOf = (url: string): string => {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /** Deliberately shallow: enough to catch a typo, never enough to reject a real address. */
+export const isEmail = (value: string): boolean => EMAIL.test(value.trim())
+
 export const emailError = (value: string): string =>
-  EMAIL.test(value.trim()) ? '' : t('Not an email address')
+  isEmail(value) ? '' : t('Not an email address')
 
 /**
  * What every kind's `isValid` counts as a value: present, and not just spaces.

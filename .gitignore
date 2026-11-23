@@ -27,6 +27,9 @@ src-tauri/binaries/
 *.key
 *.key.pub
 
+# Editor settings (personal, nothing project-wide to share)
+.vscode/
+
 # Claude Code local state & agent worktrees
 .claude/
 

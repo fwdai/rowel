@@ -33,8 +33,7 @@ csv = "1"
 # zlib-rs backend is the flate2 the locked graph already builds.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 thiserror = "2"
-rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
-rusqlite_migration = "1"
+rusqlite = { version = "0.43", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
 aes-gcm = "0.11"
 ring = "0.17"
 sha2 = "0.11"

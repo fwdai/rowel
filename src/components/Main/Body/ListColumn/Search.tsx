@@ -52,6 +52,7 @@ export default function Search({
     if (!el || el.closest('[inert]')) return
     applied.current = requested
     el.focus()
+    el.select()
   })
 
   // Clearing hands the caret back to the field: the button that was clicked

@@ -85,10 +85,15 @@ impl Reclaim {
 /// next scheduled run settle it, not to spin.
 const MAX_ATTEMPTS: usize = 3;
 
-// Both under `SYNC_META_PREFIX`, so a restore onto a fresh install scrubs them
+// All under `SYNC_META_PREFIX`, so a restore onto a fresh install scrubs them
 // (the source device's bookkeeping means nothing on the target).
 const META_REMOTE_REV: &str = "sync_remote_rev";
 const META_LAST_MS: &str = "sync_last_ms";
+// The key descriptor of the last pack this vault pushed, or pulled and opened
+// under its current key: the epoch it last saw the account on. Never read off
+// a pack, and it has to equal the current descriptor to count, so a password
+// change sets it aside by itself (see `decode_pack`).
+const META_REMOTE_KDF: &str = "sync_remote_kdf";
 
 // Surfaced verbatim by the sync indicator, so it has to read as a sentence.
 fn foreign_vault_error(provider: Provider) -> String {
@@ -140,8 +145,10 @@ pub trait Remote {
 /// is a superset of the one the digest was taken from — never a rollback — and
 /// the write's own debounced sync settles whatever is left over.
 pub trait LocalVault {
-    /// Open a pulled `.rowel` pack and read it out. The local database is not
-    /// touched: the snapshot goes into its own scratch DB.
+    /// Open a pulled `.rowel` pack and read it out. The snapshot goes into its
+    /// own scratch DB; of the local database only the note of the epoch the
+    /// account was last seen on is read, and written when the pack is under
+    /// the current one (see [`decode_pack`]).
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot>;
     /// Last-writer-wins merge of the pulled entries and attachments, and the
     /// pulled audit rows taken as a union; returns the entry and attachment
@@ -197,11 +204,12 @@ pub struct Snapshot {
     /// `(None, 0)` for a pack pushed before names travelled.
     pub name: Option<String>,
     pub name_ms: i64,
-    /// The pack was sealed under a key epoch this device has retired (a slower
-    /// device pushed under the password this one replaced, or an old revision
-    /// was put back), and was opened with the retired key. Its rows have been
-    /// carried onto the current key; the run has to push even when nothing
-    /// else differs, or the account stays under the old password.
+    /// The pack was sealed under a key epoch this device has retired, before
+    /// this device saw the account on the current one (a slower device pushed
+    /// under the password this one replaced), and was opened with the retired
+    /// key. Its rows have been carried onto the current key; the run has to
+    /// push even when nothing else differs, or the account stays under the old
+    /// password.
     pub opened_under_retired: bool,
 }
 
@@ -511,8 +519,21 @@ impl SessionVault {
 }
 
 impl LocalVault for SessionVault {
+    // `decode_in`, with the lock taken for the note on either side of the
+    // decode rather than across it: opening the snapshot is not measured in
+    // rows.
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-        self.keys.decode(pack_bytes)
+        let seen = self.with_store(remote_kdf_of)?;
+        let snapshot = self.keys.decode(pack_bytes, seen.as_deref())?;
+        self.with_store(|store| {
+            note_opened(
+                store,
+                &snapshot,
+                seen.as_deref(),
+                &self.keys.kdf_params_json,
+            )
+        })?;
+        Ok(snapshot)
     }
 
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
@@ -542,7 +563,7 @@ impl LocalVault for SessionVault {
     }
 
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
-        self.with_store(|store| note_push(store, revision, at_ms))
+        self.with_store(|store| note_push(store, revision, at_ms, &self.keys.kdf_params_json))
     }
 
     fn vault_id(&self) -> Result<Option<String>> {
@@ -628,7 +649,16 @@ impl WorkspaceVault {
 
 impl LocalVault for WorkspaceVault {
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-        self.keys.decode(pack_bytes)
+        let keys = &self.keys;
+        decode_in(
+            &self.store,
+            pack_bytes,
+            &keys.kdf_params_json,
+            &keys.vault_key,
+            &keys.retired,
+            &keys.scratch,
+            keys.provider,
+        )
     }
 
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
@@ -647,7 +677,7 @@ impl LocalVault for WorkspaceVault {
     }
 
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
-        note_push(&self.store, revision, at_ms)
+        note_push(&self.store, revision, at_ms, &self.keys.kdf_params_json)
     }
 
     fn vault_id(&self) -> Result<Option<String>> {
@@ -689,12 +719,14 @@ struct PackKeys {
 }
 
 impl PackKeys {
-    fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+    // `seen` is the epoch the vault last saw the account on.
+    fn decode(&self, pack_bytes: &[u8], seen: Option<&str>) -> Result<Snapshot> {
         decode_pack(
             pack_bytes,
             &self.kdf_params_json,
             &self.vault_key,
             &self.retired,
+            seen,
             &self.scratch,
             self.provider,
         )
@@ -786,9 +818,13 @@ fn adopt_name_in(store: &SqliteStore, name: &str, at_ms: i64) -> Result<()> {
 /// Read a pulled pack, by the key epoch its header names.
 ///
 /// - The current descriptor: opened with the current key.
-/// - A descriptor in the retired list: opened with that epoch's key, and its
-///   rows carried onto the current key before anything merges them, flagged so
-///   the run pushes the pack back under the current epoch.
+/// - A descriptor in the retired list, while `seen` (the descriptor this vault
+///   last saw the account on, `sync_remote_kdf`) is not the current one:
+///   opened with that epoch's key, and its rows carried onto the current key
+///   before anything merges them, flagged so the run pushes the pack back
+///   under the current epoch.
+/// - The same once `seen` is the current descriptor: refused as
+///   [`Error::VaultUnderRetiredPassword`], nothing opened.
 /// - Anything else is refused, and the generations say why ([`epoch_error`]).
 ///
 /// The descriptor check is not redundant with the open below. A pack from a
@@ -802,6 +838,7 @@ pub(crate) fn decode_pack(
     local_kdf_params_json: &str,
     key: &VaultKey,
     retired: &[RetiredKey],
+    seen: Option<&str>,
     scratch_dir: &Path,
     provider: Provider,
 ) -> Result<Snapshot> {
@@ -813,6 +850,16 @@ pub(crate) fn decode_pack(
     let Some(epoch) = retired.iter().find(|r| r.kdf == header) else {
         return Err(epoch_error(header, local_kdf_params_json, provider));
     };
+    // A device still on a retired password pulls before it pushes and stops
+    // at `PasswordChangedRemotely` on the current epoch, so once the account
+    // has been seen on it a retired epoch there is an old revision put back,
+    // a pack sealed with a replaced password by whoever still knows it, a
+    // replace confirmed on such a device, or a push of one that lost the race
+    // on a provider whose upload is not conditional (Drive). None of them is
+    // merged.
+    if seen == Some(local_kdf_params_json) {
+        return Err(Error::VaultUnderRetiredPassword);
+    }
     let old_key = epoch.key();
     let mut snapshot =
         records_from_snapshot(&unpacked.snapshot, &*old_key.sqlcipher_key(), scratch_dir)?;
@@ -821,6 +868,53 @@ pub(crate) fn decode_pack(
     crate::auth::reseal_attachment_blobs(&mut snapshot.attachments, &old_key, key)?;
     snapshot.opened_under_retired = true;
     Ok(snapshot)
+}
+
+/// [`decode_pack`] for a vault whose store is at hand: against the epoch the
+/// store last saw the account on, noting the current one when the pack is
+/// under it.
+pub(crate) fn decode_in(
+    store: &SqliteStore,
+    bytes: &[u8],
+    local_kdf_params_json: &str,
+    key: &VaultKey,
+    retired: &[RetiredKey],
+    scratch_dir: &Path,
+    provider: Provider,
+) -> Result<Snapshot> {
+    let seen = remote_kdf_of(store)?;
+    let snapshot = decode_pack(
+        bytes,
+        local_kdf_params_json,
+        key,
+        retired,
+        seen.as_deref(),
+        scratch_dir,
+        provider,
+    )?;
+    note_opened(store, &snapshot, seen.as_deref(), local_kdf_params_json)?;
+    Ok(snapshot)
+}
+
+/// The descriptor this vault last saw the account on: `None` before its first
+/// push or pull, and after a restore.
+pub(crate) fn remote_kdf_of(store: &SqliteStore) -> Result<Option<String>> {
+    store.meta_get(META_REMOTE_KDF).map_err(store_err)
+}
+
+// A pack opened under the current key is the account seen on its epoch.
+fn note_opened(
+    store: &SqliteStore,
+    snapshot: &Snapshot,
+    seen: Option<&str>,
+    local_kdf_params_json: &str,
+) -> Result<()> {
+    if snapshot.opened_under_retired || seen == Some(local_kdf_params_json) {
+        return Ok(());
+    }
+    store
+        .meta_set(META_REMOTE_KDF, local_kdf_params_json)
+        .map_err(store_err)
 }
 
 /// Why a pack under a descriptor this device neither uses nor has retired
@@ -895,12 +989,22 @@ pub(crate) fn remote_pack_error(e: PackError) -> Error {
     }
 }
 
-fn note_push(store: &SqliteStore, revision: &str, at_ms: i64) -> Result<()> {
+/// Record a completed push of a pack sealed under `kdf_params_json`: the
+/// revision it landed at, when, and that the account is on its epoch.
+pub(crate) fn note_push(
+    store: &SqliteStore,
+    revision: &str,
+    at_ms: i64,
+    kdf_params_json: &str,
+) -> Result<()> {
     store
         .meta_set(META_REMOTE_REV, revision)
         .map_err(store_err)?;
     store
         .meta_set(META_LAST_MS, &at_ms.to_string())
+        .map_err(store_err)?;
+    store
+        .meta_set(META_REMOTE_KDF, kdf_params_json)
         .map_err(store_err)
 }
 
@@ -1059,7 +1163,8 @@ mod tests {
 
     impl LocalVault for Device {
         fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
-            decode_pack(
+            decode_in(
+                &self.store,
                 pack_bytes,
                 &self.kdf,
                 &self.key,
@@ -1088,7 +1193,7 @@ mod tests {
             )?)
         }
         fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
-            note_push(&self.store, revision, at_ms)
+            note_push(&self.store, revision, at_ms, &self.kdf)
         }
         fn vault_id(&self) -> Result<Option<String>> {
             identity::vault_id(&self.store).map_err(store_err)
@@ -2283,6 +2388,88 @@ mod tests {
             Err(Error::VaultUnderRetiredPassword)
         ));
         assert_eq!(remote.uploads(), 0);
+    }
+
+    fn retired_epoch(kdf: &str, byte: u8) -> RetiredKey {
+        RetiredKey {
+            kdf: kdf.into(),
+            material: Zeroizing::new(vec![byte; 32]),
+            retired_at: 0,
+        }
+    }
+
+    // A pack under the retired epoch made by someone who still knows the old
+    // password: a purge shell for an entry, stamped a year ahead so it would
+    // win every later merge too, and an entry of its own.
+    fn forged_under(epoch: (VaultKey, String)) -> Vec<u8> {
+        let forger = Device::keyed(epoch.0, epoch.1);
+        forger
+            .store
+            .import(&[
+                tombstone("1", NOW + 365 * DAY_MS),
+                sealed("2", 300, "planted", &forger.key),
+            ])
+            .unwrap();
+        forger.pack_bytes()
+    }
+
+    // Once this device has pushed under the current epoch the account is on
+    // it, and a pack under the retired one is no slower device's: nothing of
+    // it is merged and nothing goes up.
+    #[test]
+    fn a_retired_pack_after_a_push_under_the_current_epoch_is_refused() {
+        let (old_key, old_kdf) = epoch(1, 0);
+        let slow = Device::keyed(old_key, old_kdf.clone());
+        slow.store
+            .import(&[sealed("1", 200, "kept", &slow.key)])
+            .unwrap();
+        let remote = FakeRemote::with(slow.pack_bytes());
+        let (new_key, new_kdf) = epoch(2, 1);
+        let mut changed = Device::keyed(new_key, new_kdf);
+        changed.retired = vec![retired_epoch(&old_kdf, 1)];
+        assert!(sync(&remote, &changed, NOW).unwrap().rekeyed_remote);
+
+        remote.put(forged_under(epoch(1, 0)));
+        let (uploads, forged) = (remote.uploads(), remote.content());
+
+        assert!(matches!(
+            sync(&remote, &changed, NOW),
+            Err(Error::VaultUnderRetiredPassword)
+        ));
+        assert_eq!(remote.uploads(), uploads);
+        assert_eq!(remote.content(), forged);
+        assert_eq!(changed.ids(), vec!["1"]);
+        assert_eq!(title_of(&changed, "1"), "kept");
+    }
+
+    // A pull that opens under the current key says the same as a push: a
+    // device that took on the new password and had nothing to push refuses a
+    // retired pack from then on.
+    #[test]
+    fn a_pull_under_the_current_epoch_closes_the_retired_one_too() {
+        let (old_key, old_kdf) = epoch(1, 0);
+        let (new_key, new_kdf) = epoch(2, 1);
+        let ahead = Device::keyed(new_key, new_kdf.clone());
+        ahead
+            .store
+            .import(&[sealed("1", 200, "kept", &ahead.key)])
+            .unwrap();
+        let remote = FakeRemote::default();
+        sync(&remote, &ahead, NOW).unwrap();
+        // The same key as `ahead`'s: `epoch` derives it from the byte alone.
+        let mut adopted = Device::keyed(epoch(2, 1).0, new_kdf);
+        adopted.retired = vec![retired_epoch(&old_kdf, 1)];
+        assert!(!sync(&remote, &adopted, NOW).unwrap().pushed);
+
+        remote.put(forged_under((old_key, old_kdf)));
+        let uploads = remote.uploads();
+
+        assert!(matches!(
+            sync(&remote, &adopted, NOW),
+            Err(Error::VaultUnderRetiredPassword)
+        ));
+        assert_eq!(remote.uploads(), uploads);
+        assert_eq!(adopted.ids(), vec!["1"]);
     }
 
     // Two generation-0 descriptors that differ are what they always were: two

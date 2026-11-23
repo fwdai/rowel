@@ -301,7 +301,8 @@ rowel proxy [--listen 127.0.0.1:7400] [--allow-http]
 `header` mode: a local HTTP proxy that puts a secret into one request. The
 agent calls an API through it with a placeholder where the key would go and
 the grant's id in a header; the proxy resolves the placeholder under that
-grant, swaps it into the outgoing request, sends it over TLS and redacts the
+grant, swaps it into the outgoing request, sends it straight to that host over
+TLS (plain HTTP only to this machine, with `--allow-http`) and redacts the
 value from what comes back. The agent's process, transcript and environment
 never contain the key.
 
@@ -316,11 +317,14 @@ X-Rowel-Grant: <grant id from rowel_request_secret>
 
 - **Addressing**: `/https/<host>/<path>?<query>` is sent to
   `https://<host>/<path>?<query>`; `<host>` may carry a port. `/http/<host>/…`
-  is served only with `--allow-http` (a dev server on localhost): a key sent
-  in the clear is a key given away. Path-prefix addressing because every SDK
-  takes a base URL, which is all the agent needs; a `CONNECT` forward proxy
-  with a local CA is not offered (it would mean installing a CA in the
-  agent's trust store).
+  is served only with `--allow-http`, and only when `<host>` is this machine
+  (`localhost`, an address in `127.0.0.0/8`, `[::1]`), for a dev server: a key
+  sent in the clear across a network is a key given away, so a grant for any
+  other host is used over TLS or not at all. A grant names no scheme, so one
+  for a host on this machine covers it over either. Path-prefix addressing
+  because every SDK takes a base URL, which is all the agent needs; a
+  `CONNECT` forward proxy with a local CA is not offered (it would mean
+  installing a CA in the agent's trust store).
 - **The grant**: `X-Rowel-Grant` is required. Every `rowel://…` placeholder
   in a request header value, and in the body when `Content-Type` is
   `application/json` or `application/x-www-form-urlencoded` (there also in
@@ -360,7 +364,12 @@ X-Rowel-Grant: <grant id from rowel_request_secret>
 - **Forwarding**: the method and headers are kept; `X-Rowel-Grant`, `Host`,
   `Content-Length` and the hop-by-hop headers (`Connection`, `Keep-Alive`,
   `Proxy-*`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`) are dropped.
-  The body is buffered whole, at most 32 MiB.
+  The body is buffered whole, at most 32 MiB. The request goes straight to
+  the host the path names: a proxy set in the environment (`HTTP_PROXY`,
+  `HTTPS_PROXY`, `ALL_PROXY`) or the system's settings is not used, since
+  whoever starts `rowel proxy` chooses its environment and a proxy there
+  would be handed the value. A network that lets traffic out only through a
+  proxy cannot be reached through `rowel proxy`.
 - **The response** is asked for unencoded (`Accept-Encoding: identity`,
   whatever your client sent), since a compressed echo of a value would pass
   the redactor; an upstream that answers encoded anyway gets a `502`. Status,
@@ -383,7 +392,7 @@ placeholder when one is at fault and never a value:
 
 | status | `error` | when |
 | --- | --- | --- |
-| 400 | `bad_request` | a path not of the form `/https/<host>/<path>`, `/http/` without `--allow-http`, a placeholder in the URL |
+| 400 | `bad_request` | a path not of the form `/https/<host>/<path>`, `/http/` without `--allow-http` or to a host not on this machine, a placeholder in the URL |
 | 400 | `no_placeholder` | nothing in the headers or the JSON or form body to put a value in |
 | 400 | `bad_header` | a resolved value that cannot be sent as a header |
 | 403 | `no_grant` | no `X-Rowel-Grant` |

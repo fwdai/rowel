@@ -18,6 +18,12 @@ kpxcFill.fillAttributeToActiveElementWith = async function(attr) {
         return;
     }
 
+    // Rowel: only an attribute one of this frame's own logins carries
+    const [ name ] = Object.keys(attr);
+    if (!kpxc.credentials.some(c => c.stringFields?.some(f => f[name] === value[0]))) {
+        return;
+    }
+
     await kpxcFill.setValue(el, value[0]);
 };
 
