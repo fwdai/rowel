@@ -111,8 +111,11 @@ once per run). `decode_pack` becomes:
 
 ```
 header = unpack(bytes).kdf_params_json
+seen   = meta "sync_remote_kdf"   (the epoch this device last saw the account on)
 if header == local.kdf        -> open with local key            (today)
-else if retired has header    -> open with that retired key;
+else if retired has header:
+   if seen == local.kdf       -> Error::VaultUnderRetiredPassword
+   else                       -> open with that retired key;
                                  snapshot.opened_under_retired = true
 else:
    remote_gen = KdfParams::from_json(header).gen()   (unparsable -> foreign error, as today)
@@ -124,14 +127,41 @@ else:
 
 Why those three:
 
-- **Retired epoch** means a slower device pushed under the password this one
-  already replaced, or an old revision was put back. Both are merged
-  normally (last-writer-wins per row), and then the pack **must** be rewritten
+- **Retired epoch**, before this device has seen the account on its current
+  one, means a slower device pushed under the password this one already
+  replaced before the change reached the account. It is merged normally
+  (last-writer-wins per row), and then the pack **must** be rewritten
   under the current epoch even when the merged digest equals the remote's
   (otherwise the account stays under the old password). So in `engine::sync`
   step 5, the "digests equal, nothing to say" early return is skipped when
   `incoming.opened_under_retired` is set. `SyncOutcome` gains `rekeyed_remote:
   bool` for the log.
+- **Retired epoch after that** is refused like a lost one
+  (`VaultUnderRetiredPassword`: nothing merged, nothing pushed, the replace
+  is offered). A device still on the old password pulls before it pushes and
+  stops at `PasswordChangedRemotely`, so such a pack is an old revision put
+  back, a pack sealed with a replaced password by whoever still knows it (the
+  reason for rotating it), a replace confirmed on a device that never
+  adopted, or that device's push losing the race on Google Drive, whose
+  upload is not conditional on the revision. Merging the forged kind would
+  let a replaced password write to the live vault: a purge shell erases an
+  entry on every device for good, and the forced push carries it to devices
+  that never held the old key.
+
+  `seen` is device-local bookkeeping in the vault's `meta` table,
+  `sync_remote_kdf`: the descriptor of the last pack this device pushed
+  (`note_push`), or pulled and opened under its current key (the
+  `LocalVault::decode` of `SessionVault` and `WorkspaceVault`, through
+  `engine::decode_in`). It sits under `SYNC_META_PREFIX`, so a restore
+  scrubs it with the rest of the source device's sync bookkeeping, and the
+  engine never reads it off a pack. Being a descriptor rather than a flag, it
+  stops matching the moment a password change replaces the descriptor, which
+  is what opens the window for that change's own transition; the first push
+  or current-epoch pull after the change closes it again. A vault with no
+  note (never synced, restored, or last synced by an older build) merges a
+  retired epoch as before. Disconnecting and reconnecting the account keep
+  it, as they keep `sync_remote_rev`, so turning sync off and on again does
+  not reopen the window.
 - **Higher (or equal, non-zero) generation** means another device re-keyed:
   this device has to adopt the new password. Equal-and-non-zero is the
   concurrent-change case (two devices each bumped once); the only useful
@@ -274,16 +304,29 @@ The other device's next run then prompts it for the new password.
 ### 8. Security notes (for the threat model)
 
 - The retired list is sealed under the current key with the workspace id as
-  AAD; it is only readable by someone who already holds the current key, so
-  keeping it does not weaken a rotation. It is never written to the account.
+  AAD; it is only readable by someone who already holds the current key, and
+  it is never written to the account. What it does allow is a pack sealed
+  under a replaced password to be merged, so that is bounded to the
+  transition: once this device has seen the account on the current epoch, a
+  retired-epoch pack is refused (section 3). Until then a replaced password
+  (any of the three kept) can still write to the vault through the account,
+  for the moments between the change and its first push. A device still on
+  the old password treats it as its current one until it adopts, and what it
+  merged meanwhile goes up with it after the adopt. A replaced password can
+  also still seal a "delete everywhere" marker that devices holding its epoch
+  honour; a marker only stops sync, never deletes, as any write access to the
+  folder already can, so it is left so a delete made around a change still
+  holds.
 - A header in the account is attacker-writable. The worst it can do: ask for
   a 1 GiB derive (existing ceiling), or raise the prompt with a password the
   user does not know, which fails locally and leaks nothing (and is
   penalized). Opening the pack with the derived key is what proves the pack
   was sealed by someone who knew the password the user typed.
-- A pack from a retired epoch is merged, never installed: an old revision put
-  back cannot move the device to the old password; it is re-sealed under the
-  current one on the next run.
+- A pack from a retired epoch is merged, never installed, and only until the
+  account has been seen on the current epoch: an old revision put back cannot
+  move the device to the old password. Put back before that, it is merged and
+  re-sealed under the current one; after it, it is refused and the replace is
+  offered.
 - A device that joined after an epoch cannot verify a pack from before it;
   it stops and offers replace. That is the one place a user can lose edits,
   and they are told.
@@ -301,6 +344,8 @@ Core:
 Engine (fake `LocalVault`/`Remote`, as the existing tests do):
 - Remote under a retired epoch: opened, merged, and pushed **even with equal
   digests**; outcome says so.
+- The same after a push, or a pull that opened, under the current epoch:
+  `VaultUnderRetiredPassword`, nothing merged, nothing pushed.
 - Remote gen higher: `PasswordChangedRemotely`, nothing pushed.
 - Remote gen lower, no retired key: `VaultUnderRetiredPassword`, nothing
   pushed.
@@ -316,12 +361,19 @@ Commands (two workspace dirs sharing one `FakeStore`, the "two devices" test):
 5. B adopts with the new password → B's sidecar equals A's header byte for
    byte; B's session key opens; B's retired list holds gen 0; a run then
    pushes B's edit; A's next run has it. Digests converge.
-6. A device C with a copy of the **gen 0** pack pushes it back: A and B merge
-   it with their retired key and re-seal under gen 1.
+6. A device C with a copy of the **gen 0** pack pushes it back: A and B, which
+   have seen the account on gen 1, refuse it (`VaultUnderRetiredPassword`) and
+   push nothing; A's replace puts gen 1 back and C is asked to adopt.
 7. A fresh device D restores from the account: sidecar gen 1 verbatim,
    unlocks with the new password.
 8. Beside: a second lockbox on the same password follows in B's adopt; one on
    its own password is returned in the list and untouched.
+9. A slower device's gen 0 push that lands before A's first gen 1 run is
+   merged and re-sealed; a pack forged under gen 0 afterwards (a purge shell
+   and a planted entry) is refused by A and by B after its adopt. A second
+   change reopens the window for its own transition only.
+10. A restore does not inherit the note from the pack it came from; a first
+    pull of that account, or a first push to an empty one, is not refused.
 
 Frontend: the prompt renders from the status kind, submits, shows the
 wrong-password copy, shows the beside list; the retired state shows the

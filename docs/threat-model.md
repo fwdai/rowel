@@ -527,8 +527,11 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
    `vault.retired.sealed`, newest first and at most three, sealed with
    AES-256-GCM under a subkey of the *current* key
    (`VaultKey::retired_keys_key`) with the workspace id as associated data. It
-   is only readable by someone who already holds the current key, so keeping it
-   does not weaken the rotation, and it is never written to the account. It is
+   is only readable by someone who already holds the current key, and it is
+   never written to the account. What keeping it does allow, merging a pack
+   sealed under a replaced passphrase, is bounded to the transition (below):
+   once the device has seen the account on the new epoch, a replaced
+   passphrase no longer writes to the vault through the account. It is
    written inside the re-key saga and snapshotted and rolled back with the
    sidecar; a list that does not open reads as empty, which only costs the
    merge of an old-epoch pack. (A primary deleted and replaced by a promoted
@@ -546,15 +549,33 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
    and a move onto the vault passphrase for the lockbox it moved. These runs
    are best effort: one that fails leaves that lockbox's account copy to its
    next run, which the retired key covers. A pack under
-   a retired epoch — a slower device's push, or an old revision put back — is
-   always *merged* and re-sealed, never installed, so it cannot move a device
-   back onto the replaced passphrase. A pack whose header is neither current
+   a retired epoch is *merged* and re-sealed, never installed, so it cannot
+   move a device back onto the replaced passphrase — and only until the device
+   has seen the account on its current epoch. That fact is device-local
+   bookkeeping in the vault's `meta` table (`sync_remote_kdf`): the descriptor
+   of the last pack the device pushed, or pulled and opened under its current
+   key. It is scrubbed by a restore with the rest of the sync bookkeeping,
+   never read off a pack, and stops matching by itself when a change replaces
+   the descriptor. Before the device has seen the new epoch, a retired-epoch
+   pack is a slower device's push that landed before the change reached the
+   account, and is merged. After, it can only be an old revision put back, a
+   pack sealed with the replaced passphrase by whoever still knows it, a
+   replace confirmed on a device that never adopted, or that device's push
+   losing the race on Google Drive (whose upload is not conditional): a device
+   on the old passphrase pulls before it pushes and stops at "changed on
+   another device". It is refused as `VaultUnderRetiredPassword`, nothing
+   merged and nothing pushed, and the replace below is offered. Without that,
+   anyone holding one of the three replaced passphrases and write access to
+   the folder could seal a new pack under it that every device merges, a purge
+   that erases entries for good included, and pushes on to devices that never
+   held the old key. A pack whose header is neither current
    nor retired is told apart by generation: the same or later is "changed on
    another device" (`PasswordChangedRemotely`), earlier is "under a passphrase
    this device replaced and lost the key of" (`VaultUnderRetiredPassword`), and
    two generation-0 descriptors are another install's vault, as before. None of
    those runs pushes. A "delete everywhere" marker opens under the current
-   marker key or any retired epoch's.
+   marker key or any retired epoch's, without that bound: a forged one stops
+   sync and nothing more, as any write access to the folder already can.
 
    The account's header is attacker-writable. Adopting the new passphrase
    (`sync_adopt_password`) derives the typed passphrase under that header —
@@ -617,7 +638,13 @@ Bringing existing data forward is an **explicit** action, and there are three pa
   disabled (`sync::ENABLED = false`). When enabled it uploads only the already-
   encrypted vault blob to the user's own Google Drive; the master passphrase and
   derived keys never leave the device. A compromised Drive account or a tapped
-  sync channel yields ciphertext, not secrets. The one thing in the account
+  sync channel yields ciphertext, not secrets, and a pack written there without
+  the key fails SQLCipher's page authentication. Write access together with a
+  passphrase the user has since replaced lets someone seal a pack under it;
+  a device that has seen the account on its current passphrase refuses that
+  pack, so it is merged only between a change and that device's first push or
+  pull under the new passphrase, and by devices still on the old one ("Key
+  lifecycle" 5). The one thing in the account
   other than a pack is the "deleted everywhere" marker (`<vault-id>.deleted`)
   that stops every device syncing a lockbox, and it is authenticated rather
   than trusted for existing: its body is sealed with AES-256-GCM under a
@@ -1344,8 +1371,11 @@ runs and publishes its identities; until then the sheet's list offers it.
   change, old revisions stay sealed under the passphrase they were written
   with: rotating a leaked passphrase does not re-encrypt the provider's
   history, and anyone holding that passphrase and the account can still read
-  them. Putting one back is merged and re-sealed under the current passphrase
-  by every device that holds the retired key (see "Key lifecycle" 5).
+  them. Putting one back is refused by every device that has seen the account
+  on the current passphrase, nothing merged and nothing pushed, and answered
+  with the offer to replace the account's copy with the device's; only a
+  device that has not seen the change reach the account yet merges it and
+  re-seals it under the current passphrase (see "Key lifecycle" 5).
 - **Physical memory attacks.** Cold-boot or DMA attacks against an unlocked
   session are out of scope.
 
