@@ -764,7 +764,7 @@ async fn restore_workspace(
             // A backup file says which vault it is only now, once its pack has
             // opened; one this device already holds is turned away here, and
             // unwound below like any other failed restore.
-            guard_restored_vault(&previous, &previous_active, &root, &vault_id)?;
+            guard_restored_vault(state, &previous, &previous_active, &root, &vault_id)?;
             let name = settle_name(&store, name, &vault_id)?;
             Ok((key, store, entries, name, vault_id))
         });
@@ -1332,10 +1332,12 @@ async fn restore_vault_in(
 // the account addresses it and is authoritative over whatever the snapshot
 // carries — the same stamp onboarding applies, for the same reason
 // (`commands::setup::adopt`). A backup file is filed under nothing: it is the
-// vault its snapshot says it is. One from before vaults carried ids is given
-// one here, as every vault made on this device is born with one
-// (`session::create_vault`): the registry records it, and a lockbox with none
-// could never sync beside an account's other vaults (`sync::plan_vault_id`).
+// vault it answers to ([`answers_to`]) — the id its snapshot carries, or for
+// one from before vaults carried ids, the id its key descriptor derives. That
+// one is written into the vault, so the registry records it, a second restore
+// of the same backup derives the same id and is turned away, and the lockbox
+// can sync beside an account's other vaults, which one with no id never could
+// (`sync::plan_vault_id`).
 fn install_pack(
     dir: &Path,
     bytes: &[u8],
@@ -1349,17 +1351,48 @@ fn install_pack(
         password,
     )?;
     let vault_id = match filed_as {
-        Some(vault_id) => {
-            identity::adopt_vault_id(&store, vault_id).map_err(store_err)?;
-            vault_id.to_string()
-        }
-        None => match identity::vault_id(&store).map_err(store_err)? {
-            Some(vault_id) => vault_id,
-            None => identity::assign_vault_id(&store).map_err(store_err)?,
-        },
+        Some(vault_id) => vault_id.to_string(),
+        // `restore_at` wrote the pack's descriptor before it opened anything,
+        // so a restored vault always answers to an id.
+        None => answers_to(&store, dir)?
+            .ok_or_else(|| Error::Other("the restored vault has no key descriptor".into()))?,
     };
+    identity::adopt_vault_id(&store, &vault_id).map_err(store_err)?;
     let entries = list_metas(&store)?;
     Ok((key, store, entries, vault_id))
+}
+
+// The vault id the vault in `dir`, open as `store`, answers to for the
+// duplicate checks: the one in its database, or — for a vault from before ids,
+// which has none — the one its key descriptor derives
+// ([`descriptor_vault_id`]), which is also the id a backup of it is restored
+// under, so the two are known for one vault. The descriptor is the pack's
+// header verbatim, kept byte for byte by a restore and by every backup taken
+// at the same password, and it carries the vault's random salt. A vault with
+// neither has no descriptor, so it predates them and was never backed up
+// (`export_vault` needs one): it answers to nothing.
+fn answers_to(store: &SqliteStore, dir: &Path) -> Result<Option<String>> {
+    if let Some(vault_id) = identity::vault_id(store).map_err(store_err)? {
+        return Ok(Some(vault_id));
+    }
+    match fs::read_to_string(dir.join(storage::KDF_SIDECAR_FILE)) {
+        Ok(descriptor) => Ok(Some(descriptor_vault_id(&descriptor))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+// A vault id for a key descriptor: its domain-separated SHA-256, cut to the
+// 16 bytes of hex a minted id has (`crypto::random_hex_id`). Nothing is
+// disclosed by it — the descriptor sits in plaintext at the head of every pack
+// and backup of the vault — and its salt keeps two vaults' ids apart.
+fn descriptor_vault_id(descriptor: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::new()
+        .chain_update(b"rowel vault id from a key descriptor\0")
+        .chain_update(descriptor.as_bytes())
+        .finalize();
+    hex::encode(&digest[..16])
 }
 
 // What the restored workspace is called.
@@ -1421,18 +1454,96 @@ pub(crate) fn guard_other_vault(state: &AppState, root: &Path, vault_id: &str) -
 /// account was asked the same before its download, under the id it is stamped
 /// with, so this turns away nothing there that was let through then.
 ///
-/// What the registry does not record, this cannot see: a locked workspace that
-/// never synced has no vault id there. For an account that misses nothing — no
-/// pack of it exists to restore — but a file can be a backup of one, and that
-/// backup gets through.
+/// The registry is not enough for a file. A locked workspace that never synced
+/// has no vault id there — for an account that misses nothing, since no pack of
+/// it exists to restore, but a file can be a backup of one. So each workspace
+/// the registry has no id for is asked in its own database, opened with the key
+/// the app holds for it ([`unrecorded_vault_id`]). One that cannot be asked is
+/// not taken as different: it could be the very vault in the backup, and the
+/// restore is refused until it has been opened here once — the open that puts
+/// its key in the ring. The ids read this way are not written to the registry:
+/// nothing here holds its lock, and its other readers only ever look for a
+/// vault an account holds, which one that never synced is not.
 fn guard_restored_vault(
+    state: &AppState,
     previous: &Lease,
     previous_active: &str,
     root: &Path,
     vault_id: &str,
 ) -> Result<()> {
-    let open = identity::vault_id(&previous.store).map_err(store_err)?;
-    refuse_held(open.as_deref(), previous_active, root, vault_id)
+    let open = answers_to(&previous.store, &workspace::dir_of(root, previous_active))?;
+    refuse_held(open.as_deref(), previous_active, root, vault_id)?;
+
+    for unrecorded in Registry::load(root)
+        .workspaces
+        .into_iter()
+        .filter(|w| w.id != previous_active && w.vault_id.is_none())
+    {
+        match unrecorded_vault_id(state, root, &unrecorded.id) {
+            Unrecorded::Holds(held) if held == vault_id => return Err(Error::VaultAlreadyOpen),
+            Unrecorded::Holds(_) | Unrecorded::Empty => {}
+            Unrecorded::Unreadable => {
+                return Err(Error::Other(unchecked_lockbox_error(&unrecorded)));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// What a workspace the registry records no vault id for turned out to hold.
+enum Unrecorded {
+    /// Its database answers to this id ([`answers_to`]).
+    Holds(String),
+    /// No database at all, or one with neither an id nor a descriptor: no
+    /// vault that was ever backed up.
+    Empty,
+    /// A database the app holds no key for, or one the key it holds does not
+    /// open (its password changed elsewhere, a re-key interrupted): whichever
+    /// vault it is, nothing here can tell.
+    Unreadable,
+}
+
+// The vault id lockbox `id` answers to, read from its own database with the
+// key the ring holds for it, as a switch to it opens it (`workspace_select`):
+// what the registry does not record, for a lockbox that is not the open one. A
+// database file that is missing or empty is not opened at all — opening one
+// would create it — and holds no vault.
+fn unrecorded_vault_id(state: &AppState, root: &Path, id: &str) -> Unrecorded {
+    let dir = workspace::dir_of(root, id);
+    let db = dir.join(storage::DB_FILE);
+    if !db.metadata().is_ok_and(|m| m.len() > 0) {
+        return Unrecorded::Empty;
+    }
+    let Some(material) = state.keyring.lock().unwrap().get(id) else {
+        return Unrecorded::Unreadable;
+    };
+    let key = VaultKey::from_material(material, dir.join(storage::KDF_SIDECAR_FILE).exists());
+    let read = SqliteStore::open(&db, &*key.sqlcipher_key())
+        .map_err(store_err)
+        .and_then(|store| answers_to(&store, &dir));
+    match read {
+        Ok(Some(held)) => Unrecorded::Holds(held),
+        Ok(None) => Unrecorded::Empty,
+        Err(e) => {
+            log::warn!("lockbox {id} could not be read for a restore's duplicate check: {e}");
+            Unrecorded::Unreadable
+        }
+    }
+}
+
+// Surfaced verbatim in the form, so it has to read as a sentence. Opening the
+// lockbox is the remedy: its password puts its key in the ring, and the retry
+// can read it.
+fn unchecked_lockbox_error(lockbox: &Workspace) -> String {
+    let which = match (&lockbox.name, lockbox.id == workspace::PRIMARY_ID) {
+        (Some(name), _) => format!("the lockbox \"{name}\""),
+        (None, true) => "the primary lockbox".to_string(),
+        (None, false) => "one of the lockboxes".to_string(),
+    };
+    format!(
+        "this backup cannot be checked against {which} on this device until that lockbox has \
+         been opened here; open it once, then retry"
+    )
 }
 
 // The refusal both guards make: `vault_id` is the open workspace's own — `open`,
@@ -1741,31 +1852,62 @@ mod tests {
 
     const BACKUP_PASSWORD: &str = "correct horse battery staple";
 
-    // A `.rowel` as `export_vault` writes one — a vault with one entry, packed
-    // with its descriptor — under a descriptor cheap enough to derive in a
-    // test, carrying `vault_id` when it has one.
-    fn backup_of(vault_id: Option<&str>) -> PathBuf {
-        let dir = tmp_root();
-        let params = KdfParams::argon2id(b"salt-backup-0123456789012345678", 256, 1, 1);
+    // A lockbox in `dir` as this device keeps one — its descriptor beside its
+    // database, one entry, named "Work", carrying `vault_id` when it has one —
+    // under a salt of its own and costs cheap enough to derive in a test; and a
+    // `.rowel` of it, as `export_vault` writes one. Its key comes back for the
+    // ring.
+    fn lockbox_in(dir: &Path, vault_id: Option<&str>) -> (VaultKey, PathBuf) {
+        crate::store::create_private_dir(dir).unwrap();
+        let params = KdfParams::argon2id(&crate::crypto::random_id_bytes(), 256, 1, 1);
+        let descriptor = params.to_json().unwrap();
+        storage::atomic_write_file(&dir.join(storage::KDF_SIDECAR_FILE), &descriptor).unwrap();
         let key = VaultKey::Argon2 {
             master: crate::crypto::derive(BACKUP_PASSWORD.as_bytes(), &params).unwrap(),
         };
-        let source = SqliteStore::open(&dir.join("source.db"), &*key.sqlcipher_key()).unwrap();
+        let source = SqliteStore::open(&dir.join(storage::DB_FILE), &*key.sqlcipher_key()).unwrap();
         if let Some(vault_id) = vault_id {
             identity::adopt_vault_id(&source, vault_id).unwrap();
         }
         identity::set_vault_name(&source, "Work", 1_700_000_000_000).unwrap();
         source.upsert(&entry("e1")).unwrap();
+        let elsewhere = tmp_root();
         let bytes = sync::pack::pack_store(
             &source,
             &*key.sqlcipher_key(),
-            &params.to_json().unwrap(),
-            &dir.join("scratch"),
+            &descriptor,
+            &elsewhere.join("scratch"),
         )
         .unwrap();
-        let path = dir.join("Rowel backup 2026-11-23.rowel");
-        fs::write(&path, bytes).unwrap();
-        path
+        let backup = elsewhere.join("Rowel backup 2026-11-23.rowel");
+        fs::write(&backup, bytes).unwrap();
+        (key, backup)
+    }
+
+    // A backup of a vault kept on no device here.
+    fn backup_of(vault_id: Option<&str>) -> PathBuf {
+        lockbox_in(&tmp_root().join("elsewhere"), vault_id).1
+    }
+
+    fn lockbox(id: &str, name: Option<&str>, vault_id: Option<&str>) -> Workspace {
+        Workspace {
+            id: id.into(),
+            name: name.map(Into::into),
+            vault_id: vault_id.map(Into::into),
+            item_count: None,
+            color: None,
+            agents: false,
+            server: None,
+        }
+    }
+
+    fn record(root: &Path, workspaces: Vec<Workspace>) {
+        Registry {
+            active: PRIMARY_ID.into(),
+            workspaces,
+        }
+        .save(root)
+        .unwrap();
     }
 
     fn entry(id: &str) -> crate::store::Record {
@@ -1839,7 +1981,7 @@ mod tests {
         let dir = new_dir(&root, "c3d4");
         let (_, store, entries, vault_id) =
             install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
-        guard_restored_vault(&previous, &previous_active, &root, &vault_id).unwrap();
+        guard_restored_vault(&state, &previous, &previous_active, &root, &vault_id).unwrap();
         let name = settle_name(&store, String::new(), &vault_id).unwrap();
         drop(store);
 
@@ -1922,7 +2064,7 @@ mod tests {
         let (previous_active, previous) = lease_for(&state, "c3d4");
         let dir = new_dir(&root, "c3d4");
         let (_, store, _, vault_id) = install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
-        let refused = guard_restored_vault(&previous, &previous_active, &root, &vault_id);
+        let refused = guard_restored_vault(&state, &previous, &previous_active, &root, &vault_id);
         assert!(matches!(refused, Err(Error::VaultAlreadyOpen)));
         drop(store);
         discard(&root, "c3d4");
@@ -1967,28 +2109,196 @@ mod tests {
         let (previous_active, previous) = lease_for(&state, "c3d4");
 
         assert!(matches!(
-            guard_restored_vault(&previous, &previous_active, &root, "beef"),
+            guard_restored_vault(&state, &previous, &previous_active, &root, "beef"),
             Err(Error::VaultAlreadyOpen)
         ));
         assert!(matches!(
-            guard_restored_vault(&previous, &previous_active, &root, "a1b2"),
+            guard_restored_vault(&state, &previous, &previous_active, &root, "a1b2"),
             Err(Error::VaultAlreadyOpen)
         ));
-        assert!(guard_restored_vault(&previous, &previous_active, &root, "f00d").is_ok());
+        assert!(guard_restored_vault(&state, &previous, &previous_active, &root, "f00d").is_ok());
     }
 
-    // A backup made before vaults carried ids is given one of its own, which is
-    // what the registry records for it.
+    // A backup made before vaults carried ids answers to the id its key
+    // descriptor derives: the same for every restore of it, another for
+    // another vault's, and written into the vault for the registry to record.
     #[test]
-    fn a_backup_with_no_vault_id_is_given_one() {
+    fn a_backup_with_no_vault_id_answers_to_its_descriptor() {
         let root = tmp_root();
         let bytes = fs::read(backup_of(None)).unwrap();
-        let dir = new_dir(&root, "c3d4");
 
-        let (_, store, _, vault_id) = install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+        let (_, store, _, vault_id) =
+            install_pack(&new_dir(&root, "c3d4"), &bytes, BACKUP_PASSWORD, None).unwrap();
+        let (_, _, _, again) =
+            install_pack(&new_dir(&root, "d4e5"), &bytes, BACKUP_PASSWORD, None).unwrap();
+        let other = fs::read(backup_of(None)).unwrap();
+        let (_, _, _, another) =
+            install_pack(&new_dir(&root, "e5f6"), &other, BACKUP_PASSWORD, None).unwrap();
 
         assert_eq!(vault_id.len(), 32);
-        assert_eq!(identity::vault_id(&store).unwrap(), Some(vault_id));
+        assert!(vault_id.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(
+            identity::vault_id(&store).unwrap().as_deref(),
+            Some(&*vault_id)
+        );
+        assert_eq!(again, vault_id);
+        assert_ne!(another, vault_id);
+    }
+
+    // The case the registry cannot answer: a locked lockbox that never synced,
+    // so it has no id on record, backed up and then restored beside itself. Its
+    // own database, opened with the key the app holds for it, says which vault
+    // it is; the restore is refused and unwound, and nothing of it is left.
+    #[test]
+    fn a_backup_of_a_locked_lockbox_that_never_synced_is_refused_and_leaves_nothing() {
+        let root = tmp_root();
+        let (key, backup) = lockbox_in(&workspace::dir_of(&root, "b2c3"), Some("cafe"));
+        record(
+            &root,
+            vec![
+                lockbox(PRIMARY_ID, None, None),
+                lockbox("b2c3", Some("Work"), None),
+            ],
+        );
+        let state = open_vault("a1b2");
+        state
+            .keyring
+            .lock()
+            .unwrap()
+            .insert("b2c3", key.biometric_material());
+        let grants = chosen(&backup);
+
+        let bytes = read(&backup, &grants).unwrap();
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let dir = new_dir(&root, "c3d4");
+        let (_, store, _, vault_id) = install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+        let refused = guard_restored_vault(&state, &previous, &previous_active, &root, &vault_id);
+        assert!(matches!(refused, Err(Error::VaultAlreadyOpen)));
+        // Another vault would have gone through: the lockbox was read, not
+        // merely suspected.
+        assert!(guard_restored_vault(&state, &previous, &previous_active, &root, "f00d").is_ok());
+        drop(store);
+        discard(&root, "c3d4");
+        restore(&state, previous_active, previous);
+
+        assert!(!dir.exists());
+        assert!(state.session.lock().unwrap().is_unlocked());
+        assert_eq!(*state.active_workspace.lock().unwrap(), PRIMARY_ID);
+        let registry = Registry::load(&root);
+        assert!(!registry.contains("c3d4"));
+        // The lockbox it was taken from is as it was, and its record too.
+        assert_eq!(registry.workspaces[1].vault_id, None);
+        assert!(verify_password_in(&workspace::dir_of(&root, "b2c3"), BACKUP_PASSWORD).is_ok());
+    }
+
+    // A lockbox with no id on record that the app holds no key for — or a key
+    // that does not open it — cannot say which vault it is, so it could be the
+    // one in the backup: the restore is refused, naming it, until it has been
+    // opened here. A registry entry with no database behind it holds no vault,
+    // and never stands in the way.
+    #[test]
+    fn a_lockbox_the_app_cannot_read_holds_the_restore_until_it_is_opened() {
+        let root = tmp_root();
+        let (key, _) = lockbox_in(&workspace::dir_of(&root, "b2c3"), Some("beef"));
+        record(
+            &root,
+            vec![
+                lockbox(PRIMARY_ID, None, None),
+                lockbox("b2c3", Some("Work"), None),
+                lockbox("d4e5", Some("Gone"), None),
+            ],
+        );
+        let state = open_vault("a1b2");
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let guard = || guard_restored_vault(&state, &previous, &previous_active, &root, "cafe");
+
+        let refused = guard();
+        assert!(
+            matches!(&refused, Err(Error::Other(message)) if message.contains("the lockbox \"Work\"")),
+            "{refused:?}"
+        );
+
+        let (stale, _) = lockbox_in(&tmp_root(), Some("beef"));
+        state
+            .keyring
+            .lock()
+            .unwrap()
+            .insert("b2c3", stale.biometric_material());
+        assert!(matches!(guard(), Err(Error::Other(_))));
+
+        state
+            .keyring
+            .lock()
+            .unwrap()
+            .insert("b2c3", key.biometric_material());
+        assert!(guard().is_ok());
+    }
+
+    // The first restore of a backup with no vault id recorded the id its
+    // descriptor derives; the second derives the same one and is turned away.
+    #[test]
+    fn the_same_backup_with_no_vault_id_is_refused_the_second_time() {
+        let root = tmp_root();
+        let backup = backup_of(None);
+        let grants = chosen(&backup);
+        let bytes = read(&backup, &grants).unwrap();
+        let (_, first, _, first_id) =
+            install_pack(&new_dir(&root, "c3d4"), &bytes, BACKUP_PASSWORD, None).unwrap();
+        drop(first);
+        record(
+            &root,
+            vec![
+                lockbox(PRIMARY_ID, None, None),
+                lockbox("c3d4", Some("Work"), Some(&first_id)),
+            ],
+        );
+        let state = open_vault("a1b2");
+
+        let (previous_active, previous) = lease_for(&state, "d4e5");
+        let dir = new_dir(&root, "d4e5");
+        let (_, store, _, vault_id) = install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+
+        assert_eq!(vault_id, first_id);
+        assert!(matches!(
+            guard_restored_vault(&state, &previous, &previous_active, &root, &vault_id),
+            Err(Error::VaultAlreadyOpen)
+        ));
+        drop(store);
+        discard(&root, "d4e5");
+        restore(&state, previous_active, previous);
+        assert!(!dir.exists());
+    }
+
+    // A lockbox here from before vaults carried ids, never synced, backed up:
+    // the backup derives its id from the descriptor, and the lockbox — read
+    // with its key — answers to the same one.
+    #[test]
+    fn a_backup_of_a_lockbox_here_with_no_vault_id_is_refused() {
+        let root = tmp_root();
+        let (key, backup) = lockbox_in(&workspace::dir_of(&root, "b2c3"), None);
+        record(
+            &root,
+            vec![
+                lockbox(PRIMARY_ID, None, None),
+                lockbox("b2c3", Some("Work"), None),
+            ],
+        );
+        let state = open_vault("a1b2");
+        state
+            .keyring
+            .lock()
+            .unwrap()
+            .insert("b2c3", key.biometric_material());
+
+        let bytes = read(&backup, &chosen(&backup)).unwrap();
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let (_, _, _, vault_id) =
+            install_pack(&new_dir(&root, "c3d4"), &bytes, BACKUP_PASSWORD, None).unwrap();
+
+        assert!(matches!(
+            guard_restored_vault(&state, &previous, &previous_active, &root, &vault_id),
+            Err(Error::VaultAlreadyOpen)
+        ));
     }
 
     // A pack from an account answers to the id its file name gives it, over

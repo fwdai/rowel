@@ -646,9 +646,18 @@ Bringing existing data forward is an **explicit** action, and there are four pat
   from an account (the setup step, the session lease put back on failure, the
   registry written last, the vault-password check under the primary's backoff)
   with the pack read off disk instead of downloaded. A wrong password writes
-  nothing. Once the pack has opened, its vault id is checked as an account
-  restore checks one, and a backup of the open lockbox or of one whose id the
-  registry records is refused. The lockbox arrives connected to no account.
+  nothing. Once the pack has opened, its vault id is compared with every
+  lockbox on the device — the open one's, the ids the registry records, and,
+  for a lockbox the registry has no id for (one that never synced), the id in
+  its own database, opened with the key the app holds for it — and a match is
+  refused. A lockbox that cannot be read that way (no key held, or one that
+  does not open it) refuses the restore too, until it has been opened once: it
+  could be the vault in the backup. A vault from before vaults carried ids
+  answers to an id derived from its key descriptor, which the pack carries in
+  plaintext anyway, so the same id-less backup cannot be restored twice, nor
+  beside the lockbox it was taken from while that lockbox keeps the password
+  it was backed up under (a password change gives it a new descriptor). The
+  lockbox arrives connected to no account.
 - **Import a legacy vault into the currently-unlocked vault** (`import_swftx`,
   `commands/vault.rs`): the Electron-era `.swftx` is independently encrypted and
   carries its own master password. Each entry is decrypted under the backup's
