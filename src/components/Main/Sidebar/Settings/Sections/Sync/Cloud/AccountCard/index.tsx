@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import {
   useApp,
-  connectSync,
   restoreWorkspaceFromPending,
   setupAccountSelect,
   switchWorkspaceAccount
@@ -10,7 +9,6 @@ import { syncProvider } from '@/api/sync'
 import { cx } from '@/utils/cx'
 import { CARD, HERO_WASH } from '@/components/elements/tokens'
 import AccountRestoreForm from '@/components/elements/AccountRestoreForm'
-import ProviderButtons from '@/components/elements/ProviderButtons'
 import Header from './Header'
 import Stats from './Stats'
 import Footer from './Footer'
@@ -25,9 +23,10 @@ interface Props {
 }
 
 // The one account this vault syncs through: where it stands, the control that
-// moves it on, and — once connected — what it holds and the way out. Before
-// there is one, the choice of provider; one account per workspace, so a vault
-// on Drive moves to Dropbox by disconnecting and connecting the other.
+// moves it on, and — once connected — what it holds and the way out. Drawn from
+// the press of a Connect on (`Providers` is the choice before it); one account
+// per workspace, so a vault on Drive moves to Dropbox by disconnecting and
+// connecting the other.
 export default function AccountCard({ probing, offered, restoring }: Props) {
   const { t } = useTranslation()
   const sync = useApp(state => state.sync)
@@ -47,15 +46,6 @@ export default function AccountCard({ probing, offered, restoring }: Props) {
   return (
     <div data-testid="settings-drive-row" className={cx(CARD, HERO_WASH)}>
       <Header provider={provider} probing={probing} offered={offered} restoring={restoring} />
-
-      {!sync.configured && !busy && (
-        <ProviderButtons
-          testid="settings"
-          onPick={connectSync}
-          disabled={sync.inProgress}
-          className="flex flex-wrap gap-2 px-5 pb-5"
-        />
-      )}
 
       {offered && (
         <div className="flex flex-col gap-3 px-5 pb-5">

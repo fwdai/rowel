@@ -1,13 +1,12 @@
 import { useTranslation } from 'react-i18next'
 import { useApp, selectWorkspaces } from '@/store'
 import { cx } from '@/utils/cx'
-import SettingsGroup from '@/components/elements/SettingsGroup'
 import { CARD_OPEN, LABEL } from '@/components/elements/tokens'
 import WorkspaceList from './WorkspaceList'
 import NewWorkspace from './NewWorkspace'
+import RestoreRow from './RestoreFromAccount/Row'
 import InfoTiles from './InfoTiles'
 import RemoteVaults from './RemoteVaults'
-import RestoreFromAccount from './RestoreFromAccount'
 import RowelServer from './RowelServer'
 
 export default function Workspaces() {
@@ -26,13 +25,11 @@ export default function Workspaces() {
         <div className={CARD_OPEN}>
           <WorkspaceList />
           <NewWorkspace />
+          <RestoreRow />
         </div>
         <InfoTiles />
       </section>
       <RemoteVaults />
-      <SettingsGroup label={t('Cloud sync')}>
-        <RestoreFromAccount />
-      </SettingsGroup>
       <RowelServer />
     </>
   )

@@ -5,17 +5,25 @@ import type { Section } from '@/store'
 import NewWorkspace from './Sections/Workspaces/NewWorkspace/Subpage'
 import EditWorkspace from './Sections/Workspaces/EditWorkspace/Subpage'
 import DeleteWorkspace from './Sections/Workspaces/DeleteWorkspace/Subpage'
+import RestoreWorkspace from './Sections/Workspaces/RestoreFromAccount/Subpage'
+import Nearby from './Sections/Sync/Nearby/Subpage'
+import Cloud from './Sections/Sync/Cloud/Subpage'
+import Backup from './Sections/Sync/Backup/Subpage'
 import { titleOf } from './sections'
 
 export type Subpage =
   | { key: 'new-workspace' }
   | { key: 'edit-workspace'; id: string }
   | { key: 'delete-workspace'; id: string }
+  | { key: 'restore-workspace' }
+  | { key: 'sync-nearby' }
+  | { key: 'sync-cloud' }
+  | { key: 'sync-backup' }
 
 type Key = Subpage['key']
 
 interface Definition<K extends Key> {
-  /** The section it sits under: what the phone's Back is labelled with. */
+  /** The section it sits under: where it shows, and what the phone's Back is labelled with. */
   crumb: Section
   title: TKey
   description: TKey
@@ -43,6 +51,32 @@ export const SUBPAGES: { [K in Key]: Definition<K> } = {
     title: 'Delete lockbox',
     description: 'There is no undo, so it takes two proofs first.',
     Body: DeleteWorkspace
+  },
+  'restore-workspace': {
+    crumb: 'workspaces',
+    title: 'Restore from a cloud account',
+    description:
+      'Sign in and pick one of the lockboxes the account already holds. It arrives as a separate lockbox, unlocked with its own master password and syncing to the same pack.',
+    Body: RestoreWorkspace
+  },
+  'sync-nearby': {
+    crumb: 'sync',
+    title: 'Nearby devices',
+    description: 'Sync directly between your own devices on the same network.',
+    Body: Nearby
+  },
+  'sync-cloud': {
+    crumb: 'sync',
+    title: 'Your cloud storage',
+    description:
+      'Sync through storage you already own. Only encrypted files are ever stored there.',
+    Body: Cloud
+  },
+  'sync-backup': {
+    crumb: 'sync',
+    title: 'Encrypted backup',
+    description: 'A file you keep yourself, sealed with your master password.',
+    Body: Backup
   }
 }
 
@@ -51,5 +85,8 @@ export const subpageTitleOf = (subpage: Subpage): string => t(SUBPAGES[subpage.k
 export const subpageDescriptionOf = (subpage: Subpage): string =>
   t(SUBPAGES[subpage.key].description)
 
+/** The section a sub-page sits under, which is the only one it is shown in. */
+export const subpageSectionOf = (subpage: Subpage): Section => SUBPAGES[subpage.key].crumb
+
 /** The parent section's title, as the phone's Back label. */
-export const subpageCrumbOf = (subpage: Subpage): string => titleOf(SUBPAGES[subpage.key].crumb)
+export const subpageCrumbOf = (subpage: Subpage): string => titleOf(subpageSectionOf(subpage))

@@ -60,12 +60,21 @@ const go = (section: string) =>
 const heard = (supported: boolean, seq: number) =>
   act(() => emitEvent(EVENTS.oslockStatus, { supported, seq }))
 
-// Settings opens on General; the sync tests want the Sync & backup pane.
+// Settings opens on General; the sync tests want the Sync & backup overview,
+// or one of the pages a row of it opens.
 const openSync = async () => {
   const opened = await open()
   await go('sync')
   return opened
 }
+
+const openSyncPage = async (page: 'nearby' | 'cloud' | 'backup') => {
+  const opened = await openSync()
+  await userEvent.click(screen.getByTestId(`settings-sync-open-${page}`))
+  return opened
+}
+const openCloud = () => openSyncPage('cloud')
+const openBackup = () => openSyncPage('backup')
 
 // A workspace row's ⋯, which is where Edit and Delete live.
 const openMenu = (id: string) => userEvent.click(screen.getByTestId(`workspace-menu-${id}`))
@@ -163,9 +172,118 @@ describe('Settings shell', () => {
   })
 })
 
+describe('Settings › sync overview', () => {
+  const summary = () => screen.getByTestId('settings-sync-summary')
+  const cloudStatus = () => screen.getByTestId('settings-sync-open-cloud-status')
+
+  it('lists each way to sync or back up, and connects nothing itself', async () => {
+    await openSync()
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-sync-open-cloud')).toHaveTextContent('Your cloud storage')
+    expect(screen.getByTestId('settings-sync-open-backup')).toHaveTextContent('Encrypted backup')
+    // No nearby row until the backend says this build can do it.
+    expect(screen.queryByTestId('settings-sync-open-nearby')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('settings-drive-connect')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('settings-backup-row')).not.toBeInTheDocument()
+  })
+
+  it('says a vault that syncs nowhere is on this device, and offers a backup', async () => {
+    await openSync()
+    expect(summary()).toHaveAttribute('data-tone', 'local')
+    expect(summary()).toHaveTextContent('On this device only')
+    expect(cloudStatus()).toHaveTextContent('Not connected')
+
+    await userEvent.click(screen.getByTestId('settings-sync-backup'))
+    expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-backup-row')).toBeInTheDocument()
+  })
+
+  it('says where the cloud account stands on its row and in the summary', async () => {
+    await openSync()
+
+    act(() =>
+      report({ configured: true, provider: 'dropbox', lastSyncedAt: '2026-01-01T00:00:00Z' })
+    )
+    expect(cloudStatus()).toHaveTextContent('Dropbox')
+    expect(cloudStatus()).toHaveAttribute('data-tone', 'good')
+    expect(summary()).toHaveTextContent('Your vault is in sync')
+    expect(summary()).toHaveTextContent('Through Dropbox')
+    expect(screen.queryByTestId('settings-sync-backup')).not.toBeInTheDocument()
+
+    act(() => report({ configured: true, provider: 'dropbox', inProgress: true }))
+    expect(cloudStatus()).toHaveTextContent('Syncing…')
+
+    act(() => report({ configured: true, provider: 'dropbox', error: 'Dropbox API 503' }))
+    expect(cloudStatus()).toHaveTextContent('Last attempt failed')
+    expect(cloudStatus()).toHaveAttribute('data-tone', 'bad')
+    expect(summary()).toHaveTextContent('Dropbox API 503')
+
+    // The failure's own page is one press away.
+    await userEvent.click(screen.getByTestId('settings-sync-review'))
+    expect(screen.getByRole('heading', { name: 'Your cloud storage' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-sync-error')).toHaveTextContent('Dropbox API 503')
+  })
+
+  // A failure whose controls are elsewhere is sent there, not to a page that
+  // could only repeat the sentence.
+  it.each<[NonNullable<SyncStatus['errorKind']>]>([
+    ['vaultDeletedRemotely'],
+    ['vaultUnderRetiredPassword']
+  ])('sends a %s failure to Lockboxes, where its choices are', async errorKind => {
+    await openSync()
+    act(() => report({ configured: true, error: 'stopped', errorKind }))
+
+    await userEvent.click(screen.getByTestId('settings-sync-review'))
+    expect(useUi.getState().settingsSection).toBe('workspaces')
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+  })
+
+  it('asks for the new master password when another device changed it', async () => {
+    await openSync()
+    act(() =>
+      report({ configured: true, error: 'changed', errorKind: 'passwordChangedRemotely' })
+    )
+
+    await userEvent.click(screen.getByTestId('settings-sync-review'))
+    expect(useUi.getState().passwordPrompt).toBe(true)
+    expect(useUi.getState().settingsSection).toBe('sync')
+  })
+
+  // `openSettings` is called from outside the modal (a backup the OS opened
+  // goes to Import), and knows nothing of the page the modal is on.
+  it('leaves a page when something outside moves Settings to another section', async () => {
+    await openSync()
+    await userEvent.click(screen.getByTestId('settings-sync-open-backup'))
+    expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+
+    act(() => openSettings('import'))
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
+
+    // And it is not waiting there on the way back.
+    act(() => openSettings('sync'))
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-sync-open-backup')).toBeInTheDocument()
+  })
+
+  it('opens a page per row and comes back to the overview', async () => {
+    await openSync()
+    await userEvent.click(screen.getByTestId('settings-sync-open-cloud'))
+
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Your cloud storage' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-cloud')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-sync-open-cloud')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-sync-open-cloud')).toBeInTheDocument()
+  })
+})
+
 describe('Settings › sync', () => {
   it('connects Google Drive', async () => {
-    await openSync()
+    await openCloud()
     await userEvent.click(screen.getByTestId('settings-drive-connect'))
     expect(calls('sync_connect')).toEqual([{ provider: 'googleDrive' }])
   })
@@ -173,8 +291,12 @@ describe('Settings › sync', () => {
   // Not connected, the card is about no provider yet: it offers each, and the
   // one pressed is the one the wait and the probe are about.
   it('offers every provider, and connects the one picked', async () => {
-    await openSync()
-    expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Cloud sync')
+    await openCloud()
+    const providers = screen.getByTestId('settings-providers')
+    expect(providers).toHaveTextContent('Choose a provider')
+    expect(providers).toHaveTextContent('Dropbox')
+    // No account yet, so no account card: the list stands in its place.
+    expect(screen.queryByTestId('settings-drive-row')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-drive-connect')).toHaveTextContent('Connect Google Drive')
     // Only the two every build has: a third needs the build to report it.
     expect(screen.queryByTestId('settings-icloud-connect')).not.toBeInTheDocument()
@@ -191,9 +313,9 @@ describe('Settings › sync', () => {
   // signed for iCloud reports a third, after the two every build has.
   it('offers iCloud on a build that reports it', async () => {
     seedApp({ providers: ['googleDrive', 'dropbox', 'iCloud'] })
-    await openSync()
+    await openCloud()
 
-    const row = screen.getByTestId('settings-drive-row')
+    const row = screen.getByTestId('settings-providers')
     const ids = [...row.querySelectorAll('[data-testid$="-connect"]')].map(node =>
       node.getAttribute('data-testid')
     )
@@ -209,7 +331,7 @@ describe('Settings › sync', () => {
   // rather than a wait on a page the user has to come back from.
   it('says it is checking the account while an iCloud connect is out', async () => {
     seedApp({ providers: ['googleDrive', 'dropbox', 'iCloud'] })
-    await openSync()
+    await openCloud()
     await userEvent.click(screen.getByTestId('settings-icloud-connect'))
 
     expect(calls('sync_connect')).toEqual([{ provider: 'iCloud' }])
@@ -220,7 +342,7 @@ describe('Settings › sync', () => {
   // Connected, the card names the account's provider — and Sharing, which only
   // Drive can hold yet, is left out for any other.
   it('names a Dropbox connection and leaves Sharing out', async () => {
-    await openSync()
+    await openCloud()
     act(() => report({ configured: true, provider: 'dropbox' }))
 
     expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Dropbox')
@@ -244,7 +366,7 @@ describe('Settings › sync', () => {
       ],
       activeWorkspace: 'w2'
     })
-    await openSync()
+    await openCloud()
 
     expect(screen.queryByTestId('settings-sync-primary-only')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('settings-drive-connect'))
@@ -255,7 +377,7 @@ describe('Settings › sync', () => {
   // Safari has the screen, so the row waits on the backend's events — the
   // click itself claims nothing.
   it('waits for Google after a connect that resolved early', async () => {
-    await openSync()
+    await openCloud()
     await userEvent.click(screen.getByTestId('settings-drive-connect'))
     expect(useApp.getState().sync.pending).toBe(false)
 
@@ -267,7 +389,7 @@ describe('Settings › sync', () => {
   })
 
   it('reports a consent that failed, and stays disconnected', async () => {
-    await openSync()
+    await openCloud()
     await userEvent.click(screen.getByTestId('settings-drive-connect'))
     report({ pending: true })
     report({ error: 'access_denied' })
@@ -283,7 +405,7 @@ describe('Settings › sync', () => {
       report({ error: 'no OAuth client configured' })
       return Promise.reject({ kind: 'other', message: 'no OAuth client configured' })
     })
-    await openSync()
+    await openCloud()
     await userEvent.click(screen.getByTestId('settings-drive-connect'))
 
     await waitFor(() => expect(useApp.getState().sync.pending).toBe(false))
@@ -307,7 +429,7 @@ describe('Settings › sync', () => {
       )
 
     it('waits on the probe, then takes an empty account as this vault', async () => {
-      await openSync()
+      await openCloud()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
       await act(async () => setupAccountPending())
       expect(await screen.findByText('Waiting for Google Drive…')).toBeInTheDocument()
@@ -325,7 +447,7 @@ describe('Settings › sync', () => {
     // A second device of a vault the account already holds: the backend adopts
     // and the picker is never shown.
     it('joins an account that already holds this vault, with no picker', async () => {
-      await openSync()
+      await openCloud()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
       await act(async () => setupAccountProbed([VAULT, OTHER_VAULT]))
 
@@ -344,7 +466,7 @@ describe('Settings › sync', () => {
         'sync_adopt_pending',
         () => new Promise<void>(resolve => (decide = resolve))
       )
-      await openSync()
+      await openCloud()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
       await act(async () => setupAccountProbed([VAULT]))
 
@@ -361,7 +483,7 @@ describe('Settings › sync', () => {
     // Workspaces uses, and the vault that was open stays as its own workspace.
     it("offers the account's vaults to restore when it holds only other ones", async () => {
       refuse()
-      await openSync()
+      await openCloud()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
       await act(async () => setupAccountProbed([VAULT, OTHER_VAULT]))
 
@@ -388,7 +510,7 @@ describe('Settings › sync', () => {
 
     it('cancels out of the offer by forgetting the account', async () => {
       refuse()
-      await openSync()
+      await openCloud()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
       await act(async () => setupAccountProbed([VAULT]))
 
@@ -405,7 +527,7 @@ describe('Settings › sync', () => {
       mockCommandOnce('sync_adopt_pending', () =>
         Promise.reject({ kind: 'other', message: 'Google Drive did not answer' })
       )
-      await openSync()
+      await openCloud()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
       await act(async () => setupAccountProbed([]))
 
@@ -417,7 +539,7 @@ describe('Settings › sync', () => {
     })
 
     it('reports a probe that failed, and offers to try again', async () => {
-      await openSync()
+      await openCloud()
       await userEvent.click(screen.getByTestId('settings-drive-connect'))
       await act(async () => setupAccountFailed('Google Drive did not answer'))
 
@@ -430,8 +552,12 @@ describe('Settings › sync', () => {
   })
 
   it('offers the encrypted backup behind its own control', async () => {
-    await openSync()
+    await openBackup()
     expect(screen.getByTestId('settings-backup-row')).toHaveTextContent('.rowel')
+    // It says which lockbox the file holds: the open one, not the whole vault.
+    expect(screen.getByTestId('settings-backup-row')).toHaveTextContent(
+      'Everything in Personal, sealed with your master password'
+    )
     expect(document.querySelector('input[name="export_password"]')).toBeNull()
     await userEvent.click(screen.getByText('Save…'))
     expect(document.querySelector('input[name="export_password"]')).toBeInTheDocument()
@@ -440,18 +566,28 @@ describe('Settings › sync', () => {
   // The portable export lives with Import now; this section keeps only the
   // encrypted backup.
   it('leaves the unencrypted export out of this section', async () => {
-    await openSync()
+    await openBackup()
     expect(screen.queryByTestId('settings-export-run')).not.toBeInTheDocument()
+  })
+
+  // An open vault cannot take a backup back in, so the page says where one
+  // goes instead of offering a restore.
+  it('says a backup restores a fresh install, and offers no restore here', async () => {
+    await openBackup()
+    expect(screen.getByTestId('settings-backup-restore-note')).toHaveTextContent(
+      'Backups restore a fresh install and are not imported into an existing vault.'
+    )
+    expect(screen.queryByText('Restore a backup')).not.toBeInTheDocument()
   })
 
   // The pill beside the title says where the connection stands, one tone per
   // state, with a sync running outranking the last one's failure.
   it('says where Drive stands in the status pill', async () => {
-    await openSync()
+    await openCloud()
     const pill = () => screen.getByTestId('settings-drive-status')
 
-    expect(pill()).toHaveTextContent('Not connected')
-    expect(pill()).toHaveAttribute('data-tone', 'neutral')
+    // No account, no card to carry a pill: the list of providers stands there.
+    expect(screen.queryByTestId('settings-drive-status')).not.toBeInTheDocument()
 
     act(() => report({ configured: true }))
     expect(pill()).toHaveTextContent('Up to date')
@@ -468,7 +604,7 @@ describe('Settings › sync', () => {
   })
 
   it('shows what a connected account holds, and the way out', async () => {
-    await openSync()
+    await openCloud()
     expect(screen.queryByTestId('settings-sync-now')).not.toBeInTheDocument()
     expect(screen.queryByText('End-to-end')).not.toBeInTheDocument()
 
@@ -1226,6 +1362,9 @@ describe('Settings › export', () => {
     await exportPane()
     await userEvent.click(screen.getByTestId('settings-export-backup-link'))
     expect(useUi.getState().settingsSection).toBe('sync')
+    // Straight to the backup's own page, not the overview above it.
+    expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-backup-row')).toBeInTheDocument()
   })
 })
 
@@ -1479,8 +1618,8 @@ describe('Settings › workspaces › vaults in the account', () => {
     expect(useApp.getState().remoteVaults).toEqual([])
   })
 
-  // One vault is shown, not offered — and its list sits beside the probe's
-  // picker without the two answering to the same ids.
+  // One vault is shown, not offered — under ids of its own, not the probe's
+  // picker's.
   it("names the account's only missing vault without asking which", async () => {
     await open()
     await act(async () => setRemoteVaults([VAULT]))
@@ -1643,6 +1782,21 @@ describe('Settings › workspaces › list', () => {
 
     await userEvent.click(screen.getByTestId('workspace-switch-w2'))
     expect(calls('workspace_select')).toEqual([{ id: 'w2' }])
+  })
+
+  // The third tile names the account a new lockbox would join; with none
+  // connected there is none to name, so it says where one is set up.
+  it('says where sync is set up until an account is connected', async () => {
+    await open()
+    act(() => report({ configured: false }))
+    await go('workspaces')
+
+    expect(screen.getByText('Set up in Sync & backup.')).toBeInTheDocument()
+    expect(screen.queryByText(/^Stored in the same/)).not.toBeInTheDocument()
+
+    act(() => report({ configured: true, provider: 'dropbox' }))
+    expect(screen.getByText('Stored in the same Dropbox account.')).toBeInTheDocument()
+    expect(screen.queryByText('Set up in Sync & backup.')).not.toBeInTheDocument()
   })
 
   it('names the provider a locked workspace syncs to', async () => {
@@ -2282,14 +2436,58 @@ describe('Settings › workspaces › master password changed elsewhere', () => 
 })
 
 describe('Settings › workspaces › restore from an account', () => {
+  // The flow is a page under Lockboxes, opened from a row under the list.
+  const openRestore = async () => {
+    await open()
+    await go('workspaces')
+    await userEvent.click(screen.getByTestId('workspace-restore-open'))
+  }
+
   // Consent, then the probe's answer — which arrives as an event, never through
   // the connect's promise.
   const connect = async (files: RemotePack[]) => {
-    await open()
-    await go('workspaces')
+    await openRestore()
     await userEvent.click(screen.getByTestId('workspace-restore-drive-connect'))
     await act(async () => setupAccountProbed(files))
   }
+
+  // On the Lockboxes page the account's Connect buttons would read as
+  // connecting this vault, which is what the same buttons do under Sync &
+  // backup; there the page's title says what they are for.
+  it('keeps the sign-in on a page of its own, a row away from the list', async () => {
+    await open()
+    await go('workspaces')
+
+    expect(screen.queryAllByTestId(/^workspace-restore-.+-connect$/)).toHaveLength(0)
+    expect(screen.getByTestId('workspace-restore-open')).toHaveTextContent(
+      'Restore from a cloud account'
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-restore-open'))
+    expect(
+      screen.getByRole('heading', { name: 'Restore from a cloud account' })
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-drive-connect')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-dropbox-connect')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-restore-open')).not.toBeInTheDocument()
+    // The title and its description are said once, by the page's header.
+    expect(screen.getAllByText('Restore from a cloud account')).toHaveLength(1)
+    expect(screen.getAllByText(/^Sign in and pick one of the lockboxes/)).toHaveLength(1)
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-open')).toBeInTheDocument()
+  })
+
+  // Going Back is backing out, the same as Cancel: the pending tokens go too.
+  it('forgets the connected account when the page is left', async () => {
+    await connect([VAULT])
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+
+    expect(calls('setup_disconnect')).toHaveLength(1)
+    expect(useApp.getState().setupAccount.status).toBe('idle')
+  })
 
   it('restores the vault the user picked as a workspace of its own', async () => {
     await connect([VAULT, OTHER_VAULT])
@@ -2414,6 +2612,12 @@ describe('Settings › workspaces › restore from an account', () => {
 
     expect(screen.getByTestId('modal-close')).toBeDisabled()
     expect(screen.getByTestId('settings-nav-sync')).toBeDisabled()
+    // The page is held too: its Back is inert and Escape does not step out.
+    expect(screen.getByTestId('settings-subpage-back')).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
+    expect(
+      screen.getByRole('heading', { name: 'Restore from a cloud account' })
+    ).toBeInTheDocument()
     // The store refuses too, whoever asks.
     closeSettings()
     setSettingsSection('sync')
@@ -2494,8 +2698,7 @@ describe('Settings › workspaces › restore from an account', () => {
   })
 
   it('reports a consent that never came back', async () => {
-    await open()
-    await go('workspaces')
+    await openRestore()
     await userEvent.click(screen.getByTestId('workspace-restore-drive-connect'))
     expect(screen.getByTestId('workspace-restore-waiting')).toBeInTheDocument()
 
@@ -2507,14 +2710,14 @@ describe('Settings › workspaces › restore from an account', () => {
     expect(calls('workspace_restore_from_pending')).toHaveLength(0)
   })
 
-  // The row starts with the choice of provider, and everything after the press
-  // names the one picked.
+  // The page starts with the choice of provider under its own title, and
+  // everything after the press names the one picked.
   it('restores from Dropbox, naming it from the press on', async () => {
-    await open()
-    await go('workspaces')
-    expect(screen.getByTestId('workspace-restore-row')).toHaveTextContent(
-      'Restore from a cloud account'
-    )
+    await openRestore()
+    expect(
+      screen.getByRole('heading', { name: 'Restore from a cloud account' })
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-row')).not.toHaveTextContent('Restore from')
 
     await userEvent.click(screen.getByTestId('workspace-restore-dropbox-connect'))
 
@@ -2599,6 +2802,22 @@ describe('Settings sub-pages', () => {
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
     expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
     expect(useUi.getState().settings).toBe(true)
+  })
+
+  // `openSettings` comes from outside the shell — a backup the OS opened asks
+  // for Import — and must not take a form away whose operation is still out.
+  it('keeps a locked sub-page when something outside asks for another section', async () => {
+    await openSubpage()
+    act(() => lockSettings(true))
+
+    act(() => openSettings('import'))
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
+    expect(useUi.getState().settingsSection).toBe('workspaces')
+
+    // The section asked for is gone to once the operation lets go.
+    act(() => lockSettings(false))
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
   })
 })
 

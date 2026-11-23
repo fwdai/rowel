@@ -75,7 +75,7 @@ const ALL: {
     key: 'sync',
     group: 'data',
     label: 'Sync & backup',
-    description: 'Keep devices in step through Google Drive or Dropbox, and keep an offline copy.',
+    description: 'Keep your vault on every device you use, and keep a copy you can recover from.',
     Glyph: CloudGlyph
   },
   {

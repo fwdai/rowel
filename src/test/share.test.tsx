@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act } from 'react'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
 import Settings from '@/components/Main/Sidebar/Settings'
@@ -361,11 +361,18 @@ describe('receiving a shared entry', () => {
   })
 })
 
+// Shared links live on the cloud account's page, a row in from the overview.
+// `fireEvent`, not `userEvent`: some of these specs run on fake timers.
+const openCloud = async () => {
+  openSettings('sync')
+  fireEvent.click(await screen.findByTestId('settings-sync-open-cloud'))
+}
+
 describe('Settings › Shared links', () => {
   const expand = async () => {
     seed()
     render(<Settings />)
-    openSettings('sync')
+    await openCloud()
     // The row's button is the disclosure.
     const row = await screen.findByTestId('settings-shares-row-toggle')
     expect(row).toHaveAttribute('aria-expanded', 'false')
@@ -376,9 +383,9 @@ describe('Settings › Shared links', () => {
   it('is not offered without Drive', async () => {
     seed({ connected: false })
     render(<Settings />)
-    openSettings('sync')
+    await openCloud()
 
-    expect(await screen.findByTestId('settings-drive-row')).toBeInTheDocument()
+    expect(await screen.findByTestId('settings-providers')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-shares-row')).not.toBeInTheDocument()
   })
 
@@ -458,7 +465,7 @@ describe('Settings › Shared links', () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
       seed()
       render(<Settings />)
-      openSettings('sync')
+      await openCloud()
       await user.click(await screen.findByTestId('settings-shares-row-toggle'))
       expect(await screen.findByTestId('settings-share-f1')).toHaveTextContent(
         'Expires in 2 minutes'
@@ -502,7 +509,7 @@ describe('Settings › Shared links', () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
       seed()
       render(<Settings />)
-      openSettings('sync')
+      await openCloud()
       await user.click(await screen.findByTestId('settings-shares-row-toggle'))
       expect(await screen.findByTestId('settings-share-f1')).toBeInTheDocument()
 
@@ -545,7 +552,7 @@ describe('Settings › Shared links', () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
       seed()
       render(<Settings />)
-      openSettings('sync')
+      await openCloud()
       await user.click(await screen.findByTestId('settings-shares-row-toggle'))
       expect(await screen.findByTestId('settings-share-f1')).toBeInTheDocument()
 

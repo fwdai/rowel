@@ -157,7 +157,7 @@ describe('Settings › Lockboxes › Rowel Server', () => {
     seedApp({ orgConnect: false })
     await openLockboxes()
 
-    expect(screen.getByText('Cloud sync')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-open')).toBeInTheDocument()
     expect(screen.queryByTestId('org-fingerprint-row')).not.toBeInTheDocument()
     expect(screen.queryByTestId('org-connect-row')).not.toBeInTheDocument()
     expect(calls('org_connections')).toEqual([])

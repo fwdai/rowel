@@ -40,13 +40,32 @@ describe('syncView', () => {
       [
         'a failed run',
         synced({ error: 'Drive said no' }),
-        { tone: 'bad', message: 'Something went wrong', detail: 'Drive said no' }
+        { tone: 'bad', message: 'Something went wrong', detail: 'Drive said no', fix: 'cloud' }
       ],
       ['no run yet', cloud({ configured: true }), { tone: 'idle', message: 'Waiting to sync' }],
       ['a landed run', synced(), { tone: 'good', message: 'Sync Successful' }]
     ])('reads %s exactly as before', (_, sync, expected) => {
       expect(syncView(sync, null)).toEqual(expected)
       expect(syncView(sync, busyNearby)).toEqual(expected)
+    })
+  })
+
+  // A failure is put right where its controls are, which the view names once
+  // for the chip and for Settings › Sync & backup alike.
+  describe('where a cloud failure is put right', () => {
+    it.each([
+      ['passwordChangedRemotely', 'password'],
+      ['vaultDeletedRemotely', 'lockboxes'],
+      ['vaultUnderRetiredPassword', 'lockboxes'],
+      ['other', 'cloud'],
+      [null, 'cloud']
+    ] as const)('sends %s to %s', (errorKind, fix) => {
+      expect(syncView(synced({ error: 'stopped', errorKind }), null).fix).toBe(fix)
+    })
+
+    it('names nowhere while nothing is wrong', () => {
+      expect(syncView(synced(), null).fix).toBeUndefined()
+      expect(syncView(cloud(), null).fix).toBeUndefined()
     })
   })
 
@@ -73,7 +92,8 @@ describe('syncView', () => {
     it('says a nearby device needs the new master password', () => {
       expect(syncView(cloud(), nearby([device('upToDate'), device('needsPassword')]))).toEqual({
         tone: 'bad',
-        message: 'A nearby device needs the new master password'
+        message: 'A nearby device needs the new master password',
+        fix: 'nearby'
       })
     })
 
@@ -82,7 +102,7 @@ describe('syncView', () => {
       expect(syncView(cloud(), nearby(devices))).toEqual({
         tone: 'bad',
         message: 'Master password changed on another device',
-        adopt: true
+        fix: 'password'
       })
     })
 
@@ -92,12 +112,14 @@ describe('syncView', () => {
       ).toEqual({
         tone: 'bad',
         message: 'Something went wrong',
-        detail: 'The clocks are 7 minutes apart'
+        detail: 'The clocks are 7 minutes apart',
+        fix: 'nearby'
       })
       expect(syncView(cloud(), nearby([device('error', 'The connection dropped')]))).toEqual({
         tone: 'bad',
         message: 'Something went wrong',
-        detail: 'The connection dropped'
+        detail: 'The connection dropped',
+        fix: 'nearby'
       })
     })
   })

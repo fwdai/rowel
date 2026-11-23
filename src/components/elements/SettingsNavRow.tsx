@@ -1,0 +1,93 @@
+import type { ReactNode } from 'react'
+import { cx } from '@/utils/cx'
+import { ChevronRightGlyph } from '@/components/Main/icons'
+import { ROW_HAIRLINE } from './tokens'
+
+export type StatusTone = 'neutral' | 'good' | 'bad'
+
+interface Props {
+  label: ReactNode
+  description?: ReactNode
+  /** The row's mark, at row size (16px), in the tile a SettingsRow draws. */
+  icon: ReactNode
+  /** The tile lit in the accent wash: what the row leads to is switched on. */
+  iconActive?: boolean
+  /** Where the thing behind the row stands, said before the row is opened. */
+  status?: string
+  statusTone?: StatusTone
+  onClick: () => void
+  testid?: string
+}
+
+const DOT: Record<StatusTone, string | null> = {
+  neutral: null,
+  good: 'bg-good',
+  bad: 'bg-bad'
+}
+
+/**
+ * A row of a SettingsGroup card that leads somewhere: the whole row is the
+ * button, a chevron says it opens a page, and what stands before the chevron is
+ * a status rather than a control. A SettingsRow's sibling, so it keeps that
+ * row's tile, type and inset, and the two can share a card.
+ *
+ * A grid rather than a line, because the status moves: beside the label and
+ * its description on the wide shell, and up onto the label's own line on the
+ * phone, where a status standing beside both would squeeze the description
+ * into a column a few words wide.
+ */
+export default function SettingsNavRow({
+  label,
+  description,
+  icon,
+  iconActive,
+  status,
+  statusTone = 'neutral',
+  onClick,
+  testid
+}: Props) {
+  const dot = DOT[statusTone]
+
+  return (
+    <button
+      type="button"
+      data-testid={testid}
+      onClick={onClick}
+      className={cx(
+        'grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-3.5 px-4 py-3.5 text-left transition-colors hover:bg-hover focus-visible:bg-hover',
+        ROW_HAIRLINE
+      )}
+    >
+      <span
+        className={cx(
+          'col-start-1 row-span-2 row-start-1 grid h-8 w-8 place-items-center rounded-sm transition-colors',
+          iconActive ? 'bg-accent-soft text-accent' : 'bg-tile text-text2'
+        )}
+      >
+        {icon}
+      </span>
+      <span className="col-start-2 row-start-1 text-base font-medium text-text max-md:text-md">
+        {label}
+      </span>
+      {status && (
+        <span
+          data-testid={testid && `${testid}-status`}
+          data-tone={statusTone}
+          className={cx(
+            'col-start-3 row-start-1 flex items-center gap-1.5 text-sm md:row-span-2 max-md:text-base',
+            statusTone === 'bad' ? 'text-bad' : 'text-text2'
+          )}
+        >
+          {dot && <span aria-hidden className={cx('h-1.5 w-1.5 flex-none rounded-full', dot)} />}
+          {status}
+        </span>
+      )}
+      {description && (
+        <span className="col-start-2 row-start-2 mt-0.5 text-sm text-text2 max-md:col-end-4 max-md:text-base">
+          {description}
+        </span>
+      )}
+      <ChevronRightGlyph className="col-start-4 row-span-2 row-start-1 text-text3" />
+    </button>
+  )
+}
