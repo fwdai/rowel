@@ -1021,9 +1021,13 @@ request without the agent ever holding it. The agent names it by a placeholder
 and asks for a grant in `env` or `header` mode naming the full command line or
 the host, path and methods; the dialog shows that place and the person allows
 once, for N days (a rule for exactly that command line or that request
-pattern), or not at all. `env` is never silent unless a rule names the full
-line, because a child process can print what it is given, and a rule for
-`node deploy.js*` does not match `node -e …`. The value is released by one
+pattern), or not at all. A request names one place in one mode, and a
+command line in it has no bare `*`, so it covers that line as written; any
+other request is refused before anyone is asked (`agents::decide`), so the
+dialog shows everything a yes covers. `env` is never silent unless a rule
+names the full line, because a child process can print what it is given,
+and a rule for `node deploy.js*` does not match `node -e …`. The value is
+released by one
 protocol action, `resolve`, that only a client of kind `sidecar` may say
 (`rowel run`, `rowel proxy`, `rowel redact`, `rowel hook post`), under the
 session's switches and the same locks as a fill, for a grant that is active in
