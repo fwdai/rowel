@@ -19,9 +19,10 @@ use crate::{emblem, favicon, scan};
 /// an env file may be named anything), `"attachment"` (any file), `"photo"`
 /// (an image to attach — the attachment pick under the image filter),
 /// `"import"` (a password manager's export), `"backup"` (a `.rowel` or a
-/// legacy `.swftx` to restore on a fresh install) or `"importBackup"` (the
-/// same two, for Settings › Import). The path picked, or `None` when the
-/// dialog was dismissed.
+/// legacy `.swftx` to restore on a fresh install), `"importBackup"` (the
+/// same two, for Settings › Import) or `"lockboxBackup"` (a `.rowel` alone,
+/// to restore as a lockbox beside the open one). The path picked, or `None`
+/// when the dialog was dismissed.
 ///
 /// On a phone an image filter makes the dialog plugin show the photo library
 /// rather than the file browser (it switches to the media picker when no
@@ -72,6 +73,11 @@ pub async fn pick_file(
         "importBackup" => {
             let label = label.unwrap_or_else(|| "Rowel backup".into());
             dialog = dialog.add_filter(label, &[BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION]);
+            Purpose::Backup
+        }
+        "lockboxBackup" => {
+            let label = label.unwrap_or_else(|| "Rowel backup".into());
+            dialog = dialog.add_filter(label, &[BACKUP_EXTENSION]);
             Purpose::Backup
         }
         other => return Err(Error::Unsupported(format!("no {other} picker"))),

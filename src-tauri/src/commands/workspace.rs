@@ -22,9 +22,13 @@
 //! (`sync::publish_remote_vaults`) and restored with the open workspace's own
 //! tokens. A workspace *made* on a connected device inherits the account the
 //! same way, and syncs to it as a vault of its own.
+//!
+//! Or it arrives from a `.rowel` backup the user chose: the same restore, with
+//! the pack read off disk on the terms onboarding reads one
+//! (`setup_restore_from_file`) instead of downloaded, and no account to keep.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use tauri::{AppHandle, State};
@@ -34,6 +38,7 @@ use crate::appkey;
 use crate::auth;
 use crate::crypto::{KdfParams, VaultKey};
 use crate::error::{Error, Result};
+use crate::grants::{self, PathGrants, Purpose};
 use crate::models::{EntryMetaDto, UnlockResult};
 use crate::secure_store::KeyStore;
 use crate::session::{list_metas, store_err, Lease};
@@ -469,16 +474,12 @@ pub async fn workspace_restore_from_pending(
     state: State<'_, AppState>,
 ) -> Result<UnlockResult> {
     let tokens = setup::peek_pending(&state)?;
-    restore_workspace(
-        &app,
-        &state,
-        name,
-        password,
+    let source = Source::Account {
         file_id,
         tokens,
-        Account::Pending,
-    )
-    .await
+        account: Account::Pending,
+    };
+    restore_workspace(&app, &state, name, password, source).await
 }
 
 /// Add a workspace by restoring one of the vaults the open workspace's account
@@ -505,31 +506,171 @@ pub async fn workspace_restore_from_account(
         let _paths = state.workspace_lock.lock().unwrap();
         open_account(&app, &state)?.ok_or(Error::SyncNotConfigured)?
     };
-    restore_workspace(
-        &app,
-        &state,
-        name,
-        password,
+    let source = Source::Account {
         file_id,
         tokens,
-        Account::Open { generation },
-    )
-    .await
+        account: Account::Open { generation },
+    };
+    restore_workspace(&app, &state, name, password, source).await
 }
 
-/// Whose tokens a restore runs on, which is the one thing that differs between
-/// the two restores: a pending account has to be kept current through the
-/// download and dropped once it is sealed inside the new workspace; the open
-/// workspace's account is its own to keep, and its token file follows the
-/// refresh — if the connection is still the one the tokens were read under,
-/// which is what `generation` names.
+/// Add a workspace by restoring a `.rowel` backup the user chose.
+///
+/// [`workspace_restore_from_pending`] with the pack read off disk instead of
+/// downloaded: the backup `export_vault` wrote, which onboarding restores as a
+/// fresh install's vault (`setup_restore_from_file`), restored here as a
+/// workspace beside the open one — the same step lock, lease, unwinding,
+/// registry-last ordering and vault-password rule. The file is read on
+/// onboarding's terms ([`read_backup`]): `path` has to be one the user chose,
+/// and the grant is held across a mistyped password and spent by the restore
+/// that installs it.
+///
+/// No account comes with a file, so the workspace arrives connected to none and
+/// syncs nowhere until the user connects it. A backup of a vault this device
+/// already holds is refused as [`Error::VaultAlreadyOpen`] once the pack has
+/// opened, which is the first moment it says which vault it is.
+#[tauri::command]
+pub async fn workspace_restore_from_file(
+    name: String,
+    password: Zeroizing<String>,
+    path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    grants: State<'_, PathGrants>,
+) -> Result<UnlockResult> {
+    let source = Source::File {
+        path: PathBuf::from(path),
+        grants: &grants,
+    };
+    restore_workspace(&app, &state, name, password, source).await
+}
+
+/// Whose tokens a restore from an account runs on: a pending account has to be
+/// kept current through the download and dropped once it is sealed inside the
+/// new workspace; the open workspace's account is its own to keep, and its
+/// token file follows the refresh — if the connection is still the one the
+/// tokens were read under, which is what `generation` names.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Account {
     Pending,
     Open { generation: u64 },
 }
 
-/// Turn the pack `file_id` into a workspace, unlocked with `password`.
+/// Where the pack a restore installs comes from, which is the one thing that
+/// differs between the restores.
+enum Source<'a> {
+    /// The pack `file_id` in an account, fetched with `tokens`. The restored
+    /// workspace keeps the account: a copy of the tokens is sealed under its
+    /// key.
+    Account {
+        file_id: String,
+        tokens: sync::Tokens,
+        account: Account,
+    },
+    /// A `.rowel` backup at `path`, which has to be a file the user chose
+    /// (`grants`). It comes with no account.
+    File {
+        path: PathBuf,
+        grants: &'a PathGrants,
+    },
+}
+
+impl Source<'_> {
+    /// The pack's bytes, and the vault id an account files it under — `None`
+    /// for a backup file, whose id is inside the encrypted snapshot.
+    ///
+    /// A pack in an account is refused before the download if this device
+    /// already holds its vault: a restore that will be turned away should not
+    /// cost the user the wait for a whole vault over the network. A file has no
+    /// name to be asked about by; it is asked once it has opened
+    /// ([`guard_restored_vault`]).
+    async fn fetch(
+        &mut self,
+        app: &AppHandle,
+        state: &AppState,
+        root: &Path,
+    ) -> Result<(Vec<u8>, Option<String>)> {
+        match self {
+            Source::Account {
+                file_id,
+                tokens,
+                account,
+            } => {
+                let (bytes, vault_id) = setup::download(app, tokens, file_id, |vault_id| {
+                    guard_other_vault(state, root, vault_id)
+                })
+                .await?;
+                // Whatever the refresh produced has to be kept, for the reason
+                // onboarding keeps it: Google rotates refresh tokens, and a
+                // mistyped master password has to leave a retry that works. A
+                // pending account lives in memory; the open workspace's lives
+                // in its token file, which has to follow too — left on the old
+                // copy, its next run could find the refresh token retired while
+                // only the restored workspace held the live one. That write
+                // happens in the same step as the lease.
+                if *account == Account::Pending {
+                    setup::replace_pending_tokens(state, tokens.clone())?;
+                }
+                Ok((bytes, Some(vault_id)))
+            }
+            Source::File { path, grants } => Ok((read_backup(path, grants).await?, None)),
+        }
+    }
+
+    /// The account the restored workspace arrives connected to, if any.
+    fn tokens(&self) -> Option<&sync::Tokens> {
+        match self {
+            Source::Account { tokens, .. } => Some(tokens),
+            Source::File { .. } => None,
+        }
+    }
+
+    /// Let go of what the restore came from, once the pack is installed — open
+    /// or closed. A pending account is sealed inside the new workspace now, and
+    /// keeping the in-memory copy would let a later restore adopt it silently;
+    /// a backup file has been read for what it was chosen for, and the next
+    /// read of it needs the user's say again. The open workspace's account is
+    /// its own, and stays.
+    fn spend(&self, state: &AppState) {
+        match self {
+            Source::Account {
+                account: Account::Pending,
+                ..
+            } => {
+                setup::take_pending(state);
+            }
+            Source::Account {
+                account: Account::Open { .. },
+                ..
+            } => {}
+            Source::File { path, grants } => {
+                grants.take(path, Purpose::Backup);
+            }
+        }
+    }
+}
+
+/// The backup at `path`, read on the terms onboarding reads one
+/// (`setup_restore_from_file`): only a path the user chose — picked, dropped or
+/// opened with the app (see `grants`) — and only a regular file
+/// (`storage::read_regular_file_capped`), capped where a download is
+/// (`pack::MAX_PACK_BYTES`) so that a file which is not a pack is never
+/// buffered whole before the pack's own checks (`pack::unpack`) refuse it.
+///
+/// The grant is checked, not spent: a mistyped password reads the file again,
+/// and the restore that installs it spends it ([`Source::spend`]).
+async fn read_backup(path: &Path, grants: &PathGrants) -> Result<Vec<u8>> {
+    if !grants.holds(path, Purpose::Backup) {
+        return Err(grants::not_chosen());
+    }
+    // Off the command thread: a backup is the whole vault, and a large one on
+    // a slow disk must not stall the async runtime.
+    let path = path.to_path_buf();
+    blocking(move || storage::read_regular_file_capped(&path, sync::pack::MAX_PACK_BYTES as u64))
+        .await
+}
+
+/// Turn the pack `source` holds into a workspace, unlocked with `password`.
 ///
 /// `name` is optional: left blank, the workspace takes the name the vault
 /// carries inside its pack (see [`crate::store::identity`]), which is the name
@@ -540,43 +681,31 @@ async fn restore_workspace(
     state: &AppState,
     name: String,
     password: Zeroizing<String>,
-    file_id: String,
-    mut tokens: sync::Tokens,
-    account: Account,
+    mut source: Source<'_>,
 ) -> Result<UnlockResult> {
     let name = name.trim().to_string();
     if password.is_empty() {
         return Err(Error::WorkspacePasswordRequired);
     }
-    // The same exclusion `workspace_create` takes, and for the same files.
+    // The same exclusion `workspace_create` takes, and for the same files. It
+    // is also what keeps a second restore out while this one runs, so a backup
+    // file's grant checked by the fetch is still here to spend at the end.
     let _step = begin_step(state)?;
 
     let root = storage::root_dir(app)?;
     let id = crate::crypto::random_hex_id();
 
-    // The download runs *before* the paths move. It is the slow half — a
-    // listing, a token refresh and a whole vault over the network — and the
-    // session of the workspace the user is looking at would otherwise be held
-    // out for all of it, taking a vault away that they never asked to leave.
+    // The fetch runs *before* the paths move. It is the slow half — a listing,
+    // a token refresh and a whole vault over the network, or a whole vault off
+    // disk — and the session of the workspace the user is looking at would
+    // otherwise be held out for all of it, taking a vault away that they never
+    // asked to leave.
     //
-    // The connection generation came with the tokens, read as one step with
-    // them, as every refresh that will be written back reads it: a disconnect
-    // landing anywhere from that read to the write below must not have its
-    // delete undone by the write.
-    let (bytes, vault_id) = setup::download(app, &mut tokens, &file_id, |vault_id| {
-        guard_other_vault(state, &root, vault_id)
-    })
-    .await?;
-    // Whatever the refresh produced has to be kept, for the reason onboarding
-    // keeps it: Google rotates refresh tokens, and a mistyped master password
-    // has to leave a retry that works. A pending account lives in memory; the
-    // open workspace's lives in its token file, which has to follow too — left
-    // on the old copy, its next run could find the refresh token retired while
-    // only the restored workspace held the live one. That write happens below,
-    // in the same step as the lease.
-    if account == Account::Pending {
-        setup::replace_pending_tokens(state, tokens.clone())?;
-    }
+    // An account's connection generation came with its tokens, read as one
+    // step with them, as every refresh that will be written back reads it: a
+    // disconnect landing anywhere from that read to the write below must not
+    // have its delete undone by the write.
+    let (bytes, filed_as) = source.fetch(app, state, &root).await?;
 
     // As `workspace_create` takes them, and for the same reasons: one step
     // under the lock, the session kept rather than dropped so a failure can put
@@ -592,22 +721,33 @@ async fn restore_workspace(
     let (previous_active, previous) = {
         let _paths = state.workspace_lock.lock().unwrap();
         guard_sync_idle(state)?;
-        if let Account::Open { generation } = account {
+        if let Source::Account {
+            tokens,
+            account: Account::Open { generation },
+            ..
+        } = &source
+        {
             let cryptor = state.session.lock().unwrap().cryptor()?;
-            if !sync::persist_tokens_if_current(app, &cryptor, &tokens, generation)? {
+            if !sync::persist_tokens_if_current(app, &cryptor, tokens, *generation)? {
                 return Err(Error::Other(disconnected_mid_restore_error(
                     tokens.provider,
                 )));
             }
         }
         let lease = state.session.lock().unwrap().take_out()?;
-        if matches!(account, Account::Open { generation } if sync::connection_generation(app) != generation)
+        if let Source::Account {
+            tokens,
+            account: Account::Open { generation },
+            ..
+        } = &source
         {
-            // The paths have not moved yet, so the session goes straight back.
-            state.session.lock().unwrap().restore(lease);
-            return Err(Error::Other(disconnected_mid_restore_error(
-                tokens.provider,
-            )));
+            if sync::connection_generation(app) != *generation {
+                // The paths have not moved yet, so the session goes straight back.
+                state.session.lock().unwrap().restore(lease);
+                return Err(Error::Other(disconnected_mid_restore_error(
+                    tokens.provider,
+                )));
+            }
         }
         let active = std::mem::replace(&mut *state.active_workspace.lock().unwrap(), id.clone());
         (active, lease)
@@ -615,15 +755,20 @@ async fn restore_workspace(
 
     // Kept past the restore: it is proved against the vault password once the
     // pack has opened, and then tried against the account's *other* vaults —
-    // the ones it opens too are added beside this one (`commands::autojoin`).
+    // the ones it opens too are added beside this one (`commands::autojoin`,
+    // which has nothing to try for a workspace that came with no account).
     let join = password.clone();
-    let restored = restore_vault_in(app, &root, &id, bytes, password, &vault_id, &tokens)
+    let restored = restore_vault_in(app, &root, &id, bytes, password, filed_as, source.tokens())
         .await
-        .and_then(|(key, store, entries)| {
+        .and_then(|(key, store, entries, vault_id)| {
+            // A backup file says which vault it is only now, once its pack has
+            // opened; one this device already holds is turned away here, and
+            // unwound below like any other failed restore.
+            guard_restored_vault(&previous, &previous_active, &root, &vault_id)?;
             let name = settle_name(&store, name, &vault_id)?;
-            Ok((key, store, entries, name))
+            Ok((key, store, entries, name, vault_id))
         });
-    let (key, store, entries, name) = match restored {
+    let (key, store, entries, name, vault_id) = match restored {
         Ok(restored) => restored,
         Err(e) => {
             // Leave no trace of a workspace that never opened — the token file
@@ -650,7 +795,7 @@ async fn restore_workspace(
                 agents: false,
                 server: None,
             };
-            return install_closed(state, &root, workspace, previous_active, previous, account);
+            return install_closed(state, &root, workspace, previous_active, previous, &source);
         }
         Err(e) => {
             drop(store);
@@ -666,9 +811,10 @@ async fn restore_workspace(
         registry.workspaces.push(Workspace {
             id: id.clone(),
             name: Some(name),
-            // Known now, and this workspace arrives syncing: the record that
-            // turns away a second restore of the same pack is made with the
-            // first, not left to the sync that follows.
+            // Known now: the record that turns away a second restore of the
+            // same vault is made with the first, not left to a sync that
+            // follows — and a workspace restored from a file has no sync to
+            // follow until it is connected.
             vault_id: Some(vault_id.clone()),
             item_count: None,
             color: None,
@@ -686,22 +832,21 @@ async fn restore_workspace(
         return Err(e);
     }
 
-    // The account belongs to the new workspace now: its token file is on disk,
-    // sealed under the key above, and the registry names the vault it is in.
-    // Dropping the in-memory copy is what stops a later restore from silently
-    // adopting it — and it goes *before* the adopt below, because a lock that
-    // wins there is not a failure of the restore, and must not leave the
-    // credentials pending as if it were.
-    if account == Account::Pending {
-        setup::take_pending(state);
-    }
+    // The workspace exists now: an account it came with is sealed under the key
+    // above, and the registry names the vault it is in. What the restore came
+    // from is let go of here — *before* the adopt below, because a lock that
+    // wins there is not a failure of the restore, and must not leave a pending
+    // account or a file's grant standing as if it were.
+    source.spend(state);
 
     // The restored vault continues the session the previous one was taken from,
-    // and it arrives connected. A lock that landed while the lease was out still
-    // wins — the workspace exists and is recorded, and the next unlock opens it.
+    // connected if it came with an account. A lock that landed while the lease
+    // was out still wins — the workspace exists and is recorded, and the next
+    // unlock opens it.
+    let syncing = source.tokens().is_some();
     let material = Zeroizing::new(key.biometric_material().to_vec());
     let (_, _, _, claim) = previous.split();
-    let Some(opened) = crate::session::continue_lease(app, claim, key, store, true) else {
+    let Some(opened) = crate::session::continue_lease(app, claim, key, store, syncing) else {
         return Err(Error::Locked);
     };
     crate::credential_identities::publish(app);
@@ -709,17 +854,17 @@ async fn restore_workspace(
     super::autojoin::with_password(app, join);
     Ok(UnlockResult {
         entries,
-        sync_configured: true,
+        sync_configured: syncing,
         session: opened.into(),
     })
 }
 
 /// The end of a restore whose pack opened with a password that is not the vault
-/// password: the lockbox is kept — recorded in the registry, its account sealed
-/// inside it — but closed and not sealed under the app key, and the workspace
-/// the user was in comes back as it was. The refusal names the lockbox, so the
-/// frontend can ask for the vault password and move it over
-/// (`workspace_adopt_vault_password`) without downloading it again.
+/// password: the lockbox is kept — recorded in the registry, any account it
+/// came with sealed inside it — but closed and not sealed under the app key,
+/// and the workspace the user was in comes back as it was. The refusal names
+/// the lockbox, so the frontend can ask for the vault password and move it over
+/// (`workspace_adopt_vault_password`) without fetching it again.
 ///
 /// A registry that will not take it is a failed restore like any other: the
 /// files go, and its error is the answer.
@@ -729,7 +874,7 @@ fn install_closed(
     workspace: Workspace,
     previous_active: String,
     previous: Lease,
-    account: Account,
+    source: &Source<'_>,
 ) -> Result<UnlockResult> {
     let id = workspace.id.clone();
     let recorded = update_registry(state, root, |registry| {
@@ -741,10 +886,9 @@ fn install_closed(
         discard(root, &id);
         return Err(e);
     }
-    // The account lives inside the lockbox now, as after any restore.
-    if account == Account::Pending {
-        setup::take_pending(state);
-    }
+    // Installed, closed or not: what it came from is let go of, as after any
+    // restore.
+    source.spend(state);
     Err(Error::VaultPasswordRequired { workspace_id: id })
 }
 
@@ -1145,46 +1289,77 @@ async fn create_vault_in(
 
 // Everything that turns the chosen pack into a workspace on this device, off
 // the command thread: Argon2id, a SQLCipher open and three file writes are all
-// blocking work.
+// blocking work. The vault id the workspace answers to comes back with it (see
+// [`install_pack`]).
 //
 // `restore_at` is handed the new workspace's paths outright, since its core runs
-// without an `AppHandle`. The token file is not: `persist_tokens` resolves
-// through whichever workspace is active, which is why the paths are repointed
-// before this runs — that is what puts the account inside the new workspace
-// rather than beside the old one's.
+// without an `AppHandle`. The token file of a pack that came with an account is
+// not: `persist_tokens` resolves through whichever workspace is active, which is
+// why the paths are repointed before this runs — that is what puts the account
+// inside the new workspace rather than beside the old one's.
 async fn restore_vault_in(
     app: &AppHandle,
     root: &Path,
     id: &str,
     bytes: Vec<u8>,
     password: Zeroizing<String>,
-    vault_id: &str,
-    tokens: &sync::Tokens,
-) -> Result<(VaultKey, SqliteStore, Vec<EntryMetaDto>)> {
+    filed_as: Option<String>,
+    tokens: Option<&sync::Tokens>,
+) -> Result<(VaultKey, SqliteStore, Vec<EntryMetaDto>, String)> {
     let dir = workspace::dir_of(root, id);
     crate::store::create_private_dir(&dir)?;
 
     let app = app.clone();
-    let vault_id = vault_id.to_string();
-    let tokens = tokens.clone();
+    let tokens = tokens.cloned();
     super::blocking(move || {
-        let (key, store) = restore::restore_at(
-            &dir.join(storage::DB_FILE),
-            &dir.join(storage::KDF_SIDECAR_FILE),
-            &bytes,
-            &password,
-        )?;
-        // The file name is how the account addresses this vault, and it is
-        // authoritative over whatever the snapshot carries — the same stamp
-        // onboarding applies, for the same reason (`commands::setup::adopt`).
-        crate::store::identity::adopt_vault_id(&store, &vault_id).map_err(store_err)?;
+        let (key, store, entries, vault_id) =
+            install_pack(&dir, &bytes, &password, filed_as.as_deref())?;
         // The listing before the tokens, as `adopt` orders them: nothing is
         // sealed under a key that a failure would then discard.
-        let entries = list_metas(&store)?;
-        sync::persist_tokens(&app, &key.cryptor(), &tokens)?;
-        Ok((key, store, entries))
+        if let Some(tokens) = tokens {
+            sync::persist_tokens(&app, &key.cryptor(), &tokens)?;
+        }
+        Ok((key, store, entries, vault_id))
     })
     .await
+}
+
+// The pack in `bytes` restored into `dir` under `password` and made the vault
+// it is, with its listing for the unlock result. Blocking.
+//
+// Which vault that is depends on where the pack came from. One filed in an
+// account answers to the id its file name gives it (`filed_as`), which is how
+// the account addresses it and is authoritative over whatever the snapshot
+// carries — the same stamp onboarding applies, for the same reason
+// (`commands::setup::adopt`). A backup file is filed under nothing: it is the
+// vault its snapshot says it is. One from before vaults carried ids is given
+// one here, as every vault made on this device is born with one
+// (`session::create_vault`): the registry records it, and a lockbox with none
+// could never sync beside an account's other vaults (`sync::plan_vault_id`).
+fn install_pack(
+    dir: &Path,
+    bytes: &[u8],
+    password: &str,
+    filed_as: Option<&str>,
+) -> Result<(VaultKey, SqliteStore, Vec<EntryMetaDto>, String)> {
+    let (key, store) = restore::restore_at(
+        &dir.join(storage::DB_FILE),
+        &dir.join(storage::KDF_SIDECAR_FILE),
+        bytes,
+        password,
+    )?;
+    let vault_id = match filed_as {
+        Some(vault_id) => {
+            identity::adopt_vault_id(&store, vault_id).map_err(store_err)?;
+            vault_id.to_string()
+        }
+        None => match identity::vault_id(&store).map_err(store_err)? {
+            Some(vault_id) => vault_id,
+            None => identity::assign_vault_id(&store).map_err(store_err)?,
+        },
+    };
+    let entries = list_metas(&store)?;
+    Ok((key, store, entries, vault_id))
 }
 
 // What the restored workspace is called.
@@ -1225,19 +1400,46 @@ pub(crate) fn guard_other_vault(state: &AppState, root: &Path, vault_id: &str) -
     let session = state.session.lock().unwrap();
     // Locked, or held out by another whole-vault operation: nothing to compare
     // against live, and the lease below is what will turn that away.
-    if let Ok(store) = session.store() {
-        if crate::store::identity::vault_id(store)
-            .map_err(store_err)?
-            .as_deref()
-            == Some(vault_id)
-        {
-            return Err(Error::VaultAlreadyOpen);
-        }
-    }
+    let open = match session.store() {
+        Ok(store) => identity::vault_id(store).map_err(store_err)?,
+        Err(_) => None,
+    };
     drop(session);
 
     let active = state.active_workspace.lock().unwrap().clone();
-    if Registry::load(root).holder_of(vault_id, &active).is_some() {
+    refuse_held(open.as_deref(), &active, root, vault_id)
+}
+
+/// [`guard_other_vault`] once the pack has opened, which is the first moment a
+/// backup file says which vault it is: its id is inside the encrypted snapshot,
+/// where a pack in an account carries one in its file name.
+///
+/// By then the open workspace's session is out on `previous` and the paths
+/// point at the new workspace, so the open workspace — `previous_active` — is
+/// asked live through the store the lease holds, and every other one through
+/// the registry, exactly as `guard_other_vault` asks them. A pack from an
+/// account was asked the same before its download, under the id it is stamped
+/// with, so this turns away nothing there that was let through then.
+///
+/// What the registry does not record, this cannot see: a locked workspace that
+/// never synced has no vault id there. For an account that misses nothing — no
+/// pack of it exists to restore — but a file can be a backup of one, and that
+/// backup gets through.
+fn guard_restored_vault(
+    previous: &Lease,
+    previous_active: &str,
+    root: &Path,
+    vault_id: &str,
+) -> Result<()> {
+    let open = identity::vault_id(&previous.store).map_err(store_err)?;
+    refuse_held(open.as_deref(), previous_active, root, vault_id)
+}
+
+// The refusal both guards make: `vault_id` is the open workspace's own — `open`,
+// read from its database — or recorded in the registry against any workspace
+// other than `active`, the open one, whose record the live read stands in for.
+fn refuse_held(open: Option<&str>, active: &str, root: &Path, vault_id: &str) -> Result<()> {
+    if open == Some(vault_id) || Registry::load(root).holder_of(vault_id, active).is_some() {
         return Err(Error::VaultAlreadyOpen);
     }
     Ok(())
@@ -1256,7 +1458,7 @@ pub(crate) fn discard(root: &Path, id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::identity;
+    use crate::store::{identity, VaultStore};
     use crate::workspace::PRIMARY_ID;
 
     fn store() -> SqliteStore {
@@ -1519,7 +1721,11 @@ mod tests {
             workspace,
             PRIMARY_ID.into(),
             previous,
-            Account::Open { generation: 0 },
+            &Source::Account {
+                file_id: "drive-file-1".into(),
+                tokens: sync::Tokens::default(),
+                account: Account::Open { generation: 0 },
+            },
         );
 
         assert!(matches!(
@@ -1531,6 +1737,307 @@ mod tests {
         assert_eq!(registry.active, PRIMARY_ID, "not the one the app opens");
         assert_eq!(*state.active_workspace.lock().unwrap(), PRIMARY_ID);
         assert!(state.session.lock().unwrap().is_unlocked());
+    }
+
+    const BACKUP_PASSWORD: &str = "correct horse battery staple";
+
+    // A `.rowel` as `export_vault` writes one — a vault with one entry, packed
+    // with its descriptor — under a descriptor cheap enough to derive in a
+    // test, carrying `vault_id` when it has one.
+    fn backup_of(vault_id: Option<&str>) -> PathBuf {
+        let dir = tmp_root();
+        let params = KdfParams::argon2id(b"salt-backup-0123456789012345678", 256, 1, 1);
+        let key = VaultKey::Argon2 {
+            master: crate::crypto::derive(BACKUP_PASSWORD.as_bytes(), &params).unwrap(),
+        };
+        let source = SqliteStore::open(&dir.join("source.db"), &*key.sqlcipher_key()).unwrap();
+        if let Some(vault_id) = vault_id {
+            identity::adopt_vault_id(&source, vault_id).unwrap();
+        }
+        identity::set_vault_name(&source, "Work", 1_700_000_000_000).unwrap();
+        source.upsert(&entry("e1")).unwrap();
+        let bytes = sync::pack::pack_store(
+            &source,
+            &*key.sqlcipher_key(),
+            &params.to_json().unwrap(),
+            &dir.join("scratch"),
+        )
+        .unwrap();
+        let path = dir.join("Rowel backup 2026-11-23.rowel");
+        fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    fn entry(id: &str) -> crate::store::Record {
+        crate::store::Record {
+            id: id.into(),
+            kind: "login".into(),
+            title: "Example".into(),
+            tags: "[]".into(),
+            url_host: "example.com".into(),
+            created_at: 100,
+            updated_at: 200,
+            deleted_at: None,
+            payload: b"sealed".to_vec(),
+            card_brand: None,
+            favorite: false,
+            has_passkey: false,
+            file_name: None,
+            var_count: None,
+            username: None,
+            doc_type: None,
+            doc_country: None,
+        }
+    }
+
+    // The open primary, holding vault `vault_id`.
+    fn open_vault(vault_id: &str) -> AppState {
+        let store = store();
+        identity::adopt_vault_id(&store, vault_id).unwrap();
+        open_with(store)
+    }
+
+    fn chosen(path: &Path) -> PathGrants {
+        let grants = PathGrants::default();
+        grants.grant(path, Purpose::Backup);
+        grants
+    }
+
+    fn read(path: &Path, grants: &PathGrants) -> Result<Vec<u8>> {
+        tauri::async_runtime::block_on(read_backup(path, grants))
+    }
+
+    // The restore's lease and repoint, as `restore_workspace` takes them: the
+    // open session out, the paths on the new workspace `id`.
+    fn lease_for(state: &AppState, id: &str) -> (String, Lease) {
+        let lease = state.session.lock().unwrap().take_out().unwrap();
+        let active = std::mem::replace(&mut *state.active_workspace.lock().unwrap(), id.into());
+        (active, lease)
+    }
+
+    // The new workspace's directory, as `restore_vault_in` makes it.
+    fn new_dir(root: &Path, id: &str) -> PathBuf {
+        let dir = workspace::dir_of(root, id);
+        crate::store::create_private_dir(&dir).unwrap();
+        dir
+    }
+
+    // The steps a file restore takes up to the vault-password check, in its
+    // order: read the chosen file, take the lease, install the pack, ask
+    // whether this device already holds it, settle the name. The lockbox it
+    // leaves opens with the backup's password beside the open one, and is the
+    // vault the backup was taken from.
+    #[test]
+    fn a_backup_restores_as_a_second_lockbox_that_opens() {
+        let root = tmp_root();
+        let state = open_vault("a1b2");
+        let backup = backup_of(Some("cafe"));
+        let grants = chosen(&backup);
+
+        let bytes = read(&backup, &grants).unwrap();
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let dir = new_dir(&root, "c3d4");
+        let (_, store, entries, vault_id) =
+            install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+        guard_restored_vault(&previous, &previous_active, &root, &vault_id).unwrap();
+        let name = settle_name(&store, String::new(), &vault_id).unwrap();
+        drop(store);
+
+        assert_eq!(vault_id, "cafe", "the vault the backup was taken from");
+        assert_eq!(name, "Work", "under the name it carries");
+        assert_eq!(entries.len(), 1);
+        let key = verify_password_in(&dir, BACKUP_PASSWORD).unwrap();
+        let reopened = SqliteStore::open(&dir.join(storage::DB_FILE), &*key.sqlcipher_key());
+        assert_eq!(
+            identity::vault_id(&reopened.unwrap()).unwrap().as_deref(),
+            Some("cafe")
+        );
+        // Beside the open lockbox, not over it: the lease still holds that one,
+        // as it was.
+        assert_eq!(
+            identity::vault_id(&previous.store).unwrap().as_deref(),
+            Some("a1b2")
+        );
+    }
+
+    // A wrong password writes nothing that outlives the unwinding, and the
+    // lockbox the user was in comes back open. The grant stays, so the retry
+    // reads the same file without asking for it again.
+    #[test]
+    fn a_wrong_backup_password_leaves_nothing_behind_and_the_session_intact() {
+        let root = tmp_root();
+        let state = open_vault("a1b2");
+        let backup = backup_of(Some("cafe"));
+        let grants = chosen(&backup);
+
+        let bytes = read(&backup, &grants).unwrap();
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let dir = new_dir(&root, "c3d4");
+        let refused = install_pack(&dir, &bytes, "not the password", None).map(drop);
+        assert!(matches!(refused, Err(Error::InvalidPassword)));
+        discard(&root, "c3d4");
+        restore(&state, previous_active, previous);
+
+        assert!(!dir.exists());
+        assert!(!Registry::load(&root).contains("c3d4"));
+        assert!(state.session.lock().unwrap().is_unlocked());
+        assert_eq!(*state.active_workspace.lock().unwrap(), PRIMARY_ID);
+        assert!(grants.holds(&backup, Purpose::Backup));
+        assert!(read(&backup, &grants).is_ok());
+    }
+
+    // The webview's word is not a choice: a path nobody granted, or one granted
+    // for another reader, is refused before a byte of it is read.
+    #[test]
+    fn a_backup_nobody_chose_is_refused() {
+        let backup = backup_of(Some("cafe"));
+        let grants = PathGrants::default();
+        assert!(matches!(read(&backup, &grants), Err(Error::Unsupported(_))));
+
+        grants.grant(&backup, Purpose::Import);
+        assert!(matches!(read(&backup, &grants), Err(Error::Unsupported(_))));
+        assert!(
+            grants.holds(&backup, Purpose::Import),
+            "the other choice is left alone"
+        );
+    }
+
+    // Chosen, but not a file: only a regular one is read.
+    #[test]
+    fn only_a_regular_file_is_read_as_a_backup() {
+        let dir = tmp_root();
+        assert!(read(&dir, &chosen(&dir)).is_err());
+    }
+
+    // The open lockbox's own vault: the user backed up the lockbox they are
+    // looking at. Refused once the pack opens, and unwound like any failure.
+    #[test]
+    fn a_backup_of_the_open_lockbox_is_refused_and_leaves_nothing() {
+        let root = tmp_root();
+        let state = open_vault("cafe");
+        let backup = backup_of(Some("cafe"));
+        let grants = chosen(&backup);
+
+        let bytes = read(&backup, &grants).unwrap();
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let dir = new_dir(&root, "c3d4");
+        let (_, store, _, vault_id) = install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+        let refused = guard_restored_vault(&previous, &previous_active, &root, &vault_id);
+        assert!(matches!(refused, Err(Error::VaultAlreadyOpen)));
+        drop(store);
+        discard(&root, "c3d4");
+        restore(&state, previous_active, previous);
+
+        assert!(!dir.exists());
+        assert!(state.session.lock().unwrap().is_unlocked());
+        assert_eq!(*state.active_workspace.lock().unwrap(), PRIMARY_ID);
+    }
+
+    // A locked lockbox the registry records as holding the vault is refused the
+    // same way — the record the live read cannot reach.
+    #[test]
+    fn a_backup_of_a_locked_lockbox_recorded_here_is_refused() {
+        let root = tmp_root();
+        Registry {
+            active: PRIMARY_ID.into(),
+            workspaces: vec![
+                Workspace {
+                    id: PRIMARY_ID.into(),
+                    name: None,
+                    vault_id: Some("a1b2".into()),
+                    item_count: None,
+                    color: None,
+                    agents: false,
+                    server: None,
+                },
+                Workspace {
+                    id: "b2c3".into(),
+                    name: Some("Work".into()),
+                    vault_id: Some("beef".into()),
+                    item_count: None,
+                    color: None,
+                    agents: false,
+                    server: None,
+                },
+            ],
+        }
+        .save(&root)
+        .unwrap();
+        let state = open_vault("a1b2");
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+
+        assert!(matches!(
+            guard_restored_vault(&previous, &previous_active, &root, "beef"),
+            Err(Error::VaultAlreadyOpen)
+        ));
+        assert!(matches!(
+            guard_restored_vault(&previous, &previous_active, &root, "a1b2"),
+            Err(Error::VaultAlreadyOpen)
+        ));
+        assert!(guard_restored_vault(&previous, &previous_active, &root, "f00d").is_ok());
+    }
+
+    // A backup made before vaults carried ids is given one of its own, which is
+    // what the registry records for it.
+    #[test]
+    fn a_backup_with_no_vault_id_is_given_one() {
+        let root = tmp_root();
+        let bytes = fs::read(backup_of(None)).unwrap();
+        let dir = new_dir(&root, "c3d4");
+
+        let (_, store, _, vault_id) = install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+
+        assert_eq!(vault_id.len(), 32);
+        assert_eq!(identity::vault_id(&store).unwrap(), Some(vault_id));
+    }
+
+    // A pack from an account answers to the id its file name gives it, over
+    // whatever its snapshot carries — as it always has.
+    #[test]
+    fn a_pack_from_an_account_answers_to_its_file_name() {
+        let root = tmp_root();
+        let bytes = fs::read(backup_of(Some("cafe"))).unwrap();
+        let dir = new_dir(&root, "c3d4");
+
+        let (_, store, _, vault_id) =
+            install_pack(&dir, &bytes, BACKUP_PASSWORD, Some("9f3c1a2b")).unwrap();
+
+        assert_eq!(vault_id, "9f3c1a2b");
+        assert_eq!(
+            identity::vault_id(&store).unwrap().as_deref(),
+            Some("9f3c1a2b")
+        );
+    }
+
+    // Installed, open or closed, the file has done what it was chosen for: its
+    // grant is spent, and reading it again needs the user's say.
+    #[test]
+    fn a_lockbox_restored_closed_from_a_backup_spends_its_grant() {
+        let root = tmp_root();
+        let state = open_vault("a1b2");
+        let backup = backup_of(Some("cafe"));
+        let grants = chosen(&backup);
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let workspace = Workspace {
+            id: "c3d4".into(),
+            name: Some("Work".into()),
+            vault_id: Some("cafe".into()),
+            item_count: None,
+            color: None,
+            agents: false,
+            server: None,
+        };
+        let source = Source::File {
+            path: backup.clone(),
+            grants: &grants,
+        };
+
+        let refused = install_closed(&state, &root, workspace, previous_active, previous, &source);
+
+        assert!(matches!(refused, Err(Error::VaultPasswordRequired { .. })));
+        assert!(Registry::load(&root).contains("c3d4"));
+        assert!(!grants.holds(&backup, Purpose::Backup));
+        assert!(matches!(read(&backup, &grants), Err(Error::Unsupported(_))));
     }
 
     // The proof a delete and a move ask of a lockbox, under its own backoff: a
