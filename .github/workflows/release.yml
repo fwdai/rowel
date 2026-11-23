@@ -52,6 +52,10 @@ on:
 
 jobs:
   release:
+    # The job that holds the signing secrets. The `release` environment can
+    # keep them to itself, behind a branch rule and a reviewer (one-time setup
+    # in docs/releasing.md).
+    environment: release
     permissions:
       contents: write # create/update the GitHub release + upload assets
       id-token: write # OIDC token for SLSA build-provenance attestation (T-CI-4)
@@ -151,8 +155,8 @@ jobs:
           mkdir -p src-tauri/binaries
           case "${{ matrix.platform }}" in
             macos-latest)
-              cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
-              cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
+              cargo build --release --locked -p rowel-cli --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+              cargo build --release --locked -p rowel-cli --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
               lipo -create \
                 src-tauri/target/aarch64-apple-darwin/release/rowel-cli \
                 src-tauri/target/x86_64-apple-darwin/release/rowel-cli \
@@ -164,7 +168,7 @@ jobs:
               cp src-tauri/target/x86_64-apple-darwin/release/rowel-cli src-tauri/binaries/rowel-cli-x86_64-apple-darwin
               ;;
             ubuntu-latest)
-              cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml
+              cargo build --release --locked -p rowel-cli --manifest-path src-tauri/Cargo.toml
               cp src-tauri/target/release/rowel-cli src-tauri/binaries/rowel-cli-x86_64-unknown-linux-gnu
               ;;
             windows-latest)
@@ -175,7 +179,7 @@ jobs:
               # Perl, the one pwsh steps (and tauri-action) find.
               export OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe
               test -x "$OPENSSL_SRC_PERL" || { echo "::error::no Strawberry Perl at $OPENSSL_SRC_PERL"; exit 1; }
-              cargo build --release -p rowel-cli --manifest-path src-tauri/Cargo.toml
+              cargo build --release --locked -p rowel-cli --manifest-path src-tauri/Cargo.toml
               cp src-tauri/target/release/rowel-cli.exe src-tauri/binaries/rowel-cli-x86_64-pc-windows-msvc.exe
               ;;
           esac
@@ -190,13 +194,15 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # macOS code signing (Developer ID Application cert) + notarization.
           # The identity string is the certificate's name, not a secret; it is
-          # the output of `security find-identity -v -p codesigning`.
-          APPLE_CERTIFICATE: ${{ secrets.CERTIFICATES_P12 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATES_P12_PASSWORD }}
+          # the output of `security find-identity -v -p codesigning`. Only the
+          # macOS leg gets the certificate and the Apple ID: the bundler reads
+          # them in macOS-only code, and the other legs get empty values.
+          APPLE_CERTIFICATE: ${{ matrix.platform == 'macos-latest' && secrets.CERTIFICATES_P12 || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.CERTIFICATES_P12_PASSWORD || '' }}
           APPLE_SIGNING_IDENTITY: 'Developer ID Application: Oleksandr Chaplinsky (UFBL3F444A)'
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_ID_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
           # Google Drive sync OAuth client, read via option_env! at compile time.
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -212,7 +218,9 @@ jobs:
           prerelease: false
           uploadUpdaterJson: true
           tauriScript: bun run tauri
-          args: ${{ matrix.args }}
+          # The Tauri CLI hands what follows `--` to cargo: every leg builds
+          # from Cargo.lock as committed, as CI does.
+          args: ${{ matrix.args }} -- --locked
 
       # The check the previous two releases needed: actually start the signed
       # app. An entitlement the profile does not grant makes AMFI refuse the
@@ -285,9 +293,9 @@ jobs:
         if: matrix.platform != 'ubuntu-latest'
         shell: bash
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_ID_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
         run: |
           set -euo pipefail
           VERSION=$(jq -r .version src-tauri/tauri.conf.json)
@@ -436,18 +444,36 @@ jobs:
           TAG="v$(jq -r .version src-tauri/tauri.conf.json)"
           gh release upload "$TAG" latest-assets/* extra-assets/* --clobber
 
-      # --- CycloneDX SBOM (T-CI-4) ----------------------------------------
-      # Generated once, on Linux, and attached to the release. The Rust SBOM is
-      # authoritative (cargo-cyclonedx over the full Cargo.lock); the JS SBOM is
-      # best-effort and never fails the release. Both tools are pinned to exact
-      # versions: they run after the installers are uploaded and attested, with
-      # this job's contents: write token in scope.
+  # --- CycloneDX SBOM (T-CI-4) ----------------------------------------
+  # Generated once, on Linux, and attached to the release. The Rust SBOM is
+  # authoritative (cargo-cyclonedx over the full Cargo.lock); the JS SBOM is
+  # best-effort and never fails the release. Both tools are pinned to exact
+  # versions, but cdxgen's own npm dependencies are not, so the two run in a
+  # job of their own: a read-only token, no secrets, and nothing written to
+  # the release. `attach-sbom` puts the result on the draft.
+  sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      # cdxgen runs under the same Node (.nvmrc) as the release job's
+      # extension build.
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
       - name: Install cargo-cyclonedx
-        if: matrix.platform == 'ubuntu-latest'
         run: cargo install cargo-cyclonedx --version 0.5.9 --locked
 
       - name: Generate CycloneDX SBOMs
-        if: matrix.platform == 'ubuntu-latest'
         run: |
           mkdir -p sbom
           cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
@@ -455,13 +481,41 @@ jobs:
           npx --yes @cyclonedx/cdxgen@11.11.0 -t npm -o sbom/rowel-js.cdx.json . \
             || echo "JS SBOM generation skipped"
 
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
+
+  # Attaches the SBOMs to the draft, which exists once the release job is
+  # done. This job holds the write token and handles files from `sbom`, so it
+  # runs nothing of theirs: the checkout is only read for the version, as in
+  # `checksums`, and the two SBOMs are uploaded by name, so the artifact
+  # cannot replace any other asset.
+  attach-sbom:
+    needs: [release, sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom
+          path: sbom
+
       - name: Attach SBOMs to the release
-        if: matrix.platform == 'ubuntu-latest'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="v$(jq -r .version src-tauri/tauri.conf.json)"
-          gh release upload "$TAG" sbom/* --clobber
+          FILES=(sbom/rowel-rust.cdx.json)
+          if [ -f sbom/rowel-js.cdx.json ]; then FILES+=(sbom/rowel-js.cdx.json); fi
+          gh release upload "$TAG" "${FILES[@]}" --clobber
 
   # The command line tool on its own for Linux, x86_64 and arm64, built here
   # rather than taken from the release job's sidecar: that one is built on
