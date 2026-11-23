@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next'
 import { useApp, openSettings, openPasswordPrompt } from '@/store'
-import { syncPasswordChangedRemotely } from '@/api/sync'
 import { cx } from '@/utils/cx'
 import Tooltip from '@/components/elements/Tooltip'
 import { CloudGlyph, DiskGlyph, CheckGlyph, AlertGlyph, NearbyGlyph } from '../../icons'
@@ -35,7 +34,8 @@ const BADGE: Partial<Record<SyncTone, string>> = {
 //
 // One failure is answered here rather than in Settings: a password changed on
 // another device needs only the new password typed in, so the chip opens that
-// prompt directly, in either shell.
+// prompt directly, in either shell. Which failure that is, is `syncView`'s to
+// say (`fix`), as it is for every surface that sends a failure somewhere.
 interface Props {
   className?: string
   onClick?: () => void
@@ -47,7 +47,7 @@ export default function SyncIndicator({ className, onClick }: Props) {
   const { t } = useTranslation()
   const sync = useApp(state => state.sync)
   const nearby = useApp(state => state.nearby)
-  const { tone, message, detail, adopt } = syncView(sync, nearby)
+  const { tone, message, detail, fix } = syncView(sync, nearby)
   // The backend's message wins when there is one; it is already prose, in no
   // catalogue, and translating it is not on offer.
   const label = detail ?? t(message)
@@ -65,7 +65,7 @@ export default function SyncIndicator({ className, onClick }: Props) {
         data-tone={tone}
         aria-label={label}
         onClick={
-          adopt || syncPasswordChangedRemotely(sync)
+          fix === 'password'
             ? openPasswordPrompt
             : (onClick ?? (() => openSettings('sync')))
         }

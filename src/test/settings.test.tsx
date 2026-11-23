@@ -224,6 +224,48 @@ describe('Settings › sync overview', () => {
     expect(screen.getByTestId('settings-sync-error')).toHaveTextContent('Dropbox API 503')
   })
 
+  // A failure whose controls are elsewhere is sent there, not to a page that
+  // could only repeat the sentence.
+  it.each<[NonNullable<SyncStatus['errorKind']>]>([
+    ['vaultDeletedRemotely'],
+    ['vaultUnderRetiredPassword']
+  ])('sends a %s failure to Lockboxes, where its choices are', async errorKind => {
+    await openSync()
+    act(() => report({ configured: true, error: 'stopped', errorKind }))
+
+    await userEvent.click(screen.getByTestId('settings-sync-review'))
+    expect(useUi.getState().settingsSection).toBe('workspaces')
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+  })
+
+  it('asks for the new master password when another device changed it', async () => {
+    await openSync()
+    act(() =>
+      report({ configured: true, error: 'changed', errorKind: 'passwordChangedRemotely' })
+    )
+
+    await userEvent.click(screen.getByTestId('settings-sync-review'))
+    expect(useUi.getState().passwordPrompt).toBe(true)
+    expect(useUi.getState().settingsSection).toBe('sync')
+  })
+
+  // `openSettings` is called from outside the modal (a backup the OS opened
+  // goes to Import), and knows nothing of the page the modal is on.
+  it('leaves a page when something outside moves Settings to another section', async () => {
+    await openSync()
+    await userEvent.click(screen.getByTestId('settings-sync-open-backup'))
+    expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+
+    act(() => openSettings('import'))
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
+
+    // And it is not waiting there on the way back.
+    act(() => openSettings('sync'))
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-sync-open-backup')).toBeInTheDocument()
+  })
+
   it('opens a page per row and comes back to the overview', async () => {
     await openSync()
     await userEvent.click(screen.getByTestId('settings-sync-open-cloud'))

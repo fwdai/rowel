@@ -3,9 +3,9 @@ import { useUi, type Section } from '@/store'
 import {
   SectionNavProvider,
   SubpageProvider,
-  useSubpageState,
   type SectionNav
 } from '../../Sidebar/Settings/sectionNav'
+import { useSubpageState } from '../../Sidebar/Settings/useSubpageState'
 import Root from './Root'
 import Pane from './Pane'
 import Stack from '../Stack'
@@ -37,7 +37,7 @@ export default function Settings() {
   const [section, setSection] = useState<Section | null>(null)
   const locked = useUi(state => state.settingsLocked)
   // A sub-page is one more pane on top of the section's, held the same way.
-  const nav = useSubpageState()
+  const nav = useSubpageState(section)
   const go: SectionNav = (next, page) => {
     if (useUi.getState().settingsLocked) return
     setSection(next)

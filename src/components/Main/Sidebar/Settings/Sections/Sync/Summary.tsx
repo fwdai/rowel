@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { useApp } from '@/store'
+import { useApp, openPasswordPrompt } from '@/store'
 import { syncProvider } from '@/api/sync'
 import { providerName } from '@/api/provider'
 import { cx } from '@/utils/cx'
@@ -8,15 +8,17 @@ import ProviderMark from '@/components/elements/ProviderMark'
 import { CARD, HERO_WASH, META } from '@/components/elements/tokens'
 import { DiskGlyph, NearbyGlyph } from '@/components/Main/icons'
 import { syncView } from '@/components/Main/Header/SyncIndicator/state'
-import { useSubpage } from '../../sectionNav'
+import { useSectionNav, useSubpage } from '../../sectionNav'
 
 // Where the vault stands, above the ways to change it: the header chip's own
-// verdict (`syncView`) spelled out, so the two can never disagree. A vault
-// that syncs nowhere is a state like any other, and is offered the one thing
-// that then stands between a lost device and a lost vault.
+// verdict (`syncView`) spelled out, so the two can never disagree — on what is
+// wrong, or on where it is put right. A vault that syncs nowhere is a state
+// like any other, and is offered the one thing that then stands between a lost
+// device and a lost vault.
 export default function Summary() {
   const { t } = useTranslation()
   const { open } = useSubpage()
+  const go = useSectionNav()
   const sync = useApp(state => state.sync)
   const nearby = useApp(state => state.nearby)
   const view = syncView(sync, nearby)
@@ -46,6 +48,14 @@ export default function Summary() {
               'Your devices on the same network sync directly while {{appName}} is open and unlocked on both. Nothing leaves your network.'
             )
 
+  // To where the failure's own controls are, which is not always a page of
+  // this section (see `SyncFix`).
+  const review = () => {
+    if (view.fix === 'password') openPasswordPrompt()
+    else if (view.fix === 'lockboxes') go('workspaces')
+    else open({ key: view.fix === 'nearby' ? 'sync-nearby' : 'sync-cloud' })
+  }
+
   return (
     <section className="mb-7">
       <div
@@ -74,7 +84,7 @@ export default function Summary() {
                 size="md"
                 className="flex-none"
                 testid="settings-sync-review"
-                onClick={() => open({ key: provider ? 'sync-cloud' : 'sync-nearby' })}
+                onClick={review}
               >
                 {t('Review')}
               </Button>

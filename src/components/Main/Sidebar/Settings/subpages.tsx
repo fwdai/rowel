@@ -23,7 +23,7 @@ export type Subpage =
 type Key = Subpage['key']
 
 interface Definition<K extends Key> {
-  /** The section it sits under: what the phone's Back is labelled with. */
+  /** The section it sits under: where it shows, and what the phone's Back is labelled with. */
   crumb: Section
   title: TKey
   description: TKey
@@ -85,5 +85,8 @@ export const subpageTitleOf = (subpage: Subpage): string => t(SUBPAGES[subpage.k
 export const subpageDescriptionOf = (subpage: Subpage): string =>
   t(SUBPAGES[subpage.key].description)
 
+/** The section a sub-page sits under, which is the only one it is shown in. */
+export const subpageSectionOf = (subpage: Subpage): Section => SUBPAGES[subpage.key].crumb
+
 /** The parent section's title, as the phone's Back label. */
-export const subpageCrumbOf = (subpage: Subpage): string => titleOf(SUBPAGES[subpage.key].crumb)
+export const subpageCrumbOf = (subpage: Subpage): string => titleOf(subpageSectionOf(subpage))
