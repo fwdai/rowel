@@ -668,7 +668,6 @@
   "Bring in a lockbox that already exists in your cloud storage": "Dodaj skrytkę, która jest już w Twojej chmurze",
   "Add a lockbox": "Dodaj skrytkę",
   "Create a new one, or restore one from a cloud account or a backup": "Utwórz nową albo przywróć ją z konta w chmurze lub kopii zapasowej",
-  "Start an empty one, or bring in one you already have.": "Zacznij od pustej albo dodaj tę, którą już masz.",
   "In your {{provider}} account": "Na Twoim koncie {{provider}}",
   "Added “{{name}}” from your {{provider}} account": "Dodano „{{name}}” z Twojego konta {{provider}}",
   "Not on this device yet": "Jeszcze nie na tym urządzeniu",

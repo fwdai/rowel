@@ -32,7 +32,7 @@ export interface SubpageNav {
 }
 
 /**
- * A step below a section ("Add a lockbox" under Lockboxes), opened by the
+ * A step below a section ("New lockbox" under Lockboxes), opened by the
  * section's own body or by a sub-page of it. Each shell holds them in local
  * state, not the store: the store's section persists so the modal reopens
  * where it was left, and a form half-filled last time is not a place to reopen

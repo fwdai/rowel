@@ -648,7 +648,6 @@
   "Bring in a lockbox that already exists in your cloud storage": "Bulut depolamanızda zaten bulunan bir kilitli kutuyu buraya ekleyin",
   "Add a lockbox": "Kilitli kutu ekle",
   "Create a new one, or restore one from a cloud account or a backup": "Yeni bir tane oluşturun ya da bir bulut hesabından veya yedekten geri yükleyin",
-  "Start an empty one, or bring in one you already have.": "Boş bir kutuyla başlayın ya da zaten sahip olduğunuz birini ekleyin.",
   "In your {{provider}} account": "{{provider}} hesabında",
   "Added “{{name}}” from your {{provider}} account": "“{{name}}”, {{provider}} hesabından eklendi",
   "Not on this device yet": "Henüz bu cihazda değil",

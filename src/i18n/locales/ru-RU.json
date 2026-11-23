@@ -668,7 +668,6 @@
   "Bring in a lockbox that already exists in your cloud storage": "Добавьте ячейку, которая уже есть на вашем облачном диске",
   "Add a lockbox": "Добавить ячейку",
   "Create a new one, or restore one from a cloud account or a backup": "Создайте новую или восстановите из облачного аккаунта или копии",
-  "Start an empty one, or bring in one you already have.": "Начните с пустой или добавьте ту, что у вас уже есть.",
   "In your {{provider}} account": "В вашем аккаунте {{provider}}",
   "Added “{{name}}” from your {{provider}} account": "Добавлено «{{name}}» из вашего аккаунта {{provider}}",
   "Not on this device yet": "Ещё нет на этом устройстве",

@@ -655,7 +655,6 @@
   "Bring in a lockbox that already exists in your cloud storage": "Bring in a lockbox that already exists in your cloud storage",
   "Add a lockbox": "Add a lockbox",
   "Create a new one, or restore one from a cloud account or a backup": "Create a new one, or restore one from a cloud account or a backup",
-  "Start an empty one, or bring in one you already have.": "Start an empty one, or bring in one you already have.",
   "In your {{provider}} account": "In your {{provider}} account",
   "Added “{{name}}” from your {{provider}} account": "Added “{{name}}” from your {{provider}} account",
   "Not on this device yet": "Not on this device yet",

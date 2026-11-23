@@ -666,7 +666,6 @@
   "Bring in a lockbox that already exists in your cloud storage": "Ajouter un coffret qui existe déjà dans votre stockage cloud",
   "Add a lockbox": "Ajouter un coffret",
   "Create a new one, or restore one from a cloud account or a backup": "En créer un nouveau, ou en restaurer un depuis un compte cloud ou une sauvegarde",
-  "Start an empty one, or bring in one you already have.": "Commencez par un coffret vide, ou ajoutez-en un que vous avez déjà.",
   "In your {{provider}} account": "Dans votre compte {{provider}}",
   "Added “{{name}}” from your {{provider}} account": "« {{name}} » ajouté depuis votre compte {{provider}}",
   "Not on this device yet": "Pas encore sur cet appareil",

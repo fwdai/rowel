@@ -638,7 +638,6 @@
   "Bring in a lockbox that already exists in your cloud storage": "添加你云存储中已有的保管箱",
   "Add a lockbox": "添加保管箱",
   "Create a new one, or restore one from a cloud account or a backup": "新建一个，或从云账号或备份恢复",
-  "Start an empty one, or bring in one you already have.": "从空白保管箱开始，或添加你已有的保管箱。",
   "In your {{provider}} account": "在你的 {{provider}} 账号中",
   "Added “{{name}}” from your {{provider}} account": "“{{name}}”已从你的 {{provider}} 账号添加",
   "Not on this device yet": "尚未在此设备上",

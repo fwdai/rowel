@@ -1,7 +1,6 @@
 import type { ComponentType } from 'react'
 import { t } from '@/i18n'
 import type { TKey } from '@/i18n'
-import AddWorkspace from './Sections/Workspaces/AddWorkspace/Subpage'
 import NewWorkspace from './Sections/Workspaces/NewWorkspace/Subpage'
 import EditWorkspace from './Sections/Workspaces/EditWorkspace/Subpage'
 import DeleteWorkspace from './Sections/Workspaces/DeleteWorkspace/Subpage'
@@ -12,7 +11,6 @@ import Cloud from './Sections/Sync/Cloud/Subpage'
 import Backup from './Sections/Sync/Backup/Subpage'
 
 export type Subpage =
-  | { key: 'add-workspace' }
   | { key: 'new-workspace' }
   | { key: 'edit-workspace'; id: string }
   | { key: 'delete-workspace'; id: string }
@@ -36,11 +34,6 @@ interface Definition<K extends Key> {
 // `SECTIONS` is for the sections themselves. None names a section: a page
 // shows under whichever one it was opened from (see `useSubpageState`).
 export const SUBPAGES: { [K in Key]: Definition<K> } = {
-  'add-workspace': {
-    title: 'Add a lockbox',
-    description: 'Start an empty one, or bring in one you already have.',
-    Body: AddWorkspace
-  },
   'new-workspace': {
     title: 'New lockbox',
     description: 'Its own encrypted database, unlocked alongside your others.',

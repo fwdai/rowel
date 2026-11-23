@@ -655,7 +655,6 @@
   "Bring in a lockbox that already exists in your cloud storage": "Ein Schließfach übernehmen, das bereits in Ihrem Cloud-Speicher liegt",
   "Add a lockbox": "Schließfach hinzufügen",
   "Create a new one, or restore one from a cloud account or a backup": "Ein neues anlegen oder eines aus einem Cloud-Konto oder einer Sicherung wiederherstellen",
-  "Start an empty one, or bring in one you already have.": "Mit einem leeren beginnen oder ein vorhandenes übernehmen.",
   "In your {{provider}} account": "In deinem {{provider}}-Konto",
   "Added “{{name}}” from your {{provider}} account": "„{{name}}“ aus deinem {{provider}}-Konto hinzugefügt",
   "Not on this device yet": "Noch nicht auf diesem Gerät",

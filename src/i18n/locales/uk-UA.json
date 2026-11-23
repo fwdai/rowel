@@ -668,7 +668,6 @@
   "Bring in a lockbox that already exists in your cloud storage": "Додайте комірку, яка вже є на вашому хмарному диску",
   "Add a lockbox": "Додати комірку",
   "Create a new one, or restore one from a cloud account or a backup": "Створіть нову або відновіть з хмарного акаунта чи копії",
-  "Start an empty one, or bring in one you already have.": "Почніть з порожньої або додайте ту, що вже маєте.",
   "In your {{provider}} account": "У вашому акаунті {{provider}}",
   "Added “{{name}}” from your {{provider}} account": "Додано «{{name}}» з вашого акаунта {{provider}}",
   "Not on this device yet": "Ще немає на цьому пристрої",

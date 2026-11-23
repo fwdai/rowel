@@ -648,7 +648,6 @@
   "Bring in a lockbox that already exists in your cloud storage": "Hämta in ett bankfack som redan finns i din molnlagring",
   "Add a lockbox": "Lägg till ett bankfack",
   "Create a new one, or restore one from a cloud account or a backup": "Skapa ett nytt eller återställ ett från ett molnkonto eller en säkerhetskopia",
-  "Start an empty one, or bring in one you already have.": "Börja med ett tomt eller hämta in ett du redan har.",
   "In your {{provider}} account": "I ditt {{provider}}-konto",
   "Added “{{name}}” from your {{provider}} account": "”{{name}}” har lagts till från ditt {{provider}}-konto",
   "Not on this device yet": "Inte på den här enheten ännu",

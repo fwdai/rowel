@@ -80,7 +80,7 @@ const openBackup = () => openSyncPage('backup')
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
 
 // A workspace row's ⋯, which is where Edit and Delete live.
-// The ways to one more lockbox sit a page below the list's one Add row.
+// The ways to one more lockbox are the menu the list's one Add row opens.
 const openAdd = async (way: 'new-row' | 'restore-open' | 'backup-open') => {
   await userEvent.click(screen.getByTestId('workspace-add-row'))
   await userEvent.click(screen.getByTestId(`workspace-${way}`))
@@ -2511,15 +2511,11 @@ describe('Settings › workspaces › new', () => {
     expect(calls('workspace_create')).toHaveLength(1)
   })
 
-  it('goes back to the ways to add one, then to the list', async () => {
+  it('goes back to the list', async () => {
     await openNew()
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
 
     expect(screen.queryByTestId('workspace-new-name')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Add a lockbox' })).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('settings-subpage-back'))
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   })
@@ -2937,8 +2933,8 @@ describe('Settings › workspaces › restore from an account', () => {
     expect(screen.getAllByText(/^Sign in and pick one of the lockboxes/)).toHaveLength(1)
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.getByRole('heading', { name: 'Add a lockbox' })).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-restore-open')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   })
 
   // Going Back is backing out, the same as Cancel: the pending tokens go too.
@@ -3367,7 +3363,6 @@ describe('Settings › workspaces › restore a backup', () => {
 })
 
 describe('Settings sub-pages', () => {
-  // Two deep: the ways to add a lockbox, and the new lockbox's form over them.
   const openSubpage = async () => {
     await open()
     await go('workspaces')
@@ -3380,36 +3375,48 @@ describe('Settings sub-pages', () => {
     expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   }
 
-  const onAdd = () => {
-    expect(screen.getByRole('heading', { name: 'Add a lockbox' })).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-new-name')).not.toBeInTheDocument()
-  }
+  const ways = () =>
+    ['new-row', 'restore-open', 'backup-open'].map(way => screen.queryByTestId(`workspace-${way}`))
 
-  // The list's one way to one more lockbox, and the last row of its card,
-  // which is the one that rounds the card's foot.
-  it('offers one way to add a lockbox under the list', async () => {
+  // The list's one way to one more lockbox, and the last row of its card. The
+  // three ways there are stay out of the list, in the menu the row opens, and
+  // the menu is not a page: the section stays where it is under it.
+  it('offers one way to add a lockbox under the list, with the ways in its menu', async () => {
     await open()
     await go('workspaces')
 
     const row = screen.getByTestId('workspace-add-row')
     expect(row).toHaveTextContent('Add a lockbox')
-    expect(row.parentElement?.lastElementChild).toBe(row)
-    for (const way of ['new-row', 'restore-open', 'backup-open'])
-      expect(screen.queryByTestId(`workspace-${way}`)).not.toBeInTheDocument()
+    expect(row.parentElement?.parentElement?.lastElementChild).toBe(row.parentElement)
+    expect(row).toHaveAttribute('aria-expanded', 'false')
+    for (const way of ways()) expect(way).not.toBeInTheDocument()
+
+    await userEvent.click(row)
+    expect(row).toHaveAttribute('aria-expanded', 'true')
+    expect(ways().map(way => way?.textContent)).toEqual([
+      expect.stringMatching(/^New lockbox/),
+      expect.stringMatching(/^Restore from a cloud account/),
+      expect.stringMatching(/^Restore a backup/)
+    ])
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
+
+    // Escape is the menu's first: it closes, and Settings stays open under it.
+    await userEvent.keyboard('{Escape}')
+    for (const way of ways()) expect(way).not.toBeInTheDocument()
+    expect(useUi.getState().settings).toBe(true)
+    onSection()
   })
 
   it('heads the sub-page in the section’s place and comes back from it', async () => {
-    await open()
-    await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-add-row'))
+    await openSubpage()
 
     // The title takes the section's line: one heading, nothing stacked above
     // it, so the header keeps its height on the way in and out.
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
-    expect(screen.getByRole('heading', { name: 'Add a lockbox' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
     expect(
-      screen.getByText('Start an empty one, or bring in one you already have.')
+      screen.getByText('Its own encrypted database, unlocked alongside your others.')
     ).toBeInTheDocument()
     // It replaces the section's body rather than stacking on it.
     expect(screen.queryByTestId('workspace-add-row')).not.toBeInTheDocument()
@@ -3419,31 +3426,27 @@ describe('Settings sub-pages', () => {
     onSection()
   })
 
-  // A page opened from a sub-page goes over it, and Back leads to the one
-  // before rather than out to the section.
-  it('opens a page from a sub-page and comes back a step at a time', async () => {
-    await openSubpage()
-
-    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
-    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
-    expect(
-      screen.getByText('Its own encrypted database, unlocked alongside your others.')
-    ).toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-new-row')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    onAdd()
-    await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    onSection()
-  })
-
   it('steps back out on Escape, leaving Settings open', async () => {
     await openSubpage()
 
     await userEvent.keyboard('{Escape}')
-    onAdd()
-    await userEvent.keyboard('{Escape}')
     onSection()
+    expect(useUi.getState().settings).toBe(true)
+  })
+
+  // A page opened from a sub-page goes over it, and Escape, like Back, leads
+  // to the one before rather than out to the section.
+  it('steps back a page at a time from a page opened over a sub-page', async () => {
+    await openBackup()
+    await userEvent.click(screen.getByTestId('settings-backup-restore'))
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
     expect(useUi.getState().settings).toBe(true)
   })
 
@@ -3463,7 +3466,7 @@ describe('Settings sub-pages', () => {
     await openSubpage()
 
     await userEvent.click(screen.getByTestId('settings-subpage-cancel'))
-    onAdd()
+    onSection()
   })
 
   it('holds the sub-page while Settings is locked', async () => {
