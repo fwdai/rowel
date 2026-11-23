@@ -321,6 +321,7 @@ pub fn run() {
             commands::workspace::workspace_connect,
             commands::workspace::workspace_restore_from_pending,
             commands::workspace::workspace_restore_from_account,
+            commands::workspace::workspace_restore_from_file,
             commands::workspace::workspace_rename,
             commands::workspace::workspace_set_color,
             commands::workspace::workspace_set_agents,

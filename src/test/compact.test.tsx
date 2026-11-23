@@ -715,6 +715,33 @@ describe('compact shell', () => {
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
   })
 
+  // The backup page's restore row leads to a page of another section: pushed
+  // over Lockboxes, its Back named after the section it belongs to, and the
+  // picked file and the form drawn on it as on the wide shell.
+  it('follows the backup page’s restore row to the restore page under Lockboxes', async () => {
+    mockCommand('pick_file', () => '/tmp/Rowel backup 2026-11-20.rowel')
+    seed()
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-sync'))
+    await userEvent.click(screen.getByTestId('settings-sync-open-backup'))
+    await userEvent.click(screen.getByTestId('settings-backup-restore'))
+
+    const page = screen.getByTestId('settings-subpage')
+    expect(within(page).getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
+    await userEvent.click(within(page).getByTestId('workspace-backup-pick'))
+    expect(within(page).getByTestId('workspace-backup-file')).toHaveTextContent(
+      'Rowel backup 2026-11-20.rowel'
+    )
+    expect(within(page).getByTestId('workspace-backup-password')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+  })
+
   // A pushed screen's title has the row to itself, so it is said in full
   // rather than cut to fit — on the section's pane and on a page pushed over
   // it alike, which is where a translated title runs longest.

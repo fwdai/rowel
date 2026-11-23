@@ -8,6 +8,7 @@ import { verbatimInput } from '@/components/elements/inputProps'
 import { CARD, META } from '@/components/elements/tokens'
 import Progress from './Progress'
 import RowErrors from './RowErrors'
+import RowelNotice from './RowelNotice'
 import type { useImport } from './useImport'
 
 const fileName = (path: string) => path.replace(/^.*[\\/]/, '')
@@ -27,12 +28,7 @@ export default function Result({ flow }: { flow: ReturnType<typeof useImport> })
       <div className={META}>{fileName(picked.path)}</div>
 
       {picked.kind === 'rowel' ? (
-        // One of our own backups, picked on the backup card or opened by the
-        // OS, while a vault is already open: it is a whole sealed database,
-        // not rows to merge.
-        <Note testid="import-rowel-notice">
-          {t('Backups restore a fresh install and are not imported into an existing vault.')}
-        </Note>
+        <RowelNotice path={picked.path} />
       ) : picked.kind === 'swftx' ? (
         <div className="flex max-w-sm flex-col gap-3">
           <Field id={passwordId} label={t('Vault file password')}>

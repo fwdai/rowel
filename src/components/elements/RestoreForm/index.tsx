@@ -1,9 +1,7 @@
-import { useId, useState, type KeyboardEvent } from 'react'
+import { useId, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { RemotePack } from '@/api/setup'
 import { describeError, vaultPasswordRequiredFor } from '@/api/errors'
 import { moveRestoredLockbox, switchWorkspace } from '@/store'
-import AccountVaults from '../AccountVaults'
 import Button from '../Button'
 import Field from '../Field'
 import Note from '../Note'
@@ -12,26 +10,34 @@ import { unsealError } from '@/components/Start/shared/errors'
 import SecretField from './SecretField'
 
 interface Props {
-  files: RemotePack[]
-  selectedId: string | null
-  onSelect: (id: string) => void
+  /** What is being restored, drawn above the fields: a vault to pick, a file. */
+  children: ReactNode
+  /**
+   * What Restore restores — an account's pack, a backup file's path — or
+   * `null` while there is nothing to restore yet. A new one starts the
+   * vault-password step over: that step belonged to what was restored before.
+   */
+  target: string | null
   /** A restore is in flight; every control stands down. */
   busy: boolean
   /**
-   * Restore the picked vault as a workspace called `name`, unlocked with
-   * `password`. An empty `name` leaves the naming to the backend, which takes
-   * the one the vault carries in its pack. A rejection is shown under the
-   * password field — a wrong one as the same sentence every unseal uses.
+   * Restore `target` as a workspace called `name`, unlocked with `password`.
+   * An empty `name` leaves the naming to the backend, which takes the one the
+   * vault carries in its pack. A rejection is shown under the password field —
+   * a wrong one as `wrongPassword`.
    */
-  onRestore: (name: string, password: string, fileId: string) => Promise<void>
+  onRestore: (name: string, password: string, target: string) => Promise<void>
+  /** What a wrong password is told, which depends on where the pack came from. */
+  wrongPassword: string
   /**
-   * Sign in as somebody else. Offered only where the account can change: a
-   * probe's pending account can, the open workspace's own cannot.
+   * A second action beside Restore, drawn while nothing runs or is being
+   * moved. Whatever would change `target` from outside the picker above
+   * (another account, another file) belongs here, so that it stands down with
+   * the form: a step in flight ends by opening the lockbox it started on.
    */
-  onSwitchAccount?: () => void
-  /** Test id base for the form's controls; the picker's is `pickerTestid`. */
+  aside?: ReactNode
+  /** Test id base for the form's controls. */
   testid?: string
-  pickerTestid?: string
 }
 
 /**
@@ -47,9 +53,13 @@ type Moving =
 
 /**
  * Name, password, Restore: the last step of every "make a workspace out of a
- * vault in an account" flow, whichever account the vault came from. The list and
- * the pick are the caller's — they outlive a wrong password — so this only
- * draws them.
+ * vault" flow, wherever the vault came from — an account, or a backup file.
+ * What is being restored is the caller's to draw and to pick — it outlives a
+ * wrong password — so this only draws it above the fields. When it may be
+ * picked is the form's to say, though: only the form knows every step it has
+ * in flight (the restore, the move, the open), so the picker goes inert for
+ * all of them, and nothing swaps the target under a step that is about to
+ * open the lockbox it began with.
  *
  * The name is optional: a vault carries its own, given wherever it was made,
  * and most restores want exactly that one. Typing one renames it everywhere.
@@ -63,15 +73,14 @@ type Moving =
  * Plain labelled fields, like every other form in Settings: the lock screen's
  * card is for the lock screen.
  */
-export default function AccountRestoreForm({
-  files,
-  selectedId,
-  onSelect,
+export default function RestoreForm({
+  children,
+  target,
   busy,
   onRestore,
-  onSwitchAccount,
-  testid = 'workspace-restore',
-  pickerTestid = 'drive'
+  wrongPassword,
+  aside,
+  testid = 'workspace-restore'
 }: Props) {
   const { t } = useTranslation()
   const id = useId()
@@ -88,9 +97,9 @@ export default function AccountRestoreForm({
   // Another pick is another restore: whatever the last one left half-moved
   // stays installed (and, once moved, opens from the list like any other), but
   // this form starts over. Reset in render, so the frame it changes in is clean.
-  const [picked, setPicked] = useState(selectedId)
-  if (picked !== selectedId) {
-    setPicked(selectedId)
+  const [picked, setPicked] = useState(target)
+  if (picked !== target) {
+    setPicked(target)
     setMoving(null)
     setVaultPassword('')
     setVaultError(null)
@@ -98,22 +107,16 @@ export default function AccountRestoreForm({
   }
 
   const restore = () => {
-    if (busy || !selectedId) return
+    if (busy || !target) return
     setError(null)
     const typed = password
-    onRestore(name.trim(), typed, selectedId).catch((err: unknown) => {
+    onRestore(name.trim(), typed, target).catch((err: unknown) => {
       const workspaceId = vaultPasswordRequiredFor(err)
       if (workspaceId) {
         setMoving({ workspaceId, moved: false, lockboxPassword: typed })
         return
       }
-      setError(
-        unsealError(
-          t,
-          err,
-          t("That isn't the password this was sealed with. Try the one you use on your other devices.")
-        )
-      )
+      setError(unsealError(t, err, wrongPassword))
     })
   }
 
@@ -162,12 +165,9 @@ export default function AccountRestoreForm({
 
   return (
     <div className="flex max-w-sm flex-col gap-3">
-      <AccountVaults
-        files={files}
-        selectedId={selectedId}
-        onSelect={onSelect}
-        testid={pickerTestid}
-      />
+      <div inert={working} data-testid={`${testid}-target`}>
+        {children}
+      </div>
       <Field id={`${id}-name`} label={t('Lockbox name (optional)')}>
         <input
           id={`${id}-name`}
@@ -224,11 +224,7 @@ export default function AccountRestoreForm({
         <Button testid={`${testid}-submit`} loading={working} onClick={submit}>
           {working ? t('Restoring…') : moving?.moved ? t('Try again') : t('Restore')}
         </Button>
-        {!working && !moving && onSwitchAccount && (
-          <Button variant="pale" testid={`${testid}-switch-account`} onClick={onSwitchAccount}>
-            {t('Switch account')}
-          </Button>
-        )}
+        {!working && !moving && aside}
       </div>
     </div>
   )

@@ -1,9 +1,10 @@
-import type { Workspace } from '@/api/types'
+import type { UnlockResult, Workspace } from '@/api/types'
 import {
   workspaceAdoptVaultPassword,
   workspaceCreate,
   workspaceDelete,
   workspaceRestoreFromAccount,
+  workspaceRestoreFromFile,
   workspaceRestoreFromPending,
   workspaceSelect
 } from '@/api/workspace'
@@ -166,20 +167,16 @@ export const moveRestoredLockbox = async (
   }
 }
 
-// The same landing, for a vault the open workspace's account holds and this
-// device does not. No probe state to keep: there was no sign-in, so nothing is
-// pending and nothing has to be forgotten. Settings is held for the same reason
-// as above — the restore ends by switching workspaces, and a navigation that
-// looked like backing out would let that happen behind the user's back.
-export const restoreWorkspaceFromAccount = async (
-  name: string,
-  password: string,
-  fileId: string
-) => {
+// The same landing, for a restore with no probe state to keep: there was no
+// sign-in, so nothing is pending and nothing has to be forgotten. Settings is
+// held for the same reason as above — the restore ends by switching
+// workspaces, and a navigation that looked like backing out would let that
+// happen behind the user's back.
+const landRestore = async (restore: () => Promise<UnlockResult>) => {
   lockSettings(true)
   let result
   try {
-    result = await workspaceRestoreFromAccount(name, password, fileId)
+    result = await restore()
   } finally {
     lockSettings(false)
   }
@@ -187,3 +184,12 @@ export const restoreWorkspaceFromAccount = async (
   await enterMain(result)
   await refreshApp()
 }
+
+// A vault the open workspace's account holds and this device does not.
+export const restoreWorkspaceFromAccount = (name: string, password: string, fileId: string) =>
+  landRestore(() => workspaceRestoreFromAccount(name, password, fileId))
+
+// A `.rowel` backup the user chose. It arrives connected to no account, so
+// `enterMain` runs no first sync for it.
+export const restoreWorkspaceFromFile = (name: string, password: string, path: string) =>
+  landRestore(() => workspaceRestoreFromFile(name, password, path))

@@ -29,13 +29,15 @@ and external links are opened through the OS only for `http`/`https` URLs
 (`opener:allow-open-url` scope in `capabilities/default.json`; plain `http` is
 kept because routers and intranet logins have no other address, and the scope
 exists to shut out `file:`, `javascript:` and custom schemes, not to upgrade
-transport). Seven commands read a path the webview names — `scan_image` (a photo
+transport). Eight commands read a path the webview names — `scan_image` (a photo
 of a card or identity document), `read_env_file`, `attachment_add`,
 `import_entries` (a password manager's export), `import_swftx` (a legacy
 backup merged into the open vault), `setup_restore_from_file` (a `.rowel`
-backup restored on a fresh install) and `setup_restore_from_legacy` (a `.swftx`
-made the vault of a fresh install, under its own password) — and none trusts
-the path it is handed; all seven read only granted paths. A path is readable only if it was granted by
+backup restored on a fresh install), `setup_restore_from_legacy` (a `.swftx`
+made the vault of a fresh install, under its own password) and
+`workspace_restore_from_file` (a `.rowel` backup restored as a lockbox beside
+the open one) — and none trusts the path it is handed; all eight read only
+granted paths. A path is readable only if it was granted by
 one of three events the core itself observes: the OS file dialog run from Rust
 (`pick_file`; the webview holds no `dialog:allow-open` permission to open one of
 its own), an OS drag-and-drop onto the window, or the OS opening a `.rowel` or
@@ -46,7 +48,8 @@ a file the OS opened a backup — and each reader spends only a grant of its own
 purpose: a path the user chose in an env-file dialog cannot be read by
 `scan_image`, so the dialog's framing is part of what was consented to. The
 one exception is a drop, which `attachment_add`, `import_entries`,
-`import_swftx`, `setup_restore_from_file` and `setup_restore_from_legacy` may also spend: the file was
+`import_swftx`, `setup_restore_from_file`, `setup_restore_from_legacy` and
+`workspace_restore_from_file` may also spend: the file was
 handed to the app itself, the drop target says what it is, and each of those
 takes the file into the vault and returns no more of it than the kind's own
 reader would. An import's preview and a backup read again after a mistyped
@@ -628,7 +631,7 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
 the encrypted database exists; a legacy `vault.swftx` file alone does **not**
 count. Nothing is migrated automatically on unlock.
 
-Bringing existing data forward is an **explicit** action, and there are three paths:
+Bringing existing data forward is an **explicit** action, and there are four paths:
 
 - **Restore a backup as a new vault** (`setup_restore_from_file`,
   `commands/setup.rs`): a `.rowel` backup is the same pack the sync engine
@@ -637,6 +640,32 @@ Bringing existing data forward is an **explicit** action, and there are three pa
   through the same `restore_from_pack` path as a Drive restore: fresh installs
   only, the password is validated by SQLCipher opening the snapshot, and the
   source device's sync bookkeeping is scrubbed.
+- **Restore a backup as a new lockbox** (`workspace_restore_from_file`,
+  `commands/workspace.rs`): the same `.rowel`, restored beside the lockboxes
+  an unlocked app already has, through the pipeline that restores a lockbox
+  from an account (the setup step, the session lease put back on failure, the
+  registry written last, the vault-password check under the primary's backoff)
+  with the pack read off disk instead of downloaded. A wrong password writes
+  nothing. The checks that follow are a backup file's alone: a pack from an
+  account is asked by the id it is filed under before its download, as it
+  always was, and no lockbox on the device can hold that restore up. Once the
+  backup's pack has opened, its vault id is compared with every
+  lockbox on the device — the open one's, the ids the registry records, and,
+  for a lockbox the registry has no id for (one that never synced), the id in
+  its own database, opened with the key the app holds for it — and a match is
+  refused. A lockbox that cannot be read that way (no key held, or one that
+  does not open it) refuses the restore too, until it has been opened once: it
+  could be the vault in the backup. An id alone does not tie a backup to its
+  source: a vault from before vaults carried ids is backed up with none, and
+  its first sync later mints it one. So the backup is also compared by its key
+  descriptor, which carries the vault's random salt, is the pack's plaintext
+  header, and sits in plaintext beside every lockbox: a lockbox on the device
+  sealed under the same descriptor is the backup's source whatever id either
+  has, and the restore is refused. An id-less backup is filed under an id
+  derived from that descriptor, so it cannot be restored twice either. What
+  the descriptor cannot recognise is a source whose password changed after
+  the backup was taken (a re-key writes a new one); that source is known by
+  its id alone. The lockbox arrives connected to no account.
 - **Import a legacy vault into the currently-unlocked vault** (`import_swftx`,
   `commands/vault.rs`): the Electron-era `.swftx` is independently encrypted and
   carries its own master password. Each entry is decrypted under the backup's

@@ -1,21 +1,14 @@
-import { useTranslation } from 'react-i18next'
-import Note from '@/components/elements/Note'
 import SubpageScroller from '../../../SubpageScroller'
 import Saves from './Saves'
+import RestoreRow from './RestoreRow'
 
-// Sync & backup › Encrypted backup: saving one, and what a saved one is for.
-// A backup is a whole sealed database, which only a fresh install can take, so
-// the page says so rather than offering a restore an open vault cannot do.
+// Sync & backup › Encrypted backup: saving one, and the way to restoring one.
 export default function BackupSubpage() {
-  const { t } = useTranslation()
-
   return (
     <SubpageScroller testid="settings-backup">
       {/* No heading over the card: the page's own title is the heading. */}
       <Saves />
-      <Note className="px-1 pt-2.5" testid="settings-backup-restore-note">
-        {t('Backups restore a fresh install and are not imported into an existing vault.')}
-      </Note>
+      <RestoreRow />
     </SubpageScroller>
   )
 }

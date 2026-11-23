@@ -20,5 +20,13 @@ export const pickBackup = (): Promise<string | null> =>
 export const pickImportBackup = (): Promise<string | null> =>
   pickFileToRead('importBackup', t('Rowel backup'))
 
+/**
+ * A `.rowel` alone, for Settings › Lockboxes, which restores it as a lockbox
+ * beside the open ones: a legacy `.swftx` is not a lockbox, and merges from
+ * Settings › Import instead.
+ */
+export const pickLockboxBackup = (): Promise<string | null> =>
+  pickFileToRead('lockboxBackup', t('Rowel backup'))
+
 export const pickImportFile = (): Promise<string | null> =>
   pickFileToRead('import', t('Password exports'))
