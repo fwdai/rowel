@@ -11,6 +11,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# A read-only token for every job. A job that needs more says so itself:
+# `changes` also reads pull requests, to list a PR's changed files.
+permissions:
+  contents: read
+
 jobs:
   # On PRs, each job below runs only when its inputs changed (a docs-only PR
   # runs nothing; a frontend-only PR skips the Rust matrix). Pushes to the

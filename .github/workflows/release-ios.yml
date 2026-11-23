@@ -44,6 +44,10 @@ on:
 jobs:
   release-ios:
     runs-on: macos-latest # Xcode + the iOS SDK only exist on macOS runners
+    # Holds the App Store Connect key. The `release` environment can keep it
+    # to itself, behind a branch rule and a reviewer (one-time setup in
+    # docs/releasing.md).
+    environment: release
     permissions:
       contents: write # attach the IPA to the GitHub release for the tag
       id-token: write # OIDC token for SLSA build-provenance attestation (T-CI-4)
