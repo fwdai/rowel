@@ -45,10 +45,16 @@ impl Lockbox {
     }
 }
 
+// A lockbox keeps three retired epochs, so no more packs than that can be under different keys.
+const MAX_KEPT: usize = 3;
+
+// The id of the key that seals a pack, and the pack.
+type Sealed = (String, Vec<u8>);
+
 // The packs of lockboxes whose password changed on another device, for the adopt to
-// open: by the id of the key a lockbox is on here, then by that of the key sealing the pack.
+// open: by the id of the key a lockbox is on here.
 #[derive(Default)]
-pub struct Kept(Mutex<HashMap<String, HashMap<String, Vec<u8>>>>);
+pub struct Kept(Mutex<HashMap<String, Vec<Sealed>>>);
 
 impl Kept {
     pub fn sealed_under(&self, id: &str) -> Vec<String> {
@@ -68,7 +74,11 @@ impl Kept {
     pub fn keep(&self, id: &str, sealed_under: &str, pack: Vec<u8>) {
         let mut kept = self.0.lock().unwrap();
         let packs = kept.entry(id.to_string()).or_default();
-        packs.insert(sealed_under.to_string(), pack);
+        packs.retain(|(held, _)| held != sealed_under);
+        packs.push((sealed_under.to_string(), pack));
+        if packs.len() > MAX_KEPT {
+            packs.remove(0);
+        }
     }
 
     pub fn clear(&self) {
@@ -92,4 +102,22 @@ pub trait Host: Send + Sync + 'static {
     fn kept(&self) -> &Kept;
 
     fn now_ms(&self) -> i64;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_more_packs_are_kept_for_a_lockbox_than_it_has_epochs_the_oldest_going_first() {
+        let kept = Kept::default();
+        for sealed_under in ["a", "b", "a", "c", "d"] {
+            kept.keep("id", sealed_under, sealed_under.as_bytes().to_vec());
+        }
+        assert_eq!(kept.sealed_under("id"), ["a", "c", "d"]);
+        assert_eq!(kept.packs("id"), [b"a", b"c", b"d"]);
+        assert!(kept.packs("other").is_empty());
+        kept.clear();
+        assert!(kept.sealed_under("id").is_empty());
+    }
 }

@@ -234,15 +234,20 @@ then on it only answers; the dialling side sends its own after the lockboxes
 it syncs. The answer is `sync/pack { lockbox, revision }` and the pack, the
 revision being the id of the key that seals it, or a `sync/state` naming that
 id when `have` lists it. An ask for a key its sender did not prove ends the
-connection. Packs are kept in memory, per lockbox and sealing key, until an
-adopt succeeds.
+connection. A pack is taken only in answer to an ask, once: any other is a
+protocol error. At most three are kept per lockbox (a lockbox keeps three
+retired epochs), the oldest going first, in memory until an adopt succeeds or
+the session ends.
 
 The prompt and the command are the cloud's (`sync_adopt_password`,
 `docs/password-change-sync-design.md`): the typed password is proved by
 opening a pack, the account's where the lockbox syncs to one and then the
 kept ones, and the device re-keys onto that pack's descriptor through the
-same saga, the lockboxes beside it following. An account that cannot be
-reached does not stop an adopt a kept pack can serve. Two cases are left out:
+same saga, the lockboxes beside it following. An open lockbox with nothing to
+adopt does not stop the ones beside it: the password is then proved by the
+first of them it opens, and counts as a wrong one when it opens none and one
+refuses it. An account that cannot be reached does not stop an adopt a kept
+pack can serve. Two cases are left out:
 devices that each changed the password apart share only a retired key and do
 not recognise each other, and a device more than three changes behind is not
 recognised (three retired epochs are kept).

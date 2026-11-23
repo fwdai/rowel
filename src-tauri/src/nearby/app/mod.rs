@@ -98,7 +98,9 @@ pub(crate) fn session_opened(app: &AppHandle) {
 }
 
 pub(crate) fn session_ended(app: &AppHandle) {
-    stop(state(app));
+    let state = state(app);
+    stop(state);
+    state.kept.clear();
 }
 
 pub(crate) fn request_run(app: &AppHandle) {

@@ -54,12 +54,17 @@ pub(super) fn run<H: Host>(
     proved: &[Lockbox],
     found: &Established,
 ) -> Option<Outcome> {
+    let asked = match channel.role() {
+        Role::Connector => Vec::new(),
+        Role::Acceptor => found.behind.clone(),
+    };
     let mut script = Script {
         shared,
         channel,
         peer,
         proved,
         found,
+        asked,
         absorbed: None,
         outcomes: Vec::new(),
     };
@@ -75,6 +80,8 @@ struct Script<'a, H: Host> {
     peer: &'a str,
     proved: &'a [Lockbox],
     found: &'a Established,
+    // The asks this side sent with its proofs, each answered once.
+    asked: Vec<String>,
     absorbed: Option<Absorbed>,
     outcomes: Vec<Outcome>,
 }
@@ -111,8 +118,8 @@ impl<H: Host> Script<'_, H> {
             } if found.ids.contains(&lockbox) => {
                 self.one(&lockbox, |s| s.answer(&lockbox, &revision, now_ms))
             }
-            Control::State { lockbox, .. } if found.behind.contains(&lockbox) => Ok(()),
-            Control::Pack { lockbox, revision } if found.behind.contains(&lockbox) => {
+            Control::State { lockbox, .. } if self.answered(&lockbox) => Ok(()),
+            Control::Pack { lockbox, revision } if self.answered(&lockbox) => {
                 let pack = self.channel.recv(MAX_PACK_BYTES)?;
                 self.shared.host.kept().keep(&lockbox, &revision, pack);
                 Ok(())
@@ -120,6 +127,11 @@ impl<H: Host> Script<'_, H> {
             Control::Ask { lockbox, have } => self.give(&lockbox, &have),
             other => Err(out_of_step(&other)),
         }
+    }
+
+    fn answered(&mut self, id: &str) -> bool {
+        let asked = self.asked.iter().position(|asked| asked == id);
+        asked.map(|at| self.asked.swap_remove(at)).is_some()
     }
 
     fn ask(&mut self, id: &str) -> Result<()> {

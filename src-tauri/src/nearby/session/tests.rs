@@ -372,22 +372,25 @@ fn sole(mut held: Arc<Device>) -> Device {
     }
 }
 
-/// A dialler holding `keys` alone, past the handshake with `node`: its channel and what it heard.
-fn dialled_with(node: &Node, keys: &Keys) -> (Channel, Vec<&'static str>) {
+/// A dialler past the handshake with `node`, having proved `keys` as its current
+/// key or as one it retired: its channel and the `replies` it heard.
+fn dialled_with(
+    node: &Node,
+    keys: &Keys,
+    retired: bool,
+    replies: usize,
+) -> (Channel, Vec<&'static str>) {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, node.manager.port()));
     let mut dialled = channel::tests::connect(addr, &identity(), None).unwrap();
-    let proof = own_proof(&dialled, &keys.proof, &keys.id);
-    for message in [
-        Control::hello("Peer"),
-        Control::Proof {
-            lockbox: keys.id.clone(),
-            proof,
-        },
-        Control::ProofsDone,
-    ] {
+    let (lockbox, proof) = (keys.id.clone(), own_proof(&dialled, &keys.proof, &keys.id));
+    let proof = match retired {
+        true => Control::RetiredProof { lockbox, proof },
+        false => Control::Proof { lockbox, proof },
+    };
+    for message in [Control::hello("Peer"), proof, Control::ProofsDone] {
         dialled.send_control(&message).unwrap();
     }
-    let heard = (0..3)
+    let heard = (0..replies)
         .map(|_| dialled.recv_control().unwrap().kind())
         .collect();
     (dialled, heard)
@@ -629,7 +632,7 @@ fn a_handshake_carries_nothing_about_removed_devices() {
     let na = node_on(&network, host(&[&a]), removed);
 
     let keys = Keys::of(&a.key);
-    let (mut dialled, heard) = dialled_with(&na, &keys);
+    let (mut dialled, heard) = dialled_with(&na, &keys, false, 3);
     assert_eq!(heard, ["hello/hello", "trust/proof", "trust/done"]);
     let state = Control::State {
         lockbox: keys.id,
@@ -886,7 +889,7 @@ fn an_ask_is_answered_for_a_key_the_asker_proved_and_a_pack_it_lacks() {
     let na = node(&network, &[&a]);
 
     let ask = |lockbox: &str, have: &[&str]| {
-        let (mut dialled, heard) = dialled_with(&na, &old);
+        let (mut dialled, heard) = dialled_with(&na, &old, false, 3);
         assert_eq!(heard, ["hello/hello", "trust/proof-retired", "trust/done"]);
         let ask = Control::Ask {
             lockbox: lockbox.into(),
@@ -898,6 +901,30 @@ fn an_ask_is_answered_for_a_key_the_asker_proved_and_a_pack_it_lacks() {
     assert_eq!(ask(&old.id, &[]).unwrap(), "sync/pack");
     assert_eq!(ask(&old.id, &[&new]).unwrap(), "sync/state");
     assert!(ask(&new, &[]).is_err());
+}
+
+#[test]
+fn a_pack_is_kept_only_in_answer_to_an_ask_and_only_once() {
+    let network = Network::default();
+    let b = lockbox("b", 1);
+    let nb = node(&network, &[&b]);
+    let old = Keys::of(&b.key);
+
+    let (mut dialled, heard) = dialled_with(&nb, &old, true, 4);
+    assert_eq!(
+        heard,
+        ["hello/hello", "trust/proof", "adopt/ask", "trust/done"]
+    );
+    for sealed_under in ["one", "two"] {
+        let pack = Control::Pack {
+            lockbox: old.id.clone(),
+            revision: sealed_under.into(),
+        };
+        let _ = dialled.send_control(&pack);
+        let _ = dialled.send(b"a pack");
+    }
+    assert!(dialled.recv_control().is_err());
+    assert_eq!(nb.host.kept.sealed_under(&old.id), ["one"]);
 }
 
 #[test]
