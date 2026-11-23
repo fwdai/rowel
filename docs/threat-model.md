@@ -264,6 +264,11 @@ carries them as part of the opaque payload and never sees them.
   base64url) — the same deliberate exposure the password export already is.
   Both exports ask for the master password again (`export_vault`,
   `export_entries`): an unlocked session alone does not carry the vault away.
+  A `.rowel` backup holds one lockbox: the open one, or another whose key the
+  app holds (`crate::appkey`), saved behind that same one proof, since the
+  password it proves is the one the app was opened with, and every lockbox in
+  the ring with it. An org lockbox is never saved this way: its key is its
+  server's, and no password opens a pack under the server's descriptor.
   That prompt, the current password of a password change and an agent grant's
   password step-up are one proof (`prove_session_password`) under the unlock's
   backoff below, so none of them is a faster way to guess the password than

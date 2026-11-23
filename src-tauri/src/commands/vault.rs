@@ -4,12 +4,15 @@ use crate::error::{Error, Result};
 use crate::events;
 use crate::grants::{self, PathGrants, Purpose};
 use crate::models::{Entry, EntryMetaDto, VaultData};
+use crate::org::lockboxes::is_org_lockbox_dir;
 use crate::session::{list_deleted_metas, list_metas, meta_dto_of, store_err, Session};
 use crate::state::AppState;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
+use crate::sync::engine::WorkspaceVault;
+use crate::workspace::{self, Registry};
 use crate::{credential_identities, crypto, save, storage, sync};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
 use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
@@ -311,65 +314,237 @@ pub(crate) fn prove_password(session: &Session, candidate: &VaultKey) -> Result<
     }
 }
 
-// Export the vault to a user-chosen `.rowel` file: the same pack the sync engine
-// uploads (KDF descriptor + SQLCipher snapshot, see `sync::pack`), so a backup
-// restores through `setup_restore_from_file` exactly as a Drive pack does. The
-// snapshot is already sealed under the vault key; `password` is asked for only
-// to prove the person exporting can open what they are about to carry away.
-// Nothing is purged first — a backup keeps every tombstone the sync pack would
-// have reclaimed.
+// Export one lockbox to a user-chosen `.rowel` file: the same pack the sync
+// engine uploads (KDF descriptor + SQLCipher snapshot, see `sync::pack`), so a
+// backup restores through `setup_restore_from_file` exactly as a Drive pack
+// does. `workspace_id` names the lockbox, and the open one is saved when it
+// names none. The snapshot is already sealed under that lockbox's key;
+// `password` is asked for only to prove the person exporting can open what
+// they are about to carry away — the open lockbox's master password, proved
+// as every prompt in an unlocked app is: the password the app was opened with,
+// and every lockbox it holds a key for with it. Nothing is purged first — a
+// backup keeps every tombstone the sync pack would have reclaimed.
+//
+// The open lockbox is packed through the session. Any other is packed from its
+// own directory and descriptor with the key the app holds for it
+// (`crate::appkey`), opened as a sync of it opens it ([`pack_lockbox`]), under
+// the setup step, so nothing re-keys, moves or deletes it while it is read.
+//
+// The save is recorded against the lockbox once it has happened
+// ([`record_saved`]): a dialog dismissed writes nothing and records nothing.
 #[tauri::command]
 pub async fn export_vault(
     password: Zeroizing<String>,
+    workspace_id: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>> {
-    let kdf_params_json = storage::read_kdf_sidecar(&app)?.ok_or_else(|| {
-        Error::Other("this vault predates the key descriptor and cannot be backed up".into())
-    })?;
-    let scratch = storage::sync_scratch_dir(&app)?;
-
-    // Proved before the lock is taken, not under it: the Argon2id behind it
-    // is hundreds of milliseconds, and the session guard held across one
-    // stalls every other command for the duration. The check below is the same
-    // comparison again, under the guard the snapshot is read with.
-    let candidate = {
-        let step = super::setup::begin_step(&state)?;
-        super::vault_password::prove_session_password(&app, &step, password).await?
+    let root = storage::root_dir(&app)?;
+    // From the target on: the open lockbox cannot be switched away between
+    // being picked and its password being proved.
+    let step = super::setup::begin_step(&state)?;
+    let target = {
+        let _paths = state.workspace_lock.lock().unwrap();
+        let active = workspace::active_id(&app);
+        let ring = state.keyring.lock().unwrap();
+        backup_target(
+            &root,
+            &Registry::load(&root),
+            &active,
+            workspace_id.as_deref(),
+            |id| ring.has(id),
+        )?
     };
 
-    let (key, source) = {
-        let session = state.session.lock().unwrap();
-        // Guard: the export key must match the unlocked vault.
-        prove_password(&session, &candidate)?;
-        let key = session.key()?.sqlcipher_key();
-        // A connection of its own, so the whole-database copy below does not
-        // borrow the session's for its duration.
-        let source = crate::session::open_snapshot_source(&app, &*key)?;
-        (key, source)
+    let bytes = if target.open {
+        let kdf_params_json = storage::read_kdf_sidecar(&app)?.ok_or_else(no_descriptor)?;
+        let scratch = storage::sync_scratch_dir(&app)?;
+
+        // Proved before the lock is taken, not under it: the Argon2id behind it
+        // is hundreds of milliseconds, and the session guard held across one
+        // stalls every other command for the duration. The check below is the
+        // same comparison again, under the guard the snapshot is read with.
+        let candidate =
+            super::vault_password::prove_session_password(&app, &step, password).await?;
+        drop(step);
+
+        let (key, source) = {
+            let session = state.session.lock().unwrap();
+            // Guard: the export key must match the unlocked vault.
+            prove_password(&session, &candidate)?;
+            let key = session.key()?.sqlcipher_key();
+            // A connection of its own, so the whole-database copy below does not
+            // borrow the session's for its duration.
+            let source = crate::session::open_snapshot_source(&app, &*key)?;
+            (key, source)
+        };
+
+        super::blocking(move || {
+            Ok(sync::pack::pack_store(
+                &source,
+                &*key,
+                &kdf_params_json,
+                &scratch,
+            )?)
+        })
+        .await?
+    } else {
+        let candidate =
+            super::vault_password::prove_session_password(&app, &step, password).await?;
+        // The proof's key compared again under the guard, as above, and the
+        // ring read under it: a lock that landed meanwhile has emptied it.
+        let material = {
+            let session = state.session.lock().unwrap();
+            prove_password(&session, &candidate)?;
+            state
+                .keyring
+                .lock()
+                .unwrap()
+                .get(&target.id)
+                .ok_or(Error::Locked)?
+        };
+        let key = VaultKey::from_material(material, true);
+        let (dir, id) = (target.dir.clone(), target.id.clone());
+        let bytes = super::blocking(move || pack_lockbox(&dir, &id, key)).await?;
+        drop(step);
+        bytes
     };
 
-    let bytes = super::blocking(move || {
-        Ok(sync::pack::pack_store(
-            &source,
-            &*key,
-            &kdf_params_json,
-            &scratch,
-        )?)
-    })
-    .await?;
-
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let dest = save::save_export(
         &app,
-        &format!(
-            "{APP_NAME} backup {}.{BACKUP_EXTENSION}",
-            chrono::Local::now().format("%Y-%m-%d")
-        ),
+        &backup_file_name(target.name.as_deref(), &today),
         &format!("{APP_NAME} backup"),
         bytes,
     )
     .await?;
-    Ok(dest.map(|p| p.to_string_lossy().into_owned()))
+    let saved = {
+        let _paths = state.workspace_lock.lock().unwrap();
+        record_saved(&root, &target.id, dest, &now())
+    };
+    Ok(saved)
+}
+
+fn no_descriptor() -> Error {
+    Error::Other("this vault predates the key descriptor and cannot be backed up".into())
+}
+
+/// The lockbox [`export_vault`] saves.
+#[derive(Debug)]
+struct BackupTarget {
+    id: String,
+    /// The registry's name for it, for the file name: `None` for a primary
+    /// nobody has named.
+    name: Option<String>,
+    dir: PathBuf,
+    /// The session's own, packed through the session rather than its files.
+    open: bool,
+}
+
+/// The lockbox `requested` names — `active`, the open one, when it names none
+/// — refused when it is not one this device can save: an id the registry does
+/// not name; an org lockbox, whose key its server holds and whose pack, under
+/// the server's descriptor, no password opens; and one the app holds no key
+/// for (`held`, asked of the ring), whose files nothing here opens without its
+/// own password. Settled before the password is asked about, so a refusal
+/// costs no Argon2id wait and no attempt against the backoff.
+fn backup_target(
+    root: &Path,
+    registry: &Registry,
+    active: &str,
+    requested: Option<&str>,
+    held: impl FnOnce(&str) -> bool,
+) -> Result<BackupTarget> {
+    let id = requested.unwrap_or(active);
+    let lockbox = registry
+        .workspaces
+        .iter()
+        .find(|w| w.id == id)
+        .ok_or(Error::NotFound)?;
+    let dir = workspace::dir_of(root, id);
+    // Told by its descriptor, as a delete and nearby sync tell one: the
+    // registry's `server` is a note beside it.
+    if is_org_lockbox_dir(&dir) {
+        return Err(Error::Unsupported(
+            "an org lockbox is kept by its server and cannot be saved as a backup".into(),
+        ));
+    }
+    let open = id == active;
+    if !open {
+        if !dir.join(storage::KDF_SIDECAR_FILE).exists() {
+            return Err(no_descriptor());
+        }
+        if !held(id) {
+            return Err(Error::Unsupported(
+                "this lockbox is not unlocked on this device; switch to it once to unlock it, \
+                 then save its backup"
+                    .into(),
+            ));
+        }
+    }
+    Ok(BackupTarget {
+        id: id.to_string(),
+        name: lockbox.name.clone(),
+        dir,
+        open,
+    })
+}
+
+/// A lockbox the session does not have open, packed from its own directory and
+/// descriptor with `key`: opened as a sync of it is (`WorkspaceVault::open`)
+/// and copied whole, nothing reclaimed. Blocking — a SQLCipher open and a copy
+/// of the whole database.
+pub(crate) fn pack_lockbox(dir: &Path, workspace_id: &str, key: VaultKey) -> Result<Vec<u8>> {
+    // The provider is named only by a foreign-pack error, which packing never
+    // meets; no audit writer, since nothing is pruned.
+    WorkspaceVault::open(dir, workspace_id, key, sync::Provider::default(), None)?.backup()
+}
+
+/// What the save dialog came back with, for the webview — and, when it put the
+/// file somewhere, a note against lockbox `id` of when it did (`None` is a
+/// dialog dismissed). Best effort: the backup is on disk either way, and a
+/// stamp that will not write only leaves the page showing an older time. For a
+/// caller holding `workspace_lock` (see [`workspace::record_backup_in`]).
+fn record_saved(root: &Path, id: &str, dest: Option<PathBuf>, at: &str) -> Option<String> {
+    let dest = dest?;
+    if let Err(e) = workspace::record_backup_in(root, id, at) {
+        log::warn!("could not record lockbox {id}'s backup: {e}");
+    }
+    Some(dest.to_string_lossy().into_owned())
+}
+
+/// The name the save dialog offers: the app's, the lockbox's and the day's, so
+/// two lockboxes saved the same day are two files rather than one offered to
+/// overwrite the other. A primary nobody has named has no name to give, and is
+/// the one lockbox without one, so it still reads apart from the rest.
+fn backup_file_name(lockbox: Option<&str>, date: &str) -> String {
+    match lockbox.map(file_safe).filter(|name| !name.is_empty()) {
+        Some(name) => format!("{APP_NAME} backup {name} {date}.{BACKUP_EXTENSION}"),
+        None => format!("{APP_NAME} backup {date}.{BACKUP_EXTENSION}"),
+    }
+}
+
+// The most of a lockbox's name a file name carries: well inside the 255 bytes a
+// name may take on every platform, at four bytes a character.
+const FILE_NAME_CHARS: usize = 48;
+
+// A name as it can stand inside a file name anywhere the app runs: separators,
+// the characters Windows reserves and control characters become spaces, a run
+// of spaces one, and a long name is cut short.
+fn file_safe(name: &str) -> String {
+    let spaced: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || r#"/\:*?"<>|"#.contains(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let words = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut: String = words.chars().take(FILE_NAME_CHARS).collect();
+    cut.trim_end().to_string()
 }
 
 // "Save as file…" on an env entry: hand the revealed `.env` back to disk under
@@ -407,9 +582,10 @@ pub async fn save_env_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::VaultKey;
+    use crate::crypto::{KdfParams, VaultKey};
     use crate::models::{Passkey, PasswordHistoryItem};
     use crate::store::SqliteStore;
+    use crate::workspace::{dir_of, statuses, PRIMARY_ID};
 
     fn passkey(credential_id: &str, private_key: &str) -> Passkey {
         Passkey {
@@ -719,5 +895,236 @@ mod tests {
         let stored = unsealed(&store, &cipher);
         assert_eq!(stored.public_key, None);
         assert_eq!(stored.fingerprint, None);
+    }
+
+    // --- the backup ---------------------------------------------------------
+
+    const VAULT_PASSWORD: &str = "vault password";
+
+    // A lockbox in `dir` under `password`, closed again once it holds one
+    // login per title, the first of them deleted: what sits beside the open
+    // lockbox on disk.
+    fn closed_lockbox(dir: &Path, password: &str, titles: &[&str]) -> VaultKey {
+        std::fs::create_dir_all(dir).unwrap();
+        let params = KdfParams::argon2id(b"salt-0123456789012345", 256, 1, 1);
+        storage::atomic_write_file(
+            &dir.join(storage::KDF_SIDECAR_FILE),
+            &params.to_json().unwrap(),
+        )
+        .unwrap();
+        let key = VaultKey::Argon2 {
+            master: crypto::derive(password.as_bytes(), &params).unwrap(),
+        };
+        let store = SqliteStore::open(&dir.join(storage::DB_FILE), &*key.sqlcipher_key()).unwrap();
+        for (i, title) in titles.iter().enumerate() {
+            let entry = Entry {
+                id: format!("e{i}"),
+                kind: "login".into(),
+                title: (*title).into(),
+                ..Entry::default()
+            };
+            save(&store, &key.payload_cipher(), &entry);
+        }
+        store.delete("e0").unwrap();
+        key
+    }
+
+    // The lockbox beside the open one, saved with the key the app holds for
+    // it, from its own directory and descriptor: the file opens with the vault
+    // password, holds that lockbox's entries, and keeps the deletion a sync
+    // pack would in time have let go.
+    #[test]
+    fn a_lockbox_that_is_not_open_is_saved_and_restores_with_the_vault_password() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_of(root.path(), "a1b2");
+        let key = closed_lockbox(&dir, VAULT_PASSWORD, &["Gone", "Bank", "Mail"]);
+
+        let bytes = pack_lockbox(&dir, "a1b2", key).unwrap();
+
+        let fresh = tempfile::tempdir().unwrap();
+        let db = fresh.path().join(storage::DB_FILE);
+        let kdf = fresh.path().join(storage::KDF_SIDECAR_FILE);
+        assert!(matches!(
+            sync::restore::restore_at(&db, &kdf, &bytes, "not it"),
+            Err(Error::InvalidPassword)
+        ));
+        let (_, store) = sync::restore::restore_at(&db, &kdf, &bytes, VAULT_PASSWORD).unwrap();
+        let mut titles: Vec<String> = list_metas(&store)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.title)
+            .collect();
+        titles.sort();
+        assert_eq!(titles, ["Bank", "Mail"]);
+        let deleted = list_deleted_metas(&store).unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].title, "Gone");
+    }
+
+    // The primary, open; a lockbox beside it; and an org lockbox, told by its
+    // descriptor. Read as JSON rather than built, so a field added to the
+    // registry record does not have to be added here.
+    fn lockboxes(root: &Path) -> Registry {
+        closed_lockbox(&dir_of(root, "a1b2"), VAULT_PASSWORD, &["x"]);
+        let org = dir_of(root, "0r61");
+        std::fs::create_dir_all(&org).unwrap();
+        storage::atomic_write_file(
+            &org.join(storage::KDF_SIDECAR_FILE),
+            &KdfParams::external("kid", 1).to_json().unwrap(),
+        )
+        .unwrap();
+        serde_json::from_str(
+            r#"{"active":"default","workspaces":[
+                {"id":"default","name":null},
+                {"id":"a1b2","name":"Work"},
+                {"id":"0r61","name":"Deploy","server":"https://rowel.acme.example"}
+            ]}"#,
+        )
+        .unwrap()
+    }
+
+    // Named or not, the open lockbox is the session's to pack: the ring is not
+    // asked about it.
+    #[test]
+    fn the_open_lockbox_is_saved_when_none_is_named() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = lockboxes(root.path());
+        let unasked = |_: &str| -> bool { panic!("the open lockbox's key is the session's") };
+
+        for requested in [None, Some(PRIMARY_ID)] {
+            let target =
+                backup_target(root.path(), &registry, PRIMARY_ID, requested, unasked).unwrap();
+            assert!(target.open);
+            assert_eq!(target.id, PRIMARY_ID);
+            assert_eq!(target.name, None);
+        }
+    }
+
+    #[test]
+    fn a_lockbox_beside_the_open_one_is_saved_from_its_own_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = lockboxes(root.path());
+
+        let target = backup_target(root.path(), &registry, PRIMARY_ID, Some("a1b2"), |id| {
+            id == "a1b2"
+        })
+        .unwrap();
+        assert!(!target.open);
+        assert_eq!(target.dir, dir_of(root.path(), "a1b2"));
+        assert_eq!(target.name.as_deref(), Some("Work"));
+    }
+
+    // What this device cannot save is refused by what it is: an id nobody
+    // made, a lockbox the app holds no key for, a lockbox with no descriptor
+    // to put in the pack, and an org lockbox — open or not, held or not.
+    #[test]
+    fn a_lockbox_this_device_cannot_save_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = lockboxes(root.path());
+        let target = |active: &str, requested: Option<&str>, held: bool| {
+            backup_target(root.path(), &registry, active, requested, |_| held)
+        };
+
+        assert!(matches!(
+            target(PRIMARY_ID, Some("gone"), true),
+            Err(Error::NotFound)
+        ));
+        assert!(matches!(
+            target(PRIMARY_ID, Some("a1b2"), false),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            target(PRIMARY_ID, Some("0r61"), true),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            target("0r61", None, true),
+            Err(Error::Unsupported(_))
+        ));
+
+        std::fs::remove_file(dir_of(root.path(), "a1b2").join(storage::KDF_SIDECAR_FILE)).unwrap();
+        assert!(matches!(
+            target(PRIMARY_ID, Some("a1b2"), true),
+            Err(Error::Other(_))
+        ));
+    }
+
+    // Only a save that happened is noted: a dismissed dialog leaves the
+    // lockbox never saved, a chosen destination stamps it, and the stamp is
+    // what the lockbox list says. An install with one lockbox keeps its stamp
+    // without being given a registry file for it.
+    #[test]
+    fn a_backup_is_recorded_once_saved_and_not_when_the_dialog_is_dismissed() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = Registry::default();
+
+        assert_eq!(record_saved(root.path(), PRIMARY_ID, None, NOW), None);
+        assert_eq!(statuses(&registry, root.path())[0].backed_up_at, None);
+
+        let dest = PathBuf::from("/chosen/Rowel backup 2026-09-26.rowel");
+        assert_eq!(
+            record_saved(root.path(), PRIMARY_ID, Some(dest.clone()), NOW),
+            Some(dest.to_string_lossy().into_owned())
+        );
+        let listed = statuses(&registry, root.path());
+        assert_eq!(listed[0].backed_up_at.as_deref(), Some(NOW));
+        assert_eq!(serde_json::to_value(&listed[0]).unwrap()["backedUpAt"], NOW);
+        assert!(!root
+            .path()
+            .join(rowel_core::workspace::REGISTRY_FILE)
+            .exists());
+    }
+
+    // Per lockbox, and only for one that is still here: a lockbox deleted
+    // while its save dialog was open is not given a directory back.
+    #[test]
+    fn a_backup_is_recorded_against_its_own_lockbox_only() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = lockboxes(root.path());
+        registry.save(root.path()).unwrap();
+        let dest = || Some(PathBuf::from("/chosen/backup.rowel"));
+
+        record_saved(root.path(), "a1b2", dest(), NOW);
+        let listed = statuses(&registry, root.path());
+        assert_eq!(listed[0].backed_up_at, None);
+        assert_eq!(listed[1].backed_up_at.as_deref(), Some(NOW));
+        assert!(serde_json::to_value(&listed[0])
+            .unwrap()
+            .get("backedUpAt")
+            .is_none());
+
+        assert!(record_saved(root.path(), "c3d4", dest(), NOW).is_some());
+        assert!(!dir_of(root.path(), "c3d4").exists());
+    }
+
+    // The name the save dialog offers says which lockbox is in it, and can be
+    // saved under on any platform whatever the lockbox is called.
+    #[test]
+    fn the_offered_file_name_tells_lockboxes_apart_and_is_safe_to_save() {
+        let name = |lockbox| backup_file_name(lockbox, "2026-11-23");
+
+        assert_eq!(
+            name(Some("Work")),
+            format!("{APP_NAME} backup Work 2026-11-23.rowel")
+        );
+        assert_eq!(name(None), format!("{APP_NAME} backup 2026-11-23.rowel"));
+        assert_eq!(
+            name(Some("Clients: A/B\\C \"new\"\t*?<>|")),
+            format!("{APP_NAME} backup Clients A B C new 2026-11-23.rowel")
+        );
+        assert_eq!(
+            name(Some("Семья")),
+            format!("{APP_NAME} backup Семья 2026-11-23.rowel")
+        );
+        // Nothing left to name it by is no name.
+        assert_eq!(name(Some(" / ")), name(None));
+        let long = "x".repeat(300);
+        assert_eq!(
+            name(Some(&long)),
+            format!(
+                "{APP_NAME} backup {} 2026-11-23.rowel",
+                "x".repeat(FILE_NAME_CHARS)
+            )
+        );
     }
 }

@@ -948,6 +948,14 @@ mod lock_scope {
              pack's own; the pack itself runs after it is released"
         );
         at(&body, "open_snapshot_source");
+        assert!(
+            at(&body, "backup_target(") < at(&body, "prove_session_password"),
+            "a lockbox this device cannot save is refused before any Argon2id derive"
+        );
+        assert!(
+            at(&body, "save_export(") < at(&body, "record_saved("),
+            "a backup is recorded only once the dialog has had its say"
+        );
     }
 
     #[test]
