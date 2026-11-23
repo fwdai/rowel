@@ -691,6 +691,147 @@ describe('Settings › sync', () => {
   })
 })
 
+// The cloud page lists the lockboxes beside the account: the ones it holds
+// (here or not yet here) and the ones that sync nowhere. Lockboxes in another
+// provider's account, and org lockboxes, are not this account's.
+describe('Settings › sync › lockboxes beside the account', () => {
+  const pack = (id: string, provider: RemotePack['provider']): RemotePack => ({
+    id,
+    name: `${id}.rowel`,
+    vaultId: id,
+    size: 64_512,
+    modifiedTime: '2024-01-01T00:00:00.000Z',
+    provider
+  })
+
+  const several = () =>
+    seedApp({
+      workspaces: [
+        { id: 'default', name: null },
+        { id: 'w2', name: 'Work', synced: true, provider: 'googleDrive' },
+        { id: 'w3', name: 'Family', synced: true, provider: 'dropbox' },
+        { id: 'w4', name: 'Scratch', synced: false },
+        { id: 'w5', name: 'Acme', server: 'https://vault.acme.test' }
+      ],
+      activeWorkspace: 'default'
+    })
+
+  const list = () => screen.getByTestId('settings-cloud-lockboxes')
+  // The rows in the order drawn, by test id.
+  const rows = () =>
+    within(list())
+      .getAllByTestId(/^settings-cloud-(lockbox|remote)-/)
+      .map(row => row.dataset.testid!)
+      .filter(id => !id.endsWith('-status'))
+  const status = (row: string) => screen.getByTestId(`${row}-status`)
+  const figure = () =>
+    within(screen.getByTestId('settings-drive-row')).getByText('Lockboxes').nextElementSibling
+
+  it('says where each lockbox stands, the open one first', async () => {
+    several()
+    await openCloud()
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    // A pack of another provider is a previous connection's.
+    await act(async () =>
+      setRemoteVaults([pack('drive-file-1', 'googleDrive'), pack('dbx-1', 'dropbox')])
+    )
+
+    expect(rows()).toEqual([
+      'settings-cloud-lockbox-default',
+      'settings-cloud-lockbox-w2',
+      'settings-cloud-lockbox-w4',
+      'settings-cloud-remote-drive-file-1'
+    ])
+
+    expect(screen.getByTestId('settings-cloud-lockbox-default')).toHaveTextContent('Personal')
+    expect(screen.getByTestId('settings-cloud-lockbox-default')).toHaveTextContent('Open now')
+    expect(status('settings-cloud-lockbox-default')).toHaveTextContent(/^Google Drive$/)
+    expect(status('settings-cloud-lockbox-default')).toHaveAttribute('data-tone', 'good')
+
+    expect(screen.getByTestId('settings-cloud-lockbox-w2')).not.toHaveTextContent('Open now')
+    expect(status('settings-cloud-lockbox-w2')).toHaveTextContent(/^Google Drive$/)
+
+    // Syncs nowhere: said in the words Lockboxes uses, and nothing to press —
+    // no command brings a lockbox that is not open into the account.
+    expect(status('settings-cloud-lockbox-w4')).toHaveTextContent(/^This device$/)
+    expect(status('settings-cloud-lockbox-w4')).toHaveAttribute('data-tone', 'neutral')
+    expect(
+      within(screen.getByTestId('settings-cloud-lockbox-w4')).queryByRole('button')
+    ).not.toBeInTheDocument()
+
+    // In the account and not here: told apart by date and size.
+    expect(screen.getByTestId('settings-cloud-remote-drive-file-1')).toHaveTextContent(
+      'Rowel lockbox'
+    )
+    expect(status('settings-cloud-remote-drive-file-1')).toHaveTextContent(
+      /^Not on this device yet · .+/
+    )
+  })
+
+  // One reading feeds both: the account holds what is in its provider here,
+  // and what is in it and not here yet — never what syncs nowhere.
+  it('agrees with the card on how many lockboxes the account holds', async () => {
+    several()
+    await openCloud()
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+
+    const held = () => rows().filter(row => status(row).textContent !== 'This device')
+    expect(held()).toHaveLength(3)
+    expect(figure()).toHaveTextContent(/^3$/)
+
+    // The account's copy of the open one is gone: it is on this device alone,
+    // on the card and in the list alike.
+    act(() =>
+      report({
+        configured: true,
+        provider: 'googleDrive',
+        error: 'gone',
+        errorKind: 'vaultDeletedRemotely'
+      })
+    )
+    expect(status('settings-cloud-lockbox-default')).toHaveTextContent(/^This device$/)
+    expect(held()).toHaveLength(2)
+    expect(figure()).toHaveTextContent(/^2$/)
+  })
+
+  it('leads from a lockbox not on this device to Lockboxes, where it is restored', async () => {
+    several()
+    await openCloud()
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+
+    await userEvent.click(screen.getByTestId('settings-cloud-remote-drive-file-1'))
+    expect(useUi.getState().settingsSection).toBe('workspaces')
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-remote-row')).toBeInTheDocument()
+  })
+
+  it('lists nothing before an account is connected, nor the open lockbox alone', async () => {
+    several()
+    await openCloud()
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+
+    // The choice of provider stands alone.
+    expect(screen.getByTestId('settings-providers')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-cloud-lockboxes')).not.toBeInTheDocument()
+
+    // Connected, with nothing on the device or in the account but the open
+    // one: the card already says everything the list would.
+    act(() => {
+      seedApp({ workspaces: [{ id: 'default', name: null }], activeWorkspace: 'default' })
+      setRemoteVaults([])
+      report({ configured: true, provider: 'googleDrive' })
+    })
+    expect(figure()).toHaveTextContent(/^1$/)
+    expect(screen.queryByTestId('settings-cloud-lockboxes')).not.toBeInTheDocument()
+
+    // Something else in the account is worth the list.
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+    expect(rows()).toEqual(['settings-cloud-lockbox-default', 'settings-cloud-remote-drive-file-1'])
+  })
+})
+
 describe('Settings › security', () => {
   it('changes the master password', async () => {
     // Nothing came back: the change reached every workspace on the device.

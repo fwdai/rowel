@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import type { Workspace } from '@/api/types'
 import type { Provider } from '@/api/provider'
+import type { RemotePack } from '@/api/setup'
 import { syncDeletedRemotely, syncProvider, type SyncStatus } from '@/api/sync'
 
 /**
@@ -58,3 +59,55 @@ export const workspaceProvider = (
         ? null
         : syncProvider(sync)
       : registeredProvider(workspace)
+
+/**
+ * Where a lockbox's copies are, as the connected account's page tells them
+ * apart: on this device and in the account (`both`), on this device alone
+ * (`device`), or in the account alone (`account`).
+ */
+export type AccountStanding = 'both' | 'device' | 'account'
+
+export type AccountLockbox =
+  | { standing: 'both' | 'device'; workspace: Workspace; open: boolean }
+  | { standing: 'account'; pack: RemotePack }
+
+const RANK: Record<AccountStanding, number> = { both: 0, device: 1, account: 2 }
+
+/**
+ * The lockboxes as the open lockbox's cloud account sees them: what its page
+ * lists, and — those `inAccount` — what its card counts, so the figure and the
+ * list cannot disagree. Empty with no account connected.
+ *
+ * One on this device is the account's when `workspaceProvider` names the
+ * account's provider, and nobody's when it names none. One in another
+ * provider's account, or an org lockbox (the company server's), is not this
+ * account's business and is left out. The packs the last sync run found in the
+ * account and not here (`remoteVaults`) are the account's own listing; one of
+ * another provider is a previous connection's, reported before a disconnect.
+ *
+ * The open one first, since the connection is its own; then the rest in the
+ * account, those on this device alone, and those not on it yet.
+ */
+export const accountLockboxes = (
+  workspaces: Workspace[],
+  remote: RemotePack[],
+  { active, sync }: { active: string; sync: SyncStatus }
+): AccountLockbox[] => {
+  const provider = syncProvider(sync)
+  if (!provider) return []
+  const here = workspaces.flatMap((workspace): AccountLockbox[] => {
+    if (workspace.server) return []
+    const home = workspaceProvider(workspace, { active, sync })
+    const standing = home === provider ? 'both' : home === null ? 'device' : null
+    return standing ? [{ standing, workspace, open: workspace.id === active }] : []
+  })
+  const there = remote
+    .filter(pack => pack.provider === provider)
+    .map((pack): AccountLockbox => ({ standing: 'account', pack }))
+  const rank = (lockbox: AccountLockbox) =>
+    lockbox.standing !== 'account' && lockbox.open ? -1 : RANK[lockbox.standing]
+  return [...here, ...there].sort((a, b) => rank(a) - rank(b))
+}
+
+/** Whether the account holds a copy of it: the lockboxes its card counts. */
+export const inAccount = (lockbox: AccountLockbox): boolean => lockbox.standing !== 'device'
