@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   useApp,
@@ -9,6 +8,7 @@ import {
   switchWorkspaceAccount
 } from '@/store'
 import { providerName } from '@/api/provider'
+import { useForgetAccountOnLeave } from '@/hooks/useForgetAccountOnLeave'
 import SettingsRow from '@/components/elements/SettingsRow'
 import Button from '@/components/elements/Button'
 import AccountRestoreForm from '@/components/elements/AccountRestoreForm'
@@ -35,15 +35,8 @@ export default function RestoreFromAccount() {
   const account = useApp(state => state.setupAccount)
   const name = account.provider && { provider: providerName(account.provider) }
 
-  // Leaving is backing out. A sign-in the user walked away from must never be
-  // adopted by a later create or restore, so the pending tokens go with the
-  // screen that asked for them — whether it goes because the user pressed
-  // Cancel, went Back, moved to another section, or closed Settings. Harmless
-  // after a restore that worked: the backend has already taken them. And
-  // harmless during one: the backend holds the account for the restore's
-  // length and refuses to drop it, so leaving mid-restore lets what the user
-  // asked for finish — exactly as leaving mid-create does.
-  useEffect(() => forgetAccount, [])
+  // Leaving is backing out, as Cancel is.
+  useForgetAccountOnLeave()
 
   const restoring = account.status === 'restoring'
 

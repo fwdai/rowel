@@ -521,6 +521,21 @@ describe('Settings › sync', () => {
       expect(screen.getByTestId('settings-drive-connect')).toBeInTheDocument()
     })
 
+    // The rule restoring under Lockboxes keeps too: a connect walked away from
+    // goes with the page, and a page left with none started calls nothing.
+    it('forgets a connect the page is left with, and calls nothing without one', async () => {
+      await openCloud()
+      await userEvent.click(screen.getByTestId('settings-subpage-back'))
+      expect(calls('setup_disconnect')).toHaveLength(0)
+
+      await userEvent.click(screen.getByTestId('settings-sync-open-cloud'))
+      await userEvent.click(screen.getByTestId('settings-drive-connect'))
+      await userEvent.click(screen.getByTestId('settings-subpage-back'))
+
+      expect(calls('setup_disconnect')).toHaveLength(1)
+      expect(useApp.getState().setupAccount.status).toBe('idle')
+    })
+
     // Any other reason the backend could not adopt (the account did not answer,
     // the vault locked) is a failure like the probe's, not an offer.
     it('reports an adopt that failed for another reason', async () => {
@@ -2487,6 +2502,16 @@ describe('Settings › workspaces › restore from an account', () => {
 
     expect(calls('setup_disconnect')).toHaveLength(1)
     expect(useApp.getState().setupAccount.status).toBe('idle')
+  })
+
+  // With no sign-in started there is nothing to forget, so the backend is not
+  // asked to.
+  it('leaves without a backend call when no sign-in was started', async () => {
+    await openRestore()
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+
+    expect(calls('setup_disconnect')).toHaveLength(0)
   })
 
   it('restores the vault the user picked as a workspace of its own', async () => {
