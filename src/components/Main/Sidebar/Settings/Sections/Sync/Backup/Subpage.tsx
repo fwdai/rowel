@@ -1,30 +1,24 @@
 import { useTranslation } from 'react-i18next'
-import SettingsNavRow from '@/components/elements/SettingsNavRow'
+import Note from '@/components/elements/Note'
 import { CARD } from '@/components/elements/tokens'
-import { FileArchiveGlyph } from '@/components/Main/icons'
-import { useSectionNav } from '../../../sectionNav'
 import SubpageScroller from '../../../SubpageScroller'
 import BackupRow from './BackupRow'
 
-// Sync & backup › Encrypted backup: saving one here, and the way to where one
-// is restored, which is Import's to do.
+// Sync & backup › Encrypted backup: saving one, and what a saved one is for.
+// A backup is a whole sealed database, which only a fresh install can take, so
+// the page says so rather than offering a restore an open vault cannot do.
 export default function BackupSubpage() {
   const { t } = useTranslation()
-  const go = useSectionNav()
 
   return (
     <SubpageScroller testid="settings-backup">
       {/* No heading over the card: the page's own title is the heading. */}
       <div className={CARD}>
         <BackupRow />
-        <SettingsNavRow
-          icon={<FileArchiveGlyph size={16} />}
-          label={t('Restore a backup')}
-          description={t('A backup file and the master password it was sealed with')}
-          onClick={() => go('import')}
-          testid="settings-backup-restore"
-        />
       </div>
+      <Note className="px-1 pt-2.5" testid="settings-backup-restore-note">
+        {t('Backups restore a fresh install and are not imported into an existing vault.')}
+      </Note>
     </SubpageScroller>
   )
 }

@@ -524,12 +524,14 @@ describe('Settings › sync', () => {
     expect(screen.queryByTestId('settings-export-run')).not.toBeInTheDocument()
   })
 
-  it('sends a restore to Import, where a backup is read', async () => {
+  // An open vault cannot take a backup back in, so the page says where one
+  // goes instead of offering a restore.
+  it('says a backup restores a fresh install, and offers no restore here', async () => {
     await openBackup()
-    await userEvent.click(screen.getByTestId('settings-backup-restore'))
-    expect(useUi.getState().settingsSection).toBe('import')
-    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
-    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-backup-restore-note')).toHaveTextContent(
+      'Backups restore a fresh install and are not imported into an existing vault.'
+    )
+    expect(screen.queryByText('Restore a backup')).not.toBeInTheDocument()
   })
 
   // The pill beside the title says where the connection stands, one tone per
