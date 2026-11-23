@@ -1,5 +1,5 @@
-import { createContext, useContext, useState } from 'react'
-import { setSettingsSection, useUi, type Section } from '@/store'
+import { createContext, useContext } from 'react'
+import { setSettingsSection, type Section } from '@/store'
 import type { Subpage } from './subpages'
 
 /** To a section, or straight to one of its sub-pages. */
@@ -42,29 +42,3 @@ const SubpageContext = createContext<SubpageNav>({
 export const SubpageProvider = SubpageContext.Provider
 
 export const useSubpage = () => useContext(SubpageContext)
-
-/**
- * The sub-page a shell holds, under the section lock: while Settings may not
- * be left (`settingsLocked`) a sub-page is neither opened nor left either.
- * `drop` is the shell's clear for a nav pick or backing out to the phone's root.
- * It checks the live lock too: its caller may have rendered just before an
- * async operation acquired that lock.
- */
-export function useSubpageState(): SubpageNav & { drop: () => void } {
-  const [subpage, setSubpage] = useState<Subpage | null>(null)
-  return {
-    subpage,
-    open: next => {
-      // Read the lock at the instant of the action. An async operation can claim
-      // it between renders; a callback that captured the prior `false` would let
-      // an immediate Escape, scrim click or Back slip through that small gap.
-      if (!useUi.getState().settingsLocked) setSubpage(next)
-    },
-    close: () => {
-      if (!useUi.getState().settingsLocked) setSubpage(null)
-    },
-    drop: () => {
-      if (!useUi.getState().settingsLocked) setSubpage(null)
-    }
-  }
-}
