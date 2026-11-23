@@ -7,7 +7,12 @@
 //!
 //! Addressing is a path prefix, `/https/<host>/<path>`, because every SDK
 //! takes a base URL and that is all the agent needs; a `CONNECT` forward
-//! proxy with a local CA is not offered (Q15). The proxy listens on the
+//! proxy with a local CA is not offered (Q15). `/http/<host>/<path>` is
+//! served with `--allow-http` and only to a host on this machine
+//! (`is_loopback_host`), so a value bound for any other host travels over
+//! TLS or not at all. The request goes straight to the host the path names:
+//! the upstream client takes no proxy from the environment (`HTTP_PROXY`,
+//! `HTTPS_PROXY`, `ALL_PROXY`) or the system. The proxy listens on the
 //! loopback address only: it holds the sidecar key, and must not be
 //! reachable from the network. Placeholders are swapped in headers and in a
 //! JSON or form body, never in the URL, which lands in logs upstream. A
@@ -49,6 +54,7 @@ use percent_encoding::percent_decode_str;
 use rowel_broker::grant::{ResolveContext, ResolveTarget};
 use rowel_broker::protocol::Code;
 use rowel_broker::reference::{Reference, SCHEME};
+use rowel_core::host::is_loopback_host;
 use serde_json::json;
 use tokio::net::TcpListener;
 use zeroize::Zeroizing;
@@ -69,8 +75,9 @@ pub const RATE_PER_MINUTE: u32 = 60;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProxyArgs {
     pub listen: SocketAddr,
-    /// Whether `/http/<host>/…` is served: a dev server on localhost. Off,
-    /// because a key sent in the clear is a key given away.
+    /// Whether `/http/<host>/…` is served, to a host on this machine only: a
+    /// dev server on localhost. Off, because a key sent in the clear is a
+    /// key given away.
     pub allow_http: bool,
 }
 
@@ -141,11 +148,15 @@ impl State {
     /// The TLS provider is installed here, once, as the app's `sync` installs
     /// it: reqwest is built without one so the app and the CLI link the same
     /// ring backend, and a client cannot be built before it is there. The
-    /// client follows no redirect (see the module doc).
+    /// client follows no redirect (see the module doc) and uses no proxy,
+    /// whatever the environment or the system names: whoever starts the
+    /// proxy chooses its environment, and a proxy there would be handed
+    /// every request, value and all.
     pub fn new(broker: Box<dyn Broker + Send>, allow_http: bool) -> io::Result<Self> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let upstream = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
             .build()
             .map_err(|e| io::Error::other(e.without_url().to_string()))?;
         Ok(Self {
@@ -234,7 +245,8 @@ struct Upstream {
 }
 
 /// `/https/<host>/<path>?<query>` read into the upstream URL. A placeholder
-/// anywhere in it, encoded or not, is refused: never in URLs.
+/// anywhere in it, encoded or not, is refused: never in URLs. `/http/` is
+/// read only with `allow_http` and only for a host on this machine.
 fn upstream_of(uri: &http::Uri, allow_http: bool) -> Result<Upstream, Refusal> {
     let bad = |message: &str| Refusal::new(StatusCode::BAD_REQUEST, "bad_request", message);
     let path = uri.path();
@@ -276,6 +288,14 @@ fn upstream_of(uri: &http::Uri, allow_http: bool) -> Result<Upstream, Refusal> {
     // `/v1/public/*` and reach `/v1/charges`.
     let url =
         reqwest::Url::parse(&url).map_err(|_| bad("the path must be /https/<host>/<path>"))?;
+    // In the clear only to this machine, where nobody sits on the way: a
+    // grant for any other host is used over TLS or not at all. The host
+    // checked is the one connected to, as parsed.
+    if scheme == "http" && !url.host_str().is_some_and(is_loopback_host) {
+        return Err(bad(
+            "/http/<host>/… is served only to this machine (localhost, 127.0.0.1, [::1]): call any other host at /https/<host>/…",
+        ));
+    }
     Ok(Upstream {
         host: self::authority(scheme, authority),
         path: url.path().to_string(),
@@ -876,6 +896,36 @@ mod tests {
         }
     }
 
+    // With the flag, `/http/` still reaches this machine only: a value for
+    // any other host goes over TLS or not at all.
+    #[test]
+    fn http_is_served_only_to_this_machine() {
+        for local in [
+            "/http/localhost:3000/x",
+            "/http/LocalHost/x",
+            "/http/127.0.0.1:3000/x",
+            "/http/127.8.9.10/x",
+            "/http/[::1]:8080/x",
+        ] {
+            let up = upstream_of(&local.parse().unwrap(), true).unwrap();
+            assert!(up.url.starts_with("http://"), "{local}");
+        }
+        for remote in [
+            "/http/api.stripe.com/v1/balance",
+            "/http/localhost.example.com/x",
+            "/http/10.0.0.1/x",
+            "/http/0.0.0.0:3000/x",
+            "/http/[2001:db8::1]:8080/x",
+        ] {
+            let refusal = upstream_of(&remote.parse().unwrap(), true).unwrap_err();
+            assert_eq!(
+                (refusal.status, refusal.error.as_str()),
+                (StatusCode::BAD_REQUEST, "bad_request"),
+                "{remote}"
+            );
+        }
+    }
+
     #[test]
     fn placeholders_are_found_as_written_and_percent_encoded() {
         let text = "Bearer rowel://lb/stripe/apiKey, key=rowel%3a%2f%2Flb%2Fgh%2Fpassword&x=rowel://lb/bad plain";
@@ -1185,7 +1235,8 @@ mod end_to_end {
     /// upstream's host (the ephemeral `127.0.0.1:<port>`, which is why the
     /// host is handed in), and an echo upstream, both on loopback. The test
     /// client follows no redirect either, so a 3xx the proxy relays is seen
-    /// as such.
+    /// as such, and talks to the proxy directly whatever proxy the
+    /// environment names.
     async fn proxy(mock: impl FnOnce(&str) -> Mock) -> Proxy {
         let (upstream, seen) = echo_upstream().await;
         let harness = known_sidecar(mock(&upstream.to_string()));
@@ -1201,6 +1252,7 @@ mod end_to_end {
             seen,
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
                 .build()
                 .unwrap(),
         }
@@ -1541,6 +1593,116 @@ mod end_to_end {
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["error"], "upstream");
+    }
+
+    // A grant for a host on another machine is not used over `/http/`, flag
+    // or not: refused before anything is resolved, and nothing goes out.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn http_to_another_machine_is_refused_before_anything_is_resolved() {
+        let proxy = proxy(|_| granting_stripe("upstream.invalid")).await;
+        let response = proxy
+            .client
+            .get(format!("{}/http/upstream.invalid/v1/balance", proxy.base))
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, GRANT)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "bad_request");
+        assert_eq!(proxy.uses(), 0);
+        assert!(proxy.buckets().is_empty());
+    }
+
+    /// Set in the child [`the_upstream_takes_no_proxy_from_the_environment`]
+    /// runs itself in, to the address its environment names as every proxy.
+    const TRAP_VAR: &str = "ROWEL_TEST_PROXY_TRAP";
+
+    // The upstream client takes no proxy from the environment. Proxy
+    // variables are process-wide and this binary runs its tests on many
+    // threads, so the request is made in a child of this test binary, run
+    // for this one test, whose environment names a trap as every proxy; the
+    // parent's environment is never touched. The trap answers whatever it
+    // is sent with a 418, so a request routed through it fails the child.
+    #[test]
+    fn the_upstream_takes_no_proxy_from_the_environment() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        if std::env::var_os(TRAP_VAR).is_some() {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(a_request_reaches_the_upstream_directly());
+            return;
+        }
+        let trap = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let trap_url = format!("http://{}", trap.local_addr().unwrap());
+        let trapped = Arc::new(AtomicBool::new(false));
+        let caught = trapped.clone();
+        std::thread::spawn(move || {
+            for stream in trap.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                caught.store(true, Ordering::SeqCst);
+                let _ = stream.read(&mut [0u8; 4096]);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 418 I'm a teapot\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+            }
+        });
+        let (_, name) = module_path!().split_once("::").unwrap();
+        let name = format!("{name}::the_upstream_takes_no_proxy_from_the_environment");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", &name, "--test-threads=1"])
+            .env(TRAP_VAR, &trap_url)
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .env_remove("REQUEST_METHOD");
+        for variable in [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            child.env(variable, &trap_url);
+        }
+        let output = child.output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "the child ran the test: {stdout}"
+        );
+        assert!(
+            !trapped.load(Ordering::SeqCst),
+            "a request went to the proxy the environment named"
+        );
+    }
+
+    /// The child's half: one request through the proxy, answered by the
+    /// echo upstream with the value in place.
+    async fn a_request_reaches_the_upstream_directly() {
+        let proxy = proxy(granting_stripe).await;
+        let response = proxy
+            .client
+            .get(proxy.url("/v1/balance"))
+            .header("authorization", format!("Bearer {REF}"))
+            .header(GRANT_HEADER, GRANT)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            proxy.last_seen()["authorization"],
+            format!("Bearer {VALUE}")
+        );
     }
 
     #[test]

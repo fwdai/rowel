@@ -195,9 +195,10 @@ pub fn resolve_target_text(target: &ResolveTarget) -> String {
     }
 }
 
-/// `api.stripe.com/v1/balance`: no scheme, since a header target is always
-/// reached over TLS, and one slash between host and path however the path
-/// was written.
+/// `api.stripe.com/v1/balance`: no scheme, since the proxy reaches a header
+/// target on any other machine over TLS only (plain HTTP is for a host on
+/// this machine, `localhost` or a loopback address), and one slash between
+/// host and path however the path was written.
 fn host_path(host: &str, path: &str) -> String {
     format!("{host}/{}", path.trim_start_matches('/'))
 }
