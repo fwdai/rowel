@@ -229,6 +229,19 @@ pub fn glob_matches(pattern: &str, text: &str) -> bool {
 /// quoted, as `rowel run` writes lines — matches that line alone, and only a
 /// bare `*` a rule's author wrote (`node deploy.js*`) stands for any run.
 fn command_matches(pattern: &str, line: &str) -> bool {
+    glob_over(&command_pattern(pattern), line.as_bytes())
+}
+
+/// Whether `line`, read as a command pattern, matches itself and nothing
+/// else: it has no bare `*`. What a command target in a request must be, so
+/// that the grant covers the text the dialog shows and no other line.
+pub fn command_is_literal(line: &str) -> bool {
+    command_pattern(line).iter().all(Option::is_some)
+}
+
+/// `pattern` as [`glob_over`] walks it: every byte itself, but a bare `*`
+/// (outside quotes, not after a backslash) a wildcard.
+fn command_pattern(pattern: &str) -> Vec<Option<u8>> {
     let mut tokens = Vec::with_capacity(pattern.len());
     let (mut single, mut double, mut escaped) = (false, false, false);
     for b in pattern.bytes() {
@@ -244,7 +257,7 @@ fn command_matches(pattern: &str, line: &str) -> bool {
             double = !double;
         }
     }
-    glob_over(&tokens, line.as_bytes())
+    tokens
 }
 
 /// Whether `path` has a `.` or `..` segment, written or percent-encoded: a
@@ -651,6 +664,27 @@ mod tests {
         assert!(quoted.matches(&Probe::Command(r#"echo "a*b" c\* 'it'\''s*'"#)));
         assert!(!quoted.matches(&Probe::Command(r#"echo "axxb" c\* 'it'\''s*'"#)));
         assert!(!quoted.matches(&Probe::Command(r#"echo "a*b" c\* 'it'\''sxx'"#)));
+    }
+
+    // A line is literal when no `*` in it is bare, read the way a command
+    // target is matched: such a line matches itself alone.
+    #[test]
+    fn a_command_line_is_literal_when_no_star_in_it_is_bare() {
+        for line in [
+            "stripe balance retrieve",
+            "psql -c 'SELECT * FROM users'",
+            r#"echo "a*b" c\* 'it'\''s*'"#,
+        ] {
+            assert!(command_is_literal(line), "{line}");
+        }
+        for line in [
+            "node deploy.js*",
+            "stripe * --live",
+            r#"echo "a" * 'b'"#,
+            r#"echo 'it'\''s' *"#,
+        ] {
+            assert!(!command_is_literal(line), "{line}");
+        }
     }
 
     #[test]
