@@ -2,14 +2,17 @@ import { createContext, useContext, useState } from 'react'
 import { setSettingsSection, useUi, type Section } from '@/store'
 import type { Subpage } from './subpages'
 
+/** To a section, or straight to one of its sub-pages. */
+export type SectionNav = (section: Section, subpage?: Subpage) => void
+
 /**
  * How a section body moves Settings to another section, whichever shell it is
- * drawn in. The wide modal's section lives in the store, so the default is
- * the store's own setter; the phone keeps its pushed section in local state
- * and provides its own (see `Compact/Settings`). A body that only called the
- * store would move the modal nobody is looking at.
+ * drawn in. Each shell provides its own, since each holds the sub-page (and
+ * the phone the section too) in local state; a body that only called the
+ * store would move the modal nobody is looking at. Outside a shell the store's
+ * setter is all there is, and it lands on the section's own page.
  */
-const SectionNavContext = createContext<(section: Section) => void>(setSettingsSection)
+const SectionNavContext = createContext<SectionNav>(setSettingsSection)
 
 export const SectionNavProvider = SectionNavContext.Provider
 

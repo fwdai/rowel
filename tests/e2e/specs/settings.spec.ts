@@ -67,6 +67,7 @@ describe("settings", () => {
 
   it("offers each sync provider while not connected", async () => {
     await section("sync");
+    await $('[data-testid="settings-sync-open-cloud"]').click();
     await expect($('[data-testid="settings-drive-row"]')).toHaveText(
       /Not connected/,
     );
@@ -76,6 +77,7 @@ describe("settings", () => {
 
   it("keeps the encrypted backup form behind its control", async () => {
     await section("sync");
+    await $('[data-testid="settings-sync-open-backup"]').click();
     await expect($('input[name="export_password"]')).not.toBeDisplayed();
     await $('[data-testid="settings-backup-row"]').$("button").click();
     await expect($('input[name="export_password"]')).toBeDisplayed();

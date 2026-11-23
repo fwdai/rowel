@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Settings from '@/components/Main/Sidebar/Settings'
 import type { NearbyDevice, NearbyStatus } from '@/api/nearby'
@@ -7,9 +7,9 @@ import { openSettings, setNearbyStatus, useUi } from '@/store'
 import { calls, mockCommand, mockCommandOnce, nearbyUnavailable } from './ipc'
 
 /*
- * Settings › Sync › Nearby devices, against the IPC mock. Every change the
- * group asks for answers through `nearby:status`, so each spec reports the
- * status the backend would have sent next (`report`).
+ * Settings › Sync & backup › Nearby devices, against the IPC mock. Every
+ * change the page asks for answers through `nearby:status`, so each spec
+ * reports the status the backend would have sent next (`report`).
  */
 
 const DAY = 24 * 60 * 60 * 1000
@@ -44,37 +44,73 @@ const openSync = () => {
   render(<Settings />)
 }
 
+// The overview's row is the way in, and is only there on a build with nearby.
+const row = () => screen.queryByTestId('settings-sync-open-nearby')
+const openNearby = () => {
+  openSync()
+  fireEvent.click(screen.getByTestId('settings-sync-open-nearby'))
+}
+
 const toggle = () => screen.getByTestId('settings-nearby-toggle')
 const status = (id = 'd1') => screen.getByTestId(`settings-nearby-status-${id}`)
 
 describe('Settings › Sync › Nearby devices', () => {
   it('draws nothing before the backend has said anything', () => {
     openSync()
-    expect(screen.getByTestId('settings-drive-row')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-sync-open-cloud')).toBeInTheDocument()
     expect(screen.queryByText('Nearby devices')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('settings-nearby-toggle')).not.toBeInTheDocument()
+    expect(row()).not.toBeInTheDocument()
   })
 
   it('draws nothing on a build without it', () => {
     act(() => setNearbyStatus({ ...nearbyUnavailable(), enabled: true, seq: 1 }))
     openSync()
-    expect(screen.queryByTestId('settings-nearby-toggle')).not.toBeInTheDocument()
+    expect(row()).not.toBeInTheDocument()
   })
 
-  it('sits above the cloud account, and leaves it as it was', () => {
+  it('sits above the cloud account on the overview, saying whether it is on', () => {
     report({ enabled: false })
     openSync()
 
-    const group = screen.getByText('Nearby devices')
-    const card = screen.getByTestId('settings-drive-row')
-    expect(group.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const cloud = screen.getByTestId('settings-sync-open-cloud')
+    expect(row()!.compareDocumentPosition(cloud) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByTestId('settings-sync-open-nearby-status')).toHaveTextContent('Off')
+
+    report({ enabled: true })
+    expect(screen.getByTestId('settings-sync-open-nearby-status')).toHaveTextContent('On')
+    // With no cloud account, nearby sync is what the summary speaks for.
+    expect(screen.getByTestId('settings-sync-summary')).toHaveTextContent('Nearby sync is on')
+  })
+
+  it('leaves the cloud account’s page as it was', () => {
+    report({ enabled: false })
+    openSync()
+    fireEvent.click(screen.getByTestId('settings-sync-open-cloud'))
+
     expect(screen.getByTestId('settings-account-name')).toHaveTextContent('Cloud sync')
     expect(screen.getByTestId('settings-drive-connect')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-nearby-toggle')).not.toBeInTheDocument()
+  })
+
+  it('steps back to the overview when the build stops offering it', () => {
+    report({ enabled: true })
+    openNearby()
+    expect(toggle()).toBeInTheDocument()
+
+    act(() => setNearbyStatus({ ...nearbyUnavailable(), seq: ++seq }))
+    expect(screen.queryByTestId('settings-nearby-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-sync-open-cloud')).toBeInTheDocument()
+  })
+
+  it('names this device, the way the others see it', () => {
+    report({ devices: [device()] })
+    openNearby()
+    expect(screen.getByTestId('settings-nearby-this-device')).toHaveTextContent('Studio Mac')
   })
 
   it('says what it does under the switch, and shows nothing else while off', () => {
     report({ enabled: false, devices: [device()] })
-    openSync()
+    openNearby()
 
     expect(toggle()).toHaveAttribute('aria-checked', 'false')
     expect(
@@ -87,7 +123,7 @@ describe('Settings › Sync › Nearby devices', () => {
 
   it('turns on through the backend, and holds the switch until it reports', async () => {
     report({ enabled: false })
-    openSync()
+    openNearby()
 
     await userEvent.click(toggle())
 
@@ -107,7 +143,7 @@ describe('Settings › Sync › Nearby devices', () => {
       Promise.reject({ kind: 'other', message: 'the network is unavailable' })
     )
     report({ enabled: false })
-    openSync()
+    openNearby()
 
     await userEvent.click(toggle())
 
@@ -119,7 +155,7 @@ describe('Settings › Sync › Nearby devices', () => {
 
   it('looks for devices while on with none found', () => {
     report({ devices: [] })
-    openSync()
+    openNearby()
 
     const searching = screen.getByTestId('settings-nearby-searching')
     expect(searching).toHaveTextContent('Looking for your devices…')
@@ -156,7 +192,7 @@ describe('Settings › Sync › Nearby devices', () => {
     ['the other device broke the protocol', 'error', { detail: 'the other device broke the protocol', detailKind: 'other' }]
   ])('says “%s” for a device in state %s', (line, state, over) => {
     report({ devices: [device({ state, ...over })] })
-    openSync()
+    openNearby()
 
     expect(screen.getByTestId('settings-nearby-device-d1')).toHaveTextContent('Alex’s iPhone')
     expect(status()).toHaveTextContent(line)
@@ -170,7 +206,7 @@ describe('Settings › Sync › Nearby devices', () => {
         device({ id: 'bad', state: 'needsPassword' })
       ]
     })
-    openSync()
+    openNearby()
 
     expect(status('ok')).not.toHaveClass('text-bad')
     expect(status('bad')).toHaveClass('text-bad')
@@ -183,7 +219,7 @@ describe('Settings › Sync › Nearby devices', () => {
         device({ id: 'behind', state: 'needsPassword' })
       ]
     })
-    openSync()
+    openNearby()
 
     expect(screen.queryByTestId('settings-nearby-adopt-behind')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('settings-nearby-adopt-ahead'))
@@ -192,7 +228,7 @@ describe('Settings › Sync › Nearby devices', () => {
 
   it('pauses a device, and resumes a paused one', async () => {
     report({ devices: [device({ id: 'd1' }), device({ id: 'd2', state: 'paused' })] })
-    openSync()
+    openNearby()
 
     await userEvent.click(screen.getByTestId('settings-nearby-menu-d1'))
     expect(screen.getByTestId('settings-nearby-pause-d1')).toHaveTextContent('Pause syncing')
@@ -213,7 +249,7 @@ describe('Settings › Sync › Nearby devices', () => {
       Promise.reject({ kind: 'other', message: 'that device is gone' })
     )
     report({ devices: [device()] })
-    openSync()
+    openNearby()
 
     await userEvent.click(screen.getByTestId('settings-nearby-menu-d1'))
     await userEvent.click(screen.getByTestId('settings-nearby-pause-d1'))
@@ -225,7 +261,7 @@ describe('Settings › Sync › Nearby devices', () => {
 
   it('removes a device only once the confirmation is answered', async () => {
     report({ devices: [device()] })
-    openSync()
+    openNearby()
 
     await userEvent.click(screen.getByTestId('settings-nearby-menu-d1'))
     await userEvent.click(screen.getByTestId('settings-nearby-remove-d1'))
@@ -245,7 +281,7 @@ describe('Settings › Sync › Nearby devices', () => {
 
   it('removes nothing when the confirmation is cancelled', async () => {
     report({ devices: [device()] })
-    openSync()
+    openNearby()
 
     await userEvent.click(screen.getByTestId('settings-nearby-menu-d1'))
     await userEvent.click(screen.getByTestId('settings-nearby-remove-d1'))

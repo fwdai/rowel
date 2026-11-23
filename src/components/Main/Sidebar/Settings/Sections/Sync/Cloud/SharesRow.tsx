@@ -10,8 +10,8 @@ import { useLatestRequest } from '@/hooks/useLatestRequest'
 import { relativeUntil } from '@/utils/time'
 import Button from '@/components/elements/Button'
 import Note from '@/components/elements/Note'
-import { LinkGlyph } from '../../../../icons'
-import ExpandableRow from '../ExpandableRow'
+import { LinkGlyph } from '@/components/Main/icons'
+import ExpandableRow from '../../ExpandableRow'
 
 // How often the countdowns are re-read. A minute is the finest unit they show.
 const TICK_MS = 60_000

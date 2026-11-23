@@ -1,6 +1,8 @@
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { describeError } from '@/api/errors'
+import { selectActiveWorkspace, selectWorkspaces, useApp } from '@/store'
+import { workspaceLabel } from '@/lib/workspace'
 import { exportVault } from '@/api/vault'
 import { BACKUP_EXTENSION } from '@/lib/backup'
 import Button from '@/components/elements/Button'
@@ -9,14 +11,18 @@ import Field from '@/components/elements/Field'
 import Note from '@/components/elements/Note'
 import { inputClass } from '@/components/elements/formStyles'
 import { verbatimInput } from '@/components/elements/inputProps'
-import { DiskGlyph } from '../../../../icons'
-import ExpandableRow from '../ExpandableRow'
+import { DiskGlyph } from '@/components/Main/icons'
+import ExpandableRow from '../../ExpandableRow'
 
-// The whole vault as one backup file, resealed under the master password the
+// The open lockbox as one backup file, resealed under the master password the
 // user re-types here (the open session's key is never handed to the exporter).
+// The row names the lockbox: the file holds that one, not every lockbox here.
 export default function BackupRow() {
   const { t } = useTranslation()
   const id = useId()
+  const active = useApp(selectActiveWorkspace)
+  const workspace = useApp(selectWorkspaces).find(workspace => workspace.id === active)
+  const lockbox = workspace ? workspaceLabel(workspace, t) : t('Personal')
   const [password, setPassword] = useState('')
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -40,11 +46,11 @@ export default function BackupRow() {
     <ExpandableRow
       label={
         <span className="flex items-center gap-2">
-          {t('Encrypted backup')}
+          {t('Save a backup')}
           <Chip>{BACKUP_EXTENSION}</Chip>
         </span>
       }
-      description={t('Your whole vault, sealed with your master password')}
+      description={t('Everything in {{lockbox}}, sealed with your master password', { lockbox })}
       icon={<DiskGlyph size={16} />}
       action={t('Save…')}
       testid="settings-backup-row"

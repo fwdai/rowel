@@ -532,7 +532,7 @@ describe('compact shell', () => {
   // A section body that sends the user elsewhere (the export pane's "save a
   // backup instead") has to move this shell's pushed pane, not the modal's
   // remembered section, which nothing on a phone is showing.
-  it('follows the export pane’s backup link to the Sync pane', async () => {
+  it('follows the export pane’s backup link to the backup page', async () => {
     seed()
     render(<Main />)
 
@@ -540,7 +540,31 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-nav-import'))
     await userEvent.click(screen.getByTestId('settings-io-export'))
     await userEvent.click(screen.getByTestId('settings-export-backup-link'))
-    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+    // The backup's page, pushed over the Sync pane it belongs to.
+    const page = screen.getByTestId('settings-subpage')
+    expect(within(page).getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
+  })
+
+  // Sync & backup is an overview whose rows push a page each: root, section,
+  // page, with each Back naming the screen under it.
+  it('drills from the Sync overview into a page and back out', async () => {
+    seed()
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-sync'))
+    await userEvent.click(screen.getByTestId('settings-sync-open-cloud'))
+
+    const page = screen.getByTestId('settings-subpage')
+    expect(within(page).getByRole('heading', { name: 'Your cloud storage' })).toBeInTheDocument()
+    expect(within(page).getByTestId('settings-drive-row')).toBeInTheDocument()
+    // The overview stays under it, out of reach until the page is popped.
+    expect(screen.getByTestId('settings-sync-open-cloud').closest('[inert]')).not.toBeNull()
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-sync-open-cloud').closest('[inert]')).toBeNull()
   })
 
   // The pane's section is local state, so the store's guard on the wide

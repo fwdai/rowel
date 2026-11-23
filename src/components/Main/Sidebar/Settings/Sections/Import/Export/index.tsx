@@ -79,7 +79,7 @@ export default function ExportPane() {
           <button
             type="button"
             data-testid="settings-export-backup-link"
-            onClick={() => go('sync')}
+            onClick={() => go('sync', { key: 'sync-backup' })}
             className={TEXT_LINK}
           >
             {t('Save an encrypted backup instead')}

@@ -3,7 +3,8 @@ import { useUi, type Section } from '@/store'
 import {
   SectionNavProvider,
   SubpageProvider,
-  useSubpageState
+  useSubpageState,
+  type SectionNav
 } from '../../Sidebar/Settings/sectionNav'
 import Root from './Root'
 import Pane from './Pane'
@@ -27,19 +28,21 @@ import Stack from '../Stack'
  * needs nothing of its own — leaving Settings from there goes through
  * `closeSettings`, which is already guarded.
  *
- * A section body that sends the user to another section (the export pane's
- * "save a backup instead") goes through `SectionNavProvider`, so here it moves
- * this local state rather than the modal's — under the same lock.
+ * A section body that sends the user to another section, or to a sub-page of
+ * one (the export pane's "save a backup instead"), goes through
+ * `SectionNavProvider`, so here it moves this local state rather than the
+ * modal's — under the same lock.
  */
 export default function Settings() {
   const [section, setSection] = useState<Section | null>(null)
   const locked = useUi(state => state.settingsLocked)
   // A sub-page is one more pane on top of the section's, held the same way.
   const nav = useSubpageState()
-  const go = (next: Section) => {
+  const go: SectionNav = (next, page) => {
     if (useUi.getState().settingsLocked) return
-    nav.drop()
     setSection(next)
+    if (page) nav.open(page)
+    else nav.drop()
   }
 
   return (

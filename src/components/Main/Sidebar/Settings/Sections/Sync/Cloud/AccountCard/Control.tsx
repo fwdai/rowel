@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { useApp, forgetAccount } from '@/store'
 import { syncNow } from '@/api/sync'
 import Button from '@/components/elements/Button'
-import { RefreshGlyph } from '../../../../../icons'
+import { RefreshGlyph } from '@/components/Main/icons'
 
 interface Props {
   probing: boolean

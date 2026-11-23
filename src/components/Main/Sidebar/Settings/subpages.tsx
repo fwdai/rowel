@@ -5,12 +5,18 @@ import type { Section } from '@/store'
 import NewWorkspace from './Sections/Workspaces/NewWorkspace/Subpage'
 import EditWorkspace from './Sections/Workspaces/EditWorkspace/Subpage'
 import DeleteWorkspace from './Sections/Workspaces/DeleteWorkspace/Subpage'
+import Nearby from './Sections/Sync/Nearby/Subpage'
+import Cloud from './Sections/Sync/Cloud/Subpage'
+import Backup from './Sections/Sync/Backup/Subpage'
 import { titleOf } from './sections'
 
 export type Subpage =
   | { key: 'new-workspace' }
   | { key: 'edit-workspace'; id: string }
   | { key: 'delete-workspace'; id: string }
+  | { key: 'sync-nearby' }
+  | { key: 'sync-cloud' }
+  | { key: 'sync-backup' }
 
 type Key = Subpage['key']
 
@@ -43,6 +49,25 @@ export const SUBPAGES: { [K in Key]: Definition<K> } = {
     title: 'Delete lockbox',
     description: 'There is no undo, so it takes two proofs first.',
     Body: DeleteWorkspace
+  },
+  'sync-nearby': {
+    crumb: 'sync',
+    title: 'Nearby devices',
+    description: 'Sync directly between your own devices on the same network.',
+    Body: Nearby
+  },
+  'sync-cloud': {
+    crumb: 'sync',
+    title: 'Your cloud storage',
+    description:
+      'Sync through storage you already own. Only encrypted files are ever stored there.',
+    Body: Cloud
+  },
+  'sync-backup': {
+    crumb: 'sync',
+    title: 'Encrypted backup',
+    description: 'A file you keep yourself, sealed with your master password.',
+    Body: Backup
   }
 }
 
