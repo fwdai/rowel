@@ -28,10 +28,10 @@ use std::net::TcpStream;
 use std::sync::Arc;
 
 use http::Uri;
-use interprocess::local_socket::{prelude::*, Stream};
+use interprocess::local_socket::Stream;
 use rowel_broker::client::Transport;
 use rowel_broker::frame;
-use rowel_broker::socket::{root_dir, socket_name};
+use rowel_broker::socket::root_dir;
 use rowel_core::host::is_loopback_host;
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;
@@ -159,12 +159,11 @@ fn broker_from(value: Option<String>) -> io::Result<Option<Broker>> {
     }
 }
 
-/// The app's socket.
+/// The app's socket, refused on Windows when the pipe there is not this
+/// user's (`rowel_broker::socket::connect`).
 pub fn connect_local() -> io::Result<Socket> {
     let root = root_dir().ok_or_else(|| io::Error::other("no data directory for this user"))?;
-    socket_name(&root)
-        .and_then(Stream::connect)
-        .map(Socket::Local)
+    rowel_broker::socket::connect(&root).map(Socket::Local)
 }
 
 /// A WebSocket to `broker`: TCP to its host and port, TLS over that for

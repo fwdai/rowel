@@ -37,16 +37,16 @@ pub fn is_browser_arg(arg: &str) -> bool {
 
 /// Relay stdio to the socket in `root` until either side closes. The exit
 /// code is the process's: zero for a browser that closed the port or a
-/// broker that went away, one for a broker that was not there to begin with
-/// — the extension shows that as its "not connected" state and retries when
-/// the user clicks it. `None` is a user with no data directory.
+/// broker that went away, one for a broker that was not there to begin with,
+/// or a pipe there that is not this user's ([`socket::connect`]), which gets
+/// not one frame — the extension shows that as its "not connected" state and
+/// retries when the user clicks it. `None` is a user with no data directory.
 pub fn run(root: Option<PathBuf>) -> i32 {
     let Some(root) = root else {
         eprintln!("rowel: no data directory for this user");
         return 1;
     };
-    let stream = socket::socket_name(&root).and_then(Stream::connect);
-    let stream = match stream {
+    let stream = match socket::connect(&root) {
         Ok(stream) => stream,
         Err(e) => {
             eprintln!(

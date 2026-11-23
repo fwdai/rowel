@@ -1001,10 +1001,16 @@ exposed process than the webview, and it is not ours.
   the one place that sandboxed extension can connect to — any process of the
   same user can reach it as it can the first, and gets no more from it; on
   Windows it is a named pipe
-  whose name carries a digest of the data directory. The browser reaches it
+  whose name carries a digest of the data directory, created owned by the user
+  under a protected DACL that lets that user and SYSTEM alone open it (the
+  descriptor plaintext exports get). The browser reaches it
   through a native messaging manifest that names this same binary: launched by
   the browser, it only relays frames between the browser's stdio and the
-  socket, holds no key and reads nothing. Every message after the key exchange
+  socket, holds no key and reads nothing. The pipe's name is predictable, so on
+  Windows the relay, and the `rowel` CLI likewise, checks that the pipe it
+  reached is owned by the current user before a frame crosses, and relays
+  nothing to one that is not: another local user who made a pipe of that name
+  first gets nothing from the browser. Every message after the key exchange
   is a NaCl box (X25519, XSalsa20-Poly1305) under keys the extension makes per
   browser session, with a fresh nonce per request and the reply sealed under
   that nonce plus one. What travels in the clear is the key exchange, a
@@ -1298,7 +1304,9 @@ app, over a device-held lockbox the operator copied to a box with no desktop,
 unlocked from the terminal or from a key file. Three things differ from the
 app and are stated in [docs/serve.md](./serve.md). The person is a terminal:
 an association or a grant the rules do not settle waits for `rowel approve`
-on the same box, over an owner-only control socket beside the broker's, so
+on the same box, over an owner-only control socket beside the broker's (on
+Windows a named pipe created and checked as the broker's is: the user's own,
+and `rowel approve` sends nothing to one that is not), so
 whoever can answer is already the user the broker runs as — the same trust the
 app's dialog rests on with the residual below; a step-up ask has no
 biometrics and takes the master password instead, derived through the

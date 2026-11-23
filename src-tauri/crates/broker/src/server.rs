@@ -9,11 +9,11 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use interprocess::local_socket::{prelude::*, Listener, ListenerOptions, RecvHalf, Stream};
+use interprocess::local_socket::{prelude::*, Listener, RecvHalf, Stream};
 
 use crate::actions::{Connection, Host};
 use crate::frame;
-use crate::socket::socket_name;
+use crate::socket::{self, socket_name};
 
 /// A connection's writing end, shared by the thread serving it and the lock
 /// signals, so a signal never lands inside a reply.
@@ -116,12 +116,10 @@ fn make_root(root: &Path) -> io::Result<()> {
 /// between the two is covered by the directory, which is `0700` from its
 /// creation — the data directory, or the group container (the system makes
 /// it `0700` as well) — so nothing else could reach the file in it anyway.
+/// On Windows the pipe is owner-only from its creation ([`socket::listen`]).
 pub fn bind(root: &Path) -> io::Result<Listener> {
     make_root(root)?;
-    let listener = ListenerOptions::new()
-        .name(socket_name(root)?)
-        .try_overwrite(true)
-        .create_sync()?;
+    let listener = socket::listen(socket_name(root)?)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

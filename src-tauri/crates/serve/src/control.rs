@@ -17,7 +17,7 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::thread;
 
-use interprocess::local_socket::{prelude::*, Listener, ListenerOptions, Name, Stream};
+use interprocess::local_socket::{prelude::*, Listener, Name, Stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -67,10 +67,7 @@ pub enum Request {
 /// (`rowel_broker::server::Lock`): with it held, the file is one a dead
 /// process left behind.
 pub fn bind(root: &Path) -> io::Result<Listener> {
-    let listener = ListenerOptions::new()
-        .name(socket_name(root)?)
-        .try_overwrite(true)
-        .create_sync()?;
+    let listener = rowel_broker::socket::listen(socket_name(root)?)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -137,7 +134,7 @@ impl Client {
     /// Connect to the broker serving `root`. Nothing listening is the error
     /// it is: `rowel serve` is not running there.
     pub fn connect(root: &Path) -> io::Result<Self> {
-        let stream = Stream::connect(socket_name(root)?)?;
+        let stream = rowel_broker::socket::connect_to(socket_name(root)?)?;
         Ok(Self { stream })
     }
 
