@@ -1,9 +1,9 @@
 import { useTranslation } from 'react-i18next'
 import { useApp, openSettings, openPasswordPrompt } from '@/store'
+import { syncView, type SyncTone } from '@/lib/syncView'
 import { cx } from '@/utils/cx'
 import Tooltip from '@/components/elements/Tooltip'
 import { CloudGlyph, DiskGlyph, CheckGlyph, AlertGlyph, NearbyGlyph } from '../../icons'
-import { syncView, type SyncTone } from './state'
 
 // The badge tints, by tone. Only the two settled states carry one -- `local`,
 // `idle` and `loading` have no verdict to report, and the legacy indicator hid

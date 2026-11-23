@@ -43,22 +43,34 @@ export interface SyncView {
 }
 
 /**
- * The chip's five states, in priority order, from the backend's sync status
- * and, where no cloud account is connected, nearby sync's.
+ * Where the vault stands: the header chip's state, which the overview's status
+ * card spells out, in the words of whichever way of syncing speaks for it.
+ *
+ * A connected cloud account speaks for the vault whatever nearby sync is
+ * doing. A connect still under way, or one that failed, does not: there is no
+ * account yet. Nearby then only replaces "this device only", which it makes
+ * untrue.
+ */
+export const syncView = (sync: SyncStatus, nearby: NearbyStatus | null): SyncView =>
+  (sync.configured ? cloudView(sync) : nearbyView(nearby)) ?? {
+    tone: 'local',
+    message: 'Changes are saved on this device only'
+  }
+
+/**
+ * Where the cloud account stands, or null with no account and none under way.
+ * The one reading of it: the chip and the status card take it through
+ * `syncView`, and the overview's row and the account card's pill and figures
+ * put it in their own words.
  *
  * Ordering matters: a run in flight outranks the previous run's verdict, so a
  * retry after a failure reads as "syncing" rather than staying red until it
- * lands. `lastSyncedAt` is what promotes the chip to "good": a vault connected
- * a second ago has not synced yet, and must not claim to be up to date.
- *
- * A connected cloud account speaks for the vault whatever nearby sync is
- * doing; nearby only replaces "this device only", which it makes untrue.
+ * lands. Both outrank whether an account is connected yet, since a connect
+ * runs and fails as a sync does. `lastSyncedAt` is what promotes the account
+ * to "good": a vault connected a second ago has not synced yet, and must not
+ * claim to be up to date.
  */
-export const syncView = (sync: SyncStatus, nearby: NearbyStatus | null): SyncView => {
-  if (!sync.configured)
-    return (
-      nearbyView(nearby) ?? { tone: 'local', message: 'Changes are saved on this device only' }
-    )
+export const cloudView = (sync: SyncStatus): SyncView | null => {
   if (sync.inProgress) return { tone: 'loading', message: 'Syncing…' }
   if (sync.error !== null)
     return {
@@ -71,6 +83,7 @@ export const syncView = (sync: SyncStatus, nearby: NearbyStatus | null): SyncVie
           ? 'lockboxes'
           : 'cloud'
     }
+  if (!sync.configured) return null
   // Connected, but nothing has landed yet. Deliberately not `loading`: if the
   // first run never starts, a spinner here would turn on at unlock and never
   // stop. A quiet cloud with no badge claims nothing instead.
@@ -86,13 +99,16 @@ const PASSWORD_CHANGED = {
 } as const
 
 /**
- * Nearby sync as the chip says it, or null when it is off (or this build has
- * none). Its status is per device, across every lockbox this one holds, so the
- * chip claims nothing for the open lockbox: it says that nearby sync is on,
- * and what needs doing about a device. Whether a device is current is said in
- * Settings, on its row.
+ * Where nearby sync stands, or null when it is off (or this build has none).
+ * Read by the chip and the status card where no cloud account speaks for the
+ * vault, and by the overview's Nearby devices row always.
+ *
+ * Its status is per device, across every lockbox this one holds, so it claims
+ * nothing for the open lockbox: it says that nearby sync is on, and what needs
+ * doing about a device. Whether a device is current is said in Settings, on
+ * its row.
  */
-const nearbyView = (nearby: NearbyStatus | null): SyncView | null => {
+export const nearbyView = (nearby: NearbyStatus | null): SyncView | null => {
   if (!nearby?.available || !nearby.enabled) return null
   const { devices } = nearby
   if (devices.some(device => device.state === 'passwordChanged')) return PASSWORD_CHANGED

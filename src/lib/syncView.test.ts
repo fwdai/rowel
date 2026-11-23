@@ -3,7 +3,7 @@ import type { SyncStatus } from '@/api/sync'
 import type { NearbyDevice, NearbyStatus } from '@/api/nearby'
 import { initialApp } from '@/store'
 import { nearbyUnavailable } from '@/test/ipc'
-import { syncView } from './state'
+import { cloudView, nearbyView, syncView } from './syncView'
 
 const cloud = (s: Partial<SyncStatus> = {}): SyncStatus => ({ ...initialApp.sync, ...s })
 
@@ -121,6 +121,52 @@ describe('syncView', () => {
         detail: 'The connection dropped',
         fix: 'nearby'
       })
+    })
+  })
+})
+
+// Each method's own standing, which the overview's rows and the account card
+// read whether or not that method is the one speaking for the vault.
+describe('cloudView', () => {
+  it('is nothing with no account and none under way', () => {
+    expect(cloudView(cloud())).toBeNull()
+  })
+
+  it('is the vault’s view once an account is connected', () => {
+    for (const sync of [synced(), synced({ inProgress: true }), synced({ error: 'no' })])
+      expect(cloudView(sync)).toEqual(syncView(sync, null))
+  })
+
+  // A connect runs and fails like a sync, so the account's own surfaces say
+  // so; the vault's view does not, since there is no account yet.
+  it('carries a connect under way, or one that failed, which the vault’s view leaves out', () => {
+    const connecting = cloud({ inProgress: true })
+    const refused = cloud({ error: 'access_denied' })
+
+    expect(cloudView(connecting)?.tone).toBe('loading')
+    expect(cloudView(refused)).toMatchObject({ tone: 'bad', fix: 'cloud' })
+    expect(syncView(connecting, null).tone).toBe('local')
+    expect(syncView(refused, null).tone).toBe('local')
+  })
+})
+
+describe('nearbyView', () => {
+  it('is nothing while nearby sync is off or absent', () => {
+    expect(nearbyView(null)).toBeNull()
+    expect(nearbyView(nearby([], { enabled: false }))).toBeNull()
+    expect(nearbyView(nearby([], { available: false }))).toBeNull()
+  })
+
+  // The vault's view leaves nearby out under a cloud account; nearby's own
+  // does not, so a device in trouble is still said where nearby is.
+  it('says a device is in trouble whatever account speaks for the vault', () => {
+    const status = nearby([device('upToDate'), device('needsPassword')])
+
+    expect(syncView(synced(), status).tone).toBe('good')
+    expect(nearbyView(status)).toEqual({
+      tone: 'bad',
+      message: 'A nearby device needs the new master password',
+      fix: 'nearby'
     })
   })
 })

@@ -2,12 +2,12 @@ import { useTranslation } from 'react-i18next'
 import { useApp, openPasswordPrompt } from '@/store'
 import { syncProvider } from '@/api/sync'
 import { providerName } from '@/api/provider'
+import { nearbyView, syncView } from '@/lib/syncView'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
 import ProviderMark from '@/components/elements/ProviderMark'
 import { CARD, HERO_WASH, META } from '@/components/elements/tokens'
 import { DiskGlyph, NearbyGlyph } from '@/components/Main/icons'
-import { syncView } from '@/components/Main/Header/SyncIndicator/state'
 import { useSectionNav, useSubpage } from '../../sectionNav'
 
 // Where the vault stands, above the ways to change it: the header chip's own
@@ -23,7 +23,7 @@ export default function Summary() {
   const nearby = useApp(state => state.nearby)
   const view = syncView(sync, nearby)
   const provider = syncProvider(sync)
-  const nearbyOn = !!nearby?.available && nearby.enabled
+  const nearbyOn = nearbyView(nearby) !== null
 
   const title =
     view.tone === 'good'

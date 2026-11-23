@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Settings from '@/components/Main/Sidebar/Settings'
 import type { NearbyDevice, NearbyStatus } from '@/api/nearby'
-import { openSettings, setNearbyStatus, useUi } from '@/store'
+import { initialApp, openSettings, setNearbyStatus, setSyncStatus, useUi } from '@/store'
 import { calls, mockCommand, mockCommandOnce, nearbyUnavailable } from './ipc'
 
 /*
@@ -80,6 +80,44 @@ describe('Settings › Sync › Nearby devices', () => {
     expect(screen.getByTestId('settings-sync-open-nearby-status')).toHaveTextContent('On')
     // With no cloud account, nearby sync is what the summary speaks for.
     expect(screen.getByTestId('settings-sync-summary')).toHaveTextContent('Nearby sync is on')
+  })
+
+  // The row reads nearby's own standing, the one the chip reads, so a device
+  // that needs something done shows on it, whatever account speaks for the
+  // vault. Which device, and what, is the page's to say.
+  it.each<NearbyDevice['state']>(['passwordChanged', 'needsPassword', 'clockSkew', 'error'])(
+    'says on the overview that a device in state %s needs attention',
+    state => {
+      report({ devices: [device({ id: 'ok' }), device({ id: 'bad', state, detail: 'It broke' })] })
+      openSync()
+      const status = screen.getByTestId('settings-sync-open-nearby-status')
+      expect(status).toHaveTextContent('Needs attention')
+      expect(status).toHaveAttribute('data-tone', 'bad')
+
+      act(() =>
+        setSyncStatus({
+          ...initialApp.sync,
+          configured: true,
+          lastSyncedAt: '2026-01-01T00:00:00Z',
+          seq: 1
+        })
+      )
+      expect(screen.getByTestId('settings-sync-summary')).toHaveAttribute('data-tone', 'good')
+      expect(status).toHaveTextContent('Needs attention')
+      expect(status).toHaveAttribute('data-tone', 'bad')
+    }
+  )
+
+  it('says a healthy nearby sync is on, and an unused one off, in their tones', () => {
+    report({ devices: [device(), device({ id: 'd2', state: 'offline' })] })
+    openSync()
+    const status = screen.getByTestId('settings-sync-open-nearby-status')
+    expect(status).toHaveTextContent('On')
+    expect(status).toHaveAttribute('data-tone', 'good')
+
+    report({ enabled: false, devices: [device({ state: 'error' })] })
+    expect(status).toHaveTextContent('Off')
+    expect(status).toHaveAttribute('data-tone', 'neutral')
   })
 
   it('leaves the cloud account’s page as it was', () => {
