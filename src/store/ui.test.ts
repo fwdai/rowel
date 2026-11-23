@@ -12,6 +12,8 @@ import {
   showTag,
   openSettings,
   closeSettings,
+  lockSettings,
+  setSettingsSection,
   resetUi
 } from './index'
 import { filterEntries } from '@/services/entries'
@@ -104,6 +106,33 @@ describe('openSettings', () => {
     resetUi()
     openSettings()
     expect(useUi.getState().settingsSection).toBe('language')
+  })
+
+  // The lock is the store's to keep: an opened backup or the palette asks from
+  // outside the shell, where no control is there to be shown disabled.
+  it('puts off a section asked for while locked until the lock is released', () => {
+    openSettings('workspaces')
+    lockSettings(true)
+
+    openSettings('import')
+    expect(useUi.getState()).toMatchObject({ settings: true, settingsSection: 'workspaces' })
+
+    lockSettings(false)
+    expect(useUi.getState()).toMatchObject({ settingsSection: 'import', settingsLocked: false })
+
+    // Nothing is left over to move it again at the next release.
+    setSettingsSection('sync')
+    lockSettings(true)
+    lockSettings(false)
+    expect(useUi.getState().settingsSection).toBe('sync')
+  })
+
+  it('stays put under the lock when no section is named', () => {
+    openSettings('workspaces')
+    lockSettings(true)
+    openSettings()
+    lockSettings(false)
+    expect(useUi.getState().settingsSection).toBe('workspaces')
   })
 })
 

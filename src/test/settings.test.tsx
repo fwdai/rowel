@@ -2735,6 +2735,22 @@ describe('Settings sub-pages', () => {
     expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
     expect(useUi.getState().settings).toBe(true)
   })
+
+  // `openSettings` comes from outside the shell — a backup the OS opened asks
+  // for Import — and must not take a form away whose operation is still out.
+  it('keeps a locked sub-page when something outside asks for another section', async () => {
+    await openSubpage()
+    act(() => lockSettings(true))
+
+    act(() => openSettings('import'))
+    expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
+    expect(useUi.getState().settingsSection).toBe('workspaces')
+
+    // The section asked for is gone to once the operation lets go.
+    act(() => lockSettings(false))
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
+  })
 })
 
 // The command line tool row on General: three states, all Rust's to say.
