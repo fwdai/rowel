@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
+import { changeLocale } from '@/i18n'
 import AuthShell from '@/components/elements/AuthShell'
 import Frame, { FrameProvider } from '@/components/elements/Frame'
 import Sheet from '@/components/elements/Sheet'
@@ -633,6 +634,31 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
     expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+  })
+
+  // A pushed screen's title has the row to itself, so it is said in full
+  // rather than cut to fit — on the section's pane and on a page pushed over
+  // it alike, which is where a translated title runs longest.
+  it('names a pushed settings screen in full, however long its title', async () => {
+    seed()
+    render(<Main />)
+    await act(() => changeLocale('de-DE'))
+    try {
+      act(() => openSettings())
+      await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+      const section = screen.getByRole('heading', { name: 'Schließfächer' })
+      await userEvent.click(screen.getByTestId('workspace-restore-open'))
+      const page = within(screen.getByTestId('settings-subpage')).getByRole('heading', {
+        name: 'Aus einem Cloud-Konto wiederherstellen'
+      })
+
+      for (const heading of [section, page]) {
+        expect(heading).not.toHaveClass('truncate')
+        expect(heading).toHaveClass('break-words')
+      }
+    } finally {
+      await act(() => changeLocale('en-US'))
+    }
   })
 
   // The sub-page's action is the slab every pushed screen puts where a thumb
