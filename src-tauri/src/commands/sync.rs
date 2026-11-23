@@ -285,6 +285,8 @@ pub fn sync_disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<()>
 #[tauri::command]
 pub fn sync_now(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
     request_run_if_ready(&app, &state);
+    #[cfg(desktop)]
+    crate::nearby::request_run(&app);
     Ok(())
 }
 
@@ -831,8 +833,12 @@ fn spawn_run(app: &AppHandle, claim: RunClaim, cryptor: Cryptor, marker_key: syn
         // the flag before it looked, so whichever order the two land in, one of
         // them sees the other (see `AppState::sync_rerun`). `launch` rather
         // than `start_run`: the rerun answers a request, it does not make one.
+        // The request is read, not lowered: `launch` lowers it when it wins
+        // the claim, and when the slot has gone to a holder that serves no
+        // request (a nearby run, `claim_or_busy`) it stays raised for that
+        // holder's release to find.
         drop(claim);
-        if take_rerun(&app.state::<AppState>()) {
+        if rerun_requested(&app.state::<AppState>()) {
             launch(&app);
         }
     });
@@ -852,9 +858,10 @@ fn claim_and_settle(state: &AppState) -> Option<RunClaim> {
     Some(claim)
 }
 
-/// Whether a run was asked for while one was in flight; answering lowers it.
-fn take_rerun(state: &AppState) -> bool {
-    state.sync_rerun.swap(false, Ordering::SeqCst)
+/// Whether a run was asked for while one was in flight. Winning the claim is
+/// what lowers the request ([`claim_and_settle`]), not asking.
+fn rerun_requested(state: &AppState) -> bool {
+    state.sync_rerun.load(Ordering::SeqCst)
 }
 
 // What a run needs from the key: the cryptor its token file is sealed under,
@@ -872,13 +879,23 @@ fn report(app: &AppHandle, result: Result<sync::engine::SyncOutcome>) {
     match result {
         Ok(outcome) => {
             if outcome.merged > 0 {
-                events::vault_merged(app, entry_metas(app));
-                crate::credential_identities::publish(app);
+                announce_merged(app);
+            }
+            #[cfg(desktop)]
+            if outcome.merged > 0 || outcome.renamed {
+                crate::nearby::request_run(app);
             }
             finished(app, None);
         }
         Err(e) => finished(app, Some(&e)),
     }
+}
+
+/// A run merged rows into the open lockbox, from the account or from a
+/// nearby device: the refreshed list for the page, and iOS's logins.
+pub(crate) fn announce_merged(app: &AppHandle) {
+    events::vault_merged(app, entry_metas(app));
+    crate::credential_identities::publish(app);
 }
 
 // The current entry list, or an empty one if the vault locked in the meantime.
@@ -897,7 +914,7 @@ fn entry_metas(app: &AppHandle) -> Vec<EntryMetaDto> {
 /// be taken on the thread that decides to run — under `workspace_lock`, before
 /// anything else can be told a run is under way — and then moved onto the thread
 /// that does the running.
-pub(super) struct RunClaim(Arc<AtomicBool>);
+pub(crate) struct RunClaim(Arc<AtomicBool>);
 
 /// Claim the run, or `None` if one is already in flight.
 fn claim_run(syncing: &Arc<AtomicBool>) -> Option<RunClaim> {
@@ -916,7 +933,7 @@ fn claim_run(syncing: &Arc<AtomicBool>) -> Option<RunClaim> {
 /// Taken rather than merely checked, and held by the caller for its whole
 /// length. Any rerun request raised meanwhile is left standing (unlike
 /// [`claim_and_settle`]): this holder is not a run and serves nobody's request.
-pub(super) fn claim_or_busy(state: &AppState) -> Result<RunClaim> {
+pub(crate) fn claim_or_busy(state: &AppState) -> Result<RunClaim> {
     claim_run(&state.syncing).ok_or(Error::SyncBusy)
 }
 
@@ -966,9 +983,10 @@ mod tests {
         // What `start_run` does: ask, then try.
         request_run(&state);
         let running = claim_and_settle(&state).expect("nothing was running");
-        assert!(!take_rerun(&state), "a run that won the claim owes nothing");
-        // Taking the answer must not have lowered a flag nobody raised again.
-        assert!(!take_rerun(&state));
+        assert!(
+            !rerun_requested(&state),
+            "a run that won the claim owes nothing"
+        );
 
         request_run(&state);
         assert!(claim_and_settle(&state).is_none(), "the claim is held");
@@ -978,10 +996,11 @@ mod tests {
 
         drop(running);
         assert!(
-            take_rerun(&state),
+            rerun_requested(&state),
             "the run in flight was asked to go again"
         );
-        assert!(!take_rerun(&state), "and only once");
+        let _rerun = claim_and_settle(&state).expect("the claim was released");
+        assert!(!rerun_requested(&state), "and only once");
     }
 
     // The rerun itself is an ordinary claim: it clears the request it answers,
@@ -996,10 +1015,10 @@ mod tests {
         assert!(claim_and_settle(&state).is_none());
         drop(running);
 
-        assert!(take_rerun(&state));
+        assert!(rerun_requested(&state));
         let rerun = claim_and_settle(&state).expect("the claim was released");
         drop(rerun);
-        assert!(!take_rerun(&state), "nothing asked during the rerun");
+        assert!(!rerun_requested(&state), "nothing asked during the rerun");
     }
 
     // Between a run's release and its rerun's claim, another caller may take
@@ -1015,7 +1034,7 @@ mod tests {
         request_run(&state);
         assert!(claim_and_settle(&state).is_none());
         drop(running);
-        assert!(take_rerun(&state));
+        assert!(rerun_requested(&state));
 
         // A concurrent `start_run` wins the released slot first…
         request_run(&state);
@@ -1024,7 +1043,7 @@ mod tests {
         assert!(claim_and_settle(&state).is_none());
 
         drop(newcomer);
-        assert!(!take_rerun(&state), "the newcomer owes no third run");
+        assert!(!rerun_requested(&state), "the newcomer owes no third run");
     }
 
     fn pack(vault_id: &str) -> PackInfo {

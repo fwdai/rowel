@@ -38,6 +38,11 @@ mod favicon;
 mod grants;
 mod hibp;
 mod locale;
+// Nearby sync: two installs on one network, mutually authenticated over TLS,
+// finding each other, proving the lockbox keys they share and syncing those.
+// Desktop only for now; the commands answer `available: false` elsewhere.
+#[cfg(desktop)]
+mod nearby;
 // Backups the OS asks the app to open (the `.rowel`/`.swftx` file associations).
 mod opened;
 // OS screen lock, sleep and user-switch listeners.
@@ -297,6 +302,16 @@ pub fn run() {
             commands::sync::sync_reupload,
             commands::password_sync::sync_adopt_password,
             commands::password_sync::sync_replace_remote,
+            // Nearby sync is desktop only, like its module; elsewhere the
+            // status read fails and the frontend draws nothing of it.
+            #[cfg(desktop)]
+            nearby::commands::nearby_status,
+            #[cfg(desktop)]
+            nearby::commands::nearby_set_enabled,
+            #[cfg(desktop)]
+            nearby::commands::nearby_pause,
+            #[cfg(desktop)]
+            nearby::commands::nearby_remove,
             commands::share::share_create,
             commands::share::share_open,
             commands::share::share_revoke,

@@ -459,6 +459,7 @@ fn announce_opened(app: &AppHandle) {
     {
         crate::browser::server::hub(app).notify_unlocked();
         crate::org::approvals::start(app);
+        crate::nearby::session_opened(app);
     }
 }
 
@@ -469,6 +470,7 @@ fn announce_ended(app: &AppHandle) -> Ended {
         crate::browser::server::hub(app).notify_locked();
         crate::org::approvals::stop();
         crate::agents::clear(app);
+        crate::nearby::session_ended(app);
     }
     Ended {
         copies: crate::commands::clipboard::copies(app),

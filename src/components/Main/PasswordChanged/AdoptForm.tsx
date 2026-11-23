@@ -2,7 +2,7 @@ import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { describeError, errorKind, isTooManyAttempts } from '@/api/errors'
 import { syncAdoptPassword } from '@/api/sync'
-import { closePasswordPrompt } from '@/store'
+import { closePasswordPrompt, useApp } from '@/store'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
 import Field from '@/components/elements/Field'
@@ -26,6 +26,7 @@ export default function AdoptForm({ onAdopted }: { onAdopted: (unmoved: string[]
   const [error, setError] = useState<string | null>(null)
   const [retryAfter, setRetryAfter] = useRetryAfter()
   const locked = retryAfter > 0
+  const hasAccount = useApp(state => state.sync.configured)
 
   const message = locked
     ? t('Too many failed attempts. Try again in {{seconds}}s', { seconds: retryAfter })
@@ -41,7 +42,7 @@ export default function AdoptForm({ onAdopted }: { onAdopted: (unmoved: string[]
       .then(onAdopted)
       .catch((err: unknown) => {
         if (isTooManyAttempts(err)) setRetryAfter(err.retryAfterSecs)
-        else if (errorKind(err) === 'invalidPassword')
+        else if (hasAccount && errorKind(err) === 'invalidPassword')
           setError(
             t(
               "That isn't the new password. If you didn't change it on another device, the account's copy may not be yours; you can replace it from Settings › Lockboxes."

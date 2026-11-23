@@ -3,7 +3,7 @@ import { useApp, openSettings, openPasswordPrompt } from '@/store'
 import { syncPasswordChangedRemotely } from '@/api/sync'
 import { cx } from '@/utils/cx'
 import Tooltip from '@/components/elements/Tooltip'
-import { CloudGlyph, DiskGlyph, CheckGlyph, AlertGlyph } from '../../icons'
+import { CloudGlyph, DiskGlyph, CheckGlyph, AlertGlyph, NearbyGlyph } from '../../icons'
 import { syncView, type SyncTone } from './state'
 
 // The badge tints, by tone. Only the two settled states carry one -- `local`,
@@ -15,7 +15,8 @@ const BADGE: Partial<Record<SyncTone, string>> = {
 }
 
 // Sync chip: a round 28px well holding one glyph that says where the vault
-// lives -- a disk when sync is off, a cloud when it is on -- with the run's
+// lives -- a disk when sync is off, a cloud when it is on, the network when
+// only nearby devices sync it -- with the run's
 // outcome riding on a corner badge and a ring that orbits while a sync is in
 // flight. This is the legacy Electron indicator's language (chip · centre glyph
 // · corner tick/exclamation · spinner ring) rebuilt on the current tokens, so
@@ -45,12 +46,15 @@ export default function SyncIndicator({ className, onClick }: Props) {
   // changes, and the chip can sit untouched in the chrome for a whole session.
   const { t } = useTranslation()
   const sync = useApp(state => state.sync)
-  const { tone, message, detail } = syncView(sync)
+  const nearby = useApp(state => state.nearby)
+  const { tone, message, detail, adopt } = syncView(sync, nearby)
   // The backend's message wins when there is one; it is already prose, in no
   // catalogue, and translating it is not on offer.
   const label = detail ?? t(message)
 
-  const Glyph = tone === 'local' ? DiskGlyph : CloudGlyph
+  // Past `local`, the vault syncs: through the cloud account when there is
+  // one, and otherwise only with the owner's devices nearby.
+  const Glyph = tone === 'local' ? DiskGlyph : sync.configured ? CloudGlyph : NearbyGlyph
   const badge = BADGE[tone]
 
   return (
@@ -61,7 +65,7 @@ export default function SyncIndicator({ className, onClick }: Props) {
         data-tone={tone}
         aria-label={label}
         onClick={
-          syncPasswordChangedRemotely(sync)
+          adopt || syncPasswordChangedRemotely(sync)
             ? openPasswordPrompt
             : (onClick ?? (() => openSettings('sync')))
         }

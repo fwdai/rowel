@@ -8,6 +8,7 @@ import Note from '@/components/elements/Note'
 import SettingsGroup from '@/components/elements/SettingsGroup'
 import AccountCard from './AccountCard'
 import BackupRow from './BackupRow'
+import Nearby from './Nearby'
 import SharesRow from './SharesRow'
 
 // Under the card, at its own inset.
@@ -70,6 +71,8 @@ export default function Sync() {
 
   return (
     <>
+      <Nearby />
+
       <section className="mb-7">
         <AccountCard probing={probing} offered={offered} restoring={restoring} />
         {syncFailure && <ErrorNote message={syncFailure} />}

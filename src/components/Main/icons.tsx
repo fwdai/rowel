@@ -47,10 +47,12 @@ import {
   Image,
   KeyRound,
   KeySquare,
+  Laptop,
   LayoutGrid,
   Link,
   Lock,
   Minimize2,
+  Monitor,
   Moon,
   MoreHorizontal,
   Palette,
@@ -66,6 +68,7 @@ import {
   Settings2,
   Share2,
   ShieldCheck,
+  Smartphone,
   SquareAsterisk,
   Star,
   Sun,
@@ -75,6 +78,7 @@ import {
   TriangleAlert,
   Upload,
   User,
+  Wifi,
   X,
   createLucideIcon,
   type IconNode,
@@ -174,6 +178,9 @@ export const StarGlyph = glyph(Star, 14)
 // state rides on the corner badge (CheckGlyph / AlertGlyph at 10) and the ring.
 export const DiskGlyph = glyph(HardDrive, 14)
 export const CloudGlyph = glyph(Cloud, 14)
+// The local network: a vault syncing with the owner's devices nearby, with no
+// cloud in between. Also the mark of Settings › Sync's nearby switch, at 16.
+export const NearbyGlyph = glyph(Wifi, 14)
 export const AlertGlyph = glyph(TriangleAlert, 14)
 // A passkey, on a login's detail rows and as the list-row mark.
 export const KeyGlyph = glyph(KeyRound, 14)
@@ -243,6 +250,10 @@ export const UploadGlyph = glyph(Upload, 16)
 // Attaching a file to an entry: the mail clip, which is what the verb means
 // to everyone.
 export const PaperclipGlyph = glyph(Paperclip, 16)
+// The owner's other devices, by what they are: a Mac, a PC, a phone.
+export const LaptopGlyph = glyph(Laptop, 16)
+export const DesktopGlyph = glyph(Monitor, 16)
+export const PhoneGlyph = glyph(Smartphone, 16)
 
 // Rail tier (20px, for the 40px+ rail hit areas and Settings nav headers)
 export const PlusRailGlyph = glyph(Plus, 20)

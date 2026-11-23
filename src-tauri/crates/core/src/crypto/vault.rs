@@ -21,7 +21,7 @@ use super::{hash_secret, hkdf_subkey, seal_aead, sqlcipher_key, unseal_aead, Cry
 use crate::error::{Error, Result};
 use crate::models::Entry;
 
-// HKDF `info` labels — one master key, four independent subkeys.
+// HKDF `info` labels — one master key, independent subkeys.
 const INFO_SQLCIPHER: &[u8] = b"sqlcipher-db-key";
 const INFO_PAYLOAD: &[u8] = b"payload-aead-key";
 const INFO_ATTACHMENT: &[u8] = b"attachment-aead-key";
@@ -35,6 +35,12 @@ const INFO_DELETE_MARKER: &[u8] = b"sync-delete-marker-key";
 // Seals the list of key epochs this vault was re-keyed away from, kept on the
 // device so a sync pack sealed under one of them still opens.
 const INFO_RETIRED_KEYS: &[u8] = b"retired-keys-key";
+// Proves to a device on the local network that this device holds this vault's
+// key, in a proof bound to one connection (the app's `nearby::trust`).
+const INFO_NEARBY_PROOF: &[u8] = b"nearby-proof-key";
+// Tags this vault in a local network advertisement so that only its holders
+// recognise it.
+const INFO_NEARBY_DISCOVERY: &[u8] = b"nearby-discovery-key";
 
 /// The active vault key. Held by the session; scrubbed on drop.
 pub enum VaultKey {
@@ -111,6 +117,23 @@ impl VaultKey {
     /// old keys does not weaken a rotation.
     pub fn retired_keys_key(&self) -> Zeroizing<[u8; KEY_LEN]> {
         Zeroizing::new(hkdf_subkey(self.biometric_material(), INFO_RETIRED_KEYS))
+    }
+
+    /// The HMAC key a device proves it holds this vault's key with, to another
+    /// device on the local network. A subkey like the delete marker's: every
+    /// device that holds the vault derives the same one, and a proof under it
+    /// reveals nothing about the key it came from.
+    pub fn nearby_proof_key(&self) -> Zeroizing<[u8; KEY_LEN]> {
+        Zeroizing::new(hkdf_subkey(self.biometric_material(), INFO_NEARBY_PROOF))
+    }
+
+    /// The HMAC key that tags this vault in a local network advertisement, so
+    /// a device holding the vault recognises it there and nobody else can.
+    pub fn nearby_discovery_key(&self) -> Zeroizing<[u8; KEY_LEN]> {
+        Zeroizing::new(hkdf_subkey(
+            self.biometric_material(),
+            INFO_NEARBY_DISCOVERY,
+        ))
     }
 
     /// The opaque bytes to persist in the OS secure store for biometric unlock,
@@ -278,6 +301,31 @@ mod tests {
         assert_ne!(*retired, *k.sqlcipher_key());
         assert_ne!(*retired, *k.delete_marker_key());
         assert_eq!(*retired, *argon2_key().retired_keys_key());
+    }
+
+    // The two nearby subkeys: neither each other nor any key already in use,
+    // the same on every device that holds the vault's key, and distinct for a
+    // legacy-keyed vault too.
+    #[test]
+    fn the_nearby_keys_are_their_own_and_deterministic() {
+        let k = argon2_key();
+        let proof = k.nearby_proof_key();
+        let discovery = k.nearby_discovery_key();
+        assert_ne!(*proof, *discovery);
+        for other in [
+            k.sqlcipher_key(),
+            k.delete_marker_key(),
+            k.retired_keys_key(),
+        ] {
+            assert_ne!(*proof, *other);
+            assert_ne!(*discovery, *other);
+        }
+        assert_eq!(*proof, *argon2_key().nearby_proof_key());
+        assert_eq!(*discovery, *argon2_key().nearby_discovery_key());
+
+        let legacy = VaultKey::legacy_from_password("pw");
+        assert_ne!(*legacy.nearby_proof_key(), *legacy.nearby_discovery_key());
+        assert_ne!(*legacy.nearby_proof_key(), *proof);
     }
 
     #[test]

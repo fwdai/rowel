@@ -150,6 +150,16 @@ pub trait LocalVault {
     /// account was last seen on is read, and written when the pack is under
     /// the current one (see [`decode_pack`]).
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot>;
+    /// [`Self::decode`] for a pack a device handed over itself, having proved
+    /// the current key (`nearby::exchange`): it says nothing of the account,
+    /// so that note is neither read nor written.
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot>;
+    /// A pack of an empty vault under this one's key and descriptor: what a
+    /// device still on an older password proves the new one against
+    /// (`nearby::session`), with nothing of the vault in it.
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    fn pack_empty(&self) -> Result<Vec<u8>>;
     /// Last-writer-wins merge of the pulled entries and attachments, and the
     /// pulled audit rows taken as a union; returns the entry and attachment
     /// rows written (the log rows change nothing the frontend shows).
@@ -229,6 +239,46 @@ pub struct SyncOutcome {
     pub rekeyed_remote: bool,
 }
 
+/// A pulled pack, taken in by [`merge_pack`].
+pub(crate) struct MergedPack {
+    /// What the pack held, for the push decision that follows a pull.
+    snapshot: Snapshot,
+    /// Entry and attachment rows the merge wrote here.
+    pub(crate) merged: usize,
+    /// Whether the pack's name beat this vault's and was adopted.
+    pub(crate) renamed: bool,
+}
+
+/// Merge an opened pack in, and take on its name if that is the newer one:
+/// what every [`sync`] does with the account's pack, and a device with a pack
+/// another one hands it directly (`nearby::exchange::absorb`). The caller
+/// opens it, since which of the two it is decides how
+/// ([`LocalVault::decode`], [`LocalVault::decode_direct`]).
+pub(crate) fn merge_pack<L: LocalVault + ?Sized>(
+    local: &L,
+    snapshot: Snapshot,
+) -> Result<MergedPack> {
+    let merged = local.merge(&snapshot)?;
+    // The name is last-writer-wins too, but on its own stamp: a rename is a
+    // change to the vault that leaves no row in the entry table.
+    // `identity::name_wins` is the whole decision — a total order, so a tie in
+    // the stamp still settles on one of the two names rather than on whatever
+    // each device happens to hold.
+    let mut renamed = false;
+    if let Some(name) = &snapshot.name {
+        let held = local.name()?;
+        if identity::name_wins((Some(name), snapshot.name_ms), (held.0.as_deref(), held.1)) {
+            local.adopt_name(name, snapshot.name_ms)?;
+            renamed = true;
+        }
+    }
+    Ok(MergedPack {
+        snapshot,
+        merged,
+        renamed,
+    })
+}
+
 /// Run one sync: pull, merge, and push if — and only if — the two sides differ,
 /// in their entries or in the vault name that travels beside them.
 ///
@@ -260,28 +310,17 @@ pub fn sync<R: Remote, L: LocalVault>(
         // Nothing on the remote yet means this run creates it, and there is no
         // snapshot to decode or merge.
         let incoming = match &pulled {
-            Some(file) => Some(local.decode(&file.bytes)?),
+            Some(file) => {
+                let taken = merge_pack(local, local.decode(&file.bytes)?)?;
+                outcome.merged += taken.merged;
+                outcome.renamed |= taken.renamed;
+                Some(taken.snapshot)
+            }
             None => None,
         };
         // A pack under a retired epoch is pushed whatever the digests say: the
         // push is what moves the account onto the current password.
         let rekeys_remote = incoming.as_ref().is_some_and(|s| s.opened_under_retired);
-        if let Some(snapshot) = &incoming {
-            outcome.merged += local.merge(snapshot)?;
-            // The name is last-writer-wins too, but on its own stamp: a rename
-            // is a change to the vault that leaves no row in the entry table.
-            // `identity::name_wins` is the whole decision — a total order, so a
-            // tie in the stamp still settles on one of the two names rather
-            // than on whatever each device happens to hold.
-            if let Some(name) = &snapshot.name {
-                let held = local.name()?;
-                if identity::name_wins((Some(name), snapshot.name_ms), (held.0.as_deref(), held.1))
-                {
-                    local.adopt_name(name, snapshot.name_ms)?;
-                    outcome.renamed = true;
-                }
-            }
-        }
 
         // 4. Settle the identity, now that the pull is in and nothing has gone
         // out. See this function's own doc for why it is exactly here.
@@ -506,6 +545,10 @@ impl LocalVault for SessionVault {
         Ok(snapshot)
     }
 
+    fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+        self.keys.decode(pack_bytes, None)
+    }
+
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
         self.with_store(|store| merge_snapshot(store, incoming))
     }
@@ -528,6 +571,14 @@ impl LocalVault for SessionVault {
         let source = self.reclaim_and_open(reclaim)?;
         let bytes = self.keys.pack(&source)?;
         drop(source);
+        self.check_key()?;
+        Ok(bytes)
+    }
+
+    // Checked as `pack` is: under a key the vault has left, the proof would
+    // refuse the right password.
+    fn pack_empty(&self) -> Result<Vec<u8>> {
+        let bytes = self.keys.pack_empty()?;
         self.check_key()?;
         Ok(bytes)
     }
@@ -631,6 +682,10 @@ impl LocalVault for WorkspaceVault {
         )
     }
 
+    fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+        self.keys.decode(pack_bytes, None)
+    }
+
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
         merge_snapshot(&self.store, incoming)
     }
@@ -644,6 +699,10 @@ impl LocalVault for WorkspaceVault {
     fn pack(&self, reclaim: Reclaim) -> Result<Vec<u8>> {
         self::reclaim(&self.store, reclaim, self.writer_id.as_deref())?;
         self.keys.pack(&self.store)
+    }
+
+    fn pack_empty(&self) -> Result<Vec<u8>> {
+        self.keys.pack_empty()
     }
 
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
@@ -707,6 +766,15 @@ impl PackKeys {
         Ok(pack::pack_store(
             source,
             &*self.vault_key.sqlcipher_key(),
+            &self.kdf_params_json,
+            &self.scratch,
+        )?)
+    }
+
+    fn pack_empty(&self) -> Result<Vec<u8>> {
+        let key = self.vault_key.sqlcipher_key();
+        Ok(pack::pack_empty(
+            &*key,
             &self.kdf_params_json,
             &self.scratch,
         )?)
@@ -1143,6 +1211,17 @@ mod tests {
                 Provider::GoogleDrive,
             )
         }
+        fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+            decode_pack(
+                pack_bytes,
+                &self.kdf,
+                &self.key,
+                &self.retired,
+                None,
+                &self.scratch,
+                Provider::GoogleDrive,
+            )
+        }
         fn merge(&self, incoming: &Snapshot) -> Result<usize> {
             merge_snapshot(&self.store, incoming)
         }
@@ -1161,6 +1240,10 @@ mod tests {
                 &self.kdf,
                 &self.scratch,
             )?)
+        }
+        fn pack_empty(&self) -> Result<Vec<u8>> {
+            let key = self.key.sqlcipher_key();
+            Ok(pack::pack_empty(&*key, &self.kdf, &self.scratch)?)
         }
         fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
             note_push(&self.store, revision, at_ms, &self.kdf)

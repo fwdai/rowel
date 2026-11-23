@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { on, EVENTS, type EventName, type EventPayloads } from '@/api/events'
 import type { EntryMeta } from '@/api/types'
-import { appStatusDefault, calls, clearCalls, mockCommand } from '../test/ipc'
+import type { NearbyStatus } from '@/api/nearby'
+import {
+  appStatusDefault,
+  calls,
+  clearCalls,
+  mockCommand,
+  nearbyUnavailable
+} from '../test/ipc'
 import { deferred } from '../test/utils'
 import { subscribeToEvents } from './events'
 import {
@@ -207,6 +214,61 @@ describe('oslock:status', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(useApp.getState().osLock).toEqual({ supported: false, seq: 2 })
+  })
+})
+
+describe('nearby:status', () => {
+  const status = (seq: number, enabled = true): NearbyStatus => ({
+    ...nearbyUnavailable(),
+    available: true,
+    enabled,
+    seq
+  })
+
+  it('keeps the newest status and ignores one with a lower seq', () => {
+    handlerFor(EVENTS.nearbyStatus)(status(2, true))
+    handlerFor(EVENTS.nearbyStatus)(status(1, false))
+
+    expect(useApp.getState().nearby).toEqual(status(2, true))
+  })
+
+  it('asks once listening, for a status no one was listening for', async () => {
+    mockCommand('nearby_status', () => status(1))
+    clearCalls('nearby_status')
+    useApp.setState({ nearby: null })
+
+    subscribeToEvents()
+
+    await vi.waitFor(() => expect(useApp.getState().nearby).toEqual(status(1)))
+    expect(calls('nearby_status')).toHaveLength(1)
+  })
+
+  it('keeps a later event over an earlier answer that lands after it', async () => {
+    const answer = deferred<NearbyStatus>()
+    mockCommand('nearby_status', () => answer.promise)
+    clearCalls('nearby_status')
+    subscribeToEvents()
+    await vi.waitFor(() => expect(calls('nearby_status')).toHaveLength(1))
+
+    handlerFor(EVENTS.nearbyStatus)(status(3, false))
+    answer.resolve(status(2, true))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(useApp.getState().nearby).toEqual(status(3, false))
+  })
+
+  it('stays unknown when the read fails', async () => {
+    // The subscription every spec here starts with has had its answer.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    mockCommand('nearby_status', () => Promise.reject({ kind: 'other', message: 'no backend' }))
+    useApp.setState({ nearby: null })
+    clearCalls('nearby_status')
+
+    subscribeToEvents()
+    await vi.waitFor(() => expect(calls('nearby_status')).toHaveLength(1))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(useApp.getState().nearby).toBeNull()
   })
 })
 

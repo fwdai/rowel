@@ -325,7 +325,7 @@ pub fn run(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) -> Result<S
     })?;
 
     if outcome.renamed {
-        adopt_name(app, &local);
+        mirror_name(app, &crate::workspace::active_id(app), &local);
     }
     // A Rowel Server's other lockboxes are not packs a password restores: they
     // are added from the server's own Settings section, with the key it hands
@@ -380,12 +380,7 @@ pub(crate) fn run_workspace(
         log::warn!("could not record lockbox {workspace_id}'s vault id in the registry: {e}");
     }
     if outcome.renamed {
-        if let Ok((Some(name), _)) = local.name() {
-            match crate::workspace::record_vault_name_of(app, workspace_id, &name) {
-                Ok(()) => crate::events::workspace_renamed(app),
-                Err(e) => log::warn!("could not record lockbox {workspace_id}'s name: {e}"),
-            }
-        }
+        mirror_name(app, workspace_id, &local);
     }
     Ok(outcome)
 }
@@ -462,22 +457,23 @@ pub fn replace_remote(app: &AppHandle, cryptor: Cryptor, marker_key: MarkerKey) 
     engine::replace(&remote, &local, now_ms())
 }
 
-/// The run pulled a newer name for this vault. The vault's own copy is already
-/// written (the engine did it); this puts it in the registry too, which is what
-/// `app_status` reports and the header and Settings list draw from, and tells
-/// the frontend to re-read it.
+/// A merge took a newer name for workspace `workspace_id`'s vault. The vault's
+/// own copy is already written (the engine did it); this puts the name the
+/// vault holds now in the registry too, which is what `app_status` reports and
+/// the header and Settings list draw from, and tells the frontend to re-read
+/// it. Called with the run claim held, by a cloud run and a nearby merge
+/// alike, so no other run can rename the vault between the read and the write.
 ///
 /// Best effort, like [`workspace::record_vault_id`] beside it: a registry the
 /// next run will write again is not worth failing this one.
-fn adopt_name(app: &AppHandle, local: &impl LocalVault) {
+pub(crate) fn mirror_name(app: &AppHandle, workspace_id: &str, local: &dyn LocalVault) {
     let Ok((Some(name), _)) = local.name() else {
         return;
     };
-    if let Err(e) = crate::workspace::record_vault_name(app, &name) {
-        log::warn!("could not record the vault name in the registry: {e}");
-        return;
+    match crate::workspace::record_vault_name_of(app, workspace_id, &name) {
+        Ok(()) => crate::events::workspace_renamed(app),
+        Err(e) => log::warn!("could not record lockbox {workspace_id}'s name: {e}"),
     }
-    crate::events::workspace_renamed(app);
 }
 
 /// Tell the frontend which of the account's vaults are not on this device, so

@@ -2,6 +2,7 @@ import type { InvokeArgs, InvokeOptions } from '@tauri-apps/api/core'
 import type { BackendError } from '@/api/errors'
 import type { AppStatus, Settings } from '@/api/app'
 import type { BrowserStatus } from '@/api/browser'
+import type { NearbyStatus } from '@/api/nearby'
 import type { Attachment } from '@/api/types'
 import { EVENTS } from '@/api/events'
 import { emitEventSoon } from './events'
@@ -110,6 +111,15 @@ export const appStatusDefault = (): AppStatus => ({
   // screen. A suite about them seeds a second entry.
   workspaces: [{ id: 'default', name: null }],
   activeWorkspace: 'default'
+})
+
+/** `nearby_status` on a build without nearby sync. */
+export const nearbyUnavailable = (): NearbyStatus => ({
+  available: false,
+  enabled: false,
+  deviceName: 'This Mac',
+  devices: [],
+  seq: 0
 })
 
 const BROWSER_OFF: BrowserStatus = {
@@ -276,6 +286,14 @@ const DEFAULTS: Record<string, Handler> = {
   // about a lockbox on its own password resolves its id.
   sync_adopt_password: () => [],
   sync_replace_remote: () => undefined,
+
+  // Nearby sync: a build that cannot do it, so no suite draws what it did not
+  // ask for. Every change reports through `nearby:status`, never through its
+  // promise, so a spec drives the status itself (`setNearbyStatus`).
+  nearby_status: nearbyUnavailable,
+  nearby_set_enabled: () => undefined,
+  nearby_pause: () => undefined,
+  nearby_remove: () => undefined,
 
   // Sharing. The link is the shape the backend hands back — file id plus key —
   // and `share_open` resolves a plain login, so a suite only overrides the one

@@ -1,0 +1,123 @@
+//! What the session manager needs from the app; the app's is `nearby::app::host`.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use zeroize::Zeroizing;
+
+use crate::crypto::VaultKey;
+use crate::error::Result;
+use crate::nearby::exchange::Absorbed;
+use crate::nearby::trust::lockbox_id;
+use crate::sync::engine::LocalVault;
+
+#[derive(Clone, PartialEq)]
+pub struct Keys {
+    pub id: String,
+    pub proof: Zeroizing<[u8; 32]>,
+    pub discovery: Zeroizing<[u8; 32]>,
+}
+
+impl Keys {
+    pub fn of(key: &VaultKey) -> Self {
+        Self::new(key.nearby_proof_key(), key.nearby_discovery_key())
+    }
+
+    pub(super) fn new(proof: Zeroizing<[u8; 32]>, discovery: Zeroizing<[u8; 32]>) -> Self {
+        Self {
+            id: lockbox_id(&discovery),
+            proof,
+            discovery,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct Lockbox {
+    pub current: Keys,
+    // Newest first.
+    pub retired: Vec<Keys>,
+}
+
+impl Lockbox {
+    pub fn id(&self) -> &str {
+        &self.current.id
+    }
+}
+
+// A lockbox keeps three retired epochs, so no more packs than that can be under different keys.
+const MAX_KEPT: usize = 3;
+
+// The id of the key that seals a pack, and the pack.
+type Sealed = (String, Vec<u8>);
+
+// The packs of lockboxes whose password changed on another device, for the adopt to
+// open: by the id of the key a lockbox is on here.
+#[derive(Default)]
+pub struct Kept(Mutex<HashMap<String, Vec<Sealed>>>);
+
+impl Kept {
+    pub fn sealed_under(&self, id: &str) -> Vec<String> {
+        let kept = self.0.lock().unwrap();
+        let packs = kept.get(id).into_iter().flatten();
+        packs
+            .map(|(sealed_under, _)| sealed_under.clone())
+            .collect()
+    }
+
+    pub fn packs(&self, id: &str) -> Vec<Vec<u8>> {
+        let kept = self.0.lock().unwrap();
+        let packs = kept.get(id).into_iter().flatten();
+        packs.map(|(_, pack)| pack.clone()).collect()
+    }
+
+    pub fn keep(&self, id: &str, sealed_under: &str, pack: Vec<u8>) {
+        let mut kept = self.0.lock().unwrap();
+        let packs = kept.entry(id.to_string()).or_default();
+        packs.retain(|(held, _)| held != sealed_under);
+        packs.push((sealed_under.to_string(), pack));
+        if packs.len() > MAX_KEPT {
+            packs.remove(0);
+        }
+    }
+
+    pub fn clear(&self) {
+        self.0.lock().unwrap().clear();
+    }
+}
+
+pub trait Host: Send + Sync + 'static {
+    fn lockboxes(&self) -> Vec<Lockbox>;
+
+    /// `step` on lockbox `id` (its current key's), opened under the run claim;
+    /// `Error::SyncBusy`, without running it, while another holds the claim.
+    fn step<T>(&self, id: &str, step: impl FnOnce(&dyn LocalVault) -> Result<T>) -> Result<T>;
+
+    // `merged` inside the step of a merge that changed the lockbox, the claim held;
+    // `pass_on` once that lockbox's exchange is over, the claim released.
+    fn merged(&self, id: &str, local: &dyn LocalVault, absorbed: &Absorbed);
+
+    fn pass_on(&self, id: &str);
+
+    fn kept(&self) -> &Kept;
+
+    fn now_ms(&self) -> i64;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_more_packs_are_kept_for_a_lockbox_than_it_has_epochs_the_oldest_going_first() {
+        let kept = Kept::default();
+        for sealed_under in ["a", "b", "a", "c", "d"] {
+            kept.keep("id", sealed_under, sealed_under.as_bytes().to_vec());
+        }
+        assert_eq!(kept.sealed_under("id"), ["a", "c", "d"]);
+        assert_eq!(kept.packs("id"), [b"a", b"c", b"d"]);
+        assert!(kept.packs("other").is_empty());
+        kept.clear();
+        assert!(kept.sealed_under("id").is_empty());
+    }
+}

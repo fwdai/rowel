@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { OsLockStatus } from './app'
 import type { AgentGrantAsk, AssociateAsk, PasskeyAsk } from './browser'
+import type { NearbyStatus } from './nearby'
 import type { OrgConnectStatus } from './org'
 import type { RemotePack } from './setup'
 import type { SyncStatus } from './sync'
@@ -34,6 +35,12 @@ export interface EventPayloads {
    * — there is no sequence of events to reconstruct state from.
    */
   'sync:status': SyncStatus
+  /**
+   * The whole of nearby sync, on every transition: the switch, a device
+   * appearing or going, a run.
+   * Stored as-is, by `seq`, as `sync:status` is.
+   */
+  'nearby:status': NearbyStatus
   'import:progress': { done: number; total: number }
   'setup:account:pending': void
   /** Every vault the account holds, newest first; empty is "nothing to restore". */
@@ -134,6 +141,7 @@ export const EVENTS: { [K in EventName as Camel<K>]: K } = {
   vaultLocked: 'vault:locked',
   vaultMerged: 'vault:merged',
   syncStatus: 'sync:status',
+  nearbyStatus: 'nearby:status',
   importProgress: 'import:progress',
   setupAccountPending: 'setup:account:pending',
   setupAccountProbed: 'setup:account:probed',

@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Header from '@/components/Main/Header'
 import type { SyncStatus } from '@/api/sync'
-import { initialApp, setSyncStatus, useUi } from '@/store'
+import { initialApp, setNearbyStatus, setSyncStatus, useUi } from '@/store'
+import { nearbyUnavailable } from './ipc'
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -62,6 +63,35 @@ describe('Header', () => {
     synced({ inProgress: true })
     render(<Header />)
     expect(chip()).toHaveAttribute('data-tone', 'loading')
+  })
+
+  // Nearby sync makes "this device only" untrue, so it says so where no cloud
+  // account speaks for the vault.
+  it('speaks for nearby sync when no cloud account is connected', () => {
+    setNearbyStatus({
+      ...nearbyUnavailable(),
+      available: true,
+      enabled: true,
+      devices: [
+        {
+          id: 'd1',
+          name: 'Alex’s iPhone',
+          platform: 'ios',
+          state: 'upToDate',
+          lastSyncedAt: null,
+          detail: null,
+          detailKind: null
+        }
+      ],
+      seq: 1
+    })
+    render(<Header />)
+    expect(chip()).toHaveAttribute('data-tone', 'idle')
+    expect(chip()).toHaveAccessibleName('Nearby sync is on')
+
+    // A connected account takes the chip back.
+    act(() => synced())
+    expect(chip()).toHaveAccessibleName('Sync Successful')
   })
 
   it('opens Settings › Sync & backup from the sync chip', async () => {

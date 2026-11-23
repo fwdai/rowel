@@ -76,6 +76,12 @@ log = "0.4.34"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "form", "query", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
+# The nearby channel (`nearby`). rcgen makes each install's Ed25519 key and the
+# self-signed certificate over it, on ring like the rustls provider (no aws-lc);
+# `zeroize` lets the key's PKCS#8 bytes it holds be scrubbed. hmac, already in
+# the locked graph under totp-rs, is the session-bound proofs on top.
+rcgen = { version = "0.14.10", default-features = false, features = ["ring", "zeroize"] }
+hmac = "0.13"
 url = "2"
 percent-encoding = "2"
 # Only for `StreamExt::buffer_unordered`, which is what gives the HIBP breach
@@ -132,6 +138,11 @@ interprocess = "2"
 # machine's host name, which is what a member recognises in a device list.
 # Already in the locked graph; the phone's enrollment names itself elsewhere.
 gethostname = "1"
+# Nearby sync's discovery (`nearby::discovery::mdns`): mDNS / DNS-SD in pure
+# Rust on a thread of its own, no async runtime (the `async` feature, flume's,
+# is left off). iOS will need the system's Bonjour instead, which refuses an
+# app's own multicast.
+mdns-sd = { version = "0.22", default-features = false, features = ["logging"] }
 
 # Passkeys through the extension (`browser::passkeys`), where the host is the
 # WebAuthn client: tokio's current-thread runtime drives the authenticator's

@@ -5,6 +5,7 @@ import { lock } from '@/api/auth'
 import type { Provider } from '@/api/provider'
 import type { RemotePack } from '@/api/setup'
 import { syncNow, type SyncStatus } from '@/api/sync'
+import type { NearbyStatus } from '@/api/nearby'
 import { checkForUpdate } from '@/api/autoUpdate'
 import { resetEmblems } from '@/hooks/useEmblem'
 import { resetFavicons } from '@/hooks/useFavicon'
@@ -89,6 +90,13 @@ export interface AppState {
    * local until the next lock.
    */
   sync: SyncStatus
+  /**
+   * The backend's nearby sync status, verbatim, from `nearby:status` and the
+   * one `nearby_status` read made once that is listened for. Null until either
+   * lands, which every reader treats as "this build cannot do it": nothing
+   * about nearby is drawn on a guess.
+   */
+  nearby: NearbyStatus | null
   /** Whether Rust hears the OS locking; changes between probes (`OsLockStatus`). */
   osLock: OsLockStatus
   setupAccount: SetupAccountState
@@ -151,6 +159,7 @@ export const initialApp: AppState = {
     lastSyncedAt: null,
     seq: 0
   },
+  nearby: null,
   osLock: { supported: false, seq: 0 },
   setupAccount: ACCOUNT_IDLE,
   remoteVaults: [],
@@ -388,7 +397,7 @@ const cancelScheduledSync = () => {
 }
 
 export const scheduleSync = () => {
-  if (!useApp.getState().sync.configured) return
+  if (!useApp.getState().sync.configured && !useApp.getState().nearby?.enabled) return
   cancelScheduledSync()
   syncTimer = setTimeout(() => {
     syncTimer = undefined
@@ -398,6 +407,9 @@ export const scheduleSync = () => {
 
 export const setSyncStatus = (sync: SyncStatus) =>
   useApp.setState(state => ({ sync: newer(state.sync, sync) }))
+
+export const setNearbyStatus = (nearby: NearbyStatus) =>
+  useApp.setState(state => ({ nearby: state.nearby ? newer(state.nearby, nearby) : nearby }))
 
 export const setOsLockStatus = (osLock: OsLockStatus) =>
   useApp.setState(state => ({ osLock: newer(state.osLock, osLock) }))

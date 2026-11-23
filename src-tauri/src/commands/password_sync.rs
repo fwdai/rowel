@@ -25,6 +25,11 @@ use super::blocking;
 use crate::auth::{self, LockoutState};
 use crate::crypto::{self, Cryptor, KdfParams, VaultKey};
 use crate::error::{Error, Result};
+#[cfg(desktop)]
+use crate::nearby::{
+    forget_packs as forget_nearby_packs, kept_packs as nearby_packs,
+    password_changed as nearby_password_changed,
+};
 use crate::state::AppState;
 use crate::sync::{self, engine, pack, MarkerKey};
 use crate::workspace::PRIMARY_ID;
@@ -42,9 +47,10 @@ use crate::{appkey, retired, storage};
 /// along the same way; the ids of those the password did not open come back.
 ///
 /// A wrong password is penalized exactly like a wrong unlock: the pack bytes
-/// are within an attacker's reach, so this must not be a free oracle. A pack
-/// already on this device's descriptor means the adopt has happened (or was
-/// never needed): a run is started and nothing else changes.
+/// are within an attacker's reach, so this must not be a free oracle. An open
+/// lockbox with nothing to adopt does not stop the ones beside it: the
+/// password is then proved by the first of them it opens, and is a wrong one
+/// if it opens none and one refuses it ([`settle`]).
 #[tauri::command]
 pub async fn sync_adopt_password(
     password: Zeroizing<String>,
@@ -72,63 +78,94 @@ pub async fn sync_adopt_password(
 
     let OpenVault {
         material,
-        cryptor,
-        marker_keys,
-        vault_id,
+        account,
         dir,
         workspace_id,
     } = open;
-    let fetched = {
-        let app = app.clone();
-        blocking(move || {
-            let store = sync::store_for(sync::Auth::Sealed { app, cryptor });
-            sync::fetch_pack(store, vault_id, marker_keys).map(|(file, _)| file)
-        })
-        .await?
+    let current_key = VaultKey::from_material(material, true);
+    let fetched = match account {
+        Ok(account) => account.packs(&app).await,
+        Err(e) => Err(e),
     };
-    let file = fetched.ok_or(Error::NoRemoteVault)?;
+    let (packs, missing) = match with_nearby(fetched, nearby_packs(&app, &current_key)) {
+        Ok(packs) if packs.is_empty() => (packs, Some(Error::NoRemoteVault)),
+        Ok(packs) => (packs, None),
+        Err(e) => (Vec::new(), Some(e)),
+    };
 
     // The lockboxes beside need the password once this one is done.
     let password_beside = password.clone();
-    let current_key = VaultKey::from_material(material, true);
+    let active = workspace_id.clone();
     let (adopt, current_key) = blocking(move || {
-        let adopt = key_for_pack(&dir, &workspace_id, &current_key, &file.bytes, &password);
+        let adopt = key_for_packs(&dir, &workspace_id, &current_key, &packs, &password);
         Ok((adopt, current_key))
     })
     .await?;
-    let (header, new_key) = match adopt {
-        Ok(Some(adopt)) => adopt,
-        // Nothing to adopt: the run sorts out whatever is left.
-        Ok(None) => {
-            drop(claim);
-            super::sync::request_run_if_ready(&app, &state);
-            return Ok(Vec::new());
+    let (open, unread) = match adopt {
+        Ok(Some((header, new_key))) => {
+            forgiven(&app, lockout);
+            super::auth::rekey_open_workspace(&app, &state, current_key, new_key, header).await?;
+            (true, None)
         }
-        Err(Error::InvalidPassword) => {
-            let (updated, refusal) = auth::penalize(lockout, now);
-            if let Err(e) = updated.save(&app) {
-                log::warn!("failed to persist lockout sidecar: {e}");
-            }
-            return Err(refusal);
-        }
-        Err(e) => return Err(e),
+        Ok(None) => (false, None),
+        Err(Error::InvalidPassword) => return Err(penalized(&app, lockout, now)),
+        // A pack that cannot be read leaves this lockbox as it is, and is no
+        // reason to leave the ones beside it behind.
+        Err(e) => (false, Some(e)),
     };
-    if lockout != LockoutState::default() {
-        if let Err(e) = LockoutState::default().save(&app) {
-            log::warn!("failed to reset lockout sidecar: {e}");
-        }
+    let mut beside = adopt_beside(&app, &state, &active, password_beside).await;
+    if unread.is_some() {
+        beside.unchanged.push(active);
     }
-
-    let active = super::auth::rekey_open_workspace(&app, &state, current_key, new_key, header)
-        .await?
-        .workspace_id;
-    let unchanged = adopt_beside(&app, &state, &active, password_beside).await;
+    // With nothing adopted, the most telling reason is the one given: a pack
+    // that could not be read, then a nearby device whose proof is not here
+    // yet, then the account's own.
+    let waiting = nearby_password_changed(&app).then_some(Error::NewPasswordUnavailable);
+    let adopted = match settle(open, &beside, unread.or(waiting).or(missing)) {
+        Err(Error::InvalidPassword) => return Err(penalized(&app, lockout, now)),
+        settled => settled?,
+    };
+    if adopted {
+        if !open {
+            forgiven(&app, lockout);
+        }
+        forget_nearby_packs(&app);
+    }
 
     // The pull now matches this device's descriptor: it merges, and pushes
     // whatever this device had that the account has not.
     drop(claim);
     super::sync::request_run_if_ready(&app, &state);
-    Ok(unchanged)
+    Ok(beside.unchanged)
+}
+
+/// Whether anything was adopted. A password that opened no lockbox and was
+/// refused by one is a wrong one; with none to refuse it, `missing` is why the
+/// open lockbox had no pack to adopt from.
+fn settle(open: bool, beside: &Beside, missing: Option<Error>) -> Result<bool> {
+    match (open || beside.adopted, beside.refused, missing) {
+        (true, ..) => Ok(true),
+        (false, true, _) => Err(Error::InvalidPassword),
+        (false, false, Some(e)) => Err(e),
+        (false, false, None) => Ok(false),
+    }
+}
+
+fn penalized(app: &AppHandle, lockout: LockoutState, now: i64) -> Error {
+    let (updated, refusal) = auth::penalize(lockout, now);
+    if let Err(e) = updated.save(app) {
+        log::warn!("failed to persist lockout sidecar: {e}");
+    }
+    refusal
+}
+
+fn forgiven(app: &AppHandle, lockout: LockoutState) {
+    if lockout == LockoutState::default() {
+        return;
+    }
+    if let Err(e) = LockoutState::default().save(app) {
+        log::warn!("failed to reset lockout sidecar: {e}");
+    }
 }
 
 /// Push this device's pack over the account's, after the user confirmed that
@@ -188,11 +225,58 @@ fn may_replace(failed_with: Option<&str>) -> bool {
 /// What the adopt needs from the open session, read in one go.
 struct OpenVault {
     material: Zeroizing<Vec<u8>>,
+    /// Why there is none, on a vault that does not sync or never has.
+    account: Result<Account>,
+    dir: std::path::PathBuf,
+    workspace_id: String,
+}
+
+struct Account {
     cryptor: Cryptor,
     marker_keys: Vec<MarkerKey>,
     vault_id: String,
-    dir: std::path::PathBuf,
-    workspace_id: String,
+}
+
+impl Account {
+    async fn packs(self, app: &AppHandle) -> Result<Vec<Vec<u8>>> {
+        let app = app.clone();
+        blocking(move || {
+            let auth = sync::Auth::Sealed {
+                app,
+                cryptor: self.cryptor,
+            };
+            let (file, _) =
+                sync::fetch_pack(sync::store_for(auth), self.vault_id, self.marker_keys)?;
+            Ok(file.map(|file| file.bytes).into_iter().collect())
+        })
+        .await
+    }
+}
+
+#[cfg(not(desktop))]
+fn nearby_packs(_: &AppHandle, _: &VaultKey) -> Vec<Vec<u8>> {
+    Vec::new()
+}
+
+#[cfg(not(desktop))]
+fn forget_nearby_packs(_: &AppHandle) {}
+
+#[cfg(not(desktop))]
+fn nearby_password_changed(_: &AppHandle) -> bool {
+    false
+}
+
+/// The account's packs, then those nearby devices handed over. An account that
+/// cannot be reached is no reason to refuse a pack already here.
+fn with_nearby(account: Result<Vec<Vec<u8>>>, nearby: Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>> {
+    match account {
+        Ok(mut packs) => {
+            packs.extend(nearby);
+            Ok(packs)
+        }
+        Err(e) if nearby.is_empty() => Err(e),
+        Err(_) => Ok(nearby),
+    }
 }
 
 impl OpenVault {
@@ -202,39 +286,60 @@ impl OpenVault {
             let id = crate::workspace::active_id(app);
             (crate::workspace::dir_of(&storage::root_dir(app)?, &id), id)
         };
-        let (material, cryptor, marker_key, vault_id) = {
-            let session = state.session.lock().unwrap();
-            let key = session.key()?;
-            if !session.sync_configured {
-                return Err(Error::SyncNotConfigured);
-            }
+        let session = state.session.lock().unwrap();
+        let key = session.key()?;
+        let account = if session.sync_configured {
             let vault_id = crate::store::identity::vault_id(session.store()?)
                 .map_err(crate::session::store_err)?;
-            (
-                Zeroizing::new(key.biometric_material().to_vec()),
-                key.cryptor(),
-                key.delete_marker_key(),
-                vault_id,
-            )
+            // A vault that never synced has no pack to adopt a password from.
+            vault_id
+                .ok_or(Error::NoRemoteVault)
+                .map(|vault_id| Account {
+                    cryptor: key.cryptor(),
+                    marker_keys: marker_keys(&dir, key, &workspace_id),
+                    vault_id,
+                })
+        } else {
+            Err(Error::SyncNotConfigured)
         };
-        // A vault that never synced has no pack to adopt a password from.
-        let vault_id = vault_id.ok_or(Error::NoRemoteVault)?;
-        let key = VaultKey::from_material(material.clone(), true);
-        let mut marker_keys = vec![marker_key];
-        marker_keys.extend(
-            retired::load(&dir, &key, &workspace_id)
-                .iter()
-                .map(|r| r.key().delete_marker_key()),
-        );
         Ok(Self {
-            material,
-            cryptor,
-            marker_keys,
-            vault_id,
+            material: Zeroizing::new(key.biometric_material().to_vec()),
+            account,
             dir,
             workspace_id,
         })
     }
+}
+
+/// The delete-marker keys of every epoch the lockbox in `dir` has been on.
+fn marker_keys(dir: &Path, key: &VaultKey, workspace_id: &str) -> Vec<MarkerKey> {
+    let retired = retired::load(dir, key, workspace_id);
+    let retired = retired.iter().map(|r| r.key().delete_marker_key());
+    std::iter::once(key.delete_marker_key())
+        .chain(retired)
+        .collect()
+}
+
+/// [`key_for_pack`] over every pack there is for one lockbox, the first with
+/// something to adopt deciding. A pack that fails does not stop the next from
+/// being tried; of the failures, a refused password is the one reported.
+pub(crate) fn key_for_packs(
+    dir: &Path,
+    workspace_id: &str,
+    current_key: &VaultKey,
+    packs: &[Vec<u8>],
+    password: &str,
+) -> Result<Option<(String, VaultKey)>> {
+    let mut failed = None;
+    for pack in packs {
+        match key_for_pack(dir, workspace_id, current_key, pack, password) {
+            Ok(None) => {}
+            Ok(found) => return Ok(found),
+            Err(e) if matches!(failed, Some(Error::InvalidPassword)) => drop(e),
+            Err(e) => failed = Some(e),
+        }
+    }
+    failed.map_or(Ok(None), Err)
 }
 
 /// The key `password` derives under the descriptor in `pack_bytes`' header,
@@ -295,11 +400,12 @@ async fn adopt_beside(
     state: &AppState,
     active: &str,
     password: Zeroizing<String>,
-) -> Vec<String> {
+) -> Beside {
+    let mut beside = Beside::default();
     let Ok(root) = storage::root_dir(app) else {
-        return Vec::new();
+        return beside;
     };
-    let mut beside: Vec<(String, String)> = crate::workspace::Registry::load(&root)
+    let mut lockboxes: Vec<(String, Option<String>)> = crate::workspace::Registry::load(&root)
         .workspaces
         .into_iter()
         .filter(|w| w.id != active)
@@ -308,12 +414,11 @@ async fn adopt_beside(
         .filter(|w| {
             !crate::org::lockboxes::is_org_lockbox_dir(&crate::workspace::dir_of(&root, &w.id))
         })
-        .filter_map(|w| Some((w.id, w.vault_id?)))
+        .map(|w| (w.id, w.vault_id))
         .collect();
-    beside.sort_by_key(|(id, _)| id == PRIMARY_ID);
+    lockboxes.sort_by_key(|(id, _)| id == PRIMARY_ID);
 
-    let mut unchanged = Vec::new();
-    for (id, vault_id) in beside {
+    for (id, vault_id) in lockboxes {
         // The app key with it, for the sealed copy to be written under when a
         // lock clears the ring during the re-key (`appkey::rekeyed`).
         let (held, app_key) = {
@@ -340,6 +445,7 @@ async fn adopt_beside(
         match adopted {
             Ok(None) => {}
             Ok(Some(material)) => {
+                beside.adopted = true;
                 if id == PRIMARY_ID {
                     appkey::replace_app_key(app, &material);
                     super::auth::restore_enrollment(app, material.clone()).await;
@@ -353,15 +459,25 @@ async fn adopt_beside(
             }
             Err(Error::InvalidPassword) => {
                 log::info!("lockbox {id} is on a password of its own in the account");
-                unchanged.push(id);
+                beside.refused = true;
+                beside.unchanged.push(id);
             }
             Err(e) => {
                 log::warn!("lockbox {id} could not take the new password: {e}");
-                unchanged.push(id);
+                beside.unchanged.push(id);
             }
         }
     }
-    unchanged
+    beside
+}
+
+/// What [`adopt_beside`] came to: whether any lockbox took the password,
+/// whether any refused it, and the ids of those left as they were.
+#[derive(Default)]
+struct Beside {
+    adopted: bool,
+    refused: bool,
+    unchanged: Vec<String>,
 }
 
 /// One lockbox beside the open one: fetch its pack with its own account, and
@@ -373,7 +489,7 @@ fn adopt_one(
     app: &AppHandle,
     dir: &Path,
     workspace_id: &str,
-    vault_id: String,
+    vault_id: Option<String>,
     held: Zeroizing<Vec<u8>>,
     password: &str,
 ) -> Result<Option<Zeroizing<Vec<u8>>>> {
@@ -383,38 +499,44 @@ fn adopt_one(
         return Ok(None);
     }
     let old_key = VaultKey::from_material(held, true);
-    let old_cryptor = old_key.cryptor();
-    let Some(tokens) = sync::read_tokens_in(dir, &old_cryptor)? else {
-        return Ok(None);
-    };
-    let mut marker_keys = vec![old_key.delete_marker_key()];
-    marker_keys.extend(
-        retired::load(dir, &old_key, workspace_id)
-            .iter()
-            .map(|r| r.key().delete_marker_key()),
-    );
-    let (fetched, store) = sync::fetch_pack(
-        sync::pending_store(app, tokens.clone()),
-        vault_id,
-        marker_keys,
-    )?;
-    // A refresh during the fetch is kept, under whichever key the file ends
-    // up sealed under.
-    let tokens = store.into_tokens().unwrap_or(tokens);
-    let Some(file) = fetched else {
-        return Ok(None);
-    };
-    let Some((header, new_key)) = key_for_pack(dir, workspace_id, &old_key, &file.bytes, password)?
+    let mut tokens = sync::read_tokens_in(dir, &old_key.cryptor())?;
+    let fetched = account_packs(app, dir, workspace_id, &old_key, vault_id, &mut tokens);
+    let packs = with_nearby(fetched, nearby_packs(app, &old_key))?;
+    let Some((header, new_key)) = key_for_packs(dir, workspace_id, &old_key, &packs, password)?
     else {
         return Ok(None);
     };
     let material = Zeroizing::new(new_key.biometric_material().to_vec());
     let new_cryptor = new_key.cryptor();
     auth::rekey_workspace(dir, workspace_id, old_key, new_key, &header)?;
-    if let Err(e) = sync::persist_tokens_in(dir, &new_cryptor, &tokens) {
-        log::warn!("could not re-seal this lockbox's account under the new password: {e}");
+    if let Some(tokens) = tokens {
+        if let Err(e) = sync::persist_tokens_in(dir, &new_cryptor, &tokens) {
+            log::warn!("could not re-seal this lockbox's account under the new password: {e}");
+        }
     }
     Ok(Some(material))
+}
+
+/// The pack lockbox `workspace_id` has in its account, when it syncs to one.
+/// A refresh during the fetch is kept in `tokens`, for whichever key the file
+/// ends up sealed under.
+fn account_packs(
+    app: &AppHandle,
+    dir: &Path,
+    workspace_id: &str,
+    key: &VaultKey,
+    vault_id: Option<String>,
+    tokens: &mut Option<sync::Tokens>,
+) -> Result<Vec<Vec<u8>>> {
+    let (Some(held), Some(vault_id)) = (tokens.clone(), vault_id) else {
+        return Ok(Vec::new());
+    };
+    let marker_keys = marker_keys(dir, key, workspace_id);
+    let (fetched, store) = sync::fetch_pack(sync::pending_store(app, held), vault_id, marker_keys)?;
+    if let Some(refreshed) = store.into_tokens() {
+        *tokens = Some(refreshed);
+    }
+    Ok(fetched.map(|file| file.bytes).into_iter().collect())
 }
 
 // The "two devices" acceptance test of the design, one layer below the
@@ -425,6 +547,26 @@ pub(crate) mod two_devices;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_password_that_opened_nothing_is_wrong_once_a_lockbox_refused_it() {
+        let beside = |adopted, refused| Beside {
+            adopted,
+            refused,
+            ..Beside::default()
+        };
+        let settled = |open, adopted, refused| settle(open, &beside(adopted, refused), None);
+        assert!(matches!(settled(true, false, true), Ok(true)));
+        assert!(matches!(settled(false, true, true), Ok(true)));
+        assert!(matches!(
+            settled(false, false, true),
+            Err(Error::InvalidPassword)
+        ));
+        assert!(matches!(settled(false, false, false), Ok(false)));
+        let missing = Some(Error::NoRemoteVault);
+        let no_pack = settle(false, &beside(false, false), missing);
+        assert!(matches!(no_pack, Err(Error::NoRemoteVault)));
+    }
 
     #[test]
     fn the_account_copy_is_replaceable_only_from_the_two_epoch_errors() {

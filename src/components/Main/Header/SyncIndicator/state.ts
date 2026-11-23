@@ -1,5 +1,6 @@
 import type { TKey } from '@/i18n'
 import { syncErrorText, type SyncStatus } from '@/api/sync'
+import type { NearbyDevice, NearbyStatus } from '@/api/nearby'
 
 export type SyncTone = 'local' | 'idle' | 'loading' | 'good' | 'bad'
 
@@ -21,19 +22,27 @@ export interface SyncView {
    * casting an arbitrary string to `TKey`.
    */
   detail?: string
+  /** The chip opens the prompt for the master password another device changed. */
+  adopt?: true
 }
 
 /**
- * The chip's five states, in priority order, from the backend's sync status.
+ * The chip's five states, in priority order, from the backend's sync status
+ * and, where no cloud account is connected, nearby sync's.
  *
  * Ordering matters: a run in flight outranks the previous run's verdict, so a
  * retry after a failure reads as "syncing" rather than staying red until it
  * lands. `lastSyncedAt` is what promotes the chip to "good": a vault connected
  * a second ago has not synced yet, and must not claim to be up to date.
+ *
+ * A connected cloud account speaks for the vault whatever nearby sync is
+ * doing; nearby only replaces "this device only", which it makes untrue.
  */
-export const syncView = (sync: SyncStatus): SyncView => {
+export const syncView = (sync: SyncStatus, nearby: NearbyStatus | null): SyncView => {
   if (!sync.configured)
-    return { tone: 'local', message: 'Changes are saved on this device only' }
+    return (
+      nearbyView(nearby) ?? { tone: 'local', message: 'Changes are saved on this device only' }
+    )
   if (sync.inProgress) return { tone: 'loading', message: 'Syncing…' }
   if (sync.error !== null)
     return {
@@ -46,4 +55,30 @@ export const syncView = (sync: SyncStatus): SyncView => {
   // stop. A quiet cloud with no badge claims nothing instead.
   if (!sync.lastSyncedAt) return { tone: 'idle', message: 'Waiting to sync' }
   return { tone: 'good', message: 'Sync Successful' }
+}
+
+const TROUBLE: NearbyDevice['state'][] = ['needsPassword', 'clockSkew', 'error']
+const PASSWORD_CHANGED = {
+  tone: 'bad',
+  message: 'Master password changed on another device',
+  adopt: true
+} as const
+
+/**
+ * Nearby sync as the chip says it, or null when it is off (or this build has
+ * none). Its status is per device, across every lockbox this one holds, so the
+ * chip claims nothing for the open lockbox: it says that nearby sync is on,
+ * and what needs doing about a device. Whether a device is current is said in
+ * Settings, on its row.
+ */
+const nearbyView = (nearby: NearbyStatus | null): SyncView | null => {
+  if (!nearby?.available || !nearby.enabled) return null
+  const { devices } = nearby
+  if (devices.some(device => device.state === 'passwordChanged')) return PASSWORD_CHANGED
+  const trouble = devices.find(device => TROUBLE.includes(device.state))
+  if (trouble?.state === 'needsPassword')
+    return { tone: 'bad', message: 'A nearby device needs the new master password' }
+  if (trouble)
+    return { tone: 'bad', message: 'Something went wrong', detail: trouble.detail ?? undefined }
+  return { tone: 'idle', message: 'Nearby sync is on' }
 }

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use zeroize::Zeroizing;
 
-use super::key_for_pack;
+use super::{key_for_pack, key_for_packs};
 use crate::auth::{self, LockoutState, RekeyPaths};
 use crate::crypto::{self, KdfParams, VaultKey};
 use crate::error::{Error, Result};
@@ -30,13 +30,13 @@ use crate::sync::engine::{self, LocalVault, Reclaim, Snapshot, SyncOutcome};
 use crate::sync::store::fake::FakeStore;
 use crate::sync::{layout, pack, restore, PackRemote, Provider};
 
-const NOW: i64 = 1_700_000_000_000;
-const OLD: &str = "old password";
-const NEW: &str = "new password";
+pub(crate) const NOW: i64 = 1_700_000_000_000;
+pub(crate) const OLD: &str = "old password";
+pub(crate) const NEW: &str = "new password";
 
 // Cheap Argon2id at a given generation, so the suite stays fast; the app's
 // own re-keys use the default costs.
-fn params(salt: u8, gen: u32) -> String {
+pub(crate) fn params(salt: u8, gen: u32) -> String {
     KdfParams::Argon2id {
         m_cost: 256,
         t_cost: 1,
@@ -53,7 +53,7 @@ fn base64_salt(salt: u8) -> String {
     STANDARD.encode([salt; 32])
 }
 
-fn derive(password: &str, params_json: &str) -> VaultKey {
+pub(crate) fn derive(password: &str, params_json: &str) -> VaultKey {
     VaultKey::Argon2 {
         master: crypto::derive(
             password.as_bytes(),
@@ -69,7 +69,8 @@ fn copy(key: &VaultKey) -> VaultKey {
 
 /// One lockbox on one device: its directory, the key its session holds, and
 /// its open store. Crate-visible so the org lockbox tests can run the same
-/// devices against a Rowel Server (`org::tests`).
+/// devices against a Rowel Server (`org::tests`), and the direct exchange
+/// against each other (`nearby::exchange`).
 pub(crate) struct Device {
     dir: TempDir,
     pub(crate) id: &'static str,
@@ -80,7 +81,7 @@ pub(crate) struct Device {
 
 impl Device {
     /// A new lockbox under `password` and descriptor `params_json`.
-    fn create(id: &'static str, vault: &str, password: &str, params_json: &str) -> Self {
+    pub(crate) fn create(id: &'static str, vault: &str, password: &str, params_json: &str) -> Self {
         Self::with_key(id, vault, derive(password, params_json), params_json)
     }
 
@@ -110,7 +111,12 @@ impl Device {
     }
 
     /// A device joining the lockbox from the account, as a restore does.
-    fn restore(id: &'static str, vault: &str, account: &FakeStore, password: &str) -> Result<Self> {
+    pub(crate) fn restore(
+        id: &'static str,
+        vault: &str,
+        account: &FakeStore,
+        password: &str,
+    ) -> Result<Self> {
         let dir = tempfile::tempdir().unwrap();
         let bytes = account.bytes(&layout::vault_file_name(vault)).unwrap();
         let (key, store) = restore::restore_at(
@@ -198,12 +204,12 @@ impl Device {
     }
 
     /// One run against the account, as `sync::run` makes it.
-    fn sync(&self, account: &FakeStore) -> Result<SyncOutcome> {
+    pub(crate) fn sync(&self, account: &FakeStore) -> Result<SyncOutcome> {
         self.sync_at(account, NOW)
     }
 
     /// [`Device::sync`] as of `now_ms`, for what a run a year on reclaims.
-    fn sync_at(&self, account: &FakeStore, now_ms: i64) -> Result<SyncOutcome> {
+    pub(crate) fn sync_at(&self, account: &FakeStore, now_ms: i64) -> Result<SyncOutcome> {
         engine::sync(&self.remote(account), self, now_ms, || Ok(()))
     }
 
@@ -250,6 +256,17 @@ impl LocalVault for Device {
             Provider::GoogleDrive,
         )
     }
+    fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+        engine::decode_pack(
+            pack_bytes,
+            &self.sidecar(),
+            &self.key,
+            &retired::load(self.path(), &self.key, self.id),
+            None,
+            &self.scratch(),
+            Provider::GoogleDrive,
+        )
+    }
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
         self.store()
             .merge(&incoming.records, &incoming.attachments, &incoming.audit)
@@ -266,6 +283,10 @@ impl LocalVault for Device {
             &self.sidecar(),
             &self.scratch(),
         )?)
+    }
+    fn pack_empty(&self) -> Result<Vec<u8>> {
+        let key = self.key.sqlcipher_key();
+        Ok(pack::pack_empty(&*key, &self.sidecar(), &self.scratch())?)
     }
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
         engine::note_push(self.store(), revision, at_ms, &self.sidecar())
@@ -411,6 +432,34 @@ fn a_password_change_on_one_device_reaches_the_other() {
 // A device that retired an epoch and lost its key (here: never held it) finds
 // the account under that epoch: it neither opens nor overwrites it, until the
 // user confirms the replace.
+#[test]
+fn of_several_packs_the_first_to_adopt_from_decides_and_a_refused_password_is_what_is_reported() {
+    let account = FakeStore::default();
+    let pack = || account.bytes(&layout::vault_file_name("v1")).unwrap();
+    let mut a = Device::create("a", "v1", OLD, &params(1, 0));
+    assert!(a.sync(&account).unwrap().pushed);
+    let own = pack();
+    let b = Device::restore("b", "v1", &account, OLD).unwrap();
+    let gen1 = params(2, 1);
+    a.rekey(derive(NEW, &gen1), &gen1);
+    a.sync(&account).unwrap();
+    let (changed, broken) = (pack(), b"not a pack".to_vec());
+
+    let key_for = |packs: &[Vec<u8>], password| {
+        let found = key_for_packs(b.path(), b.id, &b.key, packs, password);
+        found.map(|found| found.map(|(header, _)| header))
+    };
+    assert_eq!(key_for(&[], NEW).unwrap(), None);
+    assert_eq!(key_for(std::slice::from_ref(&own), NEW).unwrap(), None);
+    let all = [own.clone(), broken.clone(), changed.clone()];
+    assert_eq!(key_for(&all, NEW).unwrap(), Some(gen1));
+    assert!(matches!(
+        key_for(&[changed, broken.clone()], "not it"),
+        Err(Error::InvalidPassword)
+    ));
+    assert!(matches!(key_for(&[own, broken], NEW), Err(Error::Other(_))));
+}
+
 #[test]
 fn a_pack_under_an_epoch_this_device_cannot_open_waits_for_the_replace() {
     let account = FakeStore::default();
