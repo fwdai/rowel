@@ -652,12 +652,17 @@ Bringing existing data forward is an **explicit** action, and there are four pat
   its own database, opened with the key the app holds for it — and a match is
   refused. A lockbox that cannot be read that way (no key held, or one that
   does not open it) refuses the restore too, until it has been opened once: it
-  could be the vault in the backup. A vault from before vaults carried ids
-  answers to an id derived from its key descriptor, which the pack carries in
-  plaintext anyway, so the same id-less backup cannot be restored twice, nor
-  beside the lockbox it was taken from while that lockbox keeps the password
-  it was backed up under (a password change gives it a new descriptor). The
-  lockbox arrives connected to no account.
+  could be the vault in the backup. An id alone does not tie a backup to its
+  source: a vault from before vaults carried ids is backed up with none, and
+  its first sync later mints it one. So the backup is also compared by its key
+  descriptor, which carries the vault's random salt, is the pack's plaintext
+  header, and sits in plaintext beside every lockbox: a lockbox on the device
+  sealed under the same descriptor is the backup's source whatever id either
+  has, and the restore is refused. An id-less backup is filed under an id
+  derived from that descriptor, so it cannot be restored twice either. What
+  the descriptor cannot recognise is a source whose password changed after
+  the backup was taken (a re-key writes a new one); that source is known by
+  its id alone. The lockbox arrives connected to no account.
 - **Import a legacy vault into the currently-unlocked vault** (`import_swftx`,
   `commands/vault.rs`): the Electron-era `.swftx` is independently encrypted and
   carries its own master password. Each entry is decrypted under the backup's

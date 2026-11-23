@@ -576,6 +576,13 @@ enum Source<'a> {
 }
 
 impl Source<'_> {
+    /// A backup file rather than a pack an account files under an id: the one
+    /// source whose vault is also asked about by its key descriptor
+    /// ([`guard_backup_source`]).
+    fn is_backup(&self) -> bool {
+        matches!(self, Source::File { .. })
+    }
+
     /// The pack's bytes, and the vault id an account files it under — `None`
     /// for a backup file, whose id is inside the encrypted snapshot.
     ///
@@ -765,6 +772,9 @@ async fn restore_workspace(
             // opened; one this device already holds is turned away here, and
             // unwound below like any other failed restore.
             guard_restored_vault(state, &previous, &previous_active, &root, &vault_id)?;
+            if source.is_backup() {
+                guard_backup_source(&root, &workspace::dir_of(&root, &id))?;
+            }
             let name = settle_name(&store, name, &vault_id)?;
             Ok((key, store, entries, name, vault_id))
         });
@@ -1375,6 +1385,13 @@ fn answers_to(store: &SqliteStore, dir: &Path) -> Result<Option<String>> {
     if let Some(vault_id) = identity::vault_id(store).map_err(store_err)? {
         return Ok(Some(vault_id));
     }
+    descriptor_id_in(dir)
+}
+
+// The id the key descriptor of the vault in `dir` derives
+// ([`descriptor_vault_id`]), or `None` for a vault with no descriptor. Read
+// from the sidecar, which is plaintext: no key is needed to ask a lockbox this.
+fn descriptor_id_in(dir: &Path) -> Result<Option<String>> {
     match fs::read_to_string(dir.join(storage::KDF_SIDECAR_FILE)) {
         Ok(descriptor) => Ok(Some(descriptor_vault_id(&descriptor))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -1485,6 +1502,41 @@ fn guard_restored_vault(
             Unrecorded::Unreadable => {
                 return Err(Error::Other(unchecked_lockbox_error(&unrecorded)));
             }
+        }
+    }
+    Ok(())
+}
+
+/// A backup's source recognised by its key descriptor, beside the ids
+/// [`guard_restored_vault`] compares: the vault restored into `restored` is
+/// refused when any workspace on this device was sealed under the same
+/// descriptor, whatever id either answers to.
+///
+/// An id alone does not tie a backup to its source. A vault from before ids is
+/// backed up with none, and is given one — minted, unrelated to its descriptor
+/// — by its first sync; the backup taken before that still derives its id from
+/// the descriptor, and the two no longer match. The descriptor does not move
+/// with the id: it carries the vault's random salt, the backup's header is the
+/// source's sidecar byte for byte, and a restore writes it back out unchanged,
+/// so the source and every backup taken at the same password share it and no
+/// other vault does. It is plaintext in both places, so every workspace is
+/// asked, the open one and the locked ones alike, with no key.
+///
+/// What it cannot see is a source whose password changed after the backup was
+/// taken: a re-key writes a new descriptor. That one is left to its id.
+///
+/// For a backup file only. A pack in an account is filed under an id of its
+/// own, asked about before its download; two packs an account holds of one
+/// forked vault share a descriptor by design of that fork, and restoring the
+/// second beside the first stays the account's business.
+fn guard_backup_source(root: &Path, restored: &Path) -> Result<()> {
+    let Some(sealed_under) = descriptor_id_in(restored)? else {
+        return Ok(());
+    };
+    for held in Registry::load(root).workspaces {
+        let dir = workspace::dir_of(root, &held.id);
+        if dir != restored && descriptor_id_in(&dir)?.as_deref() == Some(&sealed_under) {
+            return Err(Error::VaultAlreadyOpen);
         }
     }
     Ok(())
@@ -2299,6 +2351,72 @@ mod tests {
             guard_restored_vault(&state, &previous, &previous_active, &root, &vault_id),
             Err(Error::VaultAlreadyOpen)
         ));
+    }
+
+    // A lockbox from before ids was backed up, then given a minted id by its
+    // first sync. The backup still derives its id from the descriptor, which
+    // no longer matches the lockbox's; the descriptor itself still does.
+    #[test]
+    fn an_older_backup_is_refused_beside_its_source_once_the_source_has_an_id() {
+        let root = tmp_root();
+        let source_dir = workspace::dir_of(&root, "b2c3");
+        let (key, backup) = lockbox_in(&source_dir, None);
+        let minted = "0123456789abcdef0123456789abcdef";
+        {
+            let store =
+                SqliteStore::open(&source_dir.join(storage::DB_FILE), &*key.sqlcipher_key())
+                    .unwrap();
+            identity::adopt_vault_id(&store, minted).unwrap();
+        }
+        record(
+            &root,
+            vec![
+                lockbox(PRIMARY_ID, None, None),
+                lockbox("b2c3", Some("Work"), Some(minted)),
+            ],
+        );
+        let state = open_vault("a1b2");
+
+        let bytes = read(&backup, &chosen(&backup)).unwrap();
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let dir = new_dir(&root, "c3d4");
+        let (_, store, _, vault_id) = install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+
+        // The ids alone let it through: that is the gap the descriptor closes.
+        assert_ne!(vault_id, minted);
+        assert!(
+            guard_restored_vault(&state, &previous, &previous_active, &root, &vault_id).is_ok()
+        );
+        assert!(matches!(
+            guard_backup_source(&root, &dir),
+            Err(Error::VaultAlreadyOpen)
+        ));
+        drop(store);
+        discard(&root, "c3d4");
+        restore(&state, previous_active, previous);
+        assert!(!dir.exists());
+    }
+
+    // Another vault's backup shares no descriptor with anything here, and a
+    // restored lockbox is not turned away by its own.
+    #[test]
+    fn a_backup_of_no_lockbox_here_passes_the_descriptor_check() {
+        let root = tmp_root();
+        let _ = lockbox_in(&workspace::dir_of(&root, "b2c3"), None);
+        record(
+            &root,
+            vec![
+                lockbox(PRIMARY_ID, None, None),
+                lockbox("b2c3", Some("Work"), None),
+            ],
+        );
+
+        let backup = backup_of(None);
+        let bytes = read(&backup, &chosen(&backup)).unwrap();
+        let dir = new_dir(&root, "c3d4");
+        let _installed = install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+
+        assert!(guard_backup_source(&root, &dir).is_ok());
     }
 
     // A pack from an account answers to the id its file name gives it, over
