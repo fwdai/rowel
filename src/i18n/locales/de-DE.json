@@ -920,6 +920,7 @@
   "Not nearby": "Nicht in der Nähe",
   "Not nearby · last synced {{when}}": "Nicht in der Nähe · zuletzt synchronisiert {{when}}",
   "Paused": "Pausiert",
+  "Has the new master password": "Hat das neue Hauptpasswort",
   "Needs the new master password": "Braucht das neue Hauptpasswort",
   "The clocks on the two devices don’t match": "Die Uhren der beiden Geräte stimmen nicht überein",
   "Pause syncing": "Synchronisierung pausieren",

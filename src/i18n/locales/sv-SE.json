@@ -920,6 +920,7 @@
   "Not nearby": "Inte i närheten",
   "Not nearby · last synced {{when}}": "Inte i närheten · senast synkad {{when}}",
   "Paused": "Pausad",
+  "Has the new master password": "Har det nya huvudlösenordet",
   "Needs the new master password": "Behöver det nya huvudlösenordet",
   "The clocks on the two devices don’t match": "Klockorna på de två enheterna stämmer inte överens",
   "Pause syncing": "Pausa synkning",

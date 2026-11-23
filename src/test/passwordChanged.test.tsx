@@ -52,12 +52,26 @@ describe('Master password changed on another device', () => {
     expect(useUi.getState().passwordPrompt).toBe(false)
   })
 
+  it('says only that the password is wrong when no account holds a copy', async () => {
+    mockCommandOnce('sync_adopt_password', () =>
+      Promise.reject({ kind: 'invalidPassword', message: 'invalid password' })
+    )
+    showPrompt()
+
+    await submit('typo')
+
+    expect((await screen.findByTestId('password-changed-error')).textContent).toBe(
+      'Incorrect Master Password'
+    )
+  })
+
   // The pack may not be one this user re-keyed at all; the copy says so and
   // points at the one way out that does not need the password.
   it('explains a wrong password and clears the field', async () => {
     mockCommandOnce('sync_adopt_password', () =>
       Promise.reject({ kind: 'invalidPassword', message: 'invalid password' })
     )
+    act(changedElsewhere)
     showPrompt()
 
     await submit('typo')

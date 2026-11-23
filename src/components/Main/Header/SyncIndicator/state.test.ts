@@ -87,6 +87,15 @@ describe('syncView', () => {
       })
     })
 
+    it('asks for the master password a nearby device changed, before any other trouble', () => {
+      const devices = [device('needsPassword'), device('passwordChanged')]
+      expect(syncView(cloud(), nearby(devices))).toEqual({
+        tone: 'bad',
+        message: 'Master password changed on another device',
+        adopt: true
+      })
+    })
+
     it('says what went wrong with a nearby device in its own words', () => {
       expect(
         syncView(cloud(), nearby([device('clockSkew', 'The clocks are 7 minutes apart')]))

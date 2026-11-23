@@ -37,6 +37,8 @@ pub enum Control {
     },
     #[serde(rename = "sync/pack")]
     Pack { lockbox: String, revision: String },
+    #[serde(rename = "adopt/ask")]
+    Ask { lockbox: String, have: Vec<String> },
 }
 
 impl Control {
@@ -56,6 +58,7 @@ impl Control {
             Self::ProofsDone => "trust/done",
             Self::State { .. } => "sync/state",
             Self::Pack { .. } => "sync/pack",
+            Self::Ask { .. } => "adopt/ask",
         }
     }
 
@@ -91,7 +94,7 @@ mod tests {
     use crate::nearby::channel::tests::pair;
     use crate::nearby::identity::tests::identity;
 
-    fn one_of_each() -> [Control; 6] {
+    fn one_of_each() -> [Control; 7] {
         [
             Control::hello("Laptop"),
             Control::Proof {
@@ -111,6 +114,10 @@ mod tests {
             Control::Pack {
                 lockbox: "k1".into(),
                 revision: "r".into(),
+            },
+            Control::Ask {
+                lockbox: "k1".into(),
+                have: vec!["k2".into()],
             },
         ]
     }

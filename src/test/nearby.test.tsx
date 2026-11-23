@@ -3,7 +3,7 @@ import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Settings from '@/components/Main/Sidebar/Settings'
 import type { NearbyDevice, NearbyStatus } from '@/api/nearby'
-import { openSettings, setNearbyStatus } from '@/store'
+import { openSettings, setNearbyStatus, useUi } from '@/store'
 import { calls, mockCommand, mockCommandOnce, nearbyUnavailable } from './ipc'
 
 /*
@@ -137,6 +137,7 @@ describe('Settings › Sync › Nearby devices', () => {
       { lastSyncedAt: new Date(Date.now() - 3 * DAY - 60_000).toISOString() }
     ],
     ['Paused', 'paused', {}],
+    ['Has the new master password', 'passwordChanged', {}],
     ['Needs the new master password', 'needsPassword', {}],
     ['The clocks are 7 minutes apart', 'clockSkew', { detail: 'The clocks are 7 minutes apart' }],
     ['The connection dropped', 'error', { detail: 'The connection dropped' }],
@@ -173,6 +174,20 @@ describe('Settings › Sync › Nearby devices', () => {
 
     expect(status('ok')).not.toHaveClass('text-bad')
     expect(status('bad')).toHaveClass('text-bad')
+  })
+
+  it('asks for the new master password from the device that has it, and from no other', async () => {
+    report({
+      devices: [
+        device({ id: 'ahead', state: 'passwordChanged' }),
+        device({ id: 'behind', state: 'needsPassword' })
+      ]
+    })
+    openSync()
+
+    expect(screen.queryByTestId('settings-nearby-adopt-behind')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('settings-nearby-adopt-ahead'))
+    expect(useUi.getState().passwordPrompt).toBe(true)
   })
 
   it('pauses a device, and resumes a paused one', async () => {

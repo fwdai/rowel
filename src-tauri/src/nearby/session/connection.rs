@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use super::advert::Recognised;
 use super::book::Outcome;
-use super::handshake::{self, Handshake};
+use super::handshake::{self, Established, Handshake};
 use super::host::Host;
 use super::listener::is_local;
 use super::{sync, Shared};
@@ -92,13 +92,19 @@ fn sync_with<H: Host>(
     }
     let lockboxes = shared.lockboxes();
     let matches = dialled.map_or(&[][..], |found| &found.matches);
-    let Handshake::Established { ids, behind } =
-        handshake::run(shared, channel, &lockboxes, matches)?
+    let Handshake::Established(found) = handshake::run(shared, channel, &lockboxes, matches)?
     else {
         return Ok(None);
     };
     shared.conns().established(conn);
     shared.syncing(&peer);
-    let synced = sync::run(shared, channel, &peer, &lockboxes, &ids);
-    Ok(behind.then_some(Outcome::Behind).or(synced))
+    let synced = sync::run(shared, channel, &peer, &lockboxes, &found);
+    Ok(on_another_password(&found).or(synced))
+}
+
+fn on_another_password(found: &Established) -> Option<Outcome> {
+    if !found.behind.is_empty() {
+        return Some(Outcome::Behind);
+    }
+    (!found.ahead.is_empty()).then_some(Outcome::Ahead)
 }

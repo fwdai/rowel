@@ -4,7 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::book::{Failure, Outcome};
-use super::handshake::out_of_step;
+use super::handshake::{out_of_step, Established};
 use super::host::{Host, Lockbox};
 use super::Shared;
 use crate::error::{Error as AppError, Result as AppResult};
@@ -20,6 +20,18 @@ const CLAIM_POLL: Duration = Duration::from_millis(50);
 enum Stop {
     Gone(Error),
     Failed(AppError),
+}
+
+impl Stop {
+    fn ended(self, why: &'static str) -> Error {
+        match self {
+            Self::Gone(e) => e,
+            Self::Failed(e) => {
+                log::info!("nearby: {why}: {e}");
+                Error::Ended(why)
+            }
+        }
+    }
 }
 
 impl From<Error> for Stop {
@@ -40,20 +52,21 @@ pub(super) fn run<H: Host>(
     channel: &mut Channel,
     peer: &str,
     proved: &[Lockbox],
-    ids: &[String],
+    found: &Established,
 ) -> Option<Outcome> {
     let mut script = Script {
         shared,
         channel,
         peer,
         proved,
+        found,
         absorbed: None,
         outcomes: Vec::new(),
     };
-    if let Err(e) = script.every(ids) {
+    if let Err(e) = script.every() {
         log::info!("nearby: sync with {peer:.8} ended: {e}");
     }
-    Outcome::of(script.outcomes, ids.len())
+    Outcome::of(script.outcomes, found.ids.len())
 }
 
 struct Script<'a, H: Host> {
@@ -61,24 +74,80 @@ struct Script<'a, H: Host> {
     channel: &'a mut Channel,
     peer: &'a str,
     proved: &'a [Lockbox],
+    found: &'a Established,
     absorbed: Option<Absorbed>,
     outcomes: Vec<Outcome>,
 }
 
 // Strictly in turns: a pack can be large, and each side writes on one blocking thread.
 impl<H: Host> Script<'_, H> {
-    fn every(&mut self, ids: &[String]) -> Result<()> {
+    fn every(&mut self) -> Result<()> {
+        let found = self.found;
         match self.channel.role() {
-            Role::Connector => ids.iter().try_for_each(|id| self.one(id, |s| s.dial(id))),
+            Role::Connector => {
+                let mut ids = found.ids.iter();
+                ids.try_for_each(|id| self.one(id, |s| s.dial(id)))?;
+                found.behind.iter().try_for_each(|id| self.ask(id))?;
+                let mut asks = found.asks.iter();
+                asks.try_for_each(|(theirs, have)| self.give(theirs, have))
+            }
             Role::Acceptor => loop {
-                let (id, theirs, their_ms) = match self.opening(ids) {
+                match self.channel.recv_control() {
                     // The dialler closes when it has run every lockbox.
                     Err(Error::Io(_)) => return Ok(()),
-                    opened => opened?,
-                };
-                self.one(&id, |s| s.answer(&id, &theirs, their_ms))?;
+                    opened => self.serve(opened?)?,
+                }
             },
         }
+    }
+
+    fn serve(&mut self, opened: Control) -> Result<()> {
+        let found = self.found;
+        match opened {
+            Control::State {
+                lockbox,
+                revision,
+                now_ms,
+            } if found.ids.contains(&lockbox) => {
+                self.one(&lockbox, |s| s.answer(&lockbox, &revision, now_ms))
+            }
+            Control::State { lockbox, .. } if found.behind.contains(&lockbox) => Ok(()),
+            Control::Pack { lockbox, revision } if found.behind.contains(&lockbox) => {
+                let pack = self.channel.recv(MAX_PACK_BYTES)?;
+                self.shared.host.kept().keep(&lockbox, &revision, pack);
+                Ok(())
+            }
+            Control::Ask { lockbox, have } => self.give(&lockbox, &have),
+            other => Err(out_of_step(&other)),
+        }
+    }
+
+    fn ask(&mut self, id: &str) -> Result<()> {
+        let have = self.shared.host.kept().sealed_under(id);
+        self.channel.send_control(&Control::Ask {
+            lockbox: id.to_string(),
+            have,
+        })?;
+        if let Said::Pack(sealed_under, pack) = self.recv(id)? {
+            self.shared.host.kept().keep(id, &sealed_under, pack);
+        }
+        Ok(())
+    }
+
+    // To a device that proved the key `theirs`, which this lockbox has retired: the
+    // pack under the current one, named by that key's id, unless it has it.
+    fn give(&mut self, theirs: &str, have: &[String]) -> Result<()> {
+        let Some(mine) = self.found.ahead_of(theirs) else {
+            return Err(Error::Protocol("an ask for a key it did not prove".into()));
+        };
+        if have.iter().any(|id| id == mine) {
+            self.send_state(theirs, mine)?;
+            return Ok(());
+        }
+        let now_ms = self.shared.host.now_ms();
+        let packed = self.step(mine, |local| exchange::pack(local, now_ms));
+        let (pack, _) = packed.map_err(|stop| stop.ended("a lockbox could not be packed"))?;
+        self.send_pack(theirs, mine, &pack)
     }
 
     fn dial(&mut self, id: &str) -> Turn<()> {
@@ -235,17 +304,6 @@ impl<H: Host> Script<'_, H> {
             revision: revision.to_string(),
         })?;
         self.channel.send(bytes)
-    }
-
-    fn opening(&mut self, ids: &[String]) -> Result<(String, String, i64)> {
-        match self.channel.recv_control()? {
-            Control::State {
-                lockbox,
-                revision,
-                now_ms,
-            } if ids.contains(&lockbox) => Ok((lockbox, revision, now_ms)),
-            other => Err(out_of_step(&other)),
-        }
     }
 
     fn recv(&mut self, id: &str) -> Result<Said> {

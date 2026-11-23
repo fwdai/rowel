@@ -22,6 +22,8 @@ export interface SyncView {
    * casting an arbitrary string to `TKey`.
    */
   detail?: string
+  /** The chip opens the prompt for the master password another device changed. */
+  adopt?: true
 }
 
 /**
@@ -56,6 +58,11 @@ export const syncView = (sync: SyncStatus, nearby: NearbyStatus | null): SyncVie
 }
 
 const TROUBLE: NearbyDevice['state'][] = ['needsPassword', 'clockSkew', 'error']
+const PASSWORD_CHANGED = {
+  tone: 'bad',
+  message: 'Master password changed on another device',
+  adopt: true
+} as const
 
 /**
  * Nearby sync as the chip says it, or null when it is off (or this build has
@@ -68,6 +75,7 @@ const nearbyView = (nearby: NearbyStatus | null): SyncView | null => {
   const { devices } = nearby
   if (devices.some(device => device.state === 'syncing'))
     return { tone: 'loading', message: 'Syncing with a nearby device…' }
+  if (devices.some(device => device.state === 'passwordChanged')) return PASSWORD_CHANGED
   const trouble = devices.find(device => TROUBLE.includes(device.state))
   if (trouble?.state === 'needsPassword')
     return { tone: 'bad', message: 'A nearby device needs the new master password' }

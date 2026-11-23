@@ -17,6 +17,7 @@ export type NearbyDeviceState =
   | 'syncing'
   | 'waiting'
   | 'upToDate'
+  | 'passwordChanged'
   | 'needsPassword'
   | 'clockSkew'
   | 'error'

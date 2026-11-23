@@ -920,6 +920,7 @@
   "Not nearby": "Yakında değil",
   "Not nearby · last synced {{when}}": "Yakında değil · son eşitleme {{when}}",
   "Paused": "Duraklatıldı",
+  "Has the new master password": "Yeni ana şifreye sahip",
   "Needs the new master password": "Yeni ana şifre gerekiyor",
   "The clocks on the two devices don’t match": "İki cihazın saatleri uyuşmuyor",
   "Pause syncing": "Eşitlemeyi duraklat",

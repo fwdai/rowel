@@ -29,6 +29,8 @@ export const statusLine = (
       return quiet(t('Waiting to sync'))
     case 'upToDate':
       return quiet(t('Up to date'))
+    case 'passwordChanged':
+      return bad(t('Has the new master password'))
     case 'needsPassword':
       return bad(t('Needs the new master password'))
     case 'clockSkew':

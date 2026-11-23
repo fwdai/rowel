@@ -11,9 +11,10 @@ use zeroize::Zeroizing;
 
 use super::book::{NearbyDevice, NearbyDeviceState};
 use super::*;
+use crate::commands::password_sync::key_for_pack;
 use crate::commands::password_sync::two_devices::{derive, params, Device, NEW, OLD};
 use crate::error::{Error as AppError, Result as AppResult};
-use crate::nearby::channel::{self, Control};
+use crate::nearby::channel::{self, Channel, Control};
 use crate::nearby::discovery::memory::Network;
 use crate::nearby::exchange::Absorbed;
 use crate::nearby::identity::tests::identity;
@@ -99,6 +100,7 @@ struct TestHost {
     /// Every merge announced, by lockbox id.
     announced: Mutex<Vec<String>>,
     passed_on: AtomicUsize,
+    kept: Kept,
 }
 
 impl TestHost {
@@ -209,6 +211,10 @@ impl Host for TestHost {
 
     fn merged(&self, id: &str, _local: &dyn LocalVault, _absorbed: &Absorbed) {
         self.announced.lock().unwrap().push(id.to_string());
+    }
+
+    fn kept(&self) -> &Kept {
+        &self.kept
     }
 
     fn now_ms(&self) -> i64 {
@@ -351,6 +357,40 @@ fn hold(node: &Node) -> Claim {
         assert!(Instant::now() < deadline, "the claim never came free");
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+/// `held` once nothing else holds it.
+fn sole(mut held: Arc<Device>) -> Device {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        held = match Arc::try_unwrap(held) {
+            Ok(device) => return device,
+            Err(held) => held,
+        };
+        assert!(Instant::now() < deadline, "the lockbox stayed held");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A dialler holding `keys` alone, past the handshake with `node`: its channel and what it heard.
+fn dialled_with(node: &Node, keys: &Keys) -> (Channel, Vec<&'static str>) {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, node.manager.port()));
+    let mut dialled = channel::tests::connect(addr, &identity(), None).unwrap();
+    let proof = own_proof(&dialled, &keys.proof, &keys.id);
+    for message in [
+        Control::hello("Peer"),
+        Control::Proof {
+            lockbox: keys.id.clone(),
+            proof,
+        },
+        Control::ProofsDone,
+    ] {
+        dialled.send_control(&message).unwrap();
+    }
+    let heard = (0..3)
+        .map(|_| dialled.recv_control().unwrap().kind())
+        .collect();
+    (dialled, heard)
 }
 
 /// Long enough for anything that was going to happen to have happened.
@@ -588,33 +628,16 @@ fn a_handshake_carries_nothing_about_removed_devices() {
     let removed = removing(identity().device_id().to_string());
     let na = node_on(&network, host(&[&a]), removed);
 
-    let peer = identity();
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, na.manager.port()));
-    let mut dialled = channel::tests::connect(addr, &peer, None).unwrap();
     let keys = Keys::of(&a.key);
-    let proof = own_proof(&dialled, &keys.proof, &keys.id);
-    for message in [
-        Control::hello("Peer"),
-        Control::Proof {
-            lockbox: keys.id.clone(),
-            proof,
-        },
-        Control::ProofsDone,
-        Control::State {
-            lockbox: keys.id.clone(),
-            revision: "r".into(),
-            now_ms: 0,
-        },
-    ] {
-        dialled.send_control(&message).unwrap();
-    }
-    let heard: Vec<&str> = (0..4)
-        .map(|_| dialled.recv_control().unwrap().kind())
-        .collect();
-    assert_eq!(
-        heard,
-        ["hello/hello", "trust/proof", "trust/done", "sync/state"]
-    );
+    let (mut dialled, heard) = dialled_with(&na, &keys);
+    assert_eq!(heard, ["hello/hello", "trust/proof", "trust/done"]);
+    let state = Control::State {
+        lockbox: keys.id,
+        revision: "r".into(),
+        now_ms: 0,
+    };
+    dialled.send_control(&state).unwrap();
+    assert_eq!(dialled.recv_control().unwrap().kind(), "sync/state");
 }
 
 #[test]
@@ -799,29 +822,82 @@ fn a_sync_that_failed_is_tried_again_at_the_next_period() {
     });
 }
 
-#[test]
-fn a_device_on_a_retired_key_needs_the_password_on_both_sides_and_gets_no_pack() {
-    let network = Network::default();
-    let mut moved_on = Device::create("a", "a", OLD, &params(1, 0));
-    moved_on.write("1", "made before the change");
+/// A lockbox whose password was changed from `OLD` to `NEW`, and the keys it was on before.
+fn moved_on() -> (Device, Keys) {
+    let mut device = Device::create("a", "a", OLD, &params(1, 0));
+    device.write("1", "made before the change");
+    let old = Keys::of(&device.key);
     let gen1 = params(2, 1);
-    moved_on.rekey(derive(NEW, &gen1), &gen1);
-    moved_on.write("2", "made after the change");
-    let (a, b) = (Arc::new(moved_on), lockbox("b", 1));
+    device.rekey(derive(NEW, &gen1), &gen1);
+    device.write("2", "made after the change");
+    (device, old)
+}
+
+#[test]
+fn a_device_on_a_retired_key_is_handed_the_pack_it_adopts_the_password_from() {
+    let network = Network::default();
+    let (a, old) = moved_on();
+    let (a, b) = (Arc::new(a), lockbox("b", 1));
     b.write("3", "made on the old password");
     let before = (a.digest(), b.digest());
     let (na, nb) = (node(&network, &[&a]), node(&network, &[&b]));
 
-    eventually("both need the password", || {
+    eventually("each says which of the two is behind", || {
         na.state_of(&nb) == Some(NearbyDeviceState::NeedsPassword)
-            && nb.state_of(&na) == Some(NearbyDeviceState::NeedsPassword)
+            && nb.state_of(&na) == Some(NearbyDeviceState::PasswordChanged)
+            && !nb.host.kept.packs(&old.id).is_empty()
     });
+    let handed_over = na.manager.packs();
     na.manager.request_runs();
     nb.manager.request_runs();
     settle();
-    assert_eq!(na.manager.packs() + nb.manager.packs(), 0);
+    assert_eq!(
+        na.manager.packs(),
+        handed_over,
+        "a pack it has is not sent again"
+    );
+    assert_eq!(nb.manager.packs(), 0);
     assert_eq!((a.digest(), b.digest()), before);
-    assert!(b.title("1").is_none() && a.title("3").is_none());
+    assert_eq!(nb.host.kept.sealed_under(&old.id), [Keys::of(&a.key).id]);
+
+    let pack = nb.host.kept.packs(&old.id).remove(0);
+    drop(nb);
+    let mut b = sole(b);
+    let refused = key_for_pack(b.path(), b.id, &b.key, &pack, OLD);
+    assert!(matches!(refused, Err(AppError::InvalidPassword)));
+    let (header, key) = key_for_pack(b.path(), b.id, &b.key, &pack, NEW)
+        .unwrap()
+        .unwrap();
+    b.rekey(key, &header);
+    let b = Arc::new(b);
+    let nb = node(&network, &[&b]);
+    eventually("the two converge on the new password", || {
+        na.level_with(&nb) && nb.level_with(&na)
+    });
+    assert!(b.title("1").is_some() && b.title("2").is_some() && a.title("3").is_some());
+}
+
+#[test]
+fn an_ask_is_answered_for_a_key_the_asker_proved_and_a_pack_it_lacks() {
+    let network = Network::default();
+    let (a, old) = moved_on();
+    let a = Arc::new(a);
+    let new = Keys::of(&a.key).id;
+    let na = node(&network, &[&a]);
+
+    let ask = |lockbox: &str, have: &[&str]| {
+        let (mut dialled, heard) = dialled_with(&na, &old);
+        assert_eq!(heard, ["hello/hello", "trust/proof-retired", "trust/done"]);
+        let ask = Control::Ask {
+            lockbox: lockbox.into(),
+            have: have.iter().map(|id| id.to_string()).collect(),
+        };
+        dialled.send_control(&ask).unwrap();
+        dialled.recv_control().map(|answer| answer.kind())
+    };
+    assert_eq!(ask(&old.id, &[]).unwrap(), "sync/pack");
+    assert_eq!(ask(&old.id, &[&new]).unwrap(), "sync/state");
+    assert!(ask(&new, &[]).is_err());
 }
 
 #[test]

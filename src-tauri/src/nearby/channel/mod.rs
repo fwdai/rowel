@@ -12,7 +12,7 @@ use super::{Error, Result};
 pub use control::Control;
 pub use tls::{accept, connect_over};
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 pub const MAX_FRAME: usize = 1024 * 1024;
 const MAX_CONTROL: usize = 64 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);

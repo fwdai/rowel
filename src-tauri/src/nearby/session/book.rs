@@ -42,6 +42,7 @@ pub enum NearbyDeviceState {
     Syncing,
     Waiting,
     UpToDate,
+    PasswordChanged,
     NeedsPassword,
     ClockSkew,
     Error,
@@ -84,7 +85,9 @@ impl From<&AppError> for Failure {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Outcome {
     Synced,
+    // This device is on a password the other has changed; `Ahead` is the reverse.
     Behind,
+    Ahead,
     Failed(Failure),
 }
 
@@ -322,15 +325,13 @@ fn state_of<'a>(
     match live.outcomes.get(id) {
         None => (Waiting, None),
         Some(Outcome::Synced) => (UpToDate, None),
-        Some(Outcome::Behind) => (NeedsPassword, None),
-        Some(Outcome::Failed(f)) if needs_password(&f.kind) => (NeedsPassword, None),
+        Some(Outcome::Behind) => (PasswordChanged, None),
+        Some(Outcome::Ahead) => (NeedsPassword, None),
+        Some(Outcome::Failed(f)) if f.kind == "passwordChangedRemotely" => (PasswordChanged, None),
+        Some(Outcome::Failed(f)) if f.kind == "vaultUnderRetiredPassword" => (NeedsPassword, None),
         Some(Outcome::Failed(f)) if f.kind == "clockSkew" => (ClockSkew, Some(f)),
         Some(Outcome::Failed(f)) => (Error, Some(f)),
     }
-}
-
-fn needs_password(kind: &str) -> bool {
-    kind == "passwordChangedRemotely" || kind == "vaultUnderRetiredPassword"
 }
 
 fn iso(ms: i64) -> Option<String> {
@@ -393,8 +394,9 @@ mod tests {
         assert_eq!(row(&book).state, Waiting);
         for (outcome, state) in [
             (Outcome::Synced, UpToDate),
-            (Outcome::Behind, NeedsPassword),
-            (failed("passwordChangedRemotely"), NeedsPassword),
+            (Outcome::Behind, PasswordChanged),
+            (Outcome::Ahead, NeedsPassword),
+            (failed("passwordChangedRemotely"), PasswordChanged),
             (failed("vaultUnderRetiredPassword"), NeedsPassword),
             (failed("clockSkew"), ClockSkew),
             (failed("vaultFull"), Error),

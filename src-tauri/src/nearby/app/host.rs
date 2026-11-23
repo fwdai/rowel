@@ -11,7 +11,7 @@ use crate::commands::sync::{claim_or_busy, RunClaim};
 use crate::crypto::VaultKey;
 use crate::error::{Error, Result};
 use crate::nearby::exchange::Absorbed;
-use crate::nearby::session::{Host, Keys, Lockbox};
+use crate::nearby::session::{Host, Kept, Keys, Lockbox};
 use crate::org::lockboxes::is_org_lockbox_dir;
 use crate::state::AppState;
 use crate::sync::engine::{LocalVault, SessionVault, WorkspaceVault};
@@ -181,6 +181,10 @@ impl Host for AppHost {
             crate::commands::sync::request_run_if_ready(&self.app, &state);
         }
         super::request_run(&self.app);
+    }
+
+    fn kept(&self) -> &Kept {
+        &super::state(&self.app).kept
     }
 
     fn now_ms(&self) -> i64 {

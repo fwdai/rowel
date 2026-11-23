@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use zeroize::Zeroizing;
 
-use super::key_for_pack;
+use super::{key_for_pack, key_for_packs};
 use crate::auth::{self, LockoutState, RekeyPaths};
 use crate::crypto::{self, KdfParams, VaultKey};
 use crate::error::{Error, Result};
@@ -409,6 +409,34 @@ fn a_password_change_on_one_device_reaches_the_other() {
 // A device that retired an epoch and lost its key (here: never held it) finds
 // the account under that epoch: it neither opens nor overwrites it, until the
 // user confirms the replace.
+#[test]
+fn of_several_packs_the_first_to_adopt_from_decides_and_a_refused_password_is_what_is_reported() {
+    let account = FakeStore::default();
+    let pack = || account.bytes(&layout::vault_file_name("v1")).unwrap();
+    let mut a = Device::create("a", "v1", OLD, &params(1, 0));
+    assert!(a.sync(&account).unwrap().pushed);
+    let own = pack();
+    let b = Device::restore("b", "v1", &account, OLD).unwrap();
+    let gen1 = params(2, 1);
+    a.rekey(derive(NEW, &gen1), &gen1);
+    a.sync(&account).unwrap();
+    let (changed, broken) = (pack(), b"not a pack".to_vec());
+
+    let key_for = |packs: &[Vec<u8>], password| {
+        let found = key_for_packs(b.path(), b.id, &b.key, packs, password);
+        found.map(|found| found.map(|(header, _)| header))
+    };
+    assert_eq!(key_for(&[], NEW).unwrap(), None);
+    assert_eq!(key_for(std::slice::from_ref(&own), NEW).unwrap(), None);
+    let all = [own.clone(), broken.clone(), changed.clone()];
+    assert_eq!(key_for(&all, NEW).unwrap(), Some(gen1));
+    assert!(matches!(
+        key_for(&[changed, broken.clone()], "not it"),
+        Err(Error::InvalidPassword)
+    ));
+    assert!(matches!(key_for(&[own, broken], NEW), Err(Error::Other(_))));
+}
+
 #[test]
 fn a_pack_under_an_epoch_this_device_cannot_open_waits_for_the_replace() {
     let account = FakeStore::default();

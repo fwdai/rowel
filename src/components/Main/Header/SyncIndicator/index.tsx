@@ -47,7 +47,7 @@ export default function SyncIndicator({ className, onClick }: Props) {
   const { t } = useTranslation()
   const sync = useApp(state => state.sync)
   const nearby = useApp(state => state.nearby)
-  const { tone, message, detail } = syncView(sync, nearby)
+  const { tone, message, detail, adopt } = syncView(sync, nearby)
   // The backend's message wins when there is one; it is already prose, in no
   // catalogue, and translating it is not on offer.
   const label = detail ?? t(message)
@@ -65,7 +65,7 @@ export default function SyncIndicator({ className, onClick }: Props) {
         data-tone={tone}
         aria-label={label}
         onClick={
-          syncPasswordChangedRemotely(sync)
+          adopt || syncPasswordChangedRemotely(sync)
             ? openPasswordPrompt
             : (onClick ?? (() => openSettings('sync')))
         }

@@ -28,7 +28,7 @@ use crate::nearby::trust::NONCE_LEN;
 use crate::nearby::{Error, Result};
 
 pub use book::{Book, NearbyStatus, Stored};
-pub use host::{Host, Keys, Lockbox};
+pub use host::{Host, Kept, Keys, Lockbox};
 
 const TICK: Duration = Duration::from_millis(200);
 // Nothing announces a change of keys: the unlock fills the keyring late, a password change rekeys.

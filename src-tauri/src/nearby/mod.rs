@@ -11,7 +11,7 @@ pub mod identity;
 pub mod session;
 pub mod trust;
 
-pub(crate) use app::{request_run, session_ended, session_opened};
+pub(crate) use app::{forget_packs, kept_packs, request_run, session_ended, session_opened};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

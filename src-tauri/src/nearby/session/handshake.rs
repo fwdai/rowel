@@ -14,8 +14,26 @@ const MAX_PROOFS: usize = 64;
 const MAX_NAME_CHARS: usize = 64;
 
 pub(super) enum Handshake {
-    Established { ids: Vec<String>, behind: bool },
+    Established(Established),
     Over,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct Established {
+    pub ids: Vec<String>,
+    // This side's lockboxes on a key the peer has retired.
+    pub behind: Vec<String>,
+    // The peer's key id, and this side's lockbox that retired it.
+    pub ahead: Vec<(String, String)>,
+    // What the answering side asked for with its proofs: a lockbox, and the packs it has.
+    pub asks: Vec<(String, Vec<String>)>,
+}
+
+impl Established {
+    pub fn ahead_of(&self, theirs: &str) -> Option<&str> {
+        let found = self.ahead.iter().find(|(id, _)| id == theirs);
+        found.map(|(_, mine)| mine.as_str())
+    }
 }
 
 pub(super) fn run<H: Host>(
@@ -27,17 +45,15 @@ pub(super) fn run<H: Host>(
     let Some((name, platform)) = hello(channel, shared.book.device_name())? else {
         return Ok(Handshake::Over);
     };
-    let proved = prove(channel, lockboxes, matches)?;
+    let kept = shared.host.kept();
+    let proved = prove(channel, lockboxes, matches, |id| kept.sealed_under(id))?;
     if proved.verified.is_empty() {
         return Ok(Handshake::Over);
     }
     shared
         .book
         .seen(&channel.peer().to_string(), &name, &platform);
-    Ok(Handshake::Established {
-        ids: proved.mine().map(|l| l.id().to_owned()).collect(),
-        behind: proved.behind(),
-    })
+    Ok(Handshake::Established(proved.established()))
 }
 
 // The peer's name and platform; None when it speaks another protocol version.
@@ -54,11 +70,13 @@ fn hello(channel: &mut Channel, name: &str) -> Result<Option<(String, String)>> 
 }
 
 // The dialling side proves what it recognised; the answering side proves back only what
-// verified, so a device that dialled on a guess hears no key id.
+// verified, so a device that dialled on a guess hears no key id. From here on the
+// answering side only answers, so what it is behind on it asks for now.
 fn prove<'a>(
     channel: &mut Channel,
     lockboxes: &'a [Lockbox],
     matches: &[Match],
+    kept: impl Fn(&str) -> Vec<String>,
 ) -> Result<Proved<'a>> {
     match channel.role() {
         Role::Connector => {
@@ -70,11 +88,17 @@ fn prove<'a>(
                 channel,
                 sent.iter().flat_map(|&(l, found)| proofs_of(l, found)),
             )?;
+            channel.send_control(&Control::ProofsDone)?;
             read_proofs(channel, &sent.iter().map(|&(l, _)| l).collect::<Vec<_>>())
         }
         Role::Acceptor => {
             let proved = read_proofs(channel, &lockboxes.iter().collect::<Vec<_>>())?;
             send_proofs(channel, proved.answers())?;
+            for id in proved.behind() {
+                let (lockbox, have) = (id.to_owned(), kept(id));
+                channel.send_control(&Control::Ask { lockbox, have })?;
+            }
+            channel.send_control(&Control::ProofsDone)?;
             Ok(proved)
         }
     }
@@ -130,7 +154,7 @@ fn send_proofs<'a>(channel: &mut Channel, keys: impl Iterator<Item = Key<'a>>) -
     for key in keys {
         channel.send_control(&key.proof(channel))?;
     }
-    channel.send_control(&Control::ProofsDone)
+    Ok(())
 }
 
 fn read_proofs<'a>(channel: &mut Channel, lockboxes: &[&'a Lockbox]) -> Result<Proved<'a>> {
@@ -140,6 +164,10 @@ fn read_proofs<'a>(channel: &mut Channel, lockboxes: &[&'a Lockbox]) -> Result<P
             Control::ProofsDone => return Ok(proved),
             Control::Proof { lockbox, proof } => (lockbox, proof, false),
             Control::RetiredProof { lockbox, proof } => (lockbox, proof, true),
+            Control::Ask { lockbox, have } => {
+                proved.asks.push((lockbox, have));
+                continue;
+            }
             other => return Err(out_of_step(&other)),
         };
         if let Some(key) = key_named(lockboxes, &id) {
@@ -155,6 +183,7 @@ fn read_proofs<'a>(channel: &mut Channel, lockboxes: &[&'a Lockbox]) -> Result<P
 #[derive(Default)]
 struct Proved<'a> {
     verified: Vec<(Key<'a>, bool)>,
+    asks: Vec<(String, Vec<String>)>,
 }
 
 impl<'a> Proved<'a> {
@@ -167,18 +196,29 @@ impl<'a> Proved<'a> {
         }
     }
 
-    fn mine(&self) -> impl Iterator<Item = &'a Lockbox> + '_ {
+    fn behind(&self) -> impl Iterator<Item = &'a str> + '_ {
         self.verified
             .iter()
             .filter_map(|&(key, retired)| match key {
-                Key::Current(lockbox) if !retired => Some(lockbox),
+                Key::Current(lockbox) if retired => Some(lockbox.id()),
                 _ => None,
             })
     }
 
-    // Anything else that verified puts one side on a retired key.
-    fn behind(&self) -> bool {
-        self.mine().count() < self.verified.len()
+    fn established(self) -> Established {
+        let mut found = Established {
+            asks: self.asks,
+            ..Established::default()
+        };
+        for (key, retired) in self.verified {
+            let mine = key.lockbox().id().to_owned();
+            match key {
+                Key::Current(_) if retired => found.behind.push(mine),
+                Key::Current(_) => found.ids.push(mine),
+                Key::Retired(_, keys) => found.ahead.push((keys.id.clone(), mine)),
+            }
+        }
+        found
     }
 
     fn has(&self, lockbox: &Lockbox) -> bool {
@@ -248,40 +288,42 @@ mod tests {
         assert!(key_named(&held, &keys(5).id).is_none());
     }
 
-    // What each side syncs and whether it found a side behind, the dialler's first.
-    fn shake(dialler: &[Lockbox], answerer: &[Lockbox]) -> [(Vec<String>, bool); 2] {
+    const HELD: &str = "held";
+
+    // What each side established, the dialler's first.
+    fn shake(dialler: &[Lockbox], answerer: &[Lockbox]) -> [Established; 2] {
         let (a, b) = (identity(), identity());
         let (mut dialled, mut answered) = pair(&a, &b);
         let txt = advert::txt(b.device_id(), [1; NONCE_LEN], answerer);
         let matches = advert::recognise(&txt, dialler).map_or_else(Vec::new, |found| found.matches);
+        let kept = |_: &str| vec![HELD.to_string()];
         thread::scope(|s| {
-            let answering = s.spawn(|| verdict(prove(&mut answered, answerer, &[])));
-            [
-                verdict(prove(&mut dialled, dialler, &matches)),
-                answering.join().unwrap(),
-            ]
+            let answering = s.spawn(|| prove(&mut answered, answerer, &[], kept));
+            let dialling = prove(&mut dialled, dialler, &matches, kept);
+            [dialling, answering.join().unwrap()].map(|proved| proved.unwrap().established())
         })
     }
 
-    fn verdict(proved: Result<Proved>) -> (Vec<String>, bool) {
-        let proved = proved.unwrap();
-        let mine = proved.mine().map(|l| l.id().to_owned()).collect();
-        (mine, proved.behind())
-    }
-
     #[test]
-    fn a_device_on_a_retired_key_is_behind_on_both_sides_whichever_dials() {
-        let (moved_on, behind) = ([keyed(2, &[1])], [keyed(1, &[])]);
-        let needs_password = (Vec::new(), true);
-        assert_eq!(
-            shake(&moved_on, &behind),
-            [needs_password.clone(), needs_password.clone()]
-        );
-        assert_eq!(
-            shake(&behind, &moved_on),
-            [needs_password.clone(), needs_password]
-        );
-        let level = (vec![keys(2).id], false);
+    fn a_device_on_a_retired_key_is_behind_whichever_dials_and_asks_when_it_answers() {
+        let (moved_on, on_old) = ([keyed(2, &[1])], [keyed(1, &[])]);
+        let (new, old) = (keys(2).id, keys(1).id);
+        let behind = Established {
+            behind: vec![old.clone()],
+            ..Established::default()
+        };
+        let ahead = |asks| Established {
+            ahead: vec![(old.clone(), new.clone())],
+            asks,
+            ..Established::default()
+        };
+        let asked = vec![(old.clone(), vec![HELD.to_string()])];
+        assert_eq!(shake(&moved_on, &on_old), [ahead(asked), behind.clone()]);
+        assert_eq!(shake(&on_old, &moved_on), [behind, ahead(Vec::new())]);
+        let level = Established {
+            ids: vec![new.clone()],
+            ..Established::default()
+        };
         assert_eq!(shake(&moved_on, &moved_on), [level.clone(), level]);
     }
 }

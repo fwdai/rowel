@@ -903,6 +903,7 @@
   "Not nearby": "不在附近",
   "Not nearby · last synced {{when}}": "不在附近 · 上次同步：{{when}}",
   "Paused": "已暂停",
+  "Has the new master password": "已有新的主密码",
   "Needs the new master password": "需要新的主密码",
   "The clocks on the two devices don’t match": "两台设备的时钟不一致",
   "Pause syncing": "暂停同步",

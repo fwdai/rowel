@@ -1,5 +1,8 @@
 //! What the session manager needs from the app; the app's is `nearby::app::host`.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use zeroize::Zeroizing;
 
 use crate::crypto::VaultKey;
@@ -42,6 +45,37 @@ impl Lockbox {
     }
 }
 
+// The packs of lockboxes whose password changed on another device, for the adopt to
+// open: by the id of the key a lockbox is on here, then by that of the key sealing the pack.
+#[derive(Default)]
+pub struct Kept(Mutex<HashMap<String, HashMap<String, Vec<u8>>>>);
+
+impl Kept {
+    pub fn sealed_under(&self, id: &str) -> Vec<String> {
+        let kept = self.0.lock().unwrap();
+        let packs = kept.get(id).into_iter().flatten();
+        packs
+            .map(|(sealed_under, _)| sealed_under.clone())
+            .collect()
+    }
+
+    pub fn packs(&self, id: &str) -> Vec<Vec<u8>> {
+        let kept = self.0.lock().unwrap();
+        let packs = kept.get(id).into_iter().flatten();
+        packs.map(|(_, pack)| pack.clone()).collect()
+    }
+
+    pub fn keep(&self, id: &str, sealed_under: &str, pack: Vec<u8>) {
+        let mut kept = self.0.lock().unwrap();
+        let packs = kept.entry(id.to_string()).or_default();
+        packs.insert(sealed_under.to_string(), pack);
+    }
+
+    pub fn clear(&self) {
+        self.0.lock().unwrap().clear();
+    }
+}
+
 pub trait Host: Send + Sync + 'static {
     fn lockboxes(&self) -> Vec<Lockbox>;
 
@@ -54,6 +88,8 @@ pub trait Host: Send + Sync + 'static {
     fn merged(&self, id: &str, local: &dyn LocalVault, absorbed: &Absorbed);
 
     fn pass_on(&self, id: &str);
+
+    fn kept(&self) -> &Kept;
 
     fn now_ms(&self) -> i64;
 }

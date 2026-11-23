@@ -131,7 +131,9 @@ sent between devices that both hold the lockbox, so a proof is not a guessing
 target for the password.
 
 A device at an older key epoch proves a retired key. It is told the password
-changed, and sent nothing else.
+changed and, when it asks, handed the lockbox's pack under the current key:
+the sealed bytes an account would hold, which the new password is proved
+against and adopted from (§5). Nothing else is sent to it.
 
 ### 4.4 Connected: the two ceremonies
 
@@ -221,8 +223,29 @@ nothing else, not even a key id. The lockboxes proved both ways under current
 keys are the ones the connection syncs. A `trust/proof` under a key the
 receiver has retired means the other side is behind: the newer side answers
 with a `trust/proof-retired` under that old key, which is the older side's
-current one, so both learn it from a proof; that device shows as
-`needsPassword` on both sides and is sent nothing else.
+current one, so both learn it from a proof. The newer side shows the device
+as `needsPassword`, the older as `passwordChanged`.
+
+**A changed password.** The older side asks for the pack to adopt the
+password from: `adopt/ask { lockbox, have }`, the lockbox named by the id of
+its own current key and `have` the ids of the keys sealing the packs it
+already keeps. The answering side sends its asks with its proofs, since from
+then on it only answers; the dialling side sends its own after the lockboxes
+it syncs. The answer is `sync/pack { lockbox, revision }` and the pack, the
+revision being the id of the key that seals it, or a `sync/state` naming that
+id when `have` lists it. An ask for a key its sender did not prove ends the
+connection. Packs are kept in memory, per lockbox and sealing key, until an
+adopt succeeds.
+
+The prompt and the command are the cloud's (`sync_adopt_password`,
+`docs/password-change-sync-design.md`): the typed password is proved by
+opening a pack, the account's where the lockbox syncs to one and then the
+kept ones, and the device re-keys onto that pack's descriptor through the
+same saga, the lockboxes beside it following. An account that cannot be
+reached does not stop an adopt a kept pack can serve. Two cases are left out:
+devices that each changed the password apart share only a retired key and do
+not recognise each other, and a device more than three changes behind is not
+recognised (three retired epochs are kept).
 
 **Steps.** The dialling side names each lockbox in turn with its
 `sync/state` (§3) and closes when all are done. Every local step (read the
@@ -318,7 +341,8 @@ interface NearbyDevice {
     | 'syncing'        // a connection with it is syncing
     | 'waiting'        // here, no verdict from the last attempt
     | 'upToDate'       // here, the last attempt synced every lockbox
-    | 'needsPassword'  // the master password changed on one side
+    | 'passwordChanged' // that device changed the master password: adopt it here
+    | 'needsPassword'  // that device is on a password this one has changed
     | 'clockSkew'
     | 'error'
   /** ISO time of the last exchange that converged, or null. */

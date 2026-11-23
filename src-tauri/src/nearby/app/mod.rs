@@ -12,7 +12,8 @@ use tauri::{AppHandle, Manager as _};
 use self::host::AppHost;
 use super::discovery::mdns::Mdns;
 use super::identity::Identity;
-use super::session::{Book, Config, Manager, Stored};
+use super::session::{Book, Config, Kept, Keys, Manager, Stored};
+use crate::crypto::VaultKey;
 use crate::error::{Error, Result};
 use crate::state::AppState;
 use crate::{events, storage};
@@ -25,6 +26,7 @@ const PERIOD: Duration = Duration::from_secs(30);
 pub(super) struct NearbyState {
     pub book: Arc<Book>,
     running: Mutex<Running>,
+    kept: Kept,
 }
 
 #[derive(Default)]
@@ -52,6 +54,7 @@ pub(super) fn state(app: &AppHandle) -> &'static NearbyState {
         NearbyState {
             book: Arc::new(book),
             running: Mutex::default(),
+            kept: Kept::default(),
         }
     })
 }
@@ -100,6 +103,14 @@ pub(crate) fn session_ended(app: &AppHandle) {
 
 pub(crate) fn request_run(app: &AppHandle) {
     through_manager(app, Manager::request_runs, |_| {});
+}
+
+pub(crate) fn kept_packs(app: &AppHandle, key: &VaultKey) -> Vec<Vec<u8>> {
+    state(app).kept.packs(&Keys::of(key).id)
+}
+
+pub(crate) fn forget_packs(app: &AppHandle) {
+    state(app).kept.clear();
 }
 
 pub(super) fn set_enabled(app: &AppHandle, enabled: bool) {

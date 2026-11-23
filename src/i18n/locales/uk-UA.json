@@ -954,6 +954,7 @@
   "Not nearby": "Не поруч",
   "Not nearby · last synced {{when}}": "Не поруч · остання синхронізація {{when}}",
   "Paused": "Призупинено",
+  "Has the new master password": "Має новий головний пароль",
   "Needs the new master password": "Потрібен новий головний пароль",
   "The clocks on the two devices don’t match": "Годинники на двох пристроях не збігаються",
   "Pause syncing": "Призупинити синхронізацію",

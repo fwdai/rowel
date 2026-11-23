@@ -790,9 +790,10 @@ the app opens a socket for it.
   Packs are the sealed bytes an account holds, at most `MAX_PACK_BYTES`, read
   only after a key was proved and opened only under the lockbox's own key
   (org lockboxes are never offered). A device on a key the other has retired
-  is shown as needing the new password on both sides, learned from a proof
-  under that old key (`trust/proof-retired`) rather than from the other's
-  word, and sent nothing else.
+  learns it from a proof under that old key (`trust/proof-retired`) rather
+  than from the other's word. On asking (`adopt/ask`) it is handed that
+  lockbox's pack under the current key, to adopt the new password from, and
+  nothing else.
 - **Remove.** A removed device's id is kept per install. It is not dialled, a
   connection with it ends before its next step, and one from it is closed as
   soon as TLS says whose it is; it is told nothing. Remove is local and never
@@ -844,7 +845,16 @@ Residuals:
 - **Removing a device will not erase what it holds.** Once a device has
   synced a lockbox it keeps its copy, readable with the master password. A
   removed device is refused from then on; its copy is put out of date only by
-  a master-password change, after which it can no longer prove the key.
+  a master-password change, after which it can no longer prove the current
+  key.
+- **A holder of a retired key is handed the current pack.** After a
+  master-password change, a device on this network that proves the key the
+  lockbox was on before, and is not removed here, gets the pack under the new
+  key when it asks: the new KDF salt and ciphertext, a target for guessing
+  the new password offline at Argon2id's cost, as the account's copy is to
+  whoever holds the account. That is what lets the owner's other devices
+  adopt the password with no account. The pack opens only with the new
+  password, so a change made because a device was lost needs a strong one.
 - **The identity key is a file.** A process running as the same user can copy
   it and present the device's id from elsewhere: the compromised-OS case
   below. The id alone is trusted with no lockbox, which still takes a proof
