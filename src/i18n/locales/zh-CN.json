@@ -912,9 +912,7 @@
   "Remove…": "移除…",
   "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "此设备将不再与它同步；你的其他设备仍会与它同步，直到你也在那些设备上将其移除。如果它丢失或被盗，请同时在“设置 › 安全”中更改主密码。",
   "Remove device": "移除设备",
-  "Syncing with a nearby device…": "正在与附近的设备同步…",
   "A nearby device needs the new master password": "附近的一台设备需要新的主密码",
-  "Up to date with nearby devices": "已与附近的设备同步",
-  "Waiting for a nearby device": "正在等待附近的设备",
+  "Nearby sync is on": "附近设备同步已开启",
   "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "这两台设备的时钟相差太大，无法安全同步。请将两台设备都设为正确时间。"
 }

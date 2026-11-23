@@ -59,25 +59,15 @@ describe('syncView', () => {
       expect(syncView(cloud(), nearby([device('upToDate')], { enabled: false }))).toEqual(local)
     })
 
-    it('waits for a nearby device while none is up to date', () => {
-      const waiting = { tone: 'idle', message: 'Waiting for a nearby device' }
-      expect(syncView(cloud(), nearby([]))).toEqual(waiting)
+    // The status is per device, not per lockbox: the chip claims nothing for
+    // the open one, whatever a device shared through another lockbox is doing.
+    it('says only that nearby sync is on, whatever its devices are doing', () => {
+      const on = { tone: 'idle', message: 'Nearby sync is on' }
+      expect(syncView(cloud(), nearby([]))).toEqual(on)
       expect(
         syncView(cloud(), nearby([device('offline'), device('paused'), device('waiting')]))
-      ).toEqual(waiting)
-    })
-
-    it('is up to date once a nearby device is', () => {
-      expect(syncView(cloud(), nearby([device('offline'), device('upToDate')]))).toEqual({
-        tone: 'good',
-        message: 'Up to date with nearby devices'
-      })
-    })
-
-    it('spins while a nearby device syncs, even beside one in trouble', () => {
-      const view = { tone: 'loading', message: 'Syncing with a nearby device…' }
-      expect(syncView(cloud(), nearby([device('upToDate'), device('syncing')]))).toEqual(view)
-      expect(syncView(cloud(), nearby([device('error', 'x'), device('syncing')]))).toEqual(view)
+      ).toEqual(on)
+      expect(syncView(cloud(), nearby([device('upToDate'), device('syncing')]))).toEqual(on)
     })
 
     it('says a nearby device needs the new master password', () => {

@@ -26,6 +26,9 @@ const PERIOD: Duration = Duration::from_secs(30);
 pub(super) struct NearbyState {
     pub book: Arc<Book>,
     running: Mutex<Running>,
+    // One start at a time: a manager attaches to the book as it starts, and one
+    // no longer wanted that attached after the wanted one would leave it unheard.
+    starting: Mutex<()>,
     kept: Kept,
 }
 
@@ -54,6 +57,7 @@ pub(super) fn state(app: &AppHandle) -> &'static NearbyState {
         NearbyState {
             book: Arc::new(book),
             running: Mutex::default(),
+            starting: Mutex::default(),
             kept: Kept::default(),
         }
     })
@@ -154,6 +158,10 @@ fn start(app: &AppHandle, state: &'static NearbyState) {
     let spawned = std::thread::Builder::new()
         .name("nearby-start".into())
         .spawn(move || {
+            let _starting = state.starting.lock().unwrap();
+            if state.running.lock().unwrap().generation != generation {
+                return;
+            }
             let started = start_manager(&app, &state.book);
             let mut running = state.running.lock().unwrap();
             match started {

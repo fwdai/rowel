@@ -929,9 +929,7 @@
   "Remove…": "Remove…",
   "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.",
   "Remove device": "Remove device",
-  "Syncing with a nearby device…": "Syncing with a nearby device…",
   "A nearby device needs the new master password": "A nearby device needs the new master password",
-  "Up to date with nearby devices": "Up to date with nearby devices",
-  "Waiting for a nearby device": "Waiting for a nearby device",
+  "Nearby sync is on": "Nearby sync is on",
   "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "The clocks on these two devices are too far apart to sync safely. Set both to the correct time."
 }

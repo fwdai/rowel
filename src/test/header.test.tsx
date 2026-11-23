@@ -86,8 +86,8 @@ describe('Header', () => {
       seq: 1
     })
     render(<Header />)
-    expect(chip()).toHaveAttribute('data-tone', 'good')
-    expect(chip()).toHaveAccessibleName('Up to date with nearby devices')
+    expect(chip()).toHaveAttribute('data-tone', 'idle')
+    expect(chip()).toHaveAccessibleName('Nearby sync is on')
 
     // A connected account takes the chip back.
     act(() => synced())

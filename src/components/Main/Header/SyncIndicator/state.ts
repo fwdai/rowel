@@ -66,22 +66,19 @@ const PASSWORD_CHANGED = {
 
 /**
  * Nearby sync as the chip says it, or null when it is off (or this build has
- * none). The same order as the cloud's: a run in flight, then a device that
- * cannot sync until something is done about it, then whether any device is
- * here and current. A paused device is the user's choice and counts as quiet.
+ * none). Its status is per device, across every lockbox this one holds, so the
+ * chip claims nothing for the open lockbox: it says that nearby sync is on,
+ * and what needs doing about a device. Whether a device is current is said in
+ * Settings, on its row.
  */
 const nearbyView = (nearby: NearbyStatus | null): SyncView | null => {
   if (!nearby?.available || !nearby.enabled) return null
   const { devices } = nearby
-  if (devices.some(device => device.state === 'syncing'))
-    return { tone: 'loading', message: 'Syncing with a nearby device…' }
   if (devices.some(device => device.state === 'passwordChanged')) return PASSWORD_CHANGED
   const trouble = devices.find(device => TROUBLE.includes(device.state))
   if (trouble?.state === 'needsPassword')
     return { tone: 'bad', message: 'A nearby device needs the new master password' }
   if (trouble)
     return { tone: 'bad', message: 'Something went wrong', detail: trouble.detail ?? undefined }
-  if (devices.some(device => device.state === 'upToDate'))
-    return { tone: 'good', message: 'Up to date with nearby devices' }
-  return { tone: 'idle', message: 'Waiting for a nearby device' }
+  return { tone: 'idle', message: 'Nearby sync is on' }
 }

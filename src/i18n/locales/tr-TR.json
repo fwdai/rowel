@@ -929,9 +929,7 @@
   "Remove…": "Kaldır…",
   "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "Bu cihaz artık onunla eşitlenmeyecek; diğer cihazlarınız ise siz onu onlardan da kaldırana kadar eşitlenmeye devam edecek. Kaybolduysa veya çalındıysa, Ayarlar › Güvenlik bölümünden ana şifrenizi de değiştirin.",
   "Remove device": "Cihazı kaldır",
-  "Syncing with a nearby device…": "Yakındaki bir cihazla eşitleniyor…",
   "A nearby device needs the new master password": "Yakındaki bir cihaz yeni ana şifreyi istiyor",
-  "Up to date with nearby devices": "Yakındaki cihazlarla güncel",
-  "Waiting for a nearby device": "Yakındaki bir cihaz bekleniyor",
+  "Nearby sync is on": "Yakındaki cihazlarla eşitleme açık",
   "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Bu iki cihazın saatleri güvenle eşitlemek için birbirinden çok farklı. İkisinde de doğru saati ayarlayın."
 }

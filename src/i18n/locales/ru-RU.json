@@ -963,9 +963,7 @@
   "Remove…": "Удалить…",
   "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "Это устройство больше не будет с ним синхронизироваться, а другие ваши устройства будут, пока вы не удалите его и на них. Если оно потеряно или украдено, смените также мастер-пароль в разделе Настройки › Безопасность.",
   "Remove device": "Удалить устройство",
-  "Syncing with a nearby device…": "Синхронизация с устройством поблизости…",
   "A nearby device needs the new master password": "Устройству поблизости нужен новый мастер-пароль",
-  "Up to date with nearby devices": "Синхронизировано с устройствами поблизости",
-  "Waiting for a nearby device": "Ожидание устройства поблизости",
+  "Nearby sync is on": "Синхронизация с устройствами поблизости включена",
   "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Часы на этих двух устройствах слишком расходятся, чтобы синхронизация была безопасной. Установите на обоих точное время."
 }

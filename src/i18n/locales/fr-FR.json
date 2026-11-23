@@ -946,9 +946,7 @@
   "Remove…": "Supprimer…",
   "This device will no longer sync with it; your other devices still will until you remove it on them too. If it was lost or stolen, also change your master password in Settings › Security.": "Cet appareil ne se synchronisera plus avec lui ; vos autres appareils continueront jusqu’à ce que vous le supprimiez aussi sur eux. S’il a été perdu ou volé, changez aussi votre mot de passe principal dans Paramètres › Sécurité.",
   "Remove device": "Supprimer l’appareil",
-  "Syncing with a nearby device…": "Synchronisation avec un appareil à proximité…",
   "A nearby device needs the new master password": "Un appareil à proximité a besoin du nouveau mot de passe principal",
-  "Up to date with nearby devices": "À jour avec les appareils à proximité",
-  "Waiting for a nearby device": "En attente d’un appareil à proximité",
+  "Nearby sync is on": "La synchronisation à proximité est activée",
   "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Les horloges de ces deux appareils sont trop décalées pour synchroniser en toute sécurité. Réglez l’heure exacte sur les deux."
 }
