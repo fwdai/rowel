@@ -218,39 +218,38 @@ test.describe('Context menu attribute fill: only an attribute of the frame\'s ow
 });
 
 // The update list of the save banner, on the content-script fixture agent-mode.spec.ts uses.
+// retrieve_credentials is answered by the background's rule: the fresh list for a URL of the
+// asking document's origin, nothing for any other.
 test.describe('Update banner: the count check is for the origin that submitted', () => {
     const ORIGIN = 'https://rowel.test';
+    const LONG_ORIGIN = `https://${'a'.repeat(50)}.rowel.test`;
     const ROOT = path.resolve('rowel');
 
-    // Two logins to choose from, the account's fresh list empty; the first one is clicked.
-    const updatesAfterChoosing = async (browserPage, url) => {
-        await browserPage.route(`${ORIGIN}/**`, (route) => {
+    // Two logins to choose from, `fresh` of them still in the vault; the first one is clicked.
+    const updatesAfterChoosing = async (browserPage, origin, url, fresh) => {
+        await browserPage.route(`${origin}/**`, (route) => {
             const file = path.join(ROOT, decodeURIComponent(new URL(route.request().url()).pathname));
             return fs.existsSync(file) ? route.fulfill({ path: file }) : route.fulfill({ status: 404 });
         });
-        await browserPage.goto(`${ORIGIN}/tests/agent-mode.html`);
+        await browserPage.goto(`${origin}/tests/agent-mode.html`);
         await browserPage.waitForSelector('#agent-mode-done', { state: 'attached' });
 
-        await browserPage.evaluate(async (submittedUrl) => {
+        await browserPage.evaluate(async ([ submittedUrl, freshCount ]) => {
             await kpxcBanner.destroy();
             kpxc.settings = { ...kpxc.settings, agentMode: false, showLoginNotifications: true, sitePreferences: [] };
             kpxc.databaseState = DatabaseState.UNLOCKED;
+            const list = [ { login: 'alice', name: 'One', uuid: 'u1' }, { login: 'alice', name: 'Two', uuid: 'u2' } ];
             browserStub.reset({
                 banner_get_position: 1,
                 get_connected_database: { count: 1, identifier: 'test' },
-                retrieve_credentials: [],
+                retrieve_credentials: ({ args: [ asked ] }) =>
+                    (new URL(asked).origin === window.location.origin ? list.slice(0, freshCount) : []),
                 update_credentials: 'error'
             });
-            const submitted = {
-                username: 'alice',
-                password: 'new-password',
-                url: submittedUrl,
-                usernameExists: true,
-                list: [ { login: 'alice', name: 'One', uuid: 'u1' }, { login: 'alice', name: 'Two', uuid: 'u2' } ]
-            };
+            const submitted = { username: 'alice', password: 'new-password', url: submittedUrl, usernameExists: true, list };
             await kpxcBanner.create(submitted);
             await kpxcBanner.updateCredentials(submitted);
-        }, url);
+        }, [ url, fresh ]);
 
         // The list is in a closed shadow root and its links answer only a trusted click.
         const middle = () => browserPage.evaluate(() => {
@@ -266,15 +265,20 @@ test.describe('Update banner: the count check is for the origin that submitted',
         return browserPage.evaluate(() => browserStub.sentFor('update_credentials').length);
     };
 
-    test('On the submitting origin, saved as the origin alone, a changed list stops the update', async ({ page: browserPage }) => {
-        expect(await updatesAfterChoosing(browserPage, ORIGIN)).toBe(0);
-    });
+    // The submitted URL as the page saves it: the origin alone ("save domain only") or the page's URL.
+    for (const [ name, origin ] of [ [ 'a short origin', ORIGIN ], [ 'an origin over 50 characters', LONG_ORIGIN ] ]) {
+        for (const [ saved, url ] of [ [ 'the origin alone', origin ], [ 'a page URL', `${origin}/${'login/'.repeat(12)}` ] ]) {
+            test(`On ${name}, saved as ${saved}: an unchanged list lets the update through`, async ({ page: browserPage }) => {
+                expect(await updatesAfterChoosing(browserPage, origin, url, 2)).toBe(1);
+            });
 
-    test('On the submitting origin, saved as a page URL, a changed list stops the update', async ({ page: browserPage }) => {
-        expect(await updatesAfterChoosing(browserPage, `${ORIGIN}/login`)).toBe(0);
-    });
+            test(`On ${name}, saved as ${saved}: a changed list stops the update`, async ({ page: browserPage }) => {
+                expect(await updatesAfterChoosing(browserPage, origin, url, 1)).toBe(0);
+            });
+        }
+    }
 
     test('After a redirect to another origin the update goes through', async ({ page: browserPage }) => {
-        expect(await updatesAfterChoosing(browserPage, 'https://login.other.test/session')).toBe(1);
+        expect(await updatesAfterChoosing(browserPage, ORIGIN, 'https://login.other.test/session', 2)).toBe(1);
     });
 });

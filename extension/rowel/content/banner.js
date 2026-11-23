@@ -339,13 +339,11 @@ kpxcBanner.updateCredentials = async function(credentials = {}) {
                     credentials.username = cred.login;
                 }
 
-                let url = credentials.url;
-                url = (url.length > 50) ? url.substring(0, 50) + '...' : url;
-
                 // Check if the password has changed for the updated credentials
+                // Rowel: asked by the URL as submitted, whole: the background serves by its origin, and sameOrigin below is decided on the same value
                 browser.runtime.sendMessage({
                     action: 'retrieve_credentials',
-                    args: [ url, '', true ] // Sets triggerUnlock to true
+                    args: [ credentials.url, '', true ] // Sets triggerUnlock to true
                 }).then(async creds => {
                     // Rowel: after a redirect to another origin this document is served none of the submitting page's logins, so there is nothing to compare
                     const origin = window.location.origin;
