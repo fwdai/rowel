@@ -333,7 +333,10 @@ pub async fn export_vault(
     // is hundreds of milliseconds, and the session guard held across one
     // stalls every other command for the duration. The check below is the same
     // comparison again, under the guard the snapshot is read with.
-    let candidate = super::vault_password::prove_session_password(&app, password).await?;
+    let candidate = {
+        let step = super::setup::begin_step(&state)?;
+        super::vault_password::prove_session_password(&app, &step, password).await?
+    };
 
     let (key, source) = {
         let session = state.session.lock().unwrap();

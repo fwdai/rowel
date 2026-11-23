@@ -215,10 +215,16 @@ its header so another device can derive the key for the snapshot inside.
 >   `commands::auth::unlock` returns it, so the unlock fails rather than
 >   proceeding past a counter it could not consult. Every prompt for the
 >   master password in an unlocked app (an export, a password change, an agent
->   grant's step-up) reads and raises the same counter, one proof at a time
+>   grant's step-up) reads and raises the same counter
 >   (`commands::vault_password::prove_session_password`), so a wrong guess
->   there delays the next unlock too. So it bounds guessing *through this app*
->   and nothing else: see "Offline brute force at scale" below.
+>   there delays the next unlock too. Every proof of a password, those and an
+>   unlock alike, holds the app's one setup step while it runs, so two never
+>   read the same count and write over each other, and the open lockbox does
+>   not change under one. Each lockbox keeps a counter of its own, though, and
+>   one vault password opens them all, so a device with several lockboxes
+>   allows that many tries where a single counter would allow one. So it
+>   bounds guessing *through this app* and nothing else: see "Offline brute
+>   force at scale" below.
 > - **Untrusted KDF parameters are bounded.** A descriptor is read off things
 >   this build did not write — a `.rowel` backup, a pack pulled from Drive, the
 >   sidecar on disk — and the Argon2 crate would otherwise accept a memory cost

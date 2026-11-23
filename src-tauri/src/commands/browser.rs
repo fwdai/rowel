@@ -4,13 +4,14 @@
 
 use serde::Serialize;
 use serde_json::json;
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
 
 use crate::agents::{self, GrantRow, RuleRow};
 use crate::browser::{self, manifest, Client, GrantAnswer, Pairing, StepUp};
 use crate::error::{Error, Result};
 use crate::settings::{self, AgentsSettings, BrowserSettings, MAX_STANDING_DAYS};
+use crate::state::AppState;
 use crate::{biometrics, storage};
 
 use super::blocking;
@@ -151,9 +152,10 @@ pub async fn agent_grant_respond(
     answer: Option<GrantAnswer>,
     password: Option<Zeroizing<String>>,
     app: AppHandle,
+    state: State<'_, AppState>,
 ) -> Result<()> {
     if answer.is_some() && browser::grant_ask_needs_step_up(&id) {
-        if let Err(e) = verify_person(&app, password).await {
+        if let Err(e) = verify_person(&app, &state, password).await {
             browser::respond_grant(&id, None);
             return Err(e);
         }
@@ -163,15 +165,20 @@ pub async fn agent_grant_respond(
 }
 
 // The person at the keyboard, proved the way the platform can. The password
-// path is the open lockbox's own proof, under its backoff
+// path is the open lockbox's own proof, under its backoff and the setup step
 // (`prove_session_password`); no second store is opened. Argon2id and the OS
 // prompt both block, so both run off the command's thread.
-async fn verify_person(app: &AppHandle, password: Option<Zeroizing<String>>) -> Result<()> {
+async fn verify_person(
+    app: &AppHandle,
+    state: &AppState,
+    password: Option<Zeroizing<String>>,
+) -> Result<()> {
     match StepUp::current() {
         StepUp::Biometric => blocking(biometrics::authenticate).await,
         StepUp::Password => {
             let password = password.ok_or(Error::InvalidPassword)?;
-            super::vault_password::prove_session_password(app, password)
+            let step = super::setup::begin_step(state)?;
+            super::vault_password::prove_session_password(app, &step, password)
                 .await
                 .map(drop)
         }

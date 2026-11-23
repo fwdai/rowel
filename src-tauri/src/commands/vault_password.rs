@@ -13,14 +13,13 @@
 //! ([`workspace_adopt_vault_password`]).
 
 use std::path::Path;
-use std::sync::{Mutex, PoisonError};
 
 use subtle::ConstantTimeEq;
 use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroizing;
 
 use super::blocking;
-use super::setup::begin_step;
+use super::setup::{begin_step, SetupStep};
 use super::workspace::{derive_in, verify_password_in};
 use crate::auth::{self, LockoutState};
 use crate::crypto::VaultKey;
@@ -159,11 +158,6 @@ pub(crate) async fn prove_lockbox_password(
     }
 }
 
-// One proof of the open lockbox's password at a time: each reads the backoff,
-// derives and writes it back, and two running together would both be let
-// through by the count the other is about to raise.
-static SESSION_PROOF: Mutex<()> = Mutex::new(());
-
 /// Prove `password` is the open lockbox's — that the key it derives is the one
 /// the session holds — under that lockbox's failed-attempt backoff, the one
 /// `unlock` keeps, and hand back the key. What every prompt for the master
@@ -174,19 +168,24 @@ static SESSION_PROOF: Mutex<()> = Mutex::new(());
 /// backoff's refusal (`InvalidPassword`, or `TooManyAttempts` once it
 /// escalates); a session that is not open is `Locked`, and counts as nothing.
 ///
+/// The caller holds the setup step, as every other proof of a password does
+/// (an unlock, a lockbox opened, made, moved or deleted): one step runs at a
+/// time, so no two proofs read the same count and each write their own, and
+/// the open lockbox cannot be switched away while this one derives against
+/// its descriptor and its backoff.
+///
 /// The key is compared again by whoever goes on to use the session
 /// ([`super::vault::prove_password`], under the guard it reads with): this
 /// proof's own look at the session ends when it returns.
 pub(crate) async fn prove_session_password(
     app: &AppHandle,
+    _step: &SetupStep<'_>,
     password: Zeroizing<String>,
 ) -> Result<VaultKey> {
     let dir = storage::workspace_dir(app)?;
     let app = app.clone();
-    // Argon2id, so off the command thread, and the wait for a proof ahead of
-    // this one with it.
+    // Argon2id, so off the command thread.
     blocking(move || {
-        let _one_at_a_time = SESSION_PROOF.lock().unwrap_or_else(PoisonError::into_inner);
         prove_in(&dir, &password, |candidate| {
             let state = app.state::<AppState>();
             let session = state.session.lock().unwrap();

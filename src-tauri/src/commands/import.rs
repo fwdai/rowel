@@ -375,7 +375,10 @@ pub async fn export_entries(
 ) -> Result<Option<String>> {
     // Proved before the lock is taken, as in `export_vault`, and compared
     // again under it.
-    let candidate = super::vault_password::prove_session_password(&app, password).await?;
+    let candidate = {
+        let step = super::setup::begin_step(&state)?;
+        super::vault_password::prove_session_password(&app, &step, password).await?
+    };
 
     // Under the guard: read the sealed rows and take a *copy* of the payload
     // cipher. Unsealing every one of them is a pass over the whole vault, and

@@ -372,7 +372,7 @@ pub async fn change_master_password(
     // the open one too: they are re-keyed through their own paths, and a switch
     // landing between two of them would move the open workspace out from under
     // the session this one is still holding.
-    let _step = super::setup::begin_step(&state)?;
+    let step = super::setup::begin_step(&state)?;
     let root = storage::root_dir(&app)?;
     // The master password is the main lockbox's; an org lockbox's key is its
     // server's, and a change made from inside one would have nothing to
@@ -402,7 +402,7 @@ pub async fn change_master_password(
     // keeps. Deriving the new key needs only the app handle and the password,
     // so it happens off the session entirely — and off the main thread, since
     // Argon2id is the single most expensive thing this app does.
-    let current_key = super::vault_password::prove_session_password(&app, current).await?;
+    let current_key = super::vault_password::prove_session_password(&app, &step, current).await?;
     let (new_key, params) = derive_new(&app, new).await?;
     let active = rekey_open_workspace(&app, &state, current_key, new_key, params.to_json()?)
         .await?
