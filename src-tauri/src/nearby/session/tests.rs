@@ -134,6 +134,9 @@ impl LocalVault for Local<'_> {
     fn decode(&self, pack_bytes: &[u8]) -> AppResult<Snapshot> {
         self.device.decode(pack_bytes)
     }
+    fn decode_direct(&self, pack_bytes: &[u8]) -> AppResult<Snapshot> {
+        self.device.decode_direct(pack_bytes)
+    }
     fn merge(&self, incoming: &Snapshot) -> AppResult<usize> {
         self.device.merge(incoming)
     }

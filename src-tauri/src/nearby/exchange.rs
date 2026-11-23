@@ -47,7 +47,7 @@ pub fn pack(local: &dyn LocalVault, now_ms: i64) -> Result<(Vec<u8>, String)> {
 }
 
 pub fn absorb(local: &dyn LocalVault, pack: &[u8]) -> Result<Absorbed> {
-    let taken = engine::merge_pack(local, pack)?;
+    let taken = engine::merge_pack(local, local.decode_direct(pack)?)?;
     Ok(Absorbed {
         merged: taken.merged,
         renamed: taken.renamed,
@@ -366,6 +366,24 @@ mod tests {
         b.rekey(derive(NEW, &gen1), &gen1);
         meet(&a, &b);
         assert_eq!(rev(&a), rev(&b));
+    }
+
+    // Two devices on the new password meet while the account still holds the old one's pack.
+    #[test]
+    fn a_pack_from_a_device_says_nothing_of_where_the_account_is() {
+        let gen1 = params(2, 1);
+        let (mut a, mut b) = (device("a"), device("b"));
+        let account = FakeStore::default();
+        a.write("1", "first");
+        a.sync(&account).unwrap();
+        a.rekey(derive(NEW, &gen1), &gen1);
+        b.rekey(derive(NEW, &gen1), &gen1);
+        b.write("2", "made on b");
+        meet(&a, &b);
+
+        assert_ne!(engine::remote_kdf_of(a.store()).unwrap(), Some(gen1));
+        let moved = a.sync(&account).unwrap();
+        assert!(moved.pushed && moved.rekeyed_remote);
     }
 
     #[test]

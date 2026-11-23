@@ -73,7 +73,10 @@ its lockbox at all ends the connection.
 A merge is `engine::merge_pack`, the first steps of a cloud pull: a pack that
 does not open (another lockbox's, a password changed on one side) is refused
 before the store is touched, with the error a cloud run gets. Nothing writes
-the cloud bookkeeping.
+the cloud bookkeeping: the pack is opened with `decode_direct`, which leaves
+alone the note of the password the account was last seen under. A device that
+proved the current key says nothing of where the account is, and noting it
+would have the next cloud run refuse an account still on the old password.
 
 **Tombstones** are the engine's to reclaim, on the rule it has for an account:
 after 90 days. Nearby sync adds nothing to it. A device that syncs with

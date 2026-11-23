@@ -256,6 +256,17 @@ impl LocalVault for Device {
             Provider::GoogleDrive,
         )
     }
+    fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+        engine::decode_pack(
+            pack_bytes,
+            &self.sidecar(),
+            &self.key,
+            &retired::load(self.path(), &self.key, self.id),
+            None,
+            &self.scratch(),
+            Provider::GoogleDrive,
+        )
+    }
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
         self.store()
             .merge(&incoming.records, &incoming.attachments, &incoming.audit)

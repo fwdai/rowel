@@ -150,6 +150,10 @@ pub trait LocalVault {
     /// account was last seen on is read, and written when the pack is under
     /// the current one (see [`decode_pack`]).
     fn decode(&self, pack_bytes: &[u8]) -> Result<Snapshot>;
+    /// [`Self::decode`] for a pack a device handed over itself, having proved
+    /// the current key (`nearby::exchange`): it says nothing of the account,
+    /// so that note is neither read nor written.
+    fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot>;
     /// Last-writer-wins merge of the pulled entries and attachments, and the
     /// pulled audit rows taken as a union; returns the entry and attachment
     /// rows written (the log rows change nothing the frontend shows).
@@ -239,16 +243,15 @@ pub(crate) struct MergedPack {
     pub(crate) renamed: bool,
 }
 
-/// Open a pack, merge it in, and take on its name if that is the newer one:
-/// the first three steps of every [`sync`], and the whole of what a device
-/// does with a pack another one hands it directly (`nearby::exchange::absorb`). A
-/// pack that does not open — another lockbox's, a password changed on one
-/// side — errors out before the local vault is touched.
+/// Merge an opened pack in, and take on its name if that is the newer one:
+/// what every [`sync`] does with the account's pack, and a device with a pack
+/// another one hands it directly (`nearby::exchange::absorb`). The caller
+/// opens it, since which of the two it is decides how
+/// ([`LocalVault::decode`], [`LocalVault::decode_direct`]).
 pub(crate) fn merge_pack<L: LocalVault + ?Sized>(
     local: &L,
-    pack_bytes: &[u8],
+    snapshot: Snapshot,
 ) -> Result<MergedPack> {
-    let snapshot = local.decode(pack_bytes)?;
     let merged = local.merge(&snapshot)?;
     // The name is last-writer-wins too, but on its own stamp: a rename is a
     // change to the vault that leaves no row in the entry table.
@@ -302,7 +305,7 @@ pub fn sync<R: Remote, L: LocalVault>(
         // snapshot to decode or merge.
         let incoming = match &pulled {
             Some(file) => {
-                let taken = merge_pack(local, &file.bytes)?;
+                let taken = merge_pack(local, local.decode(&file.bytes)?)?;
                 outcome.merged += taken.merged;
                 outcome.renamed |= taken.renamed;
                 Some(taken.snapshot)
@@ -536,6 +539,10 @@ impl LocalVault for SessionVault {
         Ok(snapshot)
     }
 
+    fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+        self.keys.decode(pack_bytes, None)
+    }
+
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
         self.with_store(|store| merge_snapshot(store, incoming))
     }
@@ -659,6 +666,10 @@ impl LocalVault for WorkspaceVault {
             &keys.scratch,
             keys.provider,
         )
+    }
+
+    fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+        self.keys.decode(pack_bytes, None)
     }
 
     fn merge(&self, incoming: &Snapshot) -> Result<usize> {
@@ -1169,6 +1180,17 @@ mod tests {
                 &self.kdf,
                 &self.key,
                 &self.retired,
+                &self.scratch,
+                Provider::GoogleDrive,
+            )
+        }
+        fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot> {
+            decode_pack(
+                pack_bytes,
+                &self.kdf,
+                &self.key,
+                &self.retired,
+                None,
                 &self.scratch,
                 Provider::GoogleDrive,
             )
