@@ -23,7 +23,10 @@ export default function Summary() {
   const nearby = useApp(state => state.nearby)
   const view = syncView(sync, nearby)
   const provider = syncProvider(sync)
-  const nearbyOn = nearbyView(nearby) !== null
+  // Named beside the account only while it is doing its part: a device that
+  // needs something done is its row's to say, not a way the vault is in sync.
+  const nearbyTone = nearbyView(nearby)?.tone
+  const nearbyOn = nearbyTone !== undefined && nearbyTone !== 'bad'
 
   const title =
     view.tone === 'good'

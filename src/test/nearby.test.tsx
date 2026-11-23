@@ -103,6 +103,9 @@ describe('Settings › Sync › Nearby devices', () => {
         })
       )
       expect(screen.getByTestId('settings-sync-summary')).toHaveAttribute('data-tone', 'good')
+      // The account still speaks for the vault, but the card does not name
+      // nearby sync as a way it is in sync while a device needs attention.
+      expect(screen.getByTestId('settings-sync-summary')).not.toHaveTextContent('nearby devices')
       expect(status).toHaveTextContent('Needs attention')
       expect(status).toHaveAttribute('data-tone', 'bad')
     }

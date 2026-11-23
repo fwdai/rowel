@@ -29,7 +29,9 @@ function NoAccount() {
         type="button"
         data-testid="workspace-info-sync-link"
         onClick={() => go('sync', { key: 'sync-cloud' })}
-        className={TEXT_LINK}
+        // A button centres a label that wraps; in a narrow tile it has to
+        // read on as the sentence it closes.
+        className={`${TEXT_LINK} text-left`}
       >
         {t('Set one up in Sync & backup')}
       </button>
