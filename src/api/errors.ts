@@ -28,6 +28,7 @@ export type BackendErrorKind =
   | 'syncBusy'
   | 'accountNotConnected'
   | 'noRemoteVault'
+  | 'newPasswordUnavailable'
   | 'alreadySetUp'
   | 'primaryWorkspaceOnly'
   | 'workspaceNameRequired'
@@ -132,6 +133,8 @@ export const describeError = (error: unknown): string => {
       return t('Connect an account first')
     case 'noRemoteVault':
       return t('This account has nothing to restore')
+    case 'newPasswordUnavailable':
+      return t('The new master password can’t be checked yet. Try again in a moment.')
     case 'alreadySetUp':
       return t('This device is already set up')
     case 'primaryWorkspaceOnly':

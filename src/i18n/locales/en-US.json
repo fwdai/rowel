@@ -922,6 +922,7 @@
   "Not nearby · last synced {{when}}": "Not nearby · last synced {{when}}",
   "Paused": "Paused",
   "Has the new master password": "Has the new master password",
+  "The new master password can’t be checked yet. Try again in a moment.": "The new master password can’t be checked yet. Try again in a moment.",
   "Needs the new master password": "Needs the new master password",
   "The clocks on the two devices don’t match": "The clocks on the two devices don’t match",
   "Pause syncing": "Pause syncing",

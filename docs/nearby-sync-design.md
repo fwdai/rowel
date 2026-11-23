@@ -134,9 +134,9 @@ sent between devices that both hold the lockbox, so a proof is not a guessing
 target for the password.
 
 A device at an older key epoch proves a retired key. It is told the password
-changed and, when it asks, handed the lockbox's pack under the current key:
-the sealed bytes an account would hold, which the new password is proved
-against and adopted from (§5). Nothing else is sent to it.
+changed and, when it asks, handed an empty pack under the current key: the
+key descriptor over a vault with nothing in it, which the new password is
+proved against and adopted from (§5). Nothing of the lockbox is sent to it.
 
 ### 4.4 Connected: the two ceremonies
 
@@ -229,16 +229,18 @@ with a `trust/proof-retired` under that old key, which is the older side's
 current one, so both learn it from a proof. The newer side shows the device
 as `needsPassword`, the older as `passwordChanged`.
 
-**A changed password.** The older side asks for the pack to adopt the
-password from: `adopt/ask { lockbox, have }`, the lockbox named by the id of
-its own current key and `have` the ids of the keys sealing the packs it
-already keeps. The answering side sends its asks with its proofs, since from
-then on it only answers; the dialling side sends its own after the lockboxes
-it syncs. The answer is `sync/pack { lockbox, revision }` and the pack, the
-revision being the id of the key that seals it, or a `sync/state` naming that
-id when `have` lists it. An ask for a key its sender did not prove ends the
-connection. A pack is taken only in answer to an ask, once: any other is a
-protocol error. At most three are kept per lockbox (a lockbox keeps three
+**A changed password.** The older side asks for the pack to adopt the password
+from: `adopt/ask { lockbox, have }`, the lockbox named by the id of its own
+current key and `have` the ids of the keys sealing the packs it already keeps.
+The answering side sends its asks with its proofs, since from then on it only
+answers; the dialling side sends its own after the lockboxes it syncs. The
+answer is `sync/pack { lockbox, revision }` and an empty pack
+(`pack::pack_empty`, about 74 KB), the revision being the id of the key that
+seals it, or a `sync/state` naming that id when `have` lists it. An ask is
+answered once for each key its sender proved; one for any other key, or a
+second for the same, ends the connection. A pack is taken only in answer to an
+ask, once, and only up to the size an empty one can be (1 MiB): anything else
+is a protocol error. At most three are kept per lockbox (a lockbox keeps three
 retired epochs), the oldest going first, in memory until an adopt succeeds or
 the session ends.
 
@@ -249,8 +251,11 @@ kept ones, and the device re-keys onto that pack's descriptor through the
 same saga, the lockboxes beside it following. An open lockbox with nothing to
 adopt does not stop the ones beside it: the password is then proved by the
 first of them it opens, and counts as a wrong one when it opens none and one
-refuses it. An account that cannot be reached does not stop an adopt a kept
-pack can serve. Two cases are left out:
+refuses it. A pack that cannot be read leaves its lockbox as it is and does
+not stop the others. An account that cannot be reached does not stop an adopt
+a kept pack can serve. When nothing was adopted while a nearby device shows as
+having the new password, its pack is not here yet, and the command says the
+password cannot be checked yet rather than report success. Two cases are left out:
 devices that each changed the password apart share only a retired key and do
 not recognise each other, and a device more than three changes behind is not
 recognised (three retired epochs are kept).

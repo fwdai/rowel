@@ -26,7 +26,10 @@ use crate::auth::{self, LockoutState};
 use crate::crypto::{self, Cryptor, KdfParams, VaultKey};
 use crate::error::{Error, Result};
 #[cfg(desktop)]
-use crate::nearby::{forget_packs as forget_nearby_packs, kept_packs as nearby_packs};
+use crate::nearby::{
+    forget_packs as forget_nearby_packs, kept_packs as nearby_packs,
+    password_changed as nearby_password_changed,
+};
 use crate::state::AppState;
 use crate::sync::{self, engine, pack, MarkerKey};
 use crate::workspace::PRIMARY_ID;
@@ -98,18 +101,27 @@ pub async fn sync_adopt_password(
         Ok((adopt, current_key))
     })
     .await?;
-    let open = match adopt {
+    let (open, unread) = match adopt {
         Ok(Some((header, new_key))) => {
             forgiven(&app, lockout);
             super::auth::rekey_open_workspace(&app, &state, current_key, new_key, header).await?;
-            true
+            (true, None)
         }
-        Ok(None) => false,
+        Ok(None) => (false, None),
         Err(Error::InvalidPassword) => return Err(penalized(&app, lockout, now)),
-        Err(e) => return Err(e),
+        // A pack that cannot be read leaves this lockbox as it is, and is no
+        // reason to leave the ones beside it behind.
+        Err(e) => (false, Some(e)),
     };
-    let beside = adopt_beside(&app, &state, &active, password_beside).await;
-    let adopted = match settle(open, &beside, missing) {
+    let mut beside = adopt_beside(&app, &state, &active, password_beside).await;
+    if unread.is_some() {
+        beside.unchanged.push(active);
+    }
+    // With nothing adopted, the most telling reason is the one given: a pack
+    // that could not be read, then a nearby device whose proof is not here
+    // yet, then the account's own.
+    let waiting = nearby_password_changed(&app).then_some(Error::NewPasswordUnavailable);
+    let adopted = match settle(open, &beside, unread.or(waiting).or(missing)) {
         Err(Error::InvalidPassword) => return Err(penalized(&app, lockout, now)),
         settled => settled?,
     };
@@ -248,6 +260,11 @@ fn nearby_packs(_: &AppHandle, _: &VaultKey) -> Vec<Vec<u8>> {
 
 #[cfg(not(desktop))]
 fn forget_nearby_packs(_: &AppHandle) {}
+
+#[cfg(not(desktop))]
+fn nearby_password_changed(_: &AppHandle) -> bool {
+    false
+}
 
 /// The account's packs, then those nearby devices handed over. An account that
 /// cannot be reached is no reason to refuse a pack already here.

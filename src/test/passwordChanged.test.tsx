@@ -65,6 +65,20 @@ describe('Master password changed on another device', () => {
     )
   })
 
+  it('says to try again when the nearby device has not handed its proof over yet', async () => {
+    mockCommandOnce('sync_adopt_password', () =>
+      Promise.reject({ kind: 'newPasswordUnavailable', message: 'cannot be checked yet' })
+    )
+    showPrompt()
+
+    await submit('new horse battery')
+
+    expect((await screen.findByTestId('password-changed-error')).textContent).toBe(
+      'The new master password can’t be checked yet. Try again in a moment.'
+    )
+    expect(dialog()).toBeInTheDocument()
+  })
+
   // The pack may not be one this user re-keyed at all; the copy says so and
   // points at the one way out that does not need the password.
   it('explains a wrong password and clears the field', async () => {

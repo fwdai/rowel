@@ -34,6 +34,10 @@ use crate::store::SqliteStore;
 /// buffered whole before `unpack` gets to refuse it.
 pub const MAX_PACK_BYTES: usize = 256 * 1024 * 1024;
 
+/// The most a [`pack_empty`] may be: it holds a schema and no rows, so this is
+/// room for the schema to grow many times over.
+pub const MAX_EMPTY_PACK_BYTES: usize = 1024 * 1024;
+
 // The format tag, not the product name: every pack ever written carries it, so
 // changing it would make this build refuse files it wrote itself.
 const MAGIC: &[u8; 4] = b"SWSY";
@@ -187,6 +191,15 @@ pub fn pack_store(
     Ok(pack(kdf_params_json, &snapshot))
 }
 
+/// A pack of an empty vault under `key` and `kdf_params_json`: what another
+/// device proves a password against, with nothing of the vault in it.
+pub fn pack_empty(key: &[u8], kdf_params_json: &str, scratch_dir: &Path) -> Result<Vec<u8>> {
+    let scratch = Scratch::new(scratch_dir, "empty")?;
+    let empty =
+        SqliteStore::open(scratch.path(), key).map_err(|e| PackError::Store(e.to_string()))?;
+    pack_store(&empty, key, kdf_params_json, scratch_dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +246,22 @@ mod tests {
             doc_type: None,
             doc_country: None,
         }
+    }
+
+    #[test]
+    fn an_empty_pack_opens_under_its_key_alone_and_holds_nothing() {
+        let dir = tmp_dir();
+        let packed = pack_empty(KEY, &kdf_json(), &dir).unwrap();
+        assert!(packed.len() <= MAX_EMPTY_PACK_BYTES);
+        let unpacked = unpack(&packed).unwrap();
+        assert_eq!(unpacked.kdf_params_json, kdf_json());
+
+        let read = |key| crate::sync::snapshot::read(&unpacked.snapshot, key, &dir);
+        let opened = read(KEY).unwrap();
+        assert!(opened.records.is_empty() && opened.attachments.is_empty());
+        assert!(opened.audit.is_empty() && opened.name.is_none());
+        assert!(read(&[0x44; 32]).is_err());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0, "no scratch left");
     }
 
     fn seeded_store(dir: &Path) -> SqliteStore {

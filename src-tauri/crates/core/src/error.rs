@@ -98,6 +98,12 @@ pub enum Error {
     #[error("this Google account has no data to restore")]
     NoRemoteVault,
 
+    /// A nearby device has changed the master password, and the proof the new
+    /// one is checked against has not come from it yet: there is nothing to
+    /// adopt the password from until its next connection.
+    #[error("the new master password cannot be checked yet")]
+    NewPasswordUnavailable,
+
     #[error("this device is already set up")]
     AlreadySetUp,
 
@@ -241,6 +247,7 @@ impl Error {
             Error::SyncBusy => "syncBusy",
             Error::AccountNotConnected => "accountNotConnected",
             Error::NoRemoteVault => "noRemoteVault",
+            Error::NewPasswordUnavailable => "newPasswordUnavailable",
             Error::AlreadySetUp => "alreadySetUp",
             Error::PrimaryWorkspaceOnly => "primaryWorkspaceOnly",
             Error::WorkspaceNameRequired => "workspaceNameRequired",

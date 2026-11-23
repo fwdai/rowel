@@ -818,9 +818,9 @@ the app opens a socket for it.
   only after a key was proved and opened only under the lockbox's own key
   (org lockboxes are never offered). A device on a key the other has retired
   learns it from a proof under that old key (`trust/proof-retired`) rather
-  than from the other's word. On asking (`adopt/ask`) it is handed that
-  lockbox's pack under the current key, to adopt the new password from, and
-  nothing else.
+  than from the other's word. On asking (`adopt/ask`) it is handed an empty
+  pack under the current key, to adopt the new password from: the key
+  descriptor and no row of the lockbox.
 - **Remove.** A removed device's id is kept per install. It is not dialled, a
   connection with it ends before its next step, and one from it is closed as
   soon as TLS says whose it is; it is told nothing. Remove is local and never
@@ -874,14 +874,14 @@ Residuals:
   removed device is refused from then on; its copy is put out of date only by
   a master-password change, after which it can no longer prove the current
   key.
-- **A holder of a retired key is handed the current pack.** After a
+- **A holder of a retired key is handed the new key descriptor.** After a
   master-password change, a device on this network that proves the key the
-  lockbox was on before, and is not removed here, gets the pack under the new
-  key when it asks: the new KDF salt and ciphertext, a target for guessing
-  the new password offline at Argon2id's cost, as the account's copy is to
-  whoever holds the account. That is what lets the owner's other devices
-  adopt the password with no account. The pack opens only with the new
-  password, so a change made because a device was lost needs a strong one.
+  lockbox was on before, and is not removed here, gets an empty pack under the
+  new key when it asks: the new KDF salt and a vault with nothing in it. That
+  is a target for guessing the new password offline at Argon2id's cost, and
+  what lets the owner's other devices adopt the password with no account. No
+  row of the lockbox goes with it, so a change made because a device was lost
+  still needs a strong new password, and exposes nothing else.
 - **The identity key is a file.** A process running as the same user can copy
   it and present the device's id from elsewhere: the compromised-OS case
   below. The id alone is trusted with no lockbox, which still takes a proof

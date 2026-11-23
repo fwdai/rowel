@@ -956,6 +956,7 @@
   "Not nearby · last synced {{when}}": "Poza zasięgiem · ostatnia synchronizacja {{when}}",
   "Paused": "Wstrzymano",
   "Has the new master password": "Ma nowe hasło główne",
+  "The new master password can’t be checked yet. Try again in a moment.": "Nowego hasła głównego nie można jeszcze sprawdzić. Spróbuj ponownie za chwilę.",
   "Needs the new master password": "Wymaga nowego hasła głównego",
   "The clocks on the two devices don’t match": "Zegary obu urządzeń się nie zgadzają",
   "Pause syncing": "Wstrzymaj synchronizację",

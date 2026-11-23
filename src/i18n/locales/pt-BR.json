@@ -939,6 +939,7 @@
   "Not nearby · last synced {{when}}": "Fora de alcance · última sincronização {{when}}",
   "Paused": "Pausado",
   "Has the new master password": "Tem a nova senha mestra",
+  "The new master password can’t be checked yet. Try again in a moment.": "A nova senha mestra ainda não pode ser verificada. Tente novamente em instantes.",
   "Needs the new master password": "Precisa da nova senha mestra",
   "The clocks on the two devices don’t match": "Os relógios dos dois dispositivos não batem",
   "Pause syncing": "Pausar sincronização",

@@ -284,6 +284,10 @@ impl LocalVault for Device {
             &self.scratch(),
         )?)
     }
+    fn pack_empty(&self) -> Result<Vec<u8>> {
+        let key = self.key.sqlcipher_key();
+        Ok(pack::pack_empty(&*key, &self.sidecar(), &self.scratch())?)
+    }
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
         engine::note_push(self.store(), revision, at_ms, &self.sidecar())
     }

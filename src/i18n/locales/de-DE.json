@@ -922,6 +922,7 @@
   "Not nearby · last synced {{when}}": "Nicht in der Nähe · zuletzt synchronisiert {{when}}",
   "Paused": "Pausiert",
   "Has the new master password": "Hat das neue Hauptpasswort",
+  "The new master password can’t be checked yet. Try again in a moment.": "Das neue Hauptpasswort kann noch nicht geprüft werden. Versuchen Sie es gleich noch einmal.",
   "Needs the new master password": "Braucht das neue Hauptpasswort",
   "The clocks on the two devices don’t match": "Die Uhren der beiden Geräte stimmen nicht überein",
   "Pause syncing": "Synchronisierung pausieren",

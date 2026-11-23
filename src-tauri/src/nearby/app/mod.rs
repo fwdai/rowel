@@ -12,6 +12,7 @@ use tauri::{AppHandle, Manager as _};
 use self::host::AppHost;
 use super::discovery::mdns::Mdns;
 use super::identity::Identity;
+use super::session::book::NearbyDeviceState;
 use super::session::{Book, Config, Kept, Keys, Manager, Stored};
 use crate::crypto::VaultKey;
 use crate::error::{Error, Result};
@@ -113,6 +114,13 @@ pub(crate) fn request_run(app: &AppHandle) {
 
 pub(crate) fn kept_packs(app: &AppHandle, key: &VaultKey) -> Vec<Vec<u8>> {
     state(app).kept.packs(&Keys::of(key).id)
+}
+
+pub(crate) fn password_changed(app: &AppHandle) -> bool {
+    let devices = state(app).book.status().devices;
+    devices
+        .iter()
+        .any(|device| device.state == NearbyDeviceState::PasswordChanged)
 }
 
 pub(crate) fn forget_packs(app: &AppHandle) {

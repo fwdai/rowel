@@ -12,7 +12,7 @@ use crate::nearby::channel::{Channel, Control, Role};
 use crate::nearby::exchange::{self, Absorbed};
 use crate::nearby::{Error, Result};
 use crate::sync::engine::LocalVault;
-use crate::sync::pack::MAX_PACK_BYTES;
+use crate::sync::pack::{MAX_EMPTY_PACK_BYTES, MAX_PACK_BYTES};
 
 const CLAIM_WAIT: Duration = Duration::from_secs(5);
 const CLAIM_POLL: Duration = Duration::from_millis(50);
@@ -65,6 +65,7 @@ pub(super) fn run<H: Host>(
         proved,
         found,
         asked,
+        owed: found.ahead.clone(),
         absorbed: None,
         outcomes: Vec::new(),
     };
@@ -82,6 +83,8 @@ struct Script<'a, H: Host> {
     found: &'a Established,
     // The asks this side sent with its proofs, each answered once.
     asked: Vec<String>,
+    // The asks the peer may make, each answered once: its key's id, then this side's lockbox.
+    owed: Vec<(String, String)>,
     absorbed: Option<Absorbed>,
     outcomes: Vec<Outcome>,
 }
@@ -120,9 +123,7 @@ impl<H: Host> Script<'_, H> {
             }
             Control::State { lockbox, .. } if self.answered(&lockbox) => Ok(()),
             Control::Pack { lockbox, revision } if self.answered(&lockbox) => {
-                let pack = self.channel.recv(MAX_PACK_BYTES)?;
-                self.shared.host.kept().keep(&lockbox, &revision, pack);
-                Ok(())
+                self.keep(&lockbox, &revision)
             }
             Control::Ask { lockbox, have } => self.give(&lockbox, &have),
             other => Err(out_of_step(&other)),
@@ -140,26 +141,34 @@ impl<H: Host> Script<'_, H> {
             lockbox: id.to_string(),
             have,
         })?;
-        if let Said::Pack(sealed_under, pack) = self.recv(id)? {
-            self.shared.host.kept().keep(id, &sealed_under, pack);
+        match self.channel.recv_control()? {
+            Control::State { lockbox, .. } if lockbox == id => Ok(()),
+            Control::Pack { lockbox, revision } if lockbox == id => self.keep(id, &revision),
+            other => Err(out_of_step(&other)),
         }
+    }
+
+    // An answer to an ask is an empty pack, so no larger than one can be.
+    fn keep(&mut self, id: &str, sealed_under: &str) -> Result<()> {
+        let pack = self.channel.recv(MAX_EMPTY_PACK_BYTES)?;
+        self.shared.host.kept().keep(id, sealed_under, pack);
         Ok(())
     }
 
-    // To a device that proved the key `theirs`, which this lockbox has retired: the
-    // pack under the current one, named by that key's id, unless it has it.
+    // To a device that proved the key `theirs`, which this lockbox has retired: an
+    // empty pack under the current one, named by that key's id, unless it has it.
     fn give(&mut self, theirs: &str, have: &[String]) -> Result<()> {
-        let Some(mine) = self.found.ahead_of(theirs) else {
-            return Err(Error::Protocol("an ask for a key it did not prove".into()));
+        let Some(at) = self.owed.iter().position(|(id, _)| id == theirs) else {
+            return Err(Error::Protocol("an ask it may not make".into()));
         };
-        if have.iter().any(|id| id == mine) {
-            self.send_state(theirs, mine)?;
+        let (_, mine) = self.owed.swap_remove(at);
+        if have.contains(&mine) {
+            self.send_state(theirs, &mine)?;
             return Ok(());
         }
-        let now_ms = self.shared.host.now_ms();
-        let packed = self.step(mine, |local| exchange::pack(local, now_ms));
-        let (pack, _) = packed.map_err(|stop| stop.ended("a lockbox could not be packed"))?;
-        self.send_pack(theirs, mine, &pack)
+        let packed = self.step(&mine, |local| local.pack_empty());
+        let pack = packed.map_err(|stop| stop.ended("a lockbox's proof could not be made"))?;
+        self.send_pack(theirs, &mine, &pack)
     }
 
     fn dial(&mut self, id: &str) -> Turn<()> {

@@ -21,6 +21,7 @@ use crate::nearby::identity::tests::identity;
 use crate::nearby::trust::own_proof;
 use crate::retired;
 use crate::sync::engine::{LocalVault, Reclaim, Snapshot};
+use crate::sync::pack::MAX_EMPTY_PACK_BYTES;
 
 const PERIOD: Duration = Duration::from_millis(500);
 
@@ -65,6 +66,11 @@ impl Manager<TestHost> {
     fn packs(&self) -> usize {
         self.shared.host.packs.load(Ordering::SeqCst)
     }
+
+    /// Empty packs this manager made for a device to adopt a password from.
+    fn proofs(&self) -> usize {
+        self.shared.host.proofs.load(Ordering::SeqCst)
+    }
 }
 
 /// Keys numbered `n`, for tests that need no lockbox behind them.
@@ -94,6 +100,7 @@ struct TestHost {
     /// Steps that took the claim.
     steps: AtomicUsize,
     packs: AtomicUsize,
+    proofs: AtomicUsize,
     fail_packs: AtomicBool,
     /// Run inside the next step, under its claim, before the gate.
     next_step: Mutex<Option<Hook>>,
@@ -149,6 +156,10 @@ impl LocalVault for Local<'_> {
         }
         self.host.packs.fetch_add(1, Ordering::SeqCst);
         self.device.pack(reclaim)
+    }
+    fn pack_empty(&self) -> AppResult<Vec<u8>> {
+        self.host.proofs.fetch_add(1, Ordering::SeqCst);
+        self.device.pack_empty()
     }
     fn note_push(&self, revision: &str, at_ms: i64) -> AppResult<()> {
         self.device.note_push(revision, at_ms)
@@ -840,7 +851,7 @@ fn moved_on() -> (Device, Keys) {
 }
 
 #[test]
-fn a_device_on_a_retired_key_is_handed_the_pack_it_adopts_the_password_from() {
+fn a_device_on_a_retired_key_is_handed_an_empty_pack_it_adopts_the_password_from() {
     let network = Network::default();
     let (a, old) = moved_on();
     let (a, b) = (Arc::new(a), lockbox("b", 1));
@@ -853,20 +864,18 @@ fn a_device_on_a_retired_key_is_handed_the_pack_it_adopts_the_password_from() {
             && nb.state_of(&na) == Some(NearbyDeviceState::PasswordChanged)
             && !nb.host.kept.packs(&old.id).is_empty()
     });
-    let handed_over = na.manager.packs();
+    let handed_over = na.manager.proofs();
     na.manager.request_runs();
     nb.manager.request_runs();
     settle();
-    assert_eq!(
-        na.manager.packs(),
-        handed_over,
-        "a pack it has is not sent again"
-    );
-    assert_eq!(nb.manager.packs(), 0);
+    assert_eq!(na.manager.proofs(), handed_over, "one is not sent twice");
+    assert_eq!(na.manager.packs() + nb.manager.packs(), 0);
     assert_eq!((a.digest(), b.digest()), before);
     assert_eq!(nb.host.kept.sealed_under(&old.id), [Keys::of(&a.key).id]);
 
     let pack = nb.host.kept.packs(&old.id).remove(0);
+    assert!(pack.len() <= MAX_EMPTY_PACK_BYTES);
+    assert!(a.decode_direct(&pack).unwrap().records.is_empty());
     drop(nb);
     let mut b = sole(b);
     let refused = key_for_pack(b.path(), b.id, &b.key, &pack, OLD);
@@ -884,7 +893,7 @@ fn a_device_on_a_retired_key_is_handed_the_pack_it_adopts_the_password_from() {
 }
 
 #[test]
-fn an_ask_is_answered_for_a_key_the_asker_proved_and_a_pack_it_lacks() {
+fn an_ask_is_answered_once_for_a_key_the_asker_proved_and_a_pack_it_lacks() {
     let network = Network::default();
     let (a, old) = moved_on();
     let a = Arc::new(a);
@@ -904,6 +913,16 @@ fn an_ask_is_answered_for_a_key_the_asker_proved_and_a_pack_it_lacks() {
     assert_eq!(ask(&old.id, &[]).unwrap(), "sync/pack");
     assert_eq!(ask(&old.id, &[&new]).unwrap(), "sync/state");
     assert!(ask(&new, &[]).is_err());
+
+    let (mut dialled, _) = dialled_with(&na, &old, false, 3);
+    let again = Control::Ask {
+        lockbox: old.id.clone(),
+        have: vec![new],
+    };
+    dialled.send_control(&again).unwrap();
+    assert_eq!(dialled.recv_control().unwrap().kind(), "sync/state");
+    let _ = dialled.send_control(&again);
+    assert!(dialled.recv_control().is_err());
 }
 
 #[test]
@@ -928,6 +947,24 @@ fn a_pack_is_kept_only_in_answer_to_an_ask_and_only_once() {
     }
     assert!(dialled.recv_control().is_err());
     assert_eq!(nb.host.kept.sealed_under(&old.id), ["one"]);
+}
+
+#[test]
+fn an_answer_to_an_ask_larger_than_an_empty_pack_is_refused() {
+    let network = Network::default();
+    let b = lockbox("b", 1);
+    let nb = node(&network, &[&b]);
+    let old = Keys::of(&b.key);
+
+    let (mut dialled, _) = dialled_with(&nb, &old, true, 4);
+    let pack = Control::Pack {
+        lockbox: old.id.clone(),
+        revision: "one".into(),
+    };
+    dialled.send_control(&pack).unwrap();
+    let _ = dialled.send(&vec![0; MAX_EMPTY_PACK_BYTES + 1]);
+    assert!(dialled.recv_control().is_err());
+    assert!(nb.host.kept.sealed_under(&old.id).is_empty());
 }
 
 #[test]

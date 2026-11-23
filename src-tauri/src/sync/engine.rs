@@ -155,6 +155,11 @@ pub trait LocalVault {
     /// so that note is neither read nor written.
     #[cfg_attr(not(desktop), allow(dead_code))]
     fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot>;
+    /// A pack of an empty vault under this one's key and descriptor: what a
+    /// device still on an older password proves the new one against
+    /// (`nearby::session`), with nothing of the vault in it.
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    fn pack_empty(&self) -> Result<Vec<u8>>;
     /// Last-writer-wins merge of the pulled entries and attachments, and the
     /// pulled audit rows taken as a union; returns the entry and attachment
     /// rows written (the log rows change nothing the frontend shows).
@@ -570,6 +575,14 @@ impl LocalVault for SessionVault {
         Ok(bytes)
     }
 
+    // Checked as `pack` is: under a key the vault has left, the proof would
+    // refuse the right password.
+    fn pack_empty(&self) -> Result<Vec<u8>> {
+        let bytes = self.keys.pack_empty()?;
+        self.check_key()?;
+        Ok(bytes)
+    }
+
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
         self.with_store(|store| note_push(store, revision, at_ms, &self.keys.kdf_params_json))
     }
@@ -688,6 +701,10 @@ impl LocalVault for WorkspaceVault {
         self.keys.pack(&self.store)
     }
 
+    fn pack_empty(&self) -> Result<Vec<u8>> {
+        self.keys.pack_empty()
+    }
+
     fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
         note_push(&self.store, revision, at_ms, &self.keys.kdf_params_json)
     }
@@ -749,6 +766,15 @@ impl PackKeys {
         Ok(pack::pack_store(
             source,
             &*self.vault_key.sqlcipher_key(),
+            &self.kdf_params_json,
+            &self.scratch,
+        )?)
+    }
+
+    fn pack_empty(&self) -> Result<Vec<u8>> {
+        let key = self.vault_key.sqlcipher_key();
+        Ok(pack::pack_empty(
+            &*key,
             &self.kdf_params_json,
             &self.scratch,
         )?)
@@ -1214,6 +1240,10 @@ mod tests {
                 &self.kdf,
                 &self.scratch,
             )?)
+        }
+        fn pack_empty(&self) -> Result<Vec<u8>> {
+            let key = self.key.sqlcipher_key();
+            Ok(pack::pack_empty(&*key, &self.kdf, &self.scratch)?)
         }
         fn note_push(&self, revision: &str, at_ms: i64) -> Result<()> {
             note_push(&self.store, revision, at_ms, &self.kdf)

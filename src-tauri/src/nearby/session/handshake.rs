@@ -29,13 +29,6 @@ pub(super) struct Established {
     pub asks: Vec<(String, Vec<String>)>,
 }
 
-impl Established {
-    pub fn ahead_of(&self, theirs: &str) -> Option<&str> {
-        let found = self.ahead.iter().find(|(id, _)| id == theirs);
-        found.map(|(_, mine)| mine.as_str())
-    }
-}
-
 pub(super) fn run<H: Host>(
     shared: &Shared<H>,
     channel: &mut Channel,
