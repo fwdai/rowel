@@ -5,6 +5,7 @@ import { CARD_OPEN, LABEL } from '@/components/elements/tokens'
 import WorkspaceList from './WorkspaceList'
 import NewWorkspace from './NewWorkspace'
 import RestoreRow from './RestoreFromAccount/Row'
+import RestoreBackupRow from './RestoreBackup/Row'
 import InfoTiles from './InfoTiles'
 import RemoteVaults from './RemoteVaults'
 import RowelServer from './RowelServer'
@@ -26,6 +27,7 @@ export default function Workspaces() {
           <WorkspaceList />
           <NewWorkspace />
           <RestoreRow />
+          <RestoreBackupRow />
         </div>
         <InfoTiles />
       </section>

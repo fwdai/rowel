@@ -146,3 +146,22 @@ export const workspaceRestoreFromAccount = (
   fileId: string
 ): Promise<UnlockResult> =>
   call('workspace_restore_from_account', { name, password, fileId })
+
+/**
+ * The same landing for a `.rowel` backup the user chose: picked, dropped or
+ * opened with the app, which is what lets the backend read `path` at all —
+ * anything else rejects before a byte is read. `password` is the one the
+ * backup was sealed with and `name` the label it gets here, blank for the one
+ * it carries.
+ *
+ * Resolves like an unlock of the restored vault, with `syncConfigured: false`:
+ * a file comes with no account, so the lockbox syncs nowhere until it is
+ * connected. A wrong password rejects as `invalidPassword` with nothing
+ * written, and the file stays chosen for the retry. A backup of a lockbox this
+ * device already holds rejects as `vaultAlreadyOpen`.
+ */
+export const workspaceRestoreFromFile = (
+  name: string,
+  password: string,
+  path: string
+): Promise<UnlockResult> => call('workspace_restore_from_file', { name, password, path })

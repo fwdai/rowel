@@ -6,6 +6,7 @@ import NewWorkspace from './Sections/Workspaces/NewWorkspace/Subpage'
 import EditWorkspace from './Sections/Workspaces/EditWorkspace/Subpage'
 import DeleteWorkspace from './Sections/Workspaces/DeleteWorkspace/Subpage'
 import RestoreWorkspace from './Sections/Workspaces/RestoreFromAccount/Subpage'
+import RestoreBackup from './Sections/Workspaces/RestoreBackup/Subpage'
 import Nearby from './Sections/Sync/Nearby/Subpage'
 import Cloud from './Sections/Sync/Cloud/Subpage'
 import Backup from './Sections/Sync/Backup/Subpage'
@@ -16,6 +17,8 @@ export type Subpage =
   | { key: 'edit-workspace'; id: string }
   | { key: 'delete-workspace'; id: string }
   | { key: 'restore-workspace' }
+  /** `path`: a backup already chosen elsewhere, whose grant still stands. */
+  | { key: 'restore-backup'; path?: string }
   | { key: 'sync-nearby' }
   | { key: 'sync-cloud' }
   | { key: 'sync-backup' }
@@ -58,6 +61,13 @@ export const SUBPAGES: { [K in Key]: Definition<K> } = {
     description:
       'Sign in and pick one of the lockboxes the account already holds. It arrives as a separate lockbox, unlocked with its own master password and syncing to the same pack.',
     Body: RestoreWorkspace
+  },
+  'restore-backup': {
+    crumb: 'workspaces',
+    title: 'Restore a backup',
+    description:
+      'Pick a .rowel file saved from Settings. It arrives as a separate lockbox, on this device only until you connect it to an account.',
+    Body: RestoreBackup
   },
   'sync-nearby': {
     crumb: 'sync',

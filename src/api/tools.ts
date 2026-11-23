@@ -66,9 +66,9 @@ export const getAudit = (checkBreaches: boolean): Promise<Audit> =>
  * named anything — and so does `'attachment'`. `'photo'` is an attachment
  * pick under the image filter: on a phone that opens the photo library rather
  * than the file browser, and what it picks is readable only as an attachment.
- * `'import'` is a password manager's export, `'backup'` a `.rowel` to restore
- * and `'importBackup'` either backup Settings › Import takes (see
- * `@/api/pickers`).
+ * `'import'` is a password manager's export, `'backup'` a `.rowel` to restore,
+ * `'importBackup'` either backup Settings › Import takes and `'lockboxBackup'`
+ * a `.rowel` alone, restored as a lockbox (see `@/api/pickers`).
  * `browse` asks a phone for the file browser even under an image filter (a
  * photo kept in Files); the desktop's one dialog ignores it.
  */
@@ -80,6 +80,7 @@ export type PickKind =
   | 'import'
   | 'backup'
   | 'importBackup'
+  | 'lockboxBackup'
 
 export const pickFileToRead = (
   kind: PickKind,

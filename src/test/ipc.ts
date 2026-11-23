@@ -162,6 +162,8 @@ const DEFAULTS: Record<string, Handler> = {
   workspace_restore_from_pending: () => ({ entries: [], syncConfigured: true }),
   // The same landing from the open workspace's own account: no sign-in first.
   workspace_restore_from_account: () => ({ entries: [], syncConfigured: true }),
+  // And from a backup file, which comes with no account: it arrives local.
+  workspace_restore_from_file: () => ({ entries: [], syncConfigured: false }),
   // A switch to a workspace Rust holds no key for: it ends as the lock it is,
   // announced like any other. (One it does hold answers like an unlock — a
   // spec that wants that path mocks the command with a session.)

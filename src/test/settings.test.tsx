@@ -755,14 +755,18 @@ describe('Settings › sync', () => {
     expect(screen.queryByTestId('settings-export-run')).not.toBeInTheDocument()
   })
 
-  // An open vault cannot take a backup back in, so the page says where one
-  // goes instead of offering a restore.
-  it('says a backup restores a fresh install, and offers no restore here', async () => {
+  // A backup restores as a lockbox of its own, so the way to restoring one
+  // leads to its page under Lockboxes rather than restoring here.
+  it('leads to the restore page under Lockboxes', async () => {
     await openBackup()
-    expect(screen.getByTestId('settings-backup-restore-note')).toHaveTextContent(
-      'Backups restore a fresh install and are not imported into an existing vault.'
-    )
-    expect(screen.queryByText('Restore a backup')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-backup-restore'))
+
+    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+    expect(useUi.getState().settingsSection).toBe('workspaces')
+    // Back is the section the page belongs to, not the one it was reached from.
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
   })
 
   // The pill beside the title says where the connection stands, one tone per
@@ -1464,8 +1468,8 @@ describe('Settings › import', () => {
   })
 
   // One of our own backups is a whole sealed database; with a vault already
-  // open there is nothing to merge it into, and the section says so instead
-  // of asking for a password it could not use.
+  // open there is nothing to merge it into, and the section says what it is
+  // instead of asking for a password it could not use.
   it('names a .rowel the OS opened and explains it is not imported', async () => {
     flowMain()
     render(<Settings />)
@@ -1473,9 +1477,34 @@ describe('Settings › import', () => {
     fileOpened('/tmp/Rowel backup 2026-09-15.rowel')
 
     expect(await screen.findByText('Rowel backup 2026-09-15.rowel')).toBeInTheDocument()
-    expect(screen.getByTestId('import-rowel-notice')).toBeInTheDocument()
+    expect(screen.getByTestId('import-rowel-notice')).toHaveTextContent(
+      'This is a Rowel backup. It is restored as a lockbox of its own, not imported.'
+    )
     expect(document.querySelector('input[name="import_password"]')).not.toBeInTheDocument()
     expect(calls('import_swftx')).toEqual([])
+  })
+
+  // The link takes the file along: the open granted it, so the restore page
+  // restores it without a second pick.
+  it('restores a .rowel the OS opened as a lockbox, from the link', async () => {
+    flowMain()
+    render(<Settings />)
+    fileOpened('/tmp/Rowel backup 2026-09-15.rowel')
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+
+    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent(
+      'Rowel backup 2026-09-15.rowel'
+    )
+    await userEvent.type(screen.getByTestId('workspace-backup-password'), 'backup-pass')
+    await act(async () => {
+      await userEvent.click(screen.getByTestId('workspace-backup-submit'))
+    })
+
+    expect(calls('pick_file')).toEqual([])
+    expect(calls('workspace_restore_from_file')).toEqual([
+      { name: '', password: 'backup-pass', path: '/tmp/Rowel backup 2026-09-15.rowel' }
+    ])
   })
 
   // The backup card offers our own `.rowel` too, and takes it as the OS-opened
@@ -1490,6 +1519,27 @@ describe('Settings › import', () => {
     expect(await screen.findByTestId('import-rowel-notice')).toBeInTheDocument()
     expect(document.querySelector('input[name="import_password"]')).not.toBeInTheDocument()
     expect(calls('import_swftx')).toEqual([])
+
+    // And offers the restore it is for, with the file already picked.
+    await userEvent.click(screen.getByTestId('import-rowel-restore'))
+    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent(
+      'Rowel backup 2026-09-15.rowel'
+    )
+    expect(calls('pick_file')).toHaveLength(1)
+  })
+
+  // A legacy vault is still merged where it was picked, and offered no link.
+  it('keeps a .swftx to the merge, with no restore link', async () => {
+    mockCommand('pick_file', () => '/tmp/other.swftx')
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-swftx'))
+
+    expect(await screen.findByText('other.swftx')).toBeInTheDocument()
+    expect(screen.queryByTestId('import-rowel-restore')).not.toBeInTheDocument()
+    expect(screen.getByTestId('import-run-backup')).toBeInTheDocument()
   })
 
   // Imported rows are published like any other edit, so another device has
@@ -3142,6 +3192,138 @@ describe('Settings › workspaces › restore from an account', () => {
     expect(screen.getByTestId('workspace-restore-empty')).toHaveTextContent(
       'This Dropbox account has nothing to restore'
     )
+  })
+})
+
+// A `.rowel` saved from Settings, restored as a lockbox beside the ones here:
+// the account restore's form, with a file where the account's vaults were.
+describe('Settings › workspaces › restore a backup', () => {
+  const BACKUP = '/tmp/Rowel backup 2026-11-20.rowel'
+
+  const openPage = async () => {
+    await open()
+    await go('workspaces')
+    await userEvent.click(screen.getByTestId('workspace-backup-open'))
+  }
+
+  const pickAndType = async (password: string) => {
+    mockCommand('pick_file', () => BACKUP)
+    await openPage()
+    await userEvent.click(screen.getByTestId('workspace-backup-pick'))
+    await userEvent.type(await screen.findByTestId('workspace-backup-password'), password)
+  }
+
+  // A third way to one more lockbox, under the other two — and the last row of
+  // the card, which is the one that rounds the card's foot.
+  it('opens its page from the last row under the lockbox list', async () => {
+    await open()
+    await go('workspaces')
+
+    const row = screen.getByTestId('workspace-backup-open')
+    expect(row).toHaveTextContent('Restore a backup')
+    expect(row.parentElement?.lastElementChild).toBe(row)
+    expect(row.previousElementSibling).toBe(screen.getByTestId('workspace-restore-open'))
+
+    await userEvent.click(row)
+    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+    expect(screen.getAllByText(/^Pick a \.rowel file saved from Settings/)).toHaveLength(1)
+    // Nothing to restore until a file is chosen.
+    expect(screen.queryByTestId('workspace-backup-password')).not.toBeInTheDocument()
+  })
+
+  it('restores the picked file as a lockbox of its own', async () => {
+    mockCommand('pick_file', () => BACKUP)
+    await openPage()
+
+    await userEvent.click(screen.getByTestId('workspace-backup-pick'))
+    // Picked in Rust, which grants the path for the restore that reads it;
+    // offered `.rowel` alone, since a legacy vault is not a lockbox.
+    expect(calls('pick_file')).toEqual([{ kind: 'lockboxBackup', label: 'Rowel backup' }])
+    expect(await screen.findByTestId('workspace-backup-file')).toHaveTextContent(
+      'Rowel backup 2026-11-20.rowel'
+    )
+    await userEvent.type(screen.getByTestId('workspace-backup-name'), 'Old laptop')
+    await userEvent.type(screen.getByTestId('workspace-backup-password'), 'backup-pass')
+    await act(async () => {
+      await userEvent.click(screen.getByTestId('workspace-backup-submit'))
+    })
+
+    expect(calls('workspace_restore_from_file')).toEqual([
+      { name: 'Old laptop', password: 'backup-pass', path: BACKUP }
+    ])
+    // It lands like every restore — active, unlocked, re-probed — but with no
+    // account, so no first sync runs.
+    await waitFor(() => expect(useApp.getState().flow).toBe('main'))
+    expect(calls('app_status').length).toBeGreaterThan(0)
+    expect(calls('sync_now')).toHaveLength(0)
+  })
+
+  it('hands a wrong password back to the form, with the file still chosen', async () => {
+    mockCommandOnce('workspace_restore_from_file', () =>
+      Promise.reject({ kind: 'invalidPassword', message: 'invalid master password' })
+    )
+    await pickAndType('wrong')
+    await userEvent.click(screen.getByTestId('workspace-backup-submit'))
+
+    expect(await screen.findByText('Invalid password for backup')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-backup-submit')).toHaveTextContent('Restore')
+    expect(screen.getByTestId('workspace-backup-file')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-backup-password')).toHaveValue('wrong')
+    expect(screen.getByTestId('workspace-backup-pick')).toHaveTextContent('Pick another file')
+    expect(useUi.getState().settingsLocked).toBe(false)
+    expect(useApp.getState().flow).not.toBe('main')
+  })
+
+  // The restore ends by switching lockboxes, so nothing may leave the page
+  // while it runs — and the file it is reading is not swapped from under it.
+  it('holds Settings while the restore runs', async () => {
+    mockCommandOnce('workspace_restore_from_file', () => new Promise(() => {}))
+    await pickAndType('backup-pass')
+    await userEvent.click(screen.getByTestId('workspace-backup-submit'))
+
+    expect(useUi.getState().settingsLocked).toBe(true)
+    expect(screen.getByTestId('workspace-backup-submit')).toHaveTextContent('Restoring…')
+    expect(screen.queryByTestId('workspace-backup-pick')).not.toBeInTheDocument()
+    expect(screen.getByTestId('modal-close')).toBeDisabled()
+    expect(screen.getByTestId('settings-subpage-back')).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+  })
+
+  it('says so when the backup is of a lockbox already here', async () => {
+    mockCommandOnce('workspace_restore_from_file', () =>
+      Promise.reject({ kind: 'vaultAlreadyOpen', message: 'this vault is already here' })
+    )
+    await pickAndType('backup-pass')
+    await userEvent.click(screen.getByTestId('workspace-backup-submit'))
+
+    expect(await screen.findByText('This lockbox is already on this device')).toBeInTheDocument()
+  })
+
+  // A backup sealed under another password is installed closed, and the same
+  // second step as an account restore's moves it onto the vault password.
+  it('moves a backup on a password of its own onto the vault password', async () => {
+    mockCommandOnce('workspace_restore_from_file', () =>
+      Promise.reject({
+        kind: 'vaultPasswordRequired',
+        message: 'this lockbox has a different password; enter the vault password to move it over',
+        workspaceId: 'w9'
+      })
+    )
+    mockCommandOnce('workspace_select', () => ({ entries: [], syncConfigured: false }))
+    await pickAndType('its-own-pass{Enter}')
+
+    const field = await screen.findByTestId('workspace-backup-vault-password')
+    await userEvent.type(field, 'the-vault-pass')
+    await act(async () => {
+      await userEvent.click(screen.getByTestId('workspace-backup-submit'))
+    })
+
+    expect(calls('workspace_adopt_vault_password')).toEqual([
+      { workspaceId: 'w9', lockboxPassword: 'its-own-pass', vaultPassword: 'the-vault-pass' }
+    ])
+    expect(calls('workspace_select')).toEqual([{ id: 'w9' }])
+    expect(calls('workspace_restore_from_file')).toHaveLength(1)
   })
 })
 
