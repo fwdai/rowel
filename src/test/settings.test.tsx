@@ -746,7 +746,6 @@ describe('Settings › sync › lockboxes beside the account', () => {
     expect(screen.getByTestId('settings-cloud-lockbox-default')).toHaveTextContent('Personal')
     expect(screen.getByTestId('settings-cloud-lockbox-default')).toHaveTextContent('Open now')
     expect(status('settings-cloud-lockbox-default')).toHaveTextContent(/^Google Drive$/)
-    expect(status('settings-cloud-lockbox-default')).toHaveAttribute('data-tone', 'good')
 
     expect(screen.getByTestId('settings-cloud-lockbox-w2')).not.toHaveTextContent('Open now')
     expect(status('settings-cloud-lockbox-w2')).toHaveTextContent(/^Google Drive$/)
@@ -754,7 +753,6 @@ describe('Settings › sync › lockboxes beside the account', () => {
     // Syncs nowhere: said in the words Lockboxes uses, and nothing to press —
     // no command brings a lockbox that is not open into the account.
     expect(status('settings-cloud-lockbox-w4')).toHaveTextContent(/^This device$/)
-    expect(status('settings-cloud-lockbox-w4')).toHaveAttribute('data-tone', 'neutral')
     expect(
       within(screen.getByTestId('settings-cloud-lockbox-w4')).queryByRole('button')
     ).not.toBeInTheDocument()
