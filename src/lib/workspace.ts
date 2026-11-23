@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import type { Workspace } from '@/api/types'
 import type { Provider } from '@/api/provider'
+import { syncDeletedRemotely, syncProvider, type SyncStatus } from '@/api/sync'
 
 /**
  * The workspace every install starts with, and the one whose key opens the
@@ -27,3 +28,33 @@ export const workspaceLabel = (workspace: Workspace, t: TFunction): string =>
  */
 export const registeredProvider = (workspace: Workspace): Provider | null =>
   workspace.provider ?? (workspace.synced === true ? 'googleDrive' : null)
+
+/**
+ * The cloud account a workspace has a copy in, or null when it has none: what
+ * Settings › Lockboxes says of each lockbox, and what the connected account's
+ * card counts, so the two cannot disagree. The open one is answered by its
+ * live connection — not once the account's copy is gone (deleted from another
+ * device); a locked one by the connection the backend found in its own
+ * directory when the list was built (`registeredProvider`) — not by its vault
+ * id, which a disconnect leaves behind.
+ *
+ * A provider, not an account: the registry knows which provider a locked
+ * lockbox's token file is for, not whose account it signs in to, so two
+ * lockboxes on Google Drive may be in two people's Drives.
+ *
+ * An org lockbox is null here whatever its connection says: the copy on its
+ * Rowel Server is the company's, not an account of the user's, so nothing
+ * that follows from "has a copy in an account" — deleting it everywhere, say
+ * — is theirs to do from this device.
+ */
+export const workspaceProvider = (
+  workspace: Workspace,
+  { active, sync }: { active: string; sync: SyncStatus }
+): Provider | null =>
+  workspace.server
+    ? null
+    : workspace.id === active
+      ? syncDeletedRemotely(sync)
+        ? null
+        : syncProvider(sync)
+      : registeredProvider(workspace)

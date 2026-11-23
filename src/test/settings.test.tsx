@@ -618,6 +618,48 @@ describe('Settings › sync', () => {
     expect(screen.getByTestId('settings-sync-error')).toHaveTextContent('Drive API 503')
   })
 
+  // The card's count is of the lockboxes this account's provider holds, read
+  // the way Settings › Lockboxes reads each one, so the two pages agree: not
+  // every lockbox on the device, and not the open one once the account's copy
+  // of it is gone.
+  it('counts the lockboxes that live in the account’s provider, as Lockboxes does', async () => {
+    seedApp({
+      workspaces: [
+        { id: 'default', name: null },
+        { id: 'w2', name: 'Work', synced: true, provider: 'googleDrive' },
+        { id: 'w3', name: 'Family', synced: true, provider: 'dropbox' },
+        { id: 'w4', name: 'Scratch', synced: false }
+      ],
+      activeWorkspace: 'default'
+    })
+    await openCloud()
+    const lockboxes = () =>
+      within(screen.getByTestId('settings-drive-row')).getByText('Lockboxes').nextElementSibling
+
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    expect(lockboxes()).toHaveTextContent(/^2$/)
+
+    act(() =>
+      report({
+        configured: true,
+        provider: 'googleDrive',
+        error: 'gone',
+        errorKind: 'vaultDeletedRemotely'
+      })
+    )
+    expect(lockboxes()).toHaveTextContent(/^1$/)
+
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    await go('workspaces')
+    const onDrive = screen
+      .getAllByTestId(/^workspace-row-/)
+      .filter(row => row.textContent?.includes('Google Drive'))
+    expect(onDrive.map(row => row.dataset.testid)).toEqual([
+      'workspace-row-default',
+      'workspace-row-w2'
+    ])
+  })
+
   it('shows what a connected account holds, and the way out', async () => {
     await openCloud()
     expect(screen.queryByTestId('settings-sync-now')).not.toBeInTheDocument()

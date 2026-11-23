@@ -1,15 +1,29 @@
 import { useTranslation } from 'react-i18next'
-import { useApp, selectWorkspaces } from '@/store'
+import { useApp, selectActiveWorkspace, selectWorkspaces } from '@/store'
+import { syncProvider } from '@/api/sync'
+import { workspaceProvider } from '@/lib/workspace'
 import { LABEL } from '@/components/elements/tokens'
 
 // The connected account in three figures, under the card's header.
 export default function Stats({ lastSynced }: { lastSynced: string }) {
   const { t } = useTranslation()
   const workspaces = useApp(selectWorkspaces)
+  const active = useApp(selectActiveWorkspace)
+  const sync = useApp(state => state.sync)
+
+  // The lockboxes that live in this account's provider, by the same reading
+  // Settings › Lockboxes gives each of them (`workspaceProvider`). For a
+  // locked one that is as far as the registry goes: it knows the provider,
+  // not whose account, so a lockbox in another account of the same provider
+  // is counted here too.
+  const provider = syncProvider(sync)
+  const inAccount = workspaces.filter(
+    workspace => workspaceProvider(workspace, { active, sync }) === provider
+  ).length
 
   const stats = [
     { label: t('Last synced'), value: lastSynced },
-    { label: t('Lockboxes'), value: String(workspaces.length) },
+    { label: t('Lockboxes'), value: String(inAccount) },
     { label: t('Encryption'), value: t('End-to-end') }
   ]
 
