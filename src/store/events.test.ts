@@ -170,6 +170,55 @@ describe('sync:status', () => {
   })
 })
 
+// What a run found in the account is that connection's listing. It is not the
+// next account's, and with no account it is nobody's.
+describe('the account listing a sync run reported', () => {
+  const PACK = {
+    id: 'f1',
+    name: 'v1.rowel',
+    vaultId: 'v1',
+    size: 1,
+    modifiedTime: '2024-01-01T00:00:00.000Z',
+    provider: 'googleDrive' as const
+  }
+  const drive = { ...initialApp.sync, configured: true, provider: 'googleDrive' as const }
+  const listed = () => useApp.getState().remoteVaults
+
+  beforeEach(() => {
+    handlerFor(EVENTS.syncStatus)({ ...drive, seq: 1 })
+    handlerFor(EVENTS.workspacesRemote)({ files: [PACK] })
+  })
+
+  it('stays through the connection that reported it', () => {
+    handlerFor(EVENTS.syncStatus)({ ...drive, inProgress: true, seq: 2 })
+    handlerFor(EVENTS.syncStatus)({ ...drive, error: 'Drive API 503', errorKind: 'other', seq: 3 })
+    expect(listed()).toEqual([PACK])
+  })
+
+  it('goes when the account is disconnected, and is not the next account’s', () => {
+    handlerFor(EVENTS.syncStatus)({ ...initialApp.sync, seq: 2 })
+    expect(listed()).toEqual([])
+
+    // Another account of the same provider, whose first run has not landed
+    // (or failed): nothing is listed for it until one says.
+    handlerFor(EVENTS.syncStatus)({ ...drive, error: 'Drive API 503', errorKind: 'other', seq: 3 })
+    expect(listed()).toEqual([])
+  })
+
+  it('goes when the status names another provider, by whichever route it arrives', () => {
+    setApp({
+      ...appStatusDefault(),
+      sync: { ...initialApp.sync, configured: true, provider: 'dropbox', seq: 2 }
+    })
+    expect(listed()).toEqual([])
+  })
+
+  it('is not dropped by a status older than the one held', () => {
+    handlerFor(EVENTS.syncStatus)({ ...initialApp.sync, seq: 0 })
+    expect(listed()).toEqual([PACK])
+  })
+})
+
 describe('oslock:status', () => {
   it('follows the listener coming up, then being lost', () => {
     setApp(appStatusDefault())

@@ -727,14 +727,28 @@ describe('Settings › sync › lockboxes beside the account', () => {
   const figure = () =>
     within(screen.getByTestId('settings-drive-row')).getByText('Lockboxes').nextElementSibling
 
+  // The listing a run reported is that account's. After a disconnect, the
+  // next account connected starts with none of it, on the list and the figure.
+  it('lists nothing of an account that was disconnected', async () => {
+    several()
+    await openCloud()
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
+    expect(rows()).toContain('settings-cloud-remote-drive-file-1')
+    expect(figure()).toHaveTextContent('3')
+
+    act(() => report({ configured: false }))
+    act(() => report({ configured: true, provider: 'googleDrive' }))
+
+    expect(rows()).not.toContain('settings-cloud-remote-drive-file-1')
+    expect(figure()).toHaveTextContent('2')
+  })
+
   it('says where each lockbox stands, the open one first', async () => {
     several()
     await openCloud()
     act(() => report({ configured: true, provider: 'googleDrive' }))
-    // A pack of another provider is a previous connection's.
-    await act(async () =>
-      setRemoteVaults([pack('drive-file-1', 'googleDrive'), pack('dbx-1', 'dropbox')])
-    )
+    await act(async () => setRemoteVaults([pack('drive-file-1', 'googleDrive')]))
 
     expect(rows()).toEqual([
       'settings-cloud-lockbox-default',
