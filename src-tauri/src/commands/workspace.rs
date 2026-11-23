@@ -576,11 +576,36 @@ enum Source<'a> {
 }
 
 impl Source<'_> {
-    /// A backup file rather than a pack an account files under an id: the one
-    /// source whose vault is also asked about by its key descriptor
-    /// ([`guard_backup_source`]).
-    fn is_backup(&self) -> bool {
-        matches!(self, Source::File { .. })
+    /// What is asked of the vault once its pack has opened into `restored`,
+    /// answering to `vault_id`: whether this device already holds it.
+    ///
+    /// Only of a backup file. A file says which vault it is at this moment and
+    /// no sooner, so every way of recognising its source is tried here: the
+    /// ids of the lockboxes on the device ([`guard_restored_vault`]) and their
+    /// key descriptors ([`guard_backup_source`]).
+    ///
+    /// A pack in an account is asked nothing more. It was asked before its
+    /// download, under the id the account files it by (`fetch`), which is all
+    /// there is to know of it; and the checks a file needs can refuse over a
+    /// lockbox that has nothing to do with the restore — one the app cannot
+    /// read — which must not stand between a user and the vault their account
+    /// holds.
+    fn guard_opened(
+        &self,
+        state: &AppState,
+        previous: &Lease,
+        previous_active: &str,
+        root: &Path,
+        restored: &Path,
+        vault_id: &str,
+    ) -> Result<()> {
+        match self {
+            Source::Account { .. } => Ok(()),
+            Source::File { .. } => {
+                guard_restored_vault(state, previous, previous_active, root, vault_id)?;
+                guard_backup_source(root, restored)
+            }
+        }
     }
 
     /// The pack's bytes, and the vault id an account files it under — `None`
@@ -771,10 +796,14 @@ async fn restore_workspace(
             // A backup file says which vault it is only now, once its pack has
             // opened; one this device already holds is turned away here, and
             // unwound below like any other failed restore.
-            guard_restored_vault(state, &previous, &previous_active, &root, &vault_id)?;
-            if source.is_backup() {
-                guard_backup_source(&root, &workspace::dir_of(&root, &id))?;
-            }
+            source.guard_opened(
+                state,
+                &previous,
+                &previous_active,
+                &root,
+                &workspace::dir_of(&root, &id),
+                &vault_id,
+            )?;
             let name = settle_name(&store, name, &vault_id)?;
             Ok((key, store, entries, name, vault_id))
         });
@@ -1467,9 +1496,9 @@ pub(crate) fn guard_other_vault(state: &AppState, root: &Path, vault_id: &str) -
 /// By then the open workspace's session is out on `previous` and the paths
 /// point at the new workspace, so the open workspace — `previous_active` — is
 /// asked live through the store the lease holds, and every other one through
-/// the registry, exactly as `guard_other_vault` asks them. A pack from an
-/// account was asked the same before its download, under the id it is stamped
-/// with, so this turns away nothing there that was let through then.
+/// the registry, exactly as `guard_other_vault` asks them. For a backup file
+/// only ([`Source::guard_opened`]): a pack from an account was asked the same
+/// before its download, under the id it is stamped with.
 ///
 /// The registry is not enough for a file. A locked workspace that never synced
 /// has no vault id there — for an account that misses nothing, since no pack of
@@ -1525,10 +1554,11 @@ fn guard_restored_vault(
 /// What it cannot see is a source whose password changed after the backup was
 /// taken: a re-key writes a new descriptor. That one is left to its id.
 ///
-/// For a backup file only. A pack in an account is filed under an id of its
-/// own, asked about before its download; two packs an account holds of one
-/// forked vault share a descriptor by design of that fork, and restoring the
-/// second beside the first stays the account's business.
+/// For a backup file only ([`Source::guard_opened`]). A pack in an account is
+/// filed under an id of its own, asked about before its download; two packs an
+/// account holds of one forked vault share a descriptor by design of that
+/// fork, and restoring the second beside the first stays the account's
+/// business.
 fn guard_backup_source(root: &Path, restored: &Path) -> Result<()> {
     let Some(sealed_under) = descriptor_id_in(restored)? else {
         return Ok(());
@@ -2284,6 +2314,56 @@ mod tests {
             .unwrap()
             .insert("b2c3", key.biometric_material());
         assert!(guard().is_ok());
+    }
+
+    // What a backup file has to be asked once it opens is not asked of an
+    // account's pack: a lockbox the app cannot read refuses a file restore, and
+    // has no say over the vault an account holds, which was asked by its id
+    // before the download.
+    #[test]
+    fn a_lockbox_the_app_cannot_read_does_not_hold_up_a_restore_from_an_account() {
+        let root = tmp_root();
+        let _ = lockbox_in(&workspace::dir_of(&root, "b2c3"), Some("beef"));
+        record(
+            &root,
+            vec![
+                lockbox(PRIMARY_ID, None, None),
+                lockbox("b2c3", Some("Work"), None),
+            ],
+        );
+        let state = open_vault("a1b2");
+        let (previous_active, previous) = lease_for(&state, "c3d4");
+        let restored = new_dir(&root, "c3d4");
+        let guard = |source: &Source<'_>| {
+            source.guard_opened(
+                &state,
+                &previous,
+                &previous_active,
+                &root,
+                &restored,
+                "cafe",
+            )
+        };
+
+        let account = Source::Account {
+            file_id: "f1".into(),
+            tokens: sync::Tokens {
+                provider: sync::Provider::GoogleDrive,
+                access_token: Some("access".into()),
+                refresh_token: Some("refresh".into()),
+                expires_at: Some(4_102_444_800),
+                account: None,
+            },
+            account: Account::Pending,
+        };
+        assert!(guard(&account).is_ok());
+
+        let grants = PathGrants::default();
+        let file = Source::File {
+            path: root.join("backup.rowel"),
+            grants: &grants,
+        };
+        assert!(matches!(guard(&file), Err(Error::Other(_))));
     }
 
     // The first restore of a backup with no vault id recorded the id its

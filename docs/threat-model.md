@@ -646,7 +646,10 @@ Bringing existing data forward is an **explicit** action, and there are four pat
   from an account (the setup step, the session lease put back on failure, the
   registry written last, the vault-password check under the primary's backoff)
   with the pack read off disk instead of downloaded. A wrong password writes
-  nothing. Once the pack has opened, its vault id is compared with every
+  nothing. The checks that follow are a backup file's alone: a pack from an
+  account is asked by the id it is filed under before its download, as it
+  always was, and no lockbox on the device can hold that restore up. Once the
+  backup's pack has opened, its vault id is compared with every
   lockbox on the device — the open one's, the ids the registry records, and,
   for a lockbox the registry has no id for (one that never synced), the id in
   its own database, opened with the key the app holds for it — and a match is
