@@ -213,9 +213,18 @@ its header so another device can derive the key for the snapshot inside.
 >   sidecar the app cannot read at all is different — `LockoutState::load`
 >   propagates the I/O error out of `storage::read_lockout_sidecar` and
 >   `commands::auth::unlock` returns it, so the unlock fails rather than
->   proceeding past a counter it could not consult. So it bounds guessing *at
->   this app's lock screen* and nothing else: see "Offline brute force at scale"
->   below.
+>   proceeding past a counter it could not consult. Every prompt for the
+>   master password in an unlocked app (an export, a password change, an agent
+>   grant's step-up) reads and raises the same counter
+>   (`commands::vault_password::prove_session_password`), so a wrong guess
+>   there delays the next unlock too. Every proof of a password, those and an
+>   unlock alike, holds the app's one setup step while it runs, so two never
+>   read the same count and write over each other, and the open lockbox does
+>   not change under one. Each lockbox keeps a counter of its own, though, and
+>   one vault password opens them all, so a device with several lockboxes
+>   allows that many tries where a single counter would allow one. So it
+>   bounds guessing *through this app* and nothing else: see "Offline brute
+>   force at scale" below.
 > - **Untrusted KDF parameters are bounded.** A descriptor is read off things
 >   this build did not write — a `.rowel` backup, a pack pulled from Drive, the
 >   sidecar on disk — and the Argon2 crate would otherwise accept a memory cost
@@ -255,6 +264,10 @@ carries them as part of the opaque payload and never sees them.
   base64url) — the same deliberate exposure the password export already is.
   Both exports ask for the master password again (`export_vault`,
   `export_entries`): an unlocked session alone does not carry the vault away.
+  That prompt, the current password of a password change and an agent grant's
+  password step-up are one proof (`prove_session_password`) under the unlock's
+  backoff below, so none of them is a faster way to guess the password than
+  the lock screen.
 - **User verification is the unlocked session plus the user's consent.** The
   vault being unlocked is the identity half of WebAuthn's "user verified" bit;
   the intent half is asked for on every registration and sign-in through the

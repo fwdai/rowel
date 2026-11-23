@@ -12,7 +12,7 @@ use crate::browser::{self, manifest, Client, GrantAnswer, Pairing, StepUp};
 use crate::error::{Error, Result};
 use crate::settings::{self, AgentsSettings, BrowserSettings, MAX_STANDING_DAYS};
 use crate::state::AppState;
-use crate::{biometrics, session, storage};
+use crate::{biometrics, storage};
 
 use super::blocking;
 
@@ -165,10 +165,9 @@ pub async fn agent_grant_respond(
 }
 
 // The person at the keyboard, proved the way the platform can. The password
-// path derives from the open lockbox's own KDF sidecar — the derivation
-// `unlock` runs — and compares the key material with what the session holds,
-// in constant time; no second store is opened. Argon2id and the OS prompt
-// both block, so both run off the command's thread.
+// path is the open lockbox's own proof, under its backoff and the setup step
+// (`prove_session_password`); no second store is opened. Argon2id and the OS
+// prompt both block, so both run off the command's thread.
 async fn verify_person(
     app: &AppHandle,
     state: &AppState,
@@ -178,9 +177,10 @@ async fn verify_person(
         StepUp::Biometric => blocking(biometrics::authenticate).await,
         StepUp::Password => {
             let password = password.ok_or(Error::InvalidPassword)?;
-            let handle = app.clone();
-            let candidate = blocking(move || session::derive_key(&handle, &password)).await?;
-            super::vault::prove_password(&state.session.lock().unwrap(), &candidate)
+            let step = super::setup::begin_step(state)?;
+            super::vault_password::prove_session_password(app, &step, password)
+                .await
+                .map(drop)
         }
     }
 }
