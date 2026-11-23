@@ -7,6 +7,7 @@ import { pickImportFile, pickImportBackup } from '@/api/pickers'
 import { describeError, errorKind } from '@/api/errors'
 import { isBackupFile, isRestorableFile } from '@/lib/backup'
 import { t } from '@/i18n'
+import { useSubpage } from '../../sectionNav'
 import { useProgress } from './useProgress'
 
 // Either a third-party export (parsed by the backend under `format`), a legacy
@@ -54,13 +55,16 @@ export function useImport() {
   }, [])
 
   // A backup the OS opened with the app, once this section is on screen,
-  // taken as the backup card would take it.
+  // taken as the backup card would take it. Under a sub-page it is not on
+  // screen, though the phone keeps it mounted there: the file is left waiting,
+  // which is what the page over it steps aside for (see `useSubpageState`).
   const opened = useApp(state => state.openedFile)
+  const covered = useSubpage().subpage !== null
   useEffect(() => {
-    if (!opened) return
+    if (!opened || covered) return
     claimOpenedFile()
     start(pickedBackup(opened))
-  }, [opened, start])
+  }, [opened, covered, start])
 
   const chooseFile = useCallback(
     (format: ImportFormat) =>

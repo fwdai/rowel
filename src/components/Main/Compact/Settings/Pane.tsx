@@ -6,7 +6,6 @@ import { descriptionOf, titleOf } from '../../Sidebar/Settings/sections'
 import { useSubpage } from '../../Sidebar/Settings/sectionNav'
 import SubpageBody from '../../Sidebar/Settings/SubpageBody'
 import {
-  subpageCrumbOf,
   subpageDescriptionOf,
   subpageTitleOf,
   type Subpage
@@ -68,15 +67,24 @@ export default function Pane({
           <div {...swipe.edge} />
         </div>
       }
-      over={subpage && <SubpagePane subpage={subpage} locked={locked} />}
+      over={subpage && <SubpagePane section={section} subpage={subpage} locked={locked} />}
     />
   )
 }
 
-// The heading stays put above the body: the frame scrolls itself and keeps the
-// tab bar's clearance, so the column has no scroller of its own. `relative`:
-// what the frame's bottom action is pinned to.
-function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean }) {
+// Back is named after the section the page was opened from, which is where it
+// leads. The heading stays put above the body: the frame scrolls itself and
+// keeps the tab bar's clearance, so the column has no scroller of its own.
+// `relative`: what the frame's bottom action is pinned to.
+function SubpagePane({
+  section,
+  subpage,
+  locked
+}: {
+  section: Key
+  subpage: Subpage
+  locked: boolean
+}) {
   const { close } = useSubpage()
   const swipe = useSwipeBack(close, locked)
 
@@ -86,7 +94,7 @@ function SubpagePane({ subpage, locked }: { subpage: Subpage; locked: boolean })
         leading={
           <BackButton
             testid="settings-subpage-back"
-            label={subpageCrumbOf(subpage)}
+            label={titleOf(section)}
             disabled={locked}
             onClick={close}
           />

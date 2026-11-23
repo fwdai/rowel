@@ -9,10 +9,12 @@ import Sheet from '@/components/elements/Sheet'
 import type { Entry } from '@/api/types'
 import { type Audit } from '@/api/tools'
 import {
+  useApp,
   useUi,
   useVault,
   selectCurrent,
   editEntry,
+  fileOpened,
   focusSearch,
   initialApp,
   lockSettings,
@@ -546,7 +548,7 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-export-backup-link'))
     // The backup's page, pushed over the Sync pane it belongs to.
     const page = screen.getByTestId('settings-subpage')
-    expect(within(page).getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    expect(within(page).getByRole('heading', { name: 'Back up the vault' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
   })
 
@@ -679,6 +681,9 @@ describe('compact shell', () => {
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    // The Add row's menu is no screen of its own: nothing is pushed for it.
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('workspace-new-row'))
 
     expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
@@ -688,19 +693,21 @@ describe('compact shell', () => {
     expect(screen.getByTestId('settings-subpage-back').closest('[inert]')).toBeNull()
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-back').closest('[inert]')).toBeNull()
   })
 
   // Restoring from a cloud account is a page under Lockboxes too, its sign-in
   // there rather than on the section's own screen.
-  it('pushes the restore page from its row under the lockbox list', async () => {
+  it('pushes the restore page from the Add row’s menu', async () => {
     seed()
     render(<Main />)
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
     expect(screen.queryAllByTestId(/^workspace-restore-.+-connect$/)).toHaveLength(0)
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
     await userEvent.click(screen.getByTestId('workspace-restore-open'))
 
     const page = screen.getByTestId('settings-subpage')
@@ -715,22 +722,21 @@ describe('compact shell', () => {
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
   })
 
-  // The backup page's restore row leads to a page of another section: pushed
-  // over Lockboxes, its Back named after the section it belongs to, and the
-  // picked file and the form drawn on it as on the wide shell.
-  it('follows the backup page’s restore row to the restore page under Lockboxes', async () => {
+  // The overview's restore row pushes the restore page over the Sync pane: the
+  // pane stays Sync & backup's, Back is named after it, and the picked file
+  // and the form are drawn as on the wide shell.
+  it('pushes the restore page over the Sync pane it was asked from', async () => {
     mockCommand('pick_file', () => '/tmp/Rowel backup 2026-11-20.rowel')
     seed()
     render(<Main />)
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-sync'))
-    await userEvent.click(screen.getByTestId('settings-sync-open-backup'))
-    await userEvent.click(screen.getByTestId('settings-backup-restore'))
+    await userEvent.click(screen.getByTestId('settings-sync-open-restore'))
 
     const page = screen.getByTestId('settings-subpage')
-    expect(within(page).getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
+    expect(within(page).getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
     await userEvent.click(within(page).getByTestId('workspace-backup-pick'))
     expect(within(page).getByTestId('workspace-backup-file')).toHaveTextContent(
       'Rowel backup 2026-11-20.rowel'
@@ -739,7 +745,39 @@ describe('compact shell', () => {
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
     expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+  })
+
+  // The Import pane stays mounted under the restore page here, so it could
+  // take a second opened file out of sight. It leaves the file waiting while
+  // it is covered: the page steps aside for it, at once or — when a restore
+  // holds Settings — once the lock is released, and only then is it taken.
+  it('steps the restore page aside for another opened backup, after a lock', async () => {
+    seed()
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-import'))
+    act(() => fileOpened('/tmp/Rowel backup 2026-09-15.rowel'))
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+    const page = screen.getByTestId('settings-subpage')
+    expect(within(page).getByTestId('workspace-backup-file')).toHaveTextContent('2026-09-15')
+
+    act(() => lockSettings(true))
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-01.rowel'))
+    expect(within(page).getByTestId('workspace-backup-file')).toHaveTextContent('2026-09-15')
+    expect(useApp.getState().openedFile).toBe('/tmp/Rowel backup 2026-10-01.rowel')
+
+    act(() => lockSettings(false))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(await screen.findByText('Rowel backup 2026-10-01.rowel')).toBeInTheDocument()
+    expect(useApp.getState().openedFile).toBeNull()
+
+    // With nothing holding Settings, the page steps aside at once.
+    await userEvent.click(screen.getByTestId('import-rowel-restore'))
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-09.rowel'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(await screen.findByText('Rowel backup 2026-10-09.rowel')).toBeInTheDocument()
   })
 
   // A pushed screen's title has the row to itself, so it is said in full
@@ -753,6 +791,7 @@ describe('compact shell', () => {
       act(() => openSettings())
       await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
       const section = screen.getByRole('heading', { name: 'Schließfächer' })
+      await userEvent.click(screen.getByTestId('workspace-add-row'))
       await userEvent.click(screen.getByTestId('workspace-restore-open'))
       const page = within(screen.getByTestId('settings-subpage')).getByRole('heading', {
         name: 'Aus einem Cloud-Konto wiederherstellen'
@@ -775,6 +814,7 @@ describe('compact shell', () => {
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
     await userEvent.click(screen.getByTestId('workspace-new-row'))
 
     const create = screen.getByTestId('workspace-create')
@@ -1081,6 +1121,7 @@ describe('swipe back', () => {
     render(<Main />)
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
     await userEvent.click(screen.getByTestId('workspace-new-row'))
 
     act(() => lockSettings(true))
@@ -1090,9 +1131,8 @@ describe('swipe back', () => {
 
     act(() => lockSettings(false))
     swipe(screen.getByTestId('settings-subpage'), { dx: 200 })
-    await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
-    )
+    await waitFor(() => expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument())
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     swipe(screen.getByTestId('settings-pane'), { dx: 200 })
     await waitFor(() => expect(screen.getByTestId('settings-nav-workspaces')).toBeInTheDocument())
   })

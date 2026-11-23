@@ -13,9 +13,10 @@ import SettingsRow from '@/components/elements/SettingsRow'
 import Button from '@/components/elements/Button'
 import AccountRestoreForm from '@/components/elements/AccountRestoreForm'
 import Note from '@/components/elements/Note'
-import ProviderButtons from '@/components/elements/ProviderButtons'
+import ProviderList from '@/components/elements/ProviderList'
 import ProviderMark from '@/components/elements/ProviderMark'
 import { waitingFor } from '@/components/elements/providerCopy'
+import { CARD } from '@/components/elements/tokens'
 import { CloudGlyph } from '@/components/Main/icons'
 
 // Adding a workspace that already exists somewhere else.
@@ -41,72 +42,71 @@ export default function RestoreFromAccount() {
   const restoring = account.status === 'restoring'
 
   // The page's title and description say what this is, so the choice of a
-  // provider stands alone, stacked on the phone as the first run's is; once
-  // one is picked, the row names it.
+  // provider stands alone, as the same choice does under Sync & backup; once
+  // one is picked, a card names it in the list's place.
   if (account.status === 'idle')
     return (
-      <div data-testid="workspace-restore-row" className="px-4 py-3.5">
-        <ProviderButtons
-          variant="primary"
-          testid="workspace-restore"
-          onPick={connectWorkspaceAccount}
-          className="flex flex-wrap gap-2 max-md:flex-col"
-        />
-      </div>
+      <ProviderList
+        testid="workspace-restore"
+        listTestid="workspace-restore-row"
+        onPick={connectWorkspaceAccount}
+      />
     )
 
   return (
-    <SettingsRow
-      label={name ? t('Restore from {{provider}}', name) : t('Restore from a cloud account')}
-      icon={
-        account.provider ? (
-          <ProviderMark provider={account.provider} size={16} />
-        ) : (
-          <CloudGlyph size={16} />
-        )
-      }
-      testid="workspace-restore-row"
-      control={
-        restoring ? null : (
-          // Withdrawn while the restore runs, with the form's own Switch
-          // account: the account is spoken for, and a Cancel that the backend
-          // would refuse is a lie.
-          <Button
-            variant="pale"
-            size="md"
-            testid="workspace-restore-cancel"
-            onClick={forgetAccount}
-          >
-            {t('Cancel')}
-          </Button>
-        )
-      }
-    >
-      {account.status === 'pending' && (
-        <Note testid="workspace-restore-waiting">{waitingFor(t, account.provider)}</Note>
-      )}
-      {account.status === 'empty' && (
-        <Note testid="workspace-restore-empty">
-          {name
-            ? t('This {{provider}} account has nothing to restore', name)
-            : t('This account has nothing to restore')}
-        </Note>
-      )}
-      {account.status === 'error' && (
-        <Note tone="bad" testid="workspace-restore-error">
-          {account.error || t('Something went wrong')}
-        </Note>
-      )}
-      {(account.status === 'found' || restoring) && (
-        <AccountRestoreForm
-          files={account.files}
-          selectedId={account.selectedId}
-          onSelect={setupAccountSelect}
-          busy={restoring}
-          onRestore={restoreWorkspaceFromPending}
-          onSwitchAccount={switchWorkspaceAccount}
-        />
-      )}
-    </SettingsRow>
+    <div className={CARD}>
+      <SettingsRow
+        label={name ? t('Restore from {{provider}}', name) : t('Restore from a cloud account')}
+        icon={
+          account.provider ? (
+            <ProviderMark provider={account.provider} size={16} />
+          ) : (
+            <CloudGlyph size={16} />
+          )
+        }
+        testid="workspace-restore-row"
+        control={
+          restoring ? null : (
+            // Withdrawn while the restore runs, with the form's own Switch
+            // account: the account is spoken for, and a Cancel that the backend
+            // would refuse is a lie.
+            <Button
+              variant="pale"
+              size="md"
+              testid="workspace-restore-cancel"
+              onClick={forgetAccount}
+            >
+              {t('Cancel')}
+            </Button>
+          )
+        }
+      >
+        {account.status === 'pending' && (
+          <Note testid="workspace-restore-waiting">{waitingFor(t, account.provider)}</Note>
+        )}
+        {account.status === 'empty' && (
+          <Note testid="workspace-restore-empty">
+            {name
+              ? t('This {{provider}} account has nothing to restore', name)
+              : t('This account has nothing to restore')}
+          </Note>
+        )}
+        {account.status === 'error' && (
+          <Note tone="bad" testid="workspace-restore-error">
+            {account.error || t('Something went wrong')}
+          </Note>
+        )}
+        {(account.status === 'found' || restoring) && (
+          <AccountRestoreForm
+            files={account.files}
+            selectedId={account.selectedId}
+            onSelect={setupAccountSelect}
+            busy={restoring}
+            onRestore={restoreWorkspaceFromPending}
+            onSwitchAccount={switchWorkspaceAccount}
+          />
+        )}
+      </SettingsRow>
+    </div>
   )
 }

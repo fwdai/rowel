@@ -41,7 +41,7 @@ export default function Settings() {
   const go: SectionNav = (next, page) => {
     if (useUi.getState().settingsLocked) return
     setSection(next)
-    if (page) nav.open(page)
+    if (page) nav.openUnder(next, page)
     else nav.drop()
   }
 

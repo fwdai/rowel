@@ -34,7 +34,7 @@ export default function SettingsModal() {
   const go: SectionNav = (next, page) => {
     if (useUi.getState().settingsLocked) return
     setSettingsSection(next)
-    if (page) nav.open(page)
+    if (page) nav.openUnder(next, page)
     else nav.drop()
   }
 

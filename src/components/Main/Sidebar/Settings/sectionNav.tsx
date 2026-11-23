@@ -21,6 +21,7 @@ export const useSectionNav = () => useContext(SectionNavContext)
 export interface SubpageNav {
   /** The sub-page drawn in place of the section body, if any. */
   subpage: Subpage | null
+  /** Under the section showing, whichever one that is. */
   open: (subpage: Subpage) => void
   /** Back to the section the sub-page was opened from. */
   close: () => void

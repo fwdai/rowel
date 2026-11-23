@@ -3,7 +3,7 @@ import { selectWorkspaces, useApp } from '@/store'
 import { useDates } from '@/hooks/useDates'
 import { backupCoverage } from '@/lib/workspace'
 
-// The Encrypted backup row's status on the overview: where backups stand
+// The Back up the vault row's status on the overview: where backups stand
 // across every lockbox that can have one. Until each has been saved, how many
 // have; once each has, how far back the oldest goes, since that is how old
 // the set of them is — said as the lockbox's own last save when there is one.

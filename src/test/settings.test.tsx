@@ -80,6 +80,12 @@ const openBackup = () => openSyncPage('backup')
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
 
 // A workspace row's ⋯, which is where Edit and Delete live.
+// The ways to one more lockbox are the menu the list's one Add row opens.
+const openAdd = async (way: 'new-row' | 'restore-open' | 'backup-open') => {
+  await userEvent.click(screen.getByTestId('workspace-add-row'))
+  await userEvent.click(screen.getByTestId(`workspace-${way}`))
+}
+
 const openMenu = (id: string) => userEvent.click(screen.getByTestId(`workspace-menu-${id}`))
 
 describe('Settings shell', () => {
@@ -183,7 +189,11 @@ describe('Settings › sync overview', () => {
     await openSync()
     expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-sync-open-cloud')).toHaveTextContent('Your cloud storage')
-    expect(screen.getByTestId('settings-sync-open-backup')).toHaveTextContent('Encrypted backup')
+    // Saving a copy and bringing one back are two things to do, so two rows.
+    expect(screen.getByTestId('settings-sync-open-backup')).toHaveTextContent('Back up the vault')
+    expect(screen.getByTestId('settings-sync-open-restore')).toHaveTextContent(
+      'Restore from a backup'
+    )
     // No nearby row until the backend says this build can do it.
     expect(screen.queryByTestId('settings-sync-open-nearby')).not.toBeInTheDocument()
     expect(screen.queryByTestId('settings-drive-connect')).not.toBeInTheDocument()
@@ -197,7 +207,7 @@ describe('Settings › sync overview', () => {
     expect(cloudStatus()).toHaveTextContent('Not connected')
 
     await userEvent.click(screen.getByTestId('settings-sync-backup'))
-    expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Back up the vault' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-backup-saves')).toBeInTheDocument()
   })
 
@@ -321,7 +331,7 @@ describe('Settings › sync overview', () => {
   it('leaves a page when something outside moves Settings to another section', async () => {
     await openSync()
     await userEvent.click(screen.getByTestId('settings-sync-open-backup'))
-    expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Back up the vault' })).toBeInTheDocument()
 
     act(() => openSettings('import'))
     expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
@@ -755,18 +765,25 @@ describe('Settings › sync', () => {
     expect(screen.queryByTestId('settings-export-run')).not.toBeInTheDocument()
   })
 
-  // A backup restores as a lockbox of its own, so the way to restoring one
-  // leads to its page under Lockboxes rather than restoring here.
-  it('leads to the restore page under Lockboxes', async () => {
+  // A backup restores as a lockbox of its own, on the page Lockboxes offers
+  // for it too. Asked for here it opens under this section: the section does
+  // not move, and Back leads to the overview it was asked from. The page that
+  // saves backups offers none of it.
+  it('opens the restore page from the overview, and steps back to it', async () => {
     await openBackup()
-
-    await userEvent.click(screen.getByTestId('settings-backup-restore'))
-
-    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
-    expect(useUi.getState().settingsSection).toBe('workspaces')
-    // Back is the section the page belongs to, not the one it was reached from.
+    expect(screen.queryByTestId('workspace-backup-pick')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-sync-open-restore'))
+
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-backup-pick')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-backup-saves')).not.toBeInTheDocument()
+    expect(useUi.getState().settingsSection).toBe('sync')
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
   })
 
   // The pill beside the title says where the connection stands, one tone per
@@ -1492,7 +1509,7 @@ describe('Settings › import', () => {
     fileOpened('/tmp/Rowel backup 2026-09-15.rowel')
     await userEvent.click(await screen.findByTestId('import-rowel-restore'))
 
-    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent(
       'Rowel backup 2026-09-15.rowel'
     )
@@ -1505,6 +1522,46 @@ describe('Settings › import', () => {
     expect(calls('workspace_restore_from_file')).toEqual([
       { name: '', password: 'backup-pass', path: '/tmp/Rowel backup 2026-09-15.rowel' }
     ])
+  })
+
+  // The restore page sits over Import, which is already the section a second
+  // opened file asks for, so nothing moves to dismiss the page: it steps aside
+  // itself, and Import takes the new file rather than leaving the first one's
+  // form up.
+  it('steps the restore page aside for another backup the OS opens', async () => {
+    flowMain()
+    render(<Settings />)
+    fileOpened('/tmp/Rowel backup 2026-09-15.rowel')
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+    expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent('2026-09-15')
+
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-01.rowel'))
+
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
+    expect(await screen.findByText('Rowel backup 2026-10-01.rowel')).toBeInTheDocument()
+    expect(useApp.getState().openedFile).toBeNull()
+
+    await userEvent.click(screen.getByTestId('import-rowel-restore'))
+    expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent('2026-10-01')
+  })
+
+  // A restore that is running holds Settings, and its page with it: the file
+  // waits, and is taken once the restore lets go.
+  it('keeps a locked restore page until the lock is released, then takes the file', async () => {
+    flowMain()
+    render(<Settings />)
+    fileOpened('/tmp/Rowel backup 2026-09-15.rowel')
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+
+    act(() => lockSettings(true))
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-01.rowel'))
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent('2026-09-15')
+
+    act(() => lockSettings(false))
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(await screen.findByText('Rowel backup 2026-10-01.rowel')).toBeInTheDocument()
   })
 
   // The backup card offers our own `.rowel` too, and takes it as the OS-opened
@@ -1522,11 +1579,16 @@ describe('Settings › import', () => {
 
     // And offers the restore it is for, with the file already picked.
     await userEvent.click(screen.getByTestId('import-rowel-restore'))
-    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent(
       'Rowel backup 2026-09-15.rowel'
     )
     expect(calls('pick_file')).toHaveLength(1)
+
+    // Over the section it was offered in, which Back leads to.
+    expect(useUi.getState().settingsSection).toBe('import')
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
   })
 
   // A legacy vault is still merged where it was picked, and offered no link.
@@ -1800,7 +1862,7 @@ describe('Settings › export', () => {
     await userEvent.click(screen.getByTestId('settings-export-backup-link'))
     expect(useUi.getState().settingsSection).toBe('sync')
     // Straight to the backup's own page, not the overview above it.
-    expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Back up the vault' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-backup-saves')).toBeInTheDocument()
   })
 })
@@ -2236,35 +2298,6 @@ describe('Settings › workspaces › list', () => {
     expect(calls('workspace_select')).toEqual([{ id: 'w2' }])
   })
 
-  // The third tile names the account a new lockbox would join; with none
-  // connected there is none to name, so it leads to where one is connected.
-  // Its title claims no syncing either way.
-  it('leads to connecting an account until one is connected', async () => {
-    await open()
-    act(() => report({ configured: false }))
-    await go('workspaces')
-
-    expect(screen.getByText('Separate sync')).toBeInTheDocument()
-    expect(screen.queryByText(/^Synced/)).not.toBeInTheDocument()
-    expect(screen.getByText(/^No cloud account yet\./)).toBeInTheDocument()
-    expect(screen.queryByText(/^Stored in the same/)).not.toBeInTheDocument()
-
-    act(() => report({ configured: true, provider: 'dropbox' }))
-    expect(screen.getByText('Separate sync')).toBeInTheDocument()
-    expect(screen.getByText('Stored in the same Dropbox account.')).toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-info-sync-link')).not.toBeInTheDocument()
-
-    act(() => report({ configured: false }))
-    await userEvent.click(screen.getByTestId('workspace-info-sync-link'))
-    expect(useUi.getState().settingsSection).toBe('sync')
-    expect(screen.getByRole('heading', { name: 'Your cloud storage' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-providers')).toBeInTheDocument()
-
-    // A page of Sync & backup, so Back is the overview.
-    await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
-  })
-
   it('names the provider a locked workspace syncs to', async () => {
     seedApp({
       workspaces: [
@@ -2344,7 +2377,7 @@ describe('Settings › workspaces › edit', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('workspace-edit-name')).not.toBeInTheDocument()
     )
-    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   })
 
   it('recolours a workspace without renaming it', async () => {
@@ -2427,7 +2460,7 @@ describe('Settings › workspaces › edit', () => {
     await userEvent.keyboard('{Escape}')
 
     expect(screen.queryByTestId('workspace-edit-name')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
     expect(useUi.getState().settings).toBe(true)
     expect(calls('workspace_rename')).toHaveLength(0)
     expect(calls('workspace_set_color')).toHaveLength(0)
@@ -2438,14 +2471,14 @@ describe('Settings › workspaces › new', () => {
   const openNew = async () => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-new-row'))
+    await openAdd('new-row')
   }
 
   const create = () => screen.getByTestId('workspace-create')
   const hint = () => screen.getByTestId('settings-subpage-hint')
   const tile = () => screen.getByTestId('workspace-new-preview').querySelector('[aria-hidden]')
 
-  it('opens the sub-page from the list’s last row and creates one', async () => {
+  it('opens the sub-page from the ways to add one and creates one', async () => {
     await openNew()
 
     expect(screen.getByRole('heading', { name: 'New lockbox' })).toBeInTheDocument()
@@ -2527,7 +2560,8 @@ describe('Settings › workspaces › new', () => {
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
 
     expect(screen.queryByTestId('workspace-new-name')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   })
 })
 
@@ -2561,7 +2595,7 @@ describe('Settings › workspaces › delete', () => {
     expect(screen.getByTestId('workspace-delete-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Delete lockbox' })).toBeInTheDocument()
     expect(screen.getByTestId('workspace-delete-preview')).toHaveTextContent('Work')
-    expect(screen.queryByTestId('workspace-new-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-add-row')).not.toBeInTheDocument()
     expect(
       screen.getByText('This removes the lockbox and everything in it from this device.')
     ).toBeInTheDocument()
@@ -2902,11 +2936,11 @@ describe('Settings › workspaces › master password changed elsewhere', () => 
 })
 
 describe('Settings › workspaces › restore from an account', () => {
-  // The flow is a page under Lockboxes, opened from a row under the list.
+  // The flow is a page under Lockboxes, one of the ways to add one.
   const openRestore = async () => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-restore-open'))
+    await openAdd('restore-open')
   }
 
   // Consent, then the probe's answer — which arrives as an event, never through
@@ -2920,10 +2954,12 @@ describe('Settings › workspaces › restore from an account', () => {
   // On the Lockboxes page the account's Connect buttons would read as
   // connecting this vault, which is what the same buttons do under Sync &
   // backup; there the page's title says what they are for.
-  it('keeps the sign-in on a page of its own, a row away from the list', async () => {
+  it('keeps the sign-in on a page of its own, away from the list', async () => {
     await open()
     await go('workspaces')
 
+    expect(screen.queryAllByTestId(/^workspace-restore-.+-connect$/)).toHaveLength(0)
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
     expect(screen.queryAllByTestId(/^workspace-restore-.+-connect$/)).toHaveLength(0)
     expect(screen.getByTestId('workspace-restore-open')).toHaveTextContent(
       'Restore from a cloud account'
@@ -2933,8 +2969,17 @@ describe('Settings › workspaces › restore from an account', () => {
     expect(
       screen.getByRole('heading', { name: 'Restore from a cloud account' })
     ).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-restore-drive-connect')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-restore-dropbox-connect')).toBeInTheDocument()
+    // The choice of a provider is the list Sync & backup asks with: a row per
+    // provider, named, each with its own Connect.
+    const providers = screen.getByTestId('workspace-restore-row')
+    expect(providers).toHaveTextContent('Choose a provider')
+    expect(within(providers).getByText('Google Drive', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-drive-connect')).toHaveAccessibleName(
+      'Connect Google Drive'
+    )
+    expect(screen.getByTestId('workspace-restore-dropbox-connect')).toHaveAccessibleName(
+      'Connect Dropbox'
+    )
     expect(screen.queryByTestId('workspace-restore-open')).not.toBeInTheDocument()
     // The title and its description are said once, by the page's header.
     expect(screen.getAllByText('Restore from a cloud account')).toHaveLength(1)
@@ -2942,7 +2987,7 @@ describe('Settings › workspaces › restore from an account', () => {
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-restore-open')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   })
 
   // Going Back is backing out, the same as Cancel: the pending tokens go too.
@@ -3218,7 +3263,7 @@ describe('Settings › workspaces › restore a backup', () => {
   const openPage = async () => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-backup-open'))
+    await openAdd('backup-open')
   }
 
   const pickAndType = async (password: string) => {
@@ -3228,19 +3273,19 @@ describe('Settings › workspaces › restore a backup', () => {
     await userEvent.type(await screen.findByTestId('workspace-backup-password'), password)
   }
 
-  // A third way to one more lockbox, under the other two — and the last row of
-  // the card, which is the one that rounds the card's foot.
-  it('opens its page from the last row under the lockbox list', async () => {
+  // The third way to one more lockbox, under the other two.
+  it('opens its page from the last of the ways to add one', async () => {
     await open()
     await go('workspaces')
+    await userEvent.click(screen.getByTestId('workspace-add-row'))
 
     const row = screen.getByTestId('workspace-backup-open')
-    expect(row).toHaveTextContent('Restore a backup')
+    expect(row).toHaveTextContent('Restore from a backup')
     expect(row.parentElement?.lastElementChild).toBe(row)
     expect(row.previousElementSibling).toBe(screen.getByTestId('workspace-restore-open'))
 
     await userEvent.click(row)
-    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
     expect(screen.getAllByText(/^Pick a \.rowel file saved from Settings/)).toHaveLength(1)
     // Nothing to restore until a file is chosen.
     expect(screen.queryByTestId('workspace-backup-password')).not.toBeInTheDocument()
@@ -3302,7 +3347,7 @@ describe('Settings › workspaces › restore a backup', () => {
     expect(screen.getByTestId('modal-close')).toBeDisabled()
     expect(screen.getByTestId('settings-subpage-back')).toBeDisabled()
     await userEvent.keyboard('{Escape}')
-    expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
   })
 
   it('says so when the backup is of a lockbox already here', async () => {
@@ -3374,14 +3419,47 @@ describe('Settings sub-pages', () => {
   const openSubpage = async () => {
     await open()
     await go('workspaces')
-    await userEvent.click(screen.getByTestId('workspace-new-row'))
+    await openAdd('new-row')
   }
 
   const onSection = () => {
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
     expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-new-row')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-add-row')).toBeInTheDocument()
   }
+
+  const ways = () =>
+    ['new-row', 'restore-open', 'backup-open'].map(way => screen.queryByTestId(`workspace-${way}`))
+
+  // The list's one way to one more lockbox, and the last row of its card. The
+  // three ways there are stay out of the list, in the menu the row opens, and
+  // the menu is not a page: the section stays where it is under it.
+  it('offers one way to add a lockbox under the list, with the ways in its menu', async () => {
+    await open()
+    await go('workspaces')
+
+    const row = screen.getByTestId('workspace-add-row')
+    expect(row).toHaveTextContent('Add a lockbox')
+    expect(row.parentElement?.parentElement?.lastElementChild).toBe(row.parentElement)
+    expect(row).toHaveAttribute('aria-expanded', 'false')
+    for (const way of ways()) expect(way).not.toBeInTheDocument()
+
+    await userEvent.click(row)
+    expect(row).toHaveAttribute('aria-expanded', 'true')
+    expect(ways().map(way => way?.textContent)).toEqual([
+      expect.stringMatching(/^New lockbox/),
+      expect.stringMatching(/^Restore from a cloud account/),
+      expect.stringMatching(/^Restore from a backup/)
+    ])
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
+
+    // Escape is the menu's first: it closes, and Settings stays open under it.
+    await userEvent.keyboard('{Escape}')
+    for (const way of ways()) expect(way).not.toBeInTheDocument()
+    expect(useUi.getState().settings).toBe(true)
+    onSection()
+  })
 
   it('heads the sub-page in the section’s place and comes back from it', async () => {
     await openSubpage()
@@ -3394,7 +3472,7 @@ describe('Settings sub-pages', () => {
       screen.getByText('Its own encrypted database, unlocked alongside your others.')
     ).toBeInTheDocument()
     // It replaces the section's body rather than stacking on it.
-    expect(screen.queryByTestId('workspace-new-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-add-row')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-subpage-back')).toHaveAccessibleName('Back')
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))

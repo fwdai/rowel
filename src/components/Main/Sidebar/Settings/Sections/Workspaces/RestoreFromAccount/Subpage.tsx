@@ -1,4 +1,3 @@
-import { CARD } from '@/components/elements/tokens'
 import SubpageScroller from '../../../SubpageScroller'
 import RestoreFromAccount from '.'
 
@@ -7,10 +6,7 @@ import RestoreFromAccount from '.'
 export default function RestoreSubpage() {
   return (
     <SubpageScroller testid="settings-restore-workspace">
-      {/* No heading over the card: the page's own title is the heading. */}
-      <div className={CARD}>
-        <RestoreFromAccount />
-      </div>
+      <RestoreFromAccount />
     </SubpageScroller>
   )
 }
