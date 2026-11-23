@@ -320,18 +320,24 @@ pub(crate) fn prove_password(session: &Session, candidate: &VaultKey) -> Result<
 // does. `workspace_id` names the lockbox, and the open one is saved when it
 // names none. The snapshot is already sealed under that lockbox's key;
 // `password` is asked for only to prove the person exporting can open what
-// they are about to carry away — the open lockbox's master password, proved
-// as every prompt in an unlocked app is: the password the app was opened with,
-// and every lockbox it holds a key for with it. Nothing is purged first — a
-// backup keeps every tombstone the sync pack would have reclaimed.
+// they are about to carry away. Nothing is purged first — a backup keeps every
+// tombstone the sync pack would have reclaimed.
 //
-// The open lockbox is packed through the session. Any other is packed from its
-// own directory and descriptor with the key the app holds for it
-// (`crate::appkey`), opened as a sync of it opens it ([`pack_lockbox`]), under
-// the setup step, so nothing re-keys, moves or deletes it while it is read.
+// The password proved is the one that opens the lockbox being saved, not
+// whichever lockbox happens to be open. The open lockbox is the session's: its
+// own password, proved as every prompt about the open lockbox is
+// (`prove_session_password`), and packed through the session. Any other is
+// held by the key the app keeps for it, sealed under the app key
+// (`crate::appkey`), so what opens it is the vault password
+// (`verify_master_password`, under the primary's backoff) — whatever the open
+// lockbox is, an org lockbox with no password of its own included. It is
+// packed from its own directory and descriptor, opened as a sync of it opens
+// it ([`pack_lockbox`]). Both proofs run under the setup step, so nothing
+// re-keys, moves or deletes the lockbox while it is proved and read.
 //
-// The save is recorded against the lockbox once it has happened
-// ([`record_saved`]): a dialog dismissed writes nothing and records nothing.
+// The save is recorded once it has happened ([`record_saved`]), against the
+// lockbox that was packed, wherever the registry has it by then: a dialog
+// dismissed writes nothing and records nothing.
 #[tauri::command]
 pub async fn export_vault(
     password: Zeroizing<String>,
@@ -357,7 +363,7 @@ pub async fn export_vault(
     };
 
     let bytes = if target.open {
-        let kdf_params_json = storage::read_kdf_sidecar(&app)?.ok_or_else(no_descriptor)?;
+        let kdf_params_json = target.sealed_under.clone();
         let scratch = storage::sync_scratch_dir(&app)?;
 
         // Proved before the lock is taken, not under it: the Argon2id behind it
@@ -389,19 +395,26 @@ pub async fn export_vault(
         })
         .await?
     } else {
-        let candidate =
-            super::vault_password::prove_session_password(&app, &step, password).await?;
-        // The proof's key compared again under the guard, as above, and the
-        // ring read under it: a lock that landed meanwhile has emptied it.
+        // Not the session's lockbox, so not the session's password: its key is
+        // sealed under the app key, and the password that opens it is the vault
+        // password. Proved under the primary's backoff, with the step held as
+        // every proof against a backoff is.
+        let app_key =
+            super::vault_password::verify_master_password(&app, &root, &state, password).await?;
+        // The ring read again under the guards, as the session's key is above:
+        // a lock that landed meanwhile has emptied it, and a password change
+        // has put another app key in it than the one just proved.
         let material = {
             let session = state.session.lock().unwrap();
-            prove_password(&session, &candidate)?;
-            state
-                .keyring
-                .lock()
-                .unwrap()
-                .get(&target.id)
-                .ok_or(Error::Locked)?
+            session.key()?;
+            let ring = state.keyring.lock().unwrap();
+            let current = ring
+                .app_key()
+                .is_some_and(|held| bool::from(held.ct_eq(&app_key)));
+            if !current {
+                return Err(Error::Locked);
+            }
+            ring.get(&target.id).ok_or(Error::Locked)?
         };
         let key = VaultKey::from_material(material, true);
         let (dir, id) = (target.dir.clone(), target.id.clone());
@@ -420,7 +433,7 @@ pub async fn export_vault(
     .await?;
     let saved = {
         let _paths = state.workspace_lock.lock().unwrap();
-        record_saved(&root, &target.id, dest, &now())
+        record_saved(&root, &target.sealed_under, dest, &now())
     };
     Ok(saved)
 }
@@ -437,6 +450,13 @@ struct BackupTarget {
     /// nobody has named.
     name: Option<String>,
     dir: PathBuf,
+    /// Its key descriptor, as its sidecar had it when it was picked: the pack's
+    /// header, and what the lockbox is known by once the step is released. The
+    /// registry's id is a slot, not a lockbox — `default` names whichever
+    /// lockbox is the primary, and a delete of the primary moves a survivor
+    /// into it — while the descriptor carries the lockbox's own random salt
+    /// and moves with its files.
+    sealed_under: String,
     /// The session's own, packed through the session rather than its files.
     open: bool,
 }
@@ -469,23 +489,24 @@ fn backup_target(
             "an org lockbox is kept by its server and cannot be saved as a backup".into(),
         ));
     }
+    let sealed_under = match std::fs::read_to_string(dir.join(storage::KDF_SIDECAR_FILE)) {
+        Ok(descriptor) => descriptor,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(no_descriptor()),
+        Err(e) => return Err(e.into()),
+    };
     let open = id == active;
-    if !open {
-        if !dir.join(storage::KDF_SIDECAR_FILE).exists() {
-            return Err(no_descriptor());
-        }
-        if !held(id) {
-            return Err(Error::Unsupported(
-                "this lockbox is not unlocked on this device; switch to it once to unlock it, \
-                 then save its backup"
-                    .into(),
-            ));
-        }
+    if !open && !held(id) {
+        return Err(Error::Unsupported(
+            "this lockbox is not unlocked on this device; switch to it once to unlock it, \
+             then save its backup"
+                .into(),
+        ));
     }
     Ok(BackupTarget {
         id: id.to_string(),
         name: lockbox.name.clone(),
         dir,
+        sealed_under,
         open,
     })
 }
@@ -501,14 +522,34 @@ pub(crate) fn pack_lockbox(dir: &Path, workspace_id: &str, key: VaultKey) -> Res
 }
 
 /// What the save dialog came back with, for the webview — and, when it put the
-/// file somewhere, a note against lockbox `id` of when it did (`None` is a
-/// dialog dismissed). Best effort: the backup is on disk either way, and a
-/// stamp that will not write only leaves the page showing an older time. For a
-/// caller holding `workspace_lock` (see [`workspace::record_backup_in`]).
-fn record_saved(root: &Path, id: &str, dest: Option<PathBuf>, at: &str) -> Option<String> {
+/// file somewhere, a note of when it did against the lockbox that was packed
+/// (`None` is a dialog dismissed).
+///
+/// The lockbox is found by `sealed_under`, the descriptor it was packed with
+/// ([`workspace::sealed_under`]), not by the id it had then: the dialog stays
+/// open with no step held, and a delete of the primary meanwhile leaves that
+/// id naming another lockbox. One that has gone is not noted anywhere; one
+/// that was promoted is noted where it lives now. A lockbox whose password
+/// changed while the dialog was open has a new descriptor and goes unnoted,
+/// which leaves the page showing an older time for a backup that is under the
+/// old password anyway.
+///
+/// Best effort: the backup is on disk either way. For a caller holding
+/// `workspace_lock` (see [`workspace::record_backup_in`]).
+fn record_saved(
+    root: &Path,
+    sealed_under: &str,
+    dest: Option<PathBuf>,
+    at: &str,
+) -> Option<String> {
     let dest = dest?;
-    if let Err(e) = workspace::record_backup_in(root, id, at) {
-        log::warn!("could not record lockbox {id}'s backup: {e}");
+    match workspace::sealed_under(root, sealed_under) {
+        Some(id) => {
+            if let Err(e) = workspace::record_backup_in(root, &id, at) {
+                log::warn!("could not record lockbox {id}'s backup: {e}");
+            }
+        }
+        None => log::info!("the lockbox a backup was saved of is no longer on this device"),
     }
     Some(dest.to_string_lossy().into_owned())
 }
@@ -961,10 +1002,23 @@ mod tests {
         assert_eq!(deleted[0].title, "Gone");
     }
 
+    // A descriptor of its own for lockbox `id`, as every lockbox has: `salt`
+    // is what tells one from another. Returned as its sidecar holds it.
+    fn sealed(root: &Path, id: &str, salt: &str) -> String {
+        let dir = dir_of(root, id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let descriptor = KdfParams::argon2id(format!("{salt:-<21}").as_bytes(), 256, 1, 1)
+            .to_json()
+            .unwrap();
+        storage::atomic_write_file(&dir.join(storage::KDF_SIDECAR_FILE), &descriptor).unwrap();
+        descriptor
+    }
+
     // The primary, open; a lockbox beside it; and an org lockbox, told by its
     // descriptor. Read as JSON rather than built, so a field added to the
     // registry record does not have to be added here.
     fn lockboxes(root: &Path) -> Registry {
+        sealed(root, PRIMARY_ID, "primary");
         closed_lockbox(&dir_of(root, "a1b2"), VAULT_PASSWORD, &["x"]);
         let org = dir_of(root, "0r61");
         std::fs::create_dir_all(&org).unwrap();
@@ -1057,13 +1111,14 @@ mod tests {
     fn a_backup_is_recorded_once_saved_and_not_when_the_dialog_is_dismissed() {
         let root = tempfile::tempdir().unwrap();
         let registry = Registry::default();
+        let primary = sealed(root.path(), PRIMARY_ID, "primary");
 
-        assert_eq!(record_saved(root.path(), PRIMARY_ID, None, NOW), None);
+        assert_eq!(record_saved(root.path(), &primary, None, NOW), None);
         assert_eq!(statuses(&registry, root.path())[0].backed_up_at, None);
 
         let dest = PathBuf::from("/chosen/Rowel backup 2026-09-26.rowel");
         assert_eq!(
-            record_saved(root.path(), PRIMARY_ID, Some(dest.clone()), NOW),
+            record_saved(root.path(), &primary, Some(dest.clone()), NOW),
             Some(dest.to_string_lossy().into_owned())
         );
         let listed = statuses(&registry, root.path());
@@ -1082,9 +1137,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let registry = lockboxes(root.path());
         registry.save(root.path()).unwrap();
+        let work = sealed(root.path(), "a1b2", "work");
         let dest = || Some(PathBuf::from("/chosen/backup.rowel"));
 
-        record_saved(root.path(), "a1b2", dest(), NOW);
+        record_saved(root.path(), &work, dest(), NOW);
         let listed = statuses(&registry, root.path());
         assert_eq!(listed[0].backed_up_at, None);
         assert_eq!(listed[1].backed_up_at.as_deref(), Some(NOW));
@@ -1093,8 +1149,44 @@ mod tests {
             .get("backedUpAt")
             .is_none());
 
-        assert!(record_saved(root.path(), "c3d4", dest(), NOW).is_some());
-        assert!(!dir_of(root.path(), "c3d4").exists());
+        let gone = KdfParams::argon2id(b"gone-0123456789012345", 256, 1, 1)
+            .to_json()
+            .unwrap();
+        assert!(record_saved(root.path(), &gone, dest(), NOW).is_some());
+        let listed = statuses(&registry, root.path());
+        assert_eq!(listed[0].backed_up_at, None);
+        assert_eq!(listed[1].backed_up_at.as_deref(), Some(NOW));
+    }
+
+    // The registry's id is a slot. While the save dialog was open the primary
+    // was deleted and the lockbox beside it promoted into `default`: a save of
+    // the deleted primary must not mark the survivor as backed up, and a save
+    // of the survivor is noted where it lives now.
+    #[test]
+    fn a_backup_follows_its_lockbox_when_the_primary_is_deleted_under_the_dialog() {
+        let root = tempfile::tempdir().unwrap();
+        let primary = sealed(root.path(), PRIMARY_ID, "primary");
+        let work = sealed(root.path(), "a1b2", "work");
+        let dest = || Some(PathBuf::from("/chosen/backup.rowel"));
+
+        // The promotion, as far as a save can see it: the survivor's files are
+        // the primary's now, and its own slot is gone.
+        std::fs::copy(
+            dir_of(root.path(), "a1b2").join(storage::KDF_SIDECAR_FILE),
+            dir_of(root.path(), PRIMARY_ID).join(storage::KDF_SIDECAR_FILE),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(dir_of(root.path(), "a1b2")).unwrap();
+        let registry = Registry::default();
+
+        assert!(record_saved(root.path(), &primary, dest(), NOW).is_some());
+        assert_eq!(statuses(&registry, root.path())[0].backed_up_at, None);
+
+        assert!(record_saved(root.path(), &work, dest(), NOW).is_some());
+        assert_eq!(
+            statuses(&registry, root.path())[0].backed_up_at.as_deref(),
+            Some(NOW)
+        );
     }
 
     // The name the save dialog offers says which lockbox is in it, and can be

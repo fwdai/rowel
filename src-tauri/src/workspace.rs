@@ -85,6 +85,28 @@ pub fn record_backup_in(root: &Path, id: &str, at: &str) -> Result<()> {
     storage::atomic_write_file(&dir_of(root, id).join(storage::LAST_BACKUP_FILE), at)
 }
 
+/// The workspace whose vault is sealed under `descriptor` (its key descriptor,
+/// as its sidecar holds it), by the id the registry has it under now, or
+/// `None` when no workspace here is.
+///
+/// How a lockbox is found again by something that picked it earlier and held
+/// no step since. An id does not last that long: `default` is whichever
+/// lockbox is the primary, and a delete of the primary moves a survivor's files
+/// into it. The descriptor moves with those files and carries the lockbox's own
+/// random salt, so it names the lockbox rather than the slot — until its
+/// password changes, which writes a new one. For a caller holding
+/// `workspace_lock`, which a delete and a promotion move the files under.
+pub fn sealed_under(root: &Path, descriptor: &str) -> Option<String> {
+    Registry::load(root)
+        .workspaces
+        .into_iter()
+        .map(|workspace| workspace.id)
+        .find(|id| {
+            fs::read_to_string(dir_of(root, id).join(storage::KDF_SIDECAR_FILE))
+                .is_ok_and(|held| held == descriptor)
+        })
+}
+
 // The stamp beside the vault in `dir`, if there is one that reads as a time: a
 // file that does not is no more a backup than no file.
 fn backed_up_at_in(dir: &Path) -> Option<String> {
