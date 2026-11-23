@@ -1007,7 +1007,10 @@ environment only and passes the child's output through a redactor that
 replaces the value and its common encodings (base64 in both alphabets,
 percent-encoding, JSON escaping) with the placeholder; the proxy, which listens
 on the loopback address only, swaps it into the outgoing request's headers or
-its JSON or form body, never the URL, and scrubs the response; the hook
+its JSON or form body, never the URL, sends the request straight to the host
+the grant covers — over TLS unless that host is this machine, and never
+through a proxy the environment or the system names, since whoever starts the
+proxy chooses its environment — and scrubs the response; the hook
 rewrites `NAME=rowel://… cmd` into `rowel run` before the agent's shell runs it
 and ends a grant whose value shows in a command's output.
 
