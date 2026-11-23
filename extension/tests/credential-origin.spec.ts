@@ -6,10 +6,11 @@
 // (cookies.set) refuses the suffixes. The context menu's attribute fill
 // (content/fill.js) runs against a focused input.
 import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
 
 // The background's globals, as the page's scripts declare them
-declare const page, tabs, kpxc, kpxcFill, asked, filled;
+declare const page, tabs, kpxc, kpxcFill, kpxcBanner, browserStub, DatabaseState, asked, filled;
 
 const BACKGROUND = [ 'common/global.js', 'background/tabs.js', 'background/page.js', 'background/grants.js' ];
 
@@ -124,6 +125,28 @@ test.describe('Per-tab credential cache: one origin\'s logins never reach anothe
         expect(result.forTop).toBeUndefined();
         expect(result.forFrame).toBe('bank-1');
     });
+
+    test('A login selected in one origin\'s frame is not told to another origin, which keeps its own', async ({ page: browserPage }) => {
+        const result = await browserPage.evaluate(async () => {
+            const tab = { id: 1, active: true, url: 'https://evilbank.com/' };
+            const frame = { tab, frameId: 3, url: 'https://bank.com/login' };
+            const top = { tab, frameId: 0, url: 'https://evilbank.com/' };
+
+            await page.retrieveCredentials(tab, [ frame.url, frame.url, false ], frame);
+            await page.setLoginId(tab, 'bank-1', frame);
+            const forFrame = await page.getLoginId(tab, false, frame);
+            await page.retrieveCredentials(tab, [ top.url, top.url, false ], top);
+            return {
+                forFrame,
+                forTop: await page.getLoginId(tab, undefined, top),
+                forTopUnselected: await page.getLoginId(tab, false, top)
+            };
+        });
+
+        expect(result.forFrame).toBe('bank-1');
+        expect(result.forTop).toBe('evil-1');
+        expect(result.forTopUnselected).toBeUndefined();
+    });
 });
 
 test.describe('Iframe check: the frame and the tab share the base domain on a label boundary', () => {
@@ -191,5 +214,67 @@ test.describe('Context menu attribute fill: only an attribute of the frame\'s ow
         });
 
         expect(result).toEqual([ '0000' ]);
+    });
+});
+
+// The update list of the save banner, on the content-script fixture agent-mode.spec.ts uses.
+test.describe('Update banner: the count check is for the origin that submitted', () => {
+    const ORIGIN = 'https://rowel.test';
+    const ROOT = path.resolve('rowel');
+
+    // Two logins to choose from, the account's fresh list empty; the first one is clicked.
+    const updatesAfterChoosing = async (browserPage, url) => {
+        await browserPage.route(`${ORIGIN}/**`, (route) => {
+            const file = path.join(ROOT, decodeURIComponent(new URL(route.request().url()).pathname));
+            return fs.existsSync(file) ? route.fulfill({ path: file }) : route.fulfill({ status: 404 });
+        });
+        await browserPage.goto(`${ORIGIN}/tests/agent-mode.html`);
+        await browserPage.waitForSelector('#agent-mode-done', { state: 'attached' });
+
+        await browserPage.evaluate(async (submittedUrl) => {
+            await kpxcBanner.destroy();
+            kpxc.settings = { ...kpxc.settings, agentMode: false, showLoginNotifications: true, sitePreferences: [] };
+            kpxc.databaseState = DatabaseState.UNLOCKED;
+            browserStub.reset({
+                banner_get_position: 1,
+                get_connected_database: { count: 1, identifier: 'test' },
+                retrieve_credentials: [],
+                update_credentials: 'error'
+            });
+            const submitted = {
+                username: 'alice',
+                password: 'new-password',
+                url: submittedUrl,
+                usernameExists: true,
+                list: [ { login: 'alice', name: 'One', uuid: 'u1' }, { login: 'alice', name: 'Two', uuid: 'u2' } ]
+            };
+            await kpxcBanner.create(submitted);
+            await kpxcBanner.updateCredentials(submitted);
+        }, url);
+
+        // The list is in a closed shadow root and its links answer only a trusted click.
+        const middle = () => browserPage.evaluate(() => {
+            const rect = kpxcBanner.shadowSelector('ul#list a').getBoundingClientRect();
+            return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, shown: rect.width > 0 };
+        });
+        await expect.poll(async () => (await middle()).shown).toBe(true);
+        const link = await middle();
+
+        await browserPage.mouse.click(link.x, link.y);
+        await expect.poll(() => browserPage.evaluate(() => browserStub.sentFor('retrieve_credentials').length)).toBe(1);
+        await browserPage.waitForTimeout(200);
+        return browserPage.evaluate(() => browserStub.sentFor('update_credentials').length);
+    };
+
+    test('On the submitting origin, saved as the origin alone, a changed list stops the update', async ({ page: browserPage }) => {
+        expect(await updatesAfterChoosing(browserPage, ORIGIN)).toBe(0);
+    });
+
+    test('On the submitting origin, saved as a page URL, a changed list stops the update', async ({ page: browserPage }) => {
+        expect(await updatesAfterChoosing(browserPage, `${ORIGIN}/login`)).toBe(0);
+    });
+
+    test('After a redirect to another origin the update goes through', async ({ page: browserPage }) => {
+        expect(await updatesAfterChoosing(browserPage, 'https://login.other.test/session')).toBe(1);
     });
 });

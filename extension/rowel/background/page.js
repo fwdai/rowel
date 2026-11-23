@@ -212,18 +212,22 @@ page.retrieveCredentials = async function(tab, args = [], sender) {
 };
 
 page.getLoginId = async function(tab, returnSingle = true, sender) {
-    // If there's only one credential available and loginId is not set
+    // Rowel: the selected login, like the cached ones, is told only to a document of the origin it belongs to
     const currentTab = tabs.getTabFromId(tab.id);
-    if (currentTab && returnSingle && !currentTab.loginId && currentTab.credentials.length === 1
-        && currentTab.credentialsOrigin === grants.originOf(sender?.url)) { // Rowel: only to a document of the login's origin
+    const origin = grants.originOf(sender?.url);
+    const loginId = currentTab?.loginIdOrigin === origin ? currentTab.loginId : undefined;
+
+    // If there's only one credential available and loginId is not set
+    if (currentTab && returnSingle && !loginId && currentTab.credentials.length === 1
+        && currentTab.credentialsOrigin === origin) {
         return currentTab.credentials[0].uuid;
     }
 
-    return currentTab ? currentTab.loginId : undefined;
+    return loginId;
 };
 
-page.setLoginId = async function(tab, loginId) {
-    tabs.updateTabValues(tab?.id, { loginId: loginId });
+page.setLoginId = async function(tab, loginId, sender) {
+    tabs.updateTabValues(tab?.id, { loginId: loginId, loginIdOrigin: grants.originOf(sender?.url) });
 };
 
 page.getManualFill = async function(tab) {

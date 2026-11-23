@@ -348,7 +348,8 @@ kpxcBanner.updateCredentials = async function(credentials = {}) {
                     args: [ url, '', true ] // Sets triggerUnlock to true
                 }).then(async creds => {
                     // Rowel: after a redirect to another origin this document is served none of the submitting page's logins, so there is nothing to compare
-                    const sameOrigin = credentials.url.startsWith(window.location.origin + '/');
+                    const origin = window.location.origin;
+                    const sameOrigin = credentials.url === origin || credentials.url.startsWith(origin + '/');
                     if (sameOrigin && (!creds || creds.length !== credentials.list.length)) {
                         kpxcBanner.verifyResult('error');
                         return;
