@@ -31,6 +31,42 @@ export const registeredProvider = (workspace: Workspace): Provider | null =>
   workspace.provider ?? (workspace.synced === true ? 'googleDrive' : null)
 
 /**
+ * Whether a lockbox can be saved as a backup here: every one but an org
+ * lockbox, whose key its server holds and whose copy the server keeps. The
+ * backend also refuses a lockbox the app holds no key for, which nothing the
+ * frontend is told can predict, so that one says why when it is asked.
+ */
+export const canBackUp = (workspace: Workspace): boolean => !workspace.server
+
+/** Where backups stand across the lockboxes that can have one. */
+export interface BackupCoverage {
+  /** How many lockboxes can be saved. */
+  lockboxes: number
+  /** How many of them have been, on this device. */
+  saved: number
+  /**
+   * The oldest of their last saves once every one has been saved — how far
+   * back the set of backups as a whole goes. Null until then.
+   */
+  oldest: string | null
+}
+
+export const backupCoverage = (workspaces: Workspace[]): BackupCoverage => {
+  const lockboxes = workspaces.filter(canBackUp)
+  const stamps = lockboxes.flatMap(workspace =>
+    workspace.backedUpAt ? [workspace.backedUpAt] : []
+  )
+  const every = stamps.length > 0 && stamps.length === lockboxes.length
+  return {
+    lockboxes: lockboxes.length,
+    saved: stamps.length,
+    oldest: every
+      ? stamps.reduce((oldest, at) => (Date.parse(at) < Date.parse(oldest) ? at : oldest))
+      : null
+  }
+}
+
+/**
  * The cloud account a workspace has a copy in, or null when it has none: what
  * Settings › Lockboxes says of each lockbox, and what the connected account's
  * card counts, so the two cannot disagree. The open one is answered by its

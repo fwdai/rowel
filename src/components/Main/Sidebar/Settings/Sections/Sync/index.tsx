@@ -3,6 +3,7 @@ import SettingsGroup from '@/components/elements/SettingsGroup'
 import SettingsNavRow from '@/components/elements/SettingsNavRow'
 import { DiskGlyph } from '@/components/Main/icons'
 import { useSubpage } from '../../sectionNav'
+import { useBackupStatus } from './Backup/status'
 import Summary from './Summary'
 import NearbyRow from './NearbyRow'
 import CloudRow from './CloudRow'
@@ -13,6 +14,7 @@ import CloudRow from './CloudRow'
 export default function Sync() {
   const { t } = useTranslation()
   const { open } = useSubpage()
+  const backupStatus = useBackupStatus()
 
   return (
     <>
@@ -28,6 +30,7 @@ export default function Sync() {
           icon={<DiskGlyph size={16} />}
           label={t('Encrypted backup')}
           description={t('A file you keep yourself, sealed with your master password.')}
+          status={backupStatus}
           onClick={() => open({ key: 'sync-backup' })}
           testid="settings-sync-open-backup"
         />

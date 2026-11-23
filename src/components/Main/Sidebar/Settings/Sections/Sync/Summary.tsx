@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next'
-import { useApp, openPasswordPrompt } from '@/store'
+import { useApp, openPasswordPrompt, selectWorkspaces } from '@/store'
 import { syncProvider } from '@/api/sync'
 import { providerName } from '@/api/provider'
+import { backupCoverage } from '@/lib/workspace'
 import { nearbyView, syncView } from '@/lib/syncView'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
@@ -14,13 +15,14 @@ import { useSectionNav, useSubpage } from '../../sectionNav'
 // verdict (`syncView`) spelled out, so the two can never disagree — on what is
 // wrong, or on where it is put right. A vault that syncs nowhere is a state
 // like any other, and is offered the one thing that then stands between a lost
-// device and a lost vault.
+// device and a lost vault — until every lockbox has a backup saved.
 export default function Summary() {
   const { t } = useTranslation()
   const { open } = useSubpage()
   const go = useSectionNav()
   const sync = useApp(state => state.sync)
   const nearby = useApp(state => state.nearby)
+  const backedUp = backupCoverage(useApp(selectWorkspaces)).oldest !== null
   const view = syncView(sync, nearby)
   const provider = syncProvider(sync)
   // Named beside the account only while it is doing its part: a device that
@@ -92,7 +94,7 @@ export default function Summary() {
                 {t('Review')}
               </Button>
             )}
-            {view.tone === 'local' && (
+            {view.tone === 'local' && !backedUp && (
               <Button
                 variant="pale"
                 size="md"

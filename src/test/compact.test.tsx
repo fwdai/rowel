@@ -550,6 +550,37 @@ describe('compact shell', () => {
     expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
   })
 
+  // The backup page is the same list on the phone, pushed over the overview
+  // that says where backups stand: a row per lockbox, each unfolding its own
+  // form inside itself rather than in a sheet.
+  it('pushes the backup page with a row per lockbox to save', async () => {
+    seed()
+    seedApp({
+      workspaces: [
+        { id: 'default', name: null, backedUpAt: '2024-01-15T12:00:00.000Z' },
+        { id: 'w2', name: 'Work' }
+      ],
+      activeWorkspace: 'default'
+    })
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-sync'))
+    expect(screen.getByTestId('settings-sync-open-backup-status')).toHaveTextContent(
+      'Some lockboxes never saved'
+    )
+    await userEvent.click(screen.getByTestId('settings-sync-open-backup'))
+
+    const page = screen.getByTestId('settings-subpage')
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
+    const work = within(page).getByTestId('settings-backup-row-w2')
+    expect(within(page).getByTestId('settings-backup-row-default')).toHaveTextContent(
+      'Last saved 01/15/2024'
+    )
+    await userEvent.click(within(work).getByTestId('settings-backup-row-w2-toggle'))
+    expect(within(work).getByLabelText('Master password')).toBeInTheDocument()
+  })
+
   // Sync & backup is an overview whose rows push a page each: root, section,
   // page, with each Back naming the screen under it.
   it('drills from the Sync overview into a page and back out', async () => {

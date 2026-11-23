@@ -31,7 +31,7 @@ import Footer from '@/components/Main/Body/Aside/Show/Footer'
 import { EVENTS } from '@/api/events'
 import { subscribeToEvents } from '@/store/events'
 import { emitEvent } from './events'
-import { appStatusDefault, calls, mockCommand, mockCommandOnce } from './ipc'
+import { appStatusDefault, calls, clearCalls, mockCommand, mockCommandOnce } from './ipc'
 import { loginMeta, seedApp, withEntries } from './utils'
 
 beforeEach(() => vi.clearAllMocks())
@@ -75,6 +75,9 @@ const openSyncPage = async (page: 'nearby' | 'cloud' | 'backup') => {
 }
 const openCloud = () => openSyncPage('cloud')
 const openBackup = () => openSyncPage('backup')
+
+// An ISO stamp whole days before now, as a backup saved then is recorded.
+const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
 
 // A workspace row's ⋯, which is where Edit and Delete live.
 const openMenu = (id: string) => userEvent.click(screen.getByTestId(`workspace-menu-${id}`))
@@ -184,7 +187,7 @@ describe('Settings › sync overview', () => {
     // No nearby row until the backend says this build can do it.
     expect(screen.queryByTestId('settings-sync-open-nearby')).not.toBeInTheDocument()
     expect(screen.queryByTestId('settings-drive-connect')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('settings-backup-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('settings-backup-saves')).not.toBeInTheDocument()
   })
 
   it('says a vault that syncs nowhere is on this device, and offers a backup', async () => {
@@ -195,7 +198,63 @@ describe('Settings › sync overview', () => {
 
     await userEvent.click(screen.getByTestId('settings-sync-backup'))
     expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-backup-row')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-backup-saves')).toBeInTheDocument()
+  })
+
+  // The backup row says where backups stand across every lockbox that can
+  // have one: none saved, some, or all — then how far back the oldest goes.
+  // The org lockbox is not one of them, never saved or not.
+  it('says on the backup row whether each lockbox has been saved', async () => {
+    const backupStatus = () => screen.getByTestId('settings-sync-open-backup-status')
+    const lockboxes = (personal?: string, work?: string) =>
+      seedApp({
+        workspaces: [
+          { id: 'default', name: null, backedUpAt: personal },
+          { id: 'w2', name: 'Work', backedUpAt: work },
+          { id: 'w-org', name: 'Deploy', server: 'https://rowel.acme.example' }
+        ],
+        activeWorkspace: 'default'
+      })
+
+    lockboxes()
+    await openSync()
+    expect(backupStatus()).toHaveTextContent('Never saved')
+
+    act(() => lockboxes(daysAgo(1)))
+    expect(backupStatus()).toHaveTextContent('Some lockboxes never saved')
+
+    act(() => lockboxes(daysAgo(1), daysAgo(3)))
+    expect(backupStatus()).toHaveTextContent('Oldest backup 3 days ago')
+  })
+
+  // A vault of one lockbox has no "oldest" to speak of: its own last save.
+  it('says when the one lockbox was last saved', async () => {
+    seedApp({ workspaces: [{ id: 'default', name: null, backedUpAt: daysAgo(2) }] })
+    await openSync()
+    expect(screen.getByTestId('settings-sync-open-backup-status')).toHaveTextContent(
+      'Last saved 2 days ago'
+    )
+  })
+
+  // The offer is for a vault with nothing to fall back on: once every
+  // lockbox has a backup saved, the card says where it stands and no more.
+  it('stops offering a backup once every lockbox has one', async () => {
+    const lockboxes = (work?: string) =>
+      seedApp({
+        workspaces: [
+          { id: 'default', name: null, backedUpAt: daysAgo(1) },
+          { id: 'w2', name: 'Work', backedUpAt: work }
+        ],
+        activeWorkspace: 'default'
+      })
+
+    lockboxes()
+    await openSync()
+    expect(screen.getByTestId('settings-sync-backup')).toBeInTheDocument()
+
+    act(() => lockboxes(daysAgo(5)))
+    expect(summary()).toHaveTextContent('On this device only')
+    expect(screen.queryByTestId('settings-sync-backup')).not.toBeInTheDocument()
   })
 
   it('says where the cloud account stands on its row and in the summary', async () => {
@@ -574,16 +633,119 @@ describe('Settings › sync', () => {
     })
   })
 
+  // One lockbox, one row: the page still reads as saving the vault there is.
   it('offers the encrypted backup behind its own control', async () => {
     await openBackup()
-    expect(screen.getByTestId('settings-backup-row')).toHaveTextContent('.rowel')
-    // It says which lockbox the file holds: the open one, not the whole vault.
-    expect(screen.getByTestId('settings-backup-row')).toHaveTextContent(
-      'Everything in Personal, sealed with your master password'
-    )
+    const saves = screen.getByTestId('settings-backup-saves')
+    expect(saves).toHaveTextContent('.rowel')
+    expect(saves).toHaveTextContent('One file per lockbox, sealed with your master password.')
+    // It says which lockbox the file holds, and that it has none yet.
+    expect(screen.getByTestId('settings-backup-row-default')).toHaveTextContent('Personal')
+    expect(screen.getByTestId('settings-backup-row-default')).toHaveTextContent('Never saved')
     expect(document.querySelector('input[name="export_password"]')).toBeNull()
     await userEvent.click(screen.getByText('Save…'))
     expect(document.querySelector('input[name="export_password"]')).toBeInTheDocument()
+  })
+
+  describe('with several lockboxes', () => {
+    const status = (work?: string, activeWorkspace = 'default') => ({
+      workspaces: [
+        { id: 'default', name: null, backedUpAt: '2024-01-15T12:00:00.000Z' },
+        { id: 'w-org', name: 'Deploy', server: 'https://rowel.acme.example' },
+        { id: 'w2', name: 'Work', backedUpAt: work }
+      ],
+      activeWorkspace
+    })
+    const rows = () =>
+      [
+        ...screen
+          .getByTestId('settings-backup-saves')
+          .querySelectorAll('[data-testid^="settings-backup-row-"]')
+      ]
+        .map(node => node.getAttribute('data-testid'))
+        .filter(id => !id?.endsWith('-toggle'))
+
+    const saveWork = async (password: string) => {
+      await userEvent.click(screen.getByTestId('settings-backup-row-w2-toggle'))
+      await userEvent.type(
+        within(screen.getByTestId('settings-backup-row-w2')).getByLabelText('Master password'),
+        password
+      )
+      await userEvent.click(screen.getByTestId('settings-backup-save-w2'))
+    }
+
+    // Every lockbox that can be saved, the open one first, each saying when
+    // it last was; the org lockbox is its server's, and is not offered.
+    it('lists each lockbox with when it was last saved', async () => {
+      seedApp(status(undefined, 'w2'))
+      await openBackup()
+
+      expect(rows()).toEqual(['settings-backup-row-w2', 'settings-backup-row-default'])
+      expect(screen.queryByTestId('settings-backup-row-w-org')).not.toBeInTheDocument()
+      const work = screen.getByTestId('settings-backup-row-w2')
+      expect(work).toHaveTextContent('Work')
+      expect(work).toHaveTextContent('Never saved')
+      const personal = screen.getByTestId('settings-backup-row-default')
+      expect(personal).toHaveTextContent('Personal')
+      expect(personal).toHaveTextContent('Last saved 01/15/2024')
+      // The chip is said once, over the list, not on every row.
+      expect(screen.getAllByText('.rowel')).toHaveLength(1)
+    })
+
+    // A lockbox that is not open is saved by its id, with the password typed
+    // beside it, and its row says so as soon as the probe has it.
+    it('saves a lockbox that is not open, and says when', async () => {
+      seedApp(status())
+      mockCommand('export_vault', () => '/Users/me/Rowel backup Work 2026-11-23.rowel')
+      mockCommand('app_status', () => ({ ...appStatusDefault(), ...status(daysAgo(0)) }))
+      await openBackup()
+      expect(screen.getByTestId('settings-backup-row-w2')).toHaveTextContent('Never saved')
+
+      await saveWork('vault password')
+
+      expect(calls('export_vault')).toEqual([{ workspaceId: 'w2', password: 'vault password' }])
+      const row = screen.getByTestId('settings-backup-row-w2')
+      expect(await within(row).findByText('Last saved just now')).toBeInTheDocument()
+      expect(within(row).getByText('Saved')).toBeInTheDocument()
+    })
+
+    // A dialog dismissed saved nothing: nothing is said, nothing re-read, and
+    // the password stays for another go.
+    it('says nothing was saved when the dialog is dismissed', async () => {
+      seedApp(status())
+      await openBackup()
+      clearCalls('app_status')
+
+      await saveWork('vault password')
+
+      expect(calls('export_vault')).toHaveLength(1)
+      const row = screen.getByTestId('settings-backup-row-w2')
+      await waitFor(() => expect(screen.getByTestId('settings-backup-save-w2')).toBeEnabled())
+      expect(row).toHaveTextContent('Never saved')
+      expect(within(row).queryByText('Saved')).not.toBeInTheDocument()
+      expect(calls('app_status')).toHaveLength(0)
+      expect(within(row).getByLabelText('Master password')).toHaveValue('vault password')
+    })
+
+    // Why a lockbox cannot be saved is the backend's to say, in its words.
+    it('shows why a lockbox could not be saved', async () => {
+      seedApp(status())
+      mockCommand('export_vault', () =>
+        Promise.reject({
+          kind: 'unsupported',
+          message: 'this lockbox is not unlocked on this device'
+        })
+      )
+      await openBackup()
+
+      await saveWork('vault password')
+
+      expect(
+        await within(screen.getByTestId('settings-backup-row-w2')).findByText(
+          'this lockbox is not unlocked on this device'
+        )
+      ).toBeInTheDocument()
+    })
   })
 
   // The portable export lives with Import now; this section keeps only the
@@ -1589,7 +1751,7 @@ describe('Settings › export', () => {
     expect(useUi.getState().settingsSection).toBe('sync')
     // Straight to the backup's own page, not the overview above it.
     expect(screen.getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-backup-row')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-backup-saves')).toBeInTheDocument()
   })
 })
 

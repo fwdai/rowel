@@ -8,6 +8,8 @@ interface Props {
   description?: string
   // The row's 16px mark, drawn in SettingsRow's tile.
   icon?: ReactNode
+  // Or a tile of its own in that place (a lockbox's monogram).
+  tile?: ReactNode
   /** What the button offers while the row is folded ("Change…", "Show"). */
   action: string
   /** What it offers once unfolded. "Cancel" for a form; a list says "Hide". */
@@ -24,6 +26,7 @@ export default function ExpandableRow({
   label,
   description,
   icon,
+  tile,
   action,
   collapse,
   testid,
@@ -37,6 +40,7 @@ export default function ExpandableRow({
       label={label}
       description={description}
       icon={icon}
+      tile={tile}
       testid={testid}
       control={
         <Button

@@ -280,6 +280,11 @@ export interface Workspace {
    * themselves.
    */
   server?: string
+  /**
+   * When a backup of it was last saved on this device (an ISO timestamp).
+   * Kept on this device only; absent for one never saved here.
+   */
+  backedUpAt?: string
 }
 
 // Which biometry this device gates with, straight from the OS (Apple reads
