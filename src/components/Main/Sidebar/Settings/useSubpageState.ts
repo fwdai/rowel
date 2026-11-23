@@ -34,9 +34,10 @@ export interface SubpageState extends SubpageNav {
  *
  * A page over Import steps aside for a file the OS opens meanwhile: Import is
  * the section that takes such a file, `openSettings('import')` moves nothing
- * when Import is already showing, and under a page the section is not there
- * to claim it (the wide shell) or not seen to (the phone). While Settings is
- * locked the page stays, and steps aside once the lock is released.
+ * when Import is already showing, and under a page the section does not claim
+ * it: it is not there to (the wide shell), or leaves it waiting (the phone,
+ * see `useImport`). While Settings is locked the page stays and the file
+ * waits, and the page steps aside once the lock is released.
  *
  * Under the section lock: while Settings may not be left (`settingsLocked`) a
  * sub-page is neither opened nor left, and the section cannot move from under

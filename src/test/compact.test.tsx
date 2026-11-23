@@ -9,10 +9,12 @@ import Sheet from '@/components/elements/Sheet'
 import type { Entry } from '@/api/types'
 import { type Audit } from '@/api/tools'
 import {
+  useApp,
   useUi,
   useVault,
   selectCurrent,
   editEntry,
+  fileOpened,
   focusSearch,
   initialApp,
   lockSettings,
@@ -744,6 +746,38 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
     expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
+  })
+
+  // The Import pane stays mounted under the restore page here, so it could
+  // take a second opened file out of sight. It leaves the file waiting while
+  // it is covered: the page steps aside for it, at once or — when a restore
+  // holds Settings — once the lock is released, and only then is it taken.
+  it('steps the restore page aside for another opened backup, after a lock', async () => {
+    seed()
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-import'))
+    act(() => fileOpened('/tmp/Rowel backup 2026-09-15.rowel'))
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+    const page = screen.getByTestId('settings-subpage')
+    expect(within(page).getByTestId('workspace-backup-file')).toHaveTextContent('2026-09-15')
+
+    act(() => lockSettings(true))
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-01.rowel'))
+    expect(within(page).getByTestId('workspace-backup-file')).toHaveTextContent('2026-09-15')
+    expect(useApp.getState().openedFile).toBe('/tmp/Rowel backup 2026-10-01.rowel')
+
+    act(() => lockSettings(false))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(await screen.findByText('Rowel backup 2026-10-01.rowel')).toBeInTheDocument()
+    expect(useApp.getState().openedFile).toBeNull()
+
+    // With nothing holding Settings, the page steps aside at once.
+    await userEvent.click(screen.getByTestId('import-rowel-restore'))
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-09.rowel'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(await screen.findByText('Rowel backup 2026-10-09.rowel')).toBeInTheDocument()
   })
 
   // A pushed screen's title has the row to itself, so it is said in full
