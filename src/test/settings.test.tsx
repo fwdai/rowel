@@ -1800,18 +1800,32 @@ describe('Settings › workspaces › list', () => {
   })
 
   // The third tile names the account a new lockbox would join; with none
-  // connected there is none to name, so it says where one is set up.
-  it('says where sync is set up until an account is connected', async () => {
+  // connected there is none to name, so it leads to where one is connected.
+  // Its title claims no syncing either way.
+  it('leads to connecting an account until one is connected', async () => {
     await open()
     act(() => report({ configured: false }))
     await go('workspaces')
 
-    expect(screen.getByText('Set up in Sync & backup.')).toBeInTheDocument()
+    expect(screen.getByText('Separate sync')).toBeInTheDocument()
+    expect(screen.queryByText(/^Synced/)).not.toBeInTheDocument()
+    expect(screen.getByText(/^No cloud account yet\./)).toBeInTheDocument()
     expect(screen.queryByText(/^Stored in the same/)).not.toBeInTheDocument()
 
     act(() => report({ configured: true, provider: 'dropbox' }))
+    expect(screen.getByText('Separate sync')).toBeInTheDocument()
     expect(screen.getByText('Stored in the same Dropbox account.')).toBeInTheDocument()
-    expect(screen.queryByText('Set up in Sync & backup.')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-info-sync-link')).not.toBeInTheDocument()
+
+    act(() => report({ configured: false }))
+    await userEvent.click(screen.getByTestId('workspace-info-sync-link'))
+    expect(useUi.getState().settingsSection).toBe('sync')
+    expect(screen.getByRole('heading', { name: 'Your cloud storage' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-providers')).toBeInTheDocument()
+
+    // A page of Sync & backup, so Back is the overview.
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
   })
 
   it('names the provider a locked workspace syncs to', async () => {
