@@ -14,9 +14,12 @@ import { subpageSectionOf, type Subpage } from './subpages'
  * nothing of what the shell holds. One left behind that way is let go here.
  *
  * Under the section lock: while Settings may not be left (`settingsLocked`) a
- * sub-page is neither opened nor left. `drop` is the shell's clear for a pick
- * of the section already showing. Each reads the live lock: its caller may
- * have rendered just before an async operation acquired it.
+ * sub-page is neither opened nor left, and the section cannot move from under
+ * one either: the store puts off every move asked for under the lock (see
+ * `openSettings`), and the phone's own is guarded the same way. `drop` is the
+ * shell's clear for a pick of the section already showing. Each reads the
+ * live lock: its caller may have rendered just before an async operation
+ * acquired it.
  */
 export function useSubpageState(section: Section | null): SubpageNav & { drop: () => void } {
   const [held, setHeld] = useState<Subpage | null>(null)

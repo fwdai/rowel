@@ -62,6 +62,13 @@ export interface UiState {
    * would only look like backing out. Set by the operation, not by the shell.
    */
   settingsLocked: boolean
+  /**
+   * A section asked for while Settings was locked (`openSettings` from outside
+   * the shell: a backup the OS opened, the palette), gone to when the lock is
+   * released. The move is put off rather than refused: what asked for it (the
+   * opened file) is still waiting for that section to take it.
+   */
+  settingsPending: Section | null
   addPicker: boolean
   /**
    * The kind whose second question the picker is on (which document an
@@ -155,6 +162,7 @@ export const initialUi: UiState = {
   // backup) says otherwise for its own opening.
   settingsSection: 'language',
   settingsLocked: false,
+  settingsPending: null,
   addPicker: false,
   addPickerKind: null,
   generator: GENERATOR_CLOSED,
@@ -278,22 +286,37 @@ export const openPalette = () => useUi.setState({ palette: true })
 export const closePalette = () => useUi.setState({ palette: false })
 
 // Without a section the modal reopens where it was left, so a deep link from
-// the palette is the only thing that moves it.
+// the palette is the only thing that moves it. Under the lock it opens but
+// moves nothing yet: the section asked for waits for `lockSettings(false)`.
 export const openSettings = (section?: Section) =>
   useUi.setState(state => ({
     palette: false,
     settings: true,
-    settingsSection: section ?? state.settingsSection
+    ...(state.settingsLocked
+      ? { settingsPending: section ?? state.settingsPending }
+      : { settingsSection: section ?? state.settingsSection })
   }))
 // Both refuse while locked, and refuse *here* rather than in the shell: the X,
-// Escape, the backdrop, the rail tile and the palette all end up in these two,
-// and a lock that any of them could walk around is not one.
+// Escape, the backdrop, the rail tile and the palette all end up in these
+// three, and a lock that any of them could walk around is not one.
 export const closeSettings = () =>
   useUi.setState(state => (state.settingsLocked ? {} : { settings: false }))
 export const setSettingsSection = (section: Section) =>
   useUi.setState(state => (state.settingsLocked ? {} : { settingsSection: section }))
-/** Hold Settings on its current section until `lockSettings(false)`. */
-export const lockSettings = (locked: boolean) => useUi.setState({ settingsLocked: locked })
+/**
+ * Hold Settings on its current section until `lockSettings(false)`, which
+ * then goes to the section asked for meanwhile, if one was.
+ */
+export const lockSettings = (locked: boolean) =>
+  useUi.setState(state =>
+    locked
+      ? { settingsLocked: true }
+      : {
+          settingsLocked: false,
+          settingsPending: null,
+          settingsSection: state.settingsPending ?? state.settingsSection
+        }
+  )
 
 // Parameterless on purpose: it is handed straight to buttons and shortcuts as
 // their handler, and must not read the event they pass as a kind.
