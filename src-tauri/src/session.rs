@@ -892,10 +892,12 @@ mod lock_scope {
             !change.contains("session.lock()"),
             "the change itself takes no session lock"
         );
-        assert!(
-            at(&change, "derive_both") < at(&change, "rekey_open_workspace"),
-            "both Argon2id derives belong before the lock is taken"
-        );
+        for derive in ["prove_session_password", "derive_new"] {
+            assert!(
+                at(&change, derive) < at(&change, "rekey_open_workspace"),
+                "both Argon2id derives belong before the lock is taken"
+            );
+        }
         let body = body_of(
             include_str!("commands/auth.rs"),
             "pub(crate) async fn rekey_open_workspace(",
@@ -911,6 +913,23 @@ mod lock_scope {
         );
     }
 
+    // The proof the three commands below start with: its derive comes before
+    // its one look at the session, which is the comparison and nothing else.
+    #[test]
+    fn the_session_password_proof_derives_outside_the_guard() {
+        let password = include_str!("commands/vault_password.rs");
+        let core = body_of(password, "fn prove_in(");
+        assert!(
+            at(&core, "derive_in") < at(&core, "is_session_key("),
+            "Argon2id belongs before the session is asked"
+        );
+        let proof = body_of(password, "pub(crate) async fn prove_session_password(");
+        assert!(
+            at(&proof, "blocking(") < at(&proof, "session.lock()"),
+            "the proof runs on the blocking pool, and locks the session only to compare"
+        );
+    }
+
     #[test]
     fn the_vault_export_derives_and_packs_outside_the_guard() {
         let body = body_of(
@@ -918,7 +937,7 @@ mod lock_scope {
             "pub async fn export_vault(",
         );
         assert!(
-            at(&body, "derive_key") < at(&body, "session.lock()"),
+            at(&body, "prove_session_password") < at(&body, "session.lock()"),
             "the export's Argon2id derive belongs before the lock is taken"
         );
         assert!(
@@ -942,7 +961,7 @@ mod lock_scope {
 
         let body = body_of(import, "pub async fn export_entries(");
         assert!(
-            at(&body, "derive_key") < at(&body, "session.lock()"),
+            at(&body, "prove_session_password") < at(&body, "session.lock()"),
             "the password's Argon2id derive belongs before the lock is taken"
         );
         // The unseal's own hop, as against the derive's before the lock.

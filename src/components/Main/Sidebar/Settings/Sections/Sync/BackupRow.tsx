@@ -1,5 +1,6 @@
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { describeError } from '@/api/errors'
 import { exportVault } from '@/api/vault'
 import { BACKUP_EXTENSION } from '@/lib/backup'
 import Button from '@/components/elements/Button'
@@ -31,7 +32,7 @@ export default function BackupRow() {
         setPassword('')
         setSaved(true)
       })
-      .catch(() => setError(t('Invalid master password')))
+      .catch((e: unknown) => setError(describeError(e)))
       .finally(() => setExporting(false))
   }
 

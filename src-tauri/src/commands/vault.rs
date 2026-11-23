@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
 use crate::events;
 use crate::grants::{self, PathGrants, Purpose};
 use crate::models::{Entry, EntryMetaDto, VaultData};
-use crate::session::{derive_key, list_deleted_metas, list_metas, meta_dto_of, store_err, Session};
+use crate::session::{list_deleted_metas, list_metas, meta_dto_of, store_err, Session};
 use crate::state::AppState;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
 use crate::{credential_identities, crypto, save, storage, sync};
@@ -295,11 +295,13 @@ pub(crate) fn reseal_legacy(
     Ok(records)
 }
 
-/// `InvalidPassword` unless `candidate` — derived from a password the user just
-/// typed, with `derive_key` — is the key the unlocked vault is open under. For
-/// a command that carries the vault away (`export_vault`, and the plaintext
-/// `import::export_entries`): an unlocked session says the vault is open, not
-/// that the person at it knows the password. Compared in constant time.
+/// `InvalidPassword` unless `candidate` is the key the unlocked vault is open
+/// under, compared in constant time. The comparison alone: a password the
+/// user just typed is proved with
+/// [`prove_session_password`](super::vault_password::prove_session_password),
+/// which keeps the backoff, and a command that then reads or re-keys the
+/// session asks this again under the guard it does so with, so the key it
+/// proved is still the session's.
 pub(crate) fn prove_password(session: &Session, candidate: &VaultKey) -> Result<()> {
     let key = session.key()?.sqlcipher_key();
     if bool::from(candidate.sqlcipher_key()[..].ct_eq(&key[..])) {
@@ -327,15 +329,11 @@ pub async fn export_vault(
     })?;
     let scratch = storage::sync_scratch_dir(&app)?;
 
-    // Argon2id before the lock is taken, not under it: a KDF is hundreds of
-    // milliseconds, and the session guard held across one stalls every other
-    // command for the duration. Deriving needs only the sidecar and the
-    // password, so there is nothing to race with — the result is only *trusted*
-    // by the check below.
-    let candidate = {
-        let app = app.clone();
-        super::blocking(move || derive_key(&app, &password)).await?
-    };
+    // Proved before the lock is taken, not under it: the Argon2id behind it
+    // is hundreds of milliseconds, and the session guard held across one
+    // stalls every other command for the duration. The check below is the same
+    // comparison again, under the guard the snapshot is read with.
+    let candidate = super::vault_password::prove_session_password(&app, password).await?;
 
     let (key, source) = {
         let session = state.session.lock().unwrap();

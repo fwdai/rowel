@@ -19,7 +19,7 @@ use crate::grants::{self, PathGrants, Purpose};
 use crate::import::{self, EntryKind, Format, ImportedEntry, RowError};
 use crate::models::{Entry, EntryMetaDto};
 use crate::save;
-use crate::session::{derive_key, list_metas, live_records, store_err};
+use crate::session::{list_metas, live_records, store_err};
 use crate::state::AppState;
 use crate::storage;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
@@ -373,12 +373,9 @@ pub async fn export_entries(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>> {
-    // Argon2id before the lock is taken, as in `export_vault`: the result is
-    // only trusted by the check under it.
-    let candidate = {
-        let app = app.clone();
-        super::blocking(move || derive_key(&app, &password)).await?
-    };
+    // Proved before the lock is taken, as in `export_vault`, and compared
+    // again under it.
+    let candidate = super::vault_password::prove_session_password(&app, password).await?;
 
     // Under the guard: read the sealed rows and take a *copy* of the payload
     // cipher. Unsealing every one of them is a pass over the whole vault, and

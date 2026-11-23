@@ -11,7 +11,7 @@ use crate::crypto::{KdfParams, VaultKey};
 use crate::error::{Error, Result};
 use crate::models::{EntryMetaDto, UnlockResult};
 use crate::secure_store::{self, GateMode, KeyStore};
-use crate::session::{derive_key, open_with_key, unlock_with_password};
+use crate::session::{open_with_key, unlock_with_password};
 use crate::state::AppState;
 use crate::store::SqliteStore;
 use crate::workspace::PRIMARY_ID;
@@ -398,10 +398,12 @@ pub async fn change_master_password(
     // to it.
     let (current_beside, new_beside) = (current.clone(), new.clone());
 
-    // Deriving needs only the app handle and the passwords, so it happens off
-    // the session entirely — and off the main thread, since Argon2id is the
-    // single most expensive thing this app does.
-    let (current_key, new_key, params) = derive_both(&app, current, new).await?;
+    // The current password is proved first, under the backoff an unlock
+    // keeps. Deriving the new key needs only the app handle and the password,
+    // so it happens off the session entirely — and off the main thread, since
+    // Argon2id is the single most expensive thing this app does.
+    let current_key = super::vault_password::prove_session_password(&app, current).await?;
+    let (new_key, params) = derive_new(&app, new).await?;
     let active = rekey_open_workspace(&app, &state, current_key, new_key, params.to_json()?)
         .await?
         .workspace_id;
@@ -456,10 +458,8 @@ pub(crate) async fn rekey_open_workspace(
     // to put the vault back on top of it.
     let lease = {
         let mut session = state.session.lock().unwrap();
-        // Verify the current password reproduces the unlocked session key.
-        if current_key.sqlcipher_key() != session.key()?.sqlcipher_key() {
-            return Err(Error::InvalidPassword);
-        }
+        // `current_key` has to be the key this session is open under.
+        super::vault::prove_password(&session, &current_key)?;
         session.take_out()?
     };
     let (old_key, store, sync_configured, claim) = lease.split();
@@ -769,23 +769,17 @@ pub(super) fn rekey_one(
     Ok(material)
 }
 
-// Both Argon2id derives, on the blocking pool and before the session lock is
-// taken. The current password's key is checked against the session afterwards;
-// the new one gets fresh params (a new salt), and nothing on disk is touched
-// here, so a failure costs nothing but the error.
-async fn derive_both(
-    app: &AppHandle,
-    current: Zeroizing<String>,
-    new: Zeroizing<String>,
-) -> Result<(VaultKey, VaultKey, KdfParams)> {
+// The new password's key, on the blocking pool and before the session lock is
+// taken: under fresh params (a new salt), and nothing on disk is touched here,
+// so a failure costs nothing but the error.
+async fn derive_new(app: &AppHandle, new: Zeroizing<String>) -> Result<(VaultKey, KdfParams)> {
     let app = app.clone();
     blocking(move || {
-        let current_key = derive_key(&app, &current)?;
         let params = next_params(&storage::kdf_sidecar_path(&app)?)?;
         let new_key = VaultKey::Argon2 {
             master: crypto::derive(new.as_bytes(), &params)?,
         };
-        Ok((current_key, new_key, params))
+        Ok((new_key, params))
     })
     .await
 }

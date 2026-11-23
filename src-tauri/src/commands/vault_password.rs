@@ -13,6 +13,7 @@
 //! ([`workspace_adopt_vault_password`]).
 
 use std::path::Path;
+use std::sync::{Mutex, PoisonError};
 
 use subtle::ConstantTimeEq;
 use tauri::{AppHandle, Manager, State};
@@ -152,6 +153,67 @@ pub(crate) async fn prove_lockbox_password(
             // attempts standing against it.
             reset_lockout(lockout, dir);
             Ok(key)
+        }
+        Err(Error::InvalidPassword) => Err(penalize(lockout, now, dir)),
+        Err(e) => Err(e),
+    }
+}
+
+// One proof of the open lockbox's password at a time: each reads the backoff,
+// derives and writes it back, and two running together would both be let
+// through by the count the other is about to raise.
+static SESSION_PROOF: Mutex<()> = Mutex::new(());
+
+/// Prove `password` is the open lockbox's — that the key it derives is the one
+/// the session holds — under that lockbox's failed-attempt backoff, the one
+/// `unlock` keeps, and hand back the key. What every prompt for the master
+/// password in an unlocked app asks (an export, a password change, an agent
+/// grant's step-up): the vault being open says nothing about who is typing,
+/// and none of them may be a way to guess the password at full Argon2id speed
+/// while the lock screen beside it escalates. A wrong password is the
+/// backoff's refusal (`InvalidPassword`, or `TooManyAttempts` once it
+/// escalates); a session that is not open is `Locked`, and counts as nothing.
+///
+/// The key is compared again by whoever goes on to use the session
+/// ([`super::vault::prove_password`], under the guard it reads with): this
+/// proof's own look at the session ends when it returns.
+pub(crate) async fn prove_session_password(
+    app: &AppHandle,
+    password: Zeroizing<String>,
+) -> Result<VaultKey> {
+    let dir = storage::workspace_dir(app)?;
+    let app = app.clone();
+    // Argon2id, so off the command thread, and the wait for a proof ahead of
+    // this one with it.
+    blocking(move || {
+        let _one_at_a_time = SESSION_PROOF.lock().unwrap_or_else(PoisonError::into_inner);
+        prove_in(&dir, &password, |candidate| {
+            let state = app.state::<AppState>();
+            let session = state.session.lock().unwrap();
+            super::vault::prove_password(&session, candidate)
+        })
+    })
+    .await
+}
+
+// `password` derived under the descriptor in `dir` and put to `is_session_key`,
+// under the backoff kept in `dir`: refused before deriving while it stands,
+// reset by a proof, raised by `InvalidPassword` and by nothing else.
+fn prove_in(
+    dir: &Path,
+    password: &str,
+    is_session_key: impl FnOnce(&VaultKey) -> Result<()>,
+) -> Result<VaultKey> {
+    let lockout = LockoutState::load_in(dir)?;
+    let now = auth::now_ms();
+    if let Some(refusal) = auth::locked_out(lockout, now) {
+        return Err(refusal);
+    }
+    let candidate = derive_in(dir, password)?;
+    match is_session_key(&candidate) {
+        Ok(()) => {
+            reset_lockout(lockout, dir);
+            Ok(candidate)
         }
         Err(Error::InvalidPassword) => Err(penalize(lockout, now, dir)),
         Err(e) => Err(e),
@@ -357,6 +419,82 @@ mod tests {
         LockoutState::load_in(dir).unwrap()
     }
 
+    // The session's key, as `prove_password` compares it.
+    fn held(key: &VaultKey) -> impl Fn(&VaultKey) -> Result<()> + '_ {
+        |candidate| {
+            if *candidate.sqlcipher_key() == *key.sqlcipher_key() {
+                Ok(())
+            } else {
+                Err(Error::InvalidPassword)
+            }
+        }
+    }
+
+    fn locked_out_for_a_while() -> LockoutState {
+        let mut state = LockoutState::default();
+        for _ in 0..6 {
+            state = auth::penalize(state, auth::now_ms()).0;
+        }
+        state
+    }
+
+    // The open lockbox's password proves itself, hands back its key, and
+    // clears whatever wrong tries stood against it.
+    #[test]
+    fn the_session_password_is_proved_and_clears_the_backoff() {
+        let dir = lockbox_under("vault-pw");
+        let key = derive_in(dir.path(), "vault-pw").unwrap();
+        auth::penalize(LockoutState::default(), auth::now_ms())
+            .0
+            .save_in(dir.path())
+            .unwrap();
+
+        let proved = prove_in(dir.path(), "vault-pw", held(&key)).unwrap();
+
+        assert_eq!(*proved.sqlcipher_key(), *key.sqlcipher_key());
+        assert_eq!(lockout(dir.path()), LockoutState::default());
+    }
+
+    // A wrong one is counted once each time, on the backoff an unlock reads,
+    // until that backoff refuses the next before anything is derived, the
+    // right password included.
+    #[test]
+    fn wrong_session_passwords_escalate_the_unlock_backoff() {
+        let dir = lockbox_under("vault-pw");
+        let key = derive_in(dir.path(), "vault-pw").unwrap();
+
+        for _ in 0..3 {
+            let refused = prove_in(dir.path(), "wrong", held(&key));
+            assert!(matches!(refused, Err(Error::InvalidPassword)));
+            assert_eq!(lockout(dir.path()).locked_until_ms, 0);
+        }
+        let fourth = prove_in(dir.path(), "wrong", held(&key));
+        assert!(matches!(fourth, Err(Error::TooManyAttempts { .. })));
+        let standing = lockout(dir.path());
+        assert!(auth::locked_out(standing, auth::now_ms()).is_some());
+
+        let asked = std::cell::Cell::new(false);
+        let refused = prove_in(dir.path(), "vault-pw", |_| {
+            asked.set(true);
+            Ok(())
+        });
+        assert!(matches!(refused, Err(Error::TooManyAttempts { .. })));
+        assert!(!asked.get(), "refused before deriving");
+        assert_eq!(lockout(dir.path()), standing);
+    }
+
+    // A session that locked meanwhile says nothing about the password: the
+    // error is passed on and the backoff is left as it was.
+    #[test]
+    fn a_locked_session_is_no_wrong_password() {
+        let dir = lockbox_under("vault-pw");
+
+        let refused = prove_in(dir.path(), "vault-pw", |_| Err(Error::Locked));
+
+        assert!(matches!(refused, Err(Error::Locked)));
+        assert_eq!(lockout(dir.path()), LockoutState::default());
+    }
+
     // The move as it has always run: the lockbox's own password opens it, and
     // that is the key the re-key starts from.
     #[test]
@@ -400,10 +538,7 @@ mod tests {
     #[test]
     fn a_locked_out_lockbox_refuses_before_deriving() {
         let dir = lockbox_under("vault-pw");
-        let mut state = LockoutState::default();
-        for _ in 0..6 {
-            state = auth::penalize(state, auth::now_ms()).0;
-        }
+        let state = locked_out_for_a_while();
         state.save_in(dir.path()).unwrap();
 
         let refused = prove_for_adoption_in(dir.path(), "lockbox-pw", "vault-pw");
