@@ -153,6 +153,7 @@ pub trait LocalVault {
     /// [`Self::decode`] for a pack a device handed over itself, having proved
     /// the current key (`nearby::exchange`): it says nothing of the account,
     /// so that note is neither read nor written.
+    #[cfg_attr(not(desktop), allow(dead_code))]
     fn decode_direct(&self, pack_bytes: &[u8]) -> Result<Snapshot>;
     /// Last-writer-wins merge of the pulled entries and attachments, and the
     /// pulled audit rows taken as a union; returns the entry and attachment
