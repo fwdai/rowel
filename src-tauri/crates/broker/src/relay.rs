@@ -13,8 +13,9 @@
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use interprocess::local_socket::{prelude::*, Stream};
+use interprocess::local_socket::Stream;
 
 use crate::{frame, manifest, socket};
 
@@ -72,17 +73,19 @@ pub fn relay(
     mut to_browser: impl Write,
     browser_closed: impl FnOnce() + Send + 'static,
 ) -> i32 {
-    let (mut from_broker, mut to_broker) = broker.split();
+    // A `&Stream` reads and writes, so the two directions share the one.
+    let broker = Arc::new(broker);
+    let to_broker = broker.clone();
     std::thread::spawn(move || {
         while let Ok(Some(body)) = frame::read(&mut browser) {
-            if frame::write(&mut to_broker, &body).is_err() {
+            if frame::write(&mut &*to_broker, &body).is_err() {
                 break;
             }
         }
         browser_closed();
     });
     loop {
-        match frame::read(&mut from_broker) {
+        match frame::read(&mut &*broker) {
             Ok(Some(body)) => {
                 if frame::write(&mut to_browser, &body).is_err() {
                     return 0;
@@ -97,7 +100,7 @@ pub fn relay(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use interprocess::local_socket::ListenerOptions;
+    use interprocess::local_socket::{prelude::*, ListenerOptions};
 
     #[test]
     fn a_browser_launch_is_told_by_what_it_puts_on_the_command_line() {

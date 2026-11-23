@@ -9,7 +9,7 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use interprocess::local_socket::{prelude::*, Listener, RecvHalf, Stream};
+use interprocess::local_socket::{Listener, Stream};
 
 use crate::actions::{Connection, Host};
 use crate::frame;
@@ -136,8 +136,8 @@ pub fn bind(root: &Path) -> io::Result<Listener> {
 /// signals first, so none raised while it is up is missed, and forgotten
 /// once [`serve`] returns.
 pub fn serve_stream<H: Host + Send + 'static>(stream: Stream, host: H) {
-    let (reader, writer) = stream.split();
-    let writer: Writer = Arc::new(Mutex::new(writer));
+    let reader = Arc::new(stream);
+    let writer: Writer = Arc::new(Mutex::new(Sender(reader.clone())));
     let shared = writer.clone();
     let hub = host.hub().clone();
     let id = hub.register(Box::new(move |message| {
@@ -172,17 +172,33 @@ pub fn serve<H: Host>(mut stream: impl Read + Write, host: H) {
     }
 }
 
-/// A local socket connection as `serve` sees it: read from its own half,
-/// written through the half the lock signals share. `frame::write` is one
+/// A local socket connection as `serve` sees it: read on its own, written
+/// through the writer the lock signals share. `frame::write` is one
 /// `write_all`, and one `write_all` is one hold of the lock.
 struct Connected {
-    reader: RecvHalf,
+    reader: Arc<Stream>,
     writer: Writer,
 }
 
 impl Read for Connected {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.reader.read(buf)
+        let mut stream: &Stream = &self.reader;
+        stream.read(buf)
+    }
+}
+
+/// The writing end of a local socket that is read elsewhere: a `&Stream`
+/// writes, so a share of the stream is all it takes.
+struct Sender(Arc<Stream>);
+
+impl Write for Sender {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut stream: &Stream = &self.0;
+        stream.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        let mut stream: &Stream = &self.0;
+        stream.flush()
     }
 }
 
