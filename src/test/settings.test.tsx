@@ -2929,8 +2929,17 @@ describe('Settings › workspaces › restore from an account', () => {
     expect(
       screen.getByRole('heading', { name: 'Restore from a cloud account' })
     ).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-restore-drive-connect')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-restore-dropbox-connect')).toBeInTheDocument()
+    // The choice of a provider is the list Sync & backup asks with: a row per
+    // provider, named, each with its own Connect.
+    const providers = screen.getByTestId('workspace-restore-row')
+    expect(providers).toHaveTextContent('Choose a provider')
+    expect(within(providers).getByText('Google Drive', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-drive-connect')).toHaveAccessibleName(
+      'Connect Google Drive'
+    )
+    expect(screen.getByTestId('workspace-restore-dropbox-connect')).toHaveAccessibleName(
+      'Connect Dropbox'
+    )
     expect(screen.queryByTestId('workspace-restore-open')).not.toBeInTheDocument()
     // The title and its description are said once, by the page's header.
     expect(screen.getAllByText('Restore from a cloud account')).toHaveLength(1)
