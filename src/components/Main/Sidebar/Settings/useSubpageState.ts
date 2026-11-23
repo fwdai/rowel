@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useUi, type Section } from '@/store'
+import { useApp, useUi, type Section } from '@/store'
 import type { SubpageNav } from './sectionNav'
 import type { Subpage } from './subpages'
 
@@ -32,6 +32,12 @@ export interface SubpageState extends SubpageNav {
  * OS opened, the palette), which knows nothing of what the shell holds. One
  * left behind that way is let go here.
  *
+ * A page over Import steps aside for a file the OS opens meanwhile: Import is
+ * the section that takes such a file, `openSettings('import')` moves nothing
+ * when Import is already showing, and under a page the section is not there
+ * to claim it (the wide shell) or not seen to (the phone). While Settings is
+ * locked the page stays, and steps aside once the lock is released.
+ *
  * Under the section lock: while Settings may not be left (`settingsLocked`) a
  * sub-page is neither opened nor left, and the section cannot move from under
  * one either: the store puts off every move asked for under the lock (see
@@ -42,7 +48,10 @@ export interface SubpageState extends SubpageNav {
  */
 export function useSubpageState(section: Section | null): SubpageState {
   const [held, setHeld] = useState<Held | null>(null)
-  const subpage = held && held.section === section ? held.page : null
+  const locked = useUi(state => state.settingsLocked)
+  const fileWaiting = useApp(state => state.openedFile !== null)
+  const yields = section === 'import' && fileWaiting && !locked
+  const subpage = held && held.section === section && !yields ? held.page : null
   if (held && !subpage) setHeld(null)
 
   const unlocked = () => !useUi.getState().settingsLocked

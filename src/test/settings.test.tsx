@@ -1524,6 +1524,46 @@ describe('Settings › import', () => {
     ])
   })
 
+  // The restore page sits over Import, which is already the section a second
+  // opened file asks for, so nothing moves to dismiss the page: it steps aside
+  // itself, and Import takes the new file rather than leaving the first one's
+  // form up.
+  it('steps the restore page aside for another backup the OS opens', async () => {
+    flowMain()
+    render(<Settings />)
+    fileOpened('/tmp/Rowel backup 2026-09-15.rowel')
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+    expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent('2026-09-15')
+
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-01.rowel'))
+
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-subpage-back')).not.toBeInTheDocument()
+    expect(await screen.findByText('Rowel backup 2026-10-01.rowel')).toBeInTheDocument()
+    expect(useApp.getState().openedFile).toBeNull()
+
+    await userEvent.click(screen.getByTestId('import-rowel-restore'))
+    expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent('2026-10-01')
+  })
+
+  // A restore that is running holds Settings, and its page with it: the file
+  // waits, and is taken once the restore lets go.
+  it('keeps a locked restore page until the lock is released, then takes the file', async () => {
+    flowMain()
+    render(<Settings />)
+    fileOpened('/tmp/Rowel backup 2026-09-15.rowel')
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+
+    act(() => lockSettings(true))
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-01.rowel'))
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-backup-file')).toHaveTextContent('2026-09-15')
+
+    act(() => lockSettings(false))
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(await screen.findByText('Rowel backup 2026-10-01.rowel')).toBeInTheDocument()
+  })
+
   // The backup card offers our own `.rowel` too, and takes it as the OS-opened
   // one above: named and explained, never sent to the legacy importer.
   it('explains a .rowel picked on the backup card instead of importing it', async () => {
