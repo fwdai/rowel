@@ -206,6 +206,14 @@ describe('Settings › sync overview', () => {
     )
     expect(cloudStatus()).toHaveTextContent('Dropbox')
     expect(cloudStatus()).toHaveAttribute('data-tone', 'good')
+
+    // Connected a moment ago, with no run landed: not yet the green name.
+    act(() => report({ configured: true, provider: 'dropbox' }))
+    expect(cloudStatus()).toHaveTextContent('Waiting to sync')
+    expect(cloudStatus()).toHaveAttribute('data-tone', 'neutral')
+    act(() =>
+      report({ configured: true, provider: 'dropbox', lastSyncedAt: '2026-01-01T00:00:00Z' })
+    )
     expect(summary()).toHaveTextContent('Your vault is in sync')
     expect(summary()).toHaveTextContent('Through Dropbox')
     expect(screen.queryByTestId('settings-sync-backup')).not.toBeInTheDocument()
@@ -604,7 +612,14 @@ describe('Settings › sync', () => {
     // No account, no card to carry a pill: the list of providers stands there.
     expect(screen.queryByTestId('settings-drive-status')).not.toBeInTheDocument()
 
+    // Connected, but no run has landed: nothing is anywhere yet, so neither
+    // the pill nor the card's figure claims the account is up to date.
     act(() => report({ configured: true }))
+    expect(pill()).toHaveTextContent('Waiting to sync')
+    expect(pill()).toHaveAttribute('data-tone', 'neutral')
+    expect(screen.getByTestId('settings-drive-row')).not.toHaveTextContent('Up to date')
+
+    act(() => report({ configured: true, lastSyncedAt: '2026-01-01T00:00:00Z' }))
     expect(pill()).toHaveTextContent('Up to date')
     expect(pill()).toHaveAttribute('data-tone', 'good')
 

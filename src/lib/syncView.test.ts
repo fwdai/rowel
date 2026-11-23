@@ -3,7 +3,7 @@ import type { SyncStatus } from '@/api/sync'
 import type { NearbyDevice, NearbyStatus } from '@/api/nearby'
 import { initialApp } from '@/store'
 import { nearbyUnavailable } from '@/test/ipc'
-import { cloudView, nearbyView, syncView } from './syncView'
+import { cloudStanding, cloudView, nearbyView, syncView } from './syncView'
 
 const cloud = (s: Partial<SyncStatus> = {}): SyncStatus => ({ ...initialApp.sync, ...s })
 
@@ -127,6 +127,20 @@ describe('syncView', () => {
 
 // Each method's own standing, which the overview's rows and the account card
 // read whether or not that method is the one speaking for the vault.
+// The account's standing in the words its card and the overview's row use:
+// only a sync that landed reads as up to date.
+describe('cloudStanding', () => {
+  it.each([
+    ['no account', cloud(), 'local', 'Not connected'],
+    ['a run in flight', synced({ inProgress: true }), 'loading', 'Syncing…'],
+    ['a failed run', synced({ error: 'Drive said no' }), 'bad', 'Last attempt failed'],
+    ['no run yet', cloud({ configured: true }), 'idle', 'Waiting to sync'],
+    ['a landed run', synced(), 'good', 'Up to date']
+  ] as const)('says %s', (_, sync, tone, label) => {
+    expect(cloudStanding(sync)).toEqual({ tone, label })
+  })
+})
+
 describe('cloudView', () => {
   it('is nothing with no account and none under way', () => {
     expect(cloudView(cloud())).toBeNull()

@@ -91,6 +91,27 @@ export const cloudView = (sync: SyncStatus): SyncView | null => {
   return { tone: 'good', message: 'Sync Successful' }
 }
 
+/**
+ * The cloud account's standing in a status's few words, for the surfaces that
+ * say it of the account itself (its card's pill and "Last synced" figure, the
+ * overview's row) rather than of the vault as the chip does. One word per
+ * tone, and a tone with no word fails the build, so no surface can let a
+ * standing it did not think of read as "up to date". `local` is `cloudView`'s
+ * null: no account.
+ */
+const STANDING: Record<SyncTone, TKey> = {
+  local: 'Not connected',
+  loading: 'Syncing…',
+  bad: 'Last attempt failed',
+  idle: 'Waiting to sync',
+  good: 'Up to date'
+}
+
+export const cloudStanding = (sync: SyncStatus): { tone: SyncTone; label: TKey } => {
+  const tone = cloudView(sync)?.tone ?? 'local'
+  return { tone, label: STANDING[tone] }
+}
+
 const TROUBLE: NearbyDevice['state'][] = ['needsPassword', 'clockSkew', 'error']
 const PASSWORD_CHANGED = {
   tone: 'bad',

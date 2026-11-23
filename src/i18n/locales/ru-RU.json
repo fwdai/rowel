@@ -742,7 +742,6 @@
   "Used in item history, expiry dates and audits": "Используется в истории записей, сроках действия и аудитах",
   "Passwords don't match yet.": "Пароли пока не совпадают.",
   "Sample · new items start here": "Пример · с этого начинаются новые записи",
-  "Syncing": "Синхронизация",
   "Encryption": "Шифрование",
   "End-to-end": "Сквозное",
   "Disconnecting keeps everything on this device and stops syncing.": "После отключения всё останется на этом устройстве, а синхронизация прекратится.",

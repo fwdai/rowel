@@ -709,7 +709,6 @@
   "Used in item history, expiry dates and audits": "用于条目历史、到期日期和审计",
   "Passwords don't match yet.": "两次输入的密码尚不一致。",
   "Sample · new items start here": "示例 · 新条目以此为起点",
-  "Syncing": "正在同步",
   "Encryption": "加密",
   "End-to-end": "端到端",
   "Disconnecting keeps everything on this device and stops syncing.": "断开连接后，所有数据仍保留在这台设备上，只是不再同步。",
