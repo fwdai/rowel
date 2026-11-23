@@ -4,38 +4,33 @@ import type { SubpageNav } from './sectionNav'
 import type { Subpage } from './subpages'
 
 interface Held {
-  /** The section the pages were opened under, which is the only one they show in. */
+  /** The section the page was opened under, which is the only one it shows in. */
   section: Section
-  /** Bottom first: each was opened from the one before it. */
-  pages: Subpage[]
-  turn: SubpageNav['turn']
+  page: Subpage
 }
 
-const NONE: Subpage[] = []
-
 export interface SubpageState extends SubpageNav {
-  /** A link to another section's sub-page: `page` alone, under `section`. */
+  /** A link to another section's sub-page: `page`, under `section`. */
   openUnder: (section: Section, page: Subpage) => void
-  /** Back to the section's own page, however deep the sub-pages went. */
+  /** The shell's clear, for a pick of the section already showing. */
   drop: () => void
 }
 
 /**
- * The sub-pages a shell holds, for the section it is showing (`null` on the
+ * The sub-page a shell holds, for the section it is showing (`null` on the
  * phone's root, which shows none).
  *
- * They are a stack under the section they were opened from: a page opened from
- * a sub-page goes over it, and Back leads to the one before, so stepping
- * deeper never moves the section and stepping back never lands somewhere the
- * user did not come from. The same page can therefore be reached under more
- * than one section (restoring a backup, from Lockboxes and from Encrypted
- * backup), and belongs each time to the one it was opened in.
+ * A sub-page belongs to the section it was opened from, and Back leads there:
+ * stepping deeper never moves the section, and stepping back never lands
+ * somewhere the user did not come from. The same page can therefore be reached
+ * under more than one section (restoring from a backup: Lockboxes, Sync &
+ * backup and Import), and belongs each time to the one it was opened in.
  *
- * A stack is only ever returned under its own section: a shell cannot draw one
- * over another section's place, whatever moved the section — its own nav, a
- * link in a section body, or `openSettings` called from outside the shell (a
- * file the OS opened, the palette), which knows nothing of what the shell
- * holds. One left behind that way is let go here.
+ * It is only ever returned under that section: a shell cannot draw one over
+ * another section's place, whatever moved the section — its own nav, a link in
+ * a section body, or `openSettings` called from outside the shell (a file the
+ * OS opened, the palette), which knows nothing of what the shell holds. One
+ * left behind that way is let go here.
  *
  * Under the section lock: while Settings may not be left (`settingsLocked`) a
  * sub-page is neither opened nor left, and the section cannot move from under
@@ -47,28 +42,23 @@ export interface SubpageState extends SubpageNav {
  */
 export function useSubpageState(section: Section | null): SubpageState {
   const [held, setHeld] = useState<Held | null>(null)
-  const current = held && held.section === section ? held : null
-  if (held && !current) setHeld(null)
+  const subpage = held && held.section === section ? held.page : null
+  if (held && !subpage) setHeld(null)
 
-  const pages = current?.pages ?? NONE
   const unlocked = () => !useUi.getState().settingsLocked
+  const clear = () => {
+    if (unlocked()) setHeld(null)
+  }
 
   return {
-    pages,
-    subpage: pages[pages.length - 1] ?? null,
-    turn: current?.turn ?? 'forward',
-    open: next => {
-      if (section && unlocked()) setHeld({ section, pages: [...pages, next], turn: 'forward' })
+    subpage,
+    open: page => {
+      if (section && unlocked()) setHeld({ section, page })
     },
     openUnder: (under, page) => {
-      if (unlocked()) setHeld({ section: under, pages: [page], turn: 'forward' })
+      if (unlocked()) setHeld({ section: under, page })
     },
-    close: () => {
-      if (section && unlocked())
-        setHeld(pages.length > 1 ? { section, pages: pages.slice(0, -1), turn: 'back' } : null)
-    },
-    drop: () => {
-      if (unlocked()) setHeld(null)
-    }
+    close: clear,
+    drop: clear
   }
 }

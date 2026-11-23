@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next'
 import { useUi, closeSettings, setSettingsSection, type Section as Key } from '@/store'
-import { cx } from '@/utils/cx'
 import Modal from '@/components/elements/Modal'
 import DialogHeader from '@/components/elements/DialogHeader'
 import IconButton from '@/components/elements/IconButton'
@@ -23,7 +22,7 @@ export default function SettingsModal() {
   const locked = useUi(state => state.settingsLocked)
   // Local, not in the store, so Settings never reopens halfway into a form.
   const nav = useSubpageState(section)
-  const { pages, subpage, turn, close } = nav
+  const { subpage, close } = nav
   // Any nav pick lands on that section's own page, the current one included.
   const select = (next: Key) => {
     if (locked) return
@@ -86,14 +85,7 @@ export default function SettingsModal() {
             {/* A sub-page takes the whole column rather than the section's
                 scroller: its frame scrolls itself and pins its own action bar. */}
             {subpage ? (
-              <div
-                // By depth too: the same page can sit at more than one.
-                key={`${pages.length}:${subpage.key}`}
-                className={cx(
-                  'flex min-h-0 flex-1 flex-col',
-                  turn === 'back' ? 'animate-step-back' : 'animate-step-forward'
-                )}
-              >
+              <div key={subpage.key} className="flex min-h-0 flex-1 flex-col animate-step-forward">
                 <SubpageBody subpage={subpage} />
               </div>
             ) : (

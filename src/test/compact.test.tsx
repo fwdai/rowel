@@ -546,7 +546,7 @@ describe('compact shell', () => {
     await userEvent.click(screen.getByTestId('settings-export-backup-link'))
     // The backup's page, pushed over the Sync pane it belongs to.
     const page = screen.getByTestId('settings-subpage')
-    expect(within(page).getByRole('heading', { name: 'Encrypted backup' })).toBeInTheDocument()
+    expect(within(page).getByRole('heading', { name: 'Back up the vault' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
   })
 
@@ -720,24 +720,21 @@ describe('compact shell', () => {
     expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
   })
 
-  // The backup page's restore row pushes the restore page over itself: the
-  // pane stays Sync & backup's, the backup page stays under it, inert, Back is
-  // named after it, and the picked file and the form are drawn as on the wide
-  // shell.
-  it('pushes the restore page over the backup page it was asked from', async () => {
+  // The overview's restore row pushes the restore page over the Sync pane: the
+  // pane stays Sync & backup's, Back is named after it, and the picked file
+  // and the form are drawn as on the wide shell.
+  it('pushes the restore page over the Sync pane it was asked from', async () => {
     mockCommand('pick_file', () => '/tmp/Rowel backup 2026-11-20.rowel')
     seed()
     render(<Main />)
 
     act(() => openSettings())
     await userEvent.click(screen.getByTestId('settings-nav-sync'))
-    await userEvent.click(screen.getByTestId('settings-sync-open-backup'))
-    await userEvent.click(screen.getByTestId('settings-backup-restore'))
+    await userEvent.click(screen.getByTestId('settings-sync-open-restore'))
 
     const page = screen.getByTestId('settings-subpage')
-    expect(within(page).getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument()
-    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Encrypted backup')
-    expect(screen.getByTestId('settings-backup-restore').closest('[inert]')).not.toBeNull()
+    expect(within(page).getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
     await userEvent.click(within(page).getByTestId('workspace-backup-pick'))
     expect(within(page).getByTestId('workspace-backup-file')).toHaveTextContent(
       'Rowel backup 2026-11-20.rowel'
@@ -745,14 +742,8 @@ describe('compact shell', () => {
     expect(within(page).getByTestId('workspace-backup-password')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('settings-subpage-back'))
-    expect(screen.queryByTestId('workspace-backup-password')).not.toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('settings-subpage')).getByRole('heading', {
-        name: 'Encrypted backup'
-      })
-    ).toBeInTheDocument()
-    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Sync & backup')
-    expect(screen.getByTestId('settings-backup-restore').closest('[inert]')).toBeNull()
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Sync & backup' })).toBeInTheDocument()
   })
 
   // A pushed screen's title has the row to itself, so it is said in full

@@ -19,7 +19,7 @@ export default function BackupCard({ active, disabled, onBackup }: Props) {
       <SettingsRow
         icon={<DiskGlyph size={16} />}
         iconActive={active}
-        label={t('Restore a backup')}
+        label={t('Restore from a backup')}
         description={t('A backup file and the master password it was sealed with')}
         control={
           <Button

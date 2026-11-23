@@ -56,7 +56,7 @@ export const SUBPAGES: { [K in Key]: Definition<K> } = {
     Body: RestoreWorkspace
   },
   'restore-backup': {
-    title: 'Restore a backup',
+    title: 'Restore from a backup',
     description:
       'Pick a .rowel file saved from Settings. It arrives as a separate lockbox, on this device only until you connect it to an account.',
     Body: RestoreBackup
@@ -73,7 +73,7 @@ export const SUBPAGES: { [K in Key]: Definition<K> } = {
     Body: Cloud
   },
   'sync-backup': {
-    title: 'Encrypted backup',
+    title: 'Back up the vault',
     description: 'A file you keep yourself, sealed with your master password.',
     Body: Backup
   }

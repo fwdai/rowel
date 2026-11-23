@@ -84,7 +84,7 @@ export default function AddWorkspace() {
           />
           <Way
             icon={<DiskGlyph size={16} />}
-            label={t('Restore a backup')}
+            label={t('Restore from a backup')}
             description={t('A backup file and the master password it was sealed with')}
             onClick={pick({ key: 'restore-backup' })}
             testid="workspace-backup-open"
