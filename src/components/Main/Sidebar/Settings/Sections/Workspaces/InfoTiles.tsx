@@ -13,7 +13,8 @@ function Tile({ title, body }: { title: string; body: string }) {
 }
 
 // What a workspace is, in three facts, under the list of them. The third names
-// the open workspace's account, which is the one a new workspace would join.
+// the open workspace's account, which is the one a new workspace would join;
+// with no account there is nothing to join yet, so it says where to set one up.
 export default function InfoTiles() {
   const { t } = useTranslation()
   const provider = useApp(state => syncProvider(state.sync))
@@ -26,7 +27,7 @@ export default function InfoTiles() {
         body={
           provider
             ? t('Stored in the same {{provider}} account.', { provider: providerName(provider) })
-            : t('Stored in the same cloud account.')
+            : t('Set up in Sync & backup.')
         }
       />
     </div>

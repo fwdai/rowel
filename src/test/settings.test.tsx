@@ -1572,8 +1572,8 @@ describe('Settings › workspaces › vaults in the account', () => {
     expect(useApp.getState().remoteVaults).toEqual([])
   })
 
-  // One vault is shown, not offered — and its list sits beside the probe's
-  // picker without the two answering to the same ids.
+  // One vault is shown, not offered — under ids of its own, not the probe's
+  // picker's.
   it("names the account's only missing vault without asking which", async () => {
     await open()
     await act(async () => setRemoteVaults([VAULT]))
@@ -1736,6 +1736,21 @@ describe('Settings › workspaces › list', () => {
 
     await userEvent.click(screen.getByTestId('workspace-switch-w2'))
     expect(calls('workspace_select')).toEqual([{ id: 'w2' }])
+  })
+
+  // The third tile names the account a new lockbox would join; with none
+  // connected there is none to name, so it says where one is set up.
+  it('says where sync is set up until an account is connected', async () => {
+    await open()
+    act(() => report({ configured: false }))
+    await go('workspaces')
+
+    expect(screen.getByText('Set up in Sync & backup.')).toBeInTheDocument()
+    expect(screen.queryByText(/^Stored in the same/)).not.toBeInTheDocument()
+
+    act(() => report({ configured: true, provider: 'dropbox' }))
+    expect(screen.getByText('Stored in the same Dropbox account.')).toBeInTheDocument()
+    expect(screen.queryByText('Set up in Sync & backup.')).not.toBeInTheDocument()
   })
 
   it('names the provider a locked workspace syncs to', async () => {
@@ -2375,14 +2390,58 @@ describe('Settings › workspaces › master password changed elsewhere', () => 
 })
 
 describe('Settings › workspaces › restore from an account', () => {
+  // The flow is a page under Lockboxes, opened from a row under the list.
+  const openRestore = async () => {
+    await open()
+    await go('workspaces')
+    await userEvent.click(screen.getByTestId('workspace-restore-open'))
+  }
+
   // Consent, then the probe's answer — which arrives as an event, never through
   // the connect's promise.
   const connect = async (files: RemotePack[]) => {
-    await open()
-    await go('workspaces')
+    await openRestore()
     await userEvent.click(screen.getByTestId('workspace-restore-drive-connect'))
     await act(async () => setupAccountProbed(files))
   }
+
+  // On the Lockboxes page the account's Connect buttons would read as
+  // connecting this vault, which is what the same buttons do under Sync &
+  // backup; there the page's title says what they are for.
+  it('keeps the sign-in on a page of its own, a row away from the list', async () => {
+    await open()
+    await go('workspaces')
+
+    expect(screen.queryAllByTestId(/^workspace-restore-.+-connect$/)).toHaveLength(0)
+    expect(screen.getByTestId('workspace-restore-open')).toHaveTextContent(
+      'Restore from a cloud account'
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-restore-open'))
+    expect(
+      screen.getByRole('heading', { name: 'Restore from a cloud account' })
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-drive-connect')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-dropbox-connect')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-restore-open')).not.toBeInTheDocument()
+    // The title and its description are said once, by the page's header.
+    expect(screen.getAllByText('Restore from a cloud account')).toHaveLength(1)
+    expect(screen.getAllByText(/^Sign in and pick one of the lockboxes/)).toHaveLength(1)
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-open')).toBeInTheDocument()
+  })
+
+  // Going Back is backing out, the same as Cancel: the pending tokens go too.
+  it('forgets the connected account when the page is left', async () => {
+    await connect([VAULT])
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+
+    expect(calls('setup_disconnect')).toHaveLength(1)
+    expect(useApp.getState().setupAccount.status).toBe('idle')
+  })
 
   it('restores the vault the user picked as a workspace of its own', async () => {
     await connect([VAULT, OTHER_VAULT])
@@ -2507,6 +2566,12 @@ describe('Settings › workspaces › restore from an account', () => {
 
     expect(screen.getByTestId('modal-close')).toBeDisabled()
     expect(screen.getByTestId('settings-nav-sync')).toBeDisabled()
+    // The page is held too: its Back is inert and Escape does not step out.
+    expect(screen.getByTestId('settings-subpage-back')).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
+    expect(
+      screen.getByRole('heading', { name: 'Restore from a cloud account' })
+    ).toBeInTheDocument()
     // The store refuses too, whoever asks.
     closeSettings()
     setSettingsSection('sync')
@@ -2587,8 +2652,7 @@ describe('Settings › workspaces › restore from an account', () => {
   })
 
   it('reports a consent that never came back', async () => {
-    await open()
-    await go('workspaces')
+    await openRestore()
     await userEvent.click(screen.getByTestId('workspace-restore-drive-connect'))
     expect(screen.getByTestId('workspace-restore-waiting')).toBeInTheDocument()
 
@@ -2600,14 +2664,14 @@ describe('Settings › workspaces › restore from an account', () => {
     expect(calls('workspace_restore_from_pending')).toHaveLength(0)
   })
 
-  // The row starts with the choice of provider, and everything after the press
-  // names the one picked.
+  // The page starts with the choice of provider under its own title, and
+  // everything after the press names the one picked.
   it('restores from Dropbox, naming it from the press on', async () => {
-    await open()
-    await go('workspaces')
-    expect(screen.getByTestId('workspace-restore-row')).toHaveTextContent(
-      'Restore from a cloud account'
-    )
+    await openRestore()
+    expect(
+      screen.getByRole('heading', { name: 'Restore from a cloud account' })
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-restore-row')).not.toHaveTextContent('Restore from')
 
     await userEvent.click(screen.getByTestId('workspace-restore-dropbox-connect'))
 

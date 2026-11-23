@@ -612,6 +612,29 @@ describe('compact shell', () => {
     expect(screen.getByTestId('settings-back').closest('[inert]')).toBeNull()
   })
 
+  // Restoring from a cloud account is a page under Lockboxes too, its sign-in
+  // there rather than on the section's own screen.
+  it('pushes the restore page from its row under the lockbox list', async () => {
+    seed()
+    render(<Main />)
+
+    act(() => openSettings())
+    await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    expect(screen.queryAllByTestId(/^workspace-restore-.+-connect$/)).toHaveLength(0)
+    await userEvent.click(screen.getByTestId('workspace-restore-open'))
+
+    const page = screen.getByTestId('settings-subpage')
+    expect(
+      within(page).getByRole('heading', { name: 'Restore from a cloud account' })
+    ).toBeInTheDocument()
+    expect(within(page).getByTestId('workspace-restore-drive-connect')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-subpage-back')).toHaveTextContent('Lockboxes')
+
+    await userEvent.click(screen.getByTestId('settings-subpage-back'))
+    expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Lockboxes' })).toBeInTheDocument()
+  })
+
   // The sub-page's action is the slab every pushed screen puts where a thumb
   // is, not the desktop's bar: Back is the Cancel, and the hint goes with it.
   it('puts a sub-page action at the bottom edge, dimmed until the form is ready', async () => {

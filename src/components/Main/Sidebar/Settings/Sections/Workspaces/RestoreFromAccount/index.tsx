@@ -38,14 +38,29 @@ export default function RestoreFromAccount() {
   // Leaving is backing out. A sign-in the user walked away from must never be
   // adopted by a later create or restore, so the pending tokens go with the
   // screen that asked for them — whether it goes because the user pressed
-  // Cancel, moved to another section, or closed Settings. Harmless after a
-  // restore that worked: the backend has already taken them. And harmless
-  // during one: the backend holds the account for the restore's length and
-  // refuses to drop it, so leaving mid-restore lets what the user asked for
-  // finish — exactly as leaving mid-create does.
+  // Cancel, went Back, moved to another section, or closed Settings. Harmless
+  // after a restore that worked: the backend has already taken them. And
+  // harmless during one: the backend holds the account for the restore's
+  // length and refuses to drop it, so leaving mid-restore lets what the user
+  // asked for finish — exactly as leaving mid-create does.
   useEffect(() => forgetAccount, [])
 
   const restoring = account.status === 'restoring'
+
+  // The page's title and description say what this is, so the choice of a
+  // provider stands alone, stacked on the phone as the first run's is; once
+  // one is picked, the row names it.
+  if (account.status === 'idle')
+    return (
+      <div data-testid="workspace-restore-row" className="px-4 py-3.5">
+        <ProviderButtons
+          variant="primary"
+          testid="workspace-restore"
+          onPick={connectWorkspaceAccount}
+          className="flex flex-wrap gap-2 max-md:flex-col"
+        />
+      </div>
+    )
 
   return (
     <SettingsRow
@@ -57,18 +72,9 @@ export default function RestoreFromAccount() {
           <CloudGlyph size={16} />
         )
       }
-      description={t(
-        'Sign in and pick one of the lockboxes the account already holds. It arrives as a separate lockbox, unlocked with its own master password and syncing to the same pack.'
-      )}
       testid="workspace-restore-row"
       control={
-        account.status === 'idle' ? (
-          <ProviderButtons
-            variant="primary"
-            testid="workspace-restore"
-            onPick={connectWorkspaceAccount}
-          />
-        ) : restoring ? null : (
+        restoring ? null : (
           // Withdrawn while the restore runs, with the form's own Switch
           // account: the account is spoken for, and a Cancel that the backend
           // would refuse is a lie.
