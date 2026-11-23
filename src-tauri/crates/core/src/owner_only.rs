@@ -9,6 +9,10 @@
 //! inherit from the folder — granting the current user and SYSTEM (which
 //! backup, indexing and antivirus services run as) and nobody else, handed to
 //! `CreateFile` in the security attributes so the file is born with it.
+//!
+//! The same descriptor is what the broker creates its named pipe under
+//! ([`current_user_sddl`]), and a client of that pipe checks the owner it
+//! names before it sends anything ([`owned_by_current_user`]).
 
 use std::fs::File;
 use std::io;
@@ -66,12 +70,60 @@ pub fn create_new(path: &Path) -> io::Result<File> {
     Ok(unsafe { File::from_raw_handle(handle.0) })
 }
 
-// The SDDL for "this user and SYSTEM, full access, nothing inherited". `P`
-// marks the DACL protected, which is what stops the folder's inheritable
-// entries from being merged into the new file's DACL at creation.
+// The SDDL for "owned by this user; this user and SYSTEM, full access, nothing
+// inherited". `P` marks the DACL protected, which is what stops the folder's
+// inheritable entries from being merged into the new object's DACL at
+// creation. The owner is named rather than left to the token's default, which
+// in an elevated process is the Administrators group, so the object is the
+// user's whichever way the process was started.
 #[cfg(windows)]
 fn owner_only_sddl(user_sid: &str) -> String {
-    format!("D:P(A;;FA;;;{user_sid})(A;;FA;;;SY)")
+    format!("O:{user_sid}D:P(A;;FA;;;{user_sid})(A;;FA;;;SY)")
+}
+
+/// The owner-only descriptor for the current user, as SDDL: what
+/// [`create_new`] creates a file under, for an object of another kind (the
+/// broker's named pipe).
+#[cfg(windows)]
+pub fn current_user_sddl() -> io::Result<String> {
+    Ok(owner_only_sddl(&current_user_sid()?))
+}
+
+/// Whether the object `handle` is open on is owned by the current user, as
+/// one created under [`current_user_sddl`] is. Windows lets a process name
+/// as an object's owner only its own user or a group its token may assign,
+/// so an object another user created does not pass. `handle` needs
+/// `READ_CONTROL`, which `GENERIC_READ` carries; anything that stops the owner
+/// being read is an error, never a pass.
+#[cfg(windows)]
+pub fn owned_by_current_user(handle: std::os::windows::io::BorrowedHandle<'_>) -> io::Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{LocalFree, HANDLE, HLOCAL};
+    use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
+    use windows::Win32::Security::{OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
+
+    let mut owner = PSID::default();
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    unsafe {
+        GetSecurityInfo(
+            HANDLE(handle.as_raw_handle()),
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            None,
+            None,
+            Some(&mut descriptor),
+        )
+    }
+    .ok()
+    .map_err(win)?;
+    // `owner` points into `descriptor`, so it is read before that is freed.
+    let owner = unsafe { sid_string(owner) };
+    unsafe {
+        LocalFree(Some(HLOCAL(descriptor.0)));
+    }
+    Ok(owner? == current_user_sid()?)
 }
 
 // A Win32 failure as the `io::Error` std would have produced for it, so callers
@@ -103,7 +155,7 @@ impl OwnerOnlyDescriptor {
         };
         use windows::Win32::Security::PSECURITY_DESCRIPTOR;
 
-        let sddl = HSTRING::from(owner_only_sddl(&current_user_sid()?));
+        let sddl = HSTRING::from(current_user_sddl()?);
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
         unsafe {
             ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -135,9 +187,7 @@ impl Drop for OwnerOnlyDescriptor {
 // The current user's SID, as the text SDDL wants.
 #[cfg(windows)]
 fn current_user_sid() -> io::Result<String> {
-    use windows::core::PWSTR;
-    use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
-    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -161,15 +211,27 @@ fn current_user_sid() -> io::Result<String> {
         let _ = CloseHandle(token);
         read.map_err(win)?;
         let user = buf.as_ptr().cast::<TOKEN_USER>();
-
-        let mut text = PWSTR::null();
-        ConvertSidToStringSidW((*user).User.Sid, &mut text).map_err(win)?;
-        let sid = text
-            .to_string()
-            .map_err(|e| io::Error::other(e.to_string()));
-        LocalFree(Some(HLOCAL(text.0.cast())));
-        sid
+        sid_string((*user).User.Sid)
     }
+}
+
+// `sid` as text, as SDDL writes it: one SID, one string, so two SIDs are the
+// same exactly when their strings are.
+//
+// Safety: `sid` points to a valid SID for the length of the call.
+#[cfg(windows)]
+unsafe fn sid_string(sid: windows::Win32::Security::PSID) -> io::Result<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+
+    let mut text = PWSTR::null();
+    unsafe { ConvertSidToStringSidW(sid, &mut text) }.map_err(win)?;
+    let string = unsafe { text.to_string() }.map_err(|e| io::Error::other(e.to_string()));
+    unsafe {
+        LocalFree(Some(HLOCAL(text.0.cast())));
+    }
+    string
 }
 
 #[cfg(all(test, unix))]
@@ -198,5 +260,41 @@ mod tests {
             create_new(&file).unwrap_err().kind(),
             std::io::ErrorKind::AlreadyExists
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use std::os::windows::io::AsHandle;
+
+    #[test]
+    fn the_descriptor_is_owned_by_the_user_and_opens_to_the_user_and_system_alone() {
+        assert_eq!(
+            owner_only_sddl("S-1-5-21-1-2-3-1001"),
+            "O:S-1-5-21-1-2-3-1001D:P(A;;FA;;;S-1-5-21-1-2-3-1001)(A;;FA;;;SY)"
+        );
+    }
+
+    // The user's whether or not the process is elevated: an elevated token's
+    // default owner is the Administrators group, which the descriptor
+    // overrides.
+    #[test]
+    fn a_file_created_owner_only_is_the_current_users() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secret");
+        drop(create_new(&path).unwrap());
+        let file = File::open(&path).unwrap();
+        assert!(owned_by_current_user(file.as_handle()).unwrap());
+    }
+
+    // Installed by the system, owned by TrustedInstaller: another owner fails
+    // the check rather than erroring.
+    #[test]
+    fn a_system_file_is_not_the_current_users() {
+        let root = std::env::var_os("SystemRoot").expect("SystemRoot is set on Windows");
+        let path = Path::new(&root).join("System32").join("kernel32.dll");
+        let file = File::open(path).unwrap();
+        assert!(!owned_by_current_user(file.as_handle()).unwrap());
     }
 }

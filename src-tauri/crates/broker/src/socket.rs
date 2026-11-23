@@ -5,7 +5,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use interprocess::local_socket::{prelude::*, Name};
+use interprocess::local_socket::{prelude::*, Listener, ListenerOptions, Name, Stream};
 
 /// The bundle identifier, which is the app-data directory's name on every
 /// desktop platform. The proxy has no `AppHandle` to ask, so it is spelled out
@@ -48,4 +48,54 @@ pub fn socket_name(root: &Path) -> io::Result<Name<'static>> {
         format!("{IDENTIFIER}.browser.{}", hex::encode(&digest[..8]))
             .to_ns_name::<GenericNamespaced>()
     }
+}
+
+/// A listener at `name`, replacing a socket already there (the caller holds
+/// the lock that makes one a dead process's). On Windows the pipe is created
+/// under the owner-only descriptor the core gives files
+/// (`owner_only::current_user_sddl`): owned by the current user, openable by
+/// that user and SYSTEM alone, where the default would let any local user
+/// open it for reading. On Unix the caller makes the socket file owner-only.
+pub fn listen(name: Name<'_>) -> io::Result<Listener> {
+    let options = ListenerOptions::new().name(name).try_overwrite(true);
+    #[cfg(windows)]
+    let options = {
+        use interprocess::os::windows::{
+            local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor, ToWtf16,
+        };
+        let sddl = rowel_core::owner_only::current_user_sddl()?
+            .to_wtf_16()
+            .map_err(io::Error::other)?;
+        options.security_descriptor(SecurityDescriptor::deserialize(&sddl)?)
+    };
+    options.create_sync()
+}
+
+/// A connection to the broker serving `root`: [`connect_to`] its socket.
+pub fn connect(root: &Path) -> io::Result<Stream> {
+    connect_to(socket_name(root)?)
+}
+
+/// A connection to the socket `name`, for a client that is about to send it
+/// keys or a password: the relay the browser launches, the `rowel` CLI. On
+/// Windows the pipe must be the current user's, or the connection is refused
+/// before a byte crosses it: a pipe's name is public, and a pipe of that name
+/// another user created first would otherwise be handed whatever the client
+/// sends. [`listen`] creates it owned by the user. On Unix the socket is a
+/// file in the data directory, and only whoever can write there can put
+/// another in its place.
+pub fn connect_to(name: Name<'_>) -> io::Result<Stream> {
+    let stream = Stream::connect(name)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsHandle;
+        let Stream::NamedPipe(pipe) = &stream;
+        if !rowel_core::owner_only::owned_by_current_user(pipe.as_handle())? {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the pipe is another user's, not this user's broker",
+            ));
+        }
+    }
+    Ok(stream)
 }

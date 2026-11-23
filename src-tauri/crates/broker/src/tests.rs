@@ -2955,7 +2955,7 @@ mod server {
     use crate::hub::{self, Hub, Sink};
     use crate::server;
     use crate::signal::ROWEL_SIGNAL;
-    use crate::socket::socket_name;
+    use crate::socket;
     #[cfg(unix)]
     use crate::socket::SOCKET_FILE;
     use crate::testing::{nonce, Extension, Mock};
@@ -3126,12 +3126,14 @@ mod server {
         }
     }
 
+    // Through the clients' own `connect`, which on Windows refuses a pipe that
+    // is not the user's: the one `bind` makes is.
     #[test]
     fn bind_listens_at_the_root_and_takes_over_a_socket_left_behind() {
-        use interprocess::local_socket::{prelude::*, Stream};
+        use interprocess::local_socket::prelude::*;
         let dir = tempfile::tempdir().unwrap();
         let listener = server::bind(dir.path()).expect("a listener at a fresh root");
-        let mut client = Stream::connect(socket_name(dir.path()).unwrap()).unwrap();
+        let mut client = socket::connect(dir.path()).expect("the user's own broker is accepted");
         let mut served = listener.accept().unwrap();
         frame::write(&mut client, b"{}").unwrap();
         assert_eq!(
