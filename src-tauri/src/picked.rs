@@ -28,6 +28,13 @@
 //! stays until that session ends. A pick answered after its session ended is
 //! not copied, and a copy a session end overtook is removed
 //! (`commands::tools::pick_file`, [`discard`]).
+//!
+//! The wipe runs off the thread that asks for it, and the folder it clears is
+//! the one the next copy is made in, so a copy first settles any wipe still
+//! owed ([`Owed`]): it is made after the wipe, never under it. A camera photo
+//! has no such step of ours in front of it. wry makes the file, so a wipe not
+//! yet run when the camera opens takes that photo's file and the capture has to
+//! be taken again.
 
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "android", test))]
@@ -44,6 +51,39 @@ use crate::error::{Error, Result};
 /// The folder under the app's cache directory the copies are made in.
 #[cfg(any(target_os = "android", test))]
 const DIR: &str = "picked";
+
+/// A wipe asked for and not yet done.
+#[cfg(any(target_os = "android", test))]
+struct Owed {
+    asked: std::sync::atomic::AtomicBool,
+    doing: std::sync::Mutex<()>,
+}
+
+#[cfg(any(target_os = "android", test))]
+impl Owed {
+    const fn new() -> Self {
+        Self {
+            asked: std::sync::atomic::AtomicBool::new(false),
+            doing: std::sync::Mutex::new(()),
+        }
+    }
+
+    fn ask(&self) {
+        self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Run `wipe` if one is owed. One caller at a time, so whoever returns
+    /// from here has no wipe owed or under way behind it.
+    fn settle(&self, wipe: impl FnOnce()) {
+        let _doing = self.doing.lock().unwrap_or_else(|e| e.into_inner());
+        if self.asked.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            wipe();
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+static OWED: Owed = Owed::new();
 
 /// The dialog's answer as a path to read: on Android a document is copied in
 /// first (see the module docs); anything else is the path the answer names,
@@ -72,6 +112,7 @@ fn copy_document(app: &AppHandle, uri: url::Url) -> Result<PathBuf> {
     use tauri::Manager;
     use tauri_plugin_fs::{FsExt, OpenOptions};
 
+    settle(app);
     let name = app.path().file_name(uri.as_str()).unwrap_or_default();
     let cache = app
         .path()
@@ -138,30 +179,35 @@ fn discard_in(cache: &Path, path: &Path) {
 }
 
 /// Remove every copy and every camera photo (see the module docs). Android
-/// only, the one platform that leaves them. Runs off the calling thread, so
-/// this may be called under the session guard (`session`). Best effort: what
-/// will not go now goes the next time.
+/// only, the one platform that leaves them. Only asks: the removal runs off the
+/// calling thread, so this may be called under the session guard (`session`).
+/// Best effort: what will not go now goes the next time.
 pub fn wipe(app: &AppHandle) {
     #[cfg(target_os = "android")]
     {
-        use tauri::Manager;
-
+        OWED.ask();
         let app = app.clone();
-        crate::commands::detached(move || {
-            // `PathPlugin.getPictureDir`: the folder wry has the camera write to.
-            let dirs = app.path();
-            wipe_in(
-                dirs.app_cache_dir().ok().as_deref(),
-                dirs.picture_dir().ok().as_deref(),
-            );
-        });
+        crate::commands::detached(move || settle(&app));
     }
     #[cfg(not(target_os = "android"))]
     let _ = app;
 }
 
-/// Remove the copies made under `cache` and the files in `pictures` named the
-/// way wry names a capture.
+/// Do the wipe if one is owed.
+#[cfg(target_os = "android")]
+fn settle(app: &AppHandle) {
+    use tauri::Manager;
+
+    OWED.settle(|| {
+        // `PathPlugin.getPictureDir`: the folder wry has the camera write to.
+        let dirs = app.path();
+        wipe_in(
+            dirs.app_cache_dir().ok().as_deref(),
+            dirs.picture_dir().ok().as_deref(),
+        );
+    });
+}
+
 #[cfg(any(target_os = "android", test))]
 fn wipe_in(cache: Option<&Path>, pictures: Option<&Path>) {
     if let Some(cache) = cache {
@@ -284,6 +330,22 @@ mod tests {
 
     // Both kinds go, the camera's empty file included; anything else in either
     // folder stays.
+    // What keeps a new copy out from under a wipe: by the time `settle`
+    // returns, the wipe that was owed has run, and it runs once.
+    #[test]
+    fn a_wipe_owed_is_done_once_by_whoever_settles_first() {
+        let owed = Owed::new();
+        let mut done = 0;
+        owed.settle(|| done += 1);
+        assert_eq!(done, 0, "none was asked for");
+
+        owed.ask();
+        owed.ask();
+        owed.settle(|| done += 1);
+        owed.settle(|| done += 1);
+        assert_eq!(done, 1);
+    }
+
     #[test]
     fn a_wipe_takes_every_copy_and_capture_and_nothing_else() {
         let cache = tempfile::tempdir().unwrap();
