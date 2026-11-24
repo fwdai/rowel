@@ -104,6 +104,18 @@ describe('Settings › Keyboard shortcuts', () => {
     expect(calls('set_settings')).toHaveLength(0)
   })
 
+  // WebKit on macOS leaves a clicked button unfocused; a bare click event is
+  // the same here, since it moves no focus either.
+  it('takes the keyboard when clicked, even where a click moves no focus', async () => {
+    render(<Keyboard />)
+
+    fireEvent.click(capture('lock'))
+    expect(document.activeElement).toBe(capture('lock'))
+    await userEvent.keyboard('j')
+
+    expect(capture('lock')).toHaveTextContent('⌘J')
+  })
+
   it('restores every default at once', async () => {
     remap({ lock: 'KeyJ', copyUrl: 'KeyO' })
     render(<Keyboard />)

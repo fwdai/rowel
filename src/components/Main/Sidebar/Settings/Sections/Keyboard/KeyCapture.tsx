@@ -41,7 +41,12 @@ export default function KeyCapture({ hint, label, onCapture, testid }: Props) {
       aria-label={t('Shortcut for {{action}}', { action: label })}
       aria-pressed={recording}
       data-testid={testid}
-      onClick={() => setRecording(!recording)}
+      onClick={event => {
+        // WebKit on macOS does not focus a clicked button, and the keys only
+        // reach this one's `onKeyDown` while it has focus.
+        event.currentTarget.focus()
+        setRecording(!recording)
+      }}
       onBlur={() => setRecording(false)}
       onKeyDown={onKeyDown}
       className={cx(
