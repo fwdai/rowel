@@ -159,7 +159,7 @@ pub async fn scan_image(
             if !scan::is_image(Path::new(&chosen.name)) {
                 return Err(Error::Unrecognized);
             }
-            storage::read_capped(chosen.file, scan::MAX_IMAGE_BYTES)
+            storage::read_capped(chosen.contents, scan::MAX_IMAGE_BYTES)
         })
         .await?;
         scan::scan_bytes(image).await?

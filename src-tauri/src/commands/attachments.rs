@@ -303,7 +303,7 @@ fn seal_file(
     chosen: Chosen,
     room: u64,
 ) -> Result<Attachment> {
-    let bytes = Zeroizing::new(read_capped(chosen.file, MAX_ATTACHMENT_BYTES)?);
+    let bytes = Zeroizing::new(read_capped(chosen.contents, MAX_ATTACHMENT_BYTES)?);
     seal_bytes(cipher, entry_id, &chosen.name, &bytes, room)
 }
 
@@ -558,6 +558,28 @@ mod tests {
         let grants = PathGrants::default();
         grants.grant(path, Purpose::Attachment);
         grants
+    }
+
+    // An Android document its provider serves through a pipe, read whole
+    // under the cap like a file on disk.
+    #[cfg(unix)]
+    #[test]
+    fn a_document_served_through_a_pipe_is_sealed_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _) = vault(&dir, &argon2_key(), "login");
+        let state = open_with(argon2_key(), store);
+        let (_, cipher, room) = begin_add_bytes(&state, "e1").unwrap();
+
+        let piped = picked::piped("scan.pdf", b"%PDF-1.7 the file".to_vec());
+        let attachment = seal_file(&cipher, "e1", piped, room).unwrap();
+
+        assert_eq!(attachment.meta.name, "scan.pdf");
+        assert_eq!(
+            &**cipher
+                .unseal(&attachment.meta.id, &attachment.blob)
+                .unwrap(),
+            b"%PDF-1.7 the file"
+        );
     }
 
     #[test]

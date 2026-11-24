@@ -664,14 +664,15 @@ pub fn open_regular_file(path: &Path) -> Result<fs::File> {
     Ok(file)
 }
 
-/// The rest of a handle, refusing anything past `cap`.
+/// The rest of a reader, refusing anything past `cap`: a file, or a picked
+/// document read front to back (`picked::Contents`).
 ///
 /// `take(cap + 1)` is what bounds the read. The extra byte is how a file at
 /// the cap is told from one past it without trusting any reported length — if
 /// it arrives, the file is too large and nothing beyond it is ever read.
-pub fn read_capped(file: fs::File, cap: u64) -> Result<Vec<u8>> {
+pub fn read_capped(reader: impl Read, cap: u64) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    file.take(cap.saturating_add(1)).read_to_end(&mut bytes)?;
+    reader.take(cap.saturating_add(1)).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > cap {
         return Err(Error::FileTooLarge);
     }
@@ -727,8 +728,8 @@ fn not_a_regular_file() -> Error {
 const MAX_BACKUP_BYTES: u64 = 256 * 1024 * 1024;
 
 // Read a backup file chosen by the user, as `picked::open` opened it.
-pub fn read_backup(file: fs::File) -> Result<String> {
-    let bytes = read_capped(file, MAX_BACKUP_BYTES)?;
+pub fn read_backup(contents: impl Read) -> Result<String> {
+    let bytes = read_capped(contents, MAX_BACKUP_BYTES)?;
     String::from_utf8(bytes).map_err(|_| Error::FileNotText)
 }
 

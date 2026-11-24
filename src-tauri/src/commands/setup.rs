@@ -336,7 +336,7 @@ pub async fn setup_restore_from_file(
     let handle = app.clone();
     let (key, store) = super::blocking(move || {
         let chosen = picked::open(&handle, Path::new(&path))?;
-        let bytes = storage::read_capped(chosen.file, sync::pack::MAX_PACK_BYTES as u64)?;
+        let bytes = storage::read_capped(chosen.contents, sync::pack::MAX_PACK_BYTES as u64)?;
         restore::restore_from_pack(&handle, &bytes, &password)
     })
     .await?;
@@ -377,7 +377,7 @@ pub async fn setup_restore_from_legacy(
     let handle = app.clone();
     let (key, store) = super::blocking(move || {
         let chosen = picked::open(&handle, Path::new(&path))?;
-        let (src, data) = super::vault::open_legacy_backup(chosen.file, &password)?;
+        let (src, data) = super::vault::open_legacy_backup(chosen.contents, &password)?;
         let (key, store) = match create_vault(&handle, &password) {
             Ok(created) => created,
             Err(e) => {

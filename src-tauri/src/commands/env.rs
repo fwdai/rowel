@@ -82,7 +82,7 @@ fn looks_like_env(text: &str) -> bool {
 // The command's body, split out so the refusals can be tested without a Tauri
 // runtime around them. Takes the file as `picked::open` opened it.
 pub fn read_env_text(chosen: Chosen) -> Result<EnvFile> {
-    let bytes = read_capped(chosen.file, MAX_BYTES)?;
+    let bytes = read_capped(chosen.contents, MAX_BYTES)?;
     let body = String::from_utf8(bytes).map_err(|_| Error::FileNotText)?;
     let file_name = chosen.name;
     // Whatever path arrives is read whole and handed back, so what leaves here
@@ -228,6 +228,16 @@ mod tests {
         let err = read(&path).unwrap_err();
         assert!(matches!(err, Error::FileTooLarge), "{err}");
         let _ = fs::remove_file(path);
+    }
+
+    // An Android document its provider serves through a pipe.
+    #[cfg(unix)]
+    #[test]
+    fn reads_an_env_served_through_a_pipe() {
+        let file =
+            read_env_text(picked::piped(".env.production", b"A=1\nB=two\n".to_vec())).unwrap();
+        assert_eq!(file.file_name, ".env.production");
+        assert_eq!(file.body, "A=1\nB=two\n");
     }
 
     #[test]

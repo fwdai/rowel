@@ -722,7 +722,7 @@ async fn read_backup(
     // Off the command thread: a backup is the whole vault, and a large one on
     // a slow disk must not stall the async runtime.
     let path = path.to_path_buf();
-    blocking(move || storage::read_capped(open(&path)?.file, sync::pack::MAX_PACK_BYTES as u64))
+    blocking(move || storage::read_capped(open(&path)?.contents, sync::pack::MAX_PACK_BYTES as u64))
         .await
 }
 
@@ -2106,6 +2106,27 @@ mod tests {
             identity::vault_id(&previous.store).unwrap().as_deref(),
             Some("a1b2")
         );
+    }
+
+    // An Android document its provider serves through a pipe: read on the
+    // same terms, and installed as a lockbox like a file on disk.
+    #[cfg(unix)]
+    #[test]
+    fn a_backup_served_through_a_pipe_restores() {
+        let root = tmp_root();
+        let backup = backup_of(Some("cafe"));
+        let grants = chosen(&backup);
+        let file = std::fs::read(&backup).unwrap();
+
+        let open = move |_: &Path| Ok(picked::piped("Rowel backup.rowel", file));
+        let bytes = tauri::async_runtime::block_on(read_backup(&backup, &grants, open)).unwrap();
+        let dir = new_dir(&root, "c3d4");
+        let (_, store, entries, vault_id) =
+            install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
+        drop(store);
+
+        assert_eq!(vault_id, "cafe");
+        assert_eq!(entries.len(), 1);
     }
 
     // A wrong password writes nothing that outlives the unwinding, and the

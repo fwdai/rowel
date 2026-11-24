@@ -241,7 +241,7 @@ pub async fn import_swftx(
     let emitter = app.clone();
     let records = super::blocking(move || -> Result<Vec<Record>> {
         let chosen = picked::open(&emitter, Path::new(&path))?;
-        let (src_cryptor, src) = open_legacy_backup(chosen.file, &password)?;
+        let (src_cryptor, src) = open_legacy_backup(chosen.contents, &password)?;
         reseal_legacy(&emitter, &src_cryptor, &src.entries, &cur_cipher)
     })
     .await?;
@@ -262,7 +262,7 @@ pub async fn import_swftx(
     })
 }
 
-/// Open the `.swftx` in `file` (as `picked::open` opened it) under `password`:
+/// Open the `.swftx` in `contents` (as `picked::open` opened it) under `password`:
 /// the legacy cryptor it was sealed with, and the vault it holds. A wrong
 /// password is [`Error::InvalidPassword`], before anything downstream is
 /// touched. The blob goes in by value, so the file is freed as soon as it has
@@ -271,10 +271,10 @@ pub async fn import_swftx(
 /// Shared by the merge above and the first run's restore
 /// (`commands::setup::setup_restore_from_legacy`).
 pub(crate) fn open_legacy_backup(
-    file: std::fs::File,
+    contents: picked::Contents,
     password: &str,
 ) -> Result<(crypto::Cryptor, VaultData)> {
-    let blob = storage::read_backup(file)?;
+    let blob = storage::read_backup(contents)?;
     let src_cryptor = crypto::Cryptor::new(&crypto::hash_secret(password));
     let src: VaultData = src_cryptor
         .decrypt_data_owned(blob)
@@ -694,8 +694,22 @@ mod tests {
     }
 
     // The file on disk, opened as the command opens it.
-    fn opened(path: &str) -> std::fs::File {
-        picked::open_local(Path::new(path)).unwrap().file
+    fn opened(path: &str) -> picked::Contents {
+        picked::open_local(Path::new(path)).unwrap().contents
+    }
+
+    // An Android document its provider serves through a pipe.
+    #[cfg(unix)]
+    #[test]
+    fn a_legacy_backup_served_through_a_pipe_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = swftx(&dir, "old-password", vec![login(vec![])]);
+        let piped = picked::piped("old-vault.swftx", std::fs::read(&path).unwrap());
+
+        let (src, data) = open_legacy_backup(piped.contents, "old-password").unwrap();
+
+        assert_eq!(data.entries.len(), 1);
+        assert_eq!(src.expose(&data.entries[0]).unwrap().title, "Site");
     }
 
     #[test]

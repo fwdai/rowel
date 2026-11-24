@@ -15,12 +15,24 @@
 //! label shown to the user. On a path the name is its last component, so the
 //! two only part on Android, which is why a pick hands the webview both
 //! ([`Pick`]) rather than leaving it to read the name off the address.
+//!
+//! What a reader is handed is [`Contents`]: bytes read front to back, and
+//! nothing else. A file on disk is a regular file, settled on its handle when
+//! it is opened; a document is whatever descriptor its provider chose, and a
+//! provider may serve one through a pipe, which cannot seek and has no length
+//! or metadata worth asking. So no reader is offered any of that: each reads
+//! what it needs under its own cap, counted on the bytes that arrive, and the
+//! one that needs to move about in a file (an archive) asks
+//! [`Contents::seekable`], which takes a file on disk as it is and reads
+//! anything else into memory first, under the cap it is given.
 
 use std::fs::File;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use serde::Serialize;
 use tauri::AppHandle;
+use zeroize::Zeroizing;
 
 use crate::error::Result;
 use crate::storage;
@@ -31,8 +43,57 @@ pub(crate) const DOCUMENTS: bool = cfg!(target_os = "android");
 /// A chosen file, open for reading, and the name it goes by: what a reader
 /// tells its kind by, and what an attachment is stored under.
 pub struct Chosen {
-    pub file: File,
+    pub contents: Contents,
     pub name: String,
+}
+
+/// A chosen file's bytes, read front to back. The handle is held rather than
+/// exposed so that nothing a pipe cannot do — seek, ask a length, clone —
+/// compiles against it (see the module docs).
+pub struct Contents(File);
+
+impl Read for Contents {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Contents {
+    /// The bytes as something read in any order, for a reader that needs that
+    /// and asks before it has read any: a file on disk as it is, since it can
+    /// seek, and anything else read whole into memory first — refused past
+    /// `cap`, counted on the bytes read, and scrubbed when it is dropped.
+    pub fn seekable(mut self, cap: u64) -> Result<Seekable> {
+        if self.0.metadata()?.file_type().is_file() {
+            return Ok(Seekable::File(self.0));
+        }
+        let bytes = Zeroizing::new(storage::read_capped(&mut self, cap)?);
+        Ok(Seekable::Memory(Cursor::new(bytes)))
+    }
+}
+
+/// What [`Contents::seekable`] gives back.
+pub enum Seekable {
+    File(File),
+    Memory(Cursor<Zeroizing<Vec<u8>>>),
+}
+
+impl Read for Seekable {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Seekable::File(file) => file.read(buf),
+            Seekable::Memory(bytes) => bytes.read(buf),
+        }
+    }
+}
+
+impl Seek for Seekable {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        match self {
+            Seekable::File(file) => file.seek(pos),
+            Seekable::Memory(bytes) => bytes.seek(pos),
+        }
+    }
 }
 
 /// A pick as the webview is handed it: the address to read it by and the name
@@ -62,7 +123,7 @@ pub fn open(app: &AppHandle, path: &Path) -> Result<Chosen> {
     if is_document(path, DOCUMENTS) {
         let file = open_document(app, path)?;
         return Ok(Chosen {
-            file,
+            contents: Contents(file),
             name: name(app, path),
         });
     }
@@ -95,7 +156,7 @@ pub fn name(app: &AppHandle, path: &Path) -> String {
 pub fn open_local(path: &Path) -> Result<Chosen> {
     let file = storage::open_regular_file(path)?;
     Ok(Chosen {
-        file,
+        contents: Contents(file),
         name: local_name(path),
     })
 }
@@ -114,7 +175,8 @@ fn local_name(path: &Path) -> String {
 /// provider may serve a document through a pipe, and the URI names exactly the
 /// document the user picked, so there is no FIFO or device behind a path to
 /// guard against. What bounds the read is the reader's own cap, which every
-/// reader applies to whatever it was handed (`storage::read_capped`).
+/// reader applies to the bytes it reads (`storage::read_capped`), and what
+/// keeps a reader from seeking it is [`Contents`].
 #[cfg(target_os = "android")]
 fn open_document(app: &AppHandle, path: &Path) -> Result<File> {
     use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
@@ -124,6 +186,25 @@ fn open_document(app: &AppHandle, path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     Ok(app.fs().open(FilePath::Url(url), options)?)
+}
+
+/// A chosen file whose contents arrive through a pipe, as a provider may
+/// serve a document: a real descriptor that cannot seek, written from another
+/// thread so that a file past the pipe's buffer streams as it would on a
+/// device. A reader that stops at its cap closes its end early, and the write
+/// then fails, which is the writer's business only.
+#[cfg(all(test, unix))]
+pub(crate) fn piped(name: &str, bytes: Vec<u8>) -> Chosen {
+    use std::io::Write;
+
+    let (reader, mut writer) = std::io::pipe().unwrap();
+    std::thread::spawn(move || {
+        let _ = writer.write_all(&bytes);
+    });
+    Chosen {
+        contents: Contents(File::from(std::os::fd::OwnedFd::from(reader))),
+        name: name.into(),
+    }
 }
 
 #[cfg(test)]
@@ -151,20 +232,18 @@ mod tests {
 
     #[test]
     fn a_file_on_disk_opens_under_its_own_name() {
-        use std::io::Read;
-
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("export.csv");
         std::fs::write(&path, b"name,password\n").unwrap();
 
         let mut chosen = open_local(&path).unwrap();
         let mut text = String::new();
-        chosen.file.read_to_string(&mut text).unwrap();
+        chosen.contents.read_to_string(&mut text).unwrap();
         assert_eq!(chosen.name, "export.csv");
         assert_eq!(text, "name,password\n");
     }
 
-    // What `PickedFile` in `src/api/types.ts` reads.
+    // What `PickedFile` in `src/api/tools.ts` reads.
     #[test]
     fn a_pick_reaches_the_webview_as_its_path_and_name() {
         let pick = Pick {
@@ -184,5 +263,55 @@ mod tests {
     fn a_directory_on_disk_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         assert!(open_local(dir.path()).is_err());
+    }
+
+    fn read_all(mut source: impl Read) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        source.read_to_end(&mut bytes).unwrap();
+        bytes
+    }
+
+    // The helper the tests feed readers with is what it claims: a descriptor
+    // that will not seek.
+    #[cfg(unix)]
+    #[test]
+    fn a_piped_document_cannot_seek() {
+        let Contents(mut file) = piped("export.csv", b"name,password\n".to_vec()).contents;
+        assert!(file.seek(SeekFrom::Start(0)).is_err());
+    }
+
+    // A file on disk is moved about where it lies, not copied.
+    #[test]
+    fn a_file_on_disk_is_seekable_where_it_lies() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.1pux");
+        std::fs::write(&path, b"PK\x03\x04 the archive").unwrap();
+
+        let mut source = open_local(&path).unwrap().contents.seekable(4).unwrap();
+        assert!(matches!(source, Seekable::File(_)), "read into memory");
+        source.seek(SeekFrom::Start(4)).unwrap();
+        assert_eq!(read_all(&mut source), b" the archive");
+    }
+
+    // A pipe is read into memory, whole, and can then be moved about.
+    #[cfg(unix)]
+    #[test]
+    fn a_piped_document_is_seekable_once_read() {
+        let mut source = piped("export.1pux", b"PK\x03\x04 the archive".to_vec())
+            .contents
+            .seekable(64)
+            .unwrap();
+        assert!(matches!(source, Seekable::Memory(_)));
+        assert_eq!(read_all(&mut source), b"PK\x03\x04 the archive");
+        source.seek(SeekFrom::Start(4)).unwrap();
+        assert_eq!(read_all(&mut source), b" the archive");
+    }
+
+    // The cap is on the bytes that arrive: a pipe reports no length to trust.
+    #[cfg(unix)]
+    #[test]
+    fn a_piped_document_past_the_cap_is_refused() {
+        let result = piped("export.1pux", vec![0; 65]).contents.seekable(64);
+        assert!(matches!(result, Err(crate::error::Error::FileTooLarge)));
     }
 }
