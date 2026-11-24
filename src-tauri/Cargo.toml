@@ -303,6 +303,9 @@ axum = "0.8"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # The Android client's bundled roots, so the host's tests can load them.
 webpki-root-certs = "1"
+# The options an Android export opens its document with (`save`), so the host's
+# tests open a file with the same ones.
+tauri-plugin-fs = "2"
 
 # Desktop-only, as `browser` is: the broker's scripted host and extension
 # (`testing::{Mock, Extension}`) for the socket server's own tests.

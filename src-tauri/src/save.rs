@@ -72,20 +72,13 @@ pub async fn save_export(
     #[cfg(target_os = "android")]
     {
         use tauri::Manager;
-        use tauri_plugin_fs::{FsExt, OpenOptions};
+        use tauri_plugin_fs::FsExt;
 
         let handle = app.clone();
         let Some(dest) = ask_then_write(
             bytes,
             pick(app, file_name, Some((filter, ANY_TYPE))),
-            move |dest: &FilePath| {
-                // Truncating: the picker also lets the user choose a document
-                // that is already there, and one longer than the export would
-                // keep its tail.
-                let mut options = OpenOptions::new();
-                options.write(true).truncate(true);
-                handle.fs().open(dest.clone(), options)
-            },
+            move |dest: &FilePath| handle.fs().open(dest.clone(), document_options()),
         )
         .await?
         else {
@@ -220,6 +213,17 @@ impl Drop for Staged {
 /// (AOSP `FileUtils.splitFileName`).
 #[cfg(target_os = "android")]
 const ANY_TYPE: &str = "application/octet-stream";
+
+/// How an export opens the document the Android dialog answered with: for
+/// writing, and cut to nothing first — the picker also lets the user choose a
+/// document that is already there, and one longer than the export would keep
+/// its tail. The one constructor of them, which the tests open a file with too.
+#[cfg(any(target_os = "android", test))]
+fn document_options() -> tauri_plugin_fs::OpenOptions {
+    let mut options = tauri_plugin_fs::OpenOptions::new();
+    options.write(true).truncate(true);
+    options
+}
 
 /// Run the dialog and, if it answered, open what it answered with and write
 /// the bytes there: Android's order, where the answer is a document to be
@@ -526,7 +530,8 @@ mod tests {
     // with, opened only then, and the export is what it holds afterwards. The
     // picker has created the document by the time it answers, hence the file
     // already there — with something in it, as one the user chose to replace
-    // has.
+    // has. Opened with the options the Android path opens it with, so an export
+    // that stopped truncating would keep the older export's tail here.
     #[tokio::test]
     async fn the_bytes_go_into_what_the_dialog_answered_with() {
         let dir = std::env::temp_dir().join(format!("rowel-save-doc-{}", std::process::id()));
@@ -537,12 +542,7 @@ mod tests {
         let chosen = ask_then_write(
             b"name,password".to_vec(),
             async { Ok(Some(dest.clone())) },
-            |dest: &PathBuf| {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .open(dest)
-            },
+            |dest: &PathBuf| std::fs::OpenOptions::from(document_options()).open(dest),
         )
         .await
         .unwrap();
