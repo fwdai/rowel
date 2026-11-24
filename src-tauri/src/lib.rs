@@ -123,6 +123,16 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_deep_link::init());
     }
 
+    // What `save` writes an export through on Android, where the destination
+    // is a `content://` URI rather than a path. Registered for that one use
+    // from Rust: nothing in `capabilities/` names an `fs:` permission, and a
+    // plugin command no capability grants is refused before it runs, so the
+    // webview gains no reach into the file system by it.
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(tauri_plugin_fs::init());
+    }
+
     // The timer behind the delayed clipboard clear. Not on iOS, where the
     // pasteboard's own expiry does the clearing and no timer is armed (see
     // `commands::clipboard`).

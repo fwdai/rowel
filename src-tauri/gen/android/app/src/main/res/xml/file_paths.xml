@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- What the FileProvider may hand out a URI for: the one directory wry creates
+     the camera's photo in, `getExternalFilesDir(DIRECTORY_PICTURES)`
+     (`RustWebChromeClient.createImageFile`). Nothing else in the app shares a
+     file through it. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-  <external-path name="my_images" path="." />
-  <cache-path name="my_cache_images" path="." />
+  <external-files-path name="camera" path="Pictures/" />
 </paths>

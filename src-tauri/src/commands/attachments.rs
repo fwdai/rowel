@@ -155,9 +155,11 @@ pub fn attachment_list(entry_id: String, state: State<'_, AppState>) -> Result<V
 
 /// Write an attachment back to disk where the user says, under its own name.
 /// Unsealed here and handed straight to the save dialog's writer — owner-only
-/// on desktop, staged in the app's sandbox for the iOS exporter — so the file
-/// goes from the vault to disk without passing through the webview. The path
-/// it landed at, or `None` when the dialog was dismissed.
+/// on desktop, staged in the app's sandbox for the iOS exporter, written into
+/// the picked document on Android — so the file goes from the vault to disk
+/// without passing through the webview. Where it landed (on Android, the name
+/// it landed under; see `save_export`), or `None` when the dialog was
+/// dismissed.
 #[tauri::command]
 pub async fn attachment_save(
     id: String,
@@ -402,7 +404,7 @@ fn attachable(store: &SqliteStore, entry_id: &str) -> Result<()> {
 }
 
 /// A name kept to its last path component: the one a save offers, so a name
-/// that arrived through sync cannot point the mobile staging anywhere else,
+/// that arrived through sync cannot point the iOS staging anywhere else,
 /// and the one a file sent as bytes is stored under, for the same reason.
 fn file_name(name: &str) -> String {
     Path::new(name)

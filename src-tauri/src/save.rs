@@ -1,10 +1,10 @@
-//! Writing an export to wherever the user says, on two platforms that mean
-//! opposite things by "save dialog".
+//! Writing an export to wherever the user says, on three platforms that each
+//! mean something else by "save dialog".
 //!
 //! Desktop hands back a destination to write to. iOS has no such API: its only
 //! export mechanism is "move this file to a place the user picks", so the
 //! plugin fakes the desktop shape by creating an *empty* file in the app's
-//! Documents directory and exporting that (`tauri-plugin-dialog` 2.7.2,
+//! Documents directory and exporting that (`tauri-plugin-dialog` 2.8.4,
 //! `ios/Sources/DialogPlugin.swift`: `saveFileDialog` at line 138 writes `""`
 //! to `<Documents>/<fileName>` at lines 148-154, but only if nothing is there
 //! yet, then hands that file to
@@ -13,13 +13,25 @@
 //! the path comes back, so writing to it achieves nothing: on iOS the content
 //! has to be in place *before* the dialog opens.
 //!
-//! Both callers (`vault::export_vault`, `import::export_entries`) go through
-//! [`save_export`], so that ordering lives in exactly one place.
+//! Android asks first, as desktop does, but what it hands back is not a path.
+//! The system picker creates the document and answers with its `content://`
+//! URI (`android/src/main/java/DialogPlugin.kt` of the same plugin:
+//! `saveFileDialog` starts `ACTION_CREATE_DOCUMENT`, `saveFileDialogResult`
+//! resolves with `intent.data` as a string), which `std::fs` cannot open and
+//! `FilePath::into_path` refuses, being no `file://` URL. The bytes go in
+//! through a descriptor the content resolver opens for that URI
+//! (`tauri-plugin-fs` 2.7.1, `src/android.rs`: `Fs::open` asks
+//! `FsPlugin.getFileDescriptor`). Nothing is staged: the export goes from
+//! memory into the document, and the app's own storage never holds it.
+//!
+//! Every caller (`vault::export_vault`, `import::export_entries`,
+//! `attachments::attachment_save`) goes through [`save_export`], so each
+//! platform's ordering lives in exactly one place.
 
 use std::path::{Path, PathBuf};
 
 use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use zeroize::Zeroize;
 
 use crate::error::{Error, Result};
@@ -27,20 +39,23 @@ use crate::error::{Error, Result};
 /// Ask the user where `file_name` should go and put `bytes` there.
 ///
 /// `filter` labels the file-type filter the desktop dialog shows; the extension
-/// it filters on is `file_name`'s. Returns the chosen path, or `None` if the
-/// dialog was dismissed.
+/// it filters on is `file_name`'s. Returns where the export went, or `None` if
+/// the dialog was dismissed: the chosen path on desktop and iOS, and on
+/// Android, where the destination is a URI that names nothing a person reads,
+/// the name the document has there — which is all the webview shows of it.
 pub async fn save_export(
     app: &AppHandle,
     file_name: &str,
     filter: &str,
     bytes: Vec<u8>,
 ) -> Result<Option<PathBuf>> {
+    #[cfg(not(target_os = "android"))]
     let extension = Path::new(file_name)
         .extension()
         .map(|e| e.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    #[cfg(mobile)]
+    #[cfg(target_os = "ios")]
     {
         use tauri::Manager;
 
@@ -51,6 +66,40 @@ pub async fn save_export(
         let (staged, asked) = staging(&dir, file_name);
         stage_then(&staged, file_name, bytes, || {
             ask(app, &asked, filter, &extension)
+        })
+        .await
+    }
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        use tauri_plugin_fs::{FsExt, OpenOptions};
+
+        let handle = app.clone();
+        let Some(dest) = ask_then_write(
+            bytes,
+            pick(app, file_name, Some((filter, ANY_TYPE))),
+            move |dest: &FilePath| {
+                // Truncating: the picker also lets the user choose a document
+                // that is already there, and one longer than the export would
+                // keep its tail.
+                let mut options = OpenOptions::new();
+                options.write(true).truncate(true);
+                handle.fs().open(dest.clone(), options)
+            },
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        // The name is asked of the document rather than assumed: the picker
+        // lets the user retype the one it was offered, and the provider alters
+        // one that is taken. A provider that will not say leaves the name that
+        // was offered. Off the runtime's workers, as the write is: the question
+        // goes through the Android main thread to the provider.
+        let (app, offered) = (app.clone(), file_name.to_string());
+        crate::commands::blocking(move || {
+            let name = app.path().file_name(&dest.to_string());
+            Ok(Some(PathBuf::from(name.unwrap_or(offered))))
         })
         .await
     }
@@ -66,8 +115,9 @@ pub async fn save_export(
 }
 
 /// Ask where a plaintext `.env` should go and write `text` there, readable by
-/// its owner alone (0600 on unix). Desktop only: the mobile picker copies the
-/// file itself and so cannot be told what mode to give it.
+/// its owner alone (0600 on unix). Desktop only: neither phone's picker can be
+/// told what mode to give the file — iOS copies it itself, Android has a
+/// content provider create it.
 ///
 /// Unlike [`save_export`] this applies no file-type filter — `.env` has no
 /// extension in the dialog's sense, `.env.production` has the wrong one — and
@@ -97,7 +147,7 @@ pub async fn save_private_text(
 /// the picker labels the file with, and the plugin resolves what to export from
 /// the name we ask for (`<Documents>/<fileName>`), which is why the directory
 /// has to travel in that name rather than beside it.
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 fn staging(dir: &Path, file_name: &str) -> (PathBuf, String) {
     let unique = format!("export-{}", crate::store::migrate::new_entry_id());
     (dir.join(&unique), format!("{unique}/{file_name}"))
@@ -109,7 +159,7 @@ fn staging(dir: &Path, file_name: &str) -> (PathBuf, String) {
 ///
 /// Split out from [`save_export`] (and compiled on every platform) so the
 /// ordering the iOS dialog demands can be tested without one.
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 async fn stage_then<F, Fut>(
     staged: &Path,
     file_name: &str,
@@ -130,10 +180,10 @@ where
 /// out of the scope — a dismissed dialog, a failed dialog, a write that ran out
 /// of disk halfway, a panic — takes the directory with it. Cleanup that has to
 /// be remembered at each exit is cleanup that one of them will forget.
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 struct Staged(PathBuf);
 
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 impl Staged {
     /// Claim the directory first, then create and fill it: a create or a write
     /// that fails partway has already left something on disk, and only a guard
@@ -146,38 +196,105 @@ impl Staged {
     }
 }
 
-#[cfg(any(mobile, test))]
+#[cfg(any(target_os = "ios", test))]
 impl Drop for Staged {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
+/// The one file type the Android dialog is asked for, whatever is being saved.
+///
+/// The plugin turns a filter's extensions into MIME types — an "extension"
+/// with a `/` in it is taken for one already — and builds its
+/// `ACTION_CREATE_DOCUMENT` intent from however many it is left with
+/// (`DialogPlugin.kt`: `parseFiltersOption`, `saveFileDialog`). Left with
+/// none — no filter, as an attachment has, or an extension Android knows no
+/// type for, as `.rowel` — it sends an empty `EXTRA_MIME_TYPES`, and the system
+/// picker then offers nowhere to save: it lists a storage root only when the
+/// root's types overlap the ones asked for (AOSP DocumentsUI,
+/// `ProvidersAccess.getMatchingRoots`). Exactly one type becomes the intent's
+/// own and that extra is not sent. This is the one every root takes, and the
+/// one under which the provider leaves the offered name as it is, extension or
+/// none, where any other type has it check the extension against the type
+/// (AOSP `FileUtils.splitFileName`).
+#[cfg(target_os = "android")]
+const ANY_TYPE: &str = "application/octet-stream";
+
+/// Run the dialog and, if it answered, open what it answered with and write
+/// the bytes there: Android's order, where the answer is a document to be
+/// opened rather than a path. Split out from [`save_export`] (and compiled for
+/// the tests) so the order can be exercised without a picker.
+///
+/// The bytes are put under a guard before the dialog runs, so they are
+/// scrubbed however this ends — a dialog dismissed or failed, a destination
+/// that would not open, a write that stopped halfway.
+///
+/// Nothing here touches the app's own storage, so there is nothing of the
+/// app's to take away again. The document is another matter: the picker has
+/// created it by the time it answers, so a write that fails leaves it where
+/// the user put it, empty or cut short, and the error is what says so —
+/// removing a document is not something its descriptor can do.
+#[cfg(any(target_os = "android", test))]
+async fn ask_then_write<D, W>(
+    bytes: Vec<u8>,
+    dialog: impl std::future::Future<Output = Result<Option<D>>>,
+    open: impl FnOnce(&D) -> std::io::Result<W> + Send + 'static,
+) -> Result<Option<D>>
+where
+    D: Send + 'static,
+    W: std::io::Write,
+{
+    let bytes = zeroize::Zeroizing::new(bytes);
+    let Some(dest) = dialog.await? else {
+        return Ok(None);
+    };
+    // Off the runtime's workers: the open is a round trip through the Android
+    // main thread, and the write waits on whichever provider owns the document.
+    crate::commands::blocking(move || {
+        open(&dest)?.write_all(&bytes)?;
+        Ok(Some(dest))
+    })
+    .await
+}
+
 // Present the save dialog off the main thread; blocking on it there would
-// deadlock the very event loop the dialog needs. An empty `filter` asks for no
-// file-type filter at all.
+// deadlock the very event loop the dialog needs. `filter` is the file-type
+// filter's label and the one type it lets through, `None` for no filter at
+// all. The answer is the plugin's own: a path on desktop, a `file://` URL on
+// iOS, a `content://` URI on Android.
+async fn pick(
+    app: &AppHandle,
+    file_name: &str,
+    filter: Option<(&str, &str)>,
+) -> Result<Option<FilePath>> {
+    let app = app.clone();
+    let file_name = file_name.to_string();
+    let filter = filter.map(|(label, kind)| (label.to_string(), kind.to_string()));
+    tauri::async_runtime::spawn_blocking(move || {
+        let dialog = app.dialog().file().set_file_name(file_name);
+        let dialog = match filter {
+            Some((label, kind)) => dialog.add_filter(label, &[kind.as_str()]),
+            None => dialog,
+        };
+        dialog.blocking_save_file()
+    })
+    .await
+    .map_err(|e| Error::Other(e.to_string()))
+}
+
+// [`pick`] where the dialog answers with somewhere `std::fs` can write. An
+// empty `filter` asks for no file-type filter at all.
+#[cfg(not(target_os = "android"))]
 async fn ask(
     app: &AppHandle,
     file_name: &str,
     filter: &str,
     extension: &str,
 ) -> Result<Option<PathBuf>> {
-    let app = app.clone();
-    let file_name = file_name.to_string();
-    let filter = filter.to_string();
-    let extension = extension.to_string();
-    let chosen = tauri::async_runtime::spawn_blocking(move || {
-        let dialog = app.dialog().file().set_file_name(file_name);
-        let dialog = if filter.is_empty() {
-            dialog
-        } else {
-            dialog.add_filter(filter, &[extension.as_str()])
-        };
-        dialog.blocking_save_file()
-    })
-    .await
-    .map_err(|e| Error::Other(e.to_string()))?;
-    // `into_path` also resolves the `file://` URL the mobile plugin hands back.
+    let filter = (!filter.is_empty()).then_some((filter, extension));
+    let chosen = pick(app, file_name, filter).await?;
+    // `into_path` also resolves the `file://` URL the iOS plugin hands back.
     Ok(chosen.and_then(|f| f.into_path().ok()))
 }
 
@@ -199,9 +316,10 @@ pub fn with_extension(dest: PathBuf, extension: &str) -> PathBuf {
 /// (`0600` on Unix, a protected owner-and-SYSTEM DACL on Windows) is complete
 /// and fsynced before it atomically replaces the destination, so the bytes are
 /// never briefly readable through the folder's permissions and a failed
-/// overwrite leaves the old file whole. `atomic_write_private` is desktop-only —
-/// on mobile the only thing written here is the staging copy inside the app's
-/// own sandbox, which the picker consumes and [`Staged`] then removes.
+/// overwrite leaves the old file whole. `atomic_write_private` is desktop-only.
+/// On iOS the only thing written here is the staging copy inside the app's own
+/// sandbox, which the picker consumes and [`Staged`] then removes; on Android
+/// an export is not written through here at all (see `ask_then_write`).
 pub(crate) fn write_and_scrub(dest: &Path, mut bytes: Vec<u8>) -> Result<()> {
     #[cfg(desktop)]
     let result = crate::storage::atomic_write_private(dest, &bytes);
@@ -402,5 +520,98 @@ mod tests {
         assert!(chosen.is_none());
         assert!(!staged.exists());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // What Android requires: the destination is whatever the dialog answered
+    // with, opened only then, and the export is what it holds afterwards. The
+    // picker has created the document by the time it answers, hence the file
+    // already there — with something in it, as one the user chose to replace
+    // has.
+    #[tokio::test]
+    async fn the_bytes_go_into_what_the_dialog_answered_with() {
+        let dir = std::env::temp_dir().join(format!("rowel-save-doc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("rowel-export.csv");
+        std::fs::write(&dest, b"an older and longer export").unwrap();
+
+        let chosen = ask_then_write(
+            b"name,password".to_vec(),
+            async { Ok(Some(dest.clone())) },
+            |dest: &PathBuf| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(dest)
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(chosen, Some(dest.clone()));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"name,password");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // Whether the destination was ever opened, for the dialogs that must not
+    // get that far.
+    fn never_opened() -> (
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        impl FnOnce(&PathBuf) -> std::io::Result<Vec<u8>> + Send + 'static,
+    ) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let opened = std::sync::Arc::new(AtomicBool::new(false));
+        let seen = opened.clone();
+        (opened, move |_: &PathBuf| {
+            seen.store(true, Ordering::SeqCst);
+            Ok(Vec::new())
+        })
+    }
+
+    // A dismissed dialog chose nowhere, so there is nothing to open: it is the
+    // `None` every caller reads as "saved nothing".
+    #[tokio::test]
+    async fn a_dismissed_dialog_opens_nothing() {
+        let (opened, open) = never_opened();
+
+        let chosen = ask_then_write(b"name,password".to_vec(), async { Ok(None) }, open)
+            .await
+            .unwrap();
+
+        assert!(chosen.is_none());
+        assert!(!opened.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    // Nor a dialog that failed outright.
+    #[tokio::test]
+    async fn a_failed_dialog_opens_nothing() {
+        let (opened, open) = never_opened();
+
+        let result = ask_then_write(
+            b"name,password".to_vec(),
+            async { Err(Error::Other("picker crashed".into())) },
+            open,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(!opened.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    // The picker answered, so the user believes the export is saved: a
+    // document the provider then will not open has to come back as an error,
+    // not as the destination.
+    #[tokio::test]
+    async fn a_destination_that_will_not_open_is_an_error() {
+        let result = ask_then_write(
+            b"name,password".to_vec(),
+            async { Ok(Some(PathBuf::from("rowel-export.csv"))) },
+            |_: &PathBuf| -> std::io::Result<Vec<u8>> {
+                Err(std::io::Error::other("the provider refused"))
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
     }
 }
