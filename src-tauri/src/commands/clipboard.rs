@@ -7,7 +7,9 @@ use tauri::AppHandle;
 use std::sync::{Arc, Mutex, MutexGuard};
 #[cfg(not(target_os = "ios"))]
 use tauri::Manager;
-#[cfg(not(target_os = "ios"))]
+// Android has the delayed clear but not the plugin: its clipboard is the
+// app's own Kotlin (see `AndroidClipboard`).
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 /// The pending clipboard clear.
@@ -108,7 +110,8 @@ fn forget_if(last: &mut Option<Remembered>, generation: u64) {
 /// The vault has just locked: a secret it copied must not outlive it.
 ///
 /// Compare-before-clear, like the timed clear — the user may have copied
-/// something of their own since, and that is theirs to keep. The pending timer
+/// something of their own since, and that is theirs to keep (as far as Android
+/// lets the comparison be made: see `android_should_clear`). The pending timer
 /// is dropped either way: the value it was armed for is gone or was never ours.
 ///
 /// Only copies numbered up to `copies` are the lock's; a later one is a newer session's.
@@ -125,10 +128,7 @@ pub fn clear_on_lock(app: &AppHandle, copies: u64) {
         }
         state.timer.disarm();
         if let Some(written) = last.take().map(|r| r.value) {
-            let current = app.clipboard().read_text().ok();
-            if should_clear(&written, current.as_deref()) {
-                let _ = app.clipboard().clear();
-            }
+            clear_if_ours(app, &written);
         }
     }
     #[cfg(target_os = "ios")]
@@ -154,12 +154,14 @@ pub fn copies(app: &AppHandle) -> u64 {
 //
 // Secrets are written with the platform markers that keep them out of
 // clipboard managers and history (concealed/transient types on macOS, the
-// exclusion formats on Windows). On macOS the pasteboard is also prepared
-// current-host-only, which is what keeps a copy off Universal Clipboard — the
-// concealed marker alone does not: Handoff syncs it to the user's other
-// devices like any other copy. The delayed
+// exclusion formats on Windows, the sensitive flag on Android). On macOS the
+// pasteboard is also prepared current-host-only, which is what keeps a copy
+// off Universal Clipboard — the concealed marker alone does not: Handoff syncs
+// it to the user's other devices like any other copy. The delayed
 // clear is compare-before-clear: it only wipes the clipboard if it still holds
 // the exact value we wrote, so a value the user copied afterwards is never lost.
+// Android can make that comparison only while the app is in front (see
+// `android_should_clear`).
 #[tauri::command]
 pub fn copy_to_clipboard(app: AppHandle, value: String, clear_after_ms: Option<u64>) -> Result<()> {
     let clear_after = clear_after_ms.map(Duration::from_millis);
@@ -191,10 +193,7 @@ pub fn copy_to_clipboard(app: AppHandle, value: String, clear_after_ms: Option<u
                 if !is_current(&last, generation) {
                     return;
                 }
-                let current = handle.clipboard().read_text().ok();
-                if should_clear(&value, current.as_deref()) {
-                    let _ = handle.clipboard().clear();
-                }
+                clear_if_ours(&handle, &value);
                 // Cleared, or overwritten by the user: either way there is
                 // nothing of ours left for a lock to find.
                 forget_if(&mut last, generation);
@@ -208,11 +207,106 @@ pub fn copy_to_clipboard(app: AppHandle, value: String, clear_after_ms: Option<u
     Ok(())
 }
 
-// Only clear when the clipboard still holds exactly what we wrote. Nothing but
-// the delayed clear consults it, and iOS arms no such callback.
-#[cfg_attr(target_os = "ios", allow(dead_code))]
+// Only clear when the clipboard still holds exactly what we wrote. Only
+// `clear_if_ours` consults it: iOS reads nothing back, and Android decides by
+// the clip's mark rather than its text (`android_should_clear`).
+#[cfg_attr(any(target_os = "ios", target_os = "android"), allow(dead_code))]
 fn should_clear(written: &str, current: Option<&str>) -> bool {
     current == Some(written)
+}
+
+/// The compare-before-clear the deadline and the lock both run: wipe the
+/// clipboard only while it still holds `written`.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn clear_if_ours(app: &AppHandle, written: &str) {
+    let current = app.clipboard().read_text().ok();
+    if should_clear(written, current.as_deref()) {
+        let _ = app.clipboard().clear();
+    }
+}
+
+/// Android's compare-before-clear. The copy is known by the mark its write
+/// left on the clip rather than by its text, so `written` goes unused: reading
+/// the text of a clip another app wrote raises Android 12's "pasted from your
+/// clipboard" notice over a value the user never asked to paste.
+#[cfg(target_os = "android")]
+fn clear_if_ours(app: &AppHandle, _written: &str) {
+    let clipboard = app.state::<AndroidClipboard>();
+    if android_should_clear(clipboard.peek().ours) {
+        clipboard.clear();
+    }
+}
+
+/// What Android showed this app of the clipboard: the reply to the Kotlin
+/// plugin's `peek`.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[derive(Default, serde::Deserialize)]
+struct Seen {
+    /// Whether the clip carries the mark of a copy made here. `None` when
+    /// there was nothing to look at: the clipboard is empty, or it is one this
+    /// app may not see just now.
+    ours: Option<bool>,
+}
+
+/// Whether Android's clear goes ahead, given what [`Seen`] reported.
+///
+/// Since Android 10 an app sees the clipboard only while it has focus, and a
+/// deadline usually falls due when it has none: the user copied a password and
+/// left for the app it goes into. Writing needs no focus, so the choice then
+/// is between clearing unseen and not clearing at all. The secret wins: a
+/// password left on the clipboard past its deadline, or past the lock, is the
+/// harm this exists to prevent, and a later copy of the user's own lost to the
+/// wipe is the smaller one. While the clipboard can be seen the rule is the
+/// desktop's — a clip that is not ours stays.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn android_should_clear(ours: Option<bool>) -> bool {
+    ours != Some(false)
+}
+
+/// The app's own Android clipboard plugin (`SecretClipboardPlugin.kt`), in
+/// place of `tauri-plugin-clipboard-manager` there. That plugin can flag a
+/// write sensitive (`write_secret`), but it cannot mark a clip as ours, and
+/// its `clear` asks `hasPrimaryClip` first — which answers "no" to an app
+/// without focus, so the clear never happens in the background, when it is
+/// needed.
+#[cfg(target_os = "android")]
+pub struct AndroidClipboard(tauri::plugin::PluginHandle<tauri::Wry>);
+
+#[cfg(target_os = "android")]
+impl AndroidClipboard {
+    /// Registers the Kotlin class and manages the handle to it.
+    ///
+    /// Each call below blocks until the Android main thread has run the
+    /// command. None of the callers is on that thread — a copy arrives on the
+    /// webview's IPC thread, a deadline on the timer's, a lock on the event
+    /// loop's (tao runs it on a thread of its own), the auto-lock timer's or
+    /// the IPC thread — so the wait cannot deadlock, `ClipboardClear`'s lock
+    /// held or not.
+    pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+        tauri::plugin::Builder::new("secret-clipboard")
+            .setup(|app, api| {
+                let handle =
+                    api.register_android_plugin("app.rowel.mobile", "SecretClipboardPlugin")?;
+                app.manage(AndroidClipboard(handle));
+                Ok(())
+            })
+            .build()
+    }
+
+    fn write(&self, text: &str) -> Result<()> {
+        self.0
+            .run_mobile_plugin("write", serde_json::json!({ "text": text }))
+            .map_err(|e| crate::error::Error::Other(e.to_string()))
+    }
+
+    /// A look that failed is a clipboard that could not be seen.
+    fn peek(&self) -> Seen {
+        self.0.run_mobile_plugin("peek", ()).unwrap_or_default()
+    }
+
+    fn clear(&self) {
+        let _: std::result::Result<(), _> = self.0.run_mobile_plugin("clear", ());
+    }
 }
 
 /// The longest a secret may sit on the iOS pasteboard when the user's clipboard
@@ -373,7 +467,15 @@ fn write_concealed(_app: &AppHandle, value: &str, clear_after: Option<Duration>)
     Ok(())
 }
 
-#[cfg(not(any(target_vendor = "apple", target_os = "windows")))]
+// Android has no concealed type either. Its marker is a flag on the clip's
+// description, which keeps the text out of the preview Android 13 shows of
+// every copy; the write and the flag are the Kotlin plugin's.
+#[cfg(target_os = "android")]
+fn write_concealed(app: &AppHandle, value: &str, _clear_after: Option<Duration>) -> Result<()> {
+    app.state::<AndroidClipboard>().write(value)
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "windows", target_os = "android")))]
 fn write_concealed(app: &AppHandle, value: &str, _clear_after: Option<Duration>) -> Result<()> {
     app.clipboard()
         .write_text(value.to_string())
@@ -382,7 +484,7 @@ fn write_concealed(app: &AppHandle, value: &str, _clear_after: Option<Duration>)
 
 #[cfg(test)]
 mod tests {
-    use super::{ios_expiry, should_clear, IOS_MAX_PASTEBOARD_TTL};
+    use super::{android_should_clear, ios_expiry, should_clear, Seen, IOS_MAX_PASTEBOARD_TTL};
     use std::time::Duration;
 
     // "Never" on iOS means "until the pasteboard expires", not "forever": the
@@ -418,6 +520,34 @@ mod tests {
     fn keeps_an_empty_or_unreadable_clipboard() {
         assert!(!should_clear("secret", None));
         assert!(!should_clear("secret", Some("")));
+    }
+
+    #[test]
+    fn android_clears_a_clip_that_carries_our_mark() {
+        assert!(android_should_clear(Some(true)));
+    }
+
+    #[test]
+    fn android_keeps_a_clip_it_can_see_is_not_ours() {
+        assert!(!android_should_clear(Some(false)));
+    }
+
+    // No focus, a locked device, or nothing there: the secret may still be on
+    // the clipboard, and clearing is the only way to be sure it is not.
+    #[test]
+    fn android_clears_a_clipboard_it_cannot_see() {
+        assert!(android_should_clear(None));
+    }
+
+    // The shapes `peek` answers in: the key is left out when Android showed no
+    // clip, and a call that failed stands for the same thing.
+    #[test]
+    fn a_peek_without_a_clip_is_an_unseen_clipboard() {
+        let ours = |json| serde_json::from_str::<Seen>(json).unwrap().ours;
+        assert_eq!(ours("{}"), None);
+        assert_eq!(ours(r#"{"ours":true}"#), Some(true));
+        assert_eq!(ours(r#"{"ours":false}"#), Some(false));
+        assert_eq!(Seen::default().ours, None);
     }
 
     // The race the generation exists for: a copy's deadline fires while a
