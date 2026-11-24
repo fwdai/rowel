@@ -208,9 +208,29 @@ const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// timeout — on top of the shared ones.
 pub(crate) fn http_client_builder() -> reqwest::ClientBuilder {
     install_crypto_provider();
-    Client::builder()
+    let builder = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
-        .read_timeout(READ_TIMEOUT)
+        .read_timeout(READ_TIMEOUT);
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(bundled_roots());
+    builder
+}
+
+/// The roots an Android build verifies servers against: Mozilla's, compiled
+/// in.
+///
+/// Everywhere else reqwest asks the OS, through `rustls-platform-verifier`.
+/// On Android that verifier is a Kotlin class the app would have to ship
+/// (from a Maven repository of its own) and hand the JVM to before the first
+/// handshake, and it panics on that handshake when it has not been. Roots in
+/// the binary need neither. What they give up is the device's own trust
+/// store: a root Android distrusts is trusted here until the next release.
+#[cfg(any(target_os = "android", test))]
+fn bundled_roots() -> Vec<reqwest::Certificate> {
+    webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .filter_map(|der| reqwest::Certificate::from_der(der).ok())
+        .collect()
 }
 
 /// Read a response body, failing with [`Error::FileTooLarge`] the moment it
@@ -720,6 +740,20 @@ mod tests {
         remote_only, setup::PackInfo, store::fake::FakeStore, Provider, VaultIdPlan,
     };
     use std::collections::HashSet;
+
+    // An Android build trusts nothing else: a bundle that came out short, or
+    // one rustls will not take, is a client that reaches no server.
+    #[test]
+    fn the_bundled_roots_all_load_and_build_a_client() {
+        let roots = super::bundled_roots();
+        assert!(!roots.is_empty());
+        assert_eq!(roots.len(), webpki_root_certs::TLS_SERVER_ROOT_CERTS.len());
+        super::install_crypto_provider();
+        reqwest::Client::builder()
+            .tls_certs_only(roots)
+            .build()
+            .expect("a client over the bundled roots");
+    }
 
     const ID: &str = "a1b2c3";
     const OTHER: &str = "dddd";

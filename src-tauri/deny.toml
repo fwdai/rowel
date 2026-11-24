@@ -13,6 +13,7 @@ targets = [
   "x86_64-pc-windows-msvc",
   "aarch64-apple-ios",
   "aarch64-apple-ios-sim",
+  "aarch64-linux-android",
 ]
 all-features = false
 
@@ -81,6 +82,10 @@ exceptions = [
   # system crypto library; this build links vendored OpenSSL instead, so no
   # libtomcrypt code is compiled in.
   { crate = "sqlcipher-src", allow = ["blessing", "WTFPL"] },
+  # Mozilla's root certificates as data, under the data licence they are
+  # published with. Android only: the roots its HTTPS client verifies against
+  # (`sync::bundled_roots`).
+  { crate = "webpki-root-certs", allow = ["CDLA-Permissive-2.0"] },
 ]
 
 # The rowel crate itself is a private application, never published to

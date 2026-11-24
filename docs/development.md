@@ -62,6 +62,37 @@ into its unlock screen. Nothing here ever deletes a data directory; to start
 that one over, remove it yourself. Debug builds only: a release build ignores
 the variable and always uses the OS app-data directory.
 
+## Running the Android app
+
+The Android project is committed under `src-tauri/gen/android`, as the Xcode
+one is under `gen/apple`. Building it needs, on top of the prerequisites above:
+
+- [Android Studio](https://developer.android.com/studio), and from its SDK
+  Manager (Settings → Languages & Frameworks → Android SDK → SDK Tools) the
+  **NDK (Side by side)** and the **Android SDK Command-line Tools**
+- the Rust targets:
+  `rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android`
+- three variables in the shell that runs the build (macOS paths shown):
+
+```bash
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export NDK_HOME="$ANDROID_HOME/ndk/$(ls -1 "$ANDROID_HOME/ndk" | sort -V | tail -1)"
+```
+
+```bash
+bun run android:dev                        # an emulator or a device over USB, with hot reload
+bun run android:build --debug --apk        # a debug APK under src-tauri/gen/android/app/build/outputs/apk
+```
+
+`android:dev` picks a running emulator or a connected device, and offers to
+start an emulator when there is neither. CI builds the same debug APK on every
+pull request that touches the app and keeps it as the `rowel-android-debug-apk`
+artifact, which `adb install` puts on a device.
+
+An Android build verifies HTTPS against Mozilla's roots, compiled in, rather
+than the device's trust store (`sync::bundled_roots` says why).
+
 ## Building the iOS AutoFill extension
 
 The iOS app embeds an AutoFill credential provider, the `rowel_autofill`

@@ -4812,6 +4812,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "url",
+ "webpki-root-certs",
  "windows",
  "windows-registry 0.100.0",
  "zbus",

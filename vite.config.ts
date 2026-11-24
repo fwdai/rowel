@@ -6,9 +6,9 @@ import svgr from 'vite-plugin-svgr'
 import tailwindcss from '@tailwindcss/vite'
 
 const host = process.env.TAURI_DEV_HOST
-// The Tauri CLI exports this to the before*Command it runs ('ios', 'darwin',
-// 'windows', 'linux'). Empty for a plain `vite`/`vitest` run, which reads as
-// desktop — see src/lib/platform.ts.
+// The Tauri CLI exports this to the before*Command it runs ('ios', 'android',
+// 'darwin', 'windows', 'linux'). Empty for a plain `vite`/`vitest` run, which
+// reads as desktop — see src/lib/platform.ts.
 const platform = process.env.TAURI_ENV_PLATFORM ?? ''
 
 // https://vitejs.dev/config/ — tuned for Tauri (fixed port, no clearScreen).

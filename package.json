@@ -35,6 +35,9 @@
     "tauri:build": "tauri build",
     "ios:init": "tauri ios init",
     "ios:dev": "tauri ios dev",
+    "android:init": "tauri android init",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build",
     "release:ios": "bash scripts/release-ios.sh",
     "release:local": "bash scripts/release-local.sh"
   },
