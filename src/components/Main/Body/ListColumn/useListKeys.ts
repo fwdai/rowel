@@ -1,12 +1,14 @@
 import type { KeyboardEvent } from 'react'
 import { useVault, selectBatch, setCurrentEntry, pickAll, pickRange } from '@/store'
-import { copySecret } from '@/services/entries'
+import { copySecret, copyValue } from '@/services/entries'
 import { useLayout } from '@/hooks/useLayout'
 import { keyCode } from '@/utils/keys'
 import { useVisibleEntries } from '../List/useVisibleEntries'
+import { copyChord } from './copyKeys'
 
 // The list column's keyboard surface: ↑/↓ walk the visible rows, ⏎ selects the
-// row they land on and ⌘⏎ copies its primary secret. On the wide shell ⇧↑/↓
+// row they land on and ⌘⏎ copies its primary secret; from the search field ⌘B,
+// ⌘T and ⌘U copy that row's other values too. On the wide shell ⇧↑/↓
 // grow a batch from the anchor and ⌘A on a row picks them all. Bound to the
 // column's own subtree rather than the window, so the arrows are live whether
 // the search field or a row itself has focus — and dead in every other field
@@ -52,6 +54,15 @@ export const useListKeys = () => {
       if (chord) {
         if (!batching) void copySecret(target)
       } else setCurrentEntry(target.id)
+      return
+    }
+
+    // From the search field, the copy chords it leaves alone act on the same
+    // row ⌘⏎ does. On a row they are the listbox's own (`onCopyKey`).
+    const value = onRow ? undefined : copyChord(event.nativeEvent, true)
+    if (value) {
+      event.preventDefault()
+      if (!batching) void copyValue(target, value)
       return
     }
 

@@ -14,12 +14,32 @@ const COPY_KEYS: Record<string, EntryValue> = {
   [SHORTCUTS.copyUrl]: 'url'
 }
 
-// Bound to the listbox, and live only on a row: clicking a row focuses it, so
-// that is where the keyboard sits once an entry is picked. Everywhere else —
-// the search field, the detail pane, any editor — ⌘C stays the system copy.
-export const onCopyKey = (event: KeyboardEvent<HTMLElement>) => {
+// The copy chords a text field has no use for, which answer from the search
+// field as well (`useListKeys`). ⌘C there is the query's own copy and Ctrl+Y a
+// PC's redo, so those two stay on the row; the field's ⌘⏎ covers the password.
+const FIELD_KEYS = new Set<string>([
+  SHORTCUTS.copyUsername,
+  SHORTCUTS.copyOtp,
+  SHORTCUTS.copyUrl
+])
+
+/**
+ * The value a copy chord asks for, or undefined for any other key. `inField`
+ * narrows it to the chords the search field leaves alone.
+ */
+export const copyChord = (event: globalThis.KeyboardEvent, inField = false) => {
   if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
-  const value = COPY_KEYS[keyCode(event.nativeEvent)]
+  const code = keyCode(event)
+  if (inField && !FIELD_KEYS.has(code)) return
+  return COPY_KEYS[code]
+}
+
+// Bound to the listbox, and live only on a row: clicking a row focuses it, so
+// that is where the keyboard sits once an entry is picked. The search field
+// takes the chords it has no use for (see `FIELD_KEYS`); everywhere else — the
+// detail pane, any editor — ⌘C stays the system copy.
+export const onCopyKey = (event: KeyboardEvent<HTMLElement>) => {
+  const value = copyChord(event.nativeEvent)
   if (!value) return
   if (!(event.target instanceof Element && event.target.closest('[role="option"]'))) return
   // Text the user has selected is what they mean ⌘C to take.
