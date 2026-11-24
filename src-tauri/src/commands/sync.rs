@@ -75,13 +75,15 @@ pub fn sync_connect(app: AppHandle, provider: Option<sync::Provider>) -> Result<
 
 /// Start the consent flow and return — see [`on_redirect`] for the other half.
 ///
-/// Nothing here waits: Safari takes the screen and iOS suspends the app behind
-/// it, so there is no result to wait for. The frontend is told by the
-/// `setup:account:*` events rather than by this promise, as on desktop.
+/// Nothing here waits: the browser takes the screen and the OS suspends the
+/// app behind it, so there is no result to wait for. The frontend is told by
+/// the `setup:account:*` events rather than by this promise, as on desktop.
 ///
 /// Synchronous on purpose, unlike its desktop twin. It does no blocking work,
-/// and running on the IPC (main) thread is what puts the opener plugin's
-/// `UIApplication.open` where UIKit requires it.
+/// and on iOS running on the IPC (main) thread is what puts the opener
+/// plugin's `UIApplication.open` where UIKit requires it. (Android asks no such
+/// care: Tauri hands every plugin command to the activity's UI thread itself,
+/// whichever thread calls.)
 #[cfg(mobile)]
 #[tauri::command]
 pub fn sync_connect(
@@ -456,17 +458,20 @@ pub(crate) fn request_run_if_ready(app: &AppHandle, state: &AppState) {
 const CONSENT_TTL: Duration = Duration::from_secs(10 * 60);
 
 /// How long after the app comes back to the foreground a redirect may still
-/// arrive for a pending flow before it is written off as abandoned. iOS delivers
-/// the URL around the same activation, not seconds later, so this is generous.
+/// arrive for a pending flow before it is written off as abandoned. Both
+/// platforms deliver the URL around the same activation, not seconds later
+/// (Android hands the activity the intent before its window has focus again),
+/// so this is generous.
 #[cfg(mobile)]
 const RESUME_GRACE: Duration = Duration::from_secs(3);
 
 /// Open the consent page and remember what the redirect will need.
 ///
 /// The record is stored *after* the page is opened, which cannot race: iOS
-/// delivers the redirect on a later turn of the same (main) run loop, so this
-/// call has long returned by then. A flow already pending is simply replaced —
-/// its nonce dies with it, so its redirect, if one ever comes, is foreign.
+/// delivers the redirect on a later turn of the same (main) run loop, and
+/// Android as a new intent once the browser has had the screen, so this call
+/// has long returned by then. A flow already pending is simply replaced — its
+/// nonce dies with it, so its redirect, if one ever comes, is foreign.
 ///
 /// Crate-visible: every connect on mobile — onboarding's, Settings ›
 /// Workspaces' and [`sync_connect`]'s — reaches it through
@@ -482,11 +487,11 @@ pub(crate) fn start_consent(
     purpose: AuthPurpose,
     provider: sync::Provider,
 ) -> Result<()> {
-    // One consent at a time, and checked before Safari is opened for a second.
-    // Replacing the pending flow would orphan it: its redirect could never be
-    // matched again, and its screen would say "waiting" for good. A flow the
-    // user walked away from does not block for long — `on_resume` writes it
-    // off once the redirect has had its chance to arrive.
+    // One consent at a time, and checked before the browser is opened for a
+    // second. Replacing the pending flow would orphan it: its redirect could
+    // never be matched again, and its screen would say "waiting" for good. A
+    // flow the user walked away from does not block for long — `on_resume`
+    // writes it off once the redirect has had its chance to arrive.
     if let Some(pending) = state.pending_auth.lock().unwrap().as_ref() {
         return Err(Error::Other(format!(
             "another {} sign-in is still waiting for its answer; finish or cancel it first",
@@ -507,7 +512,7 @@ pub(crate) fn start_consent(
     Ok(())
 }
 
-/// iOS reopened the app with a URL. If it is the provider's answer to the
+/// The OS reopened the app with a URL. If it is the provider's answer to the
 /// consent flow we have pending, finish it; if it is that provider's "the user
 /// cancelled" landing (Dropbox's `db-<APP_KEY>://2/cancel`), end it as denied;
 /// anything else is not ours and leaves the pending flow exactly as it was.
@@ -588,7 +593,10 @@ pub fn on_redirect(app: &AppHandle, url: &url::Url) {
 /// it — close the flow out, so the frontend is not left waiting on an answer
 /// that is never coming.
 ///
-/// Called from the window event hook (`window.rs`) on iOS scene activation.
+/// Called from the window event hook (`window.rs`) when the window has focus
+/// again: iOS scene activation, Android's `onWindowFocusChanged`. Android
+/// also reports focus coming back from a system dialog or the notification
+/// shade, which costs nothing: with no flow pending this returns at once.
 #[cfg(mobile)]
 pub fn on_resume(app: &AppHandle) {
     // Only ever abandon the flow that was pending *at resume*: if the user

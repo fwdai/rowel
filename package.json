@@ -36,8 +36,8 @@
     "ios:init": "tauri ios init",
     "ios:dev": "tauri ios dev",
     "android:init": "tauri android init",
-    "android:dev": "tauri android dev",
-    "android:build": "tauri android build",
+    "android:dev": "config=$(bun scripts/deep-link-config.mjs android) && tauri android dev --config \"$config\"",
+    "android:build": "config=$(bun scripts/deep-link-config.mjs android) && tauri android build --config \"$config\"",
     "release:ios": "bash scripts/release-ios.sh",
     "release:local": "bash scripts/release-local.sh"
   },

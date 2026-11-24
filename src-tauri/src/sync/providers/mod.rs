@@ -10,8 +10,9 @@ pub mod rowel;
 /// The first deep-link scheme in this build's `plugins.deep-link.mobile`
 /// configuration that starts with `prefix`. A phone build registers one scheme
 /// per provider it can sign in with (a reversed Google client id, Dropbox's
-/// `db-<APP_KEY>`), injected at build time (`scripts/release-ios.sh`), so each
-/// provider picks out its own rather than taking the first.
+/// `db-<APP_KEY>`), injected at build time (`scripts/release-ios.sh` for iOS,
+/// `scripts/deep-link-config.mjs` for Android), so each provider picks out its
+/// own rather than taking the first.
 #[cfg(mobile)]
 pub(crate) fn deep_link_scheme(app: &tauri::AppHandle, prefix: &str) -> Option<String> {
     app.config()
