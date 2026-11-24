@@ -43,13 +43,27 @@ pub fn accept(app: &AppHandle, paths: impl IntoIterator<Item = PathBuf>) {
     let Some(path) = paths.into_iter().find(|p| is_ours(p)) else {
         return;
     };
-    app.state::<PathGrants>().grant_opened(&path);
-    let path = path.to_string_lossy().into_owned();
-    *app.state::<AppState>().pending_open.lock().unwrap() = Some(path.clone());
+    let Some(path) = park(&app.state::<PathGrants>(), &app.state::<AppState>(), &path) else {
+        return;
+    };
     crate::events::file_opened(app, &path);
     // A document opened while the app is up brings the window forward; at
     // launch the reveal choreography does that itself.
     crate::window::raise(app);
+}
+
+/// Grant the document and park it for the webview, or neither: one that
+/// cannot be granted is not offered, since every reader it would lead to
+/// refuses it. The parked path, if it was.
+#[cfg(desktop)]
+fn park(grants: &PathGrants, state: &AppState, path: &Path) -> Option<String> {
+    if let Err(e) = grants.grant_opened(path) {
+        log::warn!("a document the OS opened cannot be read: {e}");
+        return None;
+    }
+    let path = path.to_string_lossy().into_owned();
+    *state.pending_open.lock().unwrap() = Some(path.clone());
+    Some(path)
 }
 
 /// The parked path, handed over once. See the module docs.
@@ -146,5 +160,27 @@ mod tests {
         assert!(is_ours(&file));
         assert!(!is_ours(&folder));
         assert!(!is_ours(&dir.path().join("missing.rowel")));
+    }
+
+    // A document is offered only once it is granted: one that cannot be — gone
+    // between the OS's word and the grant — is neither parked nor announced,
+    // since every reader it would lead to refuses it.
+    #[test]
+    fn a_document_is_parked_only_once_it_is_granted() {
+        let grants = PathGrants::default();
+        let state = AppState::default();
+        let dir = tempfile::tempdir().unwrap();
+
+        assert_eq!(park(&grants, &state, &dir.path().join("gone.rowel")), None);
+        assert!(state.pending_open.lock().unwrap().is_none());
+
+        let file = dir.path().join("vault.rowel");
+        std::fs::write(&file, b"pack").unwrap();
+        let parked = park(&grants, &state, &file).unwrap();
+        assert_eq!(
+            state.pending_open.lock().unwrap().as_deref(),
+            Some(parked.as_str())
+        );
+        assert!(grants.holds(&file, crate::grants::Purpose::Restore));
     }
 }

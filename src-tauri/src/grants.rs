@@ -45,7 +45,14 @@
 //!   session drops the rest: a lock, an unlock, a workspace switch, a lockbox
 //!   created or restored beside the open one taking its place. A password
 //!   change is not one — the same vault stays open under a new key, and its
-//!   grants with it.
+//!   grants with it. That rests on a lease handed back unannounced
+//!   (`Session::take_out`, then `adopt` or `restore`: a password change, its
+//!   rollback, a lockbox made or restored beside that fails and puts the open
+//!   one back) carrying the vault it took, as each of those callers does; a
+//!   different vault taking over goes through `session::continue_lease`, which
+//!   announces an open. Nothing checks it at run time: `adopt` takes any
+//!   store, and comparing vault ids under the session guard would mean a
+//!   database read there.
 //! - What may be read depends on whether a vault is open. With none, the only
 //!   read is a first-run restore ([`Purpose::Restore`]:
 //!   `setup_restore_from_file`, `setup_restore_from_legacy`), and that read is
@@ -73,7 +80,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::error::Error;
+use crate::error::{Error, Result};
 
 /// What a granted path may be read as — one variant per reading command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +168,22 @@ struct Held {
     scope: Scope,
 }
 
+impl Held {
+    /// Hold `path`, canonical, in the current stretch.
+    fn record(&mut self, path: PathBuf, purpose: Purpose, via: Via) {
+        self.paths.retain(|grant| grant.path != path);
+        if self.paths.len() >= CAP {
+            self.paths.pop_front();
+        }
+        self.paths.push_back(Grant {
+            path,
+            purpose,
+            via,
+            scope: self.scope,
+        });
+    }
+}
+
 impl PathGrants {
     /// The stretch a choice beginning now belongs to. Read when the choice
     /// begins — before the dialog opens, not once it answers — and handed to
@@ -172,62 +195,62 @@ impl PathGrants {
     /// Record that the user chose `path`, from a dialog opened in `scope`, to
     /// be read as `purpose`. Whether it was recorded: not if the session
     /// changed while the dialog was up, since the answer belongs to a session
-    /// that has ended, nor if `path` cannot be canonicalized (it does not
-    /// exist), since there is nothing to read.
+    /// that has ended and that session hears nothing of it. Otherwise a path
+    /// that cannot be resolved (it is not there) is an error, and nothing is
+    /// recorded: there is nothing to read.
     ///
     /// One grant per path: choosing the same file again — under this purpose or
     /// another — replaces what was held for it, so the last thing the user was
     /// asked is what the path stands for.
-    pub fn grant(&self, scope: Scope, path: &Path, purpose: Purpose) -> bool {
-        self.insert(scope, path, purpose, Via::Dialog)
+    pub fn grant(&self, scope: Scope, path: &Path, purpose: Purpose) -> Result<bool> {
+        // Resolved outside the lock: on a network volume it can take a while.
+        let resolved = path.canonicalize();
+        let mut held = self.held.lock().unwrap();
+        if held.scope != scope {
+            return Ok(false);
+        }
+        held.record(resolved?, purpose, Via::Dialog);
+        Ok(true)
     }
 
     /// [`PathGrants::grant`] for a file dropped on the window now, `purpose`
     /// being what its kind makes it. A drop is also spendable by the readers
     /// that take a file into the vault — as an attachment, an export to import
     /// or a backup to merge or restore, on a fresh install or beside the open
-    /// lockbox: the user handed the file to the app
-    /// itself rather than to a dialog with a framing of its own, and which of
-    /// those it becomes is the drop target's to say. None of them hands back
-    /// more than the kind's own reader would — the env reader returns the whole
-    /// text.
+    /// lockbox: the user handed the file to the app itself rather than to a
+    /// dialog with a framing of its own, and which of those it becomes is the
+    /// drop target's to say. None of them hands back more than the kind's own
+    /// reader would — the env reader returns the whole text.
+    ///
+    /// A drop waits on nothing, so it belongs to the stretch current when it
+    /// is recorded. One that cannot be resolved is not recorded; the webview
+    /// hears of the drop from tauri all the same, and its reader refuses it.
     pub fn grant_drop(&self, path: &Path, purpose: Purpose) {
-        self.insert(self.scope(), path, purpose, Via::Drop);
+        if let Ok(path) = path.canonicalize() {
+            self.held.lock().unwrap().record(path, purpose, Via::Drop);
+        }
     }
 
     /// [`PathGrants::grant`] for a backup the OS opened with the app now
     /// (`opened::accept`), which is a backup to whichever reader of one can
     /// run: restored on a fresh install, merged or restored beside once a vault
-    /// is open. One that arrives with a vault open belongs to that session like
-    /// any choice. One that arrives with none is spendable while none is — by
-    /// a first-run restore — and is carried into the session opened next, where
-    /// the frontend offers it for import; it ends with that session.
+    /// is open. Like a drop it waits on nothing, and belongs to the stretch
+    /// current when it is recorded. One that arrives with a vault open belongs
+    /// to that session like any choice. One that arrives with none is spendable
+    /// while none is — by a first-run restore — and is carried into the session
+    /// opened next, where the frontend offers it for import; it ends with that
+    /// session. A path that cannot be resolved is an error, and the caller is
+    /// not to offer it.
     ///
     /// Only the desktop has a caller: the phones declare no file associations.
     #[cfg_attr(not(desktop), allow(dead_code))]
-    pub fn grant_opened(&self, path: &Path) {
-        self.insert(self.scope(), path, Purpose::Backup, Via::Os);
-    }
-
-    fn insert(&self, scope: Scope, path: &Path, purpose: Purpose, via: Via) -> bool {
-        let Ok(path) = path.canonicalize() else {
-            return false;
-        };
-        let mut held = self.held.lock().unwrap();
-        if held.scope != scope {
-            return false;
-        }
-        held.paths.retain(|grant| grant.path != path);
-        if held.paths.len() >= CAP {
-            held.paths.pop_front();
-        }
-        held.paths.push_back(Grant {
-            path,
-            purpose,
-            via,
-            scope,
-        });
-        true
+    pub fn grant_opened(&self, path: &Path) -> Result<()> {
+        let path = path.canonicalize()?;
+        self.held
+            .lock()
+            .unwrap()
+            .record(path, Purpose::Backup, Via::Os);
+        Ok(())
     }
 
     /// A session opened: an unlock, a workspace switch that lands on an open
@@ -314,8 +337,8 @@ impl PathGrants {
     }
 
     /// A dialog for `purpose` opened and answered with `path` just now.
-    pub fn pick(&self, path: &Path, purpose: Purpose) -> bool {
-        self.grant(self.scope(), path, purpose)
+    pub fn pick(&self, path: &Path, purpose: Purpose) {
+        assert!(self.grant(self.scope(), path, purpose).unwrap());
     }
 }
 
@@ -525,13 +548,13 @@ mod tests {
 
         let opened_in = grants.scope();
         grants.session_ended();
-        assert!(!grants.grant(opened_in, &path, Purpose::Restore));
+        assert!(!grants.grant(opened_in, &path, Purpose::Restore).unwrap());
         assert!(
             !grants.holds(&path, Purpose::Restore),
             "nor on the lock screen"
         );
         grants.session_opened();
-        assert!(!grants.grant(opened_in, &path, Purpose::Attachment));
+        assert!(!grants.grant(opened_in, &path, Purpose::Attachment).unwrap());
         assert!(
             !grants.take(&path, Purpose::Attachment),
             "nor after the unlock"
@@ -541,13 +564,26 @@ mod tests {
         grants.session_ended();
         let opened_in = grants.scope();
         grants.session_opened();
-        assert!(!grants.grant(opened_in, &path, Purpose::Backup));
+        assert!(!grants.grant(opened_in, &path, Purpose::Backup).unwrap());
         assert!(!grants.take(&path, Purpose::Backup));
 
         // Answered in the session it was opened in, it grants.
         let opened_in = grants.scope();
-        assert!(grants.grant(opened_in, &path, Purpose::Attachment));
+        assert!(grants.grant(opened_in, &path, Purpose::Attachment).unwrap());
         assert!(grants.take(&path, Purpose::Attachment));
+    }
+
+    // A dialog's answer that cannot be resolved is an error the user sees, not
+    // a dismissal — unless the session the dialog opened in has ended, which
+    // hears nothing of it.
+    #[test]
+    fn a_pick_that_cannot_be_resolved_is_an_error_unless_its_session_ended() {
+        let grants = PathGrants::in_session();
+        let missing = Path::new("/definitely/not/here");
+        let opened_in = grants.scope();
+        assert!(grants.grant(opened_in, missing, Purpose::Env).is_err());
+        grants.session_ended();
+        assert!(!grants.grant(opened_in, missing, Purpose::Env).unwrap());
     }
 
     #[test]
@@ -633,17 +669,21 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_drops_every_grant() {
+    fn the_end_of_a_session_drops_every_grant_however_it_was_made() {
         let grants = PathGrants::in_session();
-        grants.pick(&scratch("locked-picked"), Purpose::Env);
-        grants.grant_drop(&scratch("locked-dropped"), Purpose::Image);
-        grants.grant_opened(&scratch("locked-opened"));
+        grants.pick(&scratch("ended-picked"), Purpose::Env);
+        grants.grant_drop(&scratch("ended-dropped"), Purpose::Image);
+        grants.grant_opened(&scratch("ended-opened")).unwrap();
+        assert_eq!(grants.held.lock().unwrap().paths.len(), 3);
         grants.session_ended();
         assert!(grants.held.lock().unwrap().paths.is_empty());
+    }
 
-        // An end with no session open — a lock that only empties the key
-        // ring, a switch made from the lock screen — leaves that screen's
-        // choices standing.
+    // A lock that only empties the key ring, or a switch made from the lock
+    // screen, ends no session: that screen's choices stand.
+    #[test]
+    fn an_end_with_no_session_open_drops_nothing() {
+        let grants = PathGrants::default();
         let backup = scratch("ring-lock");
         grants.pick(&backup, Purpose::Restore);
         grants.session_ended();
@@ -651,15 +691,21 @@ mod tests {
     }
 
     // The restore step's choice is read again after a mistyped password and
-    // spent by the restore that succeeds, before it opens the vault it made.
+    // spent once; spent or not, it is gone once a vault opens, so whether the
+    // restore spends it before or after opening the vault it made decides
+    // nothing.
     #[test]
-    fn a_first_run_restore_spends_its_grant_before_the_vault_opens() {
+    fn a_restore_grant_lasts_until_it_is_spent_or_a_vault_opens() {
         let grants = PathGrants::default();
-        let backup = scratch("first-run");
-        grants.pick(&backup, Purpose::Restore);
-        assert!(grants.holds(&backup, Purpose::Restore));
-        assert!(grants.holds(&backup, Purpose::Restore));
-        assert!(grants.take(&backup, Purpose::Restore));
+        let spent = scratch("restore-spent");
+        grants.pick(&spent, Purpose::Restore);
+        assert!(grants.holds(&spent, Purpose::Restore));
+        assert!(grants.holds(&spent, Purpose::Restore));
+        assert!(grants.take(&spent, Purpose::Restore));
+        assert!(!grants.holds(&spent, Purpose::Restore));
+
+        let unspent = scratch("restore-unspent");
+        grants.pick(&unspent, Purpose::Restore);
         grants.session_opened();
         assert!(grants.held.lock().unwrap().paths.is_empty());
     }
@@ -670,7 +716,7 @@ mod tests {
     fn a_backup_opened_from_the_os_while_locked_waits_for_the_next_session() {
         let grants = PathGrants::default();
         let backup = scratch("opened-at-launch");
-        grants.grant_opened(&backup);
+        grants.grant_opened(&backup).unwrap();
         assert!(grants.holds(&backup, Purpose::Restore), "a fresh install");
         assert!(!grants.holds(&backup, Purpose::Backup));
         // A switch made from the lock screen ends no session.
@@ -683,17 +729,35 @@ mod tests {
         // The next session, not any later one.
         let unused = scratch("opened-unused");
         grants.session_ended();
-        grants.grant_opened(&unused);
+        grants.grant_opened(&unused).unwrap();
         grants.session_opened();
         grants.session_ended();
         grants.session_opened();
         assert!(!grants.take(&unused, Purpose::Backup));
 
+        // Nor into a vault that takes over from that one (made or restored
+        // beside it) without a lock between.
+        let replaced = scratch("opened-replaced");
+        grants.session_ended();
+        grants.grant_opened(&replaced).unwrap();
+        grants.session_opened();
+        assert!(grants.holds(&replaced, Purpose::Backup));
+        grants.session_opened();
+        assert!(!grants.take(&replaced, Purpose::Backup));
+
         // Opened with a vault open, it is that session's like any choice.
         let unlocked = scratch("opened-unlocked");
-        grants.grant_opened(&unlocked);
+        grants.grant_opened(&unlocked).unwrap();
         grants.session_ended();
         grants.session_opened();
         assert!(!grants.take(&unlocked, Purpose::Backup));
+    }
+
+    #[test]
+    fn a_hand_over_that_cannot_be_resolved_is_an_error_and_held_nowhere() {
+        let grants = PathGrants::default();
+        let missing = Path::new("/definitely/not/here.rowel");
+        assert!(grants.grant_opened(missing).is_err());
+        assert!(grants.held.lock().unwrap().paths.is_empty());
     }
 }

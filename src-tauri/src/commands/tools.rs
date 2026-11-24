@@ -95,9 +95,10 @@ pub async fn pick_file(
     let path = picked
         .into_path()
         .map_err(|_| Error::Unsupported("the picked file has no local path".into()))?;
-    // Answered after that session ended, or a file not there to read: nothing
-    // is granted, and nothing is handed to a session that never asked.
-    if !grants.grant(scope, &path, purpose) {
+    // Answered after that session ended: nothing is granted, and nothing is
+    // handed to a session that never asked. A file that cannot be resolved is
+    // an error the user sees.
+    if !grants.grant(scope, &path, purpose)? {
         return Ok(None);
     }
     Ok(Some(path.to_string_lossy().into_owned()))
