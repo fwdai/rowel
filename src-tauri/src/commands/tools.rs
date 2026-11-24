@@ -27,11 +27,12 @@ use crate::{emblem, favicon, picked, scan, storage};
 /// (`picked::name`) — or `None` when the dialog was dismissed. The webview
 /// tells anything about the file from the name and hands the path back to read.
 ///
-/// On a phone an image filter makes the dialog plugin show the photo library
+/// On iOS an image filter makes the dialog plugin show the photo library
 /// rather than the file browser (it switches to the media picker when no
 /// filter names a non-media type); `browse` asks for the file browser anyway,
 /// under the same filter — the "Choose File" row of the phone's source sheet,
-/// for a photo kept in Files. The desktop has one dialog and ignores it.
+/// for a photo kept in Files. The desktop has one dialog and ignores it. What
+/// Android's picker is asked to filter on is [`offered`].
 ///
 /// Run from Rust rather than through the dialog plugin's JS API so the choice
 /// is one the backend witnessed: the picked path is granted (see `grants`)
@@ -50,41 +51,33 @@ pub async fn pick_file(
     browse: Option<bool>,
 ) -> Result<Option<Pick>> {
     let mut dialog = app.dialog().file();
-    let purpose = match kind.as_str() {
-        "image" => {
-            let label = label.unwrap_or_else(|| "Images".into());
-            dialog = dialog.add_filter(label, &scan::IMAGE_EXTENSIONS);
-            Purpose::Image
-        }
-        "env" => Purpose::Env,
-        "attachment" => Purpose::Attachment,
-        "photo" => {
-            let label = label.unwrap_or_else(|| "Images".into());
-            dialog = dialog.add_filter(label, &scan::IMAGE_EXTENSIONS);
-            Purpose::Attachment
-        }
-        "import" => {
-            let label = label.unwrap_or_else(|| "Password exports".into());
-            dialog = dialog.add_filter(label, &super::import::EXTENSIONS);
-            Purpose::Import
-        }
-        "backup" => {
-            let label = label.unwrap_or_else(|| "Rowel backup".into());
-            dialog = dialog.add_filter(label, &[BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION]);
-            Purpose::Backup
-        }
-        "importBackup" => {
-            let label = label.unwrap_or_else(|| "Rowel backup".into());
-            dialog = dialog.add_filter(label, &[BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION]);
-            Purpose::Backup
-        }
-        "lockboxBackup" => {
-            let label = label.unwrap_or_else(|| "Rowel backup".into());
-            dialog = dialog.add_filter(label, &[BACKUP_EXTENSION]);
-            Purpose::Backup
-        }
+    // What the pick is for, and the extensions its filter offers, with the
+    // filter's name where the webview gave none.
+    let (purpose, filter): (Purpose, Option<(&str, &'static [&'static str])>) = match kind.as_str()
+    {
+        "image" => (Purpose::Image, Some(("Images", &scan::IMAGE_EXTENSIONS))),
+        "env" => (Purpose::Env, None),
+        "attachment" => (Purpose::Attachment, None),
+        "photo" => (
+            Purpose::Attachment,
+            Some(("Images", &scan::IMAGE_EXTENSIONS)),
+        ),
+        "import" => (
+            Purpose::Import,
+            Some(("Password exports", &super::import::EXTENSIONS)),
+        ),
+        "backup" | "importBackup" => (
+            Purpose::Backup,
+            Some(("Rowel backup", &[BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION])),
+        ),
+        "lockboxBackup" => (Purpose::Backup, Some(("Rowel backup", &[BACKUP_EXTENSION]))),
         other => return Err(Error::Unsupported(format!("no {other} picker"))),
     };
+    if let Some((name, extensions)) = filter {
+        if let Some(offered) = offered(extensions, picked::DOCUMENTS) {
+            dialog = dialog.add_filter(label.unwrap_or_else(|| name.into()), offered);
+        }
+    }
     if browse.unwrap_or(false) {
         dialog = dialog.set_picker_mode(PickerMode::Document);
     }
@@ -108,6 +101,30 @@ pub async fn pick_file(
         path: path.to_string_lossy().into_owned(),
         name,
     }))
+}
+
+/// What the dialog is asked to filter a pick for `extensions` on: the
+/// extensions themselves, on desktop and iOS. Android's picker filters on MIME
+/// types, which the dialog plugin maps each extension to through `MimeTypeMap`,
+/// dropping any it has none for (`tauri-plugin-dialog` 2.8.4, `DialogPlugin.kt`:
+/// `parseFiltersOption`, `showFilePicker`) — `1pux`, `rowel` and `swftx` among
+/// them — so the files they name are greyed out under the types that are left,
+/// or every file is offered once none are. There (`documents`, which is
+/// `picked::DOCUMENTS` outside the tests) a pick is filtered only by `image/*`
+/// when it is for images, a type the plugin passes as it is and every image
+/// carries, and otherwise not at all: what was picked is held to its kind by
+/// its name afterwards, by the reader it is for.
+fn offered(
+    extensions: &'static [&'static str],
+    documents: bool,
+) -> Option<&'static [&'static str]> {
+    if !documents {
+        return Some(extensions);
+    }
+    let images = extensions
+        .iter()
+        .all(|e| scan::IMAGE_EXTENSIONS.contains(e));
+    images.then_some(&["image/*"])
 }
 
 /// What a pick is granted and handed to the webview as. The desktop dialog
@@ -244,6 +261,38 @@ mod tests {
     use std::str::FromStr;
 
     const DOCUMENT: &str = "content://com.android.providers.media.documents/document/image%3A1000";
+
+    // Every filter a pick is offered under, as `pick_file` builds them.
+    const FILTERS: [&[&str]; 3] = [
+        &scan::IMAGE_EXTENSIONS,
+        &super::super::import::EXTENSIONS,
+        &[BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION],
+    ];
+
+    // Desktop and iOS keep the filter exactly as it was.
+    #[test]
+    fn a_filter_is_its_extensions_where_the_picker_takes_them() {
+        for extensions in FILTERS.into_iter().chain([&[BACKUP_EXTENSION][..]]) {
+            assert_eq!(offered(extensions, false), Some(extensions));
+        }
+    }
+
+    // Android: an image pick is filtered by the one type every image carries,
+    // and no pick by an extension, which the picker may have no type for —
+    // `.1pux`, `.rowel` and `.swftx` would be greyed out.
+    #[test]
+    fn a_document_pick_is_filtered_by_no_extension() {
+        assert_eq!(
+            offered(&scan::IMAGE_EXTENSIONS, true),
+            Some(&["image/*"][..])
+        );
+        assert_eq!(offered(&super::super::import::EXTENSIONS, true), None);
+        assert_eq!(
+            offered(&[BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION], true),
+            None
+        );
+        assert_eq!(offered(&[BACKUP_EXTENSION], true), None);
+    }
 
     fn answer(text: &str) -> FilePath {
         FilePath::from_str(text).unwrap()

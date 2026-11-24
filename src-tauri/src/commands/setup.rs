@@ -377,7 +377,7 @@ pub async fn setup_restore_from_legacy(
     let handle = app.clone();
     let (key, store) = super::blocking(move || {
         let chosen = picked::open(&handle, Path::new(&path))?;
-        let (src, data) = super::vault::open_legacy_backup(chosen.contents, &password)?;
+        let (src, data) = super::vault::open_legacy_backup(chosen, &password)?;
         let (key, store) = match create_vault(&handle, &password) {
             Ok(created) => created,
             Err(e) => {
