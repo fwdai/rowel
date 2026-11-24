@@ -1,5 +1,6 @@
 import type { Entry, EntryMeta } from '@/api/types'
 import { setNoEntry } from '@/store'
+import { useBack } from '@/hooks/useBack'
 import { kindOf } from '@/kinds'
 import { cx } from '@/utils/cx'
 import Body from '../../Body/Aside/Show/Body'
@@ -36,8 +37,10 @@ interface Props {
 export default function Read({ entry, revealed }: Props) {
   const { error, remove } = useDelete(entry.id)
   const kind = kindOf(entry.type)
-  // The edge swipe is the nav row's back control, by gesture.
+  // The edge swipe is the nav row's back control, by gesture; Android's Back
+  // is the same control, by button.
   const swipe = useSwipeBack(setNoEntry)
+  useBack(setNoEntry)
 
   return (
     <div {...swipe.screen} data-testid="entry-screen" className={cx('text-text', PUSHED_SCREEN)}>

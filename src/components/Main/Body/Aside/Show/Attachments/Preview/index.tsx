@@ -133,7 +133,7 @@ export default function Preview({
       data-testid="attachment-preview"
       style={viewportStyle(view)}
       className={cx(
-        'animate-fade fixed inset-0 z-50 flex flex-col text-text max-md:bg-screen max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] md:bg-scrim md:backdrop-blur-md',
+        'animate-fade fixed inset-0 z-50 flex flex-col px-safe text-text max-md:bg-screen max-md:pt-(--safe-top) max-md:pb-(--safe-bottom) md:bg-scrim md:backdrop-blur-md',
         BELOW_CHROME
       )}
     >

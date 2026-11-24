@@ -88,7 +88,7 @@ export const HOVER_ONLY =
 // panel on the detail surface. Each toast places itself — two of them in the
 // same corner would sit on top of each other.
 export const TOAST =
-  'animate-pop fixed z-[1000] max-w-[340px] rounded-xl border border-line bg-detail text-text shadow-float'
+  'animate-pop fixed z-[1000] mx-safe max-w-[340px] rounded-xl border border-line bg-detail text-text shadow-float'
 
 // The micro-label face, without an ink: 11px, uppercase, tracked, regular
 // weight — a label is the secondary line, and the value it captions carries the

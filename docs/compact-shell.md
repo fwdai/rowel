@@ -346,7 +346,32 @@ Every one of these screens scrolls through `SCREEN_SCROLLER` (`Compact/chrome`).
   a control shared with the desktop needs no size prop. The one control set
   into the search field (the tag filter) is `FIELD_ACTION`: a 36px tile inset
   4px, with the field's full 44px as its hit area.
-- Safe areas: `env(safe-area-inset-top/bottom)` on anything touching an edge.
+- Safe areas: `--safe-top` / `--safe-bottom` (`styles/theme.css`) on anything
+  touching an edge, never `env(safe-area-inset-*)` directly. They are the
+  `env()` values on iOS; on Android the activity measures the system bars and
+  cutouts itself and `lib/android` writes them in, since Android System
+  WebView reports them only on some versions. `--bar-bottom` is the part of
+  the bottom edge that is a three-button navigation bar, which the shell ends
+  above; floating chrome measures from the shell's edge.
+- The sides (`--safe-left` / `--safe-right`: a cutout or a navigation bar down
+  one side of a landscape phone, the notch of an iPhone on its side) are kept
+  in two places only, and no screen pads them itself. `#root` takes them at
+  every width for everything laid out in it, so a new screen is clear of them
+  without knowing. Anything positioned against the viewport instead (`fixed`,
+  or portaled to the body) takes one of three utilities from `theme.css`:
+  `px-safe` on a frame over the whole screen (its ground or scrim still runs
+  to the edges), `inset-x-safe` on a box centred across it, `mx-safe` on a box
+  pinned to one side or a card centred in a frame. The shared frames (`Sheet`,
+  `BottomSheet`, `Modal`) and the `TOAST` token already carry theirs, so a
+  dialog or a toast built on them needs nothing; `src/test/safeSides.test.tsx`
+  fails on a new viewport-positioned class list that carries none.
+- Back: every surface with a way back — a dialog's close, the nav row's back,
+  the form's guarded Cancel, the add picker's question — offers that same
+  handler with `useBack`, where its state lives. Android's Back button and
+  gesture (`useBackButton`, mounted once by `App`) go to the overlay that
+  arrived last — a dialog, a sheet, a dropdown, the palette — and with none
+  open to the page that did, so a page swapped under an open dialog stays
+  under it. From the root they put the app in the background.
 - A 24px semibold title on tab roots, centred with its 44px actions on a 56px
   row flush against the safe area (`ROOT_HEADER`), no top bar and no app-name
   eyebrow (the home screen icon already said whose vault it is). Pushed screens

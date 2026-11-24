@@ -41,10 +41,12 @@ export const ROOT_HEADER = 'flex h-14 flex-none items-center gap-2.5'
 
 /**
  * Where floating bottom chrome sits: the same 20px off every edge. Deliberately
- * not `env(safe-area-inset-bottom)` — that is UIKit's docked-content margin
- * (34pt on a home-indicator phone), and a pill lifted by it plus a gap floats
- * visibly higher than its side gutters. iOS's own floating tab bar sits a few
- * points above the home indicator (13pt from the edge), which 20px clears.
+ * not `--safe-bottom` — that is the docked-content margin (34pt on a
+ * home-indicator phone), and a pill lifted by it plus a gap floats visibly
+ * higher than its side gutters. iOS's own floating tab bar sits a few points
+ * above the home indicator (13pt from the edge), which 20px clears, as it does
+ * Android's gesture handle. The edge it is measured from is the shell's, which
+ * ends above a navigation bar that has buttons on it (`--bar-bottom`).
  */
 const EDGE = 'inset-x-5 bottom-5'
 

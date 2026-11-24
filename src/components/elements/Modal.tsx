@@ -42,11 +42,13 @@ export default function Modal({
   return (
     <div
       className={cx(
-        'animate-fade fixed inset-0 z-50 flex justify-center bg-scrim p-4 backdrop-blur-sm',
+        'animate-fade fixed inset-0 z-50 flex justify-center bg-scrim px-safe py-4 backdrop-blur-sm',
         align === 'center' ? 'items-center' : 'items-start pt-[10vh]'
       )}
       onClick={onClose}
     >
+      {/* The card's side gutter is its own margin, so the scrim's side padding
+          is the screen's insets alone (`px-safe`). */}
       <div
         ref={setCard}
         role="dialog"
@@ -55,7 +57,7 @@ export default function Modal({
         aria-labelledby={labelledBy}
         data-testid={testid}
         className={cx(
-          'animate-pop relative overflow-hidden rounded-xl border border-line2 bg-detail text-text shadow-float',
+          'animate-pop relative mx-4 overflow-hidden rounded-xl border border-line2 bg-detail text-text shadow-float',
           className ?? 'flex max-h-[80vh] w-full max-w-dialog-lg'
         )}
         onClick={e => e.stopPropagation()}

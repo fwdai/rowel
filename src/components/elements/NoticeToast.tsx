@@ -12,7 +12,7 @@ export default function NoticeToast() {
     <div
       data-testid="notice-toast"
       role="status"
-      className="animate-pop fixed inset-x-0 top-4 z-50 mx-auto w-max max-w-[80vw] rounded-full bg-text px-5 py-2 text-base text-detail shadow-float"
+      className="animate-pop fixed inset-x-safe top-4 z-50 mx-auto w-max max-w-[80vw] rounded-full bg-text px-5 py-2 text-base text-detail shadow-float"
     >
       {notice}
     </div>

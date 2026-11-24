@@ -1,4 +1,5 @@
 import type { TKey } from '@/i18n'
+import { tintSystemBars } from '@/lib/android'
 
 export type Theme = 'light' | 'dark'
 export type ThemePreference = Theme | 'system'
@@ -38,7 +39,10 @@ export const resolveTheme = (next: ThemePreference): Theme =>
   next === 'system' ? (prefersDark() ? 'dark' : 'light') : next
 
 export const applyTheme = (next: ThemePreference): void => {
-  document.documentElement.setAttribute('data-theme', resolveTheme(next))
+  const theme = resolveTheme(next)
+  document.documentElement.setAttribute('data-theme', theme)
+  // Android draws its status and navigation bars' icons over this ground.
+  tintSystemBars(theme)
 }
 
 /** The accent, like the theme, is a root attribute theme.css keys off. */
