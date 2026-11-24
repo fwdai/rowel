@@ -54,8 +54,8 @@ pub static OAUTH: OAuthConfig = OAuthConfig {
     mobile_cancel_uri: |_| None,
 };
 
-// On both platforms: the desktop client's id, and the phone's override of the
-// id its deep-link scheme implies (`mobile_client`).
+// On both platforms: the desktop client's id, and what a phone build falls
+// back on when it registers no Google scheme (`mobile_client_id`).
 fn env_client_id() -> Option<String> {
     std::env::var("GOOGLE_OAUTH_CLIENT_ID")
         .ok()
@@ -63,8 +63,8 @@ fn env_client_id() -> Option<String> {
         .filter(|id| !id.is_empty() && id != CLIENT_ID_PLACEHOLDER)
 }
 
-// An iOS client is public and never sends one, so only the desktop client
-// reads it.
+// A phone's client (iOS or Android) is public and never sends one, so only
+// the desktop client reads it.
 #[cfg(desktop)]
 fn env_client_secret() -> Option<String> {
     std::env::var("GOOGLE_OAUTH_CLIENT_SECRET")
@@ -73,56 +73,58 @@ fn env_client_secret() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// A Google iOS client is addressed by its *reversed* client id, which is also
-/// the URL scheme the app registers: client id `123-abc.apps.googleusercontent
-/// .com` <-> scheme `com.googleusercontent.apps.123-abc`.
+/// A phone's Google client (type iOS or Android) is addressed by its
+/// *reversed* client id, which is also the URL scheme the app registers:
+/// client id `123-abc.apps.googleusercontent.com` <-> scheme
+/// `com.googleusercontent.apps.123-abc`.
 #[cfg(any(mobile, test))]
-const IOS_SCHEME_PREFIX: &str = "com.googleusercontent.apps.";
+const MOBILE_SCHEME_PREFIX: &str = "com.googleusercontent.apps.";
 #[cfg(any(mobile, test))]
-const IOS_CLIENT_ID_SUFFIX: &str = ".apps.googleusercontent.com";
+const CLIENT_ID_SUFFIX: &str = ".apps.googleusercontent.com";
 /// One slash, not two: a reversed-client-id scheme has no authority for a
 /// second one to separate. This is the exact string Google registers.
 #[cfg(any(mobile, test))]
-const IOS_REDIRECT_PATH: &str = ":/oauth2redirect";
+const MOBILE_REDIRECT_PATH: &str = ":/oauth2redirect";
 
-/// The committed deep-link scheme is the source of truth (iOS client ids are
-/// public, and the scheme is what actually registers the app for the
-/// redirect). `GOOGLE_OAUTH_CLIENT_ID` overrides it for a build that is given
-/// the id from a secret — and the redirect is then derived back from that same
-/// id, so the two can never disagree at runtime.
+/// The phone's client and its redirect, `<scheme>:/oauth2redirect`. The
+/// redirect is derived back from the client id, so the two can never disagree
+/// at runtime.
 #[cfg(mobile)]
 fn mobile_client(app: &AppHandle) -> Result<(String, String)> {
     let no_client = || crate::sync::account::no_client(&OAUTH);
-    let client_id = match env_client_id() {
-        Some(id) => id,
-        None => client_id_from_scheme(&deep_link_scheme(app)?).ok_or_else(no_client)?,
-    };
+    // Other schemes are configured beside Google's (Dropbox's among them), so
+    // this asks for the one that looks like a Google client, not the first.
+    let registered = super::deep_link_scheme(app, MOBILE_SCHEME_PREFIX);
+    let client_id =
+        mobile_client_id(registered.as_deref(), env_client_id()).ok_or_else(no_client)?;
     let scheme = scheme_from_client_id(&client_id).ok_or_else(no_client)?;
-    Ok((client_id, format!("{scheme}{IOS_REDIRECT_PATH}")))
+    Ok((client_id, format!("{scheme}{MOBILE_REDIRECT_PATH}")))
+}
+
+/// Which client a phone build signs in with. The deep-link scheme the build
+/// registers is the source of truth: a mobile client id is public, and the
+/// scheme is what the OS routes the redirect by, so a client whose scheme is
+/// not registered could never get its answer back. `GOOGLE_OAUTH_CLIENT_ID`
+/// (`env_id`) only stands in for a build that registers no Google scheme, and
+/// must not win over one: wherever a developer sets that variable it names the
+/// *desktop* client, which Google will not redirect to an app.
+#[cfg(any(mobile, test))]
+fn mobile_client_id(registered_scheme: Option<&str>, env_id: Option<String>) -> Option<String> {
+    registered_scheme.and_then(client_id_from_scheme).or(env_id)
 }
 
 /// `com.googleusercontent.apps.123-abc` -> `123-abc.apps.googleusercontent.com`
 #[cfg(any(mobile, test))]
 fn client_id_from_scheme(scheme: &str) -> Option<String> {
-    let id = scheme.strip_prefix(IOS_SCHEME_PREFIX)?;
-    (!id.is_empty()).then(|| format!("{id}{IOS_CLIENT_ID_SUFFIX}"))
+    let id = scheme.strip_prefix(MOBILE_SCHEME_PREFIX)?;
+    (!id.is_empty()).then(|| format!("{id}{CLIENT_ID_SUFFIX}"))
 }
 
 /// The inverse of [`client_id_from_scheme`].
 #[cfg(any(mobile, test))]
 fn scheme_from_client_id(client_id: &str) -> Option<String> {
-    let id = client_id.strip_suffix(IOS_CLIENT_ID_SUFFIX)?;
-    (!id.is_empty()).then(|| format!("{IOS_SCHEME_PREFIX}{id}"))
-}
-
-/// The reversed-client-id scheme out of `plugins.deep-link.mobile` (see
-/// `tauri.ios.conf.json`). Other schemes may be configured for other purposes
-/// (Dropbox's among them), so this picks the one that looks like a Google
-/// client rather than the first.
-#[cfg(mobile)]
-fn deep_link_scheme(app: &AppHandle) -> Result<String> {
-    super::deep_link_scheme(app, IOS_SCHEME_PREFIX)
-        .ok_or_else(|| crate::sync::account::no_client(&OAUTH))
+    let id = client_id.strip_suffix(CLIENT_ID_SUFFIX)?;
+    (!id.is_empty()).then(|| format!("{MOBILE_SCHEME_PREFIX}{id}"))
 }
 
 /// `Rowel/Vaults` (or `Rowel/Lockboxes` after the cutover), with either level
@@ -308,15 +310,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ios_scheme_and_client_id_are_inverses() {
+    fn mobile_scheme_and_client_id_are_inverses() {
         let scheme = "com.googleusercontent.apps.123456-abcdef";
         let client_id = "123456-abcdef.apps.googleusercontent.com";
         assert_eq!(client_id_from_scheme(scheme).as_deref(), Some(client_id));
         assert_eq!(scheme_from_client_id(client_id).as_deref(), Some(scheme));
         assert_eq!(
-            format!("{scheme}{IOS_REDIRECT_PATH}"),
+            format!("{scheme}{MOBILE_REDIRECT_PATH}"),
             "com.googleusercontent.apps.123456-abcdef:/oauth2redirect"
         );
+    }
+
+    // The environment may hand a phone build the desktop client's id; the
+    // scheme the build registers is the only client whose redirect can come
+    // back.
+    #[test]
+    fn the_registered_scheme_names_the_mobile_client_over_the_environment() {
+        let registered = "com.googleusercontent.apps.123456-phone";
+        let desktop = "123456-desktop.apps.googleusercontent.com";
+        assert_eq!(
+            mobile_client_id(Some(registered), Some(desktop.into())).as_deref(),
+            Some("123456-phone.apps.googleusercontent.com")
+        );
+        // A build that registers no Google scheme falls back on the variable.
+        assert_eq!(
+            mobile_client_id(None, Some(desktop.into())).as_deref(),
+            Some(desktop)
+        );
+        assert!(mobile_client_id(None, None).is_none());
     }
 
     #[test]

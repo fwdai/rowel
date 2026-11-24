@@ -3,5 +3,10 @@
   "identifier": "app.rowel.mobile",
   "bundle": {
     "fileAssociations": null
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": []
+    }
   }
 }
