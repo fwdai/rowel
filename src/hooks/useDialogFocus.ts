@@ -43,7 +43,7 @@ export const isTopmostDialog = (dialog: HTMLElement | null): boolean => {
  */
 export function useDialogFocus(dialog: RefObject<HTMLElement | null>, onClose: () => void) {
   useDialogPresence()
-  useBack(onClose)
+  useBack(onClose, true, 'overlay')
 
   // What opened the dialog, read on the first render rather than in the mount
   // effect: a body that takes the caret itself as it mounts (a field with

@@ -11,6 +11,11 @@ function Surface({ onBack, enabled }: { onBack: () => void; enabled?: boolean })
   return null
 }
 
+function Overlay({ onBack }: { onBack: () => void }) {
+  useBack(onBack, true, 'overlay')
+  return null
+}
+
 // A press from outside the page goes to the way back on top: the surface that
 // arrived last, as a dialog opened over a screen mounts after it.
 describe('useBack', () => {
@@ -31,6 +36,51 @@ describe('useBack', () => {
     rerender(<Surface onBack={screen} />)
     expect(goBack()).toBe(true)
     expect(screen).toHaveBeenCalledOnce()
+  })
+
+  // The read screen swapped for the held form under an open Share dialog: the
+  // page that arrives second is still the one underneath.
+  it('keeps a dialog above a page that remounts under it', () => {
+    const read = vi.fn()
+    const held = vi.fn()
+    const dialog = vi.fn()
+    const { rerender } = render(
+      <>
+        <Surface key="read" onBack={read} />
+        <Overlay onBack={dialog} />
+      </>
+    )
+
+    rerender(
+      <>
+        <Surface key="held" onBack={held} />
+        <Overlay onBack={dialog} />
+      </>
+    )
+
+    expect(goBack()).toBe(true)
+    expect(dialog).toHaveBeenCalledOnce()
+    expect(held).not.toHaveBeenCalled()
+
+    rerender(<Surface key="held" onBack={held} />)
+    expect(goBack()).toBe(true)
+    expect(held).toHaveBeenCalledOnce()
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('hands a press to the overlay opened last', () => {
+    const dialog = vi.fn()
+    const dropdown = vi.fn()
+    render(
+      <>
+        <Overlay onBack={dialog} />
+        <Overlay onBack={dropdown} />
+      </>
+    )
+
+    expect(goBack()).toBe(true)
+    expect(dropdown).toHaveBeenCalledOnce()
+    expect(dialog).not.toHaveBeenCalled()
   })
 
   it('passes over a surface that offers no way back right now', () => {

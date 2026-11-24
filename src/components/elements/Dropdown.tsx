@@ -40,7 +40,7 @@ export function Dropdown({
   const ref = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLElement | null>(null)
   // An open menu owns Android's Back the way it owns Escape.
-  useBack(onBlur)
+  useBack(onBlur, true, 'overlay')
 
   // Every kind of item: plain, the radio kind a single-select menu uses, and
   // the options of a listbox a search field drives.

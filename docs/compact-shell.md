@@ -356,8 +356,10 @@ Every one of these screens scrolls through `SCREEN_SCROLLER` (`Compact/chrome`).
 - Back: every surface with a way back — a dialog's close, the nav row's back,
   the form's guarded Cancel, the add picker's question — offers that same
   handler with `useBack`, where its state lives. Android's Back button and
-  gesture (`useBackButton`, mounted once by `App`) go to whichever surface
-  arrived last, and from the root put the app in the background.
+  gesture (`useBackButton`, mounted once by `App`) go to the overlay that
+  arrived last — a dialog, a sheet, a dropdown, the palette — and with none
+  open to the page that did, so a page swapped under an open dialog stays
+  under it. From the root they put the app in the background.
 - A 24px semibold title on tab roots, centred with its 44px actions on a 56px
   row flush against the safe area (`ROOT_HEADER`), no top bar and no app-name
   eyebrow (the home screen icon already said whose vault it is). Pushed screens

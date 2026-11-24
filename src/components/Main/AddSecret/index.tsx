@@ -68,7 +68,7 @@ export default function AddSecret() {
   }
   // On the question, Android's Back is the header's Back control; on the
   // kinds it is the frame's close.
-  useBack(back, open && question !== null)
+  useBack(back, open && question !== null, 'overlay')
 
   // The picker exists to be answered from the keyboard, so each page's first
   // choice is focused as it arrives — or, back on the kinds, the tile that was

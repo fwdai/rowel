@@ -1,9 +1,23 @@
 import { useEffect, useRef } from 'react'
 
+/**
+ * Where a surface sits: a `page` of the shell, or an `overlay` drawn above the
+ * pages — a dialog, a sheet, a dropdown, the palette, and a step inside one.
+ */
+type Layer = 'page' | 'overlay'
+
+interface Way {
+  go: () => void
+  layer: Layer
+}
+
 // The ways back there are on screen, in the order their surfaces arrived. A
-// surface that opens over another mounts after it, so the last is the one on
-// top — the one a press of Back belongs to.
-const ways: (() => void)[] = []
+// surface that opens over another of its layer mounts after it, so the last of
+// a layer is the one on top of it. Across layers the order of arrival says
+// nothing: a page can be swapped for another under an open dialog (the read
+// screen for the held form, when a reveal fails), and the newcomer is still
+// underneath.
+const ways: Way[] = []
 
 /**
  * Offer `onBack` as the way back from this surface for as long as it is
@@ -20,10 +34,13 @@ const ways: (() => void)[] = []
  * than at each layer it draws: two layers that arrive in one commit run their
  * effects child first, which is not the order they stack in.
  *
+ * `layer` is `overlay` for anything drawn above the pages, which a press
+ * reaches before any page whatever order they mounted in.
+ *
  * `onBack` is read through a ref, so a caller may hand in a fresh closure
  * every render without losing its place among the others.
  */
-export function useBack(onBack: () => void, enabled = true) {
+export function useBack(onBack: () => void, enabled = true, layer: Layer = 'page') {
   const latest = useRef(onBack)
   useEffect(() => {
     latest.current = onBack
@@ -31,20 +48,21 @@ export function useBack(onBack: () => void, enabled = true) {
 
   useEffect(() => {
     if (!enabled) return
-    const way = () => latest.current()
+    const way: Way = { go: () => latest.current(), layer }
     ways.push(way)
     return () => {
       ways.splice(ways.indexOf(way), 1)
     }
-  }, [enabled])
+  }, [enabled, layer])
 }
 
 /**
- * Go back from whatever is on top. False when nothing on screen offers a way
- * back, which is the root: the caller decides what leaving it means.
+ * Go back from whatever is on top: the last overlay, or with none open the
+ * last page. False when nothing on screen offers a way back, which is the root: the caller decides what leaving it means.
  */
 export const goBack = (): boolean => {
-  const way = ways[ways.length - 1]
-  way?.()
+  const last = (layer: Layer) => ways.filter(way => way.layer === layer).pop()
+  const way = last('overlay') ?? last('page')
+  way?.go()
   return way !== undefined
 }

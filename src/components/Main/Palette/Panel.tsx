@@ -23,7 +23,7 @@ export default function Panel() {
   // hook, so it says for itself that it is a modal surface — and what Android's
   // Back does to one.
   useDialogPresence()
-  useBack(closePalette)
+  useBack(closePalette, true, 'overlay')
 
   const commands = useResults(query)
 
