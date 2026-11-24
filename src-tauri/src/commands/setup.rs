@@ -93,15 +93,15 @@ pub(crate) fn connect_pending(app: &AppHandle, provider: Provider) -> Result<()>
     Ok(())
 }
 
-/// The mobile twin: start consent and return — iOS suspends the app behind
-/// Safari, so there is no result to wait for. [`on_consent`] finishes it.
+/// The mobile twin: start consent and return — the OS suspends the app behind
+/// the browser, so there is no result to wait for. [`on_consent`] finishes it.
 ///
 /// One purpose covers both callers. [`crate::state::AuthPurpose`] says what the
 /// redirect does when it comes back, and that is identical here: redeem the
 /// code, probe, and leave the tokens pending. Which flow asked is the
 /// frontend's to remember, not the deep-link handler's.
 ///
-/// A provider with no consent page (iCloud) has nothing for Safari to do:
+/// A provider with no consent page (iCloud) has nothing for the browser to do:
 /// the device's own account is checked and probed on the blocking pool, as
 /// desktop does for every provider, and the same events report it.
 #[cfg(mobile)]

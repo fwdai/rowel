@@ -90,6 +90,10 @@ start an emulator when there is neither. CI builds the same debug APK on every
 pull request that touches the app and keeps it as the `rowel-android-debug-apk`
 artifact, which `adb install` puts on a device.
 
+Both scripts take the build's Google Drive and Dropbox sign-ins from `.env`
+when it has them ([Android](#android), below). Without them, as in CI, the app
+builds and runs and those two sign-ins report that they are not configured.
+
 An Android build verifies HTTPS against Mozilla's roots, compiled in, rather
 than the device's trust store (`sync::bundled_roots` says why).
 
@@ -110,8 +114,9 @@ reaches the crate through UniFFI bindings committed under
 
 Release builds ship with a working Google OAuth client, so sync works out of
 the box. This section only applies when building from source, where you supply
-a client of your own. Desktop and iOS need one client each, because Google will
-not let a Desktop client redirect to a mobile app.
+a client of your own. Desktop, iOS and Android need one client each, because
+Google will not let a Desktop client redirect to a mobile app, and ties a mobile
+client to one platform's app.
 
 #### Desktop
 
@@ -177,6 +182,72 @@ which replaces a committed one. That is the only way in — exporting
 inside xcodebuild with a replaced environment that carries only the CLI's own
 `TAURI_*` variables, so `option_env!` never sees it. `GOOGLE_OAUTH_CLIENT_SECRET`
 is ignored on iOS and must never be shipped in a mobile binary.
+
+#### Android
+
+An Android client is public as well: no secret, PKCE, and the same redirect on
+its own client id reversed. Two things differ from iOS. Google identifies the
+app by its package name and the certificate it is signed with, and it refuses
+the redirect until the client is told to allow it.
+
+1. Read the SHA-1 of the key that signs the build. A debug build
+   (`android:dev`, `android:build --debug`) is signed with the debug keystore
+   the Android Gradle plugin creates on a machine's first build:
+
+   ```bash
+   keytool -list -v -keystore ~/.android/debug.keystore \
+     -alias androiddebugkey -storepass android -keypass android | grep SHA1
+   ```
+
+   That key is this machine's. A build signed with any other (another
+   machine's debug keystore, a release keystore) has another fingerprint, and
+   gets a client of its own.
+
+2. In the same project create an OAuth 2.0 Client ID of type **Android**, with
+   the package name `app.rowel.mobile` (the `identifier` in
+   `src-tauri/tauri.android.conf.json`, which is also the Gradle
+   `applicationId`) and the SHA-1 from step 1.
+3. Open the client again and, under **Advanced settings**, switch on **Enable
+   custom URI scheme**. It is off for a new Android client, and while it is off
+   Google answers the consent request with an error instead of redirecting to
+   `com.googleusercontent.apps.<id>:/oauth2redirect`. Google says the switch
+   can take a while to take effect.
+4. Put the client id in `.env`:
+
+   ```bash
+   GOOGLE_OAUTH_ANDROID_CLIENT_ID="123456-abcdef.apps.googleusercontent.com"
+   ```
+
+   `bun run android:dev` and `bun run android:build` read it (from `.env` or
+   the shell) through `scripts/deep-link-config.mjs`, which reverses it into
+   the scheme `com.googleusercontent.apps.123456-abcdef` and passes that to the
+   build with `--config`. `tauri-plugin-deep-link`'s build script registers the
+   scheme as an intent filter on `MainActivity`, and the app derives the client
+   id and the redirect URI from it at runtime, as on iOS. A bare
+   `bun run tauri android …` does not go through the script; give it
+   `--config "$(bun scripts/deep-link-config.mjs android)"` yourself.
+
+Dropbox needs nothing Android-specific: the scripts register `db-<key>` from the
+same `DROPBOX_APP_KEY` the desktop build uses, and the redirect is
+`db-<key>://2/token`. Only the scheme is registered, on the device; there is
+nothing to add in the App Console for it (`docs/sync-providers-design.md` §3).
+
+Three things to know about that build:
+
+- The intent filter is written into the committed
+  `src-tauri/gen/android/app/src/main/AndroidManifest.xml`, between the two
+  `DEEP LINK PLUGIN` comments. A build with a client fills that block in with
+  your scheme; leave the change out of your commits. A build without one
+  empties it again.
+- `tauri.android.conf.json` carries an empty `plugins.deep-link.mobile` on
+  purpose. It makes the Tauri CLI hand the plugin's build script a
+  configuration on every build, and cargo only reruns that script for a changed
+  configuration once it has seen one, so without it a scheme added after the
+  first build would never reach the manifest.
+- The registered scheme takes precedence over `GOOGLE_OAUTH_CLIENT_ID`, should
+  that desktop client's id reach the Android build. Without
+  `GOOGLE_OAUTH_ANDROID_CLIENT_ID` the build has no Google client of its own,
+  and Drive sign-in does not work in it.
 
 ### Auto-update signing
 

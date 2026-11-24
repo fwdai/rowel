@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Biometric unlock (BiometricKey.kt). -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <!-- The camera row of the source sheet is the webview's file input with
          `capture` (`FileInput`). wry answers it with ACTION_IMAGE_CAPTURE, but
@@ -19,7 +21,14 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- No app data goes to Google's cloud backup or to another device: the
+         vault leaves this one only through the user's own sync. Up to Android
+         11 allowBackup alone turns both off, so no backup rules are read there.
+         From Android 12 it still turns off the cloud, but a device-to-device
+         transfer ignores it and reads dataExtractionRules instead. -->
     <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.rowel"
@@ -36,6 +45,9 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+            
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
         <!-- Where the camera app writes the photo the webview's file input

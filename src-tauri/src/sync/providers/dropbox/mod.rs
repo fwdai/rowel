@@ -70,8 +70,9 @@ pub static OAUTH: OAuthConfig = OAuthConfig {
 /// as Google's reversed client id is: it is what registers the app for the
 /// redirect, and on iOS it is the only way the key reaches the binary at all —
 /// `tauri ios build` compiles with an environment `option_env!` never sees, so
-/// the release build injects the scheme instead (`scripts/release-ios.sh`).
-/// The environment is the fallback, for a build that registers no scheme.
+/// the release build injects the scheme instead (`scripts/release-ios.sh`; an
+/// Android build gets it from `scripts/deep-link-config.mjs`). The environment
+/// is the fallback, for a build that registers no scheme.
 #[cfg(mobile)]
 fn mobile_app_key(app: &AppHandle) -> Option<String> {
     super::deep_link_scheme(app, oauth::MOBILE_SCHEME_PREFIX)

@@ -25,6 +25,14 @@
 //!   anything that cannot pass it — unlike a verify-then-read item in Credential
 //!   Manager, which has no gate of its own and is readable by any process
 //!   running as the same user.
+//! - [`GateMode::KeystoreKey`] (Android only): the key material is sealed with
+//!   AES-256-GCM under a key that lives in the Android Keystore and never
+//!   leaves it, and only the sealed blob is written to the app's private
+//!   storage. The Keystore key requires a strong biometric for every use and
+//!   is destroyed when the enrolled biometrics change, so the OS enforces the
+//!   gate: the blob is inert to anything that cannot pass the prompt. The
+//!   Keystore and the prompt are Java APIs, so the work is done in Kotlin
+//!   (`BiometricKey.kt`), reached through `crate::biometric_key`.
 //! - **other (Linux, …):** unsupported — we report biometric unavailable rather
 //!   than store a key that nothing can gate.
 //!
@@ -95,6 +103,21 @@ fn hello_key_store_available() -> bool {
 #[cfg(target_os = "windows")]
 fn hello_key_store_available() -> bool {
     imp::key_credentials_available()
+}
+
+// Which gate an Android retrieve goes through, apart from the plugin so it can
+// be tested without a device. `KeystoreKey` is the only one an Android build
+// enrolls. Any other marker — a legacy one reads as `Prompt` here — names an
+// enrollment this platform never made, and there is no item behind it to try.
+#[cfg(any(target_os = "android", test))]
+fn through_keystore_key(
+    mode: GateMode,
+    retrieve: impl FnOnce() -> Result<Zeroizing<Vec<u8>>>,
+) -> Result<Zeroizing<Vec<u8>>> {
+    match mode {
+        GateMode::KeystoreKey => retrieve(),
+        _ => Err(Error::NotFound),
+    }
 }
 
 // --- Windows Hello key wrapping ---------------------------------------------
@@ -338,10 +361,10 @@ mod imp {
                 biometrics::authenticate()?;
                 read(prompt_options, ACCOUNT_PROMPT, add_prompt)
             }
-            // A Windows-only mode: no Apple build ever enrolls it, and reading
-            // an enrollment under a gate it was not stored behind is exactly
-            // what this module refuses to do.
-            GateMode::HelloKey => Err(Error::NotFound),
+            // The Windows and Android modes: no Apple build ever enrolls
+            // them, and reading an enrollment under a gate it was not stored
+            // behind is exactly what this module refuses to do.
+            GateMode::HelloKey | GateMode::KeystoreKey => Err(Error::NotFound),
         }
     }
 
@@ -644,7 +667,34 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_vendor = "apple", target_os = "windows")))]
+#[cfg(target_os = "android")]
+mod imp {
+    use super::*;
+    use crate::biometric_key;
+
+    pub const SUPPORTED: bool = true;
+
+    // Sealing is itself a use of the Keystore key, so enrolling puts up the
+    // biometric prompt — which also proves, before anything is recorded, that
+    // the gate the key is about to sit behind can be passed. Kotlin deletes
+    // any earlier key and blob first, so a re-enrollment never inherits the
+    // previous one's key.
+    pub fn store(key: &[u8]) -> Result<GateMode> {
+        biometric_key::store(key).map(|()| GateMode::KeystoreKey)
+    }
+
+    // Unsealing is the verification: the Keystore refuses the key to a cipher
+    // the prompt did not authorize. Hence no `biometrics::authenticate()`.
+    pub fn retrieve(mode: GateMode) -> Result<Zeroizing<Vec<u8>>> {
+        through_keystore_key(mode, biometric_key::retrieve)
+    }
+
+    pub fn delete() -> Result<()> {
+        biometric_key::remove()
+    }
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "windows", target_os = "android")))]
 mod imp {
     use super::*;
 
@@ -678,6 +728,7 @@ mod tests {
         protected: RefCell<Option<Vec<u8>>>,
         prompt: RefCell<Option<Vec<u8>>>,
         hello_key: RefCell<Option<Vec<u8>>>,
+        keystore_key: RefCell<Option<Vec<u8>>>,
         // Simulates an ad-hoc-signed build: the protected keychain refuses.
         no_entitlement: Cell<bool>,
     }
@@ -693,6 +744,7 @@ mod tests {
                 GateMode::Protected => &self.protected,
                 GateMode::Prompt => &self.prompt,
                 GateMode::HelloKey => &self.hello_key,
+                GateMode::KeystoreKey => &self.keystore_key,
             }
         }
     }
@@ -727,6 +779,7 @@ mod tests {
             *self.protected.borrow_mut() = None;
             *self.prompt.borrow_mut() = None;
             *self.hello_key.borrow_mut() = None;
+            *self.keystore_key.borrow_mut() = None;
             Ok(())
         }
     }
@@ -918,6 +971,29 @@ mod tests {
         );
         assert!(matches!(result, Err(Error::Cancelled)));
         assert!(!asked_legacy.get());
+    }
+
+    // --- the Android Keystore key (the mode it is read through) --------------
+
+    #[test]
+    fn an_android_enrollment_is_read_through_the_keystore_key() {
+        let got = through_keystore_key(GateMode::KeystoreKey, || key(b"k")).unwrap();
+        assert_eq!(&*got, b"k");
+    }
+
+    // A marker Android never wrote — a legacy one reads as `Prompt` — is an
+    // enrollment that does not exist here: a miss, and no prompt goes up.
+    #[test]
+    fn android_never_reads_through_another_platforms_gate() {
+        for mode in [GateMode::Protected, GateMode::Prompt, GateMode::HelloKey] {
+            let prompted = Cell::new(false);
+            let result = through_keystore_key(mode, || {
+                prompted.set(true);
+                key(b"k")
+            });
+            assert!(matches!(result, Err(Error::NotFound)), "{mode:?}");
+            assert!(!prompted.get(), "{mode:?}");
+        }
     }
 
     // --- Windows Hello wrapping (platform-independent halves) ----------------

@@ -22,18 +22,19 @@
 //! consent tab the user closes without answering cannot wedge a port — or the
 //! "pending" state the frontend shows — until the app restarts.
 //!
-//! iOS talks to an iOS client, which is public (no secret, PKCE mandatory) and
-//! is registered against a redirect URI on its own URL scheme. Safari takes the
-//! screen and the app is suspended behind it, so the flow has to be cut in half
-//! — [`begin`] opens the consent page, [`exchange_for_tokens`] runs when iOS
-//! reopens the app with the redirect. Everything between the two (the PKCE
-//! pair, the auth URL, the token exchange, the token file) is shared.
+//! A phone (iOS or Android) talks to a mobile client, which is public (no
+//! secret, PKCE mandatory) and is registered against a redirect URI on its own
+//! URL scheme. The browser takes the screen and the app is suspended behind
+//! it, so the flow has to be cut in half — [`begin`] opens the consent page,
+//! [`exchange_for_tokens`] runs when the OS reopens the app with the redirect.
+//! Everything between the two (the PKCE pair, the auth URL, the token
+//! exchange, the token file) is shared.
 //!
 //! Every request carries a random `state` that the redirect has to echo back
 //! ([`parse_redirect`]). On desktop that is belt-and-braces over a loopback port
-//! only this process listens on; on iOS it is the whole defence — any app can
-//! open a URL on our scheme, and without the nonce one could pass off a stray
-//! URL as the provider's answer to a flow it never saw.
+//! only this process listens on; on a phone it is the whole defence — any app
+//! can open a URL on our scheme, and without the nonce one could pass off a
+//! stray URL as the provider's answer to a flow it never saw.
 //!
 //! Tokens are stored encrypted via the vault cryptor either way.
 
@@ -72,7 +73,7 @@ pub struct OAuthConfig {
     // The desktop client, which only the loopback consent flow below reads. A
     // phone build has no loopback listener and its client comes out of
     // `mobile_client`, so these do not exist there — rather than sit unread
-    // and fail the iOS build under `-D dead-code`.
+    // and fail that build under `-D dead-code`.
     //
     /// The loopback ports the desktop client is registered for. Empty is any
     /// port at all (Google's Desktop-app clients), and the OS picks one; a
@@ -192,8 +193,8 @@ fn other<E: std::fmt::Display>(e: E) -> Error {
 struct Credentials {
     client_id: String,
     redirect_uri: String,
-    /// Desktop clients ship a (non-confidential) secret. An iOS client is a
-    /// public client and must never send one, so this stays `None` there.
+    /// Desktop clients ship a (non-confidential) secret. A phone's client is
+    /// a public client and must never send one, so this stays `None` there.
     secret: Option<String>,
 }
 

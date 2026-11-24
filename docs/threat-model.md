@@ -438,6 +438,29 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
    all: off Apple and Windows `commands/clipboard.rs` falls back to a plain
    write, so a clipboard manager there may record the value.
 
+   On Android the copy is written by the app's own plugin
+   (`SecretClipboardPlugin.kt`) with two flags on the clip's description: the
+   system's sensitive flag (`android.content.extra.IS_SENSITIVE`), which keeps
+   the text out of the preview Android 13 and later show after a copy, and a
+   mark of Rowel's own. The deadline and the lock compare by that mark, not by
+   the text — reading back a clip another app wrote raises Android 12's
+   "pasted from your clipboard" notice — and they can compare only while the
+   app has focus: since Android 10 an app without it sees no clipboard at all,
+   though it may still write one. A clear that falls due then, which is the
+   usual case for a deadline (the user has left for the app the password goes
+   into), **clears without looking**, so a value the user copied in another
+   app after the secret is wiped with it. With the app in front, a clip
+   without the mark is left alone (`android_should_clear`). Two more limits
+   are Android's. The deadline is a timer in the app's process, counted in
+   time the device is awake, and Android may freeze or kill a process it has
+   sent to the background: a clear that falls due while the process is frozen
+   happens when it next runs, and one in a process that was killed never does.
+   And the clear is sent through the app's activity, which Back closes on
+   Android 11 and earlier, so a deadline after leaving the app that way is not
+   met. Android 13 and later clear the clipboard by themselves an hour after a
+   copy, which bounds every one of these; Android 12 and earlier have no such
+   bound.
+
    One thing a lock does not reach: a sync run in flight holds key copies of its
    own. `SessionVault::capture` copies the SQLCipher key into the run's vault
    handle (`sync/engine.rs`), and the run's `DriveRemote` owns a `Cryptor`
@@ -485,6 +508,33 @@ Bitwarden JSON's `passwordHistory`, plaintext by construction).
      under a key derived from a Windows Hello key-credential signature, so
      opening it requires passing the Hello prompt rather than merely being the
      logged-in user.
+   - **Android (`GateMode::KeystoreKey`):** the key material is sealed with
+     AES-256-GCM under an AES key generated inside the Android Keystore, which
+     never hands the key out. That key requires user authentication for every
+     use, by a strong (Class 3) biometric only — the device credential is not
+     accepted — and Android destroys it when a biometric is enrolled, the last
+     one is removed, or the screen lock is turned off. It is only ever used
+     through `BiometricPrompt` with the cipher as its `CryptoObject`, so the
+     Keystore, not the app, refuses to encrypt or decrypt without a fresh prompt
+     — enrolling prompts too, since sealing is a use of the key. Only the IV and
+     the ciphertext with its tag are written, to a file in the app's no-backup
+     directory (`noBackupFilesDir`): private to the app, left out of Auto
+     Backup, and inert without the Keystore key, which does not leave the device
+     in any case. A destroyed key reads as a missing enrollment and clears the
+     marker. The Keystore and the prompt are Java APIs, so the work is done in
+     Kotlin (`BiometricKey.kt`), called from Rust over Tauri's plugin bridge,
+     and the key material crosses that bridge as base64 in JSON — at enrollment
+     and at every biometric unlock. The Rust copies are `Zeroizing` where this
+     code owns them, but the bridge makes copies it does not: a
+     `serde_json::Value` and its serialized text on the way in, the response
+     text on the way out, and on the JVM side the request and response strings
+     and the base64 string of the key. JVM strings are immutable and cannot be
+     scrubbed; they are dropped and left to the garbage collector, so the key
+     material can outlive the call in the app's heap until it is collected and
+     the memory reused. The decoded key bytes on the JVM side are overwritten as
+     soon as they have been used. Whether the Keystore key is held in the TEE or
+     in StrongBox, or in software on a device with neither, is the device's;
+     this code does not ask for StrongBox.
    - **Linux and others:** unsupported; the app reports biometrics unavailable
      rather than store an ungated key.
 5. **One unlock for every lockbox (`appkey.rs`).** The primary lockbox's
@@ -742,9 +792,23 @@ Bringing existing data forward is an **explicit** action, and there are four pat
   not briefly exposed to a snapshot, and reconciles against the window's own
   `isFocused()` once that answer is in. If the window focus subscription fails,
   it falls back to DOM `focus`/`blur` events rather than staying uncovered.
+- **Screen capture on Android.** The app's window is flagged `FLAG_SECURE`
+  (`MainActivity.kt`), the lock screen included: the system blocks
+  screenshots and screen recordings of it, keeps it off non-secure displays
+  such as a cast or a shared screen, and shows its recents thumbnail blank.
+  The cover above still goes up there on blur; under the flag it only hides
+  the vault from someone looking at the screen while another window has
+  focus. There is no setting to allow screenshots.
 - **Passive at-rest access and backups.** Because the database is SQLCipher-
   encrypted whole-file, file-level backups (Time Machine, disk images, cloud file
-  backups) carry only ciphertext.
+  backups) carry only ciphertext. On Android none of the app's data is backed
+  up at all, to Google's cloud or to another device in a device-to-device
+  transfer: `android:allowBackup="false"` turns both off on Android 11 and
+  earlier and cloud backup off on 12 and later, where a device transfer no
+  longer reads it, and `android:dataExtractionRules`
+  (`res/xml/data_extraction_rules.xml`) excludes every storage domain from
+  both on 12 and later. The vault reaches a new phone through the user's own
+  sync, never through Android's backup or transfer.
 - **A tampered update.** Updater artifacts are minisign-signed and verified
   against the public key baked into `src-tauri/tauri.conf.json`; an unsigned or
   modified artifact is rejected. A signed update is downloaded and **staged** in
@@ -1580,7 +1644,12 @@ runs and publishes its identities; until then the sheet's list offers it.
   marks them as concealed where the platform has a marker for it and auto-clears
   after a timeout (and on lock), but other apps can read the clipboard during
   that window — and on Linux there is no marker to set, so a clipboard manager
-  may keep a copy of its own that no clear of ours reaches.
+  may keep a copy of its own that no clear of ours reaches. On Android a clear
+  that falls due while the app is in the background cannot look first, so it
+  can take a value the user copied elsewhere since; and a process Android has
+  frozen, killed or closed with Back clears late or not at all — bounded on
+  Android 13 and later by the system's own clear an hour after a copy, and
+  not at all before (see *Zeroize on lock*).
 - **Rollback through Drive's revision history.** Sync is a whole-state merge:
   a device pulls the pack, merges it, and pushes the union. Deletions travel as
   tombstones, and tombstones are reclaimed after 90 days so the vault does not

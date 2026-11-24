@@ -18,6 +18,10 @@ mod autolock;
 // so the suspended process holds no lock in the App Group container.
 #[cfg(target_os = "ios")]
 mod background;
+// Android: the calls into the Kotlin class that holds the biometric-bound
+// Keystore key. Compiled for the tests too, for the half that needs no device.
+#[cfg(any(target_os = "android", test))]
+mod biometric_key;
 mod biometrics;
 // The photos the webview's camera input leaves behind on Android.
 mod capture;
@@ -123,7 +127,8 @@ pub fn run() {
     #[cfg(mobile)]
     {
         // The OAuth redirect for the public mobile client arrives on the app's
-        // own URL scheme (see `tauri.ios.conf.json`), not on a loopback port.
+        // own URL scheme (`sync::providers::deep_link_scheme`), not on a
+        // loopback port.
         builder = builder.plugin(tauri_plugin_deep_link::init());
     }
 
@@ -137,12 +142,25 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_fs::init());
     }
 
+    // Android: the Kotlin class behind biometric unlock (see `biometric_key`).
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(biometric_key::init());
+    }
+
     // The timer behind the delayed clipboard clear. Not on iOS, where the
     // pasteboard's own expiry does the clearing and no timer is armed (see
     // `commands::clipboard`).
     #[cfg(not(target_os = "ios"))]
     {
         builder = builder.manage(commands::clipboard::ClipboardClear::default());
+    }
+
+    // Android: the clipboard is the app's own Kotlin plugin, which this
+    // registers (see `commands::clipboard::AndroidClipboard`).
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(commands::clipboard::AndroidClipboard::plugin());
     }
 
     // In-app W3C WebDriver server (port 4445) for the E2E smoke suite. Never
@@ -243,8 +261,8 @@ pub fn run() {
                     opened::from_args(std::env::args().skip(1), &cwd),
                 );
             }
-            // The second half of the mobile OAuth flow: iOS reopens the app
-            // with Google's redirect once the user has approved.
+            // The second half of the mobile OAuth flow: the OS reopens the app
+            // with the provider's redirect once the user has approved.
             #[cfg(mobile)]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
