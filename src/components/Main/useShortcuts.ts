@@ -10,40 +10,52 @@ import {
   isModalOpen,
   lockVault,
   setPref,
+  currentShortcutKeys,
   SORT_MODES
 } from '@/store'
-import { SHORTCUTS } from '@/lib/shortcuts'
+import { shortcutAt, type Shortcut } from '@/lib/shortcuts'
 import { keyCode } from '@/utils/keys'
 
 // The app-level shortcut surface. One listener, one record — a new chord is
-// a key in `SHORTCUTS` and one line here. Mounted from Main, so chords are
-// live only while unlocked.
+// an action in `lib/shortcuts` and one line here. Mounted from Main, so chords
+// are live only while unlocked.
 //
-// Keyed by physical key (`KeyboardEvent.code`), not by the character the layout
-// prints, so the chords work the same on a Cyrillic keyboard (see `keyCode`).
-const BINDINGS: Record<string, () => void> = {
-  [SHORTCUTS.commands]: openPalette,
-  [SHORTCUTS.lock]: lockVault,
+// The key each action is on is looked up per press (`currentShortcutKeys`), so
+// a change in Settings › Keyboard shortcuts applies at once.
+const ACTIONS: Partial<Record<Shortcut, () => void>> = {
+  commands: openPalette,
+  lock: lockVault,
   // Re-pressing ⌘G must not drop the callback the generator was opened with:
   // the flag flips before the card mounts, so one press cannot queue a second
   // open.
-  [SHORTCUTS.generator]: () => {
+  generator: () => {
     if (!isModalOpen()) openGenerator()
   },
-  [SHORTCUTS.add]: openAddPicker,
-  [SHORTCUTS.search]: focusSearch,
+  add: openAddPicker,
+  search: focusSearch,
   // Edit whatever the list has selected — nothing to edit without a selection.
-  [SHORTCUTS.edit]: () => {
+  edit: () => {
     if (selectCurrent(useVault.getState())) editEntry()
-  },
-  ...Object.fromEntries(SORT_MODES.map((mode, i) => [`Digit${i + 1}`, () => setPref('sort', mode)]))
+  }
+}
+
+// ⌘1…⌘n pick the sort modes in menu order. Fixed: the user remaps letters only.
+const SORT_KEYS: Record<string, () => void> = Object.fromEntries(
+  SORT_MODES.map((mode, i) => [`Digit${i + 1}`, () => setPref('sort', mode)])
+)
+
+// Keyed by physical key (`KeyboardEvent.code`), not by the character the layout
+// prints, so the chords work the same on a Cyrillic keyboard (see `keyCode`).
+const bindingFor = (code: string) => {
+  const action = shortcutAt(currentShortcutKeys(), code)
+  return (action && ACTIONS[action]) || SORT_KEYS[code]
 }
 
 export const useShortcuts = () => {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
-      const run = BINDINGS[keyCode(e)]
+      const run = bindingFor(keyCode(e))
       if (!run) return
       e.preventDefault()
       // A dialog owns the keyboard while it is up: every chord here would

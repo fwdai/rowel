@@ -521,7 +521,7 @@ describe('compact shell', () => {
     act(() => openSettings())
     // Every section is a row, in the desktop nav's order.
     // A narrow desktop window, so Browser extension is among them.
-    expect(screen.getAllByTestId(/^settings-nav-/)).toHaveLength(7)
+    expect(screen.getAllByTestId(/^settings-nav-/)).toHaveLength(8)
 
     await userEvent.click(screen.getByTestId('settings-nav-security'))
     expect(screen.getByRole('heading', { name: 'Security' })).toBeInTheDocument()

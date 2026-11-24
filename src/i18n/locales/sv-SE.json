@@ -955,5 +955,16 @@
   "Remove device": "Ta bort enhet",
   "A nearby device needs the new master password": "En enhet i närheten behöver det nya huvudlösenordet",
   "Nearby sync is on": "Synkning med enheter i närheten är på",
-  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Klockorna på de två enheterna skiljer sig för mycket för att synkronisera säkert. Ställ in rätt tid på båda."
+  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Klockorna på de två enheterna skiljer sig för mycket för att synkronisera säkert. Ställ in rätt tid på båda.",
+  "Keyboard shortcuts": "Kortkommandon",
+  "Move a shortcut to another key. Changes stay on this device.": "Flytta ett kortkommando till en annan tangent. Ändringar gäller bara den här enheten.",
+  "Open the command palette": "Öppna kommandopaletten",
+  "Edit the selected item": "Redigera det valda objektet",
+  "Shortcut for {{action}}": "Kortkommando för {{action}}",
+  "Press a key…": "Tryck på en tangent…",
+  "Restore defaults": "Återställ standard",
+  "Use a letter key": "Använd en bokstavstangent",
+  "{{key}} belongs to the system": "{{key}} tillhör systemet",
+  "{{key}} is kept for editing text": "{{key}} är reserverat för textredigering",
+  "{{key}} is already used by “{{action}}”": "{{key}} används redan av ”{{action}}”"
 }

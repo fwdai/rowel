@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
@@ -145,6 +146,11 @@ pub struct Settings {
     pub hide_on_copy: bool,
     pub generator: GeneratorDefaults,
     pub browser: BrowserSettings,
+    /// Desktop: the keyboard shortcuts moved off their default key, by action,
+    /// to a `KeyboardEvent.code` (`"KeyJ"`). Opaque here: the frontend owns the
+    /// actions and their defaults (`lib/shortcuts.ts`) and drops what it does
+    /// not recognise on the way in.
+    pub shortcuts: BTreeMap<String, String>,
 }
 
 impl Default for Settings {
@@ -162,6 +168,7 @@ impl Default for Settings {
             hide_on_copy: false,
             generator: GeneratorDefaults::default(),
             browser: BrowserSettings::default(),
+            shortcuts: BTreeMap::new(),
         }
     }
 }
@@ -494,6 +501,24 @@ mod tests {
         assert_eq!(merged.generator.length, 32);
         assert!(!merged.generator.symbols);
         assert!(merged.generator.exclude_similar_characters);
+    }
+
+    #[test]
+    fn a_shortcuts_patch_replaces_the_map() {
+        let moved = merge(
+            &Settings::default(),
+            &serde_json::json!({ "shortcuts": { "lock": "KeyJ" } }),
+        )
+        .unwrap();
+        assert_eq!(moved.shortcuts.get("lock").map(String::as_str), Some("KeyJ"));
+
+        let json = serde_json::to_string(&moved).unwrap();
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), moved);
+
+        // The frontend sends the whole map, so restoring the defaults is an
+        // empty one.
+        let reset = merge(&moved, &serde_json::json!({ "shortcuts": {} })).unwrap();
+        assert!(reset.shortcuts.is_empty());
     }
 
     #[test]

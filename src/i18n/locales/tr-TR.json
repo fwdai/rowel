@@ -955,5 +955,16 @@
   "Remove device": "Cihazı kaldır",
   "A nearby device needs the new master password": "Yakındaki bir cihaz yeni ana şifreyi istiyor",
   "Nearby sync is on": "Yakındaki cihazlarla eşitleme açık",
-  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Bu iki cihazın saatleri güvenle eşitlemek için birbirinden çok farklı. İkisinde de doğru saati ayarlayın."
+  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Bu iki cihazın saatleri güvenle eşitlemek için birbirinden çok farklı. İkisinde de doğru saati ayarlayın.",
+  "Keyboard shortcuts": "Klavye kısayolları",
+  "Move a shortcut to another key. Changes stay on this device.": "Bir kısayolu başka bir tuşa taşıyın. Değişiklikler yalnızca bu cihazda geçerlidir.",
+  "Open the command palette": "Komut paletini aç",
+  "Edit the selected item": "Seçili kaydı düzenle",
+  "Shortcut for {{action}}": "{{action}} kısayolu",
+  "Press a key…": "Bir tuşa basın…",
+  "Restore defaults": "Varsayılanları geri yükle",
+  "Use a letter key": "Bir harf tuşu kullanın",
+  "{{key}} belongs to the system": "{{key}} sisteme ait",
+  "{{key}} is kept for editing text": "{{key}} metin düzenleme için ayrılmış",
+  "{{key}} is already used by “{{action}}”": "{{key}} zaten “{{action}}” tarafından kullanılıyor"
 }

@@ -4,6 +4,7 @@ import type { GeneratorOptions } from './tools'
 import type { Provider } from './provider'
 import type { BiometricMode, BiometryType, Workspace } from './types'
 import type { Accent, ThemePreference } from '@/theme'
+import type { ShortcutOverrides } from '@/lib/shortcuts'
 
 export type DateFormat = 'MM/DD/YYYY' | 'DD.MM.YYYY' | 'YYYY-MM-DD'
 
@@ -52,6 +53,12 @@ export interface Settings {
   locale: string | null
   /** Seed values for every new password, shared with the ⌘G dialog. */
   generator: GeneratorOptions
+  /**
+   * Desktop: the shortcuts the user moved to another key, by action — the
+   * defaults are `lib/shortcuts`. Per device and never synced: a key that suits
+   * one keyboard can clash on another.
+   */
+  shortcuts: ShortcutOverrides
 }
 
 /**

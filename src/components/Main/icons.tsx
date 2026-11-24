@@ -47,6 +47,7 @@ import {
   Image,
   KeyRound,
   KeySquare,
+  Keyboard,
   Laptop,
   LayoutGrid,
   Link,
@@ -230,6 +231,8 @@ export const ServerGlyph = glyph(Server, 16)
 // Settings › General: the app's own preferences, as sliders rather than the gear
 // the rail already uses for Settings as a whole.
 export const GeneralGlyph = glyph(Settings2, 16)
+// Settings › Keyboard shortcuts.
+export const KeyboardGlyph = glyph(Keyboard, 16)
 // Settings › Import & export: secrets travelling in both directions.
 export const TransferGlyph = glyph(ArrowDownUp, 16)
 // Settings › Browser extension: the puzzle piece browsers badge extensions with.

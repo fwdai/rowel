@@ -7,6 +7,7 @@ import Audit from './Sections/Audit'
 import Import from './Sections/Import'
 import Language from './Sections/Language'
 import Browser from './Sections/Browser'
+import Keyboard from './Sections/Keyboard'
 
 // One place that maps a section key to its pane, so the modal and the compact
 // sheet cannot drift apart over which section shows what.
@@ -17,6 +18,7 @@ const PANES: Record<Key, ComponentType> = {
   audit: Audit,
   import: Import,
   language: Language,
+  keyboard: Keyboard,
   browser: Browser
 }
 
