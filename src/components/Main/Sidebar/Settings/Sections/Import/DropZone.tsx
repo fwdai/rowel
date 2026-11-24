@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isMobile } from '@/lib/platform'
-import { pickImportFile } from '@/api/pickers'
+import { pickImportFile } from '@/services/pickers'
 import { useWebviewDragDrop } from '@/hooks/useWebviewDragDrop'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
@@ -32,11 +32,9 @@ export default function DropZone({ onDrop }: Props) {
   })
 
   const pick = () =>
-    pickImportFile()
-      .then(path => {
-        if (path) onDrop(path)
-      })
-      .catch(() => {})
+    pickImportFile().then(path => {
+      if (path) onDrop(path)
+    })
 
   const body = (
     <>

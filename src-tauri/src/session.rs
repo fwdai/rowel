@@ -456,6 +456,9 @@ fn seal(state: &AppState) -> Sealed {
 // its order. Memory only, and nothing here may take the session lock.
 fn announce_opened(app: &AppHandle) {
     crate::autolock::arm(app);
+    // Android's temp files go with every session open and end (`picked`). On
+    // open, what was picked or photographed before it has been read already.
+    crate::picked::wipe(app);
     #[cfg(desktop)]
     {
         crate::browser::server::hub(app).notify_unlocked();
@@ -465,13 +468,14 @@ fn announce_opened(app: &AppHandle) {
 }
 
 // `live`: a vault session was open. An end with none (a switch, delete or
-// lock from the lock screen) leaves the choices made there (`grants`) standing.
+// lock from the lock screen) leaves the choices made there (`grants`, and their
+// files on Android: `picked`) standing.
 fn announce_ended(app: &AppHandle, live: bool) -> Ended {
     if live {
         app.state::<crate::grants::PathGrants>().session_ended();
+        crate::picked::wipe(app);
     }
     crate::autolock::disarm(app);
-    crate::picked::wipe(app);
     #[cfg(desktop)]
     {
         crate::browser::server::hub(app).notify_locked();

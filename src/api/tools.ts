@@ -68,9 +68,12 @@ export const getAudit = (checkBreaches: boolean): Promise<Audit> =>
  * than the file browser, and what it picks is readable only as an attachment.
  * `'import'` is a password manager's export, `'backup'` a `.rowel` to restore,
  * `'importBackup'` either backup Settings › Import takes and `'lockboxBackup'`
- * a `.rowel` alone, restored as a lockbox (see `@/api/pickers`).
+ * a `.rowel` alone, restored as a lockbox (see `@/services/pickers`).
  * `browse` asks a phone for the file browser even under an image filter (a
  * photo kept in Files); the desktop's one dialog ignores it.
+ *
+ * Rejects when the pick fails. Called only by `pickFileToRead`
+ * (`@/services/pickers`), which shows that failure.
  */
 export type PickKind =
   | 'image'
@@ -82,7 +85,7 @@ export type PickKind =
   | 'importBackup'
   | 'lockboxBackup'
 
-export const pickFileToRead = (
+export const pickFile = (
   kind: PickKind,
   label?: string,
   browse = false
@@ -112,13 +115,6 @@ export const scanImage = (path: string): Promise<ScanResult> => call('scan_image
  */
 export const scanImageBytes = (image: Uint8Array): Promise<ScanResult> =>
   call('scan_image_bytes', image)
-
-/**
- * The camera input is done with the photo it was handed — read, refused,
- * dropped, or the camera cancelled — so Android can take away the file the
- * camera wrote it into (`capture` in Rust). A no-op anywhere else.
- */
-export const captureSettled = (): Promise<void> => call('capture_settled')
 
 // The site's favicon as a data: URI, or null when it has none. The backend
 // fetches straight from the entry's own host (never a third-party favicon

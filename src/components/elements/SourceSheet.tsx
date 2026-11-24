@@ -14,11 +14,8 @@ interface Props {
   description: string
   /** Backing out: the scrim, the grabber, the close control, or Escape. */
   onClose: () => void
-  /**
-   * A photo the camera just took, as the file the webview holds; done with
-   * once what this returns settles (see `FileInput`).
-   */
-  onCapture: (file: File) => Promise<void> | void
+  /** A photo the camera just took, as the file the webview holds. */
+  onCapture: (file: File) => void
   /** The photo library was chosen; the caller opens it from Rust. */
   onLibrary: () => void
   /** Files was chosen; the caller opens it from Rust. */

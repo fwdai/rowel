@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { pickLockboxBackup } from '@/api/pickers'
+import { pickLockboxBackup } from '@/services/pickers'
 import { restoreWorkspaceFromFile } from '@/store'
 import Button from '@/components/elements/Button'
 import FoundFileCard from '@/components/elements/FoundFileCard'
@@ -28,11 +28,9 @@ export default function RestoreBackup({ chosen }: { chosen: string | null }) {
   const [busy, setBusy] = useState(false)
 
   const pick = () =>
-    pickLockboxBackup()
-      .then(picked => {
-        if (picked) setPath(picked)
-      })
-      .catch(() => {})
+    pickLockboxBackup().then(picked => {
+      if (picked) setPath(picked)
+    })
 
   // Settings is held by the store for the restore's length; this only stands
   // the controls down, and puts them back for a retry.

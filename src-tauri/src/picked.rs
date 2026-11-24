@@ -1,4 +1,5 @@
-//! A file picked on Android, made a path on disk as it is everywhere else.
+//! A file picked on Android, made a path on disk as it is everywhere else, and
+//! the plaintext files picking leaves there.
 //!
 //! Every reader of a chosen file, the grants (`grants`) and the webview's
 //! checks by extension work on a path. The desktop dialog answers with one, and
@@ -13,16 +14,26 @@
 //! `Context.getCacheDir`, which no other app can read (tauri 2.12.5:
 //! `PathResolver::app_cache_dir` asks `PathPlugin.getCacheDir`).
 //!
-//! A copy is whatever the user picked, an export in the clear or a photo of a
-//! card, so the copies are not kept: the whole folder is removed at startup and
-//! whenever a session ends ([`wipe`]).
+//! The camera leaves files too. wry answers a file input with `capture` by
+//! creating a file for the camera app to write the photo into (wry 0.57.0,
+//! `RustWebChromeClient.kt`: `createImageFile`, `File.createTempFile("JPEG_" +
+//! <yyyyMMdd_HHmmss> + "_", ".jpg", ...)` in
+//! `getExternalFilesDir(DIRECTORY_PICTURES)`) and never removes it, nor the
+//! empty one a cancelled capture leaves, on storage a USB connection reaches.
+//!
+//! Both are what the user picked or photographed, an export in the clear or a
+//! card, and live no longer than the session they were made for: [`wipe`]
+//! removes both kinds at startup and whenever a session opens or ends
+//! (`session`). One rule rather than one per file, so a file made in a session
+//! stays until that session ends. A pick answered after its session ended is
+//! not copied, and a copy a session end overtook is removed
+//! (`commands::tools::pick_file`, [`discard`]).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "android", test))]
 use std::{
     fs::{self, File},
     io::{self, Read},
-    path::Path,
 };
 
 use tauri::AppHandle;
@@ -102,10 +113,34 @@ fn file_name(name: &str) -> Option<&str> {
     (!last.trim_start_matches('.').is_empty()).then_some(last)
 }
 
-/// Remove every copy. Android only, the one platform that makes them. The
-/// removal runs off the calling thread, so this may be called under the
-/// session guard (`session::announce_ended`). Best effort: a folder that will
-/// not go now goes at the next session end or startup.
+/// Remove the copy at `path` if [`into_path`] made it; any other path is the
+/// user's own file and stays.
+pub fn discard(app: &AppHandle, path: &Path) {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+
+        if let Ok(cache) = app.path().app_cache_dir() {
+            discard_in(&cache, path);
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, path);
+}
+
+/// Remove `path`'s folder if it is one [`copy_in`] made under `cache`.
+#[cfg(any(target_os = "android", test))]
+fn discard_in(cache: &Path, path: &Path) {
+    let root = cache.join(DIR);
+    if let Some(dir) = path.parent().filter(|dir| dir.parent() == Some(&*root)) {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// Remove every copy and every camera photo (see the module docs). Android
+/// only, the one platform that leaves them. Runs off the calling thread, so
+/// this may be called under the session guard (`session`). Best effort: what
+/// will not go now goes the next time.
 pub fn wipe(app: &AppHandle) {
     #[cfg(target_os = "android")]
     {
@@ -113,19 +148,42 @@ pub fn wipe(app: &AppHandle) {
 
         let app = app.clone();
         crate::commands::detached(move || {
-            if let Ok(cache) = app.path().app_cache_dir() {
-                wipe_in(&cache);
-            }
+            // `PathPlugin.getPictureDir`: the folder wry has the camera write to.
+            let dirs = app.path();
+            wipe_in(
+                dirs.app_cache_dir().ok().as_deref(),
+                dirs.picture_dir().ok().as_deref(),
+            );
         });
     }
     #[cfg(not(target_os = "android"))]
     let _ = app;
 }
 
-/// Remove the copies made under `cache`, all of them at once.
+/// Remove the copies made under `cache` and the files in `pictures` named the
+/// way wry names a capture.
 #[cfg(any(target_os = "android", test))]
-fn wipe_in(cache: &Path) {
-    let _ = fs::remove_dir_all(cache.join(DIR));
+fn wipe_in(cache: Option<&Path>, pictures: Option<&Path>) {
+    if let Some(cache) = cache {
+        let _ = fs::remove_dir_all(cache.join(DIR));
+    }
+    let Some(entries) = pictures.and_then(|dir| fs::read_dir(dir).ok()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file = entry.file_type().is_ok_and(|kind| kind.is_file());
+        if file && entry.file_name().to_str().is_some_and(is_capture) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Whether `name` is one wry gives a capture: its `JPEG_` prefix and `.jpg`
+/// suffix around something. The middle is not checked: its timestamp is
+/// formatted in the device's locale, whose digits need not be ASCII.
+#[cfg(any(target_os = "android", test))]
+fn is_capture(name: &str) -> bool {
+    name.len() > "JPEG_.jpg".len() && name.starts_with("JPEG_") && name.ends_with(".jpg")
 }
 
 #[cfg(test)]
@@ -188,19 +246,71 @@ mod tests {
         assert_eq!(left.len(), 1, "only the copy within the cap is left");
     }
 
+    // Only a copy's own folder goes: a path the dialog answered with on its own
+    // is the user's file.
     #[test]
-    fn a_wipe_takes_every_copy_and_nothing_else() {
+    fn a_discarded_pick_leaves_no_copy_and_no_other_file_is_touched() {
         let cache = tempfile::tempdir().unwrap();
+        let copy = copy_in(cache.path(), "export.csv", &b"secret"[..], 64).unwrap();
+        let own = cache.path().join("export.csv");
+        fs::write(&own, b"theirs").unwrap();
+
+        discard_in(cache.path(), &copy);
+        discard_in(cache.path(), &own);
+
+        assert!(!copy.parent().unwrap().exists());
+        assert!(cache.path().join(DIR).exists());
+        assert!(own.exists());
+    }
+
+    #[test]
+    fn a_capture_is_named_as_wry_names_it() {
+        for name in [
+            "JPEG_20261124_104700_8123456789012345678.jpg",
+            "JPEG_20261124_104700_-42.jpg",
+            "JPEG_٢٠٢٦١١٢٤_١٠٤٧٠٠_42.jpg",
+        ] {
+            assert!(is_capture(name), "{name}");
+        }
+        for name in [
+            "JPEG_.jpg",
+            "IMG_0042.jpg",
+            "JPEG_20261124_104700_42.png",
+            "jpeg_20261124_104700_42.jpg",
+        ] {
+            assert!(!is_capture(name), "{name}");
+        }
+    }
+
+    // Both kinds go, the camera's empty file included; anything else in either
+    // folder stays.
+    #[test]
+    fn a_wipe_takes_every_copy_and_capture_and_nothing_else() {
+        let cache = tempfile::tempdir().unwrap();
+        let pictures = tempfile::tempdir().unwrap();
         let kept = cache.path().join("favicons.tmp");
         fs::write(&kept, b"x").unwrap();
         copy_in(cache.path(), "export.csv", &b"a"[..], 64).unwrap();
         copy_in(cache.path(), "card.jpg", &b"b"[..], 64).unwrap();
+        let capture = pictures.path().join("JPEG_20261124_104700_42.jpg");
+        let empty = pictures.path().join("JPEG_20261124_104812_7.jpg");
+        let other = pictures.path().join("IMG_0042.jpg");
+        let folder = pictures.path().join("JPEG_folder_1.jpg");
+        fs::write(&capture, b"\xff\xd8\xff\xe0").unwrap();
+        fs::write(&empty, b"").unwrap();
+        fs::write(&other, b"\xff\xd8\xff\xe0").unwrap();
+        fs::create_dir(&folder).unwrap();
 
-        wipe_in(cache.path());
+        wipe_in(Some(cache.path()), Some(pictures.path()));
 
         assert!(!cache.path().join(DIR).exists());
+        assert!(!capture.exists());
+        assert!(!empty.exists());
         assert!(kept.exists());
-        // Nothing to wipe is nothing to do.
-        wipe_in(cache.path());
+        assert!(other.exists());
+        assert!(folder.exists());
+        // Nothing to wipe, or nowhere to look, is nothing to do.
+        wipe_in(Some(cache.path()), Some(&pictures.path().join("gone")));
+        wipe_in(None, None);
     }
 }

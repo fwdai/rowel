@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::{DialogExt, PickerMode};
 
 use super::vault::{BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION};
@@ -22,7 +22,8 @@ use crate::{emblem, favicon, picked, scan};
 /// legacy `.swftx` to restore on a fresh install), `"importBackup"` (the
 /// same two, for Settings › Import) or `"lockboxBackup"` (a `.rowel` alone,
 /// to restore as a lockbox beside the open one). The path picked, or `None`
-/// when the dialog was dismissed. On Android that is the path of the copy
+/// when the dialog was dismissed or outlived the session it was opened in
+/// (see `grants`). On Android that is the path of the copy
 /// made of the document picked (`picked`), as on iOS it is the copy its
 /// picker made.
 ///
@@ -85,20 +86,24 @@ pub async fn pick_file(
     // The dialog blocks its caller until the user answers, and an Android
     // document is copied before it has a path (`picked`), so both run on the
     // blocking pool, not a runtime worker.
-    let Some(path) = super::blocking(move || {
+    super::blocking(move || {
         let Some(answer) = dialog.blocking_pick_file() else {
             return Ok(None);
         };
-        picked::into_path(&app, answer).map(Some)
+        // No copy for a session that ended while the dialog was open, and none
+        // kept for one that ended while the copy was made.
+        let grants = app.state::<PathGrants>();
+        if grants.generation() != generation {
+            return Ok(None);
+        }
+        let path = picked::into_path(&app, answer)?;
+        if !grants.grant_picked(generation, &path, purpose) {
+            picked::discard(&app, &path);
+            return Ok(None);
+        }
+        Ok(Some(path.to_string_lossy().into_owned()))
     })
-    .await?
-    else {
-        return Ok(None);
-    };
-    if !grants.grant_picked(generation, &path, purpose) {
-        return Ok(None);
-    }
-    Ok(Some(path.to_string_lossy().into_owned()))
+    .await
 }
 
 /// What the dialog is asked to filter a pick for `extensions` on: the
@@ -173,15 +178,6 @@ pub async fn scan_image_bytes(
     let result = scan::scan_bytes(image).await?;
     super::same_session(&state, epoch)?;
     Ok(result)
-}
-
-/// The webview's camera input is done with the photo it was handed: read it,
-/// refused it, dropped it or saw the camera cancelled. On Android the file wry
-/// had the camera write it into is swept then (see `capture`); elsewhere there
-/// is no such file.
-#[tauri::command]
-pub fn capture_settled(app: AppHandle) {
-    crate::capture::sweep(&app);
 }
 
 /// The icon for a host the entry list is showing. Unlocked vaults only: the

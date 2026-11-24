@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useBack } from '@/hooks/useBack'
 import { cx } from '@/utils/cx'
 import Back from '@/assets/images/back.svg?react'
+import NoticeToast from './NoticeToast'
 import VaultFooter from './VaultFooter'
 import { LABEL } from './tokens'
 
@@ -113,6 +114,9 @@ export default function AuthShell({ children, onBack, footer, fill, style, ref }
           <VaultFooter />
         </div>
       )}
+      {/* The lock and setup screens' notices, such as a failed pick; `Main`
+          mounts its own. */}
+      <NoticeToast />
     </div>
   )
 }

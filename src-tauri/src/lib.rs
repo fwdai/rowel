@@ -23,8 +23,6 @@ mod background;
 #[cfg(any(target_os = "android", test))]
 mod biometric_key;
 mod biometrics;
-// The photos the webview's camera input leaves behind on Android.
-mod capture;
 // The browser extension host: the KeePassXC-Browser protocol over a local
 // socket, and the proxy mode the browser launches this binary in. `pub` so the
 // proxy integration test can reach the socket name and framing.
@@ -58,7 +56,8 @@ mod oslock;
 // the sign-in, this device's enrollment key, the sealed record of both, the
 // lockboxes it hands this device and the approvals it routes here.
 mod org;
-// Android: a picked document copied into the app's cache, to be read as a path.
+// Android: a picked document copied into the app's cache, to be read as a
+// path, and the removal of that copy and of the camera's photos.
 mod picked;
 mod retired;
 mod save;
@@ -213,11 +212,8 @@ pub fn run() {
             // vault's host list in the clear, so it goes on the first launch
             // that can see it, whether or not this one looks an icon up.
             storage::remove_legacy_icons_dir(app.handle());
-            // Android: the camera photos left by a capture the app did not live
-            // to settle (see `capture`).
-            capture::sweep(app.handle());
-            // Android: the copies of picked files a previous run left behind
-            // (see `picked`).
+            // Android: the picked copies and camera photos a previous run left
+            // behind (see `picked`).
             picked::wipe(app.handle());
             // A workspace delete a crash caught between its file moves and the
             // registry write: put back, or cleared away, before anything reads
@@ -325,7 +321,6 @@ pub fn run() {
             commands::tools::pick_file,
             commands::tools::scan_image,
             commands::tools::scan_image_bytes,
-            commands::tools::capture_settled,
             commands::tools::fetch_favicon,
             commands::tools::fetch_emblem,
             commands::clipboard::copy_to_clipboard,

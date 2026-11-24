@@ -68,8 +68,6 @@ describe('attaching a file on a phone', () => {
     expect(calls('attachment_add')).toEqual([])
     expect(screen.queryByTestId('attach-source-sheet')).not.toBeInTheDocument()
     expect(await screen.findByTestId('attachments-section')).toHaveTextContent('IMG_0042.jpg')
-    // iOS keeps no file of the camera's to let go of.
-    expect(calls('capture_settled')).toEqual([])
   })
 
   it('opens the photo library as an attachment pick under the image filter', async () => {
