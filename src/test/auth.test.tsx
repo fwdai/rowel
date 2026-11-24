@@ -278,8 +278,6 @@ describe('Auth', () => {
     expect(calls('unlock')).toHaveLength(0)
   })
 
-  // The tooltip names the key only while the key does that: with a passphrase
-  // typed, Enter submits it.
   it('hints ⏎ on the biometric button while the field is empty', async () => {
     render(<Auth biometric />)
 
@@ -319,8 +317,6 @@ describe('Auth', () => {
     expect(elsewhere).toHaveFocus()
   })
 
-  // The menu stays open across the trip away, so its arrows and Enter have to
-  // stay with it too.
   it('leaves focus in the open lockbox menu when the window comes to the front', async () => {
     seedApp({ workspaces: [PRIMARY, WORK], activeWorkspace: 'w2' })
     render(<Auth biometric />)

@@ -34,8 +34,6 @@ interface Props {
   // The field takes focus on mount, which is right for every screen that draws
   // one. The setup screen draws two, and only the first of them should.
   autoFocus?: boolean
-  // Take the caret back whenever the window comes to the front, for a screen
-  // where this field is the one thing to type into (the lock screen).
   refocus?: boolean
   // Paint the card as invalid without rendering an inline error, for the
   // screens that surface the message elsewhere: the lock screen in its
@@ -118,10 +116,6 @@ export default function Masterpass({
       inputRef.current?.focus()
   }, [inert])
 
-  // A window brought back to the front is typed into straight away, without a
-  // click to find the field first. Focus the user left somewhere that takes
-  // keys of its own stays there: another field, or an open menu (the vault
-  // picker, whose arrows and Enter would otherwise land here).
   useEffect(() => {
     if (!refocus) return
     const onWindowFocus = () => {
@@ -136,8 +130,6 @@ export default function Masterpass({
     return () => window.removeEventListener('focus', onWindowFocus)
   }, [refocus])
 
-  // With nothing typed there is no passphrase to submit, so Enter asks the
-  // biometric gate instead, when the card offers one.
   const doSubmit = (val: string) => {
     if (inert) return
     if (val !== '') onEnter?.(val)
@@ -161,8 +153,6 @@ export default function Masterpass({
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    // A held Enter is one press: its repeats must not ask the biometric gate
-    // of a field the first one just emptied.
     if (event.key === 'Enter' && !event.repeat) doSubmit(event.currentTarget.value)
   }
 

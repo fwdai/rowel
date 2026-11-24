@@ -8,7 +8,6 @@ import Tooltip from '../Tooltip'
 
 interface Props {
   biometry: BiometryType
-  /** Enter asks the gate right now: the field is empty. */
   enter: boolean
   onClick?: () => void
 }
@@ -17,10 +16,6 @@ interface Props {
 // tier, and the glyph in the macOS Touch ID rose, sized to nearly fill the 28px
 // button. Which glyph and name — Touch ID or Face ID — is `lib/biometry`'s
 // call, from what the device reports.
-//
-// On the desktop the button's tooltip is that name, and ⏎ beside it while that
-// is what Enter does. A phone has no pointer to hover with and shows no key
-// hints.
 export default function Biometric({ biometry, enter, onClick }: Props) {
   const { t } = useTranslation()
   const label = t(biometryLabel(biometry))
