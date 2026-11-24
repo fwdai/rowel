@@ -68,7 +68,7 @@ pub async fn pick_file(
         "backup" => {
             let label = label.unwrap_or_else(|| "Rowel backup".into());
             dialog = dialog.add_filter(label, &[BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION]);
-            Purpose::Backup
+            Purpose::Restore
         }
         "importBackup" => {
             let label = label.unwrap_or_else(|| "Rowel backup".into());
@@ -85,6 +85,8 @@ pub async fn pick_file(
     if browse.unwrap_or(false) {
         dialog = dialog.set_picker_mode(PickerMode::Document);
     }
+    // The answer belongs to the session the dialog opens in (see `grants`).
+    let scope = grants.scope();
     // The dialog blocks its caller until the user answers, so it runs on the
     // blocking pool, not a runtime worker.
     let Some(picked) = super::blocking(move || Ok(dialog.blocking_pick_file())).await? else {
@@ -93,7 +95,11 @@ pub async fn pick_file(
     let path = picked
         .into_path()
         .map_err(|_| Error::Unsupported("the picked file has no local path".into()))?;
-    grants.grant(&path, purpose);
+    // Answered after that session ended, or a file not there to read: nothing
+    // is granted, and nothing is handed to a session that never asked.
+    if !grants.grant(scope, &path, purpose) {
+        return Ok(None);
+    }
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 

@@ -453,7 +453,11 @@ fn seal(state: &AppState) -> Sealed {
 
 // Called under the session guard that made the change, so announcements keep
 // its order. Memory only, and nothing here may take the session lock.
+//
+// The grants hear first: a path chosen in the session before is not to be
+// spent in this one (see `grants`).
 fn announce_opened(app: &AppHandle) {
+    app.state::<crate::grants::PathGrants>().session_opened();
     crate::autolock::arm(app);
     #[cfg(desktop)]
     {
@@ -464,6 +468,7 @@ fn announce_opened(app: &AppHandle) {
 }
 
 fn announce_ended(app: &AppHandle) -> Ended {
+    app.state::<crate::grants::PathGrants>().session_ended();
     crate::autolock::disarm(app);
     #[cfg(desktop)]
     {
@@ -864,6 +869,13 @@ mod lock_scope {
         }
         let end = body_of(source, "\nfn end(");
         assert!(at(&end, "announce_ended(app)") < at(&end, "ended.finish(app)"));
+        // Which is also how the grants hear of it: a path chosen in one session
+        // is spendable in no other (`grants`).
+        at(
+            &body_of(source, "\nfn announce_opened("),
+            ".session_opened()",
+        );
+        at(&body_of(source, "\nfn announce_ended("), ".session_ended()");
 
         let touch = body_of(include_str!("autolock.rs"), "pub fn touch(");
         assert!(at(&touch, "session.lock()") < at(&touch, "arm(app)"));

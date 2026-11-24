@@ -617,16 +617,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("export.csv");
         std::fs::write(&path, b"name,url\n").unwrap();
-        let grants = PathGrants::default();
+        let grants = PathGrants::in_session();
 
         assert!(chosen(&grants, &path, true).is_err());
         assert!(chosen(&grants, &path, false).is_err());
 
         // Picked as something else: still not an export the user chose.
-        grants.grant(&path, Purpose::Env);
+        grants.pick(&path, Purpose::Env);
         assert!(chosen(&grants, &path, false).is_err());
 
-        grants.grant(&path, Purpose::Import);
+        grants.pick(&path, Purpose::Import);
         chosen(&grants, &path, true).unwrap();
         chosen(&grants, &path, true).unwrap();
         chosen(&grants, &path, false).unwrap();

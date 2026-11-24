@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 #[cfg(desktop)]
-use crate::grants::{PathGrants, Purpose};
+use crate::grants::PathGrants;
 use crate::state::AppState;
 
 /// The extensions `bundle.fileAssociations` registers.
@@ -36,13 +36,14 @@ const EXTENSIONS: [&str; 2] = [
 /// The document is granted as a backup (see `grants`) before the webview hears
 /// of it: the user opened that file with the app, which is as much a choice as
 /// picking it from the dialog, and the restore or merge it leads to reads only
-/// granted paths.
+/// granted paths. One that arrives while the vault is locked waits for the
+/// unlock that the frontend offers it after (`PathGrants::grant_opened`).
 #[cfg(desktop)]
 pub fn accept(app: &AppHandle, paths: impl IntoIterator<Item = PathBuf>) {
     let Some(path) = paths.into_iter().find(|p| is_ours(p)) else {
         return;
     };
-    app.state::<PathGrants>().grant(&path, Purpose::Backup);
+    app.state::<PathGrants>().grant_opened(&path);
     let path = path.to_string_lossy().into_owned();
     *app.state::<AppState>().pending_open.lock().unwrap() = Some(path.clone());
     crate::events::file_opened(app, &path);
