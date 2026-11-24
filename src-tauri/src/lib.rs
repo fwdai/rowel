@@ -19,6 +19,8 @@ mod autolock;
 #[cfg(target_os = "ios")]
 mod background;
 mod biometrics;
+// The photos the webview's camera input leaves behind on Android.
+mod capture;
 // The browser extension host: the KeePassXC-Browser protocol over a local
 // socket, and the proxy mode the browser launches this binary in. `pub` so the
 // proxy integration test can reach the socket name and framing.
@@ -192,6 +194,9 @@ pub fn run() {
             // vault's host list in the clear, so it goes on the first launch
             // that can see it, whether or not this one looks an icon up.
             storage::remove_legacy_icons_dir(app.handle());
+            // Android: the camera photos left by a capture that never reached
+            // Rust (see `capture`).
+            capture::sweep(app.handle());
             // A workspace delete a crash caught between its file moves and the
             // registry write: put back, or cleared away, before anything reads
             // either — the registry below is the first thing that does.

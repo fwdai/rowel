@@ -170,9 +170,13 @@ pub async fn scan_image(
 /// for `scan_image`.
 #[tauri::command]
 pub async fn scan_image_bytes(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<ScanResult> {
+    // The webview has read the camera's photo by now, whatever becomes of it
+    // here, so the file wry left it in can go (see `capture`).
+    crate::capture::sweep(&app);
     let epoch = super::unlocked_epoch(&state)?;
     // `Request` only lends the body, so the scanner works on a copy: that copy
     // is what gets zeroized (see `scan_bytes`); the body Tauri holds is
