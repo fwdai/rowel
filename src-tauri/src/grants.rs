@@ -120,6 +120,10 @@ impl PathGrants {
     /// One grant per path: choosing the same file again — under this purpose or
     /// another — replaces what was held for it, so the last thing the user was
     /// asked is what the path stands for.
+    ///
+    /// For a choice with no dialog to wait across: outside tests, a backup the
+    /// OS opened with the app (`opened::accept`), which only the desktop has.
+    #[cfg_attr(not(desktop), allow(dead_code))]
     pub fn grant(&self, path: &Path, purpose: Purpose) {
         self.insert(path, purpose, false, None);
     }
