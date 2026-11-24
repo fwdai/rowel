@@ -646,7 +646,8 @@ pub(crate) fn read_file(path: &Path) -> Result<String> {
     Ok(fs::read_to_string(path)?)
 }
 
-/// Read a whole file the user pointed at, refusing anything past `cap`.
+/// Open a file the user pointed at, for [`read_capped`] or for a caller that
+/// reads it its own way (an archive it takes one member out of).
 ///
 /// Every decision here is made on one open handle, and there is no `stat`
 /// before it: a `stat` and the open that follows are two different files
@@ -655,17 +656,6 @@ pub(crate) fn read_file(path: &Path) -> Result<String> {
 /// cannot be exchanged under us. What it has to say is that this is a regular
 /// file: a FIFO reports a length of zero and then serves bytes for as long as a
 /// writer feels like it, and a device serves them without end.
-///
-/// `take(cap + 1)` is what bounds the read. The extra byte is how a file at
-/// the cap is told from one past it without trusting any reported length — if
-/// it arrives, the file is too large and nothing beyond it is ever read.
-pub fn read_regular_file_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
-    read_capped(open_regular_file(path)?, cap)
-}
-
-/// The handle the above reads from, for a caller that wants to read a file
-/// its own way (an archive it takes one member out of) on the same terms: one
-/// open, settled on that handle to be a regular file.
 pub fn open_regular_file(path: &Path) -> Result<fs::File> {
     let file = open_without_blocking(path)?;
     if !file.metadata()?.file_type().is_file() {
@@ -674,7 +664,11 @@ pub fn open_regular_file(path: &Path) -> Result<fs::File> {
     Ok(file)
 }
 
-/// The rest of a handle, refusing anything past `cap` (see above).
+/// The rest of a handle, refusing anything past `cap`.
+///
+/// `take(cap + 1)` is what bounds the read. The extra byte is how a file at
+/// the cap is told from one past it without trusting any reported length — if
+/// it arrives, the file is too large and nothing beyond it is ever read.
 pub fn read_capped(file: fs::File, cap: u64) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     file.take(cap.saturating_add(1)).read_to_end(&mut bytes)?;
@@ -732,9 +726,9 @@ fn not_a_regular_file() -> Error {
 // end of all of it — gets to reject it.
 const MAX_BACKUP_BYTES: u64 = 256 * 1024 * 1024;
 
-// Read an arbitrary backup file chosen by the user (absolute path).
-pub fn read_backup(path: &str) -> Result<String> {
-    let bytes = read_regular_file_capped(Path::new(path), MAX_BACKUP_BYTES)?;
+// Read a backup file chosen by the user, as `picked::open` opened it.
+pub fn read_backup(file: fs::File) -> Result<String> {
+    let bytes = read_capped(file, MAX_BACKUP_BYTES)?;
     String::from_utf8(bytes).map_err(|_| Error::FileNotText)
 }
 
@@ -858,9 +852,9 @@ pub fn sync_provider_in(dir: &Path) -> Option<Provider> {
 #[cfg(test)]
 mod tests {
     use super::{
-        move_data_dir, move_vault_files, move_workspace_files, read_backup,
-        read_regular_file_capped, remove_if_present, settle_data_dir, Error, BIOMETRIC_FILE,
-        DB_FILE, DB_REKEY_BACKUP_FILE, DROPBOX_FILE, GDRIVE_FILE, ICLOUD_FILE, KDF_SIDECAR_FILE,
+        move_data_dir, move_vault_files, move_workspace_files, open_regular_file, read_backup,
+        read_capped, remove_if_present, settle_data_dir, Error, BIOMETRIC_FILE, DB_FILE,
+        DB_REKEY_BACKUP_FILE, DROPBOX_FILE, GDRIVE_FILE, ICLOUD_FILE, KDF_SIDECAR_FILE,
         KDF_SIDECAR_REKEY_BACKUP_FILE, LAST_BACKUP_FILE, LOCKOUT_SIDECAR_FILE, RETIRED_KEYS_FILE,
         RETIRED_KEYS_REKEY_BACKUP_FILE, ROWEL_SERVER_FILE, STALE_SUFFIX, SYNC_SCRATCH_DIR,
         WRAPPED_KEY_FILE,
@@ -871,6 +865,11 @@ mod tests {
 
     // What SQLite writes beside `DB_FILE`, as the tests have to name it.
     const WAL_FILE: &str = "vault.db-wal";
+
+    // A file the user pointed at, opened and read as every reader of one does.
+    fn read_regular_file_capped(path: &Path, cap: u64) -> super::Result<Vec<u8>> {
+        read_capped(open_regular_file(path)?, cap)
+    }
 
     fn tmp_sidecar() -> PathBuf {
         static N: AtomicU64 = AtomicU64::new(0);
@@ -932,7 +931,10 @@ mod tests {
     fn a_backup_under_the_cap_is_read_whole() {
         let path = tmp_sidecar().with_file_name("small.swftx");
         fs::write(&path, "deadbeef").unwrap();
-        assert_eq!(read_backup(path.to_str().unwrap()).unwrap(), "deadbeef");
+        assert_eq!(
+            read_backup(open_regular_file(&path).unwrap()).unwrap(),
+            "deadbeef"
+        );
     }
 
     // Every file of the set, laid out as a workspace holds them.

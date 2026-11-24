@@ -168,6 +168,20 @@ describe('scanning on a phone', () => {
       stillOpen()
       expect(calls('scan_image')).toHaveLength(0)
     })
+
+    it('reports a picker that failed, since the sheet is gone', async () => {
+      mockCommand('pick_file', () => {
+        throw { kind: 'unsupported', message: 'the picked file has no local path' }
+      })
+      await openSheet()
+
+      await userEvent.click(screen.getByTestId('scan-source-library'))
+
+      await waitFor(() => expect(useUi.getState().scanError).toBe('failed'))
+      expect(useUi.getState().scanBusy).toBe(false)
+      closed()
+      expect(calls('scan_image')).toHaveLength(0)
+    })
   })
 
   describe('Files', () => {

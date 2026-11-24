@@ -6,12 +6,13 @@
 use std::path::Path;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::error::{Error, Result};
 use crate::grants::{PathGrants, Purpose};
+use crate::picked::{self, Chosen};
 use crate::state::AppState;
-use crate::storage::read_regular_file_capped;
+use crate::storage::read_capped;
 
 // A real .env is a few kilobytes. Anything past this is not one, and reading
 // it whole into the webview would only ever be a mistake.
@@ -79,14 +80,11 @@ fn looks_like_env(text: &str) -> bool {
 }
 
 // The command's body, split out so the refusals can be tested without a Tauri
-// runtime around them.
-pub fn read_env_text(path: &Path) -> Result<EnvFile> {
-    let bytes = read_regular_file_capped(path, MAX_BYTES)?;
+// runtime around them. Takes the file as `picked::open` opened it.
+pub fn read_env_text(chosen: Chosen) -> Result<EnvFile> {
+    let bytes = read_capped(chosen.file, MAX_BYTES)?;
     let body = String::from_utf8(bytes).map_err(|_| Error::FileNotText)?;
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let file_name = chosen.name;
     // Whatever path arrives is read whole and handed back, so what leaves here
     // is held to being an env file: named like one, or — since the drop target
     // claims a file that merely reads like one — written like one. A key, a
@@ -105,6 +103,7 @@ pub fn read_env_text(path: &Path) -> Result<EnvFile> {
 #[tauri::command]
 pub async fn read_env_file(
     path: String,
+    app: AppHandle,
     state: State<'_, AppState>,
     grants: State<'_, PathGrants>,
 ) -> Result<EnvFile> {
@@ -121,7 +120,8 @@ pub async fn read_env_file(
     if !grants.take(Path::new(&path), Purpose::Env) {
         return Err(crate::grants::not_chosen());
     }
-    let file = super::blocking(move || read_env_text(Path::new(&path))).await?;
+    let file =
+        super::blocking(move || read_env_text(picked::open(&app, Path::new(&path))?)).await?;
     super::same_session(&state, epoch)?;
     Ok(file)
 }
@@ -141,10 +141,15 @@ mod tests {
         path
     }
 
+    // The file on disk, opened as the command opens it.
+    fn read(path: &Path) -> Result<EnvFile> {
+        read_env_text(picked::open_local(path)?)
+    }
+
     #[test]
     fn reads_a_small_utf8_file_with_its_name() {
         let path = scratch(".env.production", b"A=1\nB=two\n");
-        let file = read_env_text(&path).unwrap();
+        let file = read(&path).unwrap();
         assert_eq!(file.body, "A=1\nB=two\n");
         assert_eq!(file.file_name, ".env.production");
         let _ = fs::remove_file(path);
@@ -172,7 +177,7 @@ mod tests {
 
     fn refusal(name: &str, bytes: &[u8]) {
         let path = scratch(name, bytes);
-        let err = read_env_text(&path).unwrap_err();
+        let err = read(&path).unwrap_err();
         assert!(matches!(err, Error::Unsupported(_)), "{name}: {err}");
         let _ = fs::remove_file(path);
     }
@@ -203,7 +208,7 @@ mod tests {
     #[test]
     fn takes_an_oddly_named_file_written_like_an_env() {
         let path = scratch("keys", b"# staging\nexport A=1\nDB_URL=postgres://x\n");
-        let file = read_env_text(&path).unwrap();
+        let file = read(&path).unwrap();
         assert!(file.body.contains("DB_URL"));
         let _ = fs::remove_file(path);
     }
@@ -213,14 +218,14 @@ mod tests {
     #[test]
     fn takes_an_env_name_whatever_is_in_it() {
         let path = scratch(".env.local", b"not a variable in sight\n");
-        assert!(read_env_text(&path).is_ok());
+        assert!(read(&path).is_ok());
         let _ = fs::remove_file(path);
     }
 
     #[test]
     fn refuses_a_file_over_the_cap() {
         let path = scratch("big.env", &vec![b'x'; (MAX_BYTES + 1) as usize]);
-        let err = read_env_text(&path).unwrap_err();
+        let err = read(&path).unwrap_err();
         assert!(matches!(err, Error::FileTooLarge), "{err}");
         let _ = fs::remove_file(path);
     }
@@ -228,7 +233,7 @@ mod tests {
     #[test]
     fn refuses_bytes_that_are_not_utf8() {
         let path = scratch("binary.env", &[0xff, 0xfe, b'A', b'=', b'1']);
-        let err = read_env_text(&path).unwrap_err();
+        let err = read(&path).unwrap_err();
         assert!(matches!(err, Error::FileNotText), "{err}");
         let _ = fs::remove_file(path);
     }

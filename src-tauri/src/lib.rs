@@ -52,6 +52,8 @@ mod oslock;
 // the sign-in, this device's enrollment key, the sealed record of both, the
 // lockboxes it hands this device and the approvals it routes here.
 mod org;
+// Opening a file the user chose: a path on disk, or an Android document.
+mod picked;
 mod retired;
 mod save;
 // Local image scanning (card / identity document). `pub` so `examples/scan.rs`

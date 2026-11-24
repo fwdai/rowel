@@ -18,6 +18,7 @@ use crate::events;
 use crate::grants::{self, PathGrants, Purpose};
 use crate::import::{self, EntryKind, Format, ImportedEntry, RowError};
 use crate::models::{Entry, EntryMetaDto};
+use crate::picked::{self, Chosen};
 use crate::save;
 use crate::session::{list_metas, live_records, store_err};
 use crate::state::AppState;
@@ -116,11 +117,8 @@ pub async fn import_entries(
 
     let emitter = app.clone();
     let parsed = super::blocking(move || -> Result<Parsed> {
-        let (bytes, unpacked) = read_import_file(Path::new(&path))?;
-        let name = Path::new(&path)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let Chosen { file, name } = picked::open(&emitter, Path::new(&path))?;
+        let (bytes, unpacked) = read_import_file(file)?;
         let fmt = resolve_format(&format, unpacked, &name, &bytes)?;
 
         let parsed = fmt.importer().parse(&bytes);
@@ -266,10 +264,9 @@ fn chosen(grants: &PathGrants, path: &Path, dry_run: bool) -> Result<()> {
     }
 }
 
-fn read_import_file(path: &Path) -> Result<(Vec<u8>, bool)> {
+fn read_import_file(mut file: std::fs::File) -> Result<(Vec<u8>, bool)> {
     use std::io::{Read, Seek, SeekFrom};
 
-    let mut file = storage::open_regular_file(path)?;
     let mut head = [0u8; 4];
     let n = file.read(&mut head)?;
     file.seek(SeekFrom::Start(0))?;
@@ -712,7 +709,7 @@ mod tests {
         zip.finish().unwrap();
         assert!(std::fs::metadata(&path).unwrap().len() > MAX_BYTES);
 
-        let (bytes, unpacked) = read_import_file(&path).unwrap();
+        let (bytes, unpacked) = read_import_file(opened(&path)).unwrap();
         assert!(unpacked);
         assert_eq!(bytes, br#"{"accounts":[]}"#);
         let r = Format::Onepux.importer().parse(&bytes);
@@ -721,15 +718,20 @@ mod tests {
         let plain = dir.path().join("export.json");
         std::fs::write(&plain, vec![b' '; MAX_BYTES as usize + 1]).unwrap();
         assert!(matches!(
-            read_import_file(&plain).unwrap_err(),
+            read_import_file(opened(&plain)).unwrap_err(),
             Error::FileTooLarge
         ));
         let small = dir.path().join("small.csv");
         std::fs::write(&small, b"Title,Password\nA,p\n").unwrap();
         assert_eq!(
-            read_import_file(&small).unwrap(),
+            read_import_file(opened(&small)).unwrap(),
             (b"Title,Password\nA,p\n".to_vec(), false)
         );
+    }
+
+    // The file on disk, opened as the command opens it.
+    fn opened(path: &Path) -> std::fs::File {
+        picked::open_local(path).unwrap().file
     }
 
     fn tmp_db() -> std::path::PathBuf {

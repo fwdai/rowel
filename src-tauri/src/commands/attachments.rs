@@ -17,10 +17,11 @@ use zeroize::Zeroizing;
 use crate::crypto::AttachmentCipher;
 use crate::error::{Error, Result};
 use crate::grants::{PathGrants, Purpose};
+use crate::picked::{self, Chosen};
 use crate::save;
 use crate::session::{store_err, Epoch, Session};
 use crate::state::AppState;
-use crate::storage::read_regular_file_capped;
+use crate::storage::read_capped;
 use crate::store::{migrate, Attachment, AttachmentMeta, SqliteStore, VaultStore};
 
 /// The largest file one attachment may be: a small share of the vault's
@@ -80,6 +81,7 @@ impl From<AttachmentMeta> for AttachmentDto {
 pub async fn attachment_add(
     entry_id: String,
     path: String,
+    app: AppHandle,
     state: State<'_, AppState>,
     grants: State<'_, PathGrants>,
 ) -> Result<AttachmentDto> {
@@ -87,7 +89,8 @@ pub async fn attachment_add(
     let (epoch, cipher, room) = begin_add(&state, &grants, &entry_id, &path)?;
     let attachment = {
         let entry_id = entry_id.clone();
-        super::blocking(move || seal_file(&cipher, &entry_id, &path, room)).await?
+        super::blocking(move || seal_file(&cipher, &entry_id, picked::open(&app, &path)?, room))
+            .await?
     };
     finish_add(&state, epoch, &attachment)
 }
@@ -287,20 +290,17 @@ fn begin_add_in(session: &Session, entry_id: &str) -> Result<(Epoch, AttachmentC
     ))
 }
 
-/// Read the file at `path` whole, refusing it past the cap, and seal it under
-/// its own name (see `seal_bytes`). The plaintext is scrubbed on the way out.
+/// Read the chosen file whole (as `picked::open` opened it), refusing it past
+/// the cap, and seal it under its own name (see `seal_bytes`). The plaintext
+/// is scrubbed on the way out.
 fn seal_file(
     cipher: &AttachmentCipher,
     entry_id: &str,
-    path: &Path,
+    chosen: Chosen,
     room: u64,
 ) -> Result<Attachment> {
-    let bytes = Zeroizing::new(read_regular_file_capped(path, MAX_ATTACHMENT_BYTES)?);
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    seal_bytes(cipher, entry_id, &name, &bytes, room)
+    let bytes = Zeroizing::new(read_capped(chosen.file, MAX_ATTACHMENT_BYTES)?);
+    seal_bytes(cipher, entry_id, &chosen.name, &bytes, room)
 }
 
 /// Seal `bytes` as a file called `name`, refusing them past the `room` left in
@@ -545,6 +545,11 @@ mod tests {
         path
     }
 
+    // The file on disk, opened as the command opens it.
+    fn opened(path: &Path) -> Chosen {
+        picked::open_local(path).unwrap()
+    }
+
     fn granted(path: &Path) -> PathGrants {
         let grants = PathGrants::default();
         grants.grant(path, Purpose::Attachment);
@@ -560,7 +565,7 @@ mod tests {
         let grants = granted(&path);
 
         let (epoch, cipher, room) = begin_add(&state, &grants, "e1", &path).unwrap();
-        let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
+        let attachment = seal_file(&cipher, "e1", opened(&path), room).unwrap();
         assert!(!attachment.blob.windows(8).any(|w| w == b"the file"));
         let dto = finish_add(&state, epoch, &attachment).unwrap();
         assert_eq!(
@@ -638,7 +643,7 @@ mod tests {
             "at-cap.bin",
             &vec![0u8; MAX_ATTACHMENT_BYTES as usize],
         );
-        assert!(seal_file(&cipher, "e1", &at_cap, room).is_ok());
+        assert!(seal_file(&cipher, "e1", opened(&at_cap), room).is_ok());
 
         let over = file(
             &dir,
@@ -646,7 +651,7 @@ mod tests {
             &vec![0u8; MAX_ATTACHMENT_BYTES as usize + 1],
         );
         assert!(matches!(
-            seal_file(&cipher, "e1", &over, room),
+            seal_file(&cipher, "e1", opened(&over), room),
             Err(Error::FileTooLarge)
         ));
     }
@@ -677,12 +682,12 @@ mod tests {
 
         let fits = file(&dir, "fits.txt", b"1234");
         let (_, cipher, room) = begin_add(&state, &granted(&fits), "e1", &fits).unwrap();
-        assert!(seal_file(&cipher, "e1", &fits, room).is_ok());
+        assert!(seal_file(&cipher, "e1", opened(&fits), room).is_ok());
 
         let over = file(&dir, "over.txt", b"12345");
         let (_, cipher, room) = begin_add(&state, &granted(&over), "e1", &over).unwrap();
         assert!(matches!(
-            seal_file(&cipher, "e1", &over, room),
+            seal_file(&cipher, "e1", opened(&over), room),
             Err(Error::VaultFull)
         ));
         assert_eq!(
@@ -768,7 +773,7 @@ mod tests {
         let state = open_with(argon2_key(), store);
         let path = file(&dir, "a.txt", b"secret");
         let (epoch, cipher, room) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
-        let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
+        let attachment = seal_file(&cipher, "e1", opened(&path), room).unwrap();
 
         state.session.lock().unwrap().clear_for_test();
         assert!(matches!(
@@ -803,7 +808,7 @@ mod tests {
         let state = open_with(argon2_key(), store);
         let path = file(&dir, "a.txt", b"secret");
         let (epoch, cipher, room) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
-        let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
+        let attachment = seal_file(&cipher, "e1", opened(&path), room).unwrap();
 
         state
             .session
@@ -829,7 +834,7 @@ mod tests {
         let dto = finish_add(
             &state,
             epoch,
-            &seal_file(&cipher, "e1", &path, room).unwrap(),
+            &seal_file(&cipher, "e1", opened(&path), room).unwrap(),
         )
         .unwrap();
 

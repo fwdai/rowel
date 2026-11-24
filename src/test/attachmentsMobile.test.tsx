@@ -111,6 +111,19 @@ describe('attaching a file on a phone', () => {
     expect(calls('attachment_add')).toEqual([])
   })
 
+  it('reports a picker that failed, in the sheet’s place', async () => {
+    mockCommand('pick_file', () => {
+      throw { kind: 'unsupported', message: 'the picked file has no local path' }
+    })
+    await openSheet()
+
+    await userEvent.click(screen.getByTestId('attach-source-library'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('the picked file has no local path')
+    expect(screen.queryByTestId('attach-source-sheet')).not.toBeInTheDocument()
+    expect(calls('attachment_add')).toEqual([])
+  })
+
   it('backs out of the sheet without opening a picker', async () => {
     await openSheet()
 

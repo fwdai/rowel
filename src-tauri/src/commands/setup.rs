@@ -31,6 +31,7 @@ use crate::error::{Error, Result};
 use crate::events;
 use crate::grants::{self, PathGrants, Purpose};
 use crate::models::UnlockResult;
+use crate::picked;
 use crate::session::{create_vault, list_metas, store_err};
 use crate::state::{AppState, PendingAccount};
 use crate::storage;
@@ -310,7 +311,8 @@ pub async fn setup_restore_from_account(
 /// read is capped where the Drive download is (`pack::MAX_PACK_BYTES`), and
 /// for the same reason: a file that is not a pack must not be buffered whole
 /// before the pack's own structural checks (`pack::unpack`) get to refuse it.
-/// Only a regular file is read (`storage::read_regular_file_capped`).
+/// Only a regular file is read, or on Android the document picked
+/// (`picked::open`).
 ///
 /// `path` has to be a backup the user chose — picked, dropped or opened with
 /// the app (see `grants`). The grant is held across a mistyped password, which
@@ -333,8 +335,8 @@ pub async fn setup_restore_from_file(
 
     let handle = app.clone();
     let (key, store) = super::blocking(move || {
-        let bytes =
-            storage::read_regular_file_capped(Path::new(&path), sync::pack::MAX_PACK_BYTES as u64)?;
+        let chosen = picked::open(&handle, Path::new(&path))?;
+        let bytes = storage::read_capped(chosen.file, sync::pack::MAX_PACK_BYTES as u64)?;
         restore::restore_from_pack(&handle, &bytes, &password)
     })
     .await?;
@@ -374,7 +376,8 @@ pub async fn setup_restore_from_legacy(
 
     let handle = app.clone();
     let (key, store) = super::blocking(move || {
-        let (src, data) = super::vault::open_legacy_backup(&path, &password)?;
+        let chosen = picked::open(&handle, Path::new(&path))?;
+        let (src, data) = super::vault::open_legacy_backup(chosen.file, &password)?;
         let (key, store) = match create_vault(&handle, &password) {
             Ok(created) => created,
             Err(e) => {

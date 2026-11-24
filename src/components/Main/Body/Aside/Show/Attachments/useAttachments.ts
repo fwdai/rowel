@@ -90,13 +90,20 @@ export function useAttachments(entryId: string) {
    * Let the user pick a file and attach it: any file from the file browser, or
    * — `from: 'photo'` — an image from the photo library, where there is one
    * (see `pickFileToRead`). The image filter's name is the only part of that
-   * dialog that is ours to translate. Resolves to whether a file was picked,
-   * so the phone's sheet can stay up over a cancelled picker.
+   * dialog that is ours to translate. Resolves to whether the pick answered
+   * the phone's sheet: a file picked, or a picker that failed, whose error
+   * then shows under the list. Only a cancelled picker leaves the sheet up.
    */
   const pick = async (from: AttachSource = 'attachment'): Promise<boolean> => {
     setError(null)
     const label = from === 'photo' ? t('Images') : undefined
-    const picked = await pickFileToRead(from, label).catch(() => null)
+    let picked: string | null
+    try {
+      picked = await pickFileToRead(from, label)
+    } catch (e) {
+      fail(e)
+      return true
+    }
     if (picked) await add(picked)
     return picked !== null
   }

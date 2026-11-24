@@ -212,7 +212,10 @@ describe('scanning from the picker', () => {
     expect(calls('scan_image')).toHaveLength(0)
   })
 
-  it('scans nothing when the dialog itself fails', async () => {
+  // The failure is the scan's status, as one that could not read the image
+  // is: the picker hands the window over to it rather than staying up as if
+  // nothing had been chosen.
+  it('scans nothing when the dialog itself fails, and says so', async () => {
     seed()
     seedApp({ scanSupported: true })
     mockCommand('pick_file', () => Promise.reject({ kind: 'unsupported', message: 'no picker' }))
@@ -221,7 +224,8 @@ describe('scanning from the picker', () => {
 
     await userEvent.click(screen.getByTestId('add-scan-image'))
 
-    expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
+    await waitFor(() => expect(useUi.getState().scanError).toBe('failed'))
+    expect(screen.queryByTestId('add-secret-modal')).not.toBeInTheDocument()
     expect(calls('scan_image')).toHaveLength(0)
   })
 
