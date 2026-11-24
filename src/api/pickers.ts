@@ -1,15 +1,16 @@
 import { t } from '@/i18n'
-import { pickFileToRead } from './tools'
+import { pickFileToRead, type PickedFile } from './tools'
 
 /**
  * The files Rowel takes in whole: a backup to restore, an export to import.
- * One file off disk, or null when the dialog was dismissed.
+ * One file, as its address and its name (`PickedFile`), or null when the
+ * dialog was dismissed.
  *
  * The dialog opens in Rust (`pickFileToRead`), like every other pick of a file
  * the backend then reads: the path is granted for that one purpose before it
  * comes back here, and the restore or import refuses a path it was not.
  */
-export const pickBackup = (): Promise<string | null> =>
+export const pickBackup = (): Promise<PickedFile | null> =>
   pickFileToRead('backup', t('Rowel backup'))
 
 /**
@@ -17,7 +18,7 @@ export const pickBackup = (): Promise<string | null> =>
  * `.swftx`, which merges into the open vault, or a `.rowel`, which is offered
  * so the import can say where it restores instead of hiding it from the dialog.
  */
-export const pickImportBackup = (): Promise<string | null> =>
+export const pickImportBackup = (): Promise<PickedFile | null> =>
   pickFileToRead('importBackup', t('Rowel backup'))
 
 /**
@@ -25,8 +26,8 @@ export const pickImportBackup = (): Promise<string | null> =>
  * beside the open ones: a legacy `.swftx` is not a lockbox, and merges from
  * Settings › Import instead.
  */
-export const pickLockboxBackup = (): Promise<string | null> =>
+export const pickLockboxBackup = (): Promise<PickedFile | null> =>
   pickFileToRead('lockboxBackup', t('Rowel backup'))
 
-export const pickImportFile = (): Promise<string | null> =>
+export const pickImportFile = (): Promise<PickedFile | null> =>
   pickFileToRead('import', t('Password exports'))

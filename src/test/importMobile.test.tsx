@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { mockCommand } from './ipc'
 import DropZone from '@/components/Main/Sidebar/Settings/Sections/Import/DropZone'
+import { pickedPath } from '@/lib/picked'
 
 // The phone build: nothing drags a file onto it, so the import pane's lead is
 // the picker itself rather than a drop target with a picker button inside.
@@ -17,7 +18,7 @@ vi.mock('@/lib/platform', () => ({
 describe('the import lead, on a phone', () => {
   it('is one card that picks a file, and never says to drop one', async () => {
     const onDrop = vi.fn()
-    mockCommand('pick_file', () => '/tmp/export.csv')
+    mockCommand('pick_file', () => pickedPath('/tmp/export.csv'))
     render(<DropZone onDrop={onDrop} />)
 
     expect(screen.queryByText('Drop an export file')).not.toBeInTheDocument()
@@ -26,6 +27,6 @@ describe('the import lead, on a phone', () => {
     expect(card).toHaveTextContent('Choose an export file')
 
     await userEvent.click(card)
-    await waitFor(() => expect(onDrop).toHaveBeenCalledWith('/tmp/export.csv'))
+    await waitFor(() => expect(onDrop).toHaveBeenCalledWith(pickedPath('/tmp/export.csv')))
   })
 })

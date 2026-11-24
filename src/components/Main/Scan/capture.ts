@@ -1,4 +1,4 @@
-import { scanFinished, scanStarted, useApp } from '@/store'
+import { scanFinished, scanStarted, stampSession } from '@/store'
 import { shrinkPhoto } from '@/lib/photo'
 import { runScan } from './run'
 
@@ -21,15 +21,15 @@ import { runScan } from './run'
  * by now, so the status is the only place the user would hear of it.
  */
 export const scanCapture = async (file: File): Promise<void> => {
-  const session = useApp.getState().locks
+  const current = stampSession()
   scanStarted()
   let image: Uint8Array
   try {
     image = new Uint8Array(await (await shrinkPhoto(file)).arrayBuffer())
   } catch {
-    if (useApp.getState().locks === session) scanFinished('failed')
+    if (current()) scanFinished('failed')
     return
   }
-  if (useApp.getState().locks !== session) return
+  if (!current()) return
   await runScan(image)
 }

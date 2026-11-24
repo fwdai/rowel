@@ -8,6 +8,7 @@ import { MAX_ATTACHMENT_BYTES } from '@/api/attachments'
 import { loginEntry, loginMeta } from './utils'
 import { calls, mockCommand, seedAttachments } from './ipc'
 import { setLayout } from './layout'
+import { pickedPath } from '@/lib/picked'
 
 // The platform is baked in at build time, so a phone build is a module-level
 // fact rather than a prop: this file is the attachments suite as that build
@@ -71,7 +72,7 @@ describe('attaching a file on a phone', () => {
   })
 
   it('opens the photo library as an attachment pick under the image filter', async () => {
-    mockCommand('pick_file', () => '/tmp/IMG_0042.heic')
+    mockCommand('pick_file', () => pickedPath('/tmp/IMG_0042.heic'))
     await openSheet()
 
     await userEvent.click(screen.getByTestId('attach-source-library'))
@@ -86,7 +87,7 @@ describe('attaching a file on a phone', () => {
   })
 
   it('opens the file browser as the plain attachment pick', async () => {
-    mockCommand('pick_file', () => '/tmp/contract.pdf')
+    mockCommand('pick_file', () => pickedPath('/tmp/contract.pdf'))
     await openSheet()
 
     await userEvent.click(screen.getByTestId('attach-source-browse'))

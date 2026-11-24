@@ -8,6 +8,7 @@ import {
   setPrefill,
   scanStarted,
   scanFinished,
+  stampSession,
   type ScanError
 } from '@/store'
 import { cleanFields } from './fields'
@@ -43,17 +44,21 @@ const reason = (error: unknown): ScanError => {
  * recognized. Both go through the vault's `prefill`, which `useDraft` is the
  * only reader of.
  *
- * Never throws: the outcome is the status in the store.
+ * Never throws: the outcome is the status in the store — the status of the
+ * session that asked, so a scan a lock overtook publishes nothing: the lock
+ * cleared the status it would have reported to (see `stampSession`).
  */
 export const runScan = async (image: string | Uint8Array): Promise<void> => {
+  const current = stampSession()
   scanStarted()
   try {
     const result = await (typeof image === 'string' ? scanImage(image) : scanImageBytes(image))
+    if (!current()) return
     const fields = cleanFields(result.fields)
     if (editingKind() === result.kind) setPrefill(fields)
     else startEntry(result.kind, fields)
     scanFinished()
   } catch (error) {
-    scanFinished(reason(error))
+    if (current()) scanFinished(reason(error))
   }
 }

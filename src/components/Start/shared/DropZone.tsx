@@ -1,12 +1,14 @@
 import { useTranslation } from 'react-i18next'
 import { pickBackup } from '@/api/pickers'
+import type { PickedFile } from '@/api/tools'
 import { useFileDrop } from '@/hooks/useFileDrop'
 import { isRestorableFile } from '@/lib/backup'
+import { pickedPath } from '@/lib/picked'
 import { DownloadGlyph } from '@/components/Main/icons'
 import { META } from '@/components/elements/tokens'
 
 interface Props {
-  onPick: (path: string) => void
+  onPick: (file: PickedFile) => void
 }
 
 // A backup is a file, so the target is the file's own shape: drop it anywhere
@@ -17,13 +19,13 @@ export default function DropZone({ onPick }: Props) {
 
   useFileDrop(paths => {
     const path = paths.find(isRestorableFile)
-    if (path) onPick(path)
+    if (path) onPick(pickedPath(path))
   })
 
   const pick = () =>
     pickBackup()
-      .then(path => {
-        if (path) onPick(path)
+      .then(file => {
+        if (file) onPick(file)
       })
       .catch(() => {})
 

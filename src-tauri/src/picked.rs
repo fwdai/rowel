@@ -7,11 +7,19 @@
 //! which `std::fs` cannot open and whose last segment is an id rather than its
 //! name (`tauri-plugin-dialog` 2.8.4, `DialogPlugin.kt`: `filePickerResult`
 //! resolves with the intent's URIs as strings). Every reader of a chosen file
-//! opens it through [`open`], so that difference lives here and nowhere else.
+//! opens it through [`open`], and the name a pick goes by comes from [`name`],
+//! so that difference lives here and nowhere else.
+//!
+//! The address is what a grant is held under and what a reader opens; the name
+//! is what anything about the file is told from — its kind by its extension, a
+//! label shown to the user. On a path the name is its last component, so the
+//! two only part on Android, which is why a pick hands the webview both
+//! ([`Pick`]) rather than leaving it to read the name off the address.
 
 use std::fs::File;
 use std::path::Path;
 
+use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::error::Result;
@@ -24,6 +32,14 @@ pub(crate) const DOCUMENTS: bool = cfg!(target_os = "android");
 /// tells its kind by, and what an attachment is stored under.
 pub struct Chosen {
     pub file: File,
+    pub name: String,
+}
+
+/// A pick as the webview is handed it: the address to read it by and the name
+/// it goes by.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct Pick {
+    pub path: String,
     pub name: String,
 }
 
@@ -44,28 +60,55 @@ pub(crate) fn is_document(path: &Path, documents: bool) -> bool {
 pub fn open(app: &AppHandle, path: &Path) -> Result<Chosen> {
     #[cfg(target_os = "android")]
     if is_document(path, DOCUMENTS) {
-        return open_document(app, path);
+        let file = open_document(app, path)?;
+        return Ok(Chosen {
+            file,
+            name: name(app, path),
+        });
     }
     #[cfg(not(target_os = "android"))]
     let _ = app;
     open_local(path)
 }
 
+/// The name the chosen file at `path` goes by: its last component, or a
+/// document's display name as its provider gives it (`PathResolver::file_name`,
+/// which asks `PathPlugin.getFileNameFromUri`), empty if the provider will not
+/// say. A document's name is a round trip to its provider, so this belongs off
+/// the async runtime, as an open does.
+pub fn name(app: &AppHandle, path: &Path) -> String {
+    #[cfg(target_os = "android")]
+    if is_document(path, DOCUMENTS) {
+        use tauri::Manager;
+        return app
+            .path()
+            .file_name(&path.to_string_lossy())
+            .unwrap_or_default();
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+    local_name(path)
+}
+
 /// A file on disk: one open, settled on that handle to be a regular file
 /// (`storage::open_regular_file`), named by its last component.
 pub fn open_local(path: &Path) -> Result<Chosen> {
     let file = storage::open_regular_file(path)?;
-    let name = path
-        .file_name()
+    Ok(Chosen {
+        file,
+        name: local_name(path),
+    })
+}
+
+fn local_name(path: &Path) -> String {
+    path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    Ok(Chosen { file, name })
+        .unwrap_or_default()
 }
 
 /// A document, opened read-only through `tauri-plugin-fs` 2.7.1
 /// (`src/android.rs`: `Fs::open` asks `FsPlugin.getFileDescriptor`, which
-/// opens the URI with the content resolver) and named by the provider's display
-/// name (`PathResolver::file_name`, which asks `PathPlugin.getFileNameFromUri`).
+/// opens the URI with the content resolver).
 ///
 /// The descriptor is not held to being a regular file, as one on disk is: a
 /// provider may serve a document through a pipe, and the URI names exactly the
@@ -73,17 +116,14 @@ pub fn open_local(path: &Path) -> Result<Chosen> {
 /// guard against. What bounds the read is the reader's own cap, which every
 /// reader applies to whatever it was handed (`storage::read_capped`).
 #[cfg(target_os = "android")]
-fn open_document(app: &AppHandle, path: &Path) -> Result<Chosen> {
-    use tauri::Manager;
+fn open_document(app: &AppHandle, path: &Path) -> Result<File> {
     use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
 
     let uri = path.to_string_lossy();
     let url = url::Url::parse(&uri).map_err(|e| crate::error::Error::Other(e.to_string()))?;
     let mut options = OpenOptions::new();
     options.read(true);
-    let file = app.fs().open(FilePath::Url(url), options)?;
-    let name = app.path().file_name(&uri).unwrap_or_default();
-    Ok(Chosen { file, name })
+    Ok(app.fs().open(FilePath::Url(url), options)?)
 }
 
 #[cfg(test)]
@@ -122,6 +162,22 @@ mod tests {
         chosen.file.read_to_string(&mut text).unwrap();
         assert_eq!(chosen.name, "export.csv");
         assert_eq!(text, "name,password\n");
+    }
+
+    // What `PickedFile` in `src/api/types.ts` reads.
+    #[test]
+    fn a_pick_reaches_the_webview_as_its_path_and_name() {
+        let pick = Pick {
+            path: "content://com.android.providers.downloads.documents/document/42".into(),
+            name: "Rowel backup.rowel".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&pick).unwrap(),
+            serde_json::json!({
+                "path": "content://com.android.providers.downloads.documents/document/42",
+                "name": "Rowel backup.rowel",
+            })
+        );
     }
 
     #[test]

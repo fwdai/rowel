@@ -32,6 +32,7 @@ import {
 import { withEntries, loginEntry, loginMeta, seedApp } from './utils'
 import { setLayout } from './layout'
 import { calls, mockCommand } from './ipc'
+import { pickedPath } from '@/lib/picked'
 
 const seed = () =>
   withEntries([loginMeta({ id: 'l1', title: 'Google' }), loginMeta({ id: 'l2', title: 'Airbnb' })])
@@ -726,7 +727,7 @@ describe('compact shell', () => {
   // pane stays Sync & backup's, Back is named after it, and the picked file
   // and the form are drawn as on the wide shell.
   it('pushes the restore page over the Sync pane it was asked from', async () => {
-    mockCommand('pick_file', () => '/tmp/Rowel backup 2026-11-20.rowel')
+    mockCommand('pick_file', () => pickedPath('/tmp/Rowel backup 2026-11-20.rowel'))
     seed()
     render(<Main />)
 

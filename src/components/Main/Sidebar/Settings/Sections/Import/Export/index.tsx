@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { exportEntries, type ExportFormat } from '@/api/imports'
 import { describeError } from '@/api/errors'
+import { baseName } from '@/lib/picked'
 import { useVault } from '@/store'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
@@ -14,7 +15,6 @@ import { useSectionNav } from '../../../sectionNav'
 import Formats from './Formats'
 import Warning from './Warning'
 
-const fileName = (path: string) => path.replace(/^.*[\\/]/, '')
 
 // A portable, unencrypted dump for another manager. CSV cells are sanitized
 // against formula injection in the backend. Moving to another device of our
@@ -102,7 +102,7 @@ export default function ExportPane() {
       )}
       {saved && (
         <Note tone="good" className="mt-3">
-          {t('Saved to')} {fileName(saved)}
+          {t('Saved to')} {baseName(saved)}
         </Note>
       )}
     </div>

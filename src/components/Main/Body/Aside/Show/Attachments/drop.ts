@@ -1,7 +1,8 @@
 import type { EntryMeta, EntryType } from '@/api/types'
 import { isModalOpen, selectCurrent, useVault } from '@/store'
 import { isImagePath } from '@/lib/fileTypes'
-import { fileNameOf, isEnvFileName } from '@/kinds/env/ingest'
+import { baseName } from '@/lib/picked'
+import { isEnvFileName } from '@/kinds/env/ingest'
 
 /** Every kind takes files but `env`, whose file is the entry itself. */
 export const takesAttachments = (type: EntryType): boolean => type !== 'env'
@@ -27,4 +28,4 @@ export const attachTarget = (): EntryMeta | null => {
  * flow leaves it unread, so the drop's grant is still there to spend.
  */
 export const isAttachDrop = (path: string): boolean =>
-  !isImagePath(path) && !isEnvFileName(fileNameOf(path))
+  !isImagePath(path) && !isEnvFileName(baseName(path))

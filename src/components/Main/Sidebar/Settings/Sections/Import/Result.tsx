@@ -11,8 +11,6 @@ import RowErrors from './RowErrors'
 import RowelNotice from './RowelNotice'
 import type { useImport } from './useImport'
 
-const fileName = (path: string) => path.replace(/^.*[\\/]/, '')
-
 // The one card under the grid: what was picked, what it holds, and the button
 // that commits it.
 export default function Result({ flow }: { flow: ReturnType<typeof useImport> }) {
@@ -25,10 +23,10 @@ export default function Result({ flow }: { flow: ReturnType<typeof useImport> })
 
   return (
     <div className={`${CARD} mt-3 flex flex-col gap-3 p-4`} data-testid="import-result">
-      <div className={META}>{fileName(picked.path)}</div>
+      <div className={META}>{picked.name}</div>
 
       {picked.kind === 'rowel' ? (
-        <RowelNotice path={picked.path} />
+        <RowelNotice file={{ path: picked.path, name: picked.name }} />
       ) : picked.kind === 'swftx' ? (
         <div className="flex max-w-sm flex-col gap-3">
           <Field id={passwordId} label={t('Vault file password')}>

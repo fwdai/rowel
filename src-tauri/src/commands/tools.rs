@@ -10,6 +10,7 @@ use tauri_plugin_dialog::{DialogExt, FilePath, PickerMode};
 use super::vault::{BACKUP_EXTENSION, LEGACY_BACKUP_EXTENSION};
 use crate::error::{Error, Result};
 use crate::grants::{PathGrants, Purpose};
+use crate::picked::Pick;
 use crate::scan::ScanResult;
 use crate::state::AppState;
 use crate::{emblem, favicon, picked, scan, storage};
@@ -21,9 +22,10 @@ use crate::{emblem, favicon, picked, scan, storage};
 /// `"import"` (a password manager's export), `"backup"` (a `.rowel` or a
 /// legacy `.swftx` to restore on a fresh install), `"importBackup"` (the
 /// same two, for Settings › Import) or `"lockboxBackup"` (a `.rowel` alone,
-/// to restore as a lockbox beside the open one). The path picked (on Android,
-/// the document's URI: see `chosen_path`), or `None` when the dialog was
-/// dismissed.
+/// to restore as a lockbox beside the open one). What was picked — its path
+/// (on Android, the document's URI: see `chosen_path`) and the name it goes by
+/// (`picked::name`) — or `None` when the dialog was dismissed. The webview
+/// tells anything about the file from the name and hands the path back to read.
 ///
 /// On a phone an image filter makes the dialog plugin show the photo library
 /// rather than the file browser (it switches to the media picker when no
@@ -46,7 +48,7 @@ pub async fn pick_file(
     kind: String,
     label: Option<String>,
     browse: Option<bool>,
-) -> Result<Option<String>> {
+) -> Result<Option<Pick>> {
     let mut dialog = app.dialog().file();
     let purpose = match kind.as_str() {
         "image" => {
@@ -86,14 +88,26 @@ pub async fn pick_file(
     if browse.unwrap_or(false) {
         dialog = dialog.set_picker_mode(PickerMode::Document);
     }
-    // The dialog blocks its caller until the user answers, so it runs on the
-    // blocking pool, not a runtime worker.
-    let Some(answer) = super::blocking(move || Ok(dialog.blocking_pick_file())).await? else {
+    // The dialog blocks its caller until the user answers, and a document's
+    // name is a round trip to its provider, so both run on the blocking pool,
+    // not a runtime worker.
+    let chosen = super::blocking(move || {
+        let Some(answer) = dialog.blocking_pick_file() else {
+            return Ok(None);
+        };
+        let path = chosen_path(answer, picked::DOCUMENTS)?;
+        let name = picked::name(&app, &path);
+        Ok(Some((path, name)))
+    })
+    .await?;
+    let Some((path, name)) = chosen else {
         return Ok(None);
     };
-    let path = chosen_path(answer, picked::DOCUMENTS)?;
     grants.grant(&path, purpose);
-    Ok(Some(path.to_string_lossy().into_owned()))
+    Ok(Some(Pick {
+        path: path.to_string_lossy().into_owned(),
+        name,
+    }))
 }
 
 /// What a pick is granted and handed to the webview as. The desktop dialog

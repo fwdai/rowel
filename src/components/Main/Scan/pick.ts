@@ -1,6 +1,6 @@
-import { pickFileToRead } from '@/api/tools'
+import { pickFileToRead, type PickedFile } from '@/api/tools'
 import { t } from '@/i18n'
-import { scanFinished } from '@/store'
+import { scanFinished, stampSession } from '@/store'
 import { runScan } from './run'
 
 /**
@@ -18,17 +18,21 @@ import { runScan } from './run'
  * picker that failed — so a caller dismisses itself only then, and stays up
  * over a cancelled picker. Never throws: the outcome of the scan, and the
  * failure of a picker, is the status in the store (see `run.ts`), the one
- * place the user hears of either once the caller has gone.
+ * place the user hears of either once the caller has gone. A picker that
+ * answers after a lock answers a session that is gone: nothing is scanned or
+ * reported, and nothing is handed over (see `stampSession`).
  */
 export const pickAndScan = async (browse = false): Promise<boolean> => {
-  let path: string | null
+  const current = stampSession()
+  let file: PickedFile | null
   try {
-    path = await pickFileToRead('image', t('Images'), browse)
+    file = await pickFileToRead('image', t('Images'), browse)
   } catch {
+    if (!current()) return false
     scanFinished('failed')
     return true
   }
-  if (path === null) return false
-  void runScan(path)
+  if (file === null || !current()) return false
+  void runScan(file.path)
   return true
 }

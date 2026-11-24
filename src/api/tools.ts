@@ -86,8 +86,19 @@ export const pickFileToRead = (
   kind: PickKind,
   label?: string,
   browse = false
-): Promise<string | null> =>
+): Promise<PickedFile | null> =>
   call('pick_file', { kind, label: label ?? null, ...(browse && { browse }) })
+
+/**
+ * What a pick hands back (`picked::Pick` in Rust): `path`, the address the
+ * backend granted and reads the file by — on Android a document URI, which
+ * says nothing about the file — and `name`, what the file goes by, which is
+ * what anything about it is told from (see `@/lib/picked`).
+ */
+export interface PickedFile {
+  path: string
+  name: string
+}
 
 export interface ScanResult {
   kind: 'card' | 'identity'

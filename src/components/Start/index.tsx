@@ -3,7 +3,9 @@ import type { BiometryType, UnlockResult } from '@/api/types'
 import { setupCreate } from '@/api/setup'
 import type { Provider } from '@/api/provider'
 import { claimOpenedFile, connectAccount, enterMain, forgetAccount, useApp } from '@/store'
+import type { PickedFile } from '@/api/tools'
 import { isRestorableFile } from '@/lib/backup'
+import { pickedPath } from '@/lib/picked'
 import AuthShell from '@/components/elements/AuthShell'
 import Mascot, { type MascotState } from '@/components/elements/Mascot'
 import BiometryGlyph from '@/components/elements/BiometryGlyph'
@@ -80,12 +82,12 @@ export function Start() {
   // A `.rowel` or a legacy `.swftx` the OS opened the app with lands straight
   // on the restore step, file already picked: either becomes this device's
   // vault from there.
-  const [restoreFrom, setRestoreFrom] = useState<string | null>(null)
+  const [restoreFrom, setRestoreFrom] = useState<PickedFile | null>(null)
   const opened = useApp(state => state.openedFile)
   useEffect(() => {
     if (!opened || !isRestorableFile(opened)) return
     claimOpenedFile()
-    setRestoreFrom(opened)
+    setRestoreFrom(pickedPath(opened))
     setDirection('forward')
     setStack(['welcome', 'file'])
   }, [opened])
@@ -213,7 +215,7 @@ export function Start() {
           />
         )
       case 'file':
-        return <File onRestored={finish} initialPath={restoreFrom} />
+        return <File onRestored={finish} initialFile={restoreFrom} />
       case 'biometric':
         return (
           <Biometric

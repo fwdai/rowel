@@ -10,6 +10,7 @@ import Main from '@/components/Main'
 import { useUi, useVault, startEntry, openAddPicker } from '@/store'
 import { withEntries, loginMeta, deferred } from './utils'
 import { calls, mockCommand } from './ipc'
+import { pickedPath } from '@/lib/picked'
 
 // The webview's drag-drop stream, replaced by a hand that can drop a file —
 // setup.ts's mock is the inert one. A test waits for the listener before it
@@ -227,7 +228,7 @@ describe('interactive env ingestion', () => {
   })
 
   it('reads the file the backend dialog gave it, unfiltered', async () => {
-    mockCommand('pick_file', () => '/Users/me/code/api/.env.production')
+    mockCommand('pick_file', () => pickedPath('/Users/me/code/api/.env.production'))
     mockCommand('read_env_file', () => FILE)
     const consume = vi.fn()
     const { result } = renderHook(() => useEnvIngest(consume))

@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react'
+import type { PickedFile } from '@/api/tools'
 import { t } from '@/i18n'
 import type { TKey } from '@/i18n'
 import NewWorkspace from './Sections/Workspaces/NewWorkspace/Subpage'
@@ -15,8 +16,8 @@ export type Subpage =
   | { key: 'edit-workspace'; id: string }
   | { key: 'delete-workspace'; id: string }
   | { key: 'restore-workspace' }
-  /** `path`: a backup already chosen elsewhere, whose grant still stands. */
-  | { key: 'restore-backup'; path?: string }
+  /** `file`: a backup already chosen elsewhere, whose grant still stands. */
+  | { key: 'restore-backup'; file?: PickedFile }
   | { key: 'sync-nearby' }
   | { key: 'sync-cloud' }
   | { key: 'sync-backup' }

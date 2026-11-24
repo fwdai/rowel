@@ -5,6 +5,7 @@ import Main from '@/components/Main'
 import { clearSession, useUi, useVault } from '@/store'
 import { withEntries, loginMeta, seedApp } from './utils'
 import { calls, mockCommand } from './ipc'
+import { pickedPath } from '@/lib/picked'
 
 // The whole module graph reads as a phone, so the picker's scan row is the
 // phone's: it asks where the photo comes from before anything opens.
@@ -146,7 +147,7 @@ describe('scanning on a phone', () => {
 
   describe('the library', () => {
     it('is the same granted dialog as the desktop, run from Rust', async () => {
-      mockCommand('pick_file', () => '/var/mobile/tmp/IMG_0042.heic')
+      mockCommand('pick_file', () => pickedPath('/var/mobile/tmp/IMG_0042.heic'))
       mockCommand('scan_image', () => ({ kind: 'card', fields: CARD }))
       await openSheet()
 
@@ -186,7 +187,7 @@ describe('scanning on a phone', () => {
 
   describe('Files', () => {
     it('is the same dialog, asked for the file browser under the image filter', async () => {
-      mockCommand('pick_file', () => '/private/var/mobile/Documents/passport.png')
+      mockCommand('pick_file', () => pickedPath('/private/var/mobile/Documents/passport.png'))
       mockCommand('scan_image', () => ({ kind: 'card', fields: CARD }))
       await openSheet()
 

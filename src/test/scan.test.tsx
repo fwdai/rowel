@@ -12,6 +12,7 @@ import {
 import { runScan } from '@/components/Main/Scan/run'
 import { withEntries, loginMeta, seedApp } from './utils'
 import { calls, mockCommand } from './ipc'
+import { pickedPath } from '@/lib/picked'
 
 const CARD = { number: '4242424242424242', month: '04', year: '27', name: 'ADA LOVELACE' }
 
@@ -184,7 +185,7 @@ describe('scanning from the picker', () => {
   it('routes a picked file like a drop', async () => {
     seed()
     seedApp({ scanSupported: true })
-    mockCommand('pick_file', () => '/Users/me/card.png')
+    mockCommand('pick_file', () => pickedPath('/Users/me/card.png'))
     mockCommand('scan_image', () => ({ kind: 'card', fields: CARD }))
     render(<Main />)
     await openFromRail()

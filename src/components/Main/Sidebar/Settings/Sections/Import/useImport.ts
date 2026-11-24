@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { claimOpenedFile, setEntries, useApp } from '@/store'
+import { claimOpenedFile, setEntries, stampSession, useApp } from '@/store'
 import { importSwftx } from '@/api/vault'
 import { importEntries, type ImportFormat, type ImportReport } from '@/api/imports'
 import { syncNow } from '@/api/sync'
 import { pickImportFile, pickImportBackup } from '@/api/pickers'
+import type { PickedFile } from '@/api/tools'
 import { describeError, errorKind } from '@/api/errors'
 import { isBackupFile, isRestorableFile } from '@/lib/backup'
+import { pickedPath } from '@/lib/picked'
 import { t } from '@/i18n'
 import { useSubpage } from '../../sectionNav'
 import { useProgress } from './useProgress'
@@ -14,17 +16,20 @@ import { useProgress } from './useProgress'
 // `.swftx` vault, which is independently encrypted and needs its own password,
 // or a `.rowel` backup — which is a whole sealed database and restores a fresh
 // install rather than merging into this one, so it is only ever named here to
-// say so.
-export type Picked =
-  | { kind: 'format'; format: ImportFormat; path: string }
-  | { kind: 'swftx'; path: string }
-  | { kind: 'rowel'; path: string }
+// say so. Each is the file as it was chosen: the path to read it by, and the
+// name it is told by (see `@/lib/picked`).
+export type Picked = (
+  | { kind: 'format'; format: ImportFormat }
+  | { kind: 'swftx' }
+  | { kind: 'rowel' }
+) &
+  PickedFile
 
 // A backup by its extension: ours is a `.rowel`, anything else the card or the
 // OS hands over is taken for a legacy `.swftx` and asked for its password.
-const pickedBackup = (path: string): Picked => ({
-  kind: isBackupFile(path) ? 'rowel' : 'swftx',
-  path
+const pickedBackup = (file: PickedFile): Picked => ({
+  kind: isBackupFile(file.name) ? 'rowel' : 'swftx',
+  ...file
 })
 
 // One import flow for every tile: pick or drop a file, preview it (dry run),
@@ -63,31 +68,35 @@ export function useImport() {
   useEffect(() => {
     if (!opened || covered) return
     claimOpenedFile()
-    start(pickedBackup(opened))
+    start(pickedBackup(pickedPath(opened)))
   }, [opened, covered, start])
 
-  const chooseFile = useCallback(
-    (format: ImportFormat) =>
-      pickImportFile().then(path => {
-        if (path) start({ kind: 'format', format, path })
-      }),
-    [start]
-  )
+  // A pick that comes back after a lock is the old session's: dropped, like
+  // everything else it held (see `stampSession`).
+  const chooseFile = useCallback((format: ImportFormat) => {
+    const current = stampSession()
+    return pickImportFile().then(file => {
+      if (file && current()) start({ kind: 'format', format, ...file })
+    })
+  }, [start])
 
-  const chooseBackup = useCallback(
-    () =>
-      pickImportBackup().then(path => {
-        if (path) start(pickedBackup(path))
-      }),
-    [start]
-  )
+  const chooseBackup = useCallback(() => {
+    const current = stampSession()
+    return pickImportBackup().then(file => {
+      if (file && current()) start(pickedBackup(file))
+    })
+  }, [start])
 
-  // A dropped file has no tile behind it: one of our backups is taken as the
-  // backup card would take it, anything else has its format sniffed by the
-  // backend.
+  // A dropped or picked file with no tile behind it: one of our backups is
+  // taken as the backup card would take it, anything else has its format
+  // sniffed by the backend.
   const dropped = useCallback(
-    (path: string) =>
-      start(isRestorableFile(path) ? pickedBackup(path) : { kind: 'format', format: 'auto', path }),
+    (file: PickedFile) =>
+      start(
+        isRestorableFile(file.name)
+          ? pickedBackup(file)
+          : { kind: 'format', format: 'auto', ...file }
+      ),
     [start]
   )
 
