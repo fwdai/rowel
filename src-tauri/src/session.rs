@@ -454,6 +454,7 @@ fn seal(state: &AppState) -> Sealed {
 // Called under the session guard that made the change, so announcements keep
 // its order. Memory only, and nothing here may take the session lock.
 fn announce_opened(app: &AppHandle) {
+    app.state::<crate::grants::PathGrants>().session_opened();
     crate::autolock::arm(app);
     #[cfg(desktop)]
     {
@@ -464,6 +465,7 @@ fn announce_opened(app: &AppHandle) {
 }
 
 fn announce_ended(app: &AppHandle) -> Ended {
+    app.state::<crate::grants::PathGrants>().session_ended();
     crate::autolock::disarm(app);
     #[cfg(desktop)]
     {

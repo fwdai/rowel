@@ -28,6 +28,16 @@
 //! out, since a grant that was never read is a path the user pointed at and
 //! then walked away from. Kept canonical so a grant cannot be sidestepped or
 //! spent through a spelling of the path other than the one it was made under.
+//!
+//! A grant made while a vault is open lasts until it is spent or that vault
+//! stops being the open one — it is locked, or another takes its place (a
+//! switch, a lockbox created or restored beside it) — so a file chosen in one
+//! vault is not readable in the next. A choice made with no vault open stays
+//! until it is spent or the vault opened next stops being the open one. A
+//! choice that arrives after its vault stopped being the open one grants
+//! nothing: every grant is checked against the
+//! [`generation`](PathGrants::generation) read when the choice was made, which
+//! for `pick_file` is before the dialog opens.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -79,11 +89,51 @@ const CAP: usize = 64;
 
 #[derive(Default)]
 pub struct PathGrants {
+    held: Mutex<Held>,
+}
+
+// One lock, so a choice is checked against the generation and recorded in one
+// step that a change of open vault cannot land inside.
+#[derive(Default)]
+struct Held {
+    // Advanced whenever an open vault stops being the open one.
+    generation: u64,
+    vault_open: bool,
     // Oldest first, so the bound evicts from the front.
-    paths: Mutex<VecDeque<Grant>>,
+    paths: VecDeque<Grant>,
 }
 
 impl PathGrants {
+    /// Which open vault grants are being made under, for
+    /// [`PathGrants::grant_picked`].
+    pub fn generation(&self) -> u64 {
+        self.held.lock().unwrap().generation
+    }
+
+    /// A vault became the open one (`session::announce_opened`). If it took
+    /// another's place, the other's grants go; an open from nothing keeps the
+    /// choices made with no vault open.
+    pub fn session_opened(&self) {
+        self.set_open(true);
+    }
+
+    /// The open vault was locked or left (`session::announce_ended`). With no
+    /// vault open, as on a switch from the lock screen, nothing changes.
+    pub fn session_ended(&self) {
+        self.set_open(false);
+    }
+
+    // An open vault stopping being the open one takes every grant with it, and
+    // a choice made before now records nothing when it arrives.
+    fn set_open(&self, open: bool) {
+        let mut held = self.held.lock().unwrap();
+        if held.vault_open {
+            held.generation += 1;
+            held.paths.clear();
+        }
+        held.vault_open = open;
+    }
+
     /// Record that the user chose `path` to be read as `purpose`. A path that
     /// cannot be canonicalized (it does not exist) is not recorded: there is
     /// nothing to read.
@@ -91,8 +141,19 @@ impl PathGrants {
     /// One grant per path: choosing the same file again — under this purpose or
     /// another — replaces what was held for it, so the last thing the user was
     /// asked is what the path stands for.
+    ///
+    /// For a choice with no dialog to wait across: outside tests, a backup the
+    /// OS opened with the app (`opened::accept`), which only the desktop has.
+    #[cfg_attr(not(desktop), allow(dead_code))]
     pub fn grant(&self, path: &Path, purpose: Purpose) {
-        self.insert(path, purpose, false);
+        self.insert(path, purpose, false, self.generation());
+    }
+
+    /// [`PathGrants::grant`] for a dialog's answer, `generation` read before
+    /// the dialog opened. False, recording nothing, if the vault open then has
+    /// stopped being the open one.
+    pub fn grant_picked(&self, generation: u64, path: &Path, purpose: Purpose) -> bool {
+        self.insert(path, purpose, false, generation)
     }
 
     /// [`PathGrants::grant`] for a file dropped on the window, `purpose` being
@@ -103,23 +164,30 @@ impl PathGrants {
     /// becomes is the drop target's to say. None of them hands back more than
     /// the kind's own reader would — the env reader returns the whole text.
     pub fn grant_drop(&self, path: &Path, purpose: Purpose) {
-        self.insert(path, purpose, true);
+        self.insert(path, purpose, true, self.generation());
     }
 
-    fn insert(&self, path: &Path, purpose: Purpose, dropped: bool) {
-        let Ok(path) = path.canonicalize() else {
-            return;
-        };
-        let mut paths = self.paths.lock().unwrap();
-        paths.retain(|held| held.path != path);
-        if paths.len() >= CAP {
-            paths.pop_front();
+    // False only when the generation has moved past `generation`, read before
+    // the path is resolved.
+    fn insert(&self, path: &Path, purpose: Purpose, dropped: bool, generation: u64) -> bool {
+        let path = path.canonicalize();
+        let mut held = self.held.lock().unwrap();
+        if held.generation != generation {
+            return false;
         }
-        paths.push_back(Grant {
+        let Ok(path) = path else {
+            return true;
+        };
+        held.paths.retain(|grant| grant.path != path);
+        if held.paths.len() >= CAP {
+            held.paths.pop_front();
+        }
+        held.paths.push_back(Grant {
             path,
             purpose,
             dropped,
         });
+        true
     }
 
     /// Spend the grant for `path` as `purpose`: whether the user chose it for
@@ -133,10 +201,10 @@ impl PathGrants {
         let Ok(path) = path.canonicalize() else {
             return false;
         };
-        let mut paths = self.paths.lock().unwrap();
-        match position(&paths, &path, purpose) {
+        let mut held = self.held.lock().unwrap();
+        match position(&held.paths, &path, purpose) {
             Some(at) => {
-                paths.remove(at);
+                held.paths.remove(at);
                 true
             }
             None => false,
@@ -153,7 +221,7 @@ impl PathGrants {
         let Ok(path) = path.canonicalize() else {
             return false;
         };
-        position(&self.paths.lock().unwrap(), &path, purpose).is_some()
+        position(&self.held.lock().unwrap().paths, &path, purpose).is_some()
     }
 }
 
@@ -322,5 +390,65 @@ mod tests {
         assert!(!grants.take(&path, Purpose::Image));
         assert!(grants.take(&path, Purpose::Env));
         assert!(!grants.take(&path, Purpose::Env));
+    }
+
+    #[test]
+    fn the_end_of_a_session_drops_every_grant() {
+        let grants = PathGrants::default();
+        grants.session_opened();
+        let picked = scratch("ended-picked");
+        let dropped = scratch("ended-dropped");
+        let opened = scratch("ended-opened");
+        assert!(grants.grant_picked(grants.generation(), &picked, Purpose::Env));
+        grants.grant_drop(&dropped, Purpose::Env);
+        grants.grant(&opened, Purpose::Backup);
+        grants.session_ended();
+        assert!(!grants.take(&picked, Purpose::Env));
+        assert!(!grants.take(&dropped, Purpose::Env));
+        assert!(!grants.take(&opened, Purpose::Backup));
+    }
+
+    #[test]
+    fn a_pick_whose_dialog_opened_before_the_session_ended_records_nothing() {
+        let grants = PathGrants::default();
+        grants.session_opened();
+        let path = scratch("outlived");
+        let generation = grants.generation();
+        grants.session_ended();
+        assert!(!grants.grant_picked(generation, &path, Purpose::Image));
+        assert!(!grants.take(&path, Purpose::Image));
+    }
+
+    // A choice from the lock or first-run screen outlasts an end with no vault
+    // open (a switch from the lock screen) and an open from nothing.
+    #[test]
+    fn a_choice_made_with_no_vault_open_lasts_until_the_next_session_ends() {
+        let grants = PathGrants::default();
+        let path = scratch("before-unlock");
+        grants.grant(&path, Purpose::Backup);
+        grants.session_ended();
+        grants.session_opened();
+        assert!(grants.holds(&path, Purpose::Backup));
+        grants.session_ended();
+        assert!(!grants.take(&path, Purpose::Backup));
+    }
+
+    // A lockbox created or restored beside the open one takes its place
+    // without the first being ended.
+    #[test]
+    fn a_vault_replacing_the_open_one_drops_every_grant_and_refuses_an_earlier_dialog() {
+        let grants = PathGrants::default();
+        grants.session_opened();
+        let picked = scratch("replaced-picked");
+        let dropped = scratch("replaced-dropped");
+        let late = scratch("replaced-late");
+        let generation = grants.generation();
+        assert!(grants.grant_picked(generation, &picked, Purpose::Env));
+        grants.grant_drop(&dropped, Purpose::Env);
+        grants.session_opened();
+        assert!(!grants.take(&picked, Purpose::Env));
+        assert!(!grants.take(&dropped, Purpose::Env));
+        assert!(!grants.grant_picked(generation, &late, Purpose::Image));
+        assert!(!grants.take(&late, Purpose::Image));
     }
 }
