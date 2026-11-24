@@ -131,6 +131,13 @@ pub fn run() {
         builder = builder.manage(commands::clipboard::ClipboardClear::default());
     }
 
+    // Android: the clipboard is the app's own Kotlin plugin, which this
+    // registers (see `commands::clipboard::AndroidClipboard`).
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(commands::clipboard::AndroidClipboard::plugin());
+    }
+
     // In-app W3C WebDriver server (port 4445) for the E2E smoke suite. Never
     // compiled into a release binary, and desktop-only — the suite drives the
     // desktop app. Not on Windows for now: the plugin does not build against
