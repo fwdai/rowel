@@ -108,7 +108,7 @@ export default function Attachments({ entry }: { entry: EntryMeta }) {
       <AttachButton
         busy={busy}
         onPick={pick}
-        onFile={file => void addFile(file)}
+        onFile={addFile}
         // Under a list the pill wants a row's worth of air, as the tags'
         // chips have under their label.
         className={`${items.length === 0 ? 'mt-4' : 'mt-3'} ${ACTION_ROW}`}

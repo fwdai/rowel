@@ -124,6 +124,13 @@ export const scanImage = (path: string): Promise<ScanResult> => call('scan_image
 export const scanImageBytes = (image: Uint8Array): Promise<ScanResult> =>
   call('scan_image_bytes', image)
 
+/**
+ * The camera input is done with the photo it was handed — read, refused,
+ * dropped, or the camera cancelled — so Android can take away the file the
+ * camera wrote it into (`capture` in Rust). A no-op anywhere else.
+ */
+export const captureSettled = (): Promise<void> => call('capture_settled')
+
 // The site's favicon as a data: URI, or null when it has none. The backend
 // fetches straight from the entry's own host (never a third-party favicon
 // service) and caches on disk, so repeat calls are a file read.

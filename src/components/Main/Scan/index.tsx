@@ -36,7 +36,7 @@ export default function Scan() {
 
   const captured = (file: File) => {
     closeScanSource()
-    void scanCapture(file)
+    return scanCapture(file)
   }
 
   return (

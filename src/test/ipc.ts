@@ -266,6 +266,7 @@ const DEFAULTS: Record<string, Handler> = {
   hide_window: () => undefined,
   scan_image: reject({ kind: 'unrecognized', message: 'nothing recognized' }),
   scan_image_bytes: reject({ kind: 'unrecognized', message: 'nothing recognized' }),
+  capture_settled: () => undefined,
   // The dialog Rust opens: nothing picked unless a test says otherwise.
   pick_file: () => null,
 

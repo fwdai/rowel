@@ -116,13 +116,9 @@ const FILE_NAME_HEADER: &str = "x-file-name";
 /// it rather than writing it into whatever vault is open by then.
 #[tauri::command]
 pub async fn attachment_add_bytes(
-    app: AppHandle,
     state: State<'_, AppState>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<AttachmentDto> {
-    // The webview has read the camera's photo by now, whatever becomes of it
-    // here, so the file wry left it in can go (see `capture`).
-    crate::capture::sweep(&app);
     let entry_id = header(&request, ENTRY_ID_HEADER)?;
     let name = header(&request, FILE_NAME_HEADER)?;
     // Sized before it is copied: a body past the cap is refused without a

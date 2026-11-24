@@ -201,13 +201,9 @@ pub async fn scan_image(
 /// for `scan_image`.
 #[tauri::command]
 pub async fn scan_image_bytes(
-    app: AppHandle,
     state: State<'_, AppState>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<ScanResult> {
-    // The webview has read the camera's photo by now, whatever becomes of it
-    // here, so the file wry left it in can go (see `capture`).
-    crate::capture::sweep(&app);
     let epoch = super::unlocked_epoch(&state)?;
     // `Request` only lends the body, so the scanner works on a copy: that copy
     // is what gets zeroized (see `scan_bytes`); the body Tauri holds is
@@ -216,6 +212,15 @@ pub async fn scan_image_bytes(
     let result = scan::scan_bytes(image).await?;
     super::same_session(&state, epoch)?;
     Ok(result)
+}
+
+/// The webview's camera input is done with the photo it was handed: read it,
+/// refused it, dropped it or saw the camera cancelled. On Android the file wry
+/// had the camera write it into is swept then (see `capture`); elsewhere there
+/// is no such file.
+#[tauri::command]
+pub fn capture_settled(app: AppHandle) {
+    crate::capture::sweep(&app);
 }
 
 /// The icon for a host the entry list is showing. Unlocked vaults only: the

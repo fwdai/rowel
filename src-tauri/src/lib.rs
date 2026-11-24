@@ -212,8 +212,8 @@ pub fn run() {
             // vault's host list in the clear, so it goes on the first launch
             // that can see it, whether or not this one looks an icon up.
             storage::remove_legacy_icons_dir(app.handle());
-            // Android: the camera photos left by a capture that never reached
-            // Rust (see `capture`).
+            // Android: the camera photos left by a capture the app did not live
+            // to settle (see `capture`).
             capture::sweep(app.handle());
             // A workspace delete a crash caught between its file moves and the
             // registry write: put back, or cleared away, before anything reads
@@ -321,6 +321,7 @@ pub fn run() {
             commands::tools::pick_file,
             commands::tools::scan_image,
             commands::tools::scan_image_bytes,
+            commands::tools::capture_settled,
             commands::tools::fetch_favicon,
             commands::tools::fetch_emblem,
             commands::clipboard::copy_to_clipboard,

@@ -7,26 +7,37 @@
 //! `getExternalFilesDir(DIRECTORY_PICTURES)`). It never removes it, nor the
 //! empty one a cancelled capture leaves. That photo is a card or a passport in
 //! the clear, on storage that a USB connection reaches, and before scoped
-//! storage any app allowed to read external storage. So what wry leaves there is
-//! swept: after a capture's bytes have reached Rust (`attachment_add_bytes`,
-//! `scan_image_bytes`), and at startup for whatever a capture that never got
-//! that far left.
+//! storage any app allowed to read external storage.
+//!
+//! So a capture is swept once the webview is done with it: the capture input
+//! asks (`capture_settled`) when it has read the photo or given up on it —
+//! taken and handed over, refused, dropped across a lock, or the camera
+//! cancelled — whatever then becomes of the bytes. The camera is one capture
+//! at a time, and a sweep takes only what was there when it was asked for, so
+//! a capture begun after it, its file still being written, is left alone. At
+//! startup a sweep takes whatever a capture the app did not live to settle
+//! left behind.
+
+#[cfg(any(target_os = "android", test))]
+use std::time::SystemTime;
 
 use tauri::AppHandle;
 
-/// Remove, off the calling thread, every photo wry's capture has left. Android
-/// only: elsewhere the webview's camera input writes nothing the app keeps.
+/// Remove, off the calling thread, every photo wry's capture had left by now.
+/// Android only: elsewhere the webview's camera input writes nothing the app
+/// keeps.
 pub fn sweep(app: &AppHandle) {
     #[cfg(target_os = "android")]
     {
         use tauri::Manager;
 
+        let asked = SystemTime::now();
         let app = app.clone();
         crate::commands::detached(move || {
             // `PathPlugin.getPictureDir`: the same
             // `getExternalFilesDir(DIRECTORY_PICTURES)` wry writes to.
             if let Ok(dir) = app.path().picture_dir() {
-                remove_captures(&dir);
+                remove_captures(&dir, asked);
             }
         });
     }
@@ -34,16 +45,21 @@ pub fn sweep(app: &AppHandle) {
     let _ = app;
 }
 
-/// Remove the files in `dir` named the way wry names a capture. Best effort: a
-/// photo that will not go now is tried again on the next sweep.
+/// Remove the files in `dir` named the way wry names a capture and last
+/// written no later than `asked`: one written since belongs to a capture begun
+/// after the sweep was asked for, which the camera may still be writing. Best
+/// effort: a photo that will not go now is tried again on the next sweep.
 #[cfg(any(target_os = "android", test))]
-fn remove_captures(dir: &std::path::Path) {
+fn remove_captures(dir: &std::path::Path, asked: SystemTime) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
-        let is_file = entry.file_type().is_ok_and(|t| t.is_file());
-        if is_file && entry.file_name().to_str().is_some_and(is_capture) {
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let settled = meta.modified().is_ok_and(|written| written <= asked);
+        if meta.is_file() && settled && entry.file_name().to_str().is_some_and(is_capture) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
@@ -96,7 +112,7 @@ mod tests {
         std::fs::write(&other, b"\xff\xd8\xff\xe0").unwrap();
         std::fs::create_dir(&folder).unwrap();
 
-        remove_captures(dir.path());
+        remove_captures(dir.path(), SystemTime::now());
 
         assert!(!capture.exists());
         assert!(!cancelled.exists());
@@ -104,9 +120,30 @@ mod tests {
         assert!(folder.exists());
     }
 
+    // A capture begun after the sweep was asked for — wry's empty file, which
+    // the camera has yet to write — is not the sweep's to take.
+    #[test]
+    fn a_sweep_leaves_a_capture_begun_after_it_was_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let settled = dir.path().join("JPEG_20261124_104700_42.jpg");
+        let in_progress = dir.path().join("JPEG_20261124_104830_43.jpg");
+        std::fs::write(&settled, b"\xff\xd8\xff\xe0").unwrap();
+        let asked = SystemTime::now();
+        let later = asked + std::time::Duration::from_secs(10);
+        std::fs::File::create(&in_progress)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+
+        remove_captures(dir.path(), asked);
+
+        assert!(!settled.exists());
+        assert!(in_progress.exists());
+    }
+
     #[test]
     fn a_directory_that_is_not_there_is_nothing_to_sweep() {
         let dir = tempfile::tempdir().unwrap();
-        remove_captures(&dir.path().join("Pictures"));
+        remove_captures(&dir.path().join("Pictures"), SystemTime::now());
     }
 }

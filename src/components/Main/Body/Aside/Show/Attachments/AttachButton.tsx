@@ -11,7 +11,7 @@ interface Props {
   /** Open the picker for `from` and attach what it picks; whether it picked. */
   onPick: (from: AttachSource) => Promise<boolean>
   /** Attach a file the webview holds — a photo the camera just took. */
-  onFile: (file: File) => void
+  onFile: (file: File) => Promise<void>
   className?: string
 }
 
@@ -38,7 +38,7 @@ export default function AttachButton({ busy, onPick, onFile, className }: Props)
 
   const captured = (file: File) => {
     setAsking(false)
-    onFile(file)
+    return onFile(file)
   }
 
   return (
