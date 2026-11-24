@@ -340,7 +340,7 @@ fn end(app: &AppHandle, announce: bool, applies: impl FnOnce(&Session) -> bool) 
             return false;
         }
         let sealed = seal_in(&mut session, &state.keyring);
-        let ended = (sealed.live || sealed.held).then(|| announce_ended(app));
+        let ended = (sealed.live || sealed.held).then(|| announce_ended(app, sealed.live));
         (sealed, ended)
     };
     if let Some(count) = sealed.count {
@@ -392,8 +392,9 @@ pub fn continue_lease(
 
 /// Ends the session under the caller's guard; the caller finishes the [`Ended`].
 pub fn end_in(app: &AppHandle, session: &mut Session) -> Ended {
+    let live = session.is_live();
     session.clear();
-    announce_ended(app)
+    announce_ended(app, live)
 }
 
 /// `vault:locked` for an end not made by [`lock`]. Only under `begin_step`, so
@@ -463,7 +464,12 @@ fn announce_opened(app: &AppHandle) {
     }
 }
 
-fn announce_ended(app: &AppHandle) -> Ended {
+// `live`: a vault session was open. An end with none (a switch, delete or
+// lock from the lock screen) leaves the choices made there (`grants`) standing.
+fn announce_ended(app: &AppHandle, live: bool) -> Ended {
+    if live {
+        app.state::<crate::grants::PathGrants>().session_ended();
+    }
     crate::autolock::disarm(app);
     crate::picked::wipe(app);
     #[cfg(desktop)]
@@ -850,8 +856,8 @@ mod lock_scope {
                 "session.adopt(",
                 "announce_opened(app)",
             ),
-            ("\npub fn end_in(", "session.clear()", "announce_ended(app)"),
-            ("\nfn end(", "seal_in(&mut session", "announce_ended(app)"),
+            ("\npub fn end_in(", "session.clear()", "announce_ended(app,"),
+            ("\nfn end(", "seal_in(&mut session", "announce_ended(app,"),
         ] {
             let body = body_of(source, signature);
             assert!(
@@ -864,7 +870,7 @@ mod lock_scope {
             );
         }
         let end = body_of(source, "\nfn end(");
-        assert!(at(&end, "announce_ended(app)") < at(&end, "ended.finish(app)"));
+        assert!(at(&end, "announce_ended(app,") < at(&end, "ended.finish(app)"));
 
         let touch = body_of(include_str!("autolock.rs"), "pub fn touch(");
         assert!(at(&touch, "session.lock()") < at(&touch, "arm(app)"));

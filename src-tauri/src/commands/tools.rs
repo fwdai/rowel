@@ -80,6 +80,8 @@ pub async fn pick_file(
     if browse.unwrap_or(false) {
         dialog = dialog.set_picker_mode(PickerMode::Document);
     }
+    // A session that ends while the dialog is open takes its answer with it.
+    let generation = grants.generation();
     // The dialog blocks its caller until the user answers, and an Android
     // document is copied before it has a path (`picked`), so both run on the
     // blocking pool, not a runtime worker.
@@ -93,7 +95,9 @@ pub async fn pick_file(
     else {
         return Ok(None);
     };
-    grants.grant(&path, purpose);
+    if !grants.grant_picked(generation, &path, purpose) {
+        return Ok(None);
+    }
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
