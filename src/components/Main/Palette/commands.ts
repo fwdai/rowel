@@ -11,7 +11,8 @@ import type { EntryMeta } from '@/api/types'
 import { KINDS, addLabel, kindOf } from '@/kinds'
 import { addEntry } from '@/components/Main/AddSecret/add'
 import { t, type TKey } from '@/i18n'
-import { shortcutHint, type Shortcut } from '@/lib/shortcuts'
+import { hintOf, type Shortcut, type ShortcutKeys } from '@/lib/shortcuts'
+import { useShortcutKeys } from '@/hooks/useShortcutKeys'
 import { copyValue, type EntryValue } from '@/services/entries'
 import {
   CopyGlyph,
@@ -38,7 +39,7 @@ export interface Command {
 // The selected entry's copy chords, listed so they can be found — and run from
 // here, since the palette holds the keyboard while it is up. Only the values
 // its kind carries; none for a tombstone, which has nothing to reveal.
-const copyCommands = (entry: EntryMeta | null): Command[] => {
+const copyCommands = (entry: EntryMeta | null, keys: ShortcutKeys): Command[] => {
   if (!entry || entry.deletedAt) return []
   const kind = kindOf(entry.type)
   const offers: { value: EntryValue; label: TKey; key: Shortcut; has: boolean }[] = [
@@ -58,7 +59,7 @@ const copyCommands = (entry: EntryMeta | null): Command[] => {
     .map(offer => ({
       id: `copy-${offer.value}`,
       label: t(offer.label),
-      shortcut: shortcutHint(offer.key),
+      shortcut: hintOf(keys[offer.key]),
       glyph: CopyGlyph,
       run: () => void copyValue(entry, offer.value)
     }))
@@ -75,6 +76,7 @@ const copyCommands = (entry: EntryMeta | null): Command[] => {
 export const useCommands = (): Command[] => {
   const theme = usePrefs(state => state.theme)
   const current = useCurrentEntry()
+  const keys = useShortcutKeys()
 
   return [
     ...KINDS.map(kind => ({
@@ -86,14 +88,14 @@ export const useCommands = (): Command[] => {
     {
       id: 'add-secret',
       label: t('Add a secret'),
-      shortcut: shortcutHint('add'),
+      shortcut: hintOf(keys.add),
       glyph: PlusGlyph,
       run: openAddPicker
     },
     {
       id: 'generate-password',
       label: t('Generate a password'),
-      shortcut: shortcutHint('generator'),
+      shortcut: hintOf(keys.generator),
       glyph: GeneratorGlyph,
       // The standalone form: nothing to apply the value to, so it copies.
       run: () => openGenerator()
@@ -101,7 +103,7 @@ export const useCommands = (): Command[] => {
     {
       id: 'lock-vault',
       label: t('Lock vault'),
-      shortcut: shortcutHint('lock'),
+      shortcut: hintOf(keys.lock),
       glyph: LockGlyph,
       run: lockVault
     },
@@ -112,6 +114,6 @@ export const useCommands = (): Command[] => {
       run: toggleTheme
     },
     { id: 'settings', label: t('Settings'), glyph: GearGlyph, run: openSettings },
-    ...copyCommands(current)
+    ...copyCommands(current, keys)
   ]
 }

@@ -989,5 +989,16 @@
   "Remove device": "Удалить устройство",
   "A nearby device needs the new master password": "Устройству поблизости нужен новый мастер-пароль",
   "Nearby sync is on": "Синхронизация с устройствами поблизости включена",
-  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Часы на этих двух устройствах слишком расходятся, чтобы синхронизация была безопасной. Установите на обоих точное время."
+  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Часы на этих двух устройствах слишком расходятся, чтобы синхронизация была безопасной. Установите на обоих точное время.",
+  "Keyboard shortcuts": "Сочетания клавиш",
+  "Move a shortcut to another key. Changes stay on this device.": "Назначьте действию другую клавишу. Изменения действуют только на этом устройстве.",
+  "Open the command palette": "Открыть палитру команд",
+  "Edit the selected item": "Изменить выбранную запись",
+  "Shortcut for {{action}}": "Сочетание для «{{action}}»",
+  "Press a key…": "Нажмите клавишу…",
+  "Restore defaults": "Восстановить по умолчанию",
+  "Use a letter key": "Выберите клавишу с буквой",
+  "{{key}} belongs to the system": "{{key}} занято системой",
+  "{{key}} is kept for editing text": "{{key}} зарезервировано для редактирования текста",
+  "{{key}} is already used by “{{action}}”": "{{key}} уже занято действием «{{action}}»"
 }

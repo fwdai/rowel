@@ -989,5 +989,16 @@
   "Remove device": "Видалити пристрій",
   "A nearby device needs the new master password": "Пристрою поблизу потрібен новий головний пароль",
   "Nearby sync is on": "Синхронізацію з пристроями поблизу ввімкнено",
-  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Годинники на цих двох пристроях надто розходяться, щоб синхронізація була безпечною. Встановіть на обох точний час."
+  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Годинники на цих двох пристроях надто розходяться, щоб синхронізація була безпечною. Встановіть на обох точний час.",
+  "Keyboard shortcuts": "Комбінації клавіш",
+  "Move a shortcut to another key. Changes stay on this device.": "Призначте дії іншу клавішу. Зміни діють лише на цьому пристрої.",
+  "Open the command palette": "Відкрити палітру команд",
+  "Edit the selected item": "Редагувати вибраний запис",
+  "Shortcut for {{action}}": "Комбінація для «{{action}}»",
+  "Press a key…": "Натисніть клавішу…",
+  "Restore defaults": "Відновити типові",
+  "Use a letter key": "Виберіть клавішу з літерою",
+  "{{key}} belongs to the system": "{{key}} зайнято системою",
+  "{{key}} is kept for editing text": "{{key}} зарезервовано для редагування тексту",
+  "{{key}} is already used by “{{action}}”": "{{key}} уже зайнято дією «{{action}}»"
 }

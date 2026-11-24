@@ -64,7 +64,8 @@ const DEFAULT_SETTINGS: Settings = {
     lowercase: true,
     exclude: '',
     excludeSimilarCharacters: false
-  }
+  },
+  shortcuts: {}
 }
 
 let settings: Settings = DEFAULT_SETTINGS

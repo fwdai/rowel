@@ -2,7 +2,8 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { useUi, setFilterQuery } from '@/store'
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
-import { shortcutHint } from '@/lib/shortcuts'
+import { hintOf } from '@/lib/shortcuts'
+import { useShortcutKeys } from '@/hooks/useShortcutKeys'
 import Kbd from '@/components/elements/Kbd'
 import SearchBox from '@/components/elements/SearchBox'
 import { CloseGlyph } from '../../icons'
@@ -30,6 +31,7 @@ export default function Search({
   const { t } = useTranslation()
   const query = useUi(state => state.query)
   const empty = query === ''
+  const keys = useShortcutKeys()
   const input = useRef<HTMLInputElement>(null)
 
   // ⌘F is a window-level chord, so it asks the store for the caret rather than
@@ -89,7 +91,7 @@ export default function Search({
               !empty && 'translate-x-1 opacity-0'
             )}
           >
-            <Kbd>{shortcutHint('search')}</Kbd>
+            <Kbd>{hintOf(keys.search)}</Kbd>
           </span>
             {/* Always mounted so it can ease in: a query fades and grows it
                 from a dot to a button, clearing does the reverse. Out of reach

@@ -9,7 +9,8 @@ import {
   BoxGlyph,
   CloudGlyph,
   TransferGlyph,
-  ExtensionGlyph
+  ExtensionGlyph,
+  KeyboardGlyph
 } from '../../icons'
 
 type Glyph = (props: { size?: number }) => React.ReactElement
@@ -40,6 +41,15 @@ const ALL: {
     label: 'General',
     description: 'Appearance, language and how dates are shown.',
     Glyph: GeneralGlyph
+  },
+  // A phone has no keyboard to hold a chord with.
+  {
+    key: 'keyboard',
+    group: 'app',
+    label: 'Keyboard shortcuts',
+    description: 'Move a shortcut to another key. Changes stay on this device.',
+    Glyph: KeyboardGlyph,
+    desktop: true
   },
   // A phone's browser has no native messaging host to reach.
   {

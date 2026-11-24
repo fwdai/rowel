@@ -972,5 +972,16 @@
   "Remove device": "Supprimer l’appareil",
   "A nearby device needs the new master password": "Un appareil à proximité a besoin du nouveau mot de passe principal",
   "Nearby sync is on": "La synchronisation à proximité est activée",
-  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Les horloges de ces deux appareils sont trop décalées pour synchroniser en toute sécurité. Réglez l’heure exacte sur les deux."
+  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "Les horloges de ces deux appareils sont trop décalées pour synchroniser en toute sécurité. Réglez l’heure exacte sur les deux.",
+  "Keyboard shortcuts": "Raccourcis clavier",
+  "Move a shortcut to another key. Changes stay on this device.": "Attribuez un raccourci à une autre touche. Les changements restent sur cet appareil.",
+  "Open the command palette": "Ouvrir la palette de commandes",
+  "Edit the selected item": "Modifier l’élément sélectionné",
+  "Shortcut for {{action}}": "Raccourci pour {{action}}",
+  "Press a key…": "Appuyez sur une touche…",
+  "Restore defaults": "Rétablir les valeurs par défaut",
+  "Use a letter key": "Utilisez une lettre",
+  "{{key}} belongs to the system": "{{key}} est réservé au système",
+  "{{key}} is kept for editing text": "{{key}} est réservé à l’édition de texte",
+  "{{key}} is already used by “{{action}}”": "{{key}} est déjà utilisé par « {{action}} »"
 }

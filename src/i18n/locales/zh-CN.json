@@ -938,5 +938,16 @@
   "Remove device": "移除设备",
   "A nearby device needs the new master password": "附近的一台设备需要新的主密码",
   "Nearby sync is on": "附近设备同步已开启",
-  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "这两台设备的时钟相差太大，无法安全同步。请将两台设备都设为正确时间。"
+  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "这两台设备的时钟相差太大，无法安全同步。请将两台设备都设为正确时间。",
+  "Keyboard shortcuts": "键盘快捷键",
+  "Move a shortcut to another key. Changes stay on this device.": "将快捷键改到其他按键。更改仅在此设备上生效。",
+  "Open the command palette": "打开命令面板",
+  "Edit the selected item": "编辑所选条目",
+  "Shortcut for {{action}}": "{{action}}的快捷键",
+  "Press a key…": "请按一个键…",
+  "Restore defaults": "恢复默认",
+  "Use a letter key": "请使用字母键",
+  "{{key}} belongs to the system": "{{key}} 已被系统占用",
+  "{{key}} is kept for editing text": "{{key}} 保留用于文本编辑",
+  "{{key}} is already used by “{{action}}”": "{{key}} 已被“{{action}}”使用"
 }

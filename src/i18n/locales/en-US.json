@@ -955,5 +955,16 @@
   "Remove device": "Remove device",
   "A nearby device needs the new master password": "A nearby device needs the new master password",
   "Nearby sync is on": "Nearby sync is on",
-  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "The clocks on these two devices are too far apart to sync safely. Set both to the correct time."
+  "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.": "The clocks on these two devices are too far apart to sync safely. Set both to the correct time.",
+  "Keyboard shortcuts": "Keyboard shortcuts",
+  "Move a shortcut to another key. Changes stay on this device.": "Move a shortcut to another key. Changes stay on this device.",
+  "Open the command palette": "Open the command palette",
+  "Edit the selected item": "Edit the selected item",
+  "Shortcut for {{action}}": "Shortcut for {{action}}",
+  "Press a key…": "Press a key…",
+  "Restore defaults": "Restore defaults",
+  "Use a letter key": "Use a letter key",
+  "{{key}} belongs to the system": "{{key}} belongs to the system",
+  "{{key}} is kept for editing text": "{{key}} is kept for editing text",
+  "{{key}} is already used by “{{action}}”": "{{key}} is already used by “{{action}}”"
 }

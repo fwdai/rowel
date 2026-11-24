@@ -8,6 +8,7 @@ import {
   type SortMode
 } from '@/api/app'
 import i18n from '@/i18n'
+import { resolveShortcuts, sanitizeShortcuts, type ShortcutKeys } from '@/lib/shortcuts'
 import {
   applyAccent,
   applyTheme,
@@ -53,7 +54,8 @@ export const DEFAULT_PREFS: Settings = {
     lowercase: true,
     exclude: '',
     excludeSimilarCharacters: false
-  }
+  },
+  shortcuts: {}
 }
 
 const isTheme = (value: unknown): value is ThemePreference =>
@@ -90,7 +92,8 @@ const sanitize = (raw: Partial<Settings>): Settings => {
     locale: typeof raw.locale === 'string' ? raw.locale : null,
     generator: Number.isFinite(generator.length)
       ? generator
-      : { ...generator, length: DEFAULT_PREFS.generator.length }
+      : { ...generator, length: DEFAULT_PREFS.generator.length },
+    shortcuts: sanitizeShortcuts(raw.shortcuts)
   }
 }
 
@@ -174,6 +177,10 @@ export const prefsMark = (): number => latestWrite
 export const hydrateFromProbe = (settings: Settings, mark: number): void => {
   if (mark === latestWrite && inFlight.size === 0) hydratePrefs(settings)
 }
+
+/** Every action's key as it stands now, for a key handler that reads it per press. */
+export const currentShortcutKeys = (): ShortcutKeys =>
+  resolveShortcuts(usePrefs.getState().shortcuts)
 
 // The palette command is a flip, so it resolves "system" first and then lands
 // on a concrete light/dark preference.

@@ -23,6 +23,7 @@ export type Section =
   | 'audit'
   | 'import'
   | 'language'
+  | 'keyboard'
   | 'browser'
   | 'workspaces'
 

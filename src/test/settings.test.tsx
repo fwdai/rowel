@@ -107,6 +107,7 @@ describe('Settings shell', () => {
     )
     expect(order).toEqual([
       'settings-nav-language',
+      'settings-nav-keyboard',
       'settings-nav-browser',
       'settings-nav-security',
       'settings-nav-audit',

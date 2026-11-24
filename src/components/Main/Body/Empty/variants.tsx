@@ -8,7 +8,8 @@ import {
 } from '@/store'
 import { kindOf } from '@/kinds'
 import { chord, isMobile } from '@/lib/platform'
-import { shortcutHint } from '@/lib/shortcuts'
+import { hintOf } from '@/lib/shortcuts'
+import { useShortcutKeys } from '@/hooks/useShortcutKeys'
 import { useTranslation } from 'react-i18next'
 import EmptyState from '@/components/elements/EmptyState'
 import { addEntry } from '@/components/Main/AddSecret/add'
@@ -22,6 +23,7 @@ import Mark from './Mark'
 // mark every other empty state wears.
 export function VaultEmpty() {
   const { t } = useTranslation()
+  const keys = useShortcutKeys()
 
   // No Drive restore here: a vault that syncs holds what its pack holds, so an
   // empty one has nothing up there to pull, and a vault that has never synced
@@ -45,9 +47,9 @@ export function VaultEmpty() {
         isMobile
           ? undefined
           : [
-              { keys: shortcutHint('add'), label: t('add') },
-              { keys: shortcutHint('generator'), label: t('generator') },
-              { keys: shortcutHint('commands'), label: t('commands') }
+              { keys: hintOf(keys.add), label: t('add') },
+              { keys: hintOf(keys.generator), label: t('generator') },
+              { keys: hintOf(keys.commands), label: t('commands') }
             ]
       }
     />
@@ -62,6 +64,7 @@ export function VaultEmpty() {
 // search field as well as from a row.
 export function SelectEmpty() {
   const { t } = useTranslation()
+  const keys = useShortcutKeys()
   return (
     <EmptyState
       testid="empty-select"
@@ -72,13 +75,13 @@ export function SelectEmpty() {
           ? undefined
           : [
               { keys: '↑↓', label: t('browse') },
-              { keys: shortcutHint('search'), label: t('search') },
+              { keys: hintOf(keys.search), label: t('search') },
               { keys: chord('⏎'), label: t('copy password') },
-              { keys: shortcutHint('copyUsername'), label: t('copy username') },
-              { keys: shortcutHint('add'), label: t('add') },
-              { keys: shortcutHint('generator'), label: t('generator') },
-              { keys: shortcutHint('commands'), label: t('commands') },
-              { keys: shortcutHint('lock'), label: t('lock') }
+              { keys: hintOf(keys.copyUsername), label: t('copy username') },
+              { keys: hintOf(keys.add), label: t('add') },
+              { keys: hintOf(keys.generator), label: t('generator') },
+              { keys: hintOf(keys.commands), label: t('commands') },
+              { keys: hintOf(keys.lock), label: t('lock') }
             ]
       }
     />
