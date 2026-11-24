@@ -24,7 +24,7 @@ export default function Root({ onSelect }: { onSelect: (section: Section) => voi
   const { t } = useTranslation()
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-screen pt-[env(safe-area-inset-top)]">
+    <div className="flex min-h-0 flex-1 flex-col bg-screen pt-(--safe-top)">
       <div className={`${ROOT_HEADER} px-4`}>
         <Heading title={t('Settings')} />
         {/* The chip deep-links here too, but through this screen's own

@@ -51,8 +51,10 @@ export default function Compact() {
         data-testid="compact-shell"
         style={viewportStyle(viewport)}
         // The ground is painted here as well as on each screen, so nothing of
-        // the main root's darker `bg-app` shows between them.
-        className="relative flex h-full min-h-0 flex-col bg-screen"
+        // the main root's darker `bg-app` shows between them — nor under a
+        // navigation bar with buttons on it, which the shell ends above so
+        // that no screen in it has to know the bar is there.
+        className="relative flex h-full min-h-0 flex-col bg-screen pb-(--bar-bottom)"
       >
         {/* The entry screen is one component for reading and writing, in one
             slot, so React keeps the instance — and with it the one reveal —

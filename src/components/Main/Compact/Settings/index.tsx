@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useBack } from '@/hooks/useBack'
 import { useUi, type Section } from '@/store'
 import {
   SectionNavProvider,
@@ -32,6 +33,10 @@ import Stack from '../Stack'
  * one (the export pane's "save a backup instead"), goes through
  * `SectionNavProvider`, so here it moves this local state rather than the
  * modal's — under the same lock.
+ *
+ * Android's Back is whichever nav row is on top: out of a sub-page first, then
+ * out of the section, as the wide modal's Escape steps. It is offered here,
+ * once, because this is where both pieces of state are held.
  */
 export default function Settings() {
   const [section, setSection] = useState<Section | null>(null)
@@ -44,6 +49,12 @@ export default function Settings() {
     if (page) nav.openUnder(next, page)
     else nav.drop()
   }
+  const leave = () => {
+    if (useUi.getState().settingsLocked) return
+    nav.drop()
+    setSection(null)
+  }
+  useBack(nav.subpage ? nav.close : leave, section !== null)
 
   return (
     <SectionNavProvider value={go}>
@@ -52,15 +63,7 @@ export default function Settings() {
           under={<Root onSelect={setSection} />}
           over={
             section && (
-              <Pane
-                section={section}
-                locked={locked}
-                onBack={() => {
-                  if (useUi.getState().settingsLocked) return
-                  nav.drop()
-                  setSection(null)
-                }}
-              />
+              <Pane section={section} locked={locked} onBack={leave} />
             )
           }
         />

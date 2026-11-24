@@ -47,4 +47,20 @@ describe('untilFocused', () => {
     await expect(untilFocused(1000, 0)).resolves.toBe(true)
     expect(asked).toBe(1)
   })
+
+  // tao's Android window says `false` whatever the truth: asking it would hold
+  // every unlock for the whole limit.
+  it('does not ask on Android, where the answer means nothing', async () => {
+    vi.resetModules()
+    vi.doMock('@/lib/platform', () => ({ isAndroid: true }))
+    try {
+      const { untilFocused: onAndroid } = await import('./untilFocused')
+      answers = [false]
+      await expect(onAndroid(1000, 0)).resolves.toBe(true)
+      expect(asked).toBe(0)
+    } finally {
+      vi.doUnmock('@/lib/platform')
+      vi.resetModules()
+    }
+  })
 })

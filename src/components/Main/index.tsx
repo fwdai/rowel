@@ -1,5 +1,6 @@
 import { useLayout } from '@/hooks/useLayout'
 import { useActivityPing } from '@/hooks/useActivityPing'
+import { isAndroid } from '@/lib/platform'
 import { FrameProvider } from '@/components/elements/Frame'
 import Modal from '@/components/elements/Modal'
 import Sheet from '@/components/elements/Sheet'
@@ -52,8 +53,12 @@ export function Main() {
       <NoticeToast />
       {/* Over everything, including the overlays above — and only here, because
           the unlocked vault is the only screen with secrets on it to keep out
-          of the app switcher. */}
-      <PrivacyScreen />
+          of the app switcher. Not on Android: there the window cannot be asked
+          whether it is in front (tao answers `false` whatever the truth), so a
+          cover raised on that answer would stay up over a vault the user just
+          opened, and the activity's secure flag already keeps the screen out
+          of Recents. */}
+      {!isAndroid && <PrivacyScreen />}
     </div>
   )
 }

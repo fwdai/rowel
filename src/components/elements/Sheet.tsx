@@ -43,7 +43,7 @@ function Page({ onClose, labelledBy, testid, ref, children }: FrameProps) {
       // having to read class names off the element.
       data-frame="sheet"
       style={viewportStyle(view)}
-      className="animate-fade fixed inset-0 z-50 flex flex-col bg-screen pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-text"
+      className="animate-fade fixed inset-0 z-50 flex flex-col bg-screen px-safe pt-(--safe-top) pb-(--safe-bottom) text-text"
     >
       {/* Every dialog carries its own heading (that is what `labelledBy` points
           at), so the bar holds nothing but the way out. */}

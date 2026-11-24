@@ -12,7 +12,8 @@ import { useObscured } from './useObscured'
  * macOS shows in Mission Control and what a screenshot of an unfocused window
  * captures.
  *
- * Deliberately on every platform, and deliberately with no animation: a fade
+ * Deliberately on every platform but Android (see `Main` for why not there),
+ * and deliberately with no animation: a fade
  * would hand the snapshot a half-transparent frame, which is the one frame that
  * must not be taken. Mounted with the unlocked vault (`Main`), so the lock
  * screen — which has nothing to hide — never draws it.
@@ -26,7 +27,7 @@ export default function PrivacyScreen() {
     <div
       data-testid="privacy-screen"
       aria-hidden
-      className="fixed inset-0 z-[2000] grid place-items-center bg-app"
+      className="fixed inset-0 z-[2000] grid place-items-center bg-app px-safe"
     >
       <Logo width={72} height={72} className="fill-brand" />
     </div>

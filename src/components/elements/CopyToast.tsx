@@ -21,7 +21,7 @@ export default function CopyToast() {
   return (
     <div
       data-testid="copy-toast"
-      className="animate-pop fixed inset-x-0 top-[calc(env(safe-area-inset-top)+1rem)] z-50 mx-auto w-max rounded-full bg-text px-5 py-2 text-base text-detail shadow-float"
+      className="animate-pop fixed inset-x-safe top-[calc(var(--safe-top)+1rem)] z-50 mx-auto w-max rounded-full bg-text px-5 py-2 text-base text-detail shadow-float"
     >
       {t('Copied to Clipboard')}
     </div>

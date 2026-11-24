@@ -73,7 +73,7 @@ export default function BottomSheet({ onClose, labelledBy, testid, ref, children
       // having to read class names off the element.
       data-frame="bottom-sheet"
       style={viewportStyle(view)}
-      className="animate-fade fixed inset-0 z-50 flex flex-col justify-end"
+      className="animate-fade fixed inset-0 z-50 flex flex-col justify-end px-safe"
     >
       {/* The scrim is its own layer rather than the frame's background: the card
           sits on top of it, so a tap that lands on one is never both. */}
@@ -114,7 +114,7 @@ export default function BottomSheet({ onClose, labelledBy, testid, ref, children
             clearance — a sheet's last row ends just above the indicator, not
             a band of ground above it. What a body needs beyond that it pads
             itself. */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[calc(env(safe-area-inset-bottom)+8px)]">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[calc(var(--safe-bottom)+8px)]">
           {children}
         </div>
       </div>

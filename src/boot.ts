@@ -6,6 +6,7 @@ import { flowSetup, hydratePrefs, setApp, setUpdateReady, usePrefs } from '@/sto
 import { runStartupUpdateCheck } from '@/api/autoUpdate'
 import { applyAccent, applyTheme } from '@/theme'
 import { changeLocale, DEFAULT_LOCALE, getLocale, initI18n } from '@/i18n'
+import { followSystemInsets } from '@/lib/android'
 import { startSplash } from '@/lib/splash'
 
 /**
@@ -71,6 +72,9 @@ const adoptLegacyPrefs = async (status: AppStatus) => {
 }
 
 export const boot = async (): Promise<void> => {
+  // Before the splash is armed and the window revealed, so the choreography
+  // plays clear of the screen's edges from its first frame.
+  followSystemInsets()
   const injected = injectedBoot()
   if (injected) {
     // Before anything can await: the first frame React paints is then already

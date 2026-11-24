@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { EntryMeta, EntryType } from '@/api/types'
+import { useBack } from '@/hooks/useBack'
 import { setNoEntry } from '@/store'
 import NavBar from '../NavBar'
 import NavButton from '../NavButton'
@@ -30,6 +31,7 @@ interface Props {
 export default function Held({ entry, type, children }: Props) {
   const { t } = useTranslation()
   const heading = useHeading(type, entry)
+  useBack(setNoEntry)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise bg-screen text-text">

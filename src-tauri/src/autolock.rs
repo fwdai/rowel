@@ -238,8 +238,13 @@ fn idle(app: &AppHandle, arming: u64) {
 /// covers the phone too: tao's iOS scene delegate posts `Focused(false)` from
 /// `sceneWillResignActive:` and `Focused(true)` from `sceneDidBecomeActive:`
 /// (tao 0.35.3, `platform_impl/ios/scene.rs:75-101`), and tauri-runtime-wry
-/// forwards both unchanged off Windows (`lib.rs:522`). Sending the app to the
-/// home screen therefore starts the same clock that alt-tabbing does.
+/// forwards both unchanged off Windows (`lib.rs:522`). On Android tao posts
+/// both from the activity's `onWindowFocusChanged`, which wry's `WryActivity`
+/// relays (tao 0.37.1, `platform_impl/android/ndk_glue.rs:497`): the window
+/// loses focus on the way to the background and gets it back on return — and
+/// under the notification shade or a system dialog, which count as leaving
+/// here as Notification Center does on iOS. Sending the app to the home screen
+/// therefore starts the same clock that alt-tabbing does.
 ///
 /// Coming *back*, though, is not a fresh start if the time away already spent
 /// the whole timeout: the vault is locked instead of re-armed. Without that,

@@ -22,7 +22,7 @@ interface Props {
  */
 export default function NavBar({ leading, title, trailing }: Props) {
   return (
-    <header className="flex flex-none items-center gap-1 px-2 pt-[env(safe-area-inset-top)]">
+    <header className="flex flex-none items-center gap-1 px-2 pt-(--safe-top)">
       {leading}
       {title === undefined ? (
         // No title to centre, so the trailing cluster takes the slack itself.

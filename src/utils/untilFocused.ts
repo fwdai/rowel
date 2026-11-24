@@ -1,4 +1,5 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { isAndroid } from '@/lib/platform'
 
 /**
  * Resolve once the window says it is in front of the user, or once `limitMs`
@@ -8,9 +9,11 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
  * manifest tao posts a focus event only on a key-window change, and the
  * scene going active again after a system sheet (Face ID, a notification) is
  * not one. A window whose focus cannot be asked at all counts as in front —
- * there is nothing to wait for.
+ * there is nothing to wait for. Android's is one: tao answers `false` there
+ * whatever the truth, which would hold every caller for the whole limit.
  */
 export async function untilFocused(limitMs: number, everyMs = 100): Promise<boolean> {
+  if (isAndroid) return true
   const win = getCurrentWindow()
   const until = Date.now() + limitMs
   for (;;) {

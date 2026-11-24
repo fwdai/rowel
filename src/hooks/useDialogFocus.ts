@@ -1,4 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react'
+import { useBack } from './useBack'
 import { useDialogPresence } from './useDialogPresence'
 
 const TABBABLE =
@@ -34,13 +35,15 @@ export const isTopmostDialog = (dialog: HTMLElement | null): boolean => {
  * close — otherwise the tab order resumes at the top of the document, behind
  * the dialog. Only the topmost `[role="dialog"]` reacts, so a stacked one (the
  * generator over Settings) is neither closed from underneath by Escape nor has
- * its focus pulled back down by the trap.
+ * its focus pulled back down by the trap. Android's Back is Escape there: it
+ * closes the dialog on top (`useBack`).
  *
  * A frame that traps focus is a modal surface, so it is registered as one here
  * (`isModalOpen`), which is what tells the accelerators behind it to stand down.
  */
 export function useDialogFocus(dialog: RefObject<HTMLElement | null>, onClose: () => void) {
   useDialogPresence()
+  useBack(onClose, true, 'overlay')
 
   // What opened the dialog, read on the first render rather than in the mount
   // effect: a body that takes the caret itself as it mounts (a field with
