@@ -232,7 +232,7 @@ pub fn vault_location(container: String) -> Result<VaultLocation, AutofillError>
     let keychain_account = match GateMode::from_marker(&marker) {
         GateMode::Protected => keychain::ACCOUNT,
         GateMode::Prompt => keychain::ACCOUNT_PROMPT,
-        GateMode::HelloKey => return Err(AutofillError::Locked),
+        GateMode::HelloKey | GateMode::KeystoreKey => return Err(AutofillError::Locked),
     };
     // The stored key is the app key, the primary's; any other workspace opens
     // through its own key sealed under it, and one without is not offered a

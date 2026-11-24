@@ -288,13 +288,16 @@ export interface Workspace {
 }
 
 // Which biometry this device gates with, straight from the OS (Apple reads
-// `LAContext.biometryType`; everywhere else a fingerprint is the only kind
-// there has ever been). The platform alone cannot answer it — iPhones and Touch
-// ID iPads are the same build.
+// `LAContext.biometryType`; Android names one only when the device has a
+// single sensor it can be, and says `none` when it has several; on Windows a
+// fingerprint is the only kind there has ever been). The platform alone cannot
+// answer it — iPhones and Touch ID iPads are the same build.
 export type BiometryType = 'face' | 'touch' | 'none'
 
 // How the enrolled vault key is gated. `protected` is OS-enforced (the macOS
 // data-protection keychain releases the key only to Touch ID); `prompt` is
 // app-enforced (we run the biometric check, then read a plain credential-store
-// item). Decided once at enrollment and recorded, so the copy can be honest.
-export type BiometricMode = 'protected' | 'prompt'
+// item); `keystore-key` is Android's, OS-enforced (the key is sealed under an
+// Android Keystore key only a biometric prompt can use). Decided once at
+// enrollment and recorded, so the copy can be honest.
+export type BiometricMode = 'protected' | 'prompt' | 'keystore-key'

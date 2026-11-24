@@ -25,6 +25,10 @@ pub enum GateMode {
     /// Windows: sealed under a Windows Hello key-credential signature, so the
     /// stored blob cannot be opened without passing the Hello prompt.
     HelloKey,
+    /// Android: sealed under an Android Keystore key that only a strong
+    /// biometric prompt can use, so the stored blob cannot be opened without
+    /// passing it.
+    KeystoreKey,
 }
 
 impl GateMode {
@@ -36,6 +40,7 @@ impl GateMode {
             Self::Protected => "protected",
             Self::Prompt => "prompt",
             Self::HelloKey => "hello-key",
+            Self::KeystoreKey => "keystore-key",
         }
     }
 
@@ -48,13 +53,16 @@ impl GateMode {
             "prompt" => Self::Prompt,
             "protected" => Self::Protected,
             "hello-key" => Self::HelloKey,
+            "keystore-key" => Self::KeystoreKey,
             _ => Self::LEGACY,
         }
     }
 
     // Pre-mode enrollments: macOS only ever wrote the protected item, every
     // other platform only ever wrote the verify-then-read one. iOS had no
-    // pre-mode build at all, but shares macOS' enrollment path.
+    // pre-mode build at all, but shares macOS' enrollment path. Android had
+    // none either and enrolls no verify-then-read item, so a marker that falls
+    // through to here reads on Android as an enrollment that is gone.
     #[cfg(target_vendor = "apple")]
     const LEGACY: Self = Self::Protected;
     #[cfg(not(target_vendor = "apple"))]
@@ -67,7 +75,12 @@ mod tests {
 
     #[test]
     fn gate_mode_markers_round_trip() {
-        for mode in [GateMode::Protected, GateMode::Prompt, GateMode::HelloKey] {
+        for mode in [
+            GateMode::Protected,
+            GateMode::Prompt,
+            GateMode::HelloKey,
+            GateMode::KeystoreKey,
+        ] {
             assert_eq!(GateMode::from_marker(mode.as_marker()), mode);
         }
         // A pre-mode marker reads as whatever that build actually wrote.
