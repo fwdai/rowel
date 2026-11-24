@@ -12,9 +12,8 @@ import Error from '../Error'
 import IconButton from '../IconButton'
 import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import type { BiometryType } from '@/api/types'
-import { biometryLabel } from '@/lib/biometry'
-import BiometryGlyph from '../BiometryGlyph'
 import { verbatimInput } from '../inputProps'
+import Biometric from './Biometric'
 
 interface Props {
   // Rendered under the card, in the field's own red. The lock screen says its
@@ -33,6 +32,7 @@ interface Props {
   // The field takes focus on mount, which is right for every screen that draws
   // one. The setup screen draws two, and only the first of them should.
   autoFocus?: boolean
+  refocus?: boolean
   // Paint the card as invalid without rendering an inline error, for the
   // screens that surface the message elsewhere: the lock screen in its
   // eyebrow, the setup screen in its strength line.
@@ -75,6 +75,7 @@ export default function Masterpass({
   placeholder,
   testid,
   autoFocus = true,
+  refocus,
   invalid,
   success,
   pending,
@@ -110,9 +111,24 @@ export default function Masterpass({
       inputRef.current?.focus()
   }, [inert])
 
+  useEffect(() => {
+    if (!refocus) return
+    const onWindowFocus = () => {
+      const input = inputRef.current
+      const active = document.activeElement
+      const elsewhere =
+        active !== input &&
+        (active instanceof HTMLInputElement || !!active?.closest('[role="menu"]'))
+      if (!elsewhere) input?.focus()
+    }
+    window.addEventListener('focus', onWindowFocus)
+    return () => window.removeEventListener('focus', onWindowFocus)
+  }, [refocus])
+
   const doSubmit = (val: string) => {
-    if (inert || val === '') return
-    onEnter?.(val)
+    if (inert) return
+    if (val !== '') onEnter?.(val)
+    else if (biometric) onBiometric?.()
   }
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -121,7 +137,7 @@ export default function Masterpass({
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') doSubmit(event.currentTarget.value)
+    if (event.key === 'Enter' && !event.repeat) doSubmit(event.currentTarget.value)
   }
 
   return (
@@ -201,24 +217,8 @@ export default function Masterpass({
           )}
         </div>
 
-        {/* Biometrics are the card's own end segment: a taller divider than the
-            reveal tier, and the glyph in the macOS Touch ID rose, sized to
-            nearly fill the 28px button. Which glyph and name — Touch ID or Face
-            ID — is `lib/biometry`'s call, from what the device reports. */}
         {biometric && (
-          <>
-            <span aria-hidden className="my-auto h-7 w-px bg-line" />
-            <IconButton
-              label={t(biometryLabel(biometry))}
-              className="mx-1.5 my-auto"
-              onClick={onBiometric}
-            >
-              {/* Child span so the rose survives IconButton's hover ink. */}
-              <span className="text-touchid">
-                <BiometryGlyph type={biometry} size={22} />
-              </span>
-            </IconButton>
-          </>
+          <Biometric biometry={biometry} enter={value === ''} onClick={onBiometric} />
         )}
       </div>
       <Error error={error} />

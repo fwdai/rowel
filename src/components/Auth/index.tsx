@@ -37,6 +37,7 @@ export function Auth({ biometric, biometry = 'touch' }: Props) {
           biometric={biometric}
           biometry={biometry}
           testid="unlock-password-input"
+          refocus
           placeholder={field.placeholder}
           invalid={field.invalid}
           success={field.success}
