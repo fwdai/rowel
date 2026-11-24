@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { pickFileToRead } from '@/api/tools'
+import { pickFileToRead } from '@/services/pickers'
 import { describeError } from '@/api/errors'
 import { ingestDroppedEnvFile, ingestEnvFile, type IngestedEnv } from './ingest'
 

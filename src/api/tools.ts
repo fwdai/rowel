@@ -68,9 +68,12 @@ export const getAudit = (checkBreaches: boolean): Promise<Audit> =>
  * than the file browser, and what it picks is readable only as an attachment.
  * `'import'` is a password manager's export, `'backup'` a `.rowel` to restore,
  * `'importBackup'` either backup Settings › Import takes and `'lockboxBackup'`
- * a `.rowel` alone, restored as a lockbox (see `@/api/pickers`).
+ * a `.rowel` alone, restored as a lockbox (see `@/services/pickers`).
  * `browse` asks a phone for the file browser even under an image filter (a
  * photo kept in Files); the desktop's one dialog ignores it.
+ *
+ * Rejects when the pick fails. Called only by `pickFileToRead`
+ * (`@/services/pickers`), which shows that failure.
  */
 export type PickKind =
   | 'image'
@@ -82,7 +85,7 @@ export type PickKind =
   | 'importBackup'
   | 'lockboxBackup'
 
-export const pickFileToRead = (
+export const pickFile = (
   kind: PickKind,
   label?: string,
   browse = false

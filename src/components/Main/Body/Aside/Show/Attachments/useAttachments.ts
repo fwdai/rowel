@@ -7,7 +7,7 @@ import {
   listAttachments,
   saveAttachment
 } from '@/api/attachments'
-import { pickFileToRead } from '@/api/tools'
+import { pickFileToRead } from '@/services/pickers'
 import { shrinkPhoto } from '@/lib/photo'
 import { describeError, errorKind } from '@/api/errors'
 import { attachBytes, attachFile, removeAttachment, useVault } from '@/store'
@@ -96,7 +96,7 @@ export function useAttachments(entryId: string) {
   const pick = async (from: AttachSource = 'attachment'): Promise<boolean> => {
     setError(null)
     const label = from === 'photo' ? t('Images') : undefined
-    const picked = await pickFileToRead(from, label).catch(() => null)
+    const picked = await pickFileToRead(from, label)
     if (picked) await add(picked)
     return picked !== null
   }

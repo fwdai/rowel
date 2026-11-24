@@ -1,5 +1,24 @@
 import { t } from '@/i18n'
-import { pickFileToRead } from './tools'
+import { describeError } from '@/api/errors'
+import { pickFile, type PickKind } from '@/api/tools'
+import { showNotice } from '@/store'
+
+/**
+ * The one way the webview picks a file for the backend to read (`pickFile`).
+ * A pick that fails (the provider refuses, the copy cannot be made, the file
+ * is too large) is shown as a notice and resolves `null`, as a dismissed
+ * dialog does, so no caller has to decide what a failure means. A pick that
+ * outlived its session resolves `null` from Rust with nothing to show.
+ */
+export const pickFileToRead = (
+  kind: PickKind,
+  label?: string,
+  browse = false
+): Promise<string | null> =>
+  pickFile(kind, label, browse).catch((error: unknown) => {
+    showNotice(describeError(error))
+    return null
+  })
 
 /**
  * The files Rowel takes in whole: a backup to restore, an export to import.

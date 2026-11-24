@@ -266,12 +266,24 @@ pub async fn import_swftx(
 /// [`Error::InvalidPassword`], before anything downstream is touched. The blob
 /// goes in by value, so the file is freed as soon as it has been decoded.
 ///
+/// A file not named as a `.swftx` is refused first, as not one: any other file
+/// fails the unseal exactly as a wrong password does, and Android's picker
+/// offers every file (see `commands::tools::offered`).
+///
 /// Shared by the merge above and the first run's restore
 /// (`commands::setup::setup_restore_from_legacy`).
 pub(crate) fn open_legacy_backup(
     path: &str,
     password: &str,
 ) -> Result<(crypto::Cryptor, VaultData)> {
+    let legacy = Path::new(path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(LEGACY_BACKUP_EXTENSION));
+    if !legacy {
+        return Err(Error::Unsupported(format!(
+            "not a legacy {APP_NAME} vault (.{LEGACY_BACKUP_EXTENSION})"
+        )));
+    }
     let blob = storage::read_backup(path)?;
     let src_cryptor = crypto::Cryptor::new(&crypto::hash_secret(password));
     let src: VaultData = src_cryptor

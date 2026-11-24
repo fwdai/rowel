@@ -213,19 +213,6 @@ describe('the editor drop zone', () => {
 })
 
 describe('interactive env ingestion', () => {
-  it('surfaces picker failures through the shared request lifecycle', async () => {
-    mockCommand('pick_file', () =>
-      Promise.reject({ kind: 'fileTooLarge', message: 'the file is too large' })
-    )
-    const consume = vi.fn()
-    const { result } = renderHook(() => useEnvIngest(consume))
-
-    await act(() => result.current.pick())
-
-    expect(result.current.error).toContain('This file is too large')
-    expect(consume).not.toHaveBeenCalled()
-  })
-
   it('reads the file the backend dialog gave it, unfiltered', async () => {
     mockCommand('pick_file', () => '/Users/me/code/api/.env.production')
     mockCommand('read_env_file', () => FILE)

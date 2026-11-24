@@ -456,6 +456,9 @@ fn seal(state: &AppState) -> Sealed {
 fn announce_opened(app: &AppHandle) {
     app.state::<crate::grants::PathGrants>().session_opened();
     crate::autolock::arm(app);
+    // Android's temp files go with every session open and end (`picked`). On
+    // open, what was picked or photographed before it has been read already.
+    crate::picked::wipe(app);
     #[cfg(desktop)]
     {
         crate::browser::server::hub(app).notify_unlocked();
@@ -466,6 +469,7 @@ fn announce_opened(app: &AppHandle) {
 
 fn announce_ended(app: &AppHandle) -> Ended {
     app.state::<crate::grants::PathGrants>().session_ended();
+    crate::picked::wipe(app);
     crate::autolock::disarm(app);
     #[cfg(desktop)]
     {

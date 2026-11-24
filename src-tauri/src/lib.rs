@@ -56,6 +56,9 @@ mod oslock;
 // the sign-in, this device's enrollment key, the sealed record of both, the
 // lockboxes it hands this device and the approvals it routes here.
 mod org;
+// Android: a picked document copied into the app's cache, to be read as a
+// path, and the removal of that copy and of the camera's photos.
+mod picked;
 mod retired;
 mod save;
 // Local image scanning (card / identity document). `pub` so `examples/scan.rs`
@@ -128,6 +131,17 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_deep_link::init());
     }
 
+    // What `save` writes an export through and `picked` copies a picked file
+    // from on Android, where both dialogs answer with a `content://` URI
+    // rather than a path. Registered for those uses from Rust: nothing in
+    // `capabilities/` names an `fs:` permission, and a plugin command no
+    // capability grants is refused before it runs, so the webview gains no
+    // reach into the file system by it.
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(tauri_plugin_fs::init());
+    }
+
     // Android: the Kotlin class behind biometric unlock (see `biometric_key`).
     #[cfg(target_os = "android")]
     {
@@ -198,6 +212,9 @@ pub fn run() {
             // vault's host list in the clear, so it goes on the first launch
             // that can see it, whether or not this one looks an icon up.
             storage::remove_legacy_icons_dir(app.handle());
+            // Android: the picked copies and camera photos a previous run left
+            // behind (see `picked`).
+            picked::wipe(app.handle());
             // A workspace delete a crash caught between its file moves and the
             // registry write: put back, or cleared away, before anything reads
             // either — the registry below is the first thing that does.

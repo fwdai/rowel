@@ -730,7 +730,7 @@ fn not_a_regular_file() -> Error {
 // The cap also has to exist at all so that a file which is not a backup of ours
 // cannot be buffered and decoded before the AES-GCM tag — checked at the very
 // end of all of it — gets to reject it.
-const MAX_BACKUP_BYTES: u64 = 256 * 1024 * 1024;
+pub(crate) const MAX_BACKUP_BYTES: u64 = 256 * 1024 * 1024;
 
 // Read an arbitrary backup file chosen by the user (absolute path).
 pub fn read_backup(path: &str) -> Result<String> {

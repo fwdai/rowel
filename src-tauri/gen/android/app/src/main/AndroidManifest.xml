@@ -4,6 +4,20 @@
     <!-- Biometric unlock (BiometricKey.kt). -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- The camera row of the source sheet is the webview's file input with
+         `capture` (`FileInput`). wry answers it with ACTION_IMAGE_CAPTURE, but
+         only after `resolveActivity` finds a camera app, which from API 30 sees
+         no other package unless it is named here; without this the input
+         falls back to the plain file picker. No CAMERA permission: the camera
+         app takes the picture, and wry asks for the permission only when the
+         manifest declares it, which is also when Android would refuse the
+         intent without a grant. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+    </queries>
+
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
@@ -37,6 +51,9 @@
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
+        <!-- Where the camera app writes the photo the webview's file input
+             asked for: wry hands it a URI of this provider, under this
+             authority (`RustWebChromeClient.createImageFileUri`). -->
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

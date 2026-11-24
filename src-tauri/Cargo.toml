@@ -214,6 +214,14 @@ tauri-plugin-deep-link = "2"
 # locked graph for that target, under `rustls-platform-verifier`.
 [target.'cfg(target_os = "android")'.dependencies]
 webpki-root-certs = "1"
+# What an export is written through and a picked file is copied from on
+# Android (`save`, `picked`): both dialogs answer with a `content://` URI
+# there, and this is what turns one into a file descriptor. Already in the
+# locked graph, under the dialog plugin, but only a direct dependency has its
+# Kotlin half built into the app — tauri-build adds the plugin projects of the
+# crates this one depends on itself. Used from Rust alone: no capability grants
+# the webview any of its commands.
+tauri-plugin-fs = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # NSWindow, NSAnimationContext and its block-based completion: the zoom the
@@ -296,6 +304,9 @@ axum = "0.8"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # The Android client's bundled roots, so the host's tests can load them.
 webpki-root-certs = "1"
+# The options an Android export opens its document with (`save`), so the host's
+# tests open a file with the same ones.
+tauri-plugin-fs = "2"
 
 # Desktop-only, as `browser` is: the broker's scripted host and extension
 # (`testing::{Mock, Extension}`) for the socket server's own tests.

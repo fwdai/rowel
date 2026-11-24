@@ -1,4 +1,4 @@
-import { pickFileToRead } from '@/api/tools'
+import { pickFileToRead } from '@/services/pickers'
 import { t } from '@/i18n'
 import { runScan } from './run'
 
@@ -14,12 +14,12 @@ import { runScan } from './run'
  * ours to translate.
  *
  * Resolves to whether a file was picked, so a caller can dismiss itself only
- * when the window is actually being handed over. Never throws: a dialog that
- * could not open reads as nothing picked, and the outcome of the scan itself is
- * the status in the store (see `run.ts`).
+ * when the window is actually being handed over. Never throws: a failed pick
+ * reads as nothing picked (`pickFileToRead` shows why), and the outcome of the
+ * scan itself is the status in the store (see `run.ts`).
  */
 export const pickAndScan = async (browse = false): Promise<boolean> => {
-  const path = await pickFileToRead('image', t('Images'), browse).catch(() => null)
+  const path = await pickFileToRead('image', t('Images'), browse)
   if (path === null) return false
   void runScan(path)
   return true

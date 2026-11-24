@@ -72,7 +72,16 @@ already holds — the photo the phone's camera just took through its
 raw body, or as a JSON array of the same bytes when Tauri has fallen back to
 its `postMessage` IPC (and, for an attachment, the entry and the file's name as
 its headers). The photo library and Files on the phone go through `pick_file` and
-a grant like any other. No grant applies to the camera's photo because none
+a grant like any other. On Android the picker answers with a `content://`
+document instead of a path, so `pick_file` copies the document into the app's
+private cache directory (`picked/`, internal storage no other app can read),
+under the last path component of the name its provider gives and up to the
+256 MiB backup cap; that copy is the path granted and read (`picked.rs`).
+Android's camera leaves a file as well: wry has the camera app write the photo
+into the app's external Pictures folder (`JPEG_*.jpg`, reachable over USB) and
+never removes it. Both kinds are removed at startup and whenever a session
+opens or ends, and until then sit there unencrypted, as the picked original
+does; a pick answered after its session ended is not copied. No grant applies to the camera's photo because none
 is needed: the bytes are data the webview had anyway, so neither command can be
 used to read anything it did not; the result is the recognized fields, or a
 sealed file under a name kept to its last path component. The

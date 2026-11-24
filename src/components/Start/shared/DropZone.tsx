@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { pickBackup } from '@/api/pickers'
+import { pickBackup } from '@/services/pickers'
 import { useFileDrop } from '@/hooks/useFileDrop'
 import { isRestorableFile } from '@/lib/backup'
 import { DownloadGlyph } from '@/components/Main/icons'
@@ -21,11 +21,9 @@ export default function DropZone({ onPick }: Props) {
   })
 
   const pick = () =>
-    pickBackup()
-      .then(path => {
-        if (path) onPick(path)
-      })
-      .catch(() => {})
+    pickBackup().then(path => {
+      if (path) onPick(path)
+    })
 
   return (
     <button
