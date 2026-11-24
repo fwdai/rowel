@@ -327,7 +327,7 @@ pub async fn setup_restore_from_file(
     let _step = begin_step(&state)?;
     let ticket = state.session.lock().unwrap().ticket();
     let chosen = PathBuf::from(&path);
-    if !grants.holds(&chosen, Purpose::Restore) {
+    if !grants.holds(&chosen, Purpose::Backup) {
         return Err(grants::not_chosen());
     }
 
@@ -340,7 +340,7 @@ pub async fn setup_restore_from_file(
     .await?;
     // The step guard keeps any other restore out while this one ran, so the
     // grant checked above is still here to spend.
-    grants.take(&chosen, Purpose::Restore);
+    grants.take(&chosen, Purpose::Backup);
     adopt(&app, &state, ticket, key, store, None, None)
 }
 
@@ -368,7 +368,7 @@ pub async fn setup_restore_from_legacy(
     let _step = begin_step(&state)?;
     let ticket = state.session.lock().unwrap().ticket();
     let chosen = PathBuf::from(&path);
-    if !grants.holds(&chosen, Purpose::Restore) {
+    if !grants.holds(&chosen, Purpose::Backup) {
         return Err(grants::not_chosen());
     }
 
@@ -401,7 +401,7 @@ pub async fn setup_restore_from_legacy(
         Ok((key, store))
     })
     .await?;
-    grants.take(&chosen, Purpose::Restore);
+    grants.take(&chosen, Purpose::Backup);
     adopt(&app, &state, ticket, key, store, None, None)
 }
 

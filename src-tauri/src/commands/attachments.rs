@@ -544,8 +544,8 @@ mod tests {
     }
 
     fn granted(path: &Path) -> PathGrants {
-        let grants = PathGrants::in_session();
-        grants.pick(path, Purpose::Attachment);
+        let grants = PathGrants::default();
+        grants.grant(path, Purpose::Attachment);
         grants
     }
 
@@ -715,9 +715,9 @@ mod tests {
         let state = open_with(argon2_key(), store);
         let path = file(&dir, "a.txt", b"x");
 
-        let picked_as_env = PathGrants::in_session();
-        picked_as_env.pick(&path, Purpose::Env);
-        for grants in [PathGrants::in_session(), picked_as_env] {
+        let picked_as_env = PathGrants::default();
+        picked_as_env.grant(&path, Purpose::Env);
+        for grants in [PathGrants::default(), picked_as_env] {
             assert!(matches!(
                 begin_add(&state, &grants, "e1", &path),
                 Err(Error::Unsupported(_))
@@ -725,7 +725,7 @@ mod tests {
         }
 
         // A drop, whatever its kind, is the user handing the file over.
-        let dropped = PathGrants::in_session();
+        let dropped = PathGrants::default();
         dropped.grant_drop(&path, Purpose::Env);
         assert!(begin_add(&state, &dropped, "e1", &path).is_ok());
     }

@@ -2036,8 +2036,8 @@ mod tests {
     }
 
     fn chosen(path: &Path) -> PathGrants {
-        let grants = PathGrants::in_session();
-        grants.pick(path, Purpose::Backup);
+        let grants = PathGrants::default();
+        grants.grant(path, Purpose::Backup);
         grants
     }
 
@@ -2129,10 +2129,10 @@ mod tests {
     #[test]
     fn a_backup_nobody_chose_is_refused() {
         let backup = backup_of(Some("cafe"));
-        let grants = PathGrants::in_session();
+        let grants = PathGrants::default();
         assert!(matches!(read(&backup, &grants), Err(Error::Unsupported(_))));
 
-        grants.pick(&backup, Purpose::Import);
+        grants.grant(&backup, Purpose::Import);
         assert!(matches!(read(&backup, &grants), Err(Error::Unsupported(_))));
         assert!(
             grants.holds(&backup, Purpose::Import),
@@ -2372,7 +2372,7 @@ mod tests {
         };
         assert!(guard(&account).is_ok());
 
-        let grants = PathGrants::in_session();
+        let grants = PathGrants::default();
         let file = Source::File {
             path: root.join("backup.rowel"),
             grants: &grants,

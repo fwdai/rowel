@@ -42,6 +42,10 @@ one of three events the core itself observes: the OS file dialog run from Rust
 (`pick_file`; the webview holds no `dialog:allow-open` permission to open one of
 its own), an OS drag-and-drop onto the window, or the OS opening a `.rowel` or
 `.swftx` with the app (`opened.rs`) (`PathGrants`, one-shot, consumed on use).
+A grant lasts until it is spent or the session it was made in ends, so a file
+chosen while one vault was open cannot be read in the next; a choice made with
+no vault open stays until it is spent or the next session ends; and a dialog
+that outlives its session grants nothing.
 A grant carries the purpose it was made for — the picker's kind (`image`,
 `env`, `attachment`, `import` or a backup), for a drop the file's kind, and for
 a file the OS opened a backup — and each reader spends only a grant of its own
@@ -54,27 +58,7 @@ handed to the app itself, the drop target says what it is, and each of those
 takes the file into the vault and returns no more of it than the kind's own
 reader would. An import's preview and a backup read again after a mistyped
 password check the grant without spending it; the write or the restore that
-succeeds spends it. A grant also belongs to the session the choice was made
-in, or to the stretch with no vault open that it was made in
-(`grants::Scope`): the one current when the dialog was opened (not when it
-answered), when the file was dropped, or when the OS handed it over. Only
-grants of the current one are spendable, and every change of session (a lock,
-an unlock, a lockbox switch, a lockbox created or restored beside the open one
-taking its place) drops the rest, so a path the webview kept from one session
-cannot be spent in the next, of the same lockbox or another. A dialog answered
-after the session it opened in has ended grants nothing, and `pick_file` hands
-its path back to nobody. A password change is not a change of session. What
-may be read depends on whether a vault is open: with none (the lock screen,
-first-run setup) the only read is a first-run restore (`setup_restore_from_file`,
-`setup_restore_from_legacy`, which read a grant of the setup picker's own
-purpose, a drop or a file the OS opened), that read is refused once a vault is
-open, and every other reader is refused with none — however late the command
-itself checks for a session. The restores spend their grant before the vault
-they restore is opened. The one grant carried across a change of session is a
-backup the OS opened with the app while no vault was open: it is carried into
-the session opened next, where Settings › Import takes it, and ends with that
-session. All of this is decided in one place, `grants::position`, for every
-reader. The session must then still be the one that asked — the epoch
+succeeds spends it. The session must then still be the one that asked — the epoch
 is re-checked after the read, so a lock or a lockbox switch mid-read discards
 the bytes. Only then is the file classified: the extension against a fixed
 image list (`scan/mod.rs`), the `.env` name-or-parse check and the 1 MiB cap
