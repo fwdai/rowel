@@ -42,10 +42,12 @@ one of three events the core itself observes: the OS file dialog run from Rust
 (`pick_file`; the webview holds no `dialog:allow-open` permission to open one of
 its own), an OS drag-and-drop onto the window, or the OS opening a `.rowel` or
 `.swftx` with the app (`opened.rs`) (`PathGrants`, one-shot, consumed on use).
-A grant lasts until it is spent or the session it was made in ends, so a file
-chosen while one vault was open cannot be read in the next; a choice made with
-no vault open stays until it is spent or the next session ends; and a dialog
-that outlives its session grants nothing.
+A grant made while a vault is open lasts until it is spent or that vault stops
+being the open one (a lock, a switch, or a lockbox created or restored in its
+place), so a file chosen in one vault cannot be read in the next; a choice made
+with no vault open stays until it is spent or the vault opened next stops being
+the open one; and a choice that arrives after its vault stopped being the open
+one, such as the answer to a dialog opened before, grants nothing.
 A grant carries the purpose it was made for — the picker's kind (`image`,
 `env`, `attachment`, `import` or a backup), for a drop the file's kind, and for
 a file the OS opened a backup — and each reader spends only a grant of its own
