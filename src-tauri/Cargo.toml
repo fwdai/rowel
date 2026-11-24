@@ -209,6 +209,12 @@ objc2-cloud-kit = { version = "0.3", default-features = false, features = [
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-deep-link = "2"
 
+# The roots the Android HTTPS client verifies against (`sync::bundled_roots`),
+# in place of the OS verifier reqwest uses everywhere else. Already in the
+# locked graph for that target, under `rustls-platform-verifier`.
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-root-certs = "1"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # NSWindow, NSAnimationContext and its block-based completion: the zoom the
 # webview can follow (see `zoom`). NSWorkspace: sleep and wake (`oslock`).
@@ -288,6 +294,8 @@ axum = "0.8"
 # Writes the `.1pux` archives the import tests read; the codec is the one the
 # core reads them with.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# The Android client's bundled roots, so the host's tests can load them.
+webpki-root-certs = "1"
 
 # Desktop-only, as `browser` is: the broker's scripted host and extension
 # (`testing::{Mock, Extension}`) for the socket server's own tests.

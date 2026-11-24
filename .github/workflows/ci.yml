@@ -33,6 +33,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       rust: ${{ steps.filter.outputs.rust }}
       ios: ${{ steps.filter.outputs.ios }}
+      android: ${{ steps.filter.outputs.android }}
       crypto: ${{ steps.filter.outputs.crypto }}
       e2e: ${{ steps.filter.outputs.e2e }}
       supply-chain: ${{ steps.filter.outputs.supply-chain }}
@@ -66,6 +67,12 @@ jobs:
             # The iOS gate covers the crate, the Xcode project and app metadata
             # (all under src-tauri/), and the iOS frontend bundle.
             ios:
+              - *ci
+              - *rust-src
+              - *frontend-src
+            # The Android gate covers the same ground: the crate, the Gradle
+            # project (under src-tauri/) and the Android frontend bundle.
+            android:
               - *ci
               - *rust-src
               - *frontend-src
@@ -291,6 +298,82 @@ jobs:
       # build names still exists.
       - name: Validate the Xcode project
         run: xcodebuild -list -project src-tauri/gen/apple/rowel.xcodeproj
+
+  android:
+    # Everything about the Android app that needs no signing key, which for a
+    # debug build is all of it: the frontend bundles for the platform, the crate
+    # cross-compiles and lints, and the committed Gradle project builds an APK
+    # around it. That last step is the only place the project's Kotlin and its
+    # manifest are compiled, and the APK it uploads installs on a device or an
+    # emulator as it is (`adb install`).
+    name: Android (crate + debug APK)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      !cancelled() && (
+        github.event_name != 'pull_request' ||
+        needs.changes.result != 'success' ||
+        needs.changes.outputs.android == 'true'
+      )
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Add the Android device target
+        run: rustup target add aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+          # See the `rust` job: restore everywhere, save only on push.
+          save-if: ${{ github.event_name == 'push' }}
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.3
+      - run: bun install --frozen-lockfile
+
+      # The runner image ships the SDK and an NDK. `NDK_HOME` is what the Tauri
+      # CLI looks for; the rest is for the bare `cargo clippy` below, which has
+      # no CLI in front of it to say which compiler builds the C in the tree
+      # (ring, SQLCipher, the vendored OpenSSL).
+      - name: Point the build at the runner's NDK
+        run: |
+          set -euo pipefail
+          bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          {
+            echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME"
+            echo "CC_aarch64_linux_android=$bin/aarch64-linux-android24-clang"
+            echo "AR_aarch64_linux_android=$bin/llvm-ar"
+            echo "RANLIB_aarch64_linux_android=$bin/llvm-ranlib"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$bin/aarch64-linux-android24-clang"
+          } >> "$GITHUB_ENV"
+
+      # The real Android bundle, as the iOS job builds the iOS one: the only
+      # place `TAURI_ENV_PLATFORM=android` is exercised.
+      - name: Build the frontend for Android
+        run: bun run build
+        env:
+          TAURI_ENV_PLATFORM: android
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --target aarch64-linux-android --all-targets -- -D warnings
+
+      - name: Build a debug APK
+        run: bun run tauri android build --debug --apk --target aarch64 --ci
+
+      - name: Upload the debug APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rowel-android-debug-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 7
 
   safari:
     # The Safari extension's native relay (src-tauri/gen/safari): its XCTest
