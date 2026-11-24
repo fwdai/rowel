@@ -1,4 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useBack } from '@/hooks/useBack'
 import { cx } from '@/utils/cx'
 import { CheckGlyph } from '@/components/Main/icons'
 import { MENU } from './tokens'
@@ -38,6 +39,8 @@ export function Dropdown({
 }: DropdownProps) {
   const ref = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLElement | null>(null)
+  // An open menu owns Android's Back the way it owns Escape.
+  useBack(onBlur)
 
   // Every kind of item: plain, the radio kind a single-select menu uses, and
   // the options of a listbox a search field drives.

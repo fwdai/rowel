@@ -256,16 +256,40 @@
   }
 
   /*
-   * The iOS webview hands the page the whole screen (window.rs turns UIKit's
-   * automatic safe-area insets off), and the compact shell pads its own edges
-   * with env(safe-area-inset-*). The wide shell — an iPad — has no such chrome,
-   * so it takes the insets here, on the root, at the same 768px cut the shell
-   * switches on (`useLayout`, Tailwind's `md:`). Zero everywhere else.
+   * How far the OS reaches in over each edge of the page: the notch and the
+   * home indicator, a status bar, a navigation bar, a display cutout. Every
+   * rule that keeps clear of an edge reads these rather than `env()` itself,
+   * because not every webview fills `env()` in. WKWebView does, so there the
+   * defaults stand. Whether Android System WebView does depends on its
+   * version, so on Android the activity measures the edges itself
+   * (`ShellBridge.kt`) and `lib/android` writes them over these on the root
+   * element.
+   *
+   * `--bar-bottom` is the part of the bottom edge that is a bar with buttons
+   * on it — Android's three-button navigation — and zero everywhere else. A
+   * home indicator or a gesture handle is drawn over the page and floating
+   * chrome may sit beside it (see `EDGE` in Compact/chrome); a bar that takes
+   * taps may have nothing under it, so the shells end above it.
+   */
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --bar-bottom: 0px;
+  }
+
+  /*
+   * The mobile webviews hand the page the whole screen (on iOS window.rs turns
+   * UIKit's automatic safe-area insets off; Android is edge to edge), and the
+   * compact shell pads its own edges with the insets above. The wide shell — a
+   * tablet — has no such chrome, so it takes them here, on the root, at the
+   * same 768px cut the shell switches on (`useLayout`, Tailwind's `md:`). Zero
+   * everywhere else.
    */
   @media (min-width: 48rem) {
     #root {
-      padding: env(safe-area-inset-top) env(safe-area-inset-right)
-        env(safe-area-inset-bottom) env(safe-area-inset-left);
+      padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
     }
   }
 

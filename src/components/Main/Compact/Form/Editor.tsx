@@ -38,9 +38,11 @@ export default function Editor({ entry, type, revealed }: Props) {
       {/* One scroller, declared a container so the rows fold themselves (see
           fields/Row). One is also all it takes to keep a focused field visible:
           the shell around it is already sized to the visual viewport, so the
-          keyboard shortens this box rather than covering it. */}
+          keyboard shortens this box rather than covering it. The last row
+          clears whatever of the bottom inset the shell does not already stand
+          above (`--bar-bottom`, see `Compact`). */}
       <div
-        className={`@container ${SCREEN_SCROLLER} px-4 pt-1 pb-[calc(env(safe-area-inset-bottom)+40px)]`}
+        className={`@container ${SCREEN_SCROLLER} px-4 pt-1 pb-[calc(var(--safe-bottom)-var(--bar-bottom)+40px)]`}
       >
         {/* 56px of indent under the message: the 44px tile plus the row's gap.
             The read screen's header, input for title: the same line under it

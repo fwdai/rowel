@@ -17,4 +17,6 @@ interface RowelBoot {
 
 interface Window {
   __ROWEL_BOOT__?: RowelBoot
+  /** The Android activity's side of the shell; see `lib/android`. */
+  __ROWEL_ANDROID__?: import('@/lib/android').AndroidShell
 }

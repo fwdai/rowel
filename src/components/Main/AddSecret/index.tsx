@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { EntryType } from '@/api/types'
 import { useUi, closeAddPicker, setAddPickerKind, startEntry } from '@/store'
 import { KINDS, kindOf, type Kind } from '@/kinds'
+import { useBack } from '@/hooks/useBack'
 import Frame from '@/components/elements/Frame'
 import DialogHeader from '@/components/elements/DialogHeader'
 import IconButton from '@/components/elements/IconButton'
@@ -59,6 +60,16 @@ export default function AddSecret() {
   // How the page on screen is laid out, for the arrow keys.
   const columns = question ? 1 : COLUMNS
 
+  const back = () => {
+    if (!kind) return
+    left.current = kind.type
+    setTurn('back')
+    setAddPickerKind(null)
+  }
+  // On the question, Android's Back is the header's Back control; on the
+  // kinds it is the frame's close.
+  useBack(back, open && question !== null)
+
   // The picker exists to be answered from the keyboard, so each page's first
   // choice is focused as it arrives — or, back on the kinds, the tile that was
   // stepped into.
@@ -91,13 +102,6 @@ export default function AddSecret() {
     setFloor(column.current?.offsetHeight)
     setTurn('forward')
     setAddPickerKind(next.type)
-  }
-
-  const back = () => {
-    if (!kind) return
-    left.current = kind.type
-    setTurn('back')
-    setAddPickerKind(null)
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {

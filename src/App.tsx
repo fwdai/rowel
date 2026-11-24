@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { useApp, flowSetup, refreshApp, fileOpened } from './store'
 import { takeOpenedFile, type AppStatus } from './api/app'
 import { subscribeToEvents } from './store/events'
+import { useBackButton } from './hooks/useBackButton'
 import { useLayout } from './hooks/useLayout'
 import Auth from './components/Auth'
 import LockScreen from './components/Auth/LockScreen'
@@ -50,6 +51,7 @@ function SplashHandoff() {
 }
 
 export default function App() {
+  useBackButton()
   useEffect(() => {
     const unsubscribe = subscribeToEvents()
     // Nothing on disk is the only answer that sends us somewhere other than the

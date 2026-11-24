@@ -7,6 +7,7 @@ import {
   clearPrefill,
   isModalOpen
 } from '@/store'
+import { useBack } from '@/hooks/useBack'
 import { kindOf } from '@/kinds'
 import { pruneExtra } from '@/components/elements/fields'
 import { mergeFields } from '@/components/Main/Scan/fields'
@@ -133,6 +134,9 @@ export function useDraft(type: EntryType, revealed: Entry | null): Draft {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   })
+  // Android's Back is the same guarded Cancel: the first press arms it, the
+  // second discards. A dialog over the editor is over it there too.
+  useBack(cancel)
 
   return { model, set, dirty, attempted, confirmDiscard, saving, saveError, save, cancel }
 }

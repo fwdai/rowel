@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode, Ref } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useBack } from '@/hooks/useBack'
 import { cx } from '@/utils/cx'
 import Back from '@/assets/images/back.svg?react'
 import VaultFooter from './VaultFooter'
@@ -42,6 +43,8 @@ interface Props {
 // strip is opt-in. Reused by the lock, setup and restore screens.
 export default function AuthShell({ children, onBack, footer, fill, style, ref }: Props) {
   const { t } = useTranslation()
+  // A flow with a step to go back to takes Android's Back as its own control.
+  useBack(() => onBack?.(), onBack !== undefined)
   return (
     // Compact narrows the gutters, pads past the notch by a nav bar's height
     // (so the centered column never lays over "Back") and past the home
@@ -54,8 +57,8 @@ export default function AuthShell({ children, onBack, footer, fill, style, ref }
       ref={ref}
       style={style}
       className={cx(
-        'relative flex h-full flex-col items-center overflow-x-hidden overflow-y-auto overscroll-contain bg-app px-5 pt-[calc(env(safe-area-inset-top)+2.75rem)] text-text select-none md:px-10 md:pt-0 md:pb-0',
-        footer ? 'pb-[calc(env(safe-area-inset-bottom)+3.25rem)]' : 'pb-[env(safe-area-inset-bottom)]'
+        'relative flex h-full flex-col items-center overflow-x-hidden overflow-y-auto overscroll-contain bg-app px-5 pt-[calc(var(--safe-top)+2.75rem)] text-text select-none md:px-10 md:pt-0 md:pb-0',
+        footer ? 'pb-[calc(var(--safe-bottom)+3.25rem)]' : 'pb-(--safe-bottom)'
       )}
     >
       <div
@@ -86,7 +89,7 @@ export default function AuthShell({ children, onBack, footer, fill, style, ref }
           type="button"
           data-testid="go-back-button"
           onClick={onBack}
-          className={`absolute left-3 top-[calc(env(safe-area-inset-top)+0.5rem)] flex h-7 cursor-pointer items-center gap-1 rounded-sm border-0 bg-transparent pl-1.5 pr-2.5 ${LABEL} transition-colors hover:bg-hover hover:text-text md:left-4 md:top-11`}
+          className={`absolute left-3 top-[calc(var(--safe-top)+0.5rem)] flex h-7 cursor-pointer items-center gap-1 rounded-sm border-0 bg-transparent pl-1.5 pr-2.5 ${LABEL} transition-colors hover:bg-hover hover:text-text md:left-4 md:top-11`}
         >
           <Back width="11" className="[&_path]:fill-current" />
           {t('Back')}
@@ -103,7 +106,10 @@ export default function AuthShell({ children, onBack, footer, fill, style, ref }
       </div>
 
       {footer && (
-        <div className="absolute inset-x-0 bottom-0 flex h-13 items-center justify-center">
+        // Over a home indicator, as the compact tab bar is, but above a
+        // navigation bar with buttons on it. At md: the root already stands
+        // clear of both.
+        <div className="absolute inset-x-0 bottom-(--bar-bottom) flex h-13 items-center justify-center md:bottom-0">
           <VaultFooter />
         </div>
       )}

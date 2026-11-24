@@ -12,6 +12,11 @@
 #   public *;
 #}
 
+# The page calls the shell bridge's methods by name (src/lib/android.ts).
+-keepclassmembers class app.rowel.mobile.ShellBridge {
+  @android.webkit.JavascriptInterface public <methods>;
+}
+
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable

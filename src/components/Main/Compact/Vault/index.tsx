@@ -45,7 +45,7 @@ export default function Vault() {
   )
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-screen pt-[env(safe-area-inset-top)]">
+    <div className="flex min-h-0 flex-1 flex-col bg-screen pt-(--safe-top)">
       <ListColumn
         heading={<Title className="text-2xl" />}
         header={ROOT_HEADER}
