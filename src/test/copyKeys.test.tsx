@@ -131,6 +131,17 @@ describe('copy chords from the search field', () => {
 
     await vi.waitFor(() => expect(copied()).toEqual(['ada@example.com']))
   })
+
+  // On a Mac, ⌃B and ⌃T in a text field move the caret back and transpose.
+  it.each(['KeyB', 'KeyT'])('leaves ⌃%s to the Mac caret', async code => {
+    await pickRow()
+    clearCalls('reveal_entry')
+
+    expect(chord(screen.getByTestId('search-input'), code, { ctrlKey: true })).toBe(true)
+
+    expect(calls('reveal_entry')).toHaveLength(0)
+    expect(copied()).toEqual([])
+  })
 })
 
 describe('copy chords leave the system copy alone', () => {

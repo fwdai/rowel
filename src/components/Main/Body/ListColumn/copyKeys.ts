@@ -2,6 +2,7 @@ import type { KeyboardEvent } from 'react'
 import { useVault, selectCurrent, isModalOpen } from '@/store'
 import { copyValue, type EntryValue } from '@/services/entries'
 import { SHORTCUTS } from '@/lib/shortcuts'
+import { isPC } from '@/lib/platform'
 import { keyCode } from '@/utils/keys'
 
 // KeePass's copy chords. The palette shows them (Palette/commands.ts); the
@@ -25,10 +26,13 @@ const FIELD_KEYS = new Set<string>([
 
 /**
  * The value a copy chord asks for, or undefined for any other key. `inField`
- * narrows it to the chords the search field leaves alone.
+ * narrows it to the chords the search field leaves alone, held with the
+ * platform's own modifier: in a Mac text field Ctrl is the caret's (⌃B back a
+ * character, ⌃T transpose), so only ⌘ copies there.
  */
 export const copyChord = (event: globalThis.KeyboardEvent, inField = false) => {
   if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+  if (inField && !(isPC ? event.ctrlKey : event.metaKey)) return
   const code = keyCode(event)
   if (inField && !FIELD_KEYS.has(code)) return
   return COPY_KEYS[code]
