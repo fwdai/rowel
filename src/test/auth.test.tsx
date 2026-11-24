@@ -56,22 +56,21 @@ describe('Auth', () => {
     expect(screen.getByLabelText('Reveal passphrase')).toBeInTheDocument()
   })
 
-  it('puts the caret where you click so backspace edits mid-passphrase', async () => {
+  it('reveals the passphrase in the input itself, with no copy beside it', async () => {
     render(<Auth biometric={false} />)
     const input = screen.getByPlaceholderText<HTMLInputElement>('Master Password')
 
     await userEvent.type(input, 'abcd')
-    expect(input.selectionStart).toBe(4)
+    expect(input.type).toBe('password')
 
-    // jsdom lays the cell row out at x=0, so 30px (two 15px cells) is the
-    // boundary between 'b' and 'c'.
-    fireEvent.mouseDown(input, { clientX: 30, button: 0 })
-    expect(input.selectionStart).toBe(2)
-    expect(input.selectionEnd).toBe(2)
+    await userEvent.click(screen.getByLabelText('Reveal passphrase'))
+    expect(input.type).toBe('text')
+    expect(input.value).toBe('abcd')
+    // The browser draws the value; nothing else in the document holds it.
+    expect(screen.queryByText('abcd')).not.toBeInTheDocument()
 
-    await userEvent.keyboard('{Backspace}')
-    expect(input.value).toBe('acd')
-    expect(input.selectionStart).toBe(1)
+    await userEvent.click(screen.getByLabelText('Hide passphrase'))
+    expect(input.type).toBe('password')
   })
 
   it('acknowledges Enter immediately with a verifying state', async () => {

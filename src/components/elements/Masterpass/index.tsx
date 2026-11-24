@@ -4,8 +4,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type KeyboardEvent,
-  type MouseEvent
+  type KeyboardEvent
 } from 'react'
 import { cx } from '@/utils/cx'
 import { useTranslation } from 'react-i18next'
@@ -15,7 +14,6 @@ import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import type { BiometryType } from '@/api/types'
 import { verbatimInput } from '../inputProps'
 import Biometric from './Biometric'
-import Dots, { CELL } from './Dots'
 
 interface Props {
   // Rendered under the card, in the field's own red. The lock screen says its
@@ -42,7 +40,7 @@ interface Props {
   // Hold the card on the success tint while the unlock lands.
   success?: boolean
   // The submitted passphrase is being verified (key derivation is deliberately
-  // slow) — ripple the dots and orbit the halo.
+  // slow) — shimmer the passphrase and orbit the halo.
   pending?: boolean
   onEnter?: (value: string) => void
   onChange?: (event: ChangeEvent<HTMLInputElement>) => void
@@ -51,17 +49,17 @@ interface Props {
 
 // THE master-passphrase field, one presentation everywhere it is asked for —
 // the lock screen, and the first run's create and restore screens — so the
-// field the user meets on day one is the one they meet every day after. The
-// real value and selection live in the input; mirrored copies drive the dot
-// overlay. Masking is done with a text-transparent input + custom dots so the
-// caret and letter spacing match the design in both themes. Because the
-// input's own glyph geometry never matches the fixed cell grid, clicks are
-// mapped to a character index against the drawn cells rather than left to the
-// browser, and the overlay caret tracks the input's real selection so it
-// always shows where the next edit lands.
+// field the user meets on day one is the one they meet every day after.
+//
+// The text is the input's own, so the caret, selection, scrolling and every
+// way of editing are the browser's: a passphrase longer than the card scrolls
+// inside it like any other field. Masked, the input is set in the mask font,
+// which draws the brand asterisk where the browser asks for a bullet; revealed,
+// in the mono tier. Both are tracked to one pitch (see `tracking-masked`), so
+// the eye swaps each asterisk for its character where it stands.
 //
 // Deliberately unlike every other field in the app: a white card set gently
-// into the window ground (see --lockfield-shadow) with big centered dots,
+// into the window ground (see --lockfield-shadow) with its centered asterisks,
 // whose border + halo carry the state — its own blue on focus (`lockfield`
 // tokens, not the user's accent: this control's states are its character),
 // red (plus a shake) on a bad passphrase, green while a successful unlock
@@ -88,10 +86,7 @@ export default function Masterpass({
   const { t } = useTranslation()
   const [value, setValue] = useState('')
   const [reveal, setReveal] = useState(false)
-  const [focused, setFocused] = useState(false)
-  const [selection, setSelection] = useState<[number, number]>([0, 0])
   const inputRef = useRef<HTMLInputElement>(null)
-  const rowRef = useRef<HTMLDivElement>(null)
   // Whether focus is anywhere in the card (the input, or one of its buttons).
   // A ref, not state: it is only ever read at the moment the card goes inert.
   const within = useRef(false)
@@ -136,39 +131,13 @@ export default function Masterpass({
     else if (biometric) onBiometric?.()
   }
 
-  // Mirror the input's selection into state so the overlay caret follows it.
-  // Called from every event that can move it (typing, arrows, select-all,
-  // focus, and our own click mapping).
-  const syncSelection = () => {
-    const el = inputRef.current
-    if (!el) return
-    const end = el.value.length
-    setSelection([el.selectionStart ?? end, el.selectionEnd ?? end])
-  }
-
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     setValue(event.currentTarget.value)
-    syncSelection()
     onChange?.(event)
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter' && !event.repeat) doSubmit(event.currentTarget.value)
-  }
-
-  // Place the caret on the cell boundary nearest the click. The browser would
-  // otherwise position it by the input's own (transparent, differently spaced)
-  // glyphs, landing it on a different character than the one under the pointer.
-  const handleMouseDown = (event: MouseEvent<HTMLInputElement>) => {
-    const row = rowRef.current
-    if (event.button !== 0 || !row) return
-    event.preventDefault()
-    const input = event.currentTarget
-    const x = event.clientX - row.getBoundingClientRect().left
-    const at = Math.max(0, Math.min(input.value.length, Math.round(x / CELL)))
-    input.focus()
-    input.setSelectionRange(at, at)
-    syncSelection()
   }
 
   return (
@@ -209,11 +178,18 @@ export default function Masterpass({
           <input
             ref={inputRef}
             type={reveal ? 'text' : 'password'}
-            // The input's own text never shows: masked dots and the revealed
-            // value are both drawn by the cell overlay (see Dots) so they share
-            // one geometry, including the selection wash. Only the placeholder
-            // renders from here (15px, muted ink).
-            className="absolute inset-0 w-full rounded-xl border-0 bg-transparent px-10 text-center font-sans text-md tracking-secret text-transparent caret-transparent outline-none selection:bg-transparent placeholder:text-text2"
+            className={cx(
+              // The side padding keeps the text clear of the reveal button, and
+              // is mirrored on the left so the row stays centered in the card.
+              // An engine dims a disabled input on its own; the card decides
+              // that here.
+              'absolute inset-0 w-full rounded-xl border-0 bg-transparent px-10 text-center text-md caret-lockfield outline-none selection:bg-lockfield-soft disabled:opacity-100',
+              'placeholder:font-sans placeholder:tracking-secret placeholder:text-text2',
+              reveal ? 'font-mono tracking-revealed' : 'font-mask tracking-masked',
+              // The shimmer's gradient is the ink, so it and a solid ink are
+              // exclusive (see Eyebrow).
+              pending ? 'shimmer-text' : reveal ? 'text-text' : 'text-text/75'
+            )}
             placeholder={placeholder || t('Master Password')}
             // The passphrase is stored exactly as typed, including while
             // revealed — when `type` is `text` and nothing else would hold the
@@ -225,22 +201,6 @@ export default function Masterpass({
             value={value}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            onKeyUp={syncSelection}
-            onSelect={syncSelection}
-            onMouseDown={handleMouseDown}
-            onFocus={() => {
-              setFocused(true)
-              syncSelection()
-            }}
-            onBlur={() => setFocused(false)}
-          />
-          <Dots
-            count={value.length}
-            caret={focused && !inert}
-            selection={selection}
-            rowRef={rowRef}
-            text={reveal ? value : undefined}
-            busy={pending}
           />
           {/* Reveal is a secondary modifier of what you're typing, so it only
               appears once there is something to reveal, small and dim. The
