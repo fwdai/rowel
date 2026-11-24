@@ -119,7 +119,8 @@ pub fn run() {
     #[cfg(mobile)]
     {
         // The OAuth redirect for the public mobile client arrives on the app's
-        // own URL scheme (see `tauri.ios.conf.json`), not on a loopback port.
+        // own URL scheme (`sync::providers::deep_link_scheme`), not on a
+        // loopback port.
         builder = builder.plugin(tauri_plugin_deep_link::init());
     }
 
@@ -226,8 +227,8 @@ pub fn run() {
                     opened::from_args(std::env::args().skip(1), &cwd),
                 );
             }
-            // The second half of the mobile OAuth flow: iOS reopens the app
-            // with Google's redirect once the user has approved.
+            // The second half of the mobile OAuth flow: the OS reopens the app
+            // with the provider's redirect once the user has approved.
             #[cfg(mobile)]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;

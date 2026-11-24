@@ -55,7 +55,7 @@ pub fn app_key() -> Option<String> {
 /// "invalid redirect_uri" page.
 ///
 /// Desktop only, like the `OAuthConfig` field it fills: a phone has no
-/// loopback listener, and an unread constant fails the iOS build.
+/// loopback listener, and an unread constant fails a phone build.
 #[cfg(any(desktop, test))]
 pub const LOOPBACK_PORTS: [u16; 3] = [53682, 53683, 53684];
 
@@ -74,9 +74,10 @@ pub fn loopback_redirect_uri(port: u16) -> String {
 
 /// The URL scheme the official Dropbox SDKs register for the redirect on
 /// mobile: `db-<APP_KEY>`. It is per app, so no other Dropbox app's redirect
-/// lands on ours. Only the OS-level scheme needs registering (in
-/// `tauri.ios.conf.json`'s deep-link schemes); that Dropbox accepts it without
-/// an App Console entry is inferred from the SDK working, not documented.
+/// lands on ours. Only the OS-level scheme needs registering (among the
+/// build's deep-link schemes: an iOS URL type, an Android intent filter); that
+/// Dropbox accepts it without an App Console entry is inferred from the SDK
+/// working, not documented.
 #[cfg(any(mobile, test))]
 pub const MOBILE_SCHEME_PREFIX: &str = "db-";
 
@@ -91,10 +92,11 @@ pub const MOBILE_REDIRECT_PATH: &str = "://2/token";
 #[cfg(any(mobile, test))]
 pub const MOBILE_CANCEL_PATH: &str = "://2/cancel";
 
-/// `db-<APP_KEY>`, the deep-link scheme the iOS build registers. It is not
-/// committed in `tauri.ios.conf.json` (a placeholder is an illegal scheme and
-/// fails the upload); the release build injects it from `DROPBOX_APP_KEY`
-/// beside Google's (`scripts/release-ios.sh`).
+/// `db-<APP_KEY>`, the deep-link scheme a phone build registers. It is not
+/// committed in `tauri.ios.conf.json` or `tauri.android.conf.json` (a
+/// placeholder is an illegal scheme and fails the App Store upload); the build
+/// injects it from `DROPBOX_APP_KEY` beside Google's (`scripts/release-ios.sh`,
+/// `scripts/deep-link-config.mjs`).
 #[cfg(any(mobile, test))]
 pub fn mobile_scheme(app_key: &str) -> String {
     format!("{MOBILE_SCHEME_PREFIX}{app_key}")
