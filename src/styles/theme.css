@@ -12,20 +12,23 @@
 @source not '../../extension';
 
 /*
+ * The mask font: one glyph, the brand asterisk, on the code points an engine
+ * substitutes for a masked character. Set on a password input (`font-mask`),
+ * it has the browser draw the asterisk where it would draw a bullet. Baked
+ * from the shared geometry by `bun run mask-font`. Never inlined: the CSP
+ * takes fonts from 'self' only, which a data: URL is not.
+ */
+@font-face {
+  font-family: 'Rowel Mask';
+  src: url('../assets/fonts/rowel-mask.otf?no-inline') format('opentype');
+  font-display: block;
+}
+
+/*
  * Shared motion primitives for the redesign (from the Keyring lock prototype).
  * Kept as top-level @keyframes so any component can reference them via an
  * arbitrary `animate-[...]` utility regardless of theme.
  */
-@keyframes caret {
-  0%,
-  45% {
-    opacity: 1;
-  }
-  55%,
-  100% {
-    opacity: 0;
-  }
-}
 @keyframes fade {
   from {
     opacity: 0;
@@ -197,18 +200,6 @@
   }
   to {
     transform: translate(-50%, -50%) rotate(360deg);
-  }
-}
-/* While the key derives, the mask dots ripple in sequence (per-cell delay). */
-@keyframes dotwave {
-  0%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.55;
-  }
-  50% {
-    transform: translateY(-3px);
-    opacity: 1;
   }
 }
 /* The wide lock card gets a straight sideways nudge; rotation is the mascot's. */
@@ -390,6 +381,11 @@
     Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas,
     'Roboto Mono', 'Liberation Mono', monospace;
+  /* The master password while masked. The mono tier behind it draws whatever
+     the mask font does not hold: the character a phone echoes for a moment
+     before masking it. */
+  --font-mask: 'Rowel Mask', ui-monospace, 'SF Mono', SFMono-Regular, Menlo,
+    Consolas, 'Roboto Mono', 'Liberation Mono', monospace;
 
   --color-app: var(--c-app);
   --color-screen: var(--c-screen);
@@ -556,6 +552,12 @@
   --tracking-label: 0.12em;
   --tracking-display: -0.02em;
   --tracking-secret: 0.08em;
+  /* The master password's 12px pitch, reached from either side: the mask
+     glyph advances 0.6em (scripts/mask-font.ts) and a revealed character 1ch
+     of whichever mono the platform has, so the two tile identically and a
+     reveal swaps each asterisk for its character in place. */
+  --tracking-masked: calc(12px - 0.6em);
+  --tracking-revealed: calc(12px - 1ch);
 
   --radius-*: initial;
   --radius-xs: 4px;
