@@ -270,8 +270,12 @@
    * home indicator or a gesture handle is drawn over the page and floating
    * chrome may sit beside it (see `EDGE` in Compact/chrome); a bar that takes
    * taps may have nothing under it, so the shells end above it.
+   *
+   * On `html` rather than `:root`: the first `:root` block in this file is the
+   * palette, which is how the extension's theme script finds it
+   * (`scripts/extension-theme.mjs`).
    */
-  :root {
+  html {
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-right: env(safe-area-inset-right, 0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
