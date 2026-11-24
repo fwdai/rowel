@@ -13,9 +13,8 @@ import Error from '../Error'
 import IconButton from '../IconButton'
 import { EyeGlyph, EyeOffGlyph } from '@/components/Main/icons'
 import type { BiometryType } from '@/api/types'
-import { biometryLabel } from '@/lib/biometry'
-import BiometryGlyph from '../BiometryGlyph'
 import { verbatimInput } from '../inputProps'
+import Biometric from './Biometric'
 import Dots, { CELL } from './Dots'
 
 interface Props {
@@ -35,6 +34,9 @@ interface Props {
   // The field takes focus on mount, which is right for every screen that draws
   // one. The setup screen draws two, and only the first of them should.
   autoFocus?: boolean
+  // Take the caret back whenever the window comes to the front, for a screen
+  // where this field is the one thing to type into (the lock screen).
+  refocus?: boolean
   // Paint the card as invalid without rendering an inline error, for the
   // screens that surface the message elsewhere: the lock screen in its
   // eyebrow, the setup screen in its strength line.
@@ -77,6 +79,7 @@ export default function Masterpass({
   placeholder,
   testid,
   autoFocus = true,
+  refocus,
   invalid,
   success,
   pending,
@@ -115,9 +118,26 @@ export default function Masterpass({
       inputRef.current?.focus()
   }, [inert])
 
+  // A window brought back to the front is typed into straight away, without a
+  // click to find the field first. Another field the user was in (the vault
+  // picker's search) keeps the caret it had.
+  useEffect(() => {
+    if (!refocus) return
+    const onWindowFocus = () => {
+      const active = document.activeElement
+      if (active instanceof HTMLInputElement && active !== inputRef.current) return
+      inputRef.current?.focus()
+    }
+    window.addEventListener('focus', onWindowFocus)
+    return () => window.removeEventListener('focus', onWindowFocus)
+  }, [refocus])
+
+  // With nothing typed there is no passphrase to submit, so Enter asks the
+  // biometric gate instead, when the card offers one.
   const doSubmit = (val: string) => {
-    if (inert || val === '') return
-    onEnter?.(val)
+    if (inert) return
+    if (val !== '') onEnter?.(val)
+    else if (biometric) onBiometric?.()
   }
 
   // Mirror the input's selection into state so the overlay caret follows it.
@@ -137,7 +157,9 @@ export default function Masterpass({
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') doSubmit(event.currentTarget.value)
+    // A held Enter is one press: its repeats must not ask the biometric gate
+    // of a field the first one just emptied.
+    if (event.key === 'Enter' && !event.repeat) doSubmit(event.currentTarget.value)
   }
 
   // Place the caret on the cell boundary nearest the click. The browser would
@@ -241,24 +263,8 @@ export default function Masterpass({
           )}
         </div>
 
-        {/* Biometrics are the card's own end segment: a taller divider than the
-            reveal tier, and the glyph in the macOS Touch ID rose, sized to
-            nearly fill the 28px button. Which glyph and name — Touch ID or Face
-            ID — is `lib/biometry`'s call, from what the device reports. */}
         {biometric && (
-          <>
-            <span aria-hidden className="my-auto h-7 w-px bg-line" />
-            <IconButton
-              label={t(biometryLabel(biometry))}
-              className="mx-1.5 my-auto"
-              onClick={onBiometric}
-            >
-              {/* Child span so the rose survives IconButton's hover ink. */}
-              <span className="text-touchid">
-                <BiometryGlyph type={biometry} size={22} />
-              </span>
-            </IconButton>
-          </>
+          <Biometric biometry={biometry} enter={value === ''} onClick={onBiometric} />
         )}
       </div>
       <Error error={error} />

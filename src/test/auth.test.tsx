@@ -248,6 +248,77 @@ describe('Auth', () => {
     await waitFor(() => expect(useApp.getState().flow).toBe('main'))
   })
 
+  it('asks the biometric gate on Enter with nothing typed', async () => {
+    mockCommand('unlock_biometric', () => ({ entries: [], syncConfigured: false }))
+    render(<Auth biometric />)
+
+    await userEvent.type(screen.getByPlaceholderText('Master Password'), '{Enter}')
+
+    expect(calls('unlock_biometric')).toHaveLength(1)
+    expect(calls('unlock')).toHaveLength(0)
+    await waitFor(() => expect(useApp.getState().flow).toBe('main'))
+  })
+
+  it('submits the passphrase on Enter once something is typed, biometrics or not', async () => {
+    mockCommand('unlock', () => ({ entries: [], syncConfigured: false }))
+    render(<Auth biometric />)
+
+    await userEvent.type(screen.getByPlaceholderText('Master Password'), 'secret{Enter}')
+
+    expect(calls('unlock')).toHaveLength(1)
+    expect(calls('unlock_biometric')).toHaveLength(0)
+  })
+
+  it('leaves Enter on an empty field alone without an enrollment', async () => {
+    render(<Auth biometric={false} />)
+
+    await userEvent.type(screen.getByPlaceholderText('Master Password'), '{Enter}')
+
+    expect(calls('unlock_biometric')).toHaveLength(0)
+    expect(calls('unlock')).toHaveLength(0)
+  })
+
+  // The tooltip names the key only while the key does that: with a passphrase
+  // typed, Enter submits it.
+  it('hints ⏎ on the biometric button while the field is empty', async () => {
+    render(<Auth biometric />)
+
+    await userEvent.hover(screen.getByLabelText('Touch ID'))
+    expect(await screen.findByRole('tooltip', { hidden: true })).toHaveTextContent('Touch ID⏎')
+
+    await userEvent.type(screen.getByPlaceholderText('Master Password'), 'a')
+    await userEvent.hover(screen.getByLabelText('Touch ID'))
+    await waitFor(() =>
+      expect(screen.getByRole('tooltip', { hidden: true })).toHaveTextContent(/^Touch ID$/)
+    )
+  })
+
+  it('takes the caret back when the window comes to the front', () => {
+    render(<Auth biometric />)
+    const input = screen.getByPlaceholderText('Master Password')
+    screen.getByLabelText('Touch ID').focus()
+    expect(input).not.toHaveFocus()
+
+    fireEvent.focus(window)
+
+    expect(input).toHaveFocus()
+  })
+
+  it('leaves the caret in another field when the window comes to the front', () => {
+    render(
+      <>
+        <input aria-label="elsewhere" />
+        <Auth biometric />
+      </>
+    )
+    const elsewhere = screen.getByLabelText('elsewhere')
+    elsewhere.focus()
+
+    fireEvent.focus(window)
+
+    expect(elsewhere).toHaveFocus()
+  })
+
   // Mid-switch the backend already points at the next vault while the screen
   // still shows the last one, so nothing typed or touched is sent anywhere.
   it('takes no attempt while a workspace switch is in flight', async () => {
