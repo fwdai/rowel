@@ -7,7 +7,8 @@ import {
   setFilterType
 } from '@/store'
 import { kindOf } from '@/kinds'
-import { chord } from '@/lib/platform'
+import { chord, isMobile } from '@/lib/platform'
+import { shortcutHint } from '@/lib/shortcuts'
 import { useTranslation } from 'react-i18next'
 import EmptyState from '@/components/elements/EmptyState'
 import { addEntry } from '@/components/Main/AddSecret/add'
@@ -39,21 +40,26 @@ export function VaultEmpty() {
       // Wrapped, and named: handed straight to onClick it took the click event
       // as its section argument and Settings opened on none at all.
       secondary={{ label: t('Import from another app'), onClick: () => openSettings('import') }}
-      hints={[
-        { keys: chord('N'), label: t('add') },
-        { keys: chord('G'), label: t('generator') },
-        { keys: chord('K'), label: t('commands') }
-      ]}
+      // A phone or tablet has no keyboard to hold a chord with.
+      hints={
+        isMobile
+          ? undefined
+          : [
+              { keys: shortcutHint('add'), label: t('add') },
+              { keys: shortcutHint('generator'), label: t('generator') },
+              { keys: shortcutHint('commands'), label: t('commands') }
+            ]
+      }
     />
   )
 }
 
 // The vault has entries and none is open. No body and no buttons — this state
 // is one arrow key away from real content — so the space goes to the thing
-// worth learning here: every shortcut that answers from where the keyboard is
-// now, the list, as a cheat sheet. The list's own keys are `useListKeys`: ⏎
-// opens the row and ⌘⏎ copies its secret without opening it. ⌘E is left out —
-// it needs an open entry, and this state is the one where there is none.
+// worth learning here: a cheat sheet of the chords used most, in pairs. Not all
+// of them — the palette (⌘K) lists the copy chords too — so the sheet is four
+// rows. ⌘⏎ (`useListKeys`) rather than ⌘C for the secret: it answers from the
+// search field as well as from a row.
 export function SelectEmpty() {
   const { t } = useTranslation()
   return (
@@ -61,16 +67,20 @@ export function SelectEmpty() {
       testid="empty-select"
       mark={<Mark />}
       title={t('Select an item')}
-      hints={[
-        { keys: '↑↓', label: t('browse') },
-        { keys: '⏎', label: t('open') },
-        { keys: chord('⏎'), label: t('copy') },
-        { keys: chord('F'), label: t('search') },
-        { keys: chord('N'), label: t('add') },
-        { keys: chord('G'), label: t('generator') },
-        { keys: chord('K'), label: t('commands') },
-        { keys: chord('L'), label: t('lock') }
-      ]}
+      hints={
+        isMobile
+          ? undefined
+          : [
+              { keys: '↑↓', label: t('browse') },
+              { keys: shortcutHint('search'), label: t('search') },
+              { keys: chord('⏎'), label: t('copy password') },
+              { keys: shortcutHint('copyUsername'), label: t('copy username') },
+              { keys: shortcutHint('add'), label: t('add') },
+              { keys: shortcutHint('generator'), label: t('generator') },
+              { keys: shortcutHint('commands'), label: t('commands') },
+              { keys: shortcutHint('lock'), label: t('lock') }
+            ]
+      }
     />
   )
 }

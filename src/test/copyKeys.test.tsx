@@ -10,8 +10,9 @@ import { calls, clearCalls, mockCommand } from './ipc'
 /*
  * The KeePass copy chords (ListColumn/copyKeys): ⌘B username, ⌘C password,
  * ⌘T one-time code, ⌘Y password and code as one string, ⌘U URL — on a
- * focused row only, so ⌘C everywhere else is still the system copy of whatever
- * text is selected.
+ * focused row, and the ones a text field has no use for (⌘B, ⌘T, ⌘U) from the
+ * search field too. ⌘C everywhere off a row is still the system copy of
+ * whatever text is selected.
  */
 
 const entry = loginEntry({
@@ -106,12 +107,50 @@ describe('the password and code together', () => {
   })
 })
 
-describe('copy chords leave the system copy alone', () => {
-  it('in the search field', async () => {
+describe('copy chords from the search field', () => {
+  it.each([
+    ['KeyB', 'ada@example.com'],
+    ['KeyT', '123456'],
+    ['KeyU', 'https://google.com']
+  ])('%s copies the selected row’s value, caret left in the field', async (code, value) => {
+    await pickRow()
+    const search = screen.getByTestId('search-input')
+    search.focus()
+
+    expect(chord(search, code)).toBe(false)
+
+    await vi.waitFor(() => expect(copied()).toEqual([value]))
+    expect(document.activeElement).toBe(search)
+  })
+
+  it('acts on the first row with nothing selected, like ⌘⏎', async () => {
+    withEntries([loginMeta({ id: 'l1' })])
+    render(<Body />)
+
+    chord(screen.getByTestId('search-input'), 'KeyB')
+
+    await vi.waitFor(() => expect(copied()).toEqual(['ada@example.com']))
+  })
+
+  // On a Mac, ⌃B and ⌃T in a text field move the caret back and transpose.
+  it.each(['KeyB', 'KeyT'])('leaves ⌃%s to the Mac caret', async code => {
     await pickRow()
     clearCalls('reveal_entry')
 
-    expect(chord(screen.getByTestId('search-input'), 'KeyC')).toBe(true)
+    expect(chord(screen.getByTestId('search-input'), code, { ctrlKey: true })).toBe(true)
+
+    expect(calls('reveal_entry')).toHaveLength(0)
+    expect(copied()).toEqual([])
+  })
+})
+
+describe('copy chords leave the system copy alone', () => {
+  // ⌘C is the query's own copy there, and Ctrl+Y a PC's redo.
+  it.each(['KeyC', 'KeyY'])('%s in the search field', async code => {
+    await pickRow()
+    clearCalls('reveal_entry')
+
+    expect(chord(screen.getByTestId('search-input'), code)).toBe(true)
 
     expect(calls('reveal_entry')).toHaveLength(0)
     expect(copied()).toEqual([])

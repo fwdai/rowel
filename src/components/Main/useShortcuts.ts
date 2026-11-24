@@ -12,26 +12,28 @@ import {
   setPref,
   SORT_MODES
 } from '@/store'
+import { SHORTCUTS } from '@/lib/shortcuts'
 import { keyCode } from '@/utils/keys'
 
 // The app-level shortcut surface. One listener, one record — a new chord is
-// one line here. Mounted from Main, so chords are live only while unlocked.
+// a key in `SHORTCUTS` and one line here. Mounted from Main, so chords are
+// live only while unlocked.
 //
 // Keyed by physical key (`KeyboardEvent.code`), not by the character the layout
 // prints, so the chords work the same on a Cyrillic keyboard (see `keyCode`).
 const BINDINGS: Record<string, () => void> = {
-  KeyK: openPalette,
-  KeyL: lockVault,
+  [SHORTCUTS.commands]: openPalette,
+  [SHORTCUTS.lock]: lockVault,
   // Re-pressing ⌘G must not drop the callback the generator was opened with:
   // the flag flips before the card mounts, so one press cannot queue a second
   // open.
-  KeyG: () => {
+  [SHORTCUTS.generator]: () => {
     if (!isModalOpen()) openGenerator()
   },
-  KeyN: openAddPicker,
-  KeyF: focusSearch,
+  [SHORTCUTS.add]: openAddPicker,
+  [SHORTCUTS.search]: focusSearch,
   // Edit whatever the list has selected — nothing to edit without a selection.
-  KeyE: () => {
+  [SHORTCUTS.edit]: () => {
     if (selectCurrent(useVault.getState())) editEntry()
   },
   ...Object.fromEntries(SORT_MODES.map((mode, i) => [`Digit${i + 1}`, () => setPref('sort', mode)]))
