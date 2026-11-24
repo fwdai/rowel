@@ -99,16 +99,25 @@
         --eye: #15161a;
         --glow: rgba(255, 255, 255, 0.06);
       }
-      /* The compact (phone) shell — the same 767px cut as useLayout / the md:
-         breakpoint — pads past the notch and reserves the bottom chrome
-         (AuthShell), which moves where the column centers; mirror it exactly
-         so the mascot lands where LockScreen draws it. The insets are
-         theme.css's `--safe-*`, with what they default to spelled out for the
-         frames before that stylesheet is in. */
+      /* Where the column centers moves with whatever keeps the lock screen
+         clear of the edges; mirror it exactly so the mascot lands where
+         LockScreen draws it. At every width that is #root's side padding (a
+         cutout or a navigation bar down one side of a landscape phone). The
+         compact (phone) shell — the same 767px cut as useLayout / the md:
+         breakpoint — also pads past the notch, narrows the gutters and
+         reserves the bottom chrome (AuthShell). The insets are theme.css's
+         `--safe-*`, with what they default to spelled out for the frames
+         before that stylesheet is in. */
+      .splash {
+        padding-right: var(--safe-right, env(safe-area-inset-right));
+        padding-left: var(--safe-left, env(safe-area-inset-left));
+      }
       @media (max-width: 767px) {
         .splash {
-          padding: var(--safe-top, env(safe-area-inset-top)) 1.25rem
-            calc(var(--safe-bottom, env(safe-area-inset-bottom)) + 7rem);
+          padding: var(--safe-top, env(safe-area-inset-top))
+            calc(var(--safe-right, env(safe-area-inset-right)) + 1.25rem)
+            calc(var(--safe-bottom, env(safe-area-inset-bottom)) + 7rem)
+            calc(var(--safe-left, env(safe-area-inset-left)) + 1.25rem);
         }
       }
 

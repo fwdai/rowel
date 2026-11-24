@@ -285,15 +285,30 @@
 
   /*
    * The mobile webviews hand the page the whole screen (on iOS window.rs turns
-   * UIKit's automatic safe-area insets off; Android is edge to edge), and the
-   * compact shell pads its own edges with the insets above. The wide shell — a
-   * tablet — has no such chrome, so it takes them here, on the root, at the
-   * same 768px cut the shell switches on (`useLayout`, Tailwind's `md:`). Zero
-   * everywhere else.
+   * UIKit's automatic safe-area insets off; Android is edge to edge), so what
+   * is laid out in the root keeps clear of the edges here, once, for every
+   * screen in it.
+   *
+   * The sides at every width: a landscape phone narrower than the 768px cut
+   * still has a cutout or a navigation bar down one side, and no screen of the
+   * compact shell draws chrome there. Top and bottom only at the cut
+   * (`useLayout`, Tailwind's `md:`): the compact shell pads those itself, in
+   * its headers, tab bar and sheets, so that its grounds run under the status
+   * bar and the home indicator; the wide shell — a tablet — has no such
+   * chrome. All zero on the desktop and on a phone held upright.
+   *
+   * What is in the side strips is the body's `--c-app`, as under the wide
+   * shell. Anything positioned against the viewport rather than laid out here
+   * takes the sides itself — see `px-safe` and its siblings below.
    */
+  #root {
+    padding-right: var(--safe-right);
+    padding-left: var(--safe-left);
+  }
   @media (min-width: 48rem) {
     #root {
-      padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+      padding-top: var(--safe-top);
+      padding-bottom: var(--safe-bottom);
     }
   }
 
@@ -631,6 +646,34 @@
     background: var(--scrim);
     opacity: calc((1 - var(--pop)) * 0.35);
   }
+}
+
+/*
+ * The side insets, for a surface positioned against the viewport (`fixed`, or
+ * portaled to the body) rather than laid out in #root, which keeps everything
+ * in flow clear of them. One of these on every such surface, chosen by how it
+ * is placed; each is zero wherever the insets are (the desktop, a phone held
+ * upright). `src/test/safeSides.test.tsx` fails on one that takes none.
+ *
+ * - `px-safe`: a frame over the whole screen. Its ground or scrim still runs
+ *   to the edges, under a cutout or a side navigation bar; what it holds is
+ *   laid out between them.
+ * - `inset-x-safe`: a box centred across the screen (a toast), centred between
+ *   the safe edges instead.
+ * - `mx-safe`: a box pinned to one side (`left-5`, `right-5`) is pushed in by
+ *   that side's inset; a card centred in a frame, by both.
+ */
+@utility px-safe {
+  padding-right: var(--safe-right);
+  padding-left: var(--safe-left);
+}
+@utility inset-x-safe {
+  right: var(--safe-right);
+  left: var(--safe-left);
+}
+@utility mx-safe {
+  margin-right: var(--safe-right);
+  margin-left: var(--safe-left);
 }
 
 /*

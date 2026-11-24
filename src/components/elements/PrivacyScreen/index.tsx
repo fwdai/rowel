@@ -27,7 +27,7 @@ export default function PrivacyScreen() {
     <div
       data-testid="privacy-screen"
       aria-hidden
-      className="fixed inset-0 z-[2000] grid place-items-center bg-app"
+      className="fixed inset-0 z-[2000] grid place-items-center bg-app px-safe"
     >
       <Logo width={72} height={72} className="fill-brand" />
     </div>

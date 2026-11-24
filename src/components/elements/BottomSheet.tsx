@@ -73,7 +73,7 @@ export default function BottomSheet({ onClose, labelledBy, testid, ref, children
       // having to read class names off the element.
       data-frame="bottom-sheet"
       style={viewportStyle(view)}
-      className="animate-fade fixed inset-0 z-50 flex flex-col justify-end"
+      className="animate-fade fixed inset-0 z-50 flex flex-col justify-end px-safe"
     >
       {/* The scrim is its own layer rather than the frame's background: the card
           sits on top of it, so a tap that lands on one is never both. */}

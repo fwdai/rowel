@@ -353,6 +353,18 @@ Every one of these screens scrolls through `SCREEN_SCROLLER` (`Compact/chrome`).
   WebView reports them only on some versions. `--bar-bottom` is the part of
   the bottom edge that is a three-button navigation bar, which the shell ends
   above; floating chrome measures from the shell's edge.
+- The sides (`--safe-left` / `--safe-right`: a cutout or a navigation bar down
+  one side of a landscape phone, the notch of an iPhone on its side) are kept
+  in two places only, and no screen pads them itself. `#root` takes them at
+  every width for everything laid out in it, so a new screen is clear of them
+  without knowing. Anything positioned against the viewport instead (`fixed`,
+  or portaled to the body) takes one of three utilities from `theme.css`:
+  `px-safe` on a frame over the whole screen (its ground or scrim still runs
+  to the edges), `inset-x-safe` on a box centred across it, `mx-safe` on a box
+  pinned to one side or a card centred in a frame. The shared frames (`Sheet`,
+  `BottomSheet`, `Modal`) and the `TOAST` token already carry theirs, so a
+  dialog or a toast built on them needs nothing; `src/test/safeSides.test.tsx`
+  fails on a new viewport-positioned class list that carries none.
 - Back: every surface with a way back — a dialog's close, the nav row's back,
   the form's guarded Cancel, the add picker's question — offers that same
   handler with `useBack`, where its state lives. Android's Back button and

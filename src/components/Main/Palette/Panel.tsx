@@ -67,7 +67,7 @@ export default function Panel() {
   return (
     <div
       onClick={closePalette}
-      className="fixed inset-0 z-50 flex items-start justify-center bg-scrim pt-[92px] backdrop-blur-xs animate-fade"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-scrim px-safe pt-[92px] backdrop-blur-xs animate-fade"
     >
       <div
         data-testid="command-palette"

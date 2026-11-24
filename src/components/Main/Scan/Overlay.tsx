@@ -12,7 +12,7 @@ export default function Overlay() {
     <div
       data-testid="scan-overlay"
       aria-hidden
-      className="animate-fade pointer-events-none fixed inset-0 z-[1100] grid place-items-center bg-scrim backdrop-blur-sm"
+      className="animate-fade pointer-events-none fixed inset-0 z-[1100] grid place-items-center bg-scrim px-safe backdrop-blur-sm"
     >
       <div className="m-6 flex flex-col items-center gap-3 rounded-xl border border-dashed border-accent-line px-10 py-9 text-center">
         <span className="grid h-12 w-12 place-items-center rounded-lg bg-accent-soft text-accent">
