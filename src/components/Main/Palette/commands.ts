@@ -11,7 +11,7 @@ import type { EntryMeta } from '@/api/types'
 import { KINDS, addLabel, kindOf } from '@/kinds'
 import { addEntry } from '@/components/Main/AddSecret/add'
 import { t, type TKey } from '@/i18n'
-import { chord } from '@/lib/platform'
+import { shortcutHint, type Shortcut } from '@/lib/shortcuts'
 import { copyValue, type EntryValue } from '@/services/entries'
 import {
   CopyGlyph,
@@ -41,24 +41,24 @@ export interface Command {
 const copyCommands = (entry: EntryMeta | null): Command[] => {
   if (!entry || entry.deletedAt) return []
   const kind = kindOf(entry.type)
-  const offers: { value: EntryValue; label: TKey; key: string; has: boolean }[] = [
-    { value: 'username', label: 'Copy username', key: 'B', has: !!kind.username },
-    { value: 'secret', label: kind.primaryActionLabel, key: 'C', has: true },
-    { value: 'otp', label: 'Copy one-time code', key: 'T', has: !!kind.otpSecret },
+  const offers: { value: EntryValue; label: TKey; key: Shortcut; has: boolean }[] = [
+    { value: 'username', label: 'Copy username', key: 'copyUsername', has: !!kind.username },
+    { value: 'secret', label: kind.primaryActionLabel, key: 'copySecret', has: true },
+    { value: 'otp', label: 'Copy one-time code', key: 'copyOtp', has: !!kind.otpSecret },
     {
       value: 'secretOtp',
       label: 'Copy password and one-time code',
-      key: 'Y',
+      key: 'copySecretOtp',
       has: !!kind.otpSecret
     },
-    { value: 'url', label: 'Copy URL', key: 'U', has: !!kind.url }
+    { value: 'url', label: 'Copy URL', key: 'copyUrl', has: !!kind.url }
   ]
   return offers
     .filter(offer => offer.has)
     .map(offer => ({
       id: `copy-${offer.value}`,
       label: t(offer.label),
-      shortcut: chord(offer.key),
+      shortcut: shortcutHint(offer.key),
       glyph: CopyGlyph,
       run: () => void copyValue(entry, offer.value)
     }))
@@ -86,14 +86,14 @@ export const useCommands = (): Command[] => {
     {
       id: 'add-secret',
       label: t('Add a secret'),
-      shortcut: chord('N'),
+      shortcut: shortcutHint('add'),
       glyph: PlusGlyph,
       run: openAddPicker
     },
     {
       id: 'generate-password',
       label: t('Generate a password'),
-      shortcut: chord('G'),
+      shortcut: shortcutHint('generator'),
       glyph: GeneratorGlyph,
       // The standalone form: nothing to apply the value to, so it copies.
       run: () => openGenerator()
@@ -101,7 +101,7 @@ export const useCommands = (): Command[] => {
     {
       id: 'lock-vault',
       label: t('Lock vault'),
-      shortcut: chord('L'),
+      shortcut: shortcutHint('lock'),
       glyph: LockGlyph,
       run: lockVault
     },

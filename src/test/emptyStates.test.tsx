@@ -115,6 +115,18 @@ describe('empty states', () => {
       // The hero treatment is reserved for the empty vault.
       expect(screen.queryByRole('button')).not.toBeInTheDocument()
     })
+
+    it('lists both copy chords, and keeps the sheet to eight', () => {
+      seed()
+      render(<Aside />)
+
+      expect(screen.getByText('⌘⏎')).toBeInTheDocument()
+      expect(screen.getByText('copy password')).toBeInTheDocument()
+      expect(screen.getByText('⌘B')).toBeInTheDocument()
+      expect(screen.getByText('copy username')).toBeInTheDocument()
+      const sheet = screen.getByTestId('empty-select')
+      expect(sheet.querySelectorAll('.grid > span')).toHaveLength(8)
+    })
   })
 
   describe('vault health with nothing to audit', () => {

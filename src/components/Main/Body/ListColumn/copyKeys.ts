@@ -1,16 +1,17 @@
 import type { KeyboardEvent } from 'react'
 import { useVault, selectCurrent, isModalOpen } from '@/store'
 import { copyValue, type EntryValue } from '@/services/entries'
+import { SHORTCUTS } from '@/lib/shortcuts'
 import { keyCode } from '@/utils/keys'
 
-// KeePass's copy chords, by physical key (see `keyCode`). The palette shows
-// them (Palette/commands.ts); the binding is this record.
+// KeePass's copy chords. The palette shows them (Palette/commands.ts); the
+// binding is this record.
 const COPY_KEYS: Record<string, EntryValue> = {
-  KeyB: 'username',
-  KeyC: 'secret',
-  KeyT: 'otp',
-  KeyY: 'secretOtp',
-  KeyU: 'url'
+  [SHORTCUTS.copyUsername]: 'username',
+  [SHORTCUTS.copySecret]: 'secret',
+  [SHORTCUTS.copyOtp]: 'otp',
+  [SHORTCUTS.copySecretOtp]: 'secretOtp',
+  [SHORTCUTS.copyUrl]: 'url'
 }
 
 // Bound to the listbox, and live only on a row: clicking a row focuses it, so

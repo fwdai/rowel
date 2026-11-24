@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { useUi, setFilterQuery } from '@/store'
 import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
-import { chord } from '@/lib/platform'
+import { shortcutHint } from '@/lib/shortcuts'
 import Kbd from '@/components/elements/Kbd'
 import SearchBox from '@/components/elements/SearchBox'
 import { CloseGlyph } from '../../icons'
@@ -89,7 +89,7 @@ export default function Search({
               !empty && 'translate-x-1 opacity-0'
             )}
           >
-            <Kbd>{chord('F')}</Kbd>
+            <Kbd>{shortcutHint('search')}</Kbd>
           </span>
             {/* Always mounted so it can ease in: a query fades and grows it
                 from a dot to a button, clearing does the reverse. Out of reach
