@@ -319,6 +319,20 @@ describe('Auth', () => {
     expect(elsewhere).toHaveFocus()
   })
 
+  // The menu stays open across the trip away, so its arrows and Enter have to
+  // stay with it too.
+  it('leaves focus in the open lockbox menu when the window comes to the front', async () => {
+    seedApp({ workspaces: [PRIMARY, WORK], activeWorkspace: 'w2' })
+    render(<Auth biometric />)
+    await userEvent.click(screen.getByTestId('workspace-chip'))
+    const row = document.activeElement
+    expect(row?.closest('[role="menu"]')).not.toBeNull()
+
+    fireEvent.focus(window)
+
+    expect(row).toHaveFocus()
+  })
+
   // Mid-switch the backend already points at the next vault while the screen
   // still shows the last one, so nothing typed or touched is sent anywhere.
   it('takes no attempt while a workspace switch is in flight', async () => {

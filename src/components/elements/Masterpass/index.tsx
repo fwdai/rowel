@@ -119,14 +119,18 @@ export default function Masterpass({
   }, [inert])
 
   // A window brought back to the front is typed into straight away, without a
-  // click to find the field first. Another field the user was in (the vault
-  // picker's search) keeps the caret it had.
+  // click to find the field first. Focus the user left somewhere that takes
+  // keys of its own stays there: another field, or an open menu (the vault
+  // picker, whose arrows and Enter would otherwise land here).
   useEffect(() => {
     if (!refocus) return
     const onWindowFocus = () => {
+      const input = inputRef.current
       const active = document.activeElement
-      if (active instanceof HTMLInputElement && active !== inputRef.current) return
-      inputRef.current?.focus()
+      const elsewhere =
+        active !== input &&
+        (active instanceof HTMLInputElement || !!active?.closest('[role="menu"]'))
+      if (!elsewhere) input?.focus()
     }
     window.addEventListener('focus', onWindowFocus)
     return () => window.removeEventListener('focus', onWindowFocus)
