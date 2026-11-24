@@ -2,17 +2,14 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isMobile } from '@/lib/platform'
 import { pickImportFile } from '@/api/pickers'
-import type { PickedFile } from '@/api/tools'
 import { useWebviewDragDrop } from '@/hooks/useWebviewDragDrop'
-import { pickedPath } from '@/lib/picked'
-import { stampSession } from '@/store'
 import { cx } from '@/utils/cx'
 import Button from '@/components/elements/Button'
 import { CARD } from '@/components/elements/tokens'
 import { UploadGlyph } from '../../../../icons'
 
 interface Props {
-  onDrop: (file: PickedFile) => void
+  onDrop: (path: string) => void
 }
 
 // The import section's lead: any export file, with the backend sniffing its
@@ -30,19 +27,16 @@ export default function DropZone({ onDrop }: Props) {
     else if (payload.type === 'drop') {
       setOver(false)
       const [path] = payload.paths
-      if (path) onDrop(pickedPath(path))
+      if (path) onDrop(path)
     } else setOver(true)
   })
 
-  // A pick that comes back after a lock is the old session's, and is dropped.
-  const pick = () => {
-    const current = stampSession()
-    return pickImportFile()
-      .then(file => {
-        if (file && current()) onDrop(file)
+  const pick = () =>
+    pickImportFile()
+      .then(path => {
+        if (path) onDrop(path)
       })
       .catch(() => {})
-  }
 
   const body = (
     <>

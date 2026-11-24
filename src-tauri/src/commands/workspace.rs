@@ -40,7 +40,6 @@ use crate::crypto::{KdfParams, VaultKey};
 use crate::error::{Error, Result};
 use crate::grants::{self, PathGrants, Purpose};
 use crate::models::{EntryMetaDto, UnlockResult};
-use crate::picked;
 use crate::secure_store::KeyStore;
 use crate::session::{list_metas, store_err, Lease};
 use crate::state::AppState;
@@ -660,11 +659,7 @@ impl Source<'_> {
                 }
                 Ok((bytes, Some(vault_id)))
             }
-            Source::File { path, grants } => {
-                let app = app.clone();
-                let open = move |path: &Path| picked::open(&app, path);
-                Ok((read_backup(path, grants, open).await?, None))
-            }
+            Source::File { path, grants } => Ok((read_backup(path, grants).await?, None)),
         }
     }
 
@@ -703,26 +698,21 @@ impl Source<'_> {
 
 /// The backup at `path`, read on the terms onboarding reads one
 /// (`setup_restore_from_file`): only a path the user chose — picked, dropped or
-/// opened with the app (see `grants`) — opened by `open`, which is
-/// `picked::open` (a regular file, or on Android the document picked) and in
-/// the tests the file on disk, and capped where a download is
+/// opened with the app (see `grants`) — and only a regular file
+/// (`storage::read_regular_file_capped`), capped where a download is
 /// (`pack::MAX_PACK_BYTES`) so that a file which is not a pack is never
 /// buffered whole before the pack's own checks (`pack::unpack`) refuse it.
 ///
 /// The grant is checked, not spent: a mistyped password reads the file again,
 /// and the restore that installs it spends it ([`Source::spend`]).
-async fn read_backup(
-    path: &Path,
-    grants: &PathGrants,
-    open: impl FnOnce(&Path) -> Result<picked::Chosen> + Send + 'static,
-) -> Result<Vec<u8>> {
+async fn read_backup(path: &Path, grants: &PathGrants) -> Result<Vec<u8>> {
     if !grants.holds(path, Purpose::Backup) {
         return Err(grants::not_chosen());
     }
     // Off the command thread: a backup is the whole vault, and a large one on
     // a slow disk must not stall the async runtime.
     let path = path.to_path_buf();
-    blocking(move || storage::read_capped(open(&path)?.contents, sync::pack::MAX_PACK_BYTES as u64))
+    blocking(move || storage::read_regular_file_capped(&path, sync::pack::MAX_PACK_BYTES as u64))
         .await
 }
 
@@ -2052,7 +2042,7 @@ mod tests {
     }
 
     fn read(path: &Path, grants: &PathGrants) -> Result<Vec<u8>> {
-        tauri::async_runtime::block_on(read_backup(path, grants, picked::open_local))
+        tauri::async_runtime::block_on(read_backup(path, grants))
     }
 
     // The restore's lease and repoint, as `restore_workspace` takes them: the
@@ -2106,27 +2096,6 @@ mod tests {
             identity::vault_id(&previous.store).unwrap().as_deref(),
             Some("a1b2")
         );
-    }
-
-    // An Android document its provider serves through a pipe: read on the
-    // same terms, and installed as a lockbox like a file on disk.
-    #[cfg(unix)]
-    #[test]
-    fn a_backup_served_through_a_pipe_restores() {
-        let root = tmp_root();
-        let backup = backup_of(Some("cafe"));
-        let grants = chosen(&backup);
-        let file = std::fs::read(&backup).unwrap();
-
-        let open = move |_: &Path| Ok(picked::piped("Rowel backup.rowel", file));
-        let bytes = tauri::async_runtime::block_on(read_backup(&backup, &grants, open)).unwrap();
-        let dir = new_dir(&root, "c3d4");
-        let (_, store, entries, vault_id) =
-            install_pack(&dir, &bytes, BACKUP_PASSWORD, None).unwrap();
-        drop(store);
-
-        assert_eq!(vault_id, "cafe");
-        assert_eq!(entries.len(), 1);
     }
 
     // A wrong password writes nothing that outlives the unwinding, and the

@@ -12,18 +12,14 @@ export const BACKUP_EXTENSION = '.rowel'
  */
 export const LEGACY_BACKUP_EXTENSION = '.swftx'
 
-// Each is told from a file's name (`PickedFile.name`), never a picked file's
-// address, which on Android ends in a document id. A path on disk ends in its
-// name, so a dropped path may be asked directly.
+/** Whether an OS path names one of our backups, by extension, case aside. */
+export const isBackupFile = (path: string): boolean =>
+  path.toLowerCase().endsWith(BACKUP_EXTENSION)
 
-/** Whether a file's name is one of our backups, by extension, case aside. */
-export const isBackupFile = (name: string): boolean =>
-  name.toLowerCase().endsWith(BACKUP_EXTENSION)
-
-/** Whether a file's name is a legacy vault, by extension, case aside. */
-export const isLegacyBackupFile = (name: string): boolean =>
-  name.toLowerCase().endsWith(LEGACY_BACKUP_EXTENSION)
+/** Whether an OS path names a legacy vault, by extension, case aside. */
+export const isLegacyBackupFile = (path: string): boolean =>
+  path.toLowerCase().endsWith(LEGACY_BACKUP_EXTENSION)
 
 /** Either file the first run's restore step takes. */
-export const isRestorableFile = (name: string): boolean =>
-  isBackupFile(name) || isLegacyBackupFile(name)
+export const isRestorableFile = (path: string): boolean =>
+  isBackupFile(path) || isLegacyBackupFile(path)

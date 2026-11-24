@@ -322,20 +322,6 @@ export const clearSession = () => {
   useApp.setState(state => ({ remoteVaults: [], locks: state.locks + 1 }))
 }
 
-/**
- * Stamp the session open now, for work that awaits with nothing of the
- * session in hand — a picker, a file being read — and so cannot be refused by
- * Rust when it resumes. The check it returns says whether that session is
- * still the one open: false once it has locked, whatever unlocked since (this
- * vault or another workspace's), so the work publishes nothing — a result or
- * an error — into a session that never asked. `same_session` is the same check
- * around Rust's own awaits.
- */
-export const stampSession = (): (() => boolean) => {
-  const locks = useApp.getState().locks
-  return () => useApp.getState().locks === locks
-}
-
 /** What the last sync run found in the account and not here. */
 export const setRemoteVaults = (files: RemotePack[]) => useApp.setState({ remoteVaults: files })
 

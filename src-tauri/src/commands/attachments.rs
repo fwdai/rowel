@@ -17,11 +17,10 @@ use zeroize::Zeroizing;
 use crate::crypto::AttachmentCipher;
 use crate::error::{Error, Result};
 use crate::grants::{PathGrants, Purpose};
-use crate::picked::{self, Chosen};
 use crate::save;
 use crate::session::{store_err, Epoch, Session};
 use crate::state::AppState;
-use crate::storage::read_capped;
+use crate::storage::read_regular_file_capped;
 use crate::store::{migrate, Attachment, AttachmentMeta, SqliteStore, VaultStore};
 
 /// The largest file one attachment may be: a small share of the vault's
@@ -81,7 +80,6 @@ impl From<AttachmentMeta> for AttachmentDto {
 pub async fn attachment_add(
     entry_id: String,
     path: String,
-    app: AppHandle,
     state: State<'_, AppState>,
     grants: State<'_, PathGrants>,
 ) -> Result<AttachmentDto> {
@@ -89,8 +87,7 @@ pub async fn attachment_add(
     let (epoch, cipher, room) = begin_add(&state, &grants, &entry_id, &path)?;
     let attachment = {
         let entry_id = entry_id.clone();
-        super::blocking(move || seal_file(&cipher, &entry_id, picked::open(&app, &path)?, room))
-            .await?
+        super::blocking(move || seal_file(&cipher, &entry_id, &path, room)).await?
     };
     finish_add(&state, epoch, &attachment)
 }
@@ -158,11 +155,9 @@ pub fn attachment_list(entry_id: String, state: State<'_, AppState>) -> Result<V
 
 /// Write an attachment back to disk where the user says, under its own name.
 /// Unsealed here and handed straight to the save dialog's writer — owner-only
-/// on desktop, staged in the app's sandbox for the iOS exporter, written into
-/// the picked document on Android — so the file goes from the vault to disk
-/// without passing through the webview. Where it landed (on Android, the name
-/// it landed under; see `save_export`), or `None` when the dialog was
-/// dismissed.
+/// on desktop, staged in the app's sandbox for the iOS exporter — so the file
+/// goes from the vault to disk without passing through the webview. The path
+/// it landed at, or `None` when the dialog was dismissed.
 #[tauri::command]
 pub async fn attachment_save(
     id: String,
@@ -290,17 +285,20 @@ fn begin_add_in(session: &Session, entry_id: &str) -> Result<(Epoch, AttachmentC
     ))
 }
 
-/// Read the chosen file whole (as `picked::open` opened it), refusing it past
-/// the cap, and seal it under its own name (see `seal_bytes`). The plaintext
-/// is scrubbed on the way out.
+/// Read the file at `path` whole, refusing it past the cap, and seal it under
+/// its own name (see `seal_bytes`). The plaintext is scrubbed on the way out.
 fn seal_file(
     cipher: &AttachmentCipher,
     entry_id: &str,
-    chosen: Chosen,
+    path: &Path,
     room: u64,
 ) -> Result<Attachment> {
-    let bytes = Zeroizing::new(read_capped(chosen.contents, MAX_ATTACHMENT_BYTES)?);
-    seal_bytes(cipher, entry_id, &chosen.name, &bytes, room)
+    let bytes = Zeroizing::new(read_regular_file_capped(path, MAX_ATTACHMENT_BYTES)?);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    seal_bytes(cipher, entry_id, &name, &bytes, room)
 }
 
 /// Seal `bytes` as a file called `name`, refusing them past the `room` left in
@@ -404,7 +402,7 @@ fn attachable(store: &SqliteStore, entry_id: &str) -> Result<()> {
 }
 
 /// A name kept to its last path component: the one a save offers, so a name
-/// that arrived through sync cannot point the iOS staging anywhere else,
+/// that arrived through sync cannot point the mobile staging anywhere else,
 /// and the one a file sent as bytes is stored under, for the same reason.
 fn file_name(name: &str) -> String {
     Path::new(name)
@@ -545,37 +543,10 @@ mod tests {
         path
     }
 
-    // The file on disk, opened as the command opens it.
-    fn opened(path: &Path) -> Chosen {
-        picked::open_local(path).unwrap()
-    }
-
     fn granted(path: &Path) -> PathGrants {
         let grants = PathGrants::default();
         grants.grant(path, Purpose::Attachment);
         grants
-    }
-
-    // An Android document its provider serves through a pipe, read whole
-    // under the cap like a file on disk.
-    #[cfg(unix)]
-    #[test]
-    fn a_document_served_through_a_pipe_is_sealed_whole() {
-        let dir = tempfile::tempdir().unwrap();
-        let (store, _) = vault(&dir, &argon2_key(), "login");
-        let state = open_with(argon2_key(), store);
-        let (_, cipher, room) = begin_add_bytes(&state, "e1").unwrap();
-
-        let piped = picked::piped("scan.pdf", b"%PDF-1.7 the file".to_vec());
-        let attachment = seal_file(&cipher, "e1", piped, room).unwrap();
-
-        assert_eq!(attachment.meta.name, "scan.pdf");
-        assert_eq!(
-            &**cipher
-                .unseal(&attachment.meta.id, &attachment.blob)
-                .unwrap(),
-            b"%PDF-1.7 the file"
-        );
     }
 
     #[test]
@@ -587,7 +558,7 @@ mod tests {
         let grants = granted(&path);
 
         let (epoch, cipher, room) = begin_add(&state, &grants, "e1", &path).unwrap();
-        let attachment = seal_file(&cipher, "e1", opened(&path), room).unwrap();
+        let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
         assert!(!attachment.blob.windows(8).any(|w| w == b"the file"));
         let dto = finish_add(&state, epoch, &attachment).unwrap();
         assert_eq!(
@@ -665,7 +636,7 @@ mod tests {
             "at-cap.bin",
             &vec![0u8; MAX_ATTACHMENT_BYTES as usize],
         );
-        assert!(seal_file(&cipher, "e1", opened(&at_cap), room).is_ok());
+        assert!(seal_file(&cipher, "e1", &at_cap, room).is_ok());
 
         let over = file(
             &dir,
@@ -673,7 +644,7 @@ mod tests {
             &vec![0u8; MAX_ATTACHMENT_BYTES as usize + 1],
         );
         assert!(matches!(
-            seal_file(&cipher, "e1", opened(&over), room),
+            seal_file(&cipher, "e1", &over, room),
             Err(Error::FileTooLarge)
         ));
     }
@@ -704,12 +675,12 @@ mod tests {
 
         let fits = file(&dir, "fits.txt", b"1234");
         let (_, cipher, room) = begin_add(&state, &granted(&fits), "e1", &fits).unwrap();
-        assert!(seal_file(&cipher, "e1", opened(&fits), room).is_ok());
+        assert!(seal_file(&cipher, "e1", &fits, room).is_ok());
 
         let over = file(&dir, "over.txt", b"12345");
         let (_, cipher, room) = begin_add(&state, &granted(&over), "e1", &over).unwrap();
         assert!(matches!(
-            seal_file(&cipher, "e1", opened(&over), room),
+            seal_file(&cipher, "e1", &over, room),
             Err(Error::VaultFull)
         ));
         assert_eq!(
@@ -795,7 +766,7 @@ mod tests {
         let state = open_with(argon2_key(), store);
         let path = file(&dir, "a.txt", b"secret");
         let (epoch, cipher, room) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
-        let attachment = seal_file(&cipher, "e1", opened(&path), room).unwrap();
+        let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
 
         state.session.lock().unwrap().clear_for_test();
         assert!(matches!(
@@ -830,7 +801,7 @@ mod tests {
         let state = open_with(argon2_key(), store);
         let path = file(&dir, "a.txt", b"secret");
         let (epoch, cipher, room) = begin_add(&state, &granted(&path), "e1", &path).unwrap();
-        let attachment = seal_file(&cipher, "e1", opened(&path), room).unwrap();
+        let attachment = seal_file(&cipher, "e1", &path, room).unwrap();
 
         state
             .session
@@ -856,7 +827,7 @@ mod tests {
         let dto = finish_add(
             &state,
             epoch,
-            &seal_file(&cipher, "e1", opened(&path), room).unwrap(),
+            &seal_file(&cipher, "e1", &path, room).unwrap(),
         )
         .unwrap();
 

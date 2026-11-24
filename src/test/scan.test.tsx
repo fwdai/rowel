@@ -12,7 +12,6 @@ import {
 import { runScan } from '@/components/Main/Scan/run'
 import { withEntries, loginMeta, seedApp } from './utils'
 import { calls, mockCommand } from './ipc'
-import { pickedPath } from '@/lib/picked'
 
 const CARD = { number: '4242424242424242', month: '04', year: '27', name: 'ADA LOVELACE' }
 
@@ -185,7 +184,7 @@ describe('scanning from the picker', () => {
   it('routes a picked file like a drop', async () => {
     seed()
     seedApp({ scanSupported: true })
-    mockCommand('pick_file', () => pickedPath('/Users/me/card.png'))
+    mockCommand('pick_file', () => '/Users/me/card.png')
     mockCommand('scan_image', () => ({ kind: 'card', fields: CARD }))
     render(<Main />)
     await openFromRail()
@@ -213,10 +212,7 @@ describe('scanning from the picker', () => {
     expect(calls('scan_image')).toHaveLength(0)
   })
 
-  // The failure is the scan's status, as one that could not read the image
-  // is: the picker hands the window over to it rather than staying up as if
-  // nothing had been chosen.
-  it('scans nothing when the dialog itself fails, and says so', async () => {
+  it('scans nothing when the dialog itself fails', async () => {
     seed()
     seedApp({ scanSupported: true })
     mockCommand('pick_file', () => Promise.reject({ kind: 'unsupported', message: 'no picker' }))
@@ -225,8 +221,7 @@ describe('scanning from the picker', () => {
 
     await userEvent.click(screen.getByTestId('add-scan-image'))
 
-    await waitFor(() => expect(useUi.getState().scanError).toBe('failed'))
-    expect(screen.queryByTestId('add-secret-modal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('add-secret-modal')).toBeInTheDocument()
     expect(calls('scan_image')).toHaveLength(0)
   })
 

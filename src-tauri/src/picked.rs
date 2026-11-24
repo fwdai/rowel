@@ -1,210 +1,131 @@
-//! Opening a file the user chose, wherever the choice points.
+//! A file picked on Android, made a path on disk as it is everywhere else.
 //!
-//! What the file dialog (`commands::tools::pick_file`) or a drop on the window
-//! hands the webview, and the webview hands back to the reader that spends its
-//! grant (`grants`), is a path on disk everywhere but Android. There the system
-//! picker answers with a `content://` URI: a document some provider serves,
-//! which `std::fs` cannot open and whose last segment is an id rather than its
-//! name (`tauri-plugin-dialog` 2.8.4, `DialogPlugin.kt`: `filePickerResult`
-//! resolves with the intent's URIs as strings). Every reader of a chosen file
-//! opens it through [`open`], and the name a pick goes by comes from [`name`],
-//! so that difference lives here and nowhere else.
+//! Every reader of a chosen file, the grants (`grants`) and the webview's
+//! checks by extension work on a path. The desktop dialog answers with one, and
+//! the iOS dialog with a `file://` URL to a copy its picker has already made in
+//! the app's own temp folder. Android's answers with a `content://` URI: a
+//! document some provider serves, which `std::fs` cannot open and whose last
+//! segment is an id rather than its name (`tauri-plugin-dialog` 2.8.4,
+//! `DialogPlugin.kt`: `filePickerResult` resolves with the intent's URIs as
+//! strings). So there the document is copied once, as iOS does, into
+//! `picked/<unique id>/<its name>` under the app's cache directory, and the pick
+//! goes on as that path ([`into_path`]). The directory is the internal one,
+//! `Context.getCacheDir`, which no other app can read (tauri 2.12.5:
+//! `PathResolver::app_cache_dir` asks `PathPlugin.getCacheDir`).
 //!
-//! The address is what a grant is held under and what a reader opens; the name
-//! is what anything about the file is told from — its kind by its extension, a
-//! label shown to the user. On a path the name is its last component, so the
-//! two only part on Android, which is why a pick hands the webview both
-//! ([`Pick`]) rather than leaving it to read the name off the address.
-//!
-//! What a reader is handed is [`Contents`]: bytes read front to back, and
-//! nothing else. A file on disk is a regular file, settled on its handle when
-//! it is opened; a document is whatever descriptor its provider chose, and a
-//! provider may serve one through a pipe, which cannot seek and has no length
-//! or metadata worth asking. So no reader is offered any of that: each reads
-//! what it needs under its own cap, counted on the bytes that arrive, and the
-//! one that needs to move about in a file (an archive) asks
-//! [`Contents::seekable`], which takes a file on disk as it is and reads
-//! anything else into memory first, under the cap it is given.
+//! A copy is whatever the user picked, an export in the clear or a photo of a
+//! card, so the copies are not kept: the whole folder is removed at startup and
+//! whenever a session ends ([`wipe`]).
 
-use std::fs::File;
-use std::io::{Cursor, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::PathBuf;
+#[cfg(any(target_os = "android", test))]
+use std::{
+    fs::{self, File},
+    io::{self, Read},
+    path::Path,
+};
 
-use serde::Serialize;
 use tauri::AppHandle;
-use zeroize::Zeroizing;
+use tauri_plugin_dialog::FilePath;
 
-use crate::error::Result;
-use crate::storage;
+use crate::error::{Error, Result};
 
-/// Whether this platform's picker answers with documents rather than paths.
-pub(crate) const DOCUMENTS: bool = cfg!(target_os = "android");
+/// The folder under the app's cache directory the copies are made in.
+#[cfg(any(target_os = "android", test))]
+const DIR: &str = "picked";
 
-/// A chosen file, open for reading, and the name it goes by: what a reader
-/// tells its kind by, and what an attachment is stored under.
-pub struct Chosen {
-    pub contents: Contents,
-    pub name: String,
-}
-
-/// A chosen file's bytes, read front to back. The handle is held rather than
-/// exposed so that nothing a pipe cannot do — seek, ask a length, clone —
-/// compiles against it (see the module docs).
-pub struct Contents(File);
-
-impl Read for Contents {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.0.read(buf)
-    }
-}
-
-impl Contents {
-    /// The bytes as something read in any order, for a reader that needs that
-    /// and asks before it has read any: a file on disk as it is, since it can
-    /// seek, and anything else read whole into memory first — refused past
-    /// `cap`, counted on the bytes read, and scrubbed when it is dropped.
-    pub fn seekable(mut self, cap: u64) -> Result<Seekable> {
-        if self.0.metadata()?.file_type().is_file() {
-            return Ok(Seekable::File(self.0));
-        }
-        let bytes = Zeroizing::new(storage::read_capped(&mut self, cap)?);
-        Ok(Seekable::Memory(Cursor::new(bytes)))
-    }
-}
-
-/// What [`Contents::seekable`] gives back.
-pub enum Seekable {
-    File(File),
-    Memory(Cursor<Zeroizing<Vec<u8>>>),
-}
-
-impl Read for Seekable {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            Seekable::File(file) => file.read(buf),
-            Seekable::Memory(bytes) => bytes.read(buf),
+/// The dialog's answer as a path to read: on Android a document is copied in
+/// first (see the module docs); anything else is the path the answer names,
+/// a `file://` URL resolved to its path.
+pub fn into_path(app: &AppHandle, answer: FilePath) -> Result<PathBuf> {
+    match answer {
+        #[cfg(target_os = "android")]
+        FilePath::Url(uri) if uri.scheme() == "content" => copy_document(app, uri),
+        answer => {
+            #[cfg(not(target_os = "android"))]
+            let _ = app;
+            answer
+                .into_path()
+                .map_err(|_| Error::Unsupported("the picked file has no local path".into()))
         }
     }
 }
 
-impl Seek for Seekable {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        match self {
-            Seekable::File(file) => file.seek(pos),
-            Seekable::Memory(bytes) => bytes.seek(pos),
-        }
+/// Copy the document at `uri` into the app's cache, under the name its provider
+/// gives it (`PathPlugin.getFileNameFromUri`; empty if the provider will not
+/// say). Opened read-only through the content resolver (`tauri-plugin-fs`
+/// 2.7.1, `src/android.rs`: `Fs::open` asks `FsPlugin.getFileDescriptor`).
+/// Both are round trips to the provider, so this runs off the async runtime.
+#[cfg(target_os = "android")]
+fn copy_document(app: &AppHandle, uri: url::Url) -> Result<PathBuf> {
+    use tauri::Manager;
+    use tauri_plugin_fs::{FsExt, OpenOptions};
+
+    let name = app.path().file_name(uri.as_str()).unwrap_or_default();
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| Error::Other(e.to_string()))?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    let source = app.fs().open(FilePath::Url(uri), options)?;
+    copy_in(&cache, &name, source, crate::storage::MAX_BACKUP_BYTES)
+}
+
+/// Copy `source` into a folder of its own under `<cache>/picked`, as `name`,
+/// and hand back where it went. `name` comes from another app, so only what
+/// [`file_name`] keeps of it is used. Refused past `cap`, counted on the bytes
+/// read: a provider may serve a pipe, which has no length to trust. On any
+/// failure the folder goes, with whatever had been written into it.
+#[cfg(any(target_os = "android", test))]
+fn copy_in(cache: &Path, name: &str, source: impl Read, cap: u64) -> Result<PathBuf> {
+    let name = file_name(name)
+        .ok_or_else(|| Error::Unsupported("the picked file has no name to keep it under".into()))?;
+    let root = cache.join(DIR);
+    fs::create_dir_all(&root)?;
+    // Removed when dropped, so every way out before `keep` takes it along.
+    let dir = tempfile::tempdir_in(&root)?;
+    let mut file = File::create_new(dir.path().join(name))?;
+    let copied = io::copy(&mut source.take(cap.saturating_add(1)), &mut file)?;
+    if copied > cap {
+        return Err(Error::FileTooLarge);
     }
+    Ok(dir.keep().join(name))
 }
 
-/// A pick as the webview is handed it: the address to read it by and the name
-/// it goes by.
-#[derive(Serialize, Debug, PartialEq)]
-pub struct Pick {
-    pub path: String,
-    pub name: String,
+/// What a copy may be named out of the `name` a provider gave: its last path
+/// component, so the copy cannot land outside its folder, and nothing when
+/// that is empty or only dots (`.`, `..`), which name no file of their own.
+#[cfg(any(target_os = "android", test))]
+fn file_name(name: &str) -> Option<&str> {
+    let last = name.rsplit(['/', '\\']).next()?;
+    (!last.trim_start_matches('.').is_empty()).then_some(last)
 }
 
-/// Whether `path` names a document rather than a place on disk: a `content://`
-/// URI, where the picker hands those out (`documents`, which is [`DOCUMENTS`]
-/// outside the tests). Anywhere else a string that merely starts so is a path
-/// like any other, and is read as one.
-pub(crate) fn is_document(path: &Path, documents: bool) -> bool {
-    documents && path.to_str().is_some_and(|p| p.starts_with("content://"))
-}
-
-/// Open the chosen file at `path` for reading. The caller has spent, or holds,
-/// the grant for it (`grants`); this decides nothing about whether it may.
-///
-/// A path on disk is opened by [`open_local`]. A document is opened through the
-/// content resolver, which hands back a descriptor of the provider's choosing,
-/// and named by what the provider calls it.
-pub fn open(app: &AppHandle, path: &Path) -> Result<Chosen> {
+/// Remove every copy. Android only, the one platform that makes them. The
+/// removal runs off the calling thread, so this may be called under the
+/// session guard (`session::announce_ended`). Best effort: a folder that will
+/// not go now goes at the next session end or startup.
+pub fn wipe(app: &AppHandle) {
     #[cfg(target_os = "android")]
-    if is_document(path, DOCUMENTS) {
-        let file = open_document(app, path)?;
-        return Ok(Chosen {
-            contents: Contents(file),
-            name: name(app, path),
+    {
+        use tauri::Manager;
+
+        let app = app.clone();
+        crate::commands::detached(move || {
+            if let Ok(cache) = app.path().app_cache_dir() {
+                wipe_in(&cache);
+            }
         });
     }
     #[cfg(not(target_os = "android"))]
     let _ = app;
-    open_local(path)
 }
 
-/// The name the chosen file at `path` goes by: its last component, or a
-/// document's display name as its provider gives it (`PathResolver::file_name`,
-/// which asks `PathPlugin.getFileNameFromUri`), empty if the provider will not
-/// say. A document's name is a round trip to its provider, so this belongs off
-/// the async runtime, as an open does.
-pub fn name(app: &AppHandle, path: &Path) -> String {
-    #[cfg(target_os = "android")]
-    if is_document(path, DOCUMENTS) {
-        use tauri::Manager;
-        return app
-            .path()
-            .file_name(&path.to_string_lossy())
-            .unwrap_or_default();
-    }
-    #[cfg(not(target_os = "android"))]
-    let _ = app;
-    local_name(path)
-}
-
-/// A file on disk: one open, settled on that handle to be a regular file
-/// (`storage::open_regular_file`), named by its last component.
-pub fn open_local(path: &Path) -> Result<Chosen> {
-    let file = storage::open_regular_file(path)?;
-    Ok(Chosen {
-        contents: Contents(file),
-        name: local_name(path),
-    })
-}
-
-fn local_name(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default()
-}
-
-/// A document, opened read-only through `tauri-plugin-fs` 2.7.1
-/// (`src/android.rs`: `Fs::open` asks `FsPlugin.getFileDescriptor`, which
-/// opens the URI with the content resolver).
-///
-/// The descriptor is not held to being a regular file, as one on disk is: a
-/// provider may serve a document through a pipe, and the URI names exactly the
-/// document the user picked, so there is no FIFO or device behind a path to
-/// guard against. What bounds the read is the reader's own cap, which every
-/// reader applies to the bytes it reads (`storage::read_capped`), and what
-/// keeps a reader from seeking it is [`Contents`].
-#[cfg(target_os = "android")]
-fn open_document(app: &AppHandle, path: &Path) -> Result<File> {
-    use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
-
-    let uri = path.to_string_lossy();
-    let url = url::Url::parse(&uri).map_err(|e| crate::error::Error::Other(e.to_string()))?;
-    let mut options = OpenOptions::new();
-    options.read(true);
-    Ok(app.fs().open(FilePath::Url(url), options)?)
-}
-
-/// A chosen file whose contents arrive through a pipe, as a provider may
-/// serve a document: a real descriptor that cannot seek, written from another
-/// thread so that a file past the pipe's buffer streams as it would on a
-/// device. A reader that stops at its cap closes its end early, and the write
-/// then fails, which is the writer's business only.
-#[cfg(all(test, unix))]
-pub(crate) fn piped(name: &str, bytes: Vec<u8>) -> Chosen {
-    use std::io::Write;
-
-    let (reader, mut writer) = std::io::pipe().unwrap();
-    std::thread::spawn(move || {
-        let _ = writer.write_all(&bytes);
-    });
-    Chosen {
-        contents: Contents(File::from(std::os::fd::OwnedFd::from(reader))),
-        name: name.into(),
-    }
+/// Remove the copies made under `cache`, all of them at once.
+#[cfg(any(target_os = "android", test))]
+fn wipe_in(cache: &Path) {
+    let _ = fs::remove_dir_all(cache.join(DIR));
 }
 
 #[cfg(test)]
@@ -212,106 +133,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_content_uri_is_a_document_only_where_the_picker_hands_them_out() {
-        let uri = Path::new("content://com.android.providers.downloads.documents/document/42");
-        assert!(is_document(uri, true));
-        assert!(!is_document(uri, false));
+    fn a_name_keeps_only_its_last_component() {
+        assert_eq!(file_name("export.csv"), Some("export.csv"));
+        assert_eq!(file_name(".env.production"), Some(".env.production"));
+        assert_eq!(file_name("../../databases/vault.db"), Some("vault.db"));
+        assert_eq!(file_name("/data/data/app/x.rowel"), Some("x.rowel"));
+        assert_eq!(file_name("..\\..\\x.rowel"), Some("x.rowel"));
     }
 
     #[test]
-    fn a_path_is_never_a_document() {
-        for path in [
-            "/storage/emulated/0/Download/export.csv",
-            "content",
-            "file:///var/mobile/Documents/vault.rowel",
-            "C:\\Users\\me\\export.csv",
-        ] {
-            assert!(!is_document(Path::new(path), true), "{path}");
+    fn a_name_that_leaves_nothing_is_refused() {
+        for name in ["", ".", "..", "...", "a/..", "a/", "/"] {
+            assert_eq!(file_name(name), None, "{name:?}");
         }
     }
 
     #[test]
-    fn a_file_on_disk_opens_under_its_own_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("export.csv");
-        std::fs::write(&path, b"name,password\n").unwrap();
+    fn a_document_is_copied_into_a_folder_of_its_own() {
+        let cache = tempfile::tempdir().unwrap();
 
-        let mut chosen = open_local(&path).unwrap();
-        let mut text = String::new();
-        chosen.contents.read_to_string(&mut text).unwrap();
-        assert_eq!(chosen.name, "export.csv");
-        assert_eq!(text, "name,password\n");
-    }
+        let first = copy_in(cache.path(), "../export.csv", &b"name,password\n"[..], 64).unwrap();
+        let second = copy_in(cache.path(), "export.csv", &b"other"[..], 64).unwrap();
 
-    // What `PickedFile` in `src/api/tools.ts` reads.
-    #[test]
-    fn a_pick_reaches_the_webview_as_its_path_and_name() {
-        let pick = Pick {
-            path: "content://com.android.providers.downloads.documents/document/42".into(),
-            name: "Rowel backup.rowel".into(),
-        };
+        assert_eq!(first.file_name().unwrap(), "export.csv");
         assert_eq!(
-            serde_json::to_value(&pick).unwrap(),
-            serde_json::json!({
-                "path": "content://com.android.providers.downloads.documents/document/42",
-                "name": "Rowel backup.rowel",
-            })
+            first.parent().unwrap().parent().unwrap(),
+            cache.path().join(DIR)
         );
+        assert_ne!(first, second);
+        assert_eq!(fs::read(&first).unwrap(), b"name,password\n");
+        assert_eq!(fs::read(&second).unwrap(), b"other");
     }
 
     #[test]
-    fn a_directory_on_disk_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(open_local(dir.path()).is_err());
+    fn a_document_without_a_name_is_not_copied() {
+        let cache = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            copy_in(cache.path(), "..", &b"x"[..], 64),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(!cache.path().join(DIR).exists());
     }
 
-    fn read_all(mut source: impl Read) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        source.read_to_end(&mut bytes).unwrap();
-        bytes
-    }
-
-    // The helper the tests feed readers with is what it claims: a descriptor
-    // that will not seek.
-    #[cfg(unix)]
+    // Counted on the bytes read, and nothing of a refused copy stays behind.
     #[test]
-    fn a_piped_document_cannot_seek() {
-        let Contents(mut file) = piped("export.csv", b"name,password\n".to_vec()).contents;
-        assert!(file.seek(SeekFrom::Start(0)).is_err());
+    fn a_document_past_the_cap_is_refused_and_removed() {
+        let cache = tempfile::tempdir().unwrap();
+
+        assert!(copy_in(cache.path(), "exact.rowel", &[0u8; 64][..], 64).is_ok());
+        let refused = copy_in(cache.path(), "huge.rowel", &[0u8; 65][..], 64);
+
+        assert!(matches!(refused, Err(Error::FileTooLarge)));
+        let left: Vec<_> = fs::read_dir(cache.path().join(DIR)).unwrap().collect();
+        assert_eq!(left.len(), 1, "only the copy within the cap is left");
     }
 
-    // A file on disk is moved about where it lies, not copied.
     #[test]
-    fn a_file_on_disk_is_seekable_where_it_lies() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("export.1pux");
-        std::fs::write(&path, b"PK\x03\x04 the archive").unwrap();
+    fn a_wipe_takes_every_copy_and_nothing_else() {
+        let cache = tempfile::tempdir().unwrap();
+        let kept = cache.path().join("favicons.tmp");
+        fs::write(&kept, b"x").unwrap();
+        copy_in(cache.path(), "export.csv", &b"a"[..], 64).unwrap();
+        copy_in(cache.path(), "card.jpg", &b"b"[..], 64).unwrap();
 
-        let mut source = open_local(&path).unwrap().contents.seekable(4).unwrap();
-        assert!(matches!(source, Seekable::File(_)), "read into memory");
-        source.seek(SeekFrom::Start(4)).unwrap();
-        assert_eq!(read_all(&mut source), b" the archive");
-    }
+        wipe_in(cache.path());
 
-    // A pipe is read into memory, whole, and can then be moved about.
-    #[cfg(unix)]
-    #[test]
-    fn a_piped_document_is_seekable_once_read() {
-        let mut source = piped("export.1pux", b"PK\x03\x04 the archive".to_vec())
-            .contents
-            .seekable(64)
-            .unwrap();
-        assert!(matches!(source, Seekable::Memory(_)));
-        assert_eq!(read_all(&mut source), b"PK\x03\x04 the archive");
-        source.seek(SeekFrom::Start(4)).unwrap();
-        assert_eq!(read_all(&mut source), b" the archive");
-    }
-
-    // The cap is on the bytes that arrive: a pipe reports no length to trust.
-    #[cfg(unix)]
-    #[test]
-    fn a_piped_document_past_the_cap_is_refused() {
-        let result = piped("export.1pux", vec![0; 65]).contents.seekable(64);
-        assert!(matches!(result, Err(crate::error::Error::FileTooLarge)));
+        assert!(!cache.path().join(DIR).exists());
+        assert!(kept.exists());
+        // Nothing to wipe is nothing to do.
+        wipe_in(cache.path());
     }
 }

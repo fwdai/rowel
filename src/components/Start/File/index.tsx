@@ -5,18 +5,18 @@ import Button from '@/components/elements/Button'
 import FoundFileCard from '@/components/elements/FoundFileCard'
 import type { UnlockResult } from '@/api/types'
 import { setupRestoreFromFile, setupRestoreFromLegacy } from '@/api/setup'
-import type { PickedFile } from '@/api/tools'
 import { isLegacyBackupFile } from '@/lib/backup'
 import StepHeader from '../shared/StepHeader'
 import DropZone from '../shared/DropZone'
 import TextLink from '../shared/TextLink'
 import { COLUMN, FOOTNOTE } from '../shared/layout'
 import { unsealError } from '../shared/errors'
+import { fileNameOf } from '../shared/describe'
 
 interface Props {
   onRestored: (result: UnlockResult) => Promise<void>
   /** A backup already chosen — the one the OS opened the app with. */
-  initialFile?: PickedFile | null
+  initialPath?: string | null
 }
 
 // Restoring from a `.rowel` backup: pick the file, then unseal it with the
@@ -25,15 +25,15 @@ interface Props {
 // it under its password and builds this device's vault out of it, under that
 // same password. Desktop only — a phone has nowhere to drag a file from, and
 // the backup it would need was saved on a machine that does.
-export default function File({ onRestored, initialFile = null }: Props) {
+export default function File({ onRestored, initialPath = null }: Props) {
   const { t } = useTranslation()
-  const [file, setFile] = useState<PickedFile | null>(initialFile)
+  const [path, setPath] = useState<string | null>(initialPath)
   // Also adopted when it changes while this screen is already up: the OS can
   // open a backup with the picker on screen, and `Start` then keeps this
   // component mounted rather than remounting it on the same `file` key.
   useEffect(() => {
-    if (initialFile) setFile(initialFile)
-  }, [initialFile])
+    if (initialPath) setPath(initialPath)
+  }, [initialPath])
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -43,14 +43,14 @@ export default function File({ onRestored, initialFile = null }: Props) {
     setPassword(event.currentTarget.value)
   }
 
-  const legacy = file !== null && isLegacyBackupFile(file.name)
+  const legacy = path !== null && isLegacyBackupFile(path)
 
   const restore = () => {
-    if (busy || !file || !password) return
+    if (busy || !path || !password) return
     setBusy(true)
     setError(null)
     const unseal = legacy ? setupRestoreFromLegacy : setupRestoreFromFile
-    unseal(file.path, password)
+    unseal(path, password)
       .then(onRestored)
       .catch((err: unknown) => {
         setBusy(false)
@@ -58,7 +58,7 @@ export default function File({ onRestored, initialFile = null }: Props) {
       })
   }
 
-  if (file === null)
+  if (path === null)
     return (
       <>
         <StepHeader
@@ -67,7 +67,7 @@ export default function File({ onRestored, initialFile = null }: Props) {
           body={t('Exported from Settings on another device.')}
         />
         <div className={`${COLUMN} mt-9`}>
-          <DropZone onPick={setFile} />
+          <DropZone onPick={setPath} />
         </div>
       </>
     )
@@ -88,7 +88,7 @@ export default function File({ onRestored, initialFile = null }: Props) {
         <FoundFileCard
           where="disk"
           testid="restore-found-file"
-          name={file.name}
+          name={fileNameOf(path)}
           encrypted
         />
 
@@ -111,7 +111,7 @@ export default function File({ onRestored, initialFile = null }: Props) {
       </div>
 
       <div className={`${FOOTNOTE} flex justify-center`}>
-        <TextLink testid="restore-change-file" onClick={() => setFile(null)}>
+        <TextLink testid="restore-change-file" onClick={() => setPath(null)}>
           {t('Pick another file')}
         </TextLink>
       </div>

@@ -1,6 +1,5 @@
-import { pickFileToRead, type PickedFile } from '@/api/tools'
+import { pickFileToRead } from '@/api/tools'
 import { t } from '@/i18n'
-import { scanFinished, stampSession } from '@/store'
 import { runScan } from './run'
 
 /**
@@ -14,25 +13,14 @@ import { runScan } from './run'
  * `browse`, its file browser under the same filter. Only the filter's name is
  * ours to translate.
  *
- * Resolves to whether the window is being handed over — a file picked, or a
- * picker that failed — so a caller dismisses itself only then, and stays up
- * over a cancelled picker. Never throws: the outcome of the scan, and the
- * failure of a picker, is the status in the store (see `run.ts`), the one
- * place the user hears of either once the caller has gone. A picker that
- * answers after a lock answers a session that is gone: nothing is scanned or
- * reported, and nothing is handed over (see `stampSession`).
+ * Resolves to whether a file was picked, so a caller can dismiss itself only
+ * when the window is actually being handed over. Never throws: a dialog that
+ * could not open reads as nothing picked, and the outcome of the scan itself is
+ * the status in the store (see `run.ts`).
  */
 export const pickAndScan = async (browse = false): Promise<boolean> => {
-  const current = stampSession()
-  let file: PickedFile | null
-  try {
-    file = await pickFileToRead('image', t('Images'), browse)
-  } catch {
-    if (!current()) return false
-    scanFinished('failed')
-    return true
-  }
-  if (file === null || !current()) return false
-  void runScan(file.path)
+  const path = await pickFileToRead('image', t('Images'), browse).catch(() => null)
+  if (path === null) return false
+  void runScan(path)
   return true
 }

@@ -465,6 +465,7 @@ fn announce_opened(app: &AppHandle) {
 
 fn announce_ended(app: &AppHandle) -> Ended {
     crate::autolock::disarm(app);
+    crate::picked::wipe(app);
     #[cfg(desktop)]
     {
         crate::browser::server::hub(app).notify_locked();

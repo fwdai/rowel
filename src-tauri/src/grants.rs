@@ -28,17 +28,12 @@
 //! out, since a grant that was never read is a path the user pointed at and
 //! then walked away from. Kept canonical so a grant cannot be sidestepped or
 //! spent through a spelling of the path other than the one it was made under.
-//! An Android document (`picked`) is kept as the URI the picker gave: it names
-//! no place on disk to canonicalize. It is spent only through an address equal
-//! to it as a path compares, component by component — so a doubled or trailing
-//! `/` is the same address — and any other spelling is simply not chosen.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::error::Error;
-use crate::picked;
 
 /// What a granted path may be read as — one variant per reading command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,9 +81,6 @@ const CAP: usize = 64;
 pub struct PathGrants {
     // Oldest first, so the bound evicts from the front.
     paths: Mutex<VecDeque<Grant>>,
-    // Hold a `content://` address as a document even where the picker hands
-    // none out: the tests do, to run document grants on any host.
-    documents: bool,
 }
 
 impl PathGrants {
@@ -115,7 +107,7 @@ impl PathGrants {
     }
 
     fn insert(&self, path: &Path, purpose: Purpose, dropped: bool) {
-        let Some(path) = key(path, picked::DOCUMENTS || self.documents) else {
+        let Ok(path) = path.canonicalize() else {
             return;
         };
         let mut paths = self.paths.lock().unwrap();
@@ -138,7 +130,7 @@ impl PathGrants {
     /// choice the user did make is not burned by a read it was not made for,
     /// and the reader it was meant for can still spend it.
     pub fn take(&self, path: &Path, purpose: Purpose) -> bool {
-        let Some(path) = key(path, picked::DOCUMENTS || self.documents) else {
+        let Ok(path) = path.canonicalize() else {
             return false;
         };
         let mut paths = self.paths.lock().unwrap();
@@ -158,21 +150,11 @@ impl PathGrants {
     /// read and [`take`](PathGrants::take)s the grant once the file has done
     /// what it was chosen for.
     pub fn holds(&self, path: &Path, purpose: Purpose) -> bool {
-        let Some(path) = key(path, picked::DOCUMENTS || self.documents) else {
+        let Ok(path) = path.canonicalize() else {
             return false;
         };
         position(&self.paths.lock().unwrap(), &path, purpose).is_some()
     }
-}
-
-/// What a grant for `path` is held under: its canonical form, or `None` for a
-/// path that names nothing on disk; or a document's URI as it stands, where
-/// the picker hands those out (`documents`, see `picked::is_document`).
-fn key(path: &Path, documents: bool) -> Option<PathBuf> {
-    if picked::is_document(path, documents) {
-        return Some(path.to_path_buf());
-    }
-    path.canonicalize().ok()
 }
 
 /// Where the grant spendable for `path` as `purpose` is held, if anywhere.
@@ -329,72 +311,6 @@ mod tests {
         assert!(!grants.holds(&path, Purpose::Backup));
         assert!(grants.take(&path, Purpose::Import));
         assert!(!grants.holds(&path, Purpose::Import));
-    }
-
-    // An Android document is held as the URI the picker gave, which names
-    // nothing on disk; anywhere else the same string is a path that does not
-    // exist, and nothing is held for it.
-    #[test]
-    fn a_document_is_held_under_its_uri_where_the_picker_hands_them_out() {
-        let uri = Path::new("content://com.android.providers.downloads.documents/document/42");
-        assert_eq!(key(uri, true), Some(uri.to_path_buf()));
-        assert_eq!(key(uri, false), None);
-    }
-
-    // A path is canonical whichever platform it is on, documents or not.
-    #[test]
-    fn a_path_is_held_canonical_beside_documents() {
-        let path = scratch("beside-documents");
-        let dir = path.parent().unwrap();
-        let roundabout = dir
-            .join("..")
-            .join(dir.file_name().unwrap())
-            .join("beside-documents");
-        let canonical = path.canonicalize().unwrap();
-        assert_eq!(key(&roundabout, true), Some(canonical.clone()));
-        assert_eq!(key(&roundabout, false), Some(canonical));
-    }
-
-    const DOCUMENT: &str = "content://com.android.providers.downloads.documents/document/42";
-
-    fn holding_documents() -> PathGrants {
-        PathGrants {
-            documents: true,
-            ..PathGrants::default()
-        }
-    }
-
-    // A document is granted, held and spent like a path, for its purpose
-    // alone, though nothing on disk answers to its address.
-    #[test]
-    fn a_document_is_granted_held_and_taken_once() {
-        let grants = holding_documents();
-        let document = Path::new(DOCUMENT);
-        grants.grant(document, Purpose::Backup);
-
-        assert!(grants.holds(document, Purpose::Backup));
-        assert!(!grants.take(document, Purpose::Import));
-        assert!(grants.take(document, Purpose::Backup));
-        assert!(!grants.take(document, Purpose::Backup));
-        assert!(!grants.holds(document, Purpose::Backup));
-    }
-
-    // The address compares as a path: separators doubled or trailing spell
-    // the same one, and another document is another address.
-    #[test]
-    fn a_document_is_spent_through_its_address_as_a_path_compares() {
-        let grants = holding_documents();
-        grants.grant(Path::new(DOCUMENT), Purpose::Import);
-
-        assert!(!grants.holds(
-            Path::new("content://com.android.providers.downloads.documents/document/43"),
-            Purpose::Import
-        ));
-        assert!(grants.holds(
-            Path::new("content://com.android.providers.downloads.documents//document/42/"),
-            Purpose::Import
-        ));
-        assert!(grants.take(Path::new(DOCUMENT), Purpose::Import));
     }
 
     #[test]

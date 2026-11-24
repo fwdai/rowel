@@ -14,7 +14,7 @@ export default function RestoreBackupSubpage({
     <SubpageScroller testid="settings-restore-backup">
       {/* No heading over the card: the page's own title is the heading. */}
       <div className={CARD}>
-        <RestoreBackup chosen={subpage.file ?? null} />
+        <RestoreBackup chosen={subpage.path ?? null} />
       </div>
     </SubpageScroller>
   )

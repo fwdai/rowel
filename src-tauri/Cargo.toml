@@ -214,12 +214,13 @@ tauri-plugin-deep-link = "2"
 # locked graph for that target, under `rustls-platform-verifier`.
 [target.'cfg(target_os = "android")'.dependencies]
 webpki-root-certs = "1"
-# What an export is written through on Android (`save`): the save dialog
-# answers with a `content://` URI there, and this is what turns one into a
-# file descriptor. Already in the locked graph, under the dialog plugin, but
-# only a direct dependency has its Kotlin half built into the app — tauri-build
-# adds the plugin projects of the crates this one depends on itself. Used from
-# Rust alone: no capability grants the webview any of its commands.
+# What an export is written through and a picked file is copied from on
+# Android (`save`, `picked`): both dialogs answer with a `content://` URI
+# there, and this is what turns one into a file descriptor. Already in the
+# locked graph, under the dialog plugin, but only a direct dependency has its
+# Kotlin half built into the app — tauri-build adds the plugin projects of the
+# crates this one depends on itself. Used from Rust alone: no capability grants
+# the webview any of its commands.
 tauri-plugin-fs = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]

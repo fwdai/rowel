@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { pickFileToRead } from '@/api/tools'
 import { describeError } from '@/api/errors'
-import { stampSession } from '@/store'
 import { ingestDroppedEnvFile, ingestEnvFile, type IngestedEnv } from './ingest'
 
 /**
@@ -10,8 +9,7 @@ import { ingestDroppedEnvFile, ingestEnvFile, type IngestedEnv } from './ingest'
  * Only the newest request may publish a result, completion calls the latest
  * consumer (rather than the render that began the read), and failures become
  * visible state. Unmount invalidates the request so a departed surface cannot
- * update itself later, and a lock does too: a file picked or read for the
- * session that is gone is not handed to the one open now (see `stampSession`).
+ * update itself later.
  */
 export function useEnvIngest(onFile: (file: IngestedEnv) => void) {
   const consumer = useRef(onFile)
@@ -32,28 +30,24 @@ export function useEnvIngest(onFile: (file: IngestedEnv) => void) {
     []
   )
 
-  // `load` is handed the same check, for a step that should not start once it
-  // fails: reading a file picked for a session that has since locked.
-  const run = async (load: (live: () => boolean) => Promise<IngestedEnv | null>) => {
+  const run = async (load: () => Promise<IngestedEnv | null>) => {
     const mine = ++request.current
-    const current = stampSession()
-    const live = () => mine === request.current && current()
     setError(null)
     try {
-      const file = await load(live)
-      if (live() && file) consumer.current(file)
+      const file = await load()
+      if (mine === request.current && file) consumer.current(file)
     } catch (cause) {
-      if (live()) setError(describeError(cause))
+      if (mine === request.current) setError(describeError(cause))
     }
   }
 
   const drop = (path: string) => run(() => ingestDroppedEnvFile(path))
   const pick = () =>
-    run(async live => {
+    run(async () => {
       // Any file may be a .env, so the dialog filters nothing; it runs in Rust
       // so that the read that follows has a path the backend saw chosen.
-      const file = await pickFileToRead('env')
-      return file && live() ? ingestEnvFile(file) : null
+      const path = await pickFileToRead('env')
+      return path ? ingestEnvFile(path) : null
     })
 
   return { drop, pick, error }

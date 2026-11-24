@@ -18,7 +18,6 @@ use crate::events;
 use crate::grants::{self, PathGrants, Purpose};
 use crate::import::{self, EntryKind, Format, ImportedEntry, RowError};
 use crate::models::{Entry, EntryMetaDto};
-use crate::picked::{self, Chosen, Contents};
 use crate::save;
 use crate::session::{list_metas, live_records, store_err};
 use crate::state::AppState;
@@ -117,8 +116,11 @@ pub async fn import_entries(
 
     let emitter = app.clone();
     let parsed = super::blocking(move || -> Result<Parsed> {
-        let Chosen { contents, name } = picked::open(&emitter, Path::new(&path))?;
-        let (bytes, unpacked) = read_import_file(contents)?;
+        let (bytes, unpacked) = read_import_file(Path::new(&path))?;
+        let name = Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let fmt = resolve_format(&format, unpacked, &name, &bytes)?;
 
         let parsed = fmt.importer().parse(&bytes);
@@ -237,6 +239,17 @@ fn resolve_format(format: &str, unpacked: bool, name: &str, bytes: &[u8]) -> Res
     Format::from_name(format).ok_or_else(|| Error::Other(format!("unknown format: {format}")))
 }
 
+// The bytes an import parses, and whether they were taken out of an archive.
+// A 1Password `.1pux` is a zip with every attachment in the vault beside the
+// one JSON member the import reads, so it is not read whole — a vault of a
+// few documents would pass `MAX_BYTES` and be refused for files the import
+// leaves behind anyway. The archive stays on disk, only `export.data` comes
+// out of it (under the adapter's own cap on that member), and the attachments
+// never pass through memory. Any other file is read whole, under the cap.
+//
+// The archive is told by its signature on the same handle that is then read,
+// not by its name: the `.1pux` suffix is a convention, and a renamed one is
+// the same file.
 // Whether `path` is an export the user chose — picked through the import
 // `pick_file` or dropped on the window (see `grants`). A preview only asks:
 // the write that follows reads the same choice again. The write spends it, so
@@ -253,33 +266,19 @@ fn chosen(grants: &PathGrants, path: &Path, dry_run: bool) -> Result<()> {
     }
 }
 
-// The bytes an import parses, and whether they were taken out of an archive.
-// A 1Password `.1pux` is a zip with every attachment in the vault beside the
-// one JSON member the import reads, so a file on disk is not read whole — a
-// vault of a few documents would pass `MAX_BYTES` and be refused for files the
-// import leaves behind anyway. The archive stays on disk, only `export.data`
-// comes out of it (under the adapter's own cap on that member), and the
-// attachments never pass through memory. A document its provider serves
-// through a pipe cannot be read that way: it is read into memory first, under
-// `MAX_BYTES`, and opened there (`Contents::seekable`). Any other file is read
-// whole, under the cap.
-//
-// The archive is told by its signature on the same source that is then read,
-// not by its name: the `.1pux` suffix is a convention, and a renamed one is
-// the same file.
-fn read_import_file(contents: Contents) -> Result<(Vec<u8>, bool)> {
+fn read_import_file(path: &Path) -> Result<(Vec<u8>, bool)> {
     use std::io::{Read, Seek, SeekFrom};
 
-    let mut source = contents.seekable(MAX_BYTES)?;
-    let mut head = Vec::with_capacity(4);
-    (&mut source).take(4).read_to_end(&mut head)?;
-    source.seek(SeekFrom::Start(0))?;
-    if import::is_zip(&head) {
-        let data = import::unpack_1pux(source)
+    let mut file = storage::open_regular_file(path)?;
+    let mut head = [0u8; 4];
+    let n = file.read(&mut head)?;
+    file.seek(SeekFrom::Start(0))?;
+    if import::is_zip(&head[..n]) {
+        let data = import::unpack_1pux(file)
             .map_err(|e| Error::Other(format!("not a 1Password export: {e}")))?;
         return Ok((data, true));
     }
-    Ok((storage::read_capped(source, MAX_BYTES)?, false))
+    Ok((storage::read_capped(file, MAX_BYTES)?, false))
 }
 
 // Which of `entries` the vault already holds, verbatim. Re-running an import —
@@ -713,7 +712,7 @@ mod tests {
         zip.finish().unwrap();
         assert!(std::fs::metadata(&path).unwrap().len() > MAX_BYTES);
 
-        let (bytes, unpacked) = read_import_file(opened(&path)).unwrap();
+        let (bytes, unpacked) = read_import_file(&path).unwrap();
         assert!(unpacked);
         assert_eq!(bytes, br#"{"accounts":[]}"#);
         let r = Format::Onepux.importer().parse(&bytes);
@@ -722,91 +721,15 @@ mod tests {
         let plain = dir.path().join("export.json");
         std::fs::write(&plain, vec![b' '; MAX_BYTES as usize + 1]).unwrap();
         assert!(matches!(
-            read_import_file(opened(&plain)).unwrap_err(),
+            read_import_file(&plain).unwrap_err(),
             Error::FileTooLarge
         ));
         let small = dir.path().join("small.csv");
         std::fs::write(&small, b"Title,Password\nA,p\n").unwrap();
         assert_eq!(
-            read_import_file(opened(&small)).unwrap(),
+            read_import_file(&small).unwrap(),
             (b"Title,Password\nA,p\n".to_vec(), false)
         );
-    }
-
-    // The file on disk, opened as the command opens it.
-    fn opened(path: &Path) -> Contents {
-        picked::open_local(path).unwrap().contents
-    }
-
-    // An export as a provider serves an Android document, through a pipe —
-    // read, and parsed by the format its name and content say.
-    #[cfg(unix)]
-    fn piped_import(name: &str, file: &[u8], format: &str) -> (Vec<u8>, bool, usize) {
-        let (bytes, unpacked) =
-            read_import_file(picked::piped(name, file.to_vec()).contents).unwrap();
-        let entries = resolve_format(format, unpacked, name, &bytes)
-            .unwrap()
-            .importer()
-            .parse(&bytes)
-            .entries
-            .len();
-        (bytes, unpacked, entries)
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_csv_served_through_a_pipe_is_imported() {
-        let csv = b"Title,Username,Password,URL\nSite,ada,pw,https://example.com\n";
-        assert_eq!(
-            piped_import("export.csv", csv, "auto"),
-            (csv.to_vec(), false, 1)
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_json_export_served_through_a_pipe_is_imported() {
-        let json = br#"{"encrypted":false,"items":[{"type":1,"name":"Site","login":{"username":"ada","password":"pw"}}]}"#;
-        assert_eq!(
-            piped_import("bitwarden.json", json, "bitwarden"),
-            (json.to_vec(), false, 1)
-        );
-    }
-
-    // An archive cannot be opened front to back: through a pipe it is read
-    // into memory first, and gives up its `export.data` there.
-    #[cfg(unix)]
-    #[test]
-    fn a_1pux_served_through_a_pipe_gives_up_its_export_data() {
-        use std::io::Write;
-        let data = br#"{"accounts":[{"vaults":[{"items":[{"categoryUuid":"001","overview":{"title":"Site"},"details":{"loginFields":[{"designation":"username","value":"ada"},{"designation":"password","value":"pw"}]}}]}]}]}"#;
-        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        let stored = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
-        zip.start_file("export.data", stored).unwrap();
-        zip.write_all(data).unwrap();
-        zip.start_file("files/scan.pdf", stored).unwrap();
-        zip.write_all(b"%PDF-1.7").unwrap();
-        let archive = zip.finish().unwrap().into_inner();
-
-        let (bytes, unpacked, entries) = piped_import("export.1pux", &archive, "auto");
-        assert_eq!((bytes.as_slice(), unpacked), (&data[..], true));
-        assert_eq!(entries, 1);
-    }
-
-    // The cap is counted on the bytes that come through, since a pipe reports
-    // no length: one past it is refused, archive or not.
-    #[cfg(unix)]
-    #[test]
-    fn an_export_past_the_cap_through_a_pipe_is_refused() {
-        let over = vec![b' '; MAX_BYTES as usize + 1];
-        let err = read_import_file(picked::piped("export.json", over).contents).unwrap_err();
-        assert!(matches!(err, Error::FileTooLarge), "{err}");
-
-        let mut archive = b"PK\x03\x04".to_vec();
-        archive.resize(MAX_BYTES as usize + 1, 0);
-        let err = read_import_file(picked::piped("export.1pux", archive).contents).unwrap_err();
-        assert!(matches!(err, Error::FileTooLarge), "{err}");
     }
 
     fn tmp_db() -> std::path::PathBuf {

@@ -5,7 +5,6 @@ import Main from '@/components/Main'
 import { clearSession, useUi, useVault } from '@/store'
 import { withEntries, loginMeta, seedApp } from './utils'
 import { calls, mockCommand } from './ipc'
-import { pickedPath } from '@/lib/picked'
 
 // The whole module graph reads as a phone, so the picker's scan row is the
 // phone's: it asks where the photo comes from before anything opens.
@@ -147,7 +146,7 @@ describe('scanning on a phone', () => {
 
   describe('the library', () => {
     it('is the same granted dialog as the desktop, run from Rust', async () => {
-      mockCommand('pick_file', () => pickedPath('/var/mobile/tmp/IMG_0042.heic'))
+      mockCommand('pick_file', () => '/var/mobile/tmp/IMG_0042.heic')
       mockCommand('scan_image', () => ({ kind: 'card', fields: CARD }))
       await openSheet()
 
@@ -169,25 +168,11 @@ describe('scanning on a phone', () => {
       stillOpen()
       expect(calls('scan_image')).toHaveLength(0)
     })
-
-    it('reports a picker that failed, since the sheet is gone', async () => {
-      mockCommand('pick_file', () => {
-        throw { kind: 'unsupported', message: 'the picked file has no local path' }
-      })
-      await openSheet()
-
-      await userEvent.click(screen.getByTestId('scan-source-library'))
-
-      await waitFor(() => expect(useUi.getState().scanError).toBe('failed'))
-      expect(useUi.getState().scanBusy).toBe(false)
-      closed()
-      expect(calls('scan_image')).toHaveLength(0)
-    })
   })
 
   describe('Files', () => {
     it('is the same dialog, asked for the file browser under the image filter', async () => {
-      mockCommand('pick_file', () => pickedPath('/private/var/mobile/Documents/passport.png'))
+      mockCommand('pick_file', () => '/private/var/mobile/Documents/passport.png')
       mockCommand('scan_image', () => ({ kind: 'card', fields: CARD }))
       await openSheet()
 

@@ -8,7 +8,6 @@ import { MAX_ATTACHMENT_BYTES } from '@/api/attachments'
 import { loginEntry, loginMeta } from './utils'
 import { calls, mockCommand, seedAttachments } from './ipc'
 import { setLayout } from './layout'
-import { pickedPath } from '@/lib/picked'
 
 // The platform is baked in at build time, so a phone build is a module-level
 // fact rather than a prop: this file is the attachments suite as that build
@@ -74,7 +73,7 @@ describe('attaching a file on a phone', () => {
   })
 
   it('opens the photo library as an attachment pick under the image filter', async () => {
-    mockCommand('pick_file', () => pickedPath('/tmp/IMG_0042.heic'))
+    mockCommand('pick_file', () => '/tmp/IMG_0042.heic')
     await openSheet()
 
     await userEvent.click(screen.getByTestId('attach-source-library'))
@@ -89,7 +88,7 @@ describe('attaching a file on a phone', () => {
   })
 
   it('opens the file browser as the plain attachment pick', async () => {
-    mockCommand('pick_file', () => pickedPath('/tmp/contract.pdf'))
+    mockCommand('pick_file', () => '/tmp/contract.pdf')
     await openSheet()
 
     await userEvent.click(screen.getByTestId('attach-source-browse'))
@@ -111,19 +110,6 @@ describe('attaching a file on a phone', () => {
 
     await waitFor(() => expect(calls('pick_file')).toHaveLength(1))
     expect(screen.getByTestId('attach-source-sheet')).toBeInTheDocument()
-    expect(calls('attachment_add')).toEqual([])
-  })
-
-  it('reports a picker that failed, in the sheet’s place', async () => {
-    mockCommand('pick_file', () => {
-      throw { kind: 'unsupported', message: 'the picked file has no local path' }
-    })
-    await openSheet()
-
-    await userEvent.click(screen.getByTestId('attach-source-library'))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('the picked file has no local path')
-    expect(screen.queryByTestId('attach-source-sheet')).not.toBeInTheDocument()
     expect(calls('attachment_add')).toEqual([])
   })
 

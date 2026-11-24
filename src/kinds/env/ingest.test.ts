@@ -1,34 +1,31 @@
 import { describe, it, expect } from 'vitest'
-import { pickedPath } from '@/lib/picked'
-import { isEnvDrop, isEnvFileName, mergeNewKeys, proposeTitle } from './ingest'
+import { fileNameOf, isEnvDrop, isEnvFileName, mergeNewKeys, proposeTitle } from './ingest'
 
-const title = (path: string) => proposeTitle(pickedPath(path))
+describe('fileNameOf', () => {
+  it('takes the last segment of either separator', () => {
+    expect(fileNameOf('/Users/me/code/api/.env')).toBe('.env')
+    expect(fileNameOf('C:\\code\\api\\.env.local')).toBe('.env.local')
+    expect(fileNameOf('.env')).toBe('.env')
+  })
+})
 
 describe('proposeTitle', () => {
   it('names the project and the environment', () => {
-    expect(title('/Users/me/code/api/.env.production')).toBe('api · production')
-    expect(title('C:\\code\\api\\.env.local')).toBe('api · local')
+    expect(proposeTitle('/Users/me/code/api/.env.production')).toBe('api · production')
+    expect(proposeTitle('C:\\code\\api\\.env.local')).toBe('api · local')
   })
 
   it('is just the project for a bare .env', () => {
-    expect(title('/Users/me/code/api/.env')).toBe('api')
+    expect(proposeTitle('/Users/me/code/api/.env')).toBe('api')
   })
 
   it('reads a suffixed name as the environment', () => {
-    expect(title('/Users/me/code/api/foo.env')).toBe('api · foo')
+    expect(proposeTitle('/Users/me/code/api/foo.env')).toBe('api · foo')
   })
 
   it('has only the environment when there is no folder', () => {
-    expect(title('.env.staging')).toBe('staging')
-    expect(title('.env')).toBe('')
-  })
-
-  // An Android document's address ends in an id, not in the file's name, and
-  // says nothing of the folder it sits in.
-  it('takes a picked document by its name, with no folder', () => {
-    const document = 'content://com.android.externalstorage.documents/document/primary%3Aapi%2F.env.production'
-    expect(proposeTitle({ path: document, name: '.env.production' })).toBe('production')
-    expect(proposeTitle({ path: 'content://media/document/42', name: 'local.env' })).toBe('local')
+    expect(proposeTitle('.env.staging')).toBe('staging')
+    expect(proposeTitle('.env')).toBe('')
   })
 })
 

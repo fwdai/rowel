@@ -7,7 +7,6 @@ import { initialApp, setCurrentEntry, setEntries, setSyncStatus } from '@/store'
 import type { Attachment } from '@/api/types'
 import { loginEntry, loginMeta, withEntries } from './utils'
 import { calls, mockCommand, seedAttachments } from './ipc'
-import { pickedPath } from '@/lib/picked'
 
 // The drag-drop stream, with a hand that can drop a file (see envIngest.test).
 type Handler = (event: { payload: { type: string; paths: string[] } }) => void
@@ -67,7 +66,7 @@ describe('attachments on an entry', () => {
   })
 
   it('lists a picked file once it is attached', async () => {
-    mockCommand('pick_file', () => pickedPath('/Users/me/contract.pdf'))
+    mockCommand('pick_file', () => '/Users/me/contract.pdf')
     render(<Show entry={loginMeta()} />)
 
     await userEvent.click(await screen.findByTestId('attach-file-button'))
@@ -93,7 +92,7 @@ describe('attachments on an entry', () => {
   })
 
   it('says how large a file may be when one is refused', async () => {
-    mockCommand('pick_file', () => pickedPath('/Users/me/huge.iso'))
+    mockCommand('pick_file', () => '/Users/me/huge.iso')
     mockCommand('attachment_add', () =>
       Promise.reject({ kind: 'fileTooLarge', message: 'the file is too large' })
     )
@@ -602,7 +601,7 @@ describe('the files of an open entry', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       setSyncStatus({ ...initialApp.sync, configured: true })
-      mockCommand('pick_file', () => pickedPath('/Users/me/contract.pdf'))
+      mockCommand('pick_file', () => '/Users/me/contract.pdf')
       render(<Show entry={loginMeta()} />)
 
       await userEvent.click(await screen.findByTestId('attach-file-button'))
@@ -644,7 +643,7 @@ describe("the vault's attachment budget", () => {
   })
 
   it('says so when a file would take the vault past it', async () => {
-    mockCommand('pick_file', () => pickedPath('/Users/me/scan.pdf'))
+    mockCommand('pick_file', () => '/Users/me/scan.pdf')
     mockCommand('attachment_add', () =>
       Promise.reject({ kind: 'vaultFull', message: "this vault's attachments are at their limit" })
     )

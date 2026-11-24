@@ -58,7 +58,7 @@ mod oslock;
 // the sign-in, this device's enrollment key, the sealed record of both, the
 // lockboxes it hands this device and the approvals it routes here.
 mod org;
-// Opening a file the user chose: a path on disk, or an Android document.
+// Android: a picked document copied into the app's cache, to be read as a path.
 mod picked;
 mod retired;
 mod save;
@@ -132,11 +132,12 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_deep_link::init());
     }
 
-    // What `save` writes an export through on Android, where the destination
-    // is a `content://` URI rather than a path. Registered for that one use
-    // from Rust: nothing in `capabilities/` names an `fs:` permission, and a
-    // plugin command no capability grants is refused before it runs, so the
-    // webview gains no reach into the file system by it.
+    // What `save` writes an export through and `picked` copies a picked file
+    // from on Android, where both dialogs answer with a `content://` URI
+    // rather than a path. Registered for those uses from Rust: nothing in
+    // `capabilities/` names an `fs:` permission, and a plugin command no
+    // capability grants is refused before it runs, so the webview gains no
+    // reach into the file system by it.
     #[cfg(target_os = "android")]
     {
         builder = builder.plugin(tauri_plugin_fs::init());
@@ -215,6 +216,9 @@ pub fn run() {
             // Android: the camera photos left by a capture the app did not live
             // to settle (see `capture`).
             capture::sweep(app.handle());
+            // Android: the copies of picked files a previous run left behind
+            // (see `picked`).
+            picked::wipe(app.handle());
             // A workspace delete a crash caught between its file moves and the
             // registry write: put back, or cleared away, before anything reads
             // either — the registry below is the first thing that does.

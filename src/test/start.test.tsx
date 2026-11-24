@@ -7,7 +7,6 @@ import { fileOpened, setupAccountProbed, setupAccountFailed, useApp } from '@/st
 import { evaluate, MIN_LENGTH, type Strength } from '@/services/strength'
 import { appStatusDefault, calls, mockCommand, mockCommandOnce } from './ipc'
 import { deferred, seedApp } from './utils'
-import { pickedPath } from '@/lib/picked'
 
 // The real `evaluate` awaits an 848 kB zxcvbn chunk. The specs below have to
 // hold that await open, and in one case fail it, so the scoring itself is stood
@@ -691,7 +690,7 @@ describe('the restore screen under each provider', () => {
 
 describe('restoring from a backup file', () => {
   it('picks a file, then unseals it with the master password', async () => {
-    mockCommand('pick_file', () => pickedPath('/tmp/Rowel backup 2026-09-15.rowel'))
+    mockCommand('pick_file', () => '/tmp/Rowel backup 2026-09-15.rowel')
     render(<Start />)
 
     await userEvent.click(screen.getByTestId('start-restore-button'))
@@ -715,7 +714,7 @@ describe('restoring from a backup file', () => {
   // The pack is what says whether the password was wrong; anything else it
   // reports — a truncated file, a vault from a newer build — is shown as itself.
   it('shows a non-password failure as itself', async () => {
-    mockCommand('pick_file', () => pickedPath('/tmp/vault.rowel'))
+    mockCommand('pick_file', () => '/tmp/vault.rowel')
     mockCommandOnce('setup_restore_from_file', () =>
       Promise.reject({ kind: 'io', message: 'sync file is truncated' })
     )
@@ -768,7 +767,7 @@ describe('restoring from a backup file', () => {
   // A legacy `.swftx` is not a pack, so it goes to the command that builds a
   // vault out of it under its own password — the `.rowel` restore is untouched.
   it('restores a legacy .swftx as a new vault under its own password', async () => {
-    mockCommand('pick_file', () => pickedPath('/tmp/old-vault.swftx'))
+    mockCommand('pick_file', () => '/tmp/old-vault.swftx')
     render(<Start />)
 
     await userEvent.click(screen.getByTestId('start-restore-button'))
@@ -792,7 +791,7 @@ describe('restoring from a backup file', () => {
   })
 
   it('blames the password when the legacy vault will not open', async () => {
-    mockCommand('pick_file', () => pickedPath('/tmp/old-vault.swftx'))
+    mockCommand('pick_file', () => '/tmp/old-vault.swftx')
     mockCommandOnce('setup_restore_from_legacy', () =>
       Promise.reject({ kind: 'invalidPassword', message: 'invalid master password' })
     )

@@ -10,7 +10,7 @@ use crate::state::AppState;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
 use crate::sync::engine::WorkspaceVault;
 use crate::workspace::{self, Registry};
-use crate::{auth, credential_identities, crypto, picked, save, storage, sync};
+use crate::{auth, credential_identities, crypto, save, storage, sync};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
@@ -240,8 +240,7 @@ pub async fn import_swftx(
     // under the current payload key — emitting progress as it goes.
     let emitter = app.clone();
     let records = super::blocking(move || -> Result<Vec<Record>> {
-        let chosen = picked::open(&emitter, Path::new(&path))?;
-        let (src_cryptor, src) = open_legacy_backup(chosen, &password)?;
+        let (src_cryptor, src) = open_legacy_backup(&path, &password)?;
         reseal_legacy(&emitter, &src_cryptor, &src.entries, &cur_cipher)
     })
     .await?;
@@ -262,32 +261,30 @@ pub async fn import_swftx(
     })
 }
 
-/// Open the `.swftx` chosen (as `picked::open` opened it) under `password`:
-/// the legacy cryptor it was sealed with, and the vault it holds. A wrong
-/// password is [`Error::InvalidPassword`], before anything downstream is
-/// touched. The blob goes in by value, so the file is freed as soon as it has
-/// been decoded.
+/// Open the `.swftx` at `path` under `password`: the legacy cryptor it was
+/// sealed with, and the vault it holds. A wrong password is
+/// [`Error::InvalidPassword`], before anything downstream is touched. The blob
+/// goes in by value, so the file is freed as soon as it has been decoded.
 ///
-/// A file not named as a `.swftx` is refused first, as not one: any text that
-/// is not the sealed vault fails the unseal exactly as a wrong password does,
-/// and Android's picker offers every file (see `commands::tools::offered`).
+/// A file not named as a `.swftx` is refused first, as not one: any other file
+/// fails the unseal exactly as a wrong password does, and Android's picker
+/// offers every file (see `commands::tools::offered`).
 ///
 /// Shared by the merge above and the first run's restore
 /// (`commands::setup::setup_restore_from_legacy`).
 pub(crate) fn open_legacy_backup(
-    chosen: picked::Chosen,
+    path: &str,
     password: &str,
 ) -> Result<(crypto::Cryptor, VaultData)> {
-    let legacy = Path::new(&chosen.name)
+    let legacy = Path::new(path)
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case(LEGACY_BACKUP_EXTENSION));
     if !legacy {
         return Err(Error::Unsupported(format!(
-            "{} is not a legacy {APP_NAME} vault (.{LEGACY_BACKUP_EXTENSION})",
-            chosen.name
+            "not a legacy {APP_NAME} vault (.{LEGACY_BACKUP_EXTENSION})"
         )));
     }
-    let blob = storage::read_backup(chosen.contents)?;
+    let blob = storage::read_backup(path)?;
     let src_cryptor = crypto::Cryptor::new(&crypto::hash_secret(password));
     let src: VaultData = src_cryptor
         .decrypt_data_owned(blob)
@@ -706,55 +703,17 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
-    // The file on disk, opened as the command opens it.
-    fn opened(path: &str) -> picked::Chosen {
-        picked::open_local(Path::new(path)).unwrap()
-    }
-
-    // An Android document its provider serves through a pipe.
-    #[cfg(unix)]
-    #[test]
-    fn a_legacy_backup_served_through_a_pipe_opens() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = swftx(&dir, "old-password", vec![login(vec![])]);
-        let piped = picked::piped("old-vault.swftx", std::fs::read(&path).unwrap());
-
-        let (src, data) = open_legacy_backup(piped, "old-password").unwrap();
-
-        assert_eq!(data.entries.len(), 1);
-        assert_eq!(src.expose(&data.entries[0]).unwrap().title, "Site");
-    }
-
-    // A file of another kind is told so, not blamed on the password: on
-    // Android the picker offers every file to the backup card.
-    #[test]
-    fn a_file_not_named_as_a_legacy_vault_is_refused_as_not_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let csv = dir.path().join("export.csv");
-        std::fs::write(&csv, "Title,Password\nA,p\n").unwrap();
-
-        let refused = open_legacy_backup(opened(csv.to_str().unwrap()), "old-password");
-        assert!(
-            matches!(&refused, Err(Error::Unsupported(m)) if m.contains("export.csv")),
-            "not refused as not a legacy vault"
-        );
-
-        let shouting = dir.path().join("LEGACY.SWFTX");
-        std::fs::copy(swftx(&dir, "old-password", vec![login(vec![])]), &shouting).unwrap();
-        assert!(open_legacy_backup(opened(shouting.to_str().unwrap()), "old-password").is_ok());
-    }
-
     #[test]
     fn a_legacy_backup_opens_under_its_own_password_only() {
         let dir = tempfile::tempdir().unwrap();
         let path = swftx(&dir, "old-password", vec![login(vec![])]);
 
         assert!(matches!(
-            open_legacy_backup(opened(&path), "not-it"),
+            open_legacy_backup(&path, "not-it"),
             Err(Error::InvalidPassword)
         ));
 
-        let (src, data) = open_legacy_backup(opened(&path), "old-password").unwrap();
+        let (src, data) = open_legacy_backup(&path, "old-password").unwrap();
         assert_eq!(data.entries.len(), 1);
         // What came out is still obscured: the entries are exposed one at a
         // time by the re-seal, under the cryptor handed back with them.

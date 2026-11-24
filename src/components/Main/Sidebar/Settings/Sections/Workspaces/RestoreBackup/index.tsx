@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { pickLockboxBackup } from '@/api/pickers'
-import type { PickedFile } from '@/api/tools'
-import { restoreWorkspaceFromFile, stampSession } from '@/store'
+import { restoreWorkspaceFromFile } from '@/store'
 import Button from '@/components/elements/Button'
 import FoundFileCard from '@/components/elements/FoundFileCard'
 import RestoreForm from '@/components/elements/RestoreForm'
 import SettingsRow from '@/components/elements/SettingsRow'
 import { DiskGlyph } from '@/components/Main/icons'
+import { fileNameOf } from '@/components/Start/shared/describe'
 
 // Adding a workspace kept as a backup file: the first run's restore from a
 // `.rowel`, made beside the lockboxes already here rather than as the only
@@ -22,20 +22,17 @@ import { DiskGlyph } from '@/components/Main/icons'
 // Choosing the first file is the row's own control. Choosing another is the
 // form's (`aside`), which is what stands it down for every step the form has
 // in flight, the move onto the vault password and the open after it included.
-export default function RestoreBackup({ chosen }: { chosen: PickedFile | null }) {
+export default function RestoreBackup({ chosen }: { chosen: string | null }) {
   const { t } = useTranslation()
-  const [file, setFile] = useState(chosen)
+  const [path, setPath] = useState(chosen)
   const [busy, setBusy] = useState(false)
 
-  // A pick that comes back after a lock is the old session's, and is dropped.
-  const pick = () => {
-    const current = stampSession()
-    return pickLockboxBackup()
+  const pick = () =>
+    pickLockboxBackup()
       .then(picked => {
-        if (picked && current()) setFile(picked)
+        if (picked) setPath(picked)
       })
       .catch(() => {})
-  }
 
   // Settings is held by the store for the restore's length; this only stands
   // the controls down, and puts them back for a retry.
@@ -56,7 +53,7 @@ export default function RestoreBackup({ chosen }: { chosen: PickedFile | null })
       description={t('Use the master password you had when this backup was made.')}
       testid="workspace-backup-row"
       control={
-        !file && (
+        !path && (
           <Button
             variant="pale"
             size="md"
@@ -68,9 +65,9 @@ export default function RestoreBackup({ chosen }: { chosen: PickedFile | null })
         )
       }
     >
-      {file && (
+      {path && (
         <RestoreForm
-          target={file.path}
+          target={path}
           busy={busy}
           onRestore={restore}
           wrongPassword={t('Invalid password for backup')}
@@ -83,7 +80,7 @@ export default function RestoreBackup({ chosen }: { chosen: PickedFile | null })
         >
           <FoundFileCard
             where="disk"
-            name={file.name}
+            name={fileNameOf(path)}
             encrypted
             testid="workspace-backup-file"
           />

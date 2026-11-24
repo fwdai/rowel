@@ -7,7 +7,6 @@ import { FrameProvider } from '@/components/elements/Frame'
 import Sheet from '@/components/elements/Sheet'
 import Show from '@/components/Main/Body/Aside/Show'
 import { MAX_ATTACHMENT_BYTES } from '@/api/attachments'
-import { clearSession } from '@/store'
 import { deferred, loginEntry, loginMeta, withEntries } from './utils'
 import { calls, mockCommand } from './ipc'
 
@@ -97,21 +96,6 @@ describe('an attachment photo on Android', () => {
     await userEvent.upload(screen.getByTestId('attach-source-capture'), huge)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('up to 10 MB')
-    expect(calls('attachment_add_bytes')).toEqual([])
-    await waitFor(() => expect(calls('capture_settled')).toHaveLength(1))
-  })
-
-  // Dropped across a lock, its bytes never reach Rust either.
-  it('lets the capture go when a lock drops the photo', async () => {
-    await openSheet()
-    const read = deferred<ArrayBuffer>()
-    const slow = photo()
-    Object.defineProperty(slow, 'arrayBuffer', { value: () => read.promise })
-
-    await userEvent.upload(screen.getByTestId('attach-source-capture'), slow)
-    act(() => clearSession())
-    await act(async () => read.resolve(BYTES.buffer))
-
     expect(calls('attachment_add_bytes')).toEqual([])
     await waitFor(() => expect(calls('capture_settled')).toHaveLength(1))
   })
