@@ -18,6 +18,10 @@ mod autolock;
 // so the suspended process holds no lock in the App Group container.
 #[cfg(target_os = "ios")]
 mod background;
+// Android: the calls into the Kotlin class that holds the biometric-bound
+// Keystore key. Compiled for the tests too, for the half that needs no device.
+#[cfg(any(target_os = "android", test))]
+mod biometric_key;
 mod biometrics;
 // The browser extension host: the KeePassXC-Browser protocol over a local
 // socket, and the proxy mode the browser launches this binary in. `pub` so the
@@ -122,6 +126,12 @@ pub fn run() {
         // own URL scheme (`sync::providers::deep_link_scheme`), not on a
         // loopback port.
         builder = builder.plugin(tauri_plugin_deep_link::init());
+    }
+
+    // Android: the Kotlin class behind biometric unlock (see `biometric_key`).
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(biometric_key::init());
     }
 
     // The timer behind the delayed clipboard clear. Not on iOS, where the

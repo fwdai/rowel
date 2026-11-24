@@ -23,6 +23,10 @@ const description = (t: TFunction, mode: BiometricMode | null) => {
     return t(
       'Your vault key is stored in your OS credential store and released after a biometric check.'
     )
+  if (mode === 'keystore-key')
+    return t(
+      'Your vault key is protected by the Android Keystore and invalidated if your biometrics change.'
+    )
   return t(
     'Store your vault key in the OS secure store, released only after a biometric check.'
   )
@@ -51,8 +55,8 @@ export default function BiometricRow() {
       .finally(() => refreshApp().finally(() => setBusy(false)))
   }
 
-  // A phone names the gate it has — Face ID or Touch ID, as the lock screen
-  // does; the desktop keeps naming the two it may have.
+  // A phone names the gate it has, as the lock screen does (`biometryLabel`);
+  // the desktop keeps naming the two it may have.
   const type = biometric?.type ?? 'touch'
   const label = isMobile
     ? t('Unlock with {{biometry}}', { biometry: t(biometryLabel(type)) })

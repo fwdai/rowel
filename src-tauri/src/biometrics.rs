@@ -115,7 +115,39 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_vendor = "apple", target_os = "windows")))]
+// Android asks the Kotlin side (`biometric_key`), which asks `BiometricManager`
+// whether a strong biometric can authenticate — the only class the Keystore
+// accepts for the key the vault key is sealed under.
+#[cfg(target_os = "android")]
+mod imp {
+    use super::*;
+
+    pub fn probe() -> super::Probe {
+        match crate::biometric_key::status() {
+            Ok(status) if status.available => super::Probe {
+                available: true,
+                kind: super::android_kind(&status),
+            },
+            Ok(_) => super::Probe::UNAVAILABLE,
+            Err(e) => {
+                log::warn!("could not ask Android about biometrics: {e}");
+                super::Probe::UNAVAILABLE
+            }
+        }
+    }
+
+    // Nothing on Android verifies and then reads: the prompt belongs to the
+    // Keystore key itself (`GateMode::KeystoreKey`), so there is no bare check
+    // to run.
+    #[allow(dead_code)]
+    pub fn authenticate() -> Result<()> {
+        Err(Error::Other(
+            "a bare biometric check is not supported on this platform".into(),
+        ))
+    }
+}
+
+#[cfg(not(any(target_vendor = "apple", target_os = "windows", target_os = "android")))]
 mod imp {
     use super::*;
 
@@ -134,16 +166,33 @@ mod imp {
 // What the UI calls the gate. Kept as the three wire strings the frontend's
 // `BiometryType` union already names, so neither side has a mapping table.
 
-// Only Apple can report a face — everywhere else the gate has always been a
-// fingerprint (Windows Hello's).
-#[cfg_attr(not(target_vendor = "apple"), allow(dead_code))]
+// Only Apple and Android can report a face — on Windows the gate has always
+// been a fingerprint (Windows Hello's).
+#[cfg_attr(
+    not(any(target_vendor = "apple", target_os = "android")),
+    allow(dead_code)
+)]
 const FACE: &str = "face";
 #[cfg_attr(
-    not(any(target_vendor = "apple", target_os = "windows")),
+    not(any(target_vendor = "apple", target_os = "windows", target_os = "android")),
     allow(dead_code)
 )]
 const TOUCH: &str = "touch";
 const NONE: &str = "none";
+
+// What to call the gate on an Android device. Android does not say which
+// biometric its prompt will ask for, or which ones the user enrolled — only
+// which sensors the device declares. So the gate is named only when there is
+// exactly one it can be; a device with several, or with one this has no name
+// for, gets none, and the UI says "biometrics".
+#[cfg(any(target_os = "android", test))]
+fn android_kind(status: &crate::biometric_key::Status) -> &'static str {
+    match (status.fingerprint, status.face, status.iris) {
+        (true, false, false) => TOUCH,
+        (false, true, false) => FACE,
+        _ => NONE,
+    }
+}
 
 /// What this device's biometric gate is, and whether it can be used at all.
 ///
@@ -178,8 +227,44 @@ pub fn is_available() -> bool {
 // (unentitled builds, where the OS cannot enforce biometry on keychain read).
 // Windows no longer calls it: there the Hello prompt is the key-credential
 // signature itself (`GateMode::HelloKey`), not a check that merely precedes a
-// read. Linux never calls it — the secure store is unsupported outright.
+// read. Android never did, for the same reason (`GateMode::KeystoreKey`).
+// Linux never calls it — the secure store is unsupported outright.
 #[cfg_attr(not(target_vendor = "apple"), allow(dead_code))]
 pub fn authenticate() -> Result<()> {
     imp::authenticate()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::biometric_key::Status;
+
+    fn sensors(fingerprint: bool, face: bool, iris: bool) -> Status {
+        Status {
+            available: true,
+            fingerprint,
+            face,
+            iris,
+        }
+    }
+
+    #[test]
+    fn an_android_device_with_one_sensor_names_it() {
+        assert_eq!(android_kind(&sensors(true, false, false)), TOUCH);
+        assert_eq!(android_kind(&sensors(false, true, false)), FACE);
+    }
+
+    // The prompt picks, and does not say which: naming either would be a guess.
+    #[test]
+    fn an_android_device_with_several_sensors_names_none() {
+        assert_eq!(android_kind(&sensors(true, true, false)), NONE);
+        assert_eq!(android_kind(&sensors(true, false, true)), NONE);
+    }
+
+    // An iris scanner alone, or a sensor Android has no feature flag for.
+    #[test]
+    fn an_android_sensor_without_a_name_names_none() {
+        assert_eq!(android_kind(&sensors(false, false, true)), NONE);
+        assert_eq!(android_kind(&sensors(false, false, false)), NONE);
+    }
 }

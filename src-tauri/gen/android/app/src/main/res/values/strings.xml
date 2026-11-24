@@ -1,4 +1,6 @@
 <resources>
     <string name="app_name">"Rowel"</string>
     <string name="main_activity_title">"Rowel"</string>
+    <!-- The biometric prompt's title, for enrolling and for unlocking alike (BiometricKey.kt). -->
+    <string name="biometric_prompt_title">"Confirm your identity"</string>
 </resources>
