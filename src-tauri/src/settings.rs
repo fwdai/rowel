@@ -510,7 +510,10 @@ mod tests {
             &serde_json::json!({ "shortcuts": { "lock": "KeyJ" } }),
         )
         .unwrap();
-        assert_eq!(moved.shortcuts.get("lock").map(String::as_str), Some("KeyJ"));
+        assert_eq!(
+            moved.shortcuts.get("lock").map(String::as_str),
+            Some("KeyJ")
+        );
 
         let json = serde_json::to_string(&moved).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), moved);
