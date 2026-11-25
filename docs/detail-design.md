@@ -49,24 +49,24 @@ itself at ID-1, the credit card's shape, and what tells them apart is what
 tells the real ones apart:
 
 - **Security printing** (`Print`) — a wash of colour (rose for a licence, blue
-  for an ID card, green for a permit) with a guilloché engraved over it, drawn
-  by `guilloche.ts` rather than shipped as artwork. Fixed colours, like the
-  paper under them.
-- **The mark in the corner** (`Medallion`) — where a credit card wears its
-  network's: a licence's car, an ID card's national emblem as a hologram, a
-  permit's fingerprint. Pressed, it turns the card over.
+  for an ID card, green for a permit) over a fine-line ground. The ground is
+  texture, not artwork: it has no figure a real card would have to match.
+  Fixed colours, like the paper under them.
+- **The mark in the corner** — where a credit card wears its network's: a
+  licence's car, an ID card's national emblem as a hologram, a permit's
+  fingerprint. Small, in the stock's own ink.
 - **The card's own conventions** — the issuing state's plate (`Plate`), a
-  licence's fields under the numbers the licence standard gives them, an ID
-  card's chip mark and ghost image, a permit's term drawn from issue to expiry
-  (`Term`).
+  licence's fields under the numbers the licence standard gives them, a
+  permit's term drawn from issue to expiry (`Term`).
 
 A card has a back and turns over to show it (`elements/Face/Flip`, any face
-can use it): the mark in its corner is the control, in the same corner on both
-sides. The back is what the card says about itself, drawn from the front and
-never typed — the machine-readable zone across the lower third of an ID card
-and a permit, a licence's barcode and the legend to its field numbers — so a
-card being edited shows its front and offers no turn. A new document type gets
-a layout of its own here rather than a variant of another's.
+can use it). What turns it is a Front / Back switch under the card (the shared
+`Segmented`), outside the card so nothing printed on it has to make room. The
+back is what the card says about itself, drawn from the front and never typed
+— the machine-readable zone across the lower third of an ID card and a permit,
+a licence's categories, the legend to its field numbers and its barcode — so a
+card being edited shows its front and offers no switch. A new document type
+gets a layout of its own here rather than a variant of another's.
 
 ### Sealed blocks
 

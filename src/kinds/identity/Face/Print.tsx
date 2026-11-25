@@ -1,28 +1,27 @@
 import { cx } from '@/utils/cx'
-import { CARD } from './guilloche'
+import { CARD, GROUND } from './ground'
 
 interface Props {
   /** The tint the stock is washed in: a CSS gradient. */
   wash: string
-  /** The engraving's ink. */
+  /** The ink the ground is drawn in. */
   line: string
-  /** The engraving itself, as one path (see `guilloche.ts`). */
-  engraving: string
   /** The card's other side: the same printing, seen from behind. */
   mirrored?: boolean
 }
 
 /**
  * A card's security printing: the wash of colour its stock is tinted with and
- * the guilloché engraved over that, across the whole face and under everything
- * printed on the card (the face's frame is what it is pinned to, see `Frame`). It
- * is what makes a licence a licence before a word on it is read — the paper is
- * the vault's own (`Face`, in its paper tone); only the printing is the card's.
+ * a fine-line ground over that (see `ground.ts`), across the whole face and
+ * under everything printed on the card (the face's frame is what it is pinned
+ * to, see `Frame`). The colour is what tells one card from another; the ground
+ * is only there to make it paper. The paper itself is the vault's own (`Face`,
+ * in its paper tone).
  *
  * Fixed colours, as the rest of a document face: the card stays the colour it
  * is whichever palette the app is on.
  */
-export default function Print({ wash, line, engraving, mirrored }: Props) {
+export default function Print({ wash, line, mirrored }: Props) {
   return (
     <div
       aria-hidden
@@ -34,7 +33,7 @@ export default function Print({ wash, line, engraving, mirrored }: Props) {
         preserveAspectRatio="xMidYMid slice"
         className="h-full w-full"
       >
-        <path d={engraving} fill="none" stroke={line} strokeWidth={0.5} opacity={0.28} />
+        <path d={GROUND} fill="none" stroke={line} strokeWidth={0.5} opacity={0.2} />
       </svg>
     </div>
   )

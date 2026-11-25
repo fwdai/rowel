@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import Flip from '@/components/elements/Face/Flip'
+import Segmented from '@/components/elements/Segmented'
 import type { DocType } from '../templates'
 import type { Doc } from './DocCell'
 import Frame from './Frame'
@@ -11,6 +13,8 @@ interface Props {
   doc: Doc
 }
 
+type Side = 'front' | 'back'
+
 // A document is 460px wide where the pane allows it (see `FACE_ASIDE`) and the
 // pane's width where it does not.
 const WIDTH = 'w-[460px] max-w-full'
@@ -21,12 +25,15 @@ const WIDTH = 'w-[460px] max-w-full'
  * rows appear is the template's business and a cell with nothing in it prints
  * nothing; how they are arranged is the layout's.
  *
- * A card has a back and turns over to show it. Only while it is being read:
- * the front is the form, the back has nothing to type, so a card being edited
- * shows its front and offers no turn.
+ * A card has a back, and a switch under it says which side is up. The switch
+ * stands outside the card, so nothing printed on the card has to make room for
+ * it and it stays where it is while the card turns. Only while the card is
+ * being read: the front is the form, the back has nothing to type, so a card
+ * being edited shows its front and offers no switch.
  */
 export default function Document({ docType, doc }: Props) {
-  const [turned, setTurned] = useState(false)
+  const { t } = useTranslation()
+  const [side, setSide] = useState<Side>('front')
   const { format, Face, card } = LAYOUTS[docType]
   const front = <Face docType={docType} doc={doc} />
 
@@ -39,21 +46,36 @@ export default function Document({ docType, doc }: Props) {
       </div>
     )
 
-  const flip = doc.set ? undefined : () => setTurned(!turned)
-  const side = (testid: string, content: ReactNode, back?: boolean) => (
+  const editing = !!doc.set
+  const face = (testid: string, content: ReactNode, back?: boolean) => (
     <Frame ratio={format} docType={docType} testid={testid}>
-      <Card stock={card.stock} doc={doc} flip={flip} back={back}>
+      <Card stock={card.stock} doc={doc} back={back}>
         {content}
       </Card>
     </Frame>
   )
 
   return (
-    <Flip
-      flipped={turned && !!flip}
-      className={WIDTH}
-      front={side('identity-face', front)}
-      back={side('identity-back', <card.Back docType={docType} doc={doc} stock={card.stock} />, true)}
-    />
+    <div className={WIDTH}>
+      <Flip
+        flipped={side === 'back' && !editing}
+        front={face('identity-face', front)}
+        back={face('identity-back', <card.Back docType={docType} doc={doc} stock={card.stock} />, true)}
+      />
+      {!editing && (
+        <div className="mt-3 flex justify-center">
+          <Segmented
+            name={t('Flip card')}
+            options={[
+              { value: 'front', label: t('Front side') },
+              { value: 'back', label: t('Back side') }
+            ]}
+            value={side}
+            onChange={setSide}
+            testidPrefix="card-side"
+          />
+        </div>
+      )}
+    </div>
   )
 }

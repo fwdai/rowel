@@ -10,11 +10,11 @@ interface Props {
 
 /**
  * A card's masthead: what it is and whose, across its head — cleared on the
- * right for the mark in the corner (see `Medallion`).
+ * right for the mark in the corner (see `Card`).
  */
 export default function Masthead({ lead, title, sub }: Props) {
   return (
-    <header className="flex h-9 flex-none items-center gap-3 pr-16">
+    <header className="flex h-9 flex-none items-center gap-3 pr-12">
       {lead}
       <div className="min-w-0 flex-1">
         {title && (

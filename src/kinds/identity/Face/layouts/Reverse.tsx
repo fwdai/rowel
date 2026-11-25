@@ -17,7 +17,7 @@ interface WatermarkProps {
 /** The card's mark, large and faint in the stock of its back. */
 export function Watermark({ stock, doc, className }: WatermarkProps) {
   return (
-    <div aria-hidden className={cx('flex-none opacity-40', className)} style={{ color: stock.line }}>
+    <div aria-hidden className={cx('flex-none opacity-30', className)} style={{ color: stock.line }}>
       {stock.mark(88, doc)}
     </div>
   )

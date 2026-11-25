@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { cx } from '@/utils/cx'
 
 interface Props {
@@ -21,27 +21,13 @@ const SIDE = 'col-start-1 row-start-1 grid min-w-0 backface-hidden'
  * `inert`, out of the tab order and the accessibility tree until it comes back.
  * With motion reduced the sides simply change places.
  *
- * Going inert takes the focus off whatever turned the face, so after a turn it
- * is handed to the control that turns it back: the element each side marks
- * `data-flip`. A keyboard user stays on the card instead of at the top of the
- * page.
+ * What turns it is the caller's and stands outside both sides: a control on a
+ * side would go inert with it and take the focus along.
  */
 export default function Flip({ flipped, front, back, className }: Props) {
-  const sides = useRef<HTMLDivElement>(null)
-  const was = useRef(flipped)
-
-  useEffect(() => {
-    if (was.current === flipped) return
-    was.current = flipped
-    sides.current
-      ?.querySelector<HTMLElement>(':scope > :not([inert]) [data-flip]')
-      ?.focus({ preventScroll: true })
-  }, [flipped])
-
   return (
     <div className={cx('perspective-[1600px]', className)}>
       <div
-        ref={sides}
         className={cx(
           'grid transition-transform duration-500 transform-3d motion-reduce:transition-none',
           flipped && 'rotate-y-180'

@@ -1,5 +1,4 @@
 import { cx } from '@/utils/cx'
-import Silhouette from './Silhouette'
 
 // Where the photograph goes. The vault holds no photo, so the frame holds the
 // silhouette every blank form prints there — shoulders cut by the frame's edge,
@@ -31,7 +30,8 @@ export default function Portrait({ className = 'w-[22%]' }: Props) {
       )}
     >
       <svg viewBox="0 0 64 60" className="h-[72%] w-auto opacity-15" fill="currentColor">
-        <Silhouette />
+        <circle cx="32" cy="17" r="14" />
+        <path d="M4 60c0-15 12-26 28-26s28 11 28 26Z" />
       </svg>
     </div>
   )
