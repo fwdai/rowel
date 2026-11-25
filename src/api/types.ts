@@ -110,6 +110,11 @@ export interface IdentityEntry extends BaseEntry {
   authority: string
   personal_number: string
   note: string
+  /**
+   * The holder's photograph as a `data:image/jpeg;base64,…` URI — the crop a
+   * scan cut out around the face. Empty on a document without one.
+   */
+  portrait: string
 }
 
 // An SSH keypair. ed25519 only for now, so there is no algorithm field: the

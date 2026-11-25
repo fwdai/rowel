@@ -8,6 +8,11 @@
 //!
 //! The parsers (`mrz`, `card`) are pure text-in/fields-out and carry the tests;
 //! the platform backends only turn an image into lines.
+//!
+//! An identity document's scan also carries the holder's photograph, cut out
+//! around the face (`portrait`), so the entry's face shows the person rather
+//! than a silhouette. It is found by the OS's face detector, on-device like
+//! the text.
 
 mod card;
 mod mrz;
@@ -15,6 +20,10 @@ mod mrz;
 mod ocr_apple;
 #[cfg(target_os = "windows")]
 mod ocr_windows;
+#[cfg(any(target_vendor = "apple", test))]
+mod portrait;
+#[cfg(target_vendor = "apple")]
+mod portrait_apple;
 #[cfg(any(target_vendor = "apple", test))]
 mod rows;
 #[cfg(test)]
@@ -30,7 +39,9 @@ use crate::error::{Error, Result};
 
 /// What a scan found. `kind` is `"card"` or `"identity"`; `fields` is keyed by
 /// the field names of the matching entry kind (see `mrz`/`card` for the exact
-/// sets), so the form can fill itself in without knowing how it was read.
+/// sets), so the form can fill itself in without knowing how it was read. An
+/// identity's may include `portrait`, which is a field of the entry like the
+/// rest (`Entry::portrait`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanResult {
@@ -72,6 +83,40 @@ pub fn platform_ocr() -> Option<Box<dyn Ocr>> {
 #[cfg(not(any(target_vendor = "apple", target_os = "windows")))]
 pub fn platform_ocr() -> Option<Box<dyn Ocr>> {
     None
+}
+
+/// The picture a scan was handed: a file the user already keeps, or the bytes
+/// of a photo that is on no disk.
+#[derive(Clone, Copy)]
+pub enum Image<'a> {
+    File(&'a Path),
+    Bytes(&'a [u8]),
+}
+
+/// The holder's photograph in `image`, as `Entry::portrait` keeps it, where
+/// the platform can find a face: Apple's Vision.
+#[cfg(target_vendor = "apple")]
+pub fn platform_portrait(image: Image<'_>) -> Option<String> {
+    portrait_apple::find(image)
+}
+
+/// No face detector is wired up anywhere else yet; the document's face keeps
+/// its silhouette there.
+#[cfg(not(target_vendor = "apple"))]
+pub fn platform_portrait(_image: Image<'_>) -> Option<String> {
+    None
+}
+
+/// A document's fields with the holder's photograph among them, when there is
+/// one to be had. Best effort: a document that reads is a scan with or
+/// without its picture. A card has no holder to show.
+fn with_portrait(mut found: ScanResult, image: Image<'_>) -> ScanResult {
+    if found.kind == "identity" {
+        if let Some(portrait) = platform_portrait(image) {
+            found.fields.insert("portrait".into(), portrait);
+        }
+    }
+    found
 }
 
 /// Read whatever the recognized text holds.
@@ -128,7 +173,9 @@ pub async fn scan(path: String) -> Result<ScanResult> {
         // The recognized lines are the card number in the clear; the parsed
         // result is all that may outlive this call.
         lines.zeroize();
-        found.ok_or(Error::Unrecognized)
+        found
+            .map(|found| with_portrait(found, Image::File(&file)))
+            .ok_or(Error::Unrecognized)
     })
     .await
     .map_err(|e| Error::Other(e.to_string()))?
@@ -146,12 +193,15 @@ pub async fn scan_bytes(mut image: Vec<u8>) -> Result<ScanResult> {
         let ocr = platform_ocr().ok_or_else(|| {
             Error::Unsupported("scanning is not available on this platform".into())
         })?;
-        let recognized = ocr.recognize_data(&image);
+        // The photograph is cut from the same bytes, so they are scrubbed
+        // only once both readers are done with them.
+        let found = ocr.recognize_data(&image).map(|mut lines| {
+            let found = scan_lines(&lines);
+            lines.zeroize();
+            found.map(|found| with_portrait(found, Image::Bytes(&image)))
+        });
         image.zeroize();
-        let mut lines = recognized?;
-        let found = scan_lines(&lines);
-        lines.zeroize();
-        found.ok_or(Error::Unrecognized)
+        found?.ok_or(Error::Unrecognized)
     })
     .await
     .map_err(|e| Error::Other(e.to_string()))?

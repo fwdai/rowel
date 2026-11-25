@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useFields } from '@/components/elements/fields'
 import { docTypeOf, TEMPLATES } from '../templates'
+import { portraitOf } from '../portrait'
 import type { Doc } from './DocCell'
 import Document from './Document'
 
@@ -32,6 +33,8 @@ export default function Face() {
     has: key => rows.has(key),
     set: editing ? (key, value) => set(key, value) : undefined,
     required: key => !!rows.get(key),
+    portrait: portraitOf(entry),
+    removePortrait: editing ? () => set('portrait', '') : undefined,
     shown,
     toggle: () => setShown(!shown)
   }

@@ -474,6 +474,7 @@ const identityEntry = (extra?: ExtraField[]): Entry =>
     authority: '',
     personal_number: '',
     note: '',
+    portrait: '',
     tags: [],
     ...(extra ? { extra } : {})
   }) as Entry

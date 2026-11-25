@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { DOC_TYPES, TEMPLATES, type DocType, type IdentityKey } from '../templates'
 import type { Doc } from './DocCell'
 import Document from './Document'
@@ -19,15 +20,23 @@ const FILLED: Record<string, string> = {
   personal_number: '9103140447'
 }
 
-const show = (docType: DocType, shown = false, over: Record<string, string> = {}) => {
+const show = (
+  docType: DocType,
+  shown = false,
+  over: Record<string, string> = {},
+  extra: Partial<Doc> = {}
+) => {
   const keys = new Set<IdentityKey>(TEMPLATES[docType].map(row => row.key))
   const doc: Doc = {
     value: key => (keys.has(key) ? ({ ...FILLED, ...over }[key] ?? '') : ''),
     shown,
-    toggle: () => {}
+    toggle: () => {},
+    ...extra
   }
   render(<Document docType={docType} doc={doc} />)
 }
+
+const PHOTO = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
 
 const face = () => screen.getByTestId('identity-face')
 
@@ -90,6 +99,28 @@ describe('the document face', () => {
     // The band is generated from the same values and must not undo the mask.
     expect(face().textContent).not.toContain('X48213097')
     expect(face().textContent).not.toContain('9103140447')
+  })
+
+  it('prints a silhouette where the document has no photograph', () => {
+    show('passport')
+    const frame = screen.getByTestId('identity-portrait')
+    expect(frame.querySelector('img')).toBeNull()
+    expect(frame.querySelector('svg')).not.toBeNull()
+  })
+
+  it("prints the holder's photograph where it has one", () => {
+    show('id_card', false, {}, { portrait: PHOTO })
+    const frame = screen.getByTestId('identity-portrait')
+    expect(frame.querySelector('img')).toHaveAttribute('src', PHOTO)
+    // Reading, the photograph is part of the document: nothing takes it off.
+    expect(screen.queryByTestId('remove-portrait')).toBeNull()
+  })
+
+  it('lets the photograph be taken off while editing', async () => {
+    const removePortrait = vi.fn()
+    show('passport', true, {}, { portrait: PHOTO, set: () => {}, removePortrait })
+    await userEvent.click(screen.getByTestId('remove-portrait'))
+    expect(removePortrait).toHaveBeenCalledOnce()
   })
 
   it('prints the number and its band once revealed', () => {

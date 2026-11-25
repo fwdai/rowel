@@ -174,9 +174,31 @@ objc2-vision = { version = "0.3.2", default-features = false, features = [
   "VNRequest",
   "VNRequestHandler",
   "VNRecognizeTextRequest",
+  "VNDetectFaceRectanglesRequest",
   "VNObservation",
   "VNTypes",
   "objc2-core-foundation",
+  "objc2-core-image",
+] }
+# The holder's photograph off a scanned document (`scan::portrait_apple`):
+# Core Image decodes the picture upright, hands Vision the same pixels to find
+# the face in, and cuts, scales and encodes the crop. Core Graphics is the
+# colour space the JPEG is written in; Core Foundation the rectangle and the
+# transform. All three are already in the locked graph.
+objc2-core-image = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CIImage",
+  "CIContext",
+  "objc2-core-foundation",
+  "objc2-core-graphics",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CGColorSpace",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CFCGTypes",
 ] }
 # Biometric-gated Keychain (SecAccessControl / kSecAccessControlBiometryCurrentSet).
 # OSX_10_15 enables the data-protection keychain required for biometric ACLs on

@@ -162,7 +162,7 @@ export default function Document({ docType, doc }: Props) {
             so a pane too narrow to set these fields pushes the face taller
             rather than hiding the overflow under the frame's rounded corner. */}
         <div className="mt-3 flex items-start gap-4">
-          <Portrait />
+          <Portrait src={doc.portrait} onRemove={doc.removePortrait} />
           <div className={FIELDS}>
             <DocCell
               doc={doc}

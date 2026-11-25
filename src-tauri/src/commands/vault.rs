@@ -96,6 +96,13 @@ fn merge_stored(
             "a passkey's private key cannot be set from here".into(),
         ));
     }
+    // The payload is unsealed whole on every reveal, so the one picture it
+    // carries stays the size of one.
+    if !entry.has_valid_portrait() {
+        return Err(Error::Unsupported(
+            "a portrait has to be a small JPEG".into(),
+        ));
+    }
     let mut stored = store
         .get(&entry.id)
         .map_err(store_err)?

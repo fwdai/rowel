@@ -27,6 +27,8 @@ const PASSPORT = {
   personal_number: 'ZE184226B'
 }
 
+const PORTRAIT = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
+
 const seed = () => withEntries([loginMeta({ id: 'l1', title: 'Google' })])
 
 const scan = (path: string) => act(async () => void (await runScan(path)))
@@ -157,6 +159,24 @@ describe('a scanned draft', () => {
       expect(document.querySelector('input[name="number"]')).toHaveValue('L898902C3')
     )
     expect(name).toHaveValue('MY OWN NAME')
+  })
+
+  it("shows the holder's photograph the scan cut out, until it is removed", async () => {
+    seed()
+    seedApp({ scanSupported: true })
+    mockCommand('scan_image', () => ({
+      kind: 'identity',
+      fields: { ...PASSPORT, portrait: PORTRAIT }
+    }))
+    render(<Main />)
+
+    await scan('/Users/me/passport.jpg')
+
+    const frame = await screen.findByTestId('identity-portrait')
+    expect(frame.querySelector('img')).toHaveAttribute('src', PORTRAIT)
+
+    await userEvent.click(within(frame).getByTestId('remove-portrait'))
+    expect(frame.querySelector('img')).toBeNull()
   })
 })
 

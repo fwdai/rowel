@@ -19,7 +19,8 @@ export const defaults: EntryDraft = {
   expiry_date: '',
   authority: '',
   personal_number: '',
-  note: ''
+  note: '',
+  portrait: ''
 }
 
 // What "complete" means depends on the document: a driving licence must have an
