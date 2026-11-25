@@ -15,6 +15,10 @@ export interface Doc {
   set?: (key: IdentityKey, value: string) => void
   /** Whether the template needs the row filled before the document saves. */
   required?: (key: IdentityKey) => boolean
+  /** The holder's photograph, as an image source; absent when there is none. */
+  portrait?: string
+  /** Takes the photograph off the draft; absent while reading. */
+  removePortrait?: () => void
   shown: boolean
   toggle: () => void
 }

@@ -21,7 +21,8 @@ export const defaults: EntryDraft = {
   personal_number: '',
   categories: '',
   color: '',
-  note: ''
+  note: '',
+  portrait: ''
 }
 
 // What "complete" means depends on the document: a driving licence must have an
