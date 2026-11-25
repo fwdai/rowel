@@ -7,9 +7,9 @@ import Document from './Document'
 /**
  * The document as an object, in both modes.
  *
- * One face for every type (see `Document`), printing only the rows the
- * document's template has, so a value left over from another type (an import,
- * an older vault) never shows on a document that has no place for it. Editing,
+ * Each type is drawn as the document it is (see `Document`), printing only the
+ * rows its template has, so a value left over from another type (an import, an
+ * older vault) never shows on a document that has no place for it. Editing,
  * the same cells take the typing, and the template says which of them the
  * document cannot be saved without.
  */

@@ -1,16 +1,29 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { countryName } from '@/utils/countries'
+import { cx } from '@/utils/cx'
 import { DOC_TYPE_LABELS } from '../../templates'
-import Medallion from '../Medallion'
-import Print from '../Print'
-import { HEAD, SUBTITLE } from '../flow'
-import type { LayoutProps, Stock } from '.'
+import { placeOf } from '../place'
+import type { Doc } from '../DocCell'
+import type { LayoutProps } from '.'
+import Masthead from './Masthead'
+import type { Stock } from './stocks'
+
+interface WatermarkProps {
+  stock: Stock
+  doc: Doc
+  className?: string
+}
+
+/** The card's mark, large and faint in the stock of its back. */
+export function Watermark({ stock, doc, className }: WatermarkProps) {
+  return (
+    <div aria-hidden className={cx('flex-none opacity-40', className)} style={{ color: stock.line }}>
+      {stock.mark(88, doc)}
+    </div>
+  )
+}
 
 interface Props extends LayoutProps {
-  stock: Stock
-  /** The card's mark, the same one its front wears. */
-  mark: ReactNode
   /** What runs along the foot, edge to edge: the machine-readable zone, a barcode. */
   band: ReactNode
   /** What the back carries above that. */
@@ -18,34 +31,21 @@ interface Props extends LayoutProps {
 }
 
 /**
- * The back of a card: the front's stock seen from behind, its mark in the same
- * corner to turn it over again, a line saying whose back this is, and the
- * band a machine reads along the foot. Nothing on it is typed — the back is
- * what the card says about itself, drawn from what the front holds.
+ * The back of a card: a line saying whose back this is, what the card carries
+ * there, and the band a machine reads along the foot. Nothing on it is typed —
+ * the back is what the card says about itself, drawn from what the front holds.
  */
-export default function Reverse({ docType, doc, flip, stock, mark, band, children }: Props) {
+export default function Reverse({ docType, doc, band, children }: Props) {
   const { t } = useTranslation()
-  const country = doc.value('country')
-  const place = countryName(country) ?? country
+  const place = placeOf(doc)
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
-      <Print {...stock} mirrored />
-      <Medallion line={stock.line} onFlip={flip}>
-        {mark}
-      </Medallion>
-
+    <>
       <div className="flex min-w-0 flex-1 flex-col px-5 pb-3 pt-4">
-        <header className={HEAD}>
-          <div className={SUBTITLE}>
-            {t(DOC_TYPE_LABELS[docType])}
-            {place && ` · ${place}`}
-          </div>
-        </header>
+        <Masthead sub={`${t(DOC_TYPE_LABELS[docType])}${place && ` · ${place}`}`} />
         <div className="mt-auto flex min-w-0 items-end gap-4 pt-3">{children}</div>
       </div>
-
       {band}
-    </div>
+    </>
   )
 }

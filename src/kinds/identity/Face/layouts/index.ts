@@ -2,25 +2,20 @@ import type { ComponentType } from 'react'
 import type { DocType } from '../../templates'
 import type { Doc } from '../DocCell'
 import IdCard from './IdCard'
-import IdCardBack from './IdCard/Back'
 import License from './License'
 import LicenseBack from './License/Back'
 import Page from './Page'
 import Permit from './Permit'
-import PermitBack from './Permit/Back'
+import ZoneBack from './ZoneBack'
+import { ID_CARD, LICENSE, PERMIT, type Stock } from './stocks'
 
 export interface LayoutProps {
   docType: DocType
   doc: Doc
-  /** Turns the card over; absent on a document that has no back to turn to. */
-  flip?: () => void
 }
 
-/** What a card's stock is printed with, the same on both its sides (see `Print`). */
-export interface Stock {
-  wash: string
-  line: string
-  engraving: string
+export interface BackProps extends LayoutProps {
+  stock: Stock
 }
 
 interface Layout {
@@ -31,8 +26,8 @@ interface Layout {
    */
   format: string
   Face: ComponentType<LayoutProps>
-  /** The other side, for a document that is a card. */
-  Back?: ComponentType<LayoutProps>
+  /** For a document that is a card: what it is made of, and its other side. */
+  card?: { stock: Stock; Back: ComponentType<BackProps> }
 }
 
 // ISO/IEC 7810 and ICAO 9303: a passport's data page is ID-3 and noticeably
@@ -49,8 +44,8 @@ const ID_1 = '85.6 / 53.98'
  */
 export const LAYOUTS: Record<DocType, Layout> = {
   passport: { format: ID_3, Face: Page },
-  id_card: { format: ID_1, Face: IdCard, Back: IdCardBack },
-  driver_license: { format: ID_1, Face: License, Back: LicenseBack },
-  residence_permit: { format: ID_1, Face: Permit, Back: PermitBack },
+  id_card: { format: ID_1, Face: IdCard, card: { stock: ID_CARD, Back: ZoneBack } },
+  driver_license: { format: ID_1, Face: License, card: { stock: LICENSE, Back: LicenseBack } },
+  residence_permit: { format: ID_1, Face: Permit, card: { stock: PERMIT, Back: ZoneBack } },
   other: { format: ID_1, Face: Page }
 }

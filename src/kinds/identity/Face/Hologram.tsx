@@ -10,23 +10,26 @@ const IRIDESCENT =
 interface Props {
   /** The issuing country as the document has it; anything not a code gets the generic emblem. */
   country: string
-  className?: string
+  /** The emblem's box, in px. */
+  size: number
 }
 
 /**
- * The issuing state's coat of arms as the hologram a card carries over its
- * photograph: the same emblem a passport's cover is stamped with (see `Cover`),
- * in the shifting film instead of gold.
+ * The issuing state's coat of arms as the hologram a card carries: the same
+ * emblem a passport's cover is stamped with (see `Cover`), in the shifting film
+ * instead of gold.
  */
-export default function Hologram({ country, className }: Props) {
+export default function Hologram({ country, size }: Props) {
   const emblem = useEmblem(countryCode(country))
 
   return (
-    <Foil
-      src={emblem ?? genericEmblem}
-      metal={IRIDESCENT}
-      testid="identity-hologram"
-      className={className}
-    />
+    <div style={{ width: size, height: size }}>
+      <Foil
+        src={emblem ?? genericEmblem}
+        metal={IRIDESCENT}
+        testid="identity-hologram"
+        className="h-full w-full"
+      />
+    </div>
   )
 }

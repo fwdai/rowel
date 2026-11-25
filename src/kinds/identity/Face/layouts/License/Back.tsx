@@ -1,11 +1,9 @@
 import { useTranslation } from 'react-i18next'
 import { CAPTION } from '@/components/elements/Face/Cell'
-import { LicenseGlyph } from '@/components/Main/icons'
 import { specOf, type IdentityKey } from '../../../templates'
-import Reverse from '../Reverse'
-import type { LayoutProps } from '..'
+import type { BackProps } from '..'
+import Reverse, { Watermark } from '../Reverse'
 import { INDEX } from './numbering'
-import { STOCK } from './stock'
 
 // The bars of the licence's barcode. Decoration, like the portrait's
 // silhouette: the vault holds no barcode, and what the code would carry is
@@ -24,18 +22,17 @@ const codes = (categories: string): string[] => categories.split(/[\s,;/|]+/).fi
  * The back of a driving licence, where the card says what its holder may
  * drive: each category the front lists in a box of its own, as the table on a
  * real licence sets them, over the legend to the numbers the front's fields
- * are set under, with the vehicle the licence is for drawn large in the stock
- * and the barcode along the foot.
+ * are set under, with the card's mark large in the stock and the barcode along
+ * the foot.
  */
-export default function LicenseBack(props: LayoutProps) {
+export default function LicenseBack({ docType, doc, stock }: BackProps) {
   const { t } = useTranslation()
-  const held = codes(props.doc.value('categories'))
+  const held = codes(doc.value('categories'))
 
   return (
     <Reverse
-      {...props}
-      stock={STOCK}
-      mark={<LicenseGlyph size={22} />}
+      docType={docType}
+      doc={doc}
       band={
         <div className="border-t border-(--face-rule) bg-white/70 px-5 py-3">
           <div aria-hidden className="h-9 opacity-70" style={{ backgroundImage: BARS }} />
@@ -49,7 +46,7 @@ export default function LicenseBack(props: LayoutProps) {
               <li
                 key={at}
                 className="grid h-7 min-w-9 place-items-center rounded-[5px] border bg-white/60 px-2 text-base font-semibold uppercase tracking-[0.04em]"
-                style={{ borderColor: STOCK.line }}
+                style={{ borderColor: stock.line }}
               >
                 {code}
               </li>
@@ -66,9 +63,7 @@ export default function LicenseBack(props: LayoutProps) {
           ))}
         </ol>
       </div>
-      <div aria-hidden className="flex-none opacity-25" style={{ color: STOCK.line }}>
-        <LicenseGlyph size={84} stroke={1.5} />
-      </div>
+      <Watermark stock={stock} doc={doc} />
     </Reverse>
   )
 }

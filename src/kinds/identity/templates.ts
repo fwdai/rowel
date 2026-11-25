@@ -51,7 +51,7 @@ interface Spec {
   country?: boolean
   /** In the encrypted payload: masked behind a reveal toggle. */
   secret?: boolean
-  /** The document's headline value, set 2xl and letter-spaced. */
+  /** The document's headline value, set at the headline-secret tier (see `DocCell`). */
   big?: boolean
   /** The multi-line body row. */
   note?: boolean

@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react'
 import { cx } from '@/utils/cx'
 import { CARD } from './guilloche'
 
@@ -11,8 +10,6 @@ interface Props {
   engraving: string
   /** The card's other side: the same printing, seen from behind. */
   mirrored?: boolean
-  /** Anything else in the stock, as SVG in the card's own units (see `CARD`). */
-  children?: ReactNode
 }
 
 /**
@@ -25,7 +22,7 @@ interface Props {
  * Fixed colours, as the rest of a document face: the card stays the colour it
  * is whichever palette the app is on.
  */
-export default function Print({ wash, line, engraving, mirrored, children }: Props) {
+export default function Print({ wash, line, engraving, mirrored }: Props) {
   return (
     <div
       aria-hidden
@@ -38,7 +35,6 @@ export default function Print({ wash, line, engraving, mirrored, children }: Pro
         className="h-full w-full"
       >
         <path d={engraving} fill="none" stroke={line} strokeWidth={0.5} opacity={0.28} />
-        {children}
       </svg>
     </div>
   )

@@ -39,6 +39,9 @@ interface Props {
   className?: string
 }
 
+// The headline-secret tier every face's number takes (see docs/detail-design.md).
+const HEADLINE = 'text-xl tracking-secret'
+
 // One row of the template, printed on the face. The template's spec says what
 // the value is — a date, a secret — and this turns that into how it shows and
 // how it is typed: a date in the user's pattern, stored as ISO on blur; a
@@ -84,7 +87,10 @@ export default function DocCell({
       size={size}
       required={doc.required?.(name)}
       masked={masked}
-      ink={cx(ink ?? 'text-base leading-tight', masked && !editing && 'text-(--face-ink2)')}
+      ink={cx(
+        ink ?? (spec.big ? HEADLINE : 'text-base leading-tight'),
+        masked && !editing && 'text-(--face-ink2)'
+      )}
       wrap={wrap && !masked}
       className={index ? 'min-w-0 flex-1' : className}
     />
