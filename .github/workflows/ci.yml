@@ -364,8 +364,23 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --target aarch64-linux-android --all-targets -- -D warnings
 
+      # Gradle fetches its plugins from Maven Central, which now and then
+      # answers a shared runner with 429 Too Many Requests. That is not the
+      # project failing to build, so the step waits and tries again: the crate
+      # is compiled by then, so a retry is the Gradle half alone, and a real
+      # failure still fails, on all three tries.
       - name: Build a debug APK
-        run: bun run tauri android build --debug --apk --target aarch64 --ci
+        run: |
+          for attempt in 1 2 3; do
+            if bun run tauri android build --debug --apk --target aarch64 --ci; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::APK build failed (attempt $attempt of 3); retrying in 60s"
+              sleep 60
+            fi
+          done
+          exit 1
 
       - name: Upload the debug APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
