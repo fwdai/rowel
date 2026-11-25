@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { DOC_TYPES, TEMPLATES, type DocType, type IdentityKey } from '../templates'
 import type { Doc } from './DocCell'
 import Document from './Document'
@@ -16,13 +16,20 @@ const FILLED: Record<string, string> = {
   issue_date: '2021-06-02',
   expiry_date: '2031-06-01',
   authority: 'HMPO',
-  personal_number: '9103140447'
+  personal_number: '9103140447',
+  categories: 'AM, B1/B'
 }
 
-const show = (docType: DocType, shown = false, over: Record<string, string> = {}) => {
+const show = (
+  docType: DocType,
+  shown = false,
+  over: Record<string, string> = {},
+  editing = false
+) => {
   const keys = new Set<IdentityKey>(TEMPLATES[docType].map(row => row.key))
   const doc: Doc = {
     value: key => (keys.has(key) ? ({ ...FILLED, ...over }[key] ?? '') : ''),
+    set: editing ? () => {} : undefined,
     shown,
     toggle: () => {}
   }
@@ -30,6 +37,7 @@ const show = (docType: DocType, shown = false, over: Record<string, string> = {}
 }
 
 const face = () => screen.getByTestId('identity-face')
+const back = () => screen.getByTestId('identity-back')
 
 describe('the document face', () => {
   it('prints every kind of document on the same paper', () => {
@@ -96,5 +104,131 @@ describe('the document face', () => {
     show('passport', true)
     expect(screen.getByTestId('entry-value-number')).toHaveTextContent('X48213097')
     expect(face().textContent).toContain('P<GBRALEXANDRA')
+  })
+
+  describe('a card', () => {
+    const CARDS = ['id_card', 'driver_license', 'residence_permit'] as const
+
+    it('keeps its front for people: the machine-readable zone is on the back', () => {
+      for (const docType of CARDS) {
+        show(docType, true)
+        expect(face().textContent).not.toContain('<<')
+        cleanup()
+      }
+      show('id_card', true)
+      expect(within(back()).getByTestId('identity-mrz')).toHaveTextContent('I<GBRX48213097')
+      cleanup()
+      show('residence_permit', true)
+      expect(within(back()).getByTestId('identity-mrz')).toHaveTextContent('IRGBRX48213097')
+    })
+
+    it('sets a licence’s categories on its front, and one to a box on its back', () => {
+      show('driver_license', true)
+      expect(screen.getByTestId('entry-value-categories')).toHaveTextContent('AM, B1/B')
+      // Free text: whatever sits between the codes is the gap between them.
+      const boxes = within(screen.getByTestId('identity-categories')).getAllByRole('listitem')
+      expect(boxes.map(box => box.textContent)).toEqual(['AM', 'B1', 'B'])
+      cleanup()
+
+      show('driver_license', true, { categories: '' })
+      expect(screen.queryByTestId('identity-categories')).toBeNull()
+      cleanup()
+
+      // Only a licence has the row.
+      show('id_card', true)
+      expect(screen.queryByTestId('entry-value-categories')).toBeNull()
+    })
+
+    it('prints the legend to a licence’s numbers on its back, and no zone', () => {
+      show('driver_license', true)
+      expect(within(back()).queryByTestId('identity-mrz')).toBeNull()
+      expect(back()).toHaveTextContent('4b.Expires')
+      expect(back()).toHaveTextContent('5.Number')
+    })
+
+    it('masks its number on both sides until the eye is pressed', () => {
+      for (const docType of CARDS) {
+        show(docType)
+        expect(face().textContent).not.toContain('X48213097')
+        expect(back().textContent).not.toContain('X48213097')
+        expect(back().textContent).not.toContain('9103140447')
+        cleanup()
+        show(docType, true)
+        expect(screen.getByTestId('entry-value-number')).toHaveTextContent('X48213097')
+        cleanup()
+      }
+    })
+
+    it('turns over on its mark, and back again', () => {
+      show('id_card')
+      const side = (of: HTMLElement) => of.parentElement!
+      expect(side(face())).not.toHaveAttribute('inert')
+      expect(side(back())).toHaveAttribute('inert')
+
+      fireEvent.click(within(face()).getByTestId('flip-card'))
+      expect(side(face())).toHaveAttribute('inert')
+      expect(side(back())).not.toHaveAttribute('inert')
+
+      fireEvent.click(within(back()).getByTestId('flip-card'))
+      expect(side(face())).not.toHaveAttribute('inert')
+    })
+
+    it('offers no turn while it is being edited', () => {
+      show('id_card', true, {}, true)
+      expect(screen.queryByTestId('flip-card')).toBeNull()
+      expect(face().parentElement).not.toHaveAttribute('inert')
+    })
+
+    it('leaves a passport one-sided', () => {
+      show('passport')
+      expect(screen.queryByTestId('identity-back')).toBeNull()
+      expect(screen.queryByTestId('flip-card')).toBeNull()
+    })
+
+    it('says how long it has, once', () => {
+      for (const docType of CARDS) {
+        show(docType, false, { expiry_date: '2019-01-01' })
+        expect(screen.getAllByText('Expired')).toHaveLength(1)
+        cleanup()
+      }
+    })
+
+    it('numbers a licence’s fields as the licence standard does', () => {
+      show('driver_license', true)
+      const indexed = (name: string) =>
+        screen.getByTestId(`entry-value-${name}`).closest('button')!.parentElement
+      expect(indexed('name')).toHaveTextContent(/^1\./)
+      expect(indexed('birth_date')).toHaveTextContent(/^3\./)
+      expect(indexed('issue_date')).toHaveTextContent(/^4a\./)
+      expect(indexed('expiry_date')).toHaveTextContent(/^4b\./)
+      expect(indexed('authority')).toHaveTextContent(/^4c\./)
+      expect(indexed('number')).toHaveTextContent(/^5\./)
+    })
+
+    it('titles an ID card with the state that issued it', () => {
+      show('id_card')
+      expect(face()).toHaveTextContent('United Kingdom')
+      expect(screen.getByTestId('identity-doc-type')).toHaveTextContent('ID card')
+      expect(within(face()).getByTestId('identity-hologram')).toBeInTheDocument()
+    })
+
+    it('draws how far through its term a permit is', () => {
+      const day = (offset: number) =>
+        new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10)
+      const term = () => screen.queryByTestId('identity-term')
+
+      show('residence_permit', false, { issue_date: day(-100), expiry_date: day(300) })
+      expect(parseFloat(term()!.style.width)).toBeCloseTo(25, 0)
+      cleanup()
+
+      // Past its last day the term is spent, not overdrawn.
+      show('residence_permit', false, { issue_date: day(-400), expiry_date: day(-10) })
+      expect(term()!.style.width).toBe('100%')
+      cleanup()
+
+      // No term to draw until both ends are dates.
+      show('residence_permit', false, { issue_date: '' })
+      expect(term()).toBeNull()
+    })
   })
 })

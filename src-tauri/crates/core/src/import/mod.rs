@@ -174,6 +174,7 @@ pub struct ImportedEntry {
     pub doc_expiry_date: Option<String>,
     pub doc_authority: Option<String>,
     pub doc_personal_number: Option<String>,
+    pub doc_categories: Option<String>,
     // SSH key fields (only meaningful when kind == Ssh). The private key is the
     // credential; the public line and fingerprint are derivable from it but are
     // carried where a format has room, so a round-trip needs no key parsing.

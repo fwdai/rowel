@@ -65,6 +65,7 @@ pub const ISSUE_DATE_LABEL: &str = "Issue date";
 pub const EXPIRY_DATE_LABEL: &str = "Expiry date";
 pub const AUTHORITY_LABEL: &str = "Authority";
 pub const PERSONAL_NUMBER_LABEL: &str = "Personal number";
+pub const CATEGORIES_LABEL: &str = "Categories";
 pub const PASSWORD_UPDATED_LABEL: &str = "Password updated";
 pub const FAVORITE_LABEL: &str = "Favorite";
 /// What the CXF credential holding the user's own custom fields is called. The
@@ -87,6 +88,7 @@ pub fn labelled_fields(e: &ImportedEntry) -> Vec<(&'static str, &str, bool)> {
         (ISSUE_DATE_LABEL, &e.doc_issue_date, false),
         (EXPIRY_DATE_LABEL, &e.doc_expiry_date, false),
         (AUTHORITY_LABEL, &e.doc_authority, false),
+        (CATEGORIES_LABEL, &e.doc_categories, false),
         (PASSWORD_UPDATED_LABEL, &e.password_updated_at, false),
     ]
     .into_iter()
@@ -115,6 +117,7 @@ pub fn set_labelled(entry: &mut ImportedEntry, mut take: impl FnMut(&str) -> Opt
         (EXPIRY_DATE_LABEL, &mut entry.doc_expiry_date),
         (AUTHORITY_LABEL, &mut entry.doc_authority),
         (PERSONAL_NUMBER_LABEL, &mut entry.doc_personal_number),
+        (CATEGORIES_LABEL, &mut entry.doc_categories),
         (PASSWORD_UPDATED_LABEL, &mut entry.password_updated_at),
     ] {
         if let Some(value) = take(label) {
@@ -735,6 +738,7 @@ const COLUMNS: &[&str] = &[
     "doc_expiry_date",
     "doc_authority",
     "doc_personal_number",
+    "doc_categories",
     "favorite",
     "created_at",
     "updated_at",
@@ -792,6 +796,7 @@ pub fn to_generic_csv(entries: &[ImportedEntry]) -> csv::Result<Vec<u8>> {
             e.doc_expiry_date.clone().unwrap_or_default(),
             e.doc_authority.clone().unwrap_or_default(),
             e.doc_personal_number.clone().unwrap_or_default(),
+            e.doc_categories.clone().unwrap_or_default(),
             e.favorite.to_string(),
             e.created_at.clone().unwrap_or_default(),
             e.updated_at.clone().unwrap_or_default(),

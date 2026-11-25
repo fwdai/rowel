@@ -26,6 +26,12 @@ interface Props {
   bare?: boolean
   /** A caption other than the field's own — the name reads as "Holder" here. */
   label?: TKey
+  /**
+   * The field's number on a driving licence — `4b.` — set in the gutter before
+   * it. The numbering is the licence's own (ISO/IEC 18013-1), the same on a
+   * card from any country, and it is what makes a licence's fields a licence's.
+   */
+  index?: string
   ink?: string
   wrap?: boolean
   /** The box's width in characters while editing; without it the cell's own. */
@@ -41,7 +47,17 @@ interface Props {
 // document has left is not a cell: it belongs to the document rather than to
 // any one of its dates, so the face states it once, in the status beside the
 // number.
-export default function DocCell({ doc, name, bare, label, ink, wrap, size, className }: Props) {
+export default function DocCell({
+  doc,
+  name,
+  bare,
+  label,
+  index,
+  ink,
+  wrap,
+  size,
+  className
+}: Props) {
   const { format, formatDate, toIsoDate } = useDates()
   const spec = specOf(name)
   const value = doc.value(name)
@@ -53,7 +69,7 @@ export default function DocCell({ doc, name, bare, label, ink, wrap, size, class
 
   const masked = !!spec.secret && !doc.shown
 
-  return (
+  const cell = (
     <Cell
       name={name}
       label={label ?? spec.label}
@@ -70,7 +86,17 @@ export default function DocCell({ doc, name, bare, label, ink, wrap, size, class
       masked={masked}
       ink={cx(ink ?? 'text-base leading-tight', masked && !editing && 'text-(--face-ink2)')}
       wrap={wrap && !masked}
-      className={className}
+      className={index ? 'min-w-0 flex-1' : className}
     />
+  )
+  if (!index) return cell
+
+  return (
+    <div className={cx('flex min-w-0 items-start gap-2', className)}>
+      <span aria-hidden className="flex-none text-2xs font-semibold tracking-[0.1em]">
+        {index}
+      </span>
+      {cell}
+    </div>
   )
 }

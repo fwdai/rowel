@@ -109,6 +109,8 @@ export interface IdentityEntry extends BaseEntry {
   expiry_date: string
   authority: string
   personal_number: string
+  /** What a driving licence covers, as the card prints it: `AM, B1, B`. Free text. */
+  categories: string
   note: string
 }
 

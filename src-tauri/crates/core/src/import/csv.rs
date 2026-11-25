@@ -64,6 +64,7 @@ const DOC_ISSUE_DATE: &[&str] = &["doc_issue_date"];
 const DOC_EXPIRY_DATE: &[&str] = &["doc_expiry_date"];
 const DOC_AUTHORITY: &[&str] = &["doc_authority"];
 const DOC_PERSONAL_NUMBER: &[&str] = &["doc_personal_number"];
+const DOC_CATEGORIES: &[&str] = &["doc_categories"];
 const SSH_PRIVATE_KEY: &[&str] = &["ssh_private_key"];
 const SSH_PUBLIC_KEY: &[&str] = &["ssh_public_key"];
 const SSH_FINGERPRINT: &[&str] = &["ssh_fingerprint"];
@@ -319,6 +320,7 @@ fn rowel_row(
             entry.doc_expiry_date = cell(DOC_EXPIRY_DATE);
             entry.doc_authority = cell(DOC_AUTHORITY);
             entry.doc_personal_number = cell(DOC_PERSONAL_NUMBER);
+            entry.doc_categories = cell(DOC_CATEGORIES);
         }
         EntryKind::Ssh => {
             entry.ssh_private_key = cell(SSH_PRIVATE_KEY);

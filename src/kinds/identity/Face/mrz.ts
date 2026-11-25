@@ -11,8 +11,9 @@ import type { Doc } from './DocCell'
  * with check digits over them, so the band is derived rather than stored —
  * nothing to fill in, and it stays true as the document is edited.
  *
- * A driving licence has no MRZ (it carries a barcode, which the face draws
- * instead) and `other` is not a format at all, so both get no band: `null`.
+ * A driving licence has no MRZ (its back carries a barcode instead) and `other`
+ * is not a format at all, so both get no band: `null`. A passport prints its
+ * zone on the data page; a card prints it on its back (see `MachineZone`).
  *
  * The one liberty taken is the name. ICAO wants the primary identifier — the
  * surname — first, then `<<`, then the given names; the vault stores `name`

@@ -94,6 +94,10 @@ const FIELDS = {
   issue_date: { label: 'Issued', group: 'document', date: true },
   expiry_date: { label: 'Expires', group: 'document', date: true, expiry: true },
   authority: { label: 'Authority', group: 'document', placeholder: 'HMPO', maxLength: 60 },
+  // What a driving licence entitles its holder to drive. Free text rather than
+  // a pick list: the codes are each country's own (`AM, B1, B` on one card,
+  // `Class C` on another), and the back of the card sets them one to a box.
+  categories: { label: 'Categories', group: 'document', placeholder: 'AM, B', maxLength: 60 },
   personal_number: { label: 'Personal no.', group: 'extra', secret: true, maxLength: 40 },
   note: { label: 'Note', group: 'extra', note: true }
 } satisfies Record<string, Spec>
@@ -147,6 +151,7 @@ export const TEMPLATES: Record<DocType, Row[]> = {
     { key: 'issue_date' },
     { key: 'expiry_date', required: true },
     { key: 'authority' },
+    { key: 'categories' },
     { key: 'note' }
   ],
   residence_permit: [
