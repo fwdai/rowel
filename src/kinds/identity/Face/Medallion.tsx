@@ -59,6 +59,7 @@ export default function Medallion({ line, onFlip, children }: Props) {
       title={t('Flip card')}
       aria-label={t('Flip card')}
       data-testid="flip-card"
+      data-flip
       onClick={onFlip}
       className={cx(PLACE, 'group cursor-pointer rounded-full')}
       style={box}

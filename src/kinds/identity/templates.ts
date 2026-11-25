@@ -176,7 +176,12 @@ export const TEMPLATES: Record<DocType, Row[]> = {
   ]
 }
 
-const isDocType = (value: unknown): value is DocType =>
+/**
+ * Whether a value is a document type we know. What a vault or an import hands
+ * over is free text, so anything keyed by `DocType` asks this first — a bare
+ * lookup would answer `__proto__` with the object's own prototype.
+ */
+export const isDocType = (value: unknown): value is DocType =>
   typeof value === 'string' && (DOC_TYPES as readonly string[]).includes(value)
 
 /**

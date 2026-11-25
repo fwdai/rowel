@@ -147,6 +147,22 @@ describe('Entry list', () => {
     setFilterType(null)
   })
 
+  // A document type is free text from the vault or an import: one that is no
+  // type of ours, even one that names something on every object, still draws.
+  it('draws an identity whose document type is not one we know', () => {
+    const identity = { type: 'identity' as const, urlHost: '' }
+    withEntries([
+      loginMeta({ id: 'p1', title: 'Odd', docType: '__proto__', ...identity }),
+      loginMeta({ id: 'p2', title: 'Odder', docType: 'constructor', ...identity })
+    ])
+    setFilterType('identity')
+    render(<ListColumn />)
+
+    expect(screen.getByText('Odd')).toBeInTheDocument()
+    expect(screen.getByText('Odder')).toBeInTheDocument()
+    setFilterType(null)
+  })
+
   it('stamps the cover with the country’s emblem, asked for once per country', async () => {
     const emblem = 'data:image/svg+xml;base64,EMBLEM'
     mockCommand('fetch_emblem', () => emblem)

@@ -137,6 +137,7 @@ fn round_trip_bitwarden_identity() {
             doc_type: Some("driver_license".into()),
             doc_number: Some("D-99".into()),
             holder_name: Some("Mononym".into()),
+            doc_categories: Some("AM, B".into()),
             ..Default::default()
         },
     ];
@@ -178,6 +179,37 @@ fn bitwarden_reads_text_and_hidden_fields_as_extras() {
             field("Issuer note", ""),
         ]
     );
+}
+
+// "Categories" is a licence's row and anyone's word. A licence gives a field of
+// that name up to its categories; a login, or a passport — which has no such
+// row to show it in — keeps it as the custom field it was.
+#[test]
+fn bitwarden_claims_categories_only_from_a_licence() {
+    let json = br#"{"items":[
+      {"type":1,"name":"Blog","login":{"username":"ada"},"fields":[
+        {"name":"Categories","value":"news, essays","type":0}]},
+      {"type":4,"name":"Passport","identity":{"passportNumber":"X1"},"fields":[
+        {"name":"Categories","value":"ordinary","type":0}]},
+      {"type":4,"name":"Licence","identity":{"licenseNumber":"D-99"},"fields":[
+        {"name":"Categories","value":"AM, B","type":0}]}
+    ]}"#;
+    let r = parse(Format::Bitwarden, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+
+    assert_eq!(
+        r.entries[0].extra,
+        vec![field("Categories", "news, essays")]
+    );
+    assert_eq!(r.entries[0].doc_categories, None);
+    assert_eq!(r.entries[1].extra, vec![field("Categories", "ordinary")]);
+    assert_eq!(r.entries[1].doc_categories, None);
+    assert_eq!(r.entries[2].doc_categories.as_deref(), Some("AM, B"));
+    assert!(r.entries[2].extra.is_empty());
+
+    // And a login's own "Categories" survives our export and the way back.
+    let back = parse(Format::Bitwarden, &to_bitwarden_json(&r.entries).unwrap());
+    assert_eq!(back.entries, r.entries);
 }
 
 // Extras belong to no kind, so a login keeps them too — and comes back with the
@@ -2043,7 +2075,6 @@ fn round_trip_bitwarden_whole_identity() {
         doc_expiry_date: Some("2030-03-04".into()),
         doc_authority: Some("HMPO".into()),
         doc_personal_number: Some("PN-42".into()),
-        doc_categories: Some("AM, B".into()),
         ..Default::default()
     }];
     let bytes = to_bitwarden_json(&entries).unwrap();

@@ -1,6 +1,6 @@
 import { IdentityGlyph } from '@/components/Main/icons'
 import { DOC_GLYPHS } from './glyphs'
-import type { DocType } from './templates'
+import { isDocType } from './templates'
 
 interface Props {
   /** As the row's metadata carries it: free text from the vault. */
@@ -13,6 +13,6 @@ interface Props {
  * permit — and the kind's own for anything that is not a type we know.
  */
 export default function DocGlyph({ docType, size }: Props) {
-  const Glyph = DOC_GLYPHS[docType as DocType] ?? IdentityGlyph
+  const Glyph = isDocType(docType) ? DOC_GLYPHS[docType] : IdentityGlyph
   return <Glyph size={size} />
 }

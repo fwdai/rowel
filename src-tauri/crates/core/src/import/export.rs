@@ -101,6 +101,11 @@ pub fn labelled_fields(e: &ImportedEntry) -> Vec<(&'static str, &str, bool)> {
 /// Bitwarden importer removes it from the custom fields it rode in, a CXF one
 /// reads it out of the `custom-fields` credential — so the slot list is written
 /// once and the two directions cannot drift.
+///
+/// A licence's categories are not claimed here. Every other label is ours
+/// whatever the item is, but "Categories" is a thing people call a field of
+/// their own, so it is taken back only off a driving licence, by the importer
+/// that knows it has one (see `bitwarden`), and stays the user's anywhere else.
 pub fn set_labelled(entry: &mut ImportedEntry, mut take: impl FnMut(&str) -> Option<String>) {
     // Only when the label is there at all: a format with a member of its own
     // for the star has already set it.
@@ -117,7 +122,6 @@ pub fn set_labelled(entry: &mut ImportedEntry, mut take: impl FnMut(&str) -> Opt
         (EXPIRY_DATE_LABEL, &mut entry.doc_expiry_date),
         (AUTHORITY_LABEL, &mut entry.doc_authority),
         (PERSONAL_NUMBER_LABEL, &mut entry.doc_personal_number),
-        (CATEGORIES_LABEL, &mut entry.doc_categories),
         (PASSWORD_UPDATED_LABEL, &mut entry.password_updated_at),
     ] {
         if let Some(value) = take(label) {
@@ -202,7 +206,11 @@ pub fn to_bitwarden_json(entries: &[ImportedEntry]) -> serde_json::Result<Vec<u8
             // still gets a field of ours, empty, when the user has one wearing
             // it (see `shadowed`).
             let written: Vec<&str> = ours.iter().map(|(l, _, _)| *l).collect();
-            let claims = claimed.iter().map(String::as_str).chain(ssh);
+            // A licence's categories are claimed back off a licence alone, so
+            // only a licence needs that label guarded.
+            let licence =
+                (e.doc_type.as_deref() == Some("driver_license")).then_some(CATEGORIES_LABEL);
+            let claims = claimed.iter().map(String::as_str).chain(ssh).chain(licence);
             for label in shadowed(e, &written, claims) {
                 push_field(&mut item, label, "", FIELD_TEXT);
             }

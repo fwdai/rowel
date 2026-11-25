@@ -4,7 +4,7 @@
 
 use serde::Deserialize;
 
-use super::export::PASSPHRASE_LABEL;
+use super::export::{CATEGORIES_LABEL, PASSPHRASE_LABEL};
 use super::{
     non_empty, take_labelled, EntryKind, ImportResult, ImportedEntry, ImportedPasskey, Importer,
 };
@@ -383,6 +383,13 @@ impl Importer for Bitwarden {
                     } else {
                         "passport"
                     };
+                    // Only a licence has the row, so only a licence gives the
+                    // field up: on any other item "Categories" is the user's
+                    // own and stays the custom field it was.
+                    let categories = licence
+                        .is_some()
+                        .then(|| take_labelled(&mut extra, CATEGORIES_LABEL))
+                        .flatten();
                     result.entries.push(ImportedEntry {
                         kind: EntryKind::Identity,
                         title,
@@ -395,6 +402,7 @@ impl Importer for Bitwarden {
                         // number as a labelled field instead still keeps it.
                         doc_personal_number: non_empty(identity.ssn.clone())
                             .or_else(|| base.doc_personal_number.clone()),
+                        doc_categories: categories,
                         extra,
                         ..base
                     });

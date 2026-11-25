@@ -168,9 +168,12 @@ describe('the document face', () => {
       fireEvent.click(within(face()).getByTestId('flip-card'))
       expect(side(face())).toHaveAttribute('inert')
       expect(side(back())).not.toHaveAttribute('inert')
+      // The side that was pressed has gone inert; the focus goes with the card.
+      expect(within(back()).getByTestId('flip-card')).toHaveFocus()
 
       fireEvent.click(within(back()).getByTestId('flip-card'))
       expect(side(face())).not.toHaveAttribute('inert')
+      expect(within(face()).getByTestId('flip-card')).toHaveFocus()
     })
 
     it('offers no turn while it is being edited', () => {
