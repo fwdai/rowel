@@ -62,6 +62,7 @@ import {
   Plus,
   Puzzle,
   RefreshCw,
+  Rotate3d,
   ScanLine,
   Search,
   Server,
@@ -154,6 +155,9 @@ export const TrashGlyph = glyph(Trash2, 14)
 export const ArchiveGlyph = glyph(Archive, 14)
 export const ArchiveRestoreGlyph = glyph(ArchiveRestore, 14)
 export const RefreshGlyph = glyph(RefreshCw, 14)
+// Turning a card over to its other side: the two arcs of a turn in space, so
+// it is not read as the refresh above.
+export const FlipGlyph = glyph(Rotate3d, 14)
 export const DownloadGlyph = glyph(Download, 14)
 // What an attached file is, at a glance.
 export const FileGlyph = glyph(File, 14)

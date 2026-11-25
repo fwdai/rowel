@@ -159,32 +159,34 @@ describe('the document face', () => {
       }
     })
 
-    it('turns over on the switch under it, and back again', () => {
+    it('turns over on the key at its edge, and back again', () => {
       show('id_card')
       const side = (of: HTMLElement) => of.parentElement!
+      const key = screen.getByTestId('flip-face')
       expect(side(face())).not.toHaveAttribute('inert')
       expect(side(back())).toHaveAttribute('inert')
-      expect(screen.getByTestId('card-side-front')).toBeChecked()
+      expect(key).toHaveAttribute('aria-pressed', 'false')
 
-      fireEvent.click(screen.getByTestId('card-side-back'))
+      fireEvent.click(key)
       expect(side(face())).toHaveAttribute('inert')
       expect(side(back())).not.toHaveAttribute('inert')
-      expect(screen.getByTestId('card-side-back')).toBeChecked()
+      expect(key).toHaveAttribute('aria-pressed', 'true')
 
-      fireEvent.click(screen.getByTestId('card-side-front'))
+      // One key, outside both sides: it is still there to turn the card back.
+      fireEvent.click(key)
       expect(side(face())).not.toHaveAttribute('inert')
     })
 
     it('offers no turn while it is being edited', () => {
       show('id_card', true, {}, true)
-      expect(screen.queryByTestId('card-side-back')).toBeNull()
+      expect(screen.queryByTestId('flip-face')).toBeNull()
       expect(face().parentElement).not.toHaveAttribute('inert')
     })
 
     it('leaves a passport one-sided', () => {
       show('passport')
       expect(screen.queryByTestId('identity-back')).toBeNull()
-      expect(screen.queryByTestId('card-side-back')).toBeNull()
+      expect(screen.queryByTestId('flip-face')).toBeNull()
     })
 
     it('says how long it has, once', () => {
