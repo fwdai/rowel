@@ -21,10 +21,10 @@ pub(crate) struct Rect {
     pub h: f64,
 }
 
-/// The width a portrait is stored at, in pixels: the slot it is drawn in is
-/// about a hundred points wide, so this is that at 3×. Its height follows
-/// from [`ASPECT`].
-pub(crate) const WIDTH: f64 = 300.0;
+// The width a portrait is stored at, in pixels: the slot it is drawn in is
+// about a hundred points wide, so this is that at 3×. Its height follows from
+// `ASPECT`.
+const WIDTH: f64 = 300.0;
 
 /// A portrait photo's proportions, width over height — 3:4, the slot's own.
 const ASPECT: f64 = 3.0 / 4.0;
@@ -73,6 +73,12 @@ pub(crate) fn frame(face: Rect, width: f64, height: f64) -> Option<Rect> {
         w,
         h,
     })
+}
+
+/// How much to scale what `frame` cut, to store it: down to [`WIDTH`], never
+/// up — a small photo stays as sharp as it was taken.
+pub(crate) fn scale(frame: Rect) -> f64 {
+    (WIDTH / frame.w).min(1.0)
 }
 
 #[cfg(test)]
@@ -143,6 +149,19 @@ mod tests {
             ..FACE
         };
         assert_eq!(frame(speck, 2000.0, 1400.0), None);
+    }
+
+    #[test]
+    fn a_portrait_is_stored_no_wider_than_it_is_shown_and_never_enlarged() {
+        let cut = |w: f64| Rect {
+            x: 0.0,
+            y: 0.0,
+            w,
+            h: w / 0.75,
+        };
+        assert_eq!(scale(cut(600.0)), 0.5);
+        assert_eq!(scale(cut(300.0)), 1.0);
+        assert_eq!(scale(cut(90.0)), 1.0);
     }
 
     #[test]
