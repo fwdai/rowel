@@ -11,7 +11,7 @@ use zeroize::Zeroize;
 
 use crate::models::{PORTRAIT_MAX_LEN, PORTRAIT_PREFIX};
 
-use super::portrait::{frame, holder, Rect, WIDTH};
+use super::portrait::{frame, holder, scale, Rect};
 use super::Image;
 
 // ImageIO's `kCGImageDestinationLossyCompressionQuality`, by its value: the
@@ -48,11 +48,10 @@ pub fn find(image: Image<'_>) -> Option<String> {
         }))?;
         let crop = frame(face, width, height)?;
 
-        // Down to the stored width, never up: a small photo stays as sharp
-        // as it was taken. The frame is moved to the origin as it is scaled,
-        // and the result cut to whole pixels again: scaled where it lay, its
-        // edges fall between pixels and the encoder rounds each one outward.
-        let scale = (WIDTH / crop.w).min(1.0);
+        // The frame is moved to the origin as it is scaled, and the result
+        // cut to whole pixels again: scaled where it lay, its edges fall
+        // between pixels and the encoder rounds each one outward.
+        let scale = scale(crop);
         let (left, bottom) = (extent.origin.x + crop.x, extent.origin.y + crop.y);
         let sized = unsafe {
             picture
