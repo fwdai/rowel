@@ -76,6 +76,23 @@ impl Scanner for Local {
         };
         Ok(read(lines, image))
     }
+
+    /// The OS builds its recognition models for an app the first time that
+    /// app recognizes anything, and keeps them from then on: measured on
+    /// macOS, most of a minute the first time and a fraction of a second
+    /// after. Recognizing a blank picture pays that ahead of the user, who
+    /// would otherwise spend it watching their first scan.
+    fn warm_up(&self) {
+        let mut blank = Vec::new();
+        let encoded = image::GrayImage::from_pixel(8, 8, image::Luma([255])).write_to(
+            &mut std::io::Cursor::new(&mut blank),
+            image::ImageFormat::Png,
+        );
+        if encoded.is_ok() {
+            // Nothing to read on it, and no backend to read it with is fine too.
+            let _ = self.ocr.recognize_data(&blank);
+        }
+    }
 }
 
 fn identity(fields: BTreeMap<String, String>) -> ScanResult {

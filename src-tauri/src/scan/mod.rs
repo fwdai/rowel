@@ -92,11 +92,23 @@ pub enum Image<'a> {
 /// it gets there is its own business.
 pub trait Scanner {
     fn scan(&self, image: Image<'_>) -> Result<Option<ScanResult>>;
+
+    /// Get ready ahead of the first scan, for an engine with something to
+    /// get ready. Nothing by default.
+    fn warm_up(&self) {}
 }
 
 /// The engine this build scans with, where it has one.
 pub fn scanner() -> Option<Box<dyn Scanner>> {
     local::scanner()
+}
+
+/// Have the engine ready before anybody scans (see [`Scanner::warm_up`]).
+/// May take as long as a first scan does, so it is for a thread of its own.
+pub fn warm_up() {
+    if let Some(scanner) = scanner() {
+        scanner.warm_up();
+    }
 }
 
 /// Whether this platform can scan at all, so the UI can leave the affordance

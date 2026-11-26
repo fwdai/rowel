@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
-import { useUi, useVault, startEntry } from '@/store'
+import { useUi, useVault, startEntry, scanStarted, scanFinished } from '@/store'
 import {
   cleanFields,
   firstImage,
@@ -12,6 +12,7 @@ import {
 import { runScan } from '@/components/Main/Scan/run'
 import { withEntries, loginMeta, seedApp } from './utils'
 import { calls, mockCommand } from './ipc'
+import { setLayout } from './layout'
 
 const CARD = { number: '4242424242424242', month: '04', year: '27', name: 'ADA LOVELACE' }
 
@@ -177,6 +178,57 @@ describe('a scanned draft', () => {
 
     await userEvent.click(within(frame).getByTestId('remove-portrait'))
     expect(frame.querySelector('img')).toBeNull()
+  })
+})
+
+describe('a scan under way', () => {
+  it('says so in the pane the result will land in, and nowhere else', () => {
+    seed()
+    seedApp({ scanSupported: true })
+    render(<Main />)
+    expect(screen.getByTestId('empty-select')).toBeInTheDocument()
+
+    act(() => scanStarted())
+
+    expect(screen.getByTestId('scan-reading')).toHaveTextContent('Reading the image…')
+    expect(screen.queryByTestId('empty-select')).toBeNull()
+    expect(screen.queryByTestId('scan-status')).toBeNull()
+
+    act(() => scanFinished())
+    expect(screen.queryByTestId('scan-reading')).toBeNull()
+    expect(screen.getByTestId('empty-select')).toBeInTheDocument()
+  })
+
+  it('leaves an open editor alone and says so in the corner', () => {
+    seed()
+    seedApp({ scanSupported: true })
+    startEntry('identity')
+    render(<Main />)
+
+    act(() => scanStarted())
+
+    expect(screen.queryByTestId('scan-reading')).toBeNull()
+    expect(document.querySelector('input[name="name"]')).toBeInTheDocument()
+    expect(screen.getByTestId('scan-status')).toBeInTheDocument()
+    act(() => scanFinished())
+  })
+
+  it('takes the phone’s screen, under the tab bar and over the list', () => {
+    setLayout('compact')
+    seed()
+    seedApp({ scanSupported: true })
+    render(<Main />)
+
+    act(() => scanStarted())
+
+    expect(screen.getByTestId('scan-reading')).toBeInTheDocument()
+    expect(screen.queryByTestId('scan-status')).toBeNull()
+    // The list stays mounted under it, and the way out stays on screen.
+    expect(screen.getByText('Google')).toBeInTheDocument()
+    expect(screen.getByTestId('add-entry-button')).toBeInTheDocument()
+
+    act(() => scanFinished())
+    expect(screen.queryByTestId('scan-reading')).toBeNull()
   })
 })
 
