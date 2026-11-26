@@ -16,9 +16,13 @@ import { join } from 'node:path'
 const LOCALES = 'extension/rowel/_locales'
 const RELEASES = 'github.com/fwdai/rowel/releases'
 
-// Upstream's name for the extension, as the translations spell it.
-const EXTENSION_NAME =
-  /KeePassXC[-–‑]?(?:Browser|browser|Navigator|Naviagator|böngésző|브라우저|ဘရောက်ဇာ|Tarayıcı|דפדפן־)/g
+// Upstream's name for the app, as the translations spell it ("KeepassXC",
+// "KeepassXc", "KeePassKC"), and for the extension.
+const APP_NAME = /Kee[Pp]ass[XK][Cc]/g
+const EXTENSION_NAME = new RegExp(
+  `${APP_NAME.source}[-–‑]?(?:Browser|browser|Navigator|Naviagator|böngésző|브라우저|ဘရောက်ဇာ|Tarayıcı|דפדפן־)`,
+  'g'
+)
 
 const OVERRIDES = {
   extensionDescription: 'Fill logins, one-time codes and passkeys from your Rowel vault.',
@@ -56,6 +60,14 @@ const OVERRIDES = {
   errorNotConnected: "Rowel isn't running. Open the Rowel app and try again.",
   gettingStartedWelcomeText:
     'Welcome to the Rowel browser extension. It fills logins and passkeys from your Rowel vault.'
+}
+
+// Translations Rowel words itself, by locale. Like OVERRIDES they win over
+// upstream's text, so they survive a sync.
+const STORE_DESCRIPTION_PT = 'Preencha inícios de sessão, códigos de utilização única e passkeys a partir do seu cofre Rowel.'
+const LOCALE_OVERRIDES = {
+  pt: { extensionDescription: STORE_DESCRIPTION_PT },
+  pt_PT: { extensionDescription: STORE_DESCRIPTION_PT }
 }
 
 // Keys upstream does not have, [message, translator note]. They are appended
@@ -144,7 +156,7 @@ const ROWEL_MESSAGES = {
 const rename = text =>
   text
     .replace(EXTENSION_NAME, 'Rowel')
-    .replace(/KeePassXC/g, 'Rowel')
+    .replace(APP_NAME, 'Rowel')
     .replace(/keepassxc\.org/g, RELEASES)
 
 const english = (key, text) =>
@@ -163,7 +175,7 @@ function rebrand(source, locale) {
       const message = line.match(/^(\s*"message": )(".*")(,?)$/)
       if (!message) return line
       const text = JSON.parse(message[2])
-      const next = locale === 'en' ? english(key, text) : rename(text)
+      const next = LOCALE_OVERRIDES[locale]?.[key] ?? (locale === 'en' ? english(key, text) : rename(text))
       return next === text ? line : `${message[1]}${JSON.stringify(next)}${message[3]}`
     })
     .join('\n')

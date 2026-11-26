@@ -3,7 +3,7 @@
     "name": "Rowel",
     "description": "__MSG_extensionDescription__",
     "author": "Rowel",
-    "homepage_url": "https://github.com/fwdai/rowel",
+    "homepage_url": "https://rowel.app",
     "icons": {
         "16": "icons/rowel.svg",
         "32": "icons/rowel.svg",

@@ -344,7 +344,7 @@
         "description": "Button text for adding Username-only option."
     },
     "popupErrorEncountered": {
-        "message": "KeepassXC-Navigator errori occurrit.",
+        "message": "Rowel errori occurrit.",
         "description": "A text shown above error message in the popup."
     },
     "popupUpdateAvailable": {
@@ -712,7 +712,7 @@
         "description": "Debug logging help text."
     },
     "optionsRadioText": {
-        "message": "Comproba si actualizationes sint pro KeePassKC:",
+        "message": "Comproba si actualizationes sint pro Rowel:",
         "description": "Text above radio buttons in the settings page."
     },
     "optionsRadioThreeDays": {
