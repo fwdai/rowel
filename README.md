@@ -37,6 +37,12 @@ versioned installer from the [releases page](https://github.com/fwdai/rowel/rele
 it stays there alongside the version-free copy either way. iOS has no file to
 download: it comes from Apple, through TestFlight for as long as it is in beta.
 
+On macOS you can also install with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask rowel
+```
+
 or install with the [GitHub CLI](https://cli.github.com), grab the latest installer for your OS:
 
 ```bash
