@@ -29,13 +29,13 @@ Download it directly — every link gives you the newest release:
 | macOS (Universal) | [.dmg](https://github.com/fwdai/rowel/releases/latest/download/Rowel_universal.dmg)                                                                                                                                                                            |
 | Windows (x64)     | [setup .exe](https://github.com/fwdai/rowel/releases/latest/download/Rowel_x64-setup.exe)                                                                                                                                                                      |
 | Linux (x86_64)    | [.deb](https://github.com/fwdai/rowel/releases/latest/download/Rowel_amd64.deb) · [.rpm](https://github.com/fwdai/rowel/releases/latest/download/Rowel_x86_64.rpm) · [.AppImage](https://github.com/fwdai/rowel/releases/latest/download/Rowel_amd64.AppImage) |
-| iOS               | [TestFlight beta](https://testflight.apple.com/join/5dmNyYsP)                                                                                                                                                                                                  |
+| iOS               | [App Store](https://apps.apple.com/app/rowel-mobile/id6811798288)                                                                                                                                                                                              |
 
 These names have no version in them, so they always resolve to the newest
 release — from the next release onwards. Until that one is out, take the
 versioned installer from the [releases page](https://github.com/fwdai/rowel/releases/latest);
 it stays there alongside the version-free copy either way. iOS has no file to
-download: it comes from Apple, through TestFlight for as long as it is in beta.
+download: it comes from Apple, through the App Store.
 
 On macOS you can also install with [Homebrew](https://brew.sh):
 
