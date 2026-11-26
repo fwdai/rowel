@@ -834,6 +834,32 @@ fn a_field_number_set_against_its_date_is_not_part_of_the_date() {
 }
 
 #[test]
+fn a_licence_keeps_the_dates_printed_under_their_captions() {
+    assert_eq!(
+        fields_of(&[
+            "DRIVER LICENSE",
+            "DOB",
+            "12 AUG 1974",
+            "ISS",
+            "01 JAN 2020",
+            "EXP",
+            "01 JAN 2030",
+        ]),
+        pairs(&[
+            ("birth_date", "1974-08-12"),
+            ("doc_type", "driver_license"),
+            ("expiry_date", "2030-01-01"),
+            ("issue_date", "2020-01-01"),
+        ])
+    );
+    // In figures set apart, the same.
+    assert_eq!(
+        identity_of(&["DRIVER LICENSE", "DOB", "12 08 1964", "EXP", "01 02 2030"])["birth_date"],
+        "1964-08-12"
+    );
+}
+
+#[test]
 fn a_name_is_not_a_month() {
     // Field 2, a given name that opens like a month — or is spelled like
     // one — and a stray figure after it, on a licence with its real dates.

@@ -169,6 +169,13 @@ pub(super) fn order<'a>(dates: impl IntoIterator<Item = &'a Printed>, american: 
 }
 
 impl Printed {
+    /// Whether the year is printed in full. Then this is a date beyond doubt;
+    /// with two digits it is three figures that could be one.
+    pub fn full(&self) -> bool {
+        let (Form::Plain { year, .. } | Form::Figures { year, .. }) = self.form;
+        matches!(year, Year::Full(_))
+    }
+
     /// The day this is, on a document that writes its dates in `order` — or
     /// in the other order, where this one date leaves no choice. `None` for
     /// figures that are no day of any year.

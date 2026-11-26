@@ -277,10 +277,15 @@ pub(super) fn find(lines: &[String], numbered: bool) -> Vec<Caption> {
         let words = words(text);
         // Each caption as the words it spans, first and one past the last.
         let mut spans: Vec<(usize, usize, Field)> = Vec::new();
+        // The line's dates, which a field number is told from — asked only
+        // where field numbers are.
+        let dated = numbered.then(|| dates::find(text));
         let abbreviated = words.first().and_then(|word| abbreviated(text, word));
         let mut at = usize::from(abbreviated.is_some());
         while at < words.len() {
-            let number = numbered.then(|| field_number(text, &words, at)).flatten();
+            let number = dated
+                .as_deref()
+                .and_then(|dated| field_number(text, &words, at, dated));
             let caption = match number {
                 // "4d DLN", "1. Family name": the number and the words are
                 // one caption, and the words say what it is — a licence's 5
@@ -356,8 +361,9 @@ pub(super) fn field_numbers(lines: &[String]) -> Vec<String> {
     let mut found = Vec::new();
     for text in lines {
         let words = words(text);
+        let dated = dates::find(text);
         for at in 0..words.len() {
-            if let Some((number, _)) = field_number(text, &words, at) {
+            if let Some((number, _)) = field_number(text, &words, at, &dated) {
                 found.push(number.to_owned());
             }
         }
@@ -403,14 +409,21 @@ fn worded(words: &[Word]) -> Option<(usize, Field)> {
 ///
 /// A field number is one or two digits, up to the high teens a licence runs
 /// to, and perhaps a letter: "2", "4a", "12". It stands apart — "2 JANICE",
-/// "2.GIVEN", not "2-12" or "5'-06" — and is no piece of a date
-/// ("23.08.2013"), though it may be set hard against the date it captions
-/// ("3.12.08.1964"). In the middle of a line it is one only where the print
-/// says so: a full stop after it, or the caption's own words.
+/// "2.GIVEN", not "2-12" or "5'-06". In the middle of a line it is one only
+/// where the print says so: a full stop after it, or the caption's own words.
+///
+/// And it is no piece of a date, `dated` being the line's: not the day a
+/// date opens with ("12 AUG 1974", printed under its caption), nor a figure
+/// in the middle of one ("23.08.2013") — though it may be set hard against
+/// the date it captions ("3.12.08.1964"). Only a date with its year in full
+/// settles that. Three figures with a two-digit year are as likely a field
+/// number, a name and a stray figure ("2 JAN 68"), and there the number
+/// stands and the date is dropped for running across it (`super::Dated`).
 fn field_number<'a>(
     text: &str,
     words: &'a [Word],
     at: usize,
+    dated: &[dates::Printed],
 ) -> Option<(&'a str, Option<(usize, Field)>)> {
     let word = &words[at];
     let key = word.key.as_str();
@@ -422,6 +435,12 @@ fn field_number<'a>(
     if digits > 2 || !in_range || key.len() > digits + 1 || !lettered {
         return None;
     }
+    if dated
+        .iter()
+        .any(|d| d.full() && (d.start..d.end).contains(&word.start))
+    {
+        return None;
+    }
 
     let mut after = text[word.end..].chars();
     let stopped = match after.next() {
@@ -431,8 +450,7 @@ fn field_number<'a>(
             // unless what follows the stop is a whole date of its own, and
             // this the number of the field it stands in.
             let figure = after.next().is_some_and(|c| c.is_ascii_digit());
-            let dated = || dates::find(text).iter().any(|d| d.start == word.end + 1);
-            if figure && !dated() {
+            if figure && !dated.iter().any(|d| d.start == word.end + 1) {
                 return None;
             }
             true
@@ -603,6 +621,25 @@ mod tests {
         );
         // A date's own first figure is not one, nor a decimal's.
         assert_eq!(found(&["12.08.1964", "1.75 m"], true), []);
+    }
+
+    #[test]
+    fn the_day_a_date_opens_with_is_not_a_field_number() {
+        assert_eq!(
+            found(
+                &["12 AUG 1974", "01 JAN 2020", "12 08 1964", "Aug 17, 1958"],
+                true
+            ),
+            []
+        );
+        // A field number before a date is still one.
+        assert_eq!(
+            found(&["3 12 AUG 1974", "4a 01 JAN 2020"], true),
+            [
+                (Field::Birth, "12 AUG 1974".into()),
+                (Field::Issue, "01 JAN 2020".into()),
+            ]
+        );
     }
 
     #[test]
