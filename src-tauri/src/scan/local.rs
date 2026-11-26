@@ -70,15 +70,11 @@ struct Local {
 
 impl Scanner for Local {
     fn scan(&self, image: Image<'_>) -> Result<Option<ScanResult>> {
-        let mut lines = match image {
+        let lines = match image {
             Image::File(path) => self.ocr.recognize(path)?,
             Image::Bytes(bytes) => self.ocr.recognize_data(bytes)?,
         };
-        let found = read(&lines, image);
-        // The recognized lines are the card number in the clear; the parsed
-        // result is all that may outlive this call.
-        lines.zeroize();
-        Ok(found)
+        Ok(read(lines, image))
     }
 }
 
@@ -161,8 +157,18 @@ fn issued_between(lines: &[String], mrz: &BTreeMap<String, String>) -> Option<St
 /// as a document of no stated type, with its photograph and whatever its
 /// print still gives. Not where a damaged MRZ is in view: that picture is
 /// asked for again.
-pub fn read(lines: &[String], image: Image<'_>) -> Option<ScanResult> {
-    if let Some(mut found) = scan_lines(lines) {
+///
+/// The lines are the card number in the clear, so they are taken whole and
+/// scrubbed as soon as they have been read — before the photograph is looked
+/// for, which is the slow half and the one that can fail on its own. The
+/// parsed result is all that outlives the text.
+pub fn read(mut lines: Vec<String>, image: Image<'_>) -> Option<ScanResult> {
+    let named = scan_lines(&lines);
+    let unnamed = (named.is_none() && !lines.is_empty() && !mrz::present(&lines))
+        .then(|| document::fields(&lines, None));
+    lines.zeroize();
+
+    if let Some(mut found) = named {
         // A card has no holder to show; and a document that reads is a scan
         // with or without its picture.
         if found.kind == "identity" {
@@ -172,12 +178,8 @@ pub fn read(lines: &[String], image: Image<'_>) -> Option<ScanResult> {
         }
         return Some(found);
     }
-    if lines.is_empty() || mrz::present(lines) {
-        return None;
-    }
-    let portrait = platform_portrait(image)?;
-    let mut fields = document::fields(lines, None);
+    let mut fields = unnamed?;
+    fields.insert("portrait".into(), platform_portrait(image)?);
     fields.insert("doc_type".into(), "other".into());
-    fields.insert("portrait".into(), portrait);
     Some(identity(fields))
 }

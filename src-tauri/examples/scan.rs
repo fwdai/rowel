@@ -30,7 +30,7 @@ fn main() {
         println!("{line}");
     }
 
-    let Some(found) = read(&lines, Image::File(Path::new(&path))) else {
+    let Some(found) = read(lines, Image::File(Path::new(&path))) else {
         println!("--- nothing recognized");
         return;
     };
