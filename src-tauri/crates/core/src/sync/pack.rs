@@ -245,7 +245,6 @@ mod tests {
             username: None,
             doc_type: None,
             doc_country: None,
-            doc_color: None,
         }
     }
 

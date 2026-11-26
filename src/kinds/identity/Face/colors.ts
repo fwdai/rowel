@@ -1,4 +1,3 @@
-import type { CSSProperties } from 'react'
 import type { TKey } from '@/i18n'
 
 /**
@@ -48,12 +47,6 @@ export const washOf = (color: CardColor): string => {
   const { from, to } = TINTS[color]
   return `linear-gradient(118deg, rgba(${from}, 0.26), rgba(${from}, 0.09) 52%, rgba(${to}, 0.2))`
 }
-
-/** A list tile in the card's colour: its hue as the ground, its ink for the glyph. */
-export const tileOf = (color: CardColor): CSSProperties => ({
-  backgroundColor: `rgba(${TINTS[color].from}, 0.22)`,
-  color: TINTS[color].line
-})
 
 /** The same two hues at full strength, on white: what a swatch shows. */
 export const swatchOf = (color: CardColor): string => {

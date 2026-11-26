@@ -200,9 +200,6 @@ export interface EntryMeta {
   // yet stamped.
   docType?: string
   docCountry?: string
-  // The card colour the user picked for an identity, as its palette key, so
-  // the list can tint the row. Absent when the card wears its type's own.
-  docColor?: string
   createdAt?: string
   updatedAt?: string
   // Present only on the tombstones listDeleted returns.

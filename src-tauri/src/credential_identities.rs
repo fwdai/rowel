@@ -357,7 +357,6 @@ mod tests {
             username: username.map(Into::into),
             doc_type: None,
             doc_country: None,
-            doc_color: None,
             created_at: None,
             updated_at: None,
             deleted_at: None,

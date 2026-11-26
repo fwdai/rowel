@@ -54,9 +54,7 @@ of its own and nothing else:
   texture, not artwork). Rose for a licence, blue for an ID card, green for a
   permit by default; the user can pick another from the palette (`colors.ts`)
   under the card while editing, to match the card in their hand. The entry
-  stores the palette key, and the list tints the row's tile in the same
-  colour (a derived `doc_color` column, like the passport cover's
-  `doc_country`), so a card can be found by its colour.
+  stores the palette key.
 - **Its mark** in the top-right corner, where a credit card wears its
   network's: a car, the national emblem as a hologram, a fingerprint.
 - **Its arrangement** — which fields go where: a licence's under the numbers
