@@ -395,7 +395,7 @@ fn card(mut entry: ImportedEntry, fields: Vec<Field>) -> ImportedEntry {
 
 // An ID document's fields are all generic types, so the slots are filled by
 // the template's English labels; the first one wearing a label wins, and
-// anything unmatched (class, restrictions, height, an address) is an extra.
+// anything unmatched (restrictions, height, an address) is an extra.
 // The date slots only hold `YYYY-MM-DD` — the expiry warning reads them as
 // such — so a date is converted when its order can be told (see [`iso_date`])
 // and otherwise kept as the labelled extra it was, where it still reads.
@@ -443,6 +443,11 @@ fn identity(mut entry: ImportedEntry, fields: Vec<Field>, doc_type: &str) -> Imp
             "expiry date" | "expires on" => &mut entry.doc_expiry_date,
             "authority" | "issuing authority" | "issued by" | "place of issue" => {
                 &mut entry.doc_authority
+            }
+            // Only a licence has the row; on any other document it stays the
+            // labelled extra it was.
+            "class" | "license class" | "categories" if doc_type == "driver_license" => {
+                &mut entry.doc_categories
             }
             _ => {
                 entry.extra.push(field.into_extra());

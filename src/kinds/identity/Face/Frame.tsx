@@ -9,15 +9,17 @@ interface Props {
   ratio: string
   /** Which document this is, for the e2e suite and for anyone styling one. */
   docType: string
+  /** The colour a card is in, for the same readers. */
+  color?: string
   children: ReactNode
 }
 
 /**
  * The paper every document face is printed on — the vault's shared `Face`
  * surface, so a passport, a licence and an SSH key's fingerprint plate are one
- * kind of object on the page. A passport, a licence and an ID card were each
- * printed on their own tinted stock here once, and the colour never said
- * anything the eyebrow was not already saying.
+ * kind of object on the page. What tells one card from another is printed on
+ * that paper by its layout (see `Print`), the way it is on the real thing; the
+ * stock is the same.
  *
  * The ratio sizes the face, so a document is the shape it really is: a passport
  * page is squarer than a licence because a passport page *is* squarer, and
@@ -37,15 +39,20 @@ interface Props {
  * see is worse than a document half a centimetre too tall — and the layout's job
  * is to keep that the rare case rather than to rely on it.
  */
-export default function Frame({ ratio, docType, children }: Props) {
+export default function Frame({ ratio, docType, color, children }: Props) {
   return (
-    <Face data-testid="identity-face" data-doc-type={docType} className="grid w-[460px] max-w-full">
+    <Face data-testid="identity-face" data-doc-type={docType} data-color={color} className="grid w-full">
       <div
         aria-hidden
         className="col-start-1 row-start-1 w-full self-start"
         style={{ aspectRatio: ratio }}
       />
-      <div className="col-start-1 row-start-1 flex min-w-0 flex-col">{children}</div>
+      {/* Positioned and isolated: what a layout pins to the card (its security
+          printing, the mark in its corner) is pinned to this, the whole face,
+          and the printing can sit under the text without leaving the face. */}
+      <div className="relative isolate col-start-1 row-start-1 flex min-w-0 flex-col">
+        {children}
+      </div>
     </Face>
   )
 }

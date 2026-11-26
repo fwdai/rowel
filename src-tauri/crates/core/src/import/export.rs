@@ -65,6 +65,7 @@ pub const ISSUE_DATE_LABEL: &str = "Issue date";
 pub const EXPIRY_DATE_LABEL: &str = "Expiry date";
 pub const AUTHORITY_LABEL: &str = "Authority";
 pub const PERSONAL_NUMBER_LABEL: &str = "Personal number";
+pub const CATEGORIES_LABEL: &str = "Categories";
 pub const PASSWORD_UPDATED_LABEL: &str = "Password updated";
 pub const FAVORITE_LABEL: &str = "Favorite";
 /// What the CXF credential holding the user's own custom fields is called. The
@@ -87,6 +88,7 @@ pub fn labelled_fields(e: &ImportedEntry) -> Vec<(&'static str, &str, bool)> {
         (ISSUE_DATE_LABEL, &e.doc_issue_date, false),
         (EXPIRY_DATE_LABEL, &e.doc_expiry_date, false),
         (AUTHORITY_LABEL, &e.doc_authority, false),
+        (CATEGORIES_LABEL, &e.doc_categories, false),
         (PASSWORD_UPDATED_LABEL, &e.password_updated_at, false),
     ]
     .into_iter()
@@ -99,6 +101,11 @@ pub fn labelled_fields(e: &ImportedEntry) -> Vec<(&'static str, &str, bool)> {
 /// Bitwarden importer removes it from the custom fields it rode in, a CXF one
 /// reads it out of the `custom-fields` credential — so the slot list is written
 /// once and the two directions cannot drift.
+///
+/// A licence's categories are not claimed here. Every other label is ours
+/// whatever the item is, but "Categories" is a thing people call a field of
+/// their own, so it is taken back only off a driving licence, by the importer
+/// that knows it has one (see `bitwarden`), and stays the user's anywhere else.
 pub fn set_labelled(entry: &mut ImportedEntry, mut take: impl FnMut(&str) -> Option<String>) {
     // Only when the label is there at all: a format with a member of its own
     // for the star has already set it.
@@ -199,7 +206,11 @@ pub fn to_bitwarden_json(entries: &[ImportedEntry]) -> serde_json::Result<Vec<u8
             // still gets a field of ours, empty, when the user has one wearing
             // it (see `shadowed`).
             let written: Vec<&str> = ours.iter().map(|(l, _, _)| *l).collect();
-            let claims = claimed.iter().map(String::as_str).chain(ssh);
+            // A licence's categories are claimed back off a licence alone, so
+            // only a licence needs that label guarded.
+            let licence =
+                (e.doc_type.as_deref() == Some("driver_license")).then_some(CATEGORIES_LABEL);
+            let claims = claimed.iter().map(String::as_str).chain(ssh).chain(licence);
             for label in shadowed(e, &written, claims) {
                 push_field(&mut item, label, "", FIELD_TEXT);
             }
@@ -735,6 +746,8 @@ const COLUMNS: &[&str] = &[
     "doc_expiry_date",
     "doc_authority",
     "doc_personal_number",
+    "doc_categories",
+    "doc_color",
     "favorite",
     "created_at",
     "updated_at",
@@ -792,6 +805,8 @@ pub fn to_generic_csv(entries: &[ImportedEntry]) -> csv::Result<Vec<u8>> {
             e.doc_expiry_date.clone().unwrap_or_default(),
             e.doc_authority.clone().unwrap_or_default(),
             e.doc_personal_number.clone().unwrap_or_default(),
+            e.doc_categories.clone().unwrap_or_default(),
+            e.doc_color.clone().unwrap_or_default(),
             e.favorite.to_string(),
             e.created_at.clone().unwrap_or_default(),
             e.updated_at.clone().unwrap_or_default(),

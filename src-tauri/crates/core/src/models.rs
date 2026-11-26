@@ -63,6 +63,16 @@ pub struct Entry {
     pub authority: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub personal_number: Option<String>,
+    /// What a driving licence entitles its holder to drive, as the card prints
+    /// it under field 9: `AM, B1, B`, or a class letter. Free text — the codes
+    /// are each country's own — and only a licence has the row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub categories: Option<String>,
+    /// The colour a card is drawn in, when the user picked one to match the
+    /// card in their hand: a palette key (`green`), never a colour value.
+    /// Absent, the card wears its document type's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     /// SSH key fields (`ssh` entries). ed25519 only for now: `private_key` is an
     /// OpenSSH PEM block, `public_key` the single `ssh-ed25519 AAAA… comment`
     /// line and `fingerprint` its `SHA256:…` digest, derived once at save time so

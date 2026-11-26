@@ -504,6 +504,8 @@ fn imported_to_entry(imp: &ImportedEntry) -> Entry {
             e.expiry_date = imp.doc_expiry_date.clone();
             e.authority = imp.doc_authority.clone();
             e.personal_number = imp.doc_personal_number.clone();
+            e.categories = imp.doc_categories.clone();
+            e.color = imp.doc_color.clone();
         }
         EntryKind::Ssh => {
             e.private_key = imp.ssh_private_key.clone();
@@ -583,6 +585,8 @@ fn entry_to_imported(e: &Entry) -> ImportedEntry {
         doc_expiry_date: identity.then(|| e.expiry_date.clone()).flatten(),
         doc_authority: e.authority.clone(),
         doc_personal_number: e.personal_number.clone(),
+        doc_categories: e.categories.clone(),
+        doc_color: e.color.clone(),
         ssh_private_key: e.private_key.clone(),
         ssh_public_key: e.public_key.clone(),
         ssh_fingerprint: e.fingerprint.clone(),

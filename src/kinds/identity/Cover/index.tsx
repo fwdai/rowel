@@ -27,7 +27,7 @@ export default function Cover({ country }: Props) {
       className="grid h-full w-full place-items-center"
       style={{ backgroundColor: coverColor(country) }}
     >
-      <Foil src={emblem ?? genericEmblem} className="h-[68%] w-[68%]" />
+      <Foil src={emblem ?? genericEmblem} testid="passport-emblem" className="h-[68%] w-[68%]" />
     </div>
   )
 }

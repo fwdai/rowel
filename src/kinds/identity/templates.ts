@@ -51,7 +51,7 @@ interface Spec {
   country?: boolean
   /** In the encrypted payload: masked behind a reveal toggle. */
   secret?: boolean
-  /** The document's headline value, set 2xl and letter-spaced. */
+  /** The document's headline value, set at the headline-secret tier (see `DocCell`). */
   big?: boolean
   /** The multi-line body row. */
   note?: boolean
@@ -94,6 +94,10 @@ const FIELDS = {
   issue_date: { label: 'Issued', group: 'document', date: true },
   expiry_date: { label: 'Expires', group: 'document', date: true, expiry: true },
   authority: { label: 'Authority', group: 'document', placeholder: 'HMPO', maxLength: 60 },
+  // What a driving licence entitles its holder to drive. Free text rather than
+  // a pick list: the codes are each country's own (`AM, B1, B` on one card,
+  // `Class C` on another), and the back of the card sets them one to a box.
+  categories: { label: 'Categories', group: 'document', placeholder: 'AM, B', maxLength: 60 },
   personal_number: { label: 'Personal no.', group: 'extra', secret: true, maxLength: 40 },
   note: { label: 'Note', group: 'extra', note: true }
 } satisfies Record<string, Spec>
@@ -147,6 +151,7 @@ export const TEMPLATES: Record<DocType, Row[]> = {
     { key: 'issue_date' },
     { key: 'expiry_date', required: true },
     { key: 'authority' },
+    { key: 'categories' },
     { key: 'note' }
   ],
   residence_permit: [
@@ -171,7 +176,12 @@ export const TEMPLATES: Record<DocType, Row[]> = {
   ]
 }
 
-const isDocType = (value: unknown): value is DocType =>
+/**
+ * Whether a value is a document type we know. What a vault or an import hands
+ * over is free text, so anything keyed by `DocType` asks this first — a bare
+ * lookup would answer `__proto__` with the object's own prototype.
+ */
+export const isDocType = (value: unknown): value is DocType =>
   typeof value === 'string' && (DOC_TYPES as readonly string[]).includes(value)
 
 /**

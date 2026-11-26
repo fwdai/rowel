@@ -472,6 +472,8 @@ const identityEntry = (extra?: ExtraField[]): Entry =>
     issue_date: '',
     expiry_date: '2035-06-01',
     authority: '',
+    categories: '',
+    color: '',
     personal_number: '',
     note: '',
     tags: [],

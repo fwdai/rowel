@@ -137,6 +137,7 @@ fn round_trip_bitwarden_identity() {
             doc_type: Some("driver_license".into()),
             doc_number: Some("D-99".into()),
             holder_name: Some("Mononym".into()),
+            doc_categories: Some("AM, B".into()),
             ..Default::default()
         },
     ];
@@ -158,7 +159,7 @@ fn round_trip_bitwarden_identity() {
 fn bitwarden_reads_text_and_hidden_fields_as_extras() {
     let json = br#"{"items":[
       {"type":4,"name":"Licence","identity":{"licenseNumber":"D-99"},"fields":[
-        {"name":"Categories","value":"B, BE","type":0},
+        {"name":"Endorsements","value":"B, BE","type":0},
         {"name":"Restrictions","value":"01","type":1},
         {"name":"Favourite","value":"true","type":2},
         {"name":"Linked","value":"3","type":3},
@@ -171,13 +172,44 @@ fn bitwarden_reads_text_and_hidden_fields_as_extras() {
     assert_eq!(
         r.entries[0].extra,
         vec![
-            field("Categories", "B, BE"),
+            field("Endorsements", "B, BE"),
             concealed("Restrictions", "01"),
             // No type at all reads as text, and a value-less field is still a
             // label the user wrote.
             field("Issuer note", ""),
         ]
     );
+}
+
+// "Categories" is a licence's row and anyone's word. A licence gives a field of
+// that name up to its categories; a login, or a passport — which has no such
+// row to show it in — keeps it as the custom field it was.
+#[test]
+fn bitwarden_claims_categories_only_from_a_licence() {
+    let json = br#"{"items":[
+      {"type":1,"name":"Blog","login":{"username":"ada"},"fields":[
+        {"name":"Categories","value":"news, essays","type":0}]},
+      {"type":4,"name":"Passport","identity":{"passportNumber":"X1"},"fields":[
+        {"name":"Categories","value":"ordinary","type":0}]},
+      {"type":4,"name":"Licence","identity":{"licenseNumber":"D-99"},"fields":[
+        {"name":"Categories","value":"AM, B","type":0}]}
+    ]}"#;
+    let r = parse(Format::Bitwarden, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+
+    assert_eq!(
+        r.entries[0].extra,
+        vec![field("Categories", "news, essays")]
+    );
+    assert_eq!(r.entries[0].doc_categories, None);
+    assert_eq!(r.entries[1].extra, vec![field("Categories", "ordinary")]);
+    assert_eq!(r.entries[1].doc_categories, None);
+    assert_eq!(r.entries[2].doc_categories.as_deref(), Some("AM, B"));
+    assert!(r.entries[2].extra.is_empty());
+
+    // And a login's own "Categories" survives our export and the way back.
+    let back = parse(Format::Bitwarden, &to_bitwarden_json(&r.entries).unwrap());
+    assert_eq!(back.entries, r.entries);
 }
 
 // Extras belong to no kind, so a login keeps them too — and comes back with the
@@ -1188,6 +1220,7 @@ fn enpass_reads_a_driving_licence_as_an_identity() {
     assert_eq!(licence.doc_sex.as_deref(), Some("Female"));
     assert_eq!(licence.doc_birth_date.as_deref(), Some("1987-06-25"));
     assert_eq!(licence.doc_country.as_deref(), Some("GB"));
+    assert_eq!(licence.doc_categories.as_deref(), Some("B"));
     // `01/06/2020` could be June or January: it stays a labelled extra rather
     // than a date the expiry warning would misread.
     assert!(licence.doc_issue_date.is_none());
@@ -1196,7 +1229,6 @@ fn enpass_reads_a_driving_licence_as_an_identity() {
         licence.extra,
         vec![
             field("Address", "1 Main St"),
-            field("Class", "B"),
             field("Issued on", "01/06/2020"),
         ]
     );
@@ -1829,6 +1861,8 @@ fn one_of_every_kind() -> Vec<ImportedEntry> {
             doc_expiry_date: Some("2030-03-04".into()),
             doc_authority: Some("HMPO".into()),
             doc_personal_number: Some("PN-42".into()),
+            doc_categories: Some("AM, B".into()),
+            doc_color: Some("green".into()),
             ..shared()
         },
         ImportedEntry {
@@ -2458,6 +2492,7 @@ fn onepux_maps_cards_documents_keys_and_notes() {
             {"title":"address","id":"address","value":{"address":{"street":"1 Main St","city":"Lund","country":"se","zip":"","state":""}}},
             {"title":"date of birth","id":"birthdate","value":{"date":-86400}},
             {"title":"number","id":"number","value":{"string":"DL-9"}},
+            {"title":"license class","id":"class","value":{"string":"AM, B"}},
             {"title":"country","id":"country","value":{"string":"Sweden"}},
             {"title":"expiry date","id":"expiry_date","value":{"monthYear":203005}}]}]}},
           {"categoryUuid":"114","overview":{"title":"Deploy key"},"details":{"sections":[{"fields":[
@@ -2522,6 +2557,7 @@ fn onepux_maps_cards_documents_keys_and_notes() {
     assert_eq!(licence.doc_type.as_deref(), Some("driver_license"));
     assert_eq!(licence.doc_birth_date.as_deref(), Some("1969-12-31"));
     assert_eq!(licence.doc_number.as_deref(), Some("DL-9"));
+    assert_eq!(licence.doc_categories.as_deref(), Some("AM, B"));
     assert_eq!(licence.doc_expiry_date, None);
     assert_eq!(
         licence.extra,

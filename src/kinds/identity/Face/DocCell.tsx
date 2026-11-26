@@ -26,12 +26,17 @@ interface Props {
   bare?: boolean
   /** A caption other than the field's own — the name reads as "Holder" here. */
   label?: TKey
+  /** The field's number on a driving licence — `4b.` — set in the gutter before it. */
+  index?: string
   ink?: string
   wrap?: boolean
   /** The box's width in characters while editing; without it the cell's own. */
   size?: number
   className?: string
 }
+
+// The headline-secret tier every face's number takes (see docs/detail-design.md).
+const HEADLINE = 'text-xl tracking-secret'
 
 // One row of the template, printed on the face. The template's spec says what
 // the value is — a date, a secret — and this turns that into how it shows and
@@ -41,7 +46,17 @@ interface Props {
 // document has left is not a cell: it belongs to the document rather than to
 // any one of its dates, so the face states it once, in the status beside the
 // number.
-export default function DocCell({ doc, name, bare, label, ink, wrap, size, className }: Props) {
+export default function DocCell({
+  doc,
+  name,
+  bare,
+  label,
+  index,
+  ink,
+  wrap,
+  size,
+  className
+}: Props) {
   const { format, formatDate, toIsoDate } = useDates()
   const spec = specOf(name)
   const value = doc.value(name)
@@ -53,7 +68,7 @@ export default function DocCell({ doc, name, bare, label, ink, wrap, size, class
 
   const masked = !!spec.secret && !doc.shown
 
-  return (
+  const cell = (
     <Cell
       name={name}
       label={label ?? spec.label}
@@ -68,9 +83,22 @@ export default function DocCell({ doc, name, bare, label, ink, wrap, size, class
       size={size}
       required={doc.required?.(name)}
       masked={masked}
-      ink={cx(ink ?? 'text-base leading-tight', masked && !editing && 'text-(--face-ink2)')}
+      ink={cx(
+        ink ?? (spec.big ? HEADLINE : 'text-base leading-tight'),
+        masked && !editing && 'text-(--face-ink2)'
+      )}
       wrap={wrap && !masked}
-      className={className}
+      className={index ? 'min-w-0 flex-1' : className}
     />
+  )
+  if (!index) return cell
+
+  return (
+    <div className={cx('flex min-w-0 items-start gap-2', className)}>
+      <span aria-hidden className="flex-none text-2xs font-semibold tracking-[0.1em]">
+        {index}
+      </span>
+      {cell}
+    </div>
   )
 }

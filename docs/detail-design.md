@@ -41,6 +41,30 @@ copy), `Eye` (the one control), `CopyHint`. Faces pad 20px
 value — a card number, a document number — at `text-xl tracking-secret`, the
 same tier a revealed password takes in a row.
 
+An ID document is drawn as the document it is (`kinds/identity/Face/layouts`),
+on the same paper. A passport is its data page — ID-3, the machine-readable
+band along the foot — and so is a document that is no particular card. A
+driving licence, an ID card and a residence permit are one card at ID-1, the
+credit card's shape: one shell (`layouts/Card`), one masthead with the issuing
+state's plate, one holder block with the photograph at one size on its own
+opaque ground, the same cells and type. A document type brings three things
+of its own and nothing else:
+
+- **Its colour** — a wash over a fine-line ground (`Print`; the ground is
+  texture, not artwork). Rose for a licence, blue for an ID card, green for a
+  permit by default; the user can pick another from the palette (`colors.ts`)
+  under the card while editing, to match the card in their hand. The entry
+  stores the palette key.
+- **Its mark** in the top-right corner, where a credit card wears its
+  network's: a car, the national emblem as a hologram, a fingerprint.
+- **Its arrangement** — which fields go where: a licence's under the numbers
+  the licence standard gives them, a permit's term drawn from issue to expiry
+  (`Term`).
+
+The cards print no machine-readable band: a real card carries it on its back,
+and a card here is its front. A new document type gets a row of its own in the
+layout table rather than a variant of another's.
+
 ### Sealed blocks
 
 A panel whose head names the body (`ROW_LABEL`, so on the phone it is the

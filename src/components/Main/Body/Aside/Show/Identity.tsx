@@ -5,6 +5,7 @@ import CardBrandMark from '@/components/elements/CardBrandMark'
 import { hasBrandMark } from '@/utils/cardBrand'
 import { kindOf } from '@/kinds'
 import Cover from '@/kinds/identity/Cover'
+import DocGlyph from '@/kinds/identity/DocGlyph'
 import { passportCountry } from '@/kinds/identity/meta'
 import { useFavicon } from '@/hooks/useFavicon'
 import { TITLE, type Look } from './look'
@@ -18,8 +19,9 @@ interface TileProps {
 }
 
 // The entry's own artwork if it has any — a favicon, a card brand mark, a
-// passport's cover — and the kind's glyph otherwise, on the tile both headers
-// put beside the title, reading and writing alike.
+// passport's cover — and the kind's glyph otherwise (a document's own: a car
+// for a licence), on the tile both headers put beside the title, reading and
+// writing alike.
 export function Tile({ look, tile, glyph }: TileProps) {
   const icon = useFavicon(look.urlHost)
   const country = passportCountry(look)
@@ -42,6 +44,8 @@ export function Tile({ look, tile, glyph }: TileProps) {
         <CardBrandMark brand={look.cardBrand} size={mark} />
       ) : country ? (
         <Cover country={country} />
+      ) : look.type === 'identity' ? (
+        <DocGlyph docType={look.docType} size={glyph} />
       ) : (
         <Glyph size={glyph} />
       )}

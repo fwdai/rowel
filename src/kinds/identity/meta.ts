@@ -19,6 +19,8 @@ export const defaults: EntryDraft = {
   expiry_date: '',
   authority: '',
   personal_number: '',
+  categories: '',
+  color: '',
   note: ''
 }
 

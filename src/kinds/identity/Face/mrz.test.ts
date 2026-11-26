@@ -41,7 +41,7 @@ describe('checkDigit', () => {
 
 describe('mrz', () => {
   it('prints a passport as TD3', () => {
-    const lines = mrz('passport', doc({ ...ANNA, number: 'L898902C3', personal_number: 'ZE184226B' }))
+    const lines = mrz(doc({ ...ANNA, number: 'L898902C3', personal_number: 'ZE184226B' }))
 
     expect(lines).toEqual([
       'P<GBRERIKSSON<ANNA<MARIA<<<<<<<<<<<<<<<<<<<<',
@@ -49,39 +49,23 @@ describe('mrz', () => {
     ])
   })
 
-  it('prints an ID card as TD1', () => {
-    const lines = mrz('id_card', doc({ ...ANNA, number: 'D23145890' }))
-
-    expect(lines).toEqual([
-      'I<GBRD231458907<<<<<<<<<<<<<<<',
-      '7408122F1204159GBR<<<<<<<<<<<6',
-      'ERIKSSON<ANNA<MARIA<<<<<<<<<<<'
-    ])
-  })
-
-  it('marks a residence permit with its own document code', () => {
-    const permit = mrz('residence_permit', doc({ ...ANNA, number: 'D23145890' }))
-    expect(permit?.[0].slice(0, 2)).toBe('IR')
-  })
-
   // Every line is a fixed width; a value too long for its column is cut and a
   // short one padded, so the columns after it never shift.
-  it('holds each format to its width', () => {
+  it('holds the band to its width', () => {
     const long = { ...ANNA, name: 'X'.repeat(80), number: '1234567890123' }
-    expect(mrz('passport', doc(long))?.every(line => line.length === 44)).toBe(true)
-    expect(mrz('id_card', doc(long))?.every(line => line.length === 30)).toBe(true)
+    expect(mrz(doc(long)).every(line => line.length === 44)).toBe(true)
   })
 
   it('prints filler rather than a wrong date for a date not yet typed', () => {
-    const lines = mrz('passport', doc({ ...ANNA, expiry_date: '2012-0', number: 'L898902C3' }))
-    expect(lines?.[1].slice(21, 27)).toBe('<<<<<<')
+    const lines = mrz(doc({ ...ANNA, expiry_date: '2012-0', number: 'L898902C3' }))
+    expect(lines[1].slice(21, 27)).toBe('<<<<<<')
   })
 
   // Upper-casing before the filter is what expands the eszett, which is the
   // substitution ICAO asks for — the same as its own ß → SS.
   it('folds an accented name onto the letters the band has', () => {
-    const lines = mrz('id_card', doc({ ...ANNA, name: 'Zoë Müller-Voß', number: 'D23145890' }))
-    expect(lines?.[2]).toBe('ZOE<MULLER<VOSS<<<<<<<<<<<<<<<')
+    const [line] = mrz(doc({ ...ANNA, name: 'Zoë Müller-Voß', number: 'L898902C3' }))
+    expect(line).toBe('P<GBRZOE<MULLER<VOSS<<<<<<<<<<<<<<<<<<<<<<<<')
   })
 
   /*
@@ -90,20 +74,21 @@ describe('mrz', () => {
    * and the name silently loses it.
    */
   it('substitutes the letters that do not decompose rather than dropping them', () => {
+    // The name's own column: the 39 after the document code and the state.
     const name = (value: string) =>
-      mrz('id_card', doc({ ...ANNA, name: value, number: 'D23145890' }))?.[2]
+      mrz(doc({ ...ANNA, name: value, number: 'L898902C3' }))[0].slice(5).replace(/<+$/, '')
 
-    expect(name('Łukasz')).toBe('LUKASZ<<<<<<<<<<<<<<<<<<<<<<<<')
-    expect(name('Ørsted')).toBe('OERSTED<<<<<<<<<<<<<<<<<<<<<<<')
-    expect(name('Æblerød')).toBe('AEBLEROED<<<<<<<<<<<<<<<<<<<<<')
-    expect(name('Þórsdóttir')).toBe('THORSDOTTIR<<<<<<<<<<<<<<<<<<<')
+    expect(name('Łukasz')).toBe('LUKASZ')
+    expect(name('Ørsted')).toBe('OERSTED')
+    expect(name('Æblerød')).toBe('AEBLEROED')
+    expect(name('Þórsdóttir')).toBe('THORSDOTTIR')
     // A decomposed paste is the same letter and has to read as one.
     expect(name('Ł'.normalize('NFD'))).toBe(name('Ł'))
   })
 
   it('lends the issuing country as the nationality when there is none', () => {
-    const lines = mrz('passport', doc({ ...ANNA, nationality: '', number: 'L898902C3' }))
-    expect(lines?.[1].slice(10, 13)).toBe('GBR')
+    const lines = mrz(doc({ ...ANNA, nationality: '', number: 'L898902C3' }))
+    expect(lines[1].slice(10, 13)).toBe('GBR')
   })
 
   /*
@@ -113,24 +98,19 @@ describe('mrz', () => {
    */
   describe('the state columns', () => {
     it('prints filler for a country that is not a code', () => {
-      const lines = mrz('passport', doc({ ...ANNA, country: 'United Kingdom', number: 'L898902C3' }))
-      expect(lines?.[0].slice(2, 5)).toBe('<<<')
+      const lines = mrz(doc({ ...ANNA, country: 'United Kingdom', number: 'L898902C3' }))
+      expect(lines[0].slice(2, 5)).toBe('<<<')
     })
 
     it('takes a real code however it was typed', () => {
-      const lines = mrz('passport', doc({ ...ANNA, country: ' gbr ', number: 'L898902C3' }))
-      expect(lines?.[0].slice(2, 5)).toBe('GBR')
+      const lines = mrz(doc({ ...ANNA, country: ' gbr ', number: 'L898902C3' }))
+      expect(lines[0].slice(2, 5)).toBe('GBR')
     })
 
     it('falls back to the issuer rather than to a mistyped nationality', () => {
-      const lines = mrz('passport', doc({ ...ANNA, country: 'GBR', nationality: 'British', number: 'L898902C3' }))
-      expect(lines?.[1].slice(10, 13)).toBe('GBR')
+      const lines = mrz(doc({ ...ANNA, country: 'GBR', nationality: 'British', number: 'L898902C3' }))
+      expect(lines[1].slice(10, 13)).toBe('GBR')
     })
-  })
-
-  it('has no band for a licence or an unclassified document', () => {
-    expect(mrz('driver_license', doc(ANNA))).toBeNull()
-    expect(mrz('other', doc(ANNA))).toBeNull()
   })
 
   /*
@@ -142,29 +122,19 @@ describe('mrz', () => {
   describe('while the number is masked', () => {
     const secrets = { number: 'L898902C3', personal_number: 'ZE184226B' }
 
-    it('prints neither secret nor any digit derived from one, on TD3', () => {
-      const [, line] = mrz('passport', doc({ ...ANNA, ...secrets }, false)) ?? []
-      const open = mrz('passport', doc({ ...ANNA, ...secrets }))?.[1] ?? ''
+    it('prints neither secret nor any digit derived from one', () => {
+      const [, line] = mrz(doc({ ...ANNA, ...secrets }, false))
+      const [, open] = mrz(doc({ ...ANNA, ...secrets }))
 
       expect(line).toBe('••••••••••GBR7408122F1204159••••••••••••••••')
       // Whatever is still legible is legible on the revealed band too: the mask
       // only ever covers, it never rewrites what it leaves showing.
       expect(line).toHaveLength(open.length)
-      expect(line?.slice(10, 28)).toBe(open.slice(10, 28))
-    })
-
-    it('prints neither secret nor any digit derived from one, on TD1', () => {
-      const lines = mrz('id_card', doc({ ...ANNA, ...secrets, number: 'D23145890' }, false))
-
-      expect(lines).toEqual([
-        'I<GBR•••••••••••••••••••••••••',
-        '7408122F1204159GBR<<<<<<<<<<<•',
-        'ERIKSSON<ANNA<MARIA<<<<<<<<<<<'
-      ])
+      expect(line.slice(10, 28)).toBe(open.slice(10, 28))
     })
 
     it('keeps no trace of the number in the masked band', () => {
-      const masked = (mrz('passport', doc({ ...ANNA, ...secrets }, false)) ?? []).join('')
+      const masked = mrz(doc({ ...ANNA, ...secrets }, false)).join('')
       expect(masked).not.toContain('L898902C3')
       expect(masked).not.toContain('ZE184226B')
     })

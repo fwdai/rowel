@@ -733,6 +733,8 @@ fn identity(mut entry: ImportedEntry, fields: Vec<Field>, doc_type: &str) -> Imp
             "nationality" => &mut entry.doc_nationality,
             "country" | "issuing_country" => &mut entry.doc_country,
             "issuing_authority" => &mut entry.doc_authority,
+            // Only a licence has the row (see `enpass::identity`).
+            "class" if doc_type == "driver_license" => &mut entry.doc_categories,
             "birthdate" if day => &mut entry.doc_birth_date,
             "issue_date" if day => &mut entry.doc_issue_date,
             "expiry_date" if day => &mut entry.doc_expiry_date,
