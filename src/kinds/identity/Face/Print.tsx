@@ -1,12 +1,5 @@
 import { useId } from 'react'
-import { cx } from '@/utils/cx'
-import { washOf, type CardColor } from './colors'
-
-interface Props {
-  color: CardColor
-  /** The card's other side: the same printing, seen from behind. */
-  mirrored?: boolean
-}
+import { lineOf, washOf, type CardColor } from './colors'
 
 /**
  * A card's security printing: the wash of colour its stock is tinted with and
@@ -20,17 +13,14 @@ interface Props {
  * Fixed colours, as the rest of a document face: the card stays the colour it
  * is whichever palette the app is on.
  */
-export default function Print({ color, mirrored }: Props) {
+export default function Print({ color }: { color: CardColor }) {
   const ground = useId()
 
   return (
     <svg
       aria-hidden
-      className={cx(
-        'pointer-events-none absolute inset-0 -z-10 h-full w-full text-(--card-line)',
-        mirrored && '-scale-x-100'
-      )}
-      style={{ background: washOf(color) }}
+      className="pointer-events-none absolute inset-0 -z-10 h-full w-full"
+      style={{ background: washOf(color), color: lineOf(color) }}
     >
       <pattern
         id={ground}

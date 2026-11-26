@@ -6,30 +6,12 @@ import Hologram from '../Hologram'
 import type { CardColor } from '../colors'
 import IdCard from './IdCard'
 import License from './License'
-import LicenseBack from './License/Back'
 import Page from './Page'
 import Permit from './Permit'
-import ZoneBack from './ZoneBack'
 
 export interface LayoutProps {
   docType: DocType
   doc: Doc
-}
-
-export interface BackProps extends LayoutProps {
-  /** The card's mark, large and faint, for the stock of its back. */
-  watermark: ReactNode
-}
-
-/**
- * What one type of card brings to the shared card (see `Card`): the colour it
- * wears unless the user picked another, its mark — small in the corner of its
- * front, large in the stock of its back — and its other side.
- */
-interface CardSpec {
-  color: CardColor
-  mark: (size: number, doc: Doc) => ReactNode
-  Back: ComponentType<BackProps>
 }
 
 interface Layout {
@@ -41,8 +23,11 @@ interface Layout {
   format: string
   /** How the document's fields are arranged. */
   Face: ComponentType<LayoutProps>
-  /** For a document that is a card. */
-  card?: CardSpec
+  /**
+   * For a document that is a card, what it brings to the shared card (see
+   * `Card`): the colour it wears unless the user picked another, and its mark.
+   */
+  card?: { color: CardColor; mark: (doc: Doc) => ReactNode }
 }
 
 // ISO/IEC 7810 and ICAO 9303: a passport's data page is ID-3 and noticeably
@@ -51,8 +36,8 @@ interface Layout {
 const ID_3 = '125 / 88'
 const ID_1 = '85.6 / 53.98'
 
-// A mark drawn in line holds one hairline at either size.
-const HAIRLINE = 1.5
+// A mark drawn in line: 28px, at a hairline.
+const GLYPH = { size: 28, stroke: 1.5 }
 
 /**
  * How each kind of document is drawn. A passport is its data page; a licence,
@@ -69,27 +54,18 @@ export const LAYOUTS: Record<DocType, Layout> = {
     card: {
       color: 'blue',
       // The issuing state's emblem, in film.
-      mark: (size, doc) => <Hologram country={doc.value('country')} size={size} />,
-      Back: ZoneBack
+      mark: doc => <Hologram country={doc.value('country')} className="h-7 w-7" />
     }
   },
   driver_license: {
     format: ID_1,
     Face: License,
-    card: {
-      color: 'rose',
-      mark: size => <LicenseGlyph size={size} stroke={HAIRLINE} />,
-      Back: LicenseBack
-    }
+    card: { color: 'rose', mark: () => <LicenseGlyph {...GLYPH} /> }
   },
   residence_permit: {
     format: ID_1,
     Face: Permit,
-    card: {
-      color: 'green',
-      mark: size => <FingerprintGlyph size={size} stroke={HAIRLINE} />,
-      Back: ZoneBack
-    }
+    card: { color: 'green', mark: () => <FingerprintGlyph {...GLYPH} /> }
   },
   other: { format: ID_1, Face: Page }
 }

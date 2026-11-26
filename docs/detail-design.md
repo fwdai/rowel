@@ -61,16 +61,9 @@ of its own and nothing else:
   the licence standard gives them, a permit's term drawn from issue to expiry
   (`Term`).
 
-A card has a back and turns over to show it (`elements/Face/Flip`, any face
-can use it). What turns it is a small raised key on the card's right edge —
-the edge it turns about — outside both sides, so nothing printed on the card
-makes room for it and it is in the same place whichever side is up. Under the
-pointer it lifts the card a few degrees, which says what it does. The back is
-what the card says about itself, drawn from the front and never typed — the
-machine-readable zone across the lower third of an ID card and a permit,
-a licence's categories, the legend to its field numbers and its barcode — so a
-card being edited shows its front and offers no turn. A new document type
-gets a layout of its own here rather than a variant of another's.
+The cards print no machine-readable band: a real card carries it on its back,
+and a card here is its front. A new document type gets a row of its own in the
+layout table rather than a variant of another's.
 
 ### Sealed blocks
 

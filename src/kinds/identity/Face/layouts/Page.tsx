@@ -15,7 +15,8 @@ import type { LayoutProps } from '.'
  *
  * Also the page for a document that is no particular card (`other`): which rows
  * appear is the template's business and a cell with nothing in it prints
- * nothing, so it reads as a plain sheet with no band.
+ * nothing, so it reads as a plain sheet — with no band, which only a passport
+ * has.
  */
 export default function Page({ docType, doc }: LayoutProps) {
   const place = placeOf(doc)
@@ -51,7 +52,7 @@ export default function Page({ docType, doc }: LayoutProps) {
         <Foot doc={doc} />
       </div>
 
-      <MachineZone docType={docType} doc={doc} />
+      {docType === 'passport' && <MachineZone doc={doc} />}
     </>
   )
 }

@@ -11,8 +11,6 @@ interface Props {
   docType: string
   /** The colour a card is in, for the same readers. */
   color?: string
-  /** `identity-face` for the side a document is read on, `identity-back` for a card's other one. */
-  testid: string
   children: ReactNode
 }
 
@@ -41,9 +39,9 @@ interface Props {
  * see is worse than a document half a centimetre too tall — and the layout's job
  * is to keep that the rare case rather than to rely on it.
  */
-export default function Frame({ ratio, docType, color, testid, children }: Props) {
+export default function Frame({ ratio, docType, color, children }: Props) {
   return (
-    <Face data-testid={testid} data-doc-type={docType} data-color={color} className="grid w-full">
+    <Face data-testid="identity-face" data-doc-type={docType} data-color={color} className="grid w-full">
       <div
         aria-hidden
         className="col-start-1 row-start-1 w-full self-start"

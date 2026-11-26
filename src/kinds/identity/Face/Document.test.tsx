@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { DOC_TYPES, TEMPLATES, type DocType, type IdentityKey } from '../templates'
 import type { Doc } from './DocCell'
 import Document from './Document'
@@ -37,7 +37,6 @@ const show = (
 }
 
 const face = () => screen.getByTestId('identity-face')
-const back = () => screen.getByTestId('identity-back')
 
 describe('the document face', () => {
   it('prints every kind of document on the same paper', () => {
@@ -109,84 +108,32 @@ describe('the document face', () => {
   describe('a card', () => {
     const CARDS = ['id_card', 'driver_license', 'residence_permit'] as const
 
-    it('keeps its front for people: the machine-readable zone is on the back', () => {
+    it('prints no machine-readable band: that is a passport page’s', () => {
       for (const docType of CARDS) {
         show(docType, true)
         expect(face().textContent).not.toContain('<<')
         cleanup()
       }
-      show('id_card', true)
-      expect(within(back()).getByTestId('identity-mrz')).toHaveTextContent('I<GBRX48213097')
-      cleanup()
-      show('residence_permit', true)
-      expect(within(back()).getByTestId('identity-mrz')).toHaveTextContent('IRGBRX48213097')
     })
 
-    it('sets a licence’s categories on its front, and one to a box on its back', () => {
+    it('sets a licence’s categories under their number, and on no other card', () => {
       show('driver_license', true)
       expect(screen.getByTestId('entry-value-categories')).toHaveTextContent('AM, B1/B')
-      // Free text: whatever sits between the codes is the gap between them.
-      const boxes = within(screen.getByTestId('identity-categories')).getAllByRole('listitem')
-      expect(boxes.map(box => box.textContent)).toEqual(['AM', 'B1', 'B'])
       cleanup()
 
-      show('driver_license', true, { categories: '' })
-      expect(screen.queryByTestId('identity-categories')).toBeNull()
-      cleanup()
-
-      // Only a licence has the row.
       show('id_card', true)
       expect(screen.queryByTestId('entry-value-categories')).toBeNull()
     })
 
-    it('prints the legend to a licence’s numbers on its back, and no zone', () => {
-      show('driver_license', true)
-      expect(within(back()).queryByTestId('identity-mrz')).toBeNull()
-      expect(back()).toHaveTextContent('4b.Expires')
-      expect(back()).toHaveTextContent('5.Number')
-    })
-
-    it('masks its number on both sides until the eye is pressed', () => {
+    it('masks its number until the eye is pressed', () => {
       for (const docType of CARDS) {
         show(docType)
         expect(face().textContent).not.toContain('X48213097')
-        expect(back().textContent).not.toContain('X48213097')
-        expect(back().textContent).not.toContain('9103140447')
         cleanup()
         show(docType, true)
         expect(screen.getByTestId('entry-value-number')).toHaveTextContent('X48213097')
         cleanup()
       }
-    })
-
-    it('turns over on the key at its edge, and back again', () => {
-      show('id_card')
-      const side = (of: HTMLElement) => of.parentElement!
-      const key = screen.getByTestId('flip-face')
-      expect(side(face())).not.toHaveAttribute('inert')
-      expect(side(back())).toHaveAttribute('inert')
-      expect(key).toHaveAttribute('aria-pressed', 'false')
-
-      fireEvent.click(key)
-      expect(side(face())).toHaveAttribute('inert')
-      expect(side(back())).not.toHaveAttribute('inert')
-      expect(key).toHaveAttribute('aria-pressed', 'true')
-
-      // One key, outside both sides: it is still there to turn the card back.
-      fireEvent.click(key)
-      expect(side(face())).not.toHaveAttribute('inert')
-    })
-
-    it('offers no turn while it is being edited', () => {
-      show('id_card', true, {}, true)
-      expect(screen.queryByTestId('flip-face')).toBeNull()
-      expect(face().parentElement).not.toHaveAttribute('inert')
-    })
-
-    it('leaves a passport one-sided', () => {
-      show('passport')
-      expect(screen.queryByTestId('identity-back')).toBeNull()
-      expect(screen.queryByTestId('flip-face')).toBeNull()
     })
 
     describe('colour', () => {
@@ -209,10 +156,9 @@ describe('the document face', () => {
         expect(worn('residence_permit')).toBe('green')
       })
 
-      it('is the one the entry stores, on both sides', () => {
+      it('is the one the entry stores', () => {
         render(<Document docType="residence_permit" doc={doc()} color="blue" />)
         expect(face()).toHaveAttribute('data-color', 'blue')
-        expect(back()).toHaveAttribute('data-color', 'blue')
       })
 
       it('falls back to the type’s own for a value that is no colour of ours', () => {
@@ -266,7 +212,7 @@ describe('the document face', () => {
       show('id_card')
       expect(face()).toHaveTextContent('United Kingdom')
       expect(screen.getByTestId('identity-doc-type')).toHaveTextContent('ID card')
-      expect(within(face()).getByTestId('identity-hologram')).toBeInTheDocument()
+      expect(screen.getByTestId('identity-hologram')).toBeInTheDocument()
     })
 
     it('draws how far through its term a permit is', () => {

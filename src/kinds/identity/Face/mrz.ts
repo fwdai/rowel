@@ -1,19 +1,13 @@
 import { countryCode } from '@/utils/countries'
-import type { DocType } from '../templates'
 import type { Doc } from './DocCell'
 
 /**
- * The machine-readable zone, generated from what the document already says.
+ * A passport's machine-readable zone, generated from what the document already
+ * says.
  *
- * ICAO 9303 defines two formats the documents in this vault use: TD3, the
- * passport's two lines of 44, and TD1, the three lines of 30 an ID card or a
- * residence permit carries. Both are the same fields laid out in fixed columns
- * with check digits over them, so the band is derived rather than stored —
- * nothing to fill in, and it stays true as the document is edited.
- *
- * A driving licence has no MRZ (its back carries a barcode instead) and `other`
- * is not a format at all, so both get no band: `null`. A passport prints its
- * zone on the data page; a card prints it on its back (see `MachineZone`).
+ * ICAO 9303's TD3: two lines of 44, the fields laid out in fixed columns with
+ * check digits over them, so the band is derived rather than stored — nothing
+ * to fill in, and it stays true as the document is edited.
  *
  * The one liberty taken is the name. ICAO wants the primary identifier — the
  * surname — first, then `<<`, then the given names; the vault stores `name`
@@ -122,7 +116,11 @@ const state = (value: string): string => countryCode(value) ?? FILLER.repeat(3)
 // TD3 — the passport data page. Line 1 is the document code, the issuing state
 // and the name; line 2 is every other field in fixed columns, each followed by
 // its check digit, and a composite digit over the lot.
-const td3 = (doc: Doc, issuer: string, nationality: string): string[] => {
+export const mrz = (doc: Doc): string[] => {
+  const issuer = state(doc.value('country'))
+  // The band always names a nationality; a document that only says where it was
+  // issued lends that, which is true of every document that omits the field.
+  const nationality = countryCode(doc.value('nationality')) ?? issuer
   const number = fit(doc.value('number'), 9)
   const dob = yymmdd(doc.value('birth_date'))
   const expiry = yymmdd(doc.value('expiry_date'))
@@ -149,45 +147,4 @@ const td3 = (doc: Doc, issuer: string, nationality: string): string[] => {
     `P${FILLER}${issuer}${fit(doc.value('name'), 39)}`,
     doc.shown ? line : blank(blank(line, 28, 44), 0, 10)
   ]
-}
-
-// TD1 — the ID-1 card. The same fields over three shorter lines: the number and
-// the optional data on the first, the dates on the second, the name on the third.
-const td1 = (doc: Doc, docType: DocType, issuer: string, nationality: string): string[] => {
-  const number = fit(doc.value('number'), 9)
-  const dob = yymmdd(doc.value('birth_date'))
-  const expiry = yymmdd(doc.value('expiry_date'))
-
-  const code = docType === 'residence_permit' ? 'IR' : `I${FILLER}`
-  const first = code + issuer + number + checkDigit(number) + fit(doc.value('personal_number'), 15)
-  const second =
-    dob +
-    checkDigit(dob) +
-    sexOf(doc.value('sex')) +
-    expiry +
-    checkDigit(expiry) +
-    nationality +
-    FILLER.repeat(11)
-
-  const composite = checkDigit(
-    first.slice(5) + second.slice(0, 7) + second.slice(8, 15) + second.slice(18, 29)
-  )
-  const line2 = second + composite
-
-  return doc.shown
-    ? [first, line2, fit(doc.value('name'), 30)]
-    : [blank(first, 5, 30), blank(line2, 29, 30), fit(doc.value('name'), 30)]
-}
-
-/** The band this document prints, or `null` where it has none to print. */
-export const mrz = (docType: DocType, doc: Doc): string[] | null => {
-  const issuer = state(doc.value('country'))
-  // The band always names a nationality; a document that only says where it was
-  // issued lends that, which is true of every document that omits the field.
-  const nationality = countryCode(doc.value('nationality')) ?? issuer
-
-  if (docType === 'passport') return td3(doc, issuer, nationality)
-  if (docType === 'id_card' || docType === 'residence_permit')
-    return td1(doc, docType, issuer, nationality)
-  return null
 }

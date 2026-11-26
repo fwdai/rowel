@@ -26,11 +26,7 @@ interface Props {
   bare?: boolean
   /** A caption other than the field's own — the name reads as "Holder" here. */
   label?: TKey
-  /**
-   * The field's number on a driving licence — `4b.` — set in the gutter before
-   * it. The numbering is the licence's own (ISO/IEC 18013-1), the same on a
-   * card from any country, and it is what makes a licence's fields a licence's.
-   */
+  /** The field's number on a driving licence — `4b.` — set in the gutter before it. */
   index?: string
   ink?: string
   wrap?: boolean
