@@ -1,6 +1,6 @@
 {
     "extensionDescription": {
-        "message": "Integração KeepassXC para navegadores modernos",
+        "message": "Preencha inícios de sessão, códigos de utilização única e passkeys a partir do seu cofre Rowel.",
         "description": "Name of the extension."
     },
     "addSitePreferenceButtonTitle": {

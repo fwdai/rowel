@@ -4,7 +4,7 @@
     "minimum_chrome_version": "124",
     "description": "__MSG_extensionDescription__",
     "author": "Rowel",
-    "homepage_url": "https://github.com/fwdai/rowel",
+    "homepage_url": "https://rowel.app",
     "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApFScDLPjx3rTfa7Hgoj6woTK90ABGNO+Z18fqxEiTwAGj4lnJYE0ySOf7FTnmH/w6JIrai5r90RmWimDrW3nINnSCgjKntvzCIjGOPhWjYnvrFY44CWEIqDd45pZHcnPFlh+NoSgXwsz0s06IbhU0XyFesUZslhxBgDBi++pRc784rYxBwPmj69aAtAEw2ErLSLl6KWOAPwn3hZBZ3J2EZUg4g14dxYLf2Vu+Urjj/IhyG+izQUtb+IqcoIRMP/B0b6RvnQB2nbOXiPZbGMMtvdy30lImh1tX5xbsPgZ0ptI+Af03llzB+7RVm6n0KUnqQGyKHU0YYt9SxhVinolRwIDAQAB",
     "icons": {
         "16": "icons/rowel_16x16.png",

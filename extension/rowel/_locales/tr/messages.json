@@ -443,7 +443,7 @@
         "description": "Message shown when trying to save credentials that haven't changed."
     },
     "popupTitle": {
-        "message": "KeepassXc - Açılır pencere",
+        "message": "Rowel - Açılır pencere",
         "description": "Popup window title."
     },
     "popupSettingsText": {

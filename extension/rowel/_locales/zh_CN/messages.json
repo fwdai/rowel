@@ -124,7 +124,7 @@
         "description": "Action canceled or denied."
     },
     "errorMessageEncrypt": {
-        "message": "消息加密失败。KeepassXC 是否已运行？",
+        "message": "消息加密失败。Rowel 是否已运行？",
         "description": "Message encryption failed. Is KeePassXC running?"
     },
     "errorMessageAssociate": {
