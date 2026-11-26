@@ -2,8 +2,9 @@
 //! picture into lines, and everything that can be wrong about a scan is wrong
 //! about the lines.
 
+use super::local::scan_lines;
 use super::rows::{rows as lines_of, Region};
-use super::{card, is_image, local_path, mrz, scan_lines};
+use super::{card, document, is_image, local_path, mrz};
 
 // The ICAO 9303 specimen document (Utopia / ANNA MARIA ERIKSSON), the one set
 // of MRZ lines whose every check digit is published.
@@ -386,4 +387,291 @@ fn refuses_anything_that_is_not_an_image() {
 async fn a_scan_of_a_non_image_is_refused() {
     let err = super::scan("/Users/a/notes.txt".into()).await.unwrap_err();
     assert!(matches!(err, crate::error::Error::Unrecognized), "{err}");
+}
+
+// What the recognizer made of public specimen documents, noise and all.
+
+const CALIFORNIA_LICENCE: [&str; 16] = [
+    "CALIFORNIA DRIVER LICENSE",
+    "USA",
+    "0557 IS57355/383",
+    "4d DLN I1234567 4b EXP 11/26/2030",
+    "ЗDов 11/26/1957",
+    "1 SAMPLE",
+    "2 JANICE 668",
+    "8 123 NORTH STREET",
+    "SACRAMENTO, CA 00000-1234",
+    "9 CLASS A",
+    "OSAMPLE 9a END NONE",
+    "12 REST NONE",
+    "4a ISS 11/09/2025",
+    "49S SC4SSC 5 DD 00/00/0000NNNAN/ANFD/YY",
+    "15 SEX F 18 EYES BRN",
+    "Janice fample 16 HGT 5'-06\" 19 HAIR 17 WGT 160 lb BRN",
+];
+
+// Captions over their values, a skewed photo that ran most of the card into
+// one line, and a number that happens to pass the card check.
+const DC_LICENCE: [&str; 14] = [
+    "WASHINGTON, DC USA",
+    "DL",
+    "DRIVER LICENSE",
+    "4d.DLN 4b.EPX",
+    "A9999999 02/21/2018",
+    "1.FAMILY NAME",
+    "JONES",
+    "9999999 02211984 #1234 8.ADDRESS WASHINGTON, DC 00000-0000 1234 COMMODORE JOSHUA BARNEY DRIVE, NE 2.GIVEN NAMES ANGELINA GABRIELA 15.SEX 5-02 16.HGT 17.WGT 120 18.EYES BRO 02/21/1984 3.DOB",
+    "9.CLASS 4a.ISS",
+    "02/17/2010",
+    "9a.ENDORSEMENTS",
+    "NONE V DONOR",
+    "5.DD 12.RESTRICTIONS VETERAN",
+    "12348757475974",
+];
+
+// The title and the Greek came out as noise; the numbered fields and the
+// Latin lines under them did not.
+const GREEK_LICENCE: [&str; 11] = [
+    "АДЕІА ОДНГНЕНЕ ЕЛЛНNIКН АНМОКРАТІА",
+    "•GR",
+    "1. ЕAAHNIДA",
+    "ELLINIDA",
+    "2. ГЕОРГІА МАРІA",
+    "GEORGIA RI",
+    "3. 05.02 OНNA АTТІКНЕ",
+    "4g. 23.08.2013 AOHNAS",
+    "48. 23.03.2028 48, 012345678",
+    "0800000e3",
+    "9. A, B, C",
+];
+
+const AUSTRIAN_PERMIT: [&str; 13] = [
+    "AUFENTHALTSTITEL A123456789",
+    "NAME TOS",
+    "KHAN",
+    "SAJED ALI",
+    "GULTIG BIS 10.02.2021",
+    "AUSSTEL LUNGSORT UND-DATUM",
+    "WIEN 10.02.2016",
+    "ART DES AUFENTHALTSTITELS",
+    "DAUERAUFENTHALT - EU",
+    "SONSTIGE ANGABEN",
+    "KEINE",
+    "CAN 08503690",
+    "UNTERSCHRIFT",
+];
+
+// A passport's data page with its MRZ out of the picture: every caption in
+// three languages, above its value, two to a line.
+const DUTCH_PASSPORT_PAGE: [&str; 15] = [
+    "PASSPORT PASPOORT KONINKRIJK DER NEDERLANDEN",
+    "туре code 2 nationaliteit / nationality / nationalité documentnummer / document no. / no. du document",
+    "P NLD Nederlandse SPEC 2014",
+    "3 näam / surname / nom",
+    "De Bruijn",
+    "e/v Molenaar",
+    "4 voornamen / given names / prenoms",
+    "Willeke Liselotte",
+    "-5 geboortedatum / date of birth / date de naissance",
+    "10 MAA/MAR 1965",
+    "6 geboorteplaats / place of birth / lieu de naissance",
+    "/ geslacht/ sex / sexe 8 lengte / height / taille",
+    "V/F 1,75 m",
+    "9 datum van afgifte / date of issue / date de délivrance 10 geldig tot / date of expiry / date d'expiration",
+    "09 MAA/MAR 2014 09 MAA/MAR 2024",
+];
+
+fn identity_of(lines: &[&str]) -> std::collections::BTreeMap<String, String> {
+    let found = scan_lines(&rows(lines)).expect("a document should read");
+    assert_eq!(found.kind, "identity");
+    found.fields
+}
+
+fn type_of(lines: &[&str]) -> Option<String> {
+    scan_lines(&rows(lines))
+        .filter(|found| found.kind == "identity")?
+        .fields
+        .get("doc_type")
+        .cloned()
+}
+
+fn fields_of(lines: &[&str]) -> Vec<(String, String)> {
+    identity_of(lines).into_iter().collect()
+}
+
+fn pairs(fields: &[(&str, &str)]) -> Vec<(String, String)> {
+    fields
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect()
+}
+
+#[test]
+fn reads_a_licence_captioned_by_number() {
+    assert_eq!(
+        fields_of(&CALIFORNIA_LICENCE),
+        pairs(&[
+            ("birth_date", "1957-11-26"),
+            ("doc_type", "driver_license"),
+            ("expiry_date", "2030-11-26"),
+            ("issue_date", "2025-11-09"),
+            ("name", "JANICE SAMPLE"),
+            ("number", "I1234567"),
+            ("sex", "F"),
+        ])
+    );
+}
+
+#[test]
+fn reads_values_printed_under_their_captions() {
+    assert_eq!(
+        fields_of(&DC_LICENCE),
+        pairs(&[
+            // Under no caption that could be read: placed by being the
+            // earliest of the three.
+            ("birth_date", "1984-02-21"),
+            ("doc_type", "driver_license"),
+            ("expiry_date", "2018-02-21"),
+            ("issue_date", "2010-02-17"),
+            ("name", "ANGELINA GABRIELA JONES"),
+            ("number", "A9999999"),
+        ])
+    );
+}
+
+#[test]
+fn reads_what_survives_of_a_document_in_another_script() {
+    assert_eq!(
+        fields_of(&GREEK_LICENCE),
+        pairs(&[
+            ("doc_type", "driver_license"),
+            // Two dates fifteen years apart are an issue and an expiry, not
+            // a birth.
+            ("expiry_date", "2028-03-23"),
+            ("issue_date", "2013-08-23"),
+            // The Latin line under each misread one.
+            ("name", "GEORGIA RI ELLINIDA"),
+        ])
+    );
+}
+
+#[test]
+fn reads_a_document_with_one_caption_for_the_whole_name() {
+    assert_eq!(
+        fields_of(&AUSTRIAN_PERMIT),
+        pairs(&[
+            ("doc_type", "residence_permit"),
+            ("expiry_date", "2021-02-10"),
+            ("issue_date", "2016-02-10"),
+            ("name", "SAJED ALI KHAN"),
+            ("number", "A123456789"),
+        ])
+    );
+}
+
+#[test]
+fn reads_a_passport_page_by_its_print_when_the_mrz_is_out_of_frame() {
+    assert_eq!(
+        fields_of(&DUTCH_PASSPORT_PAGE),
+        pairs(&[
+            ("birth_date", "1965-03-10"),
+            ("doc_type", "passport"),
+            ("expiry_date", "2024-03-09"),
+            ("issue_date", "2014-03-09"),
+            ("name", "Willeke Liselotte De Bruijn"),
+            ("sex", "F"),
+        ])
+    );
+}
+
+#[test]
+fn the_print_adds_the_issue_date_an_mrz_does_not_carry() {
+    let mut lines = vec![
+        "Date of birth 12 AUG 1974",
+        "Date of issue 16 APR 2007",
+        "Date of expiry 15 APR 2012",
+    ];
+    lines.extend(TD3);
+    let fields = identity_of(&lines);
+    assert_eq!(fields["issue_date"], "2007-04-16");
+    // Everything the MRZ says stays the MRZ's.
+    assert_eq!(fields["birth_date"], "1974-08-12");
+    assert_eq!(fields["expiry_date"], "2012-04-15");
+    assert_eq!(fields["name"], "ANNA MARIA ERIKSSON");
+
+    // A printed date that cannot be the issue date is not taken for one.
+    let mut lines = vec!["Date of issue 16 APR 2031"];
+    lines.extend(TD3);
+    assert!(!identity_of(&lines).contains_key("issue_date"));
+}
+
+#[test]
+fn knows_a_document_by_the_title_it_prints() {
+    assert_eq!(
+        type_of(&CALIFORNIA_LICENCE).as_deref(),
+        Some("driver_license")
+    );
+    assert_eq!(
+        type_of(&AUSTRIAN_PERMIT).as_deref(),
+        Some("residence_permit")
+    );
+    assert_eq!(
+        type_of(&[
+            "BUNDESREPUBLIK DEUTSCHLAND",
+            "PERSONALAUSWEIS / IDENTITY CARD"
+        ])
+        .as_deref(),
+        Some("id_card")
+    );
+}
+
+#[test]
+fn reads_a_title_through_case_marks_and_line_breaks() {
+    let printed = |lines: &[&str]| document::doc_type(&rows(lines));
+    assert_eq!(printed(&["Führerschein"]), Some("driver_license"));
+    assert_eq!(printed(&["DRIVER'S LICENSE"]), Some("driver_license"));
+    assert_eq!(printed(&["Carte nationale d’identité"]), Some("id_card"));
+    assert_eq!(printed(&["TITRE DE", "SÉJOUR"]), Some("residence_permit"));
+    // Whole words only.
+    assert_eq!(printed(&["VALID CARD", "MEMBER SINCE 2019"]), None);
+    assert_eq!(printed(&["nothing a document says"]), None);
+}
+
+#[test]
+fn a_licence_is_not_a_card_whatever_its_digits_add_up_to() {
+    assert!(card::parse(&rows(&DC_LICENCE)).is_some());
+    assert_eq!(type_of(&DC_LICENCE).as_deref(), Some("driver_license"));
+}
+
+#[test]
+fn knows_a_licence_by_its_numbered_fields_when_the_title_is_lost() {
+    assert_eq!(type_of(&GREEK_LICENCE).as_deref(), Some("driver_license"));
+    // A numbered list is not one: it has a 4, never a 4a.
+    assert_eq!(
+        document::doc_type(&rows(&["1. Eggs", "2. Flour", "3. Milk", "4. Sugar"])),
+        None
+    );
+}
+
+#[test]
+fn a_card_that_says_what_it_is_overrides_the_catch_all_mrz_code() {
+    let mut lines = vec!["UNITED STATES OF AMERICA", "PERMANENT RESIDENT"];
+    lines.extend(TD1);
+    assert_eq!(type_of(&lines).as_deref(), Some("residence_permit"));
+    // The MRZ still fills everything else.
+    assert_eq!(identity_of(&lines)["number"], "D23145890");
+    // And a passport stays one whatever else is printed near it.
+    let mut lines = vec!["RESIDENCE PERMIT"];
+    lines.extend(TD3);
+    assert_eq!(type_of(&lines).as_deref(), Some("passport"));
+}
+
+#[test]
+fn a_card_stays_a_card_and_passport_alone_does_not_claim_one() {
+    let card = ["WORLD PASSPORT REWARDS", "4242 4242 4242 4242", "04/27"];
+    assert_eq!(scan_lines(&rows(&card)).unwrap().kind, "card");
+    assert_eq!(
+        type_of(&["PASSPORT", "PASSEPORT"]).as_deref(),
+        Some("passport")
+    );
 }

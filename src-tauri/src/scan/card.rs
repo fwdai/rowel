@@ -8,6 +8,8 @@
 
 use std::collections::BTreeMap;
 
+use super::words::is_name_word;
+
 /// Embossed digits are misread as these letters and no others.
 fn as_digit(c: char) -> Option<char> {
     match c {
@@ -235,14 +237,6 @@ fn cardholder(lines: &[String]) -> Option<String> {
         }
     }
     best.map(str::to_owned)
-}
-
-fn is_name_word(word: &str) -> bool {
-    !word.is_empty()
-        && word.chars().any(char::is_uppercase)
-        && word
-            .chars()
-            .all(|c| c.is_uppercase() || matches!(c, '-' | '\'' | '.'))
 }
 
 fn bare(word: &str) -> String {
