@@ -1,0 +1,341 @@
+//! Reading the printed face of an identity document: what it is, whose it is,
+//! its number and its dates.
+//!
+//! Nothing here knows a particular document. Documents differ in layout and
+//! language but not in kind: each says what it is in a title (`doctype`),
+//! captions what it prints (`captions`) and prints its dates in one of a few
+//! ways (`dates`). So a field is found the way a person finds it — by the
+//! caption beside or above it — and checked by what it has to be: a date is a
+//! date, a number has digits in it, a name has none.
+//!
+//! Where a caption is missing or was misread, the dates still place
+//! themselves: a document's birth date comes before its issue date, and its
+//! expiry is the last of the three.
+//!
+//! Text in, fields out, like the other readers. It is a best reading rather
+//! than a verified one — nothing here has a check digit — which is why an
+//! MRZ, when the picture has one, is read first and believed over this.
+
+mod captions;
+mod dates;
+mod doctype;
+
+use std::collections::{BTreeMap, HashSet};
+
+use chrono::{Months, NaiveDate};
+
+use crate::scan::words;
+use captions::{Caption, Field};
+
+pub use doctype::printed as doc_type;
+
+/// The fields the document's print gives, keyed as an identity entry's are:
+/// `name`, `number`, `birth_date`, `issue_date`, `expiry_date` and `sex`,
+/// each present only when it was found. `doc_type` is what [`doc_type`] made
+/// of the same lines; a driving licence's fields are captioned by number as
+/// well as by word.
+pub fn fields(lines: &[String], doc_type: Option<&str>) -> BTreeMap<String, String> {
+    let print = Print {
+        lines,
+        captions: captions::find(lines, doc_type == Some("driver_license")),
+    };
+    let dated = Dated::read(&print);
+    // Without a caption, a number is guessed at only on a document that at
+    // least said what it is.
+    let number = print
+        .value(Field::Number, number_in)
+        .or_else(|| doc_type.and_then(|_| lone_number(lines)));
+    [
+        ("name", name(&print)),
+        ("number", number),
+        ("sex", print.value(Field::Sex, sex_in)),
+        ("birth_date", dated.birth.map(dates::iso)),
+        ("issue_date", dated.issue.map(dates::iso)),
+        ("expiry_date", dated.expiry.map(dates::iso)),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| Some((key.to_owned(), value?)))
+    .collect()
+}
+
+/// A document's print: its lines and the captions found in them.
+struct Print<'a> {
+    lines: &'a [String],
+    captions: Vec<Caption>,
+}
+
+impl Print<'_> {
+    fn of(&self, field: Field) -> impl Iterator<Item = &Caption> {
+        self.captions.iter().filter(move |c| c.field == field)
+    }
+
+    /// What stands beside a caption, on its own line.
+    fn beside(&self, caption: &Caption) -> &str {
+        &self.lines[caption.line][caption.start..caption.end]
+    }
+
+    /// The line under `line`, when it is all value: documents print the
+    /// caption above the data as often as before it, and a line with a
+    /// caption of its own belongs to that caption.
+    fn below(&self, line: usize) -> Option<&str> {
+        self.lines
+            .get(line + 1)
+            .filter(|_| self.captions.iter().all(|c| c.line != line + 1))
+            .map(String::as_str)
+    }
+
+    /// The value of `field`: what `read` makes of the text beside the first
+    /// of its captions to have one, or below it.
+    fn value(&self, field: Field, read: impl Fn(&str) -> Option<String>) -> Option<String> {
+        self.of(field).find_map(|caption| {
+            read(self.beside(caption)).or_else(|| self.below(caption.line).and_then(&read))
+        })
+    }
+}
+
+/// The holder's name, given names first — the way a person writes their own,
+/// and the way the MRZ reader hands it over.
+fn name(print: &Print<'_>) -> Option<String> {
+    let of = |field: Field| print.of(field).find_map(|caption| named(print, caption));
+    match (of(Field::Given), of(Field::Surname)) {
+        // Two captions over one line of print ("Surname  Given names" above
+        // "ERIKSSON ANNA MARIA") both find the whole of it.
+        (Some(given), Some(surname)) if given.0 == surname.0 => Some(given.0),
+        (Some(given), Some(surname)) => Some(format!("{} {}", given.0, surname.0)),
+        (Some(part), None) | (None, Some(part)) => Some(part.0),
+        (None, None) => {
+            let caption = print.of(Field::Name).next()?;
+            let (first, below) = named(print, caption)?;
+            // Under a single "Name", a line of one word with another line of
+            // names under it is the surname over the given names.
+            let second = (below && !first.contains(' '))
+                .then(|| print.below(caption.line + 1))
+                .flatten()
+                .and_then(|line| name_in(line, true));
+            Some(match second {
+                Some(given) => format!("{given} {first}"),
+                None => first,
+            })
+        }
+    }
+}
+
+/// A name caption's value, and whether it was found below the caption rather
+/// than beside it. Three letters or fewer beside a caption with a proper line
+/// of names under it is the caption's own debris, not a name.
+fn named(print: &Print<'_>, caption: &Caption) -> Option<(String, bool)> {
+    let beside = name_in(print.beside(caption), false);
+    let below = print
+        .below(caption.line)
+        .and_then(|line| name_in(line, true));
+    match (beside, below) {
+        (Some(beside), Some(below))
+            if beside.chars().filter(|c| c.is_alphabetic()).count() <= 3 =>
+        {
+            Some((below, true))
+        }
+        (Some(beside), _) => Some((beside, false)),
+        (None, Some(below)) => Some((below, true)),
+        (None, None) => None,
+    }
+}
+
+/// The name in a stretch of text. Beside a caption, what is not a name is
+/// dropped — a stray figure, the colon after the caption. A line on its own
+/// has to be a name through and through (`whole`), or it is something else:
+/// an address, a place, a number.
+fn name_in(text: &str, whole: bool) -> Option<String> {
+    let (names, rest): (Vec<&str>, Vec<&str>) =
+        words::tokens(text).partition(|word| words::is_name_word(word));
+    if names.is_empty() || (whole && !rest.is_empty()) {
+        return None;
+    }
+    // A word in two alphabets at once is a misreading, and so is its line.
+    if names.iter().any(|word| words::mixes_scripts(word)) {
+        return None;
+    }
+    Some(names.join(" "))
+}
+
+/// A document or licence number: the first word with enough digits in it to
+/// be one. Not a date — those are written with marks a number does not have.
+fn number_in(text: &str) -> Option<String> {
+    words::tokens(text)
+        .find(|word| {
+            (5..=20).contains(&word.chars().count())
+                && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                && word.chars().filter(char::is_ascii_digit).count() >= 3
+        })
+        .map(str::to_owned)
+}
+
+/// The number of a document that does not caption it, when the print leaves
+/// no doubt: the one word on it that mixes letters with digits the way a
+/// document number does. Two such words are a doubt.
+fn lone_number(lines: &[String]) -> Option<String> {
+    let mut candidates = lines
+        .iter()
+        .flat_map(|line| line.split_whitespace())
+        .filter(|word| {
+            (7..=12).contains(&word.len())
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                && word.chars().any(|c| c.is_ascii_uppercase())
+                && word.chars().filter(char::is_ascii_digit).count() >= 4
+        });
+    let only = candidates.next()?;
+    candidates.next().is_none().then(|| only.to_owned())
+}
+
+/// `M` or `F`, as the MRZ reader gives it; anything else is left unsaid.
+fn sex_in(text: &str) -> Option<String> {
+    words::tokens(text)
+        // "V/F": the letter in the document's language, then the
+        // international one.
+        .flat_map(|word| word.split('/'))
+        .find_map(|word| match word.to_uppercase().as_str() {
+            "M" | "MALE" => Some("M"),
+            "F" | "FEMALE" => Some("F"),
+            _ => None,
+        })
+        .map(str::to_owned)
+}
+
+/// The three dates a document carries.
+#[derive(Default)]
+struct Dated {
+    birth: Option<NaiveDate>,
+    issue: Option<NaiveDate>,
+    expiry: Option<NaiveDate>,
+}
+
+// Nobody holds a document that outlives its issue by this long, so a date
+// further than this before the expiry is the holder's birth, not the issue.
+const LONGEST_VALIDITY_YEARS: u32 = 16;
+
+impl Dated {
+    fn read(print: &Print<'_>) -> Self {
+        let printed: Vec<Vec<dates::Printed>> =
+            print.lines.iter().map(|line| dates::find(line)).collect();
+        let order = dates::order(printed.iter().flatten(), american(print.lines));
+        // Every date as (line, where it starts, the day it is).
+        let all: Vec<(usize, usize, NaiveDate)> = printed
+            .iter()
+            .enumerate()
+            .flat_map(|(line, dates)| dates.iter().map(move |d| (line, d)))
+            .filter_map(|(line, d)| Some((line, d.start, d.on(order)?)))
+            .collect();
+        let mut taken: HashSet<(usize, usize)> = HashSet::new();
+        let mut dated = Self::default();
+        let mut born_beside = false;
+
+        // A date beside its caption first, for every caption: only then is a
+        // date on the line below known to be nobody else's.
+        for below in [false, true] {
+            for caption in &print.captions {
+                let found = all.iter().find(|(line, start, _)| {
+                    !taken.contains(&(*line, *start))
+                        && if below {
+                            *line == caption.line + 1
+                        } else {
+                            *line == caption.line && (caption.start..caption.end).contains(start)
+                        }
+                });
+                let Some(&(line, start, date)) = found else {
+                    continue;
+                };
+                let field = match caption.field {
+                    Field::Birth => &mut dated.birth,
+                    Field::Issue => &mut dated.issue,
+                    Field::Expiry => &mut dated.expiry,
+                    _ => continue,
+                };
+                if field.is_none() {
+                    *field = Some(date);
+                    taken.insert((line, start));
+                    born_beside |= caption.field == Field::Birth && !below;
+                }
+            }
+        }
+
+        let mut rest: Vec<NaiveDate> = all
+            .iter()
+            .filter(|(line, start, _)| !taken.contains(&(*line, *start)))
+            .map(|(_, _, date)| *date)
+            .filter(|date| ![dated.birth, dated.issue, dated.expiry].contains(&Some(*date)))
+            .collect();
+        rest.sort();
+        rest.dedup();
+        dated.place(rest, chrono::Utc::now().date_naive());
+        // A birth date that was not read beside its own caption — taken from
+        // the line below one, or by order — is checked against the expiry:
+        // too close to it, with no issue date known, it is the issue date.
+        if !born_beside && dated.issue.is_none() {
+            if let (Some(birth), Some(expiry)) = (dated.birth, dated.expiry) {
+                if !outlived(birth, expiry) {
+                    dated.issue = dated.birth.take();
+                }
+            }
+        }
+        dated
+    }
+
+    /// Give the dates no caption claimed to the fields still empty, by what
+    /// order they have to come in: birth, then issue, then expiry.
+    fn place(&mut self, mut rest: Vec<NaiveDate>, today: NaiveDate) {
+        if self.expiry.is_none() {
+            if let Some(&last) = rest.last() {
+                let known = self.birth.max(self.issue);
+                // The last date is the expiry when there is anything for it
+                // to be later than; a lone date is one only if still ahead.
+                if known.is_none_or(|k| last > k)
+                    && (rest.len() >= 2 || known.is_some() || last > today)
+                {
+                    self.expiry = rest.pop();
+                }
+            }
+        }
+        if self.birth.is_none() {
+            if let Some(&first) = rest.first() {
+                let is_birth = match (self.issue, self.expiry) {
+                    (Some(issue), _) => first < issue,
+                    (None, _) if rest.len() >= 2 => true,
+                    (None, Some(expiry)) => outlived(first, expiry),
+                    (None, None) => false,
+                };
+                if is_birth {
+                    self.birth = Some(rest.remove(0));
+                }
+            }
+        }
+        if self.issue.is_none() {
+            self.issue = rest
+                .iter()
+                .rev()
+                .find(|date| {
+                    **date <= today
+                        && self.birth.is_none_or(|birth| **date > birth)
+                        && self.expiry.is_none_or(|expiry| **date < expiry)
+                })
+                .copied();
+        }
+    }
+}
+
+/// Whether `expiry` is further from `date` than any document stays valid, so
+/// that `date` can only be the holder's birth.
+fn outlived(date: NaiveDate, expiry: NaiveDate) -> bool {
+    date.checked_add_months(Months::new(12 * LONGEST_VALIDITY_YEARS))
+        .is_some_and(|latest| latest <= expiry)
+}
+
+/// Whether the document says it is one of the United States', where a date's
+/// month comes first.
+fn american(lines: &[String]) -> bool {
+    let keys: Vec<String> = lines.iter().flat_map(|line| words::keys(line)).collect();
+    keys.iter().any(|key| key == "USA")
+        || keys
+            .windows(2)
+            .any(|pair| pair[0] == "UNITED" && pair[1] == "STATES")
+}
