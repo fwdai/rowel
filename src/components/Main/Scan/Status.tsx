@@ -22,9 +22,10 @@ const HINT: TKey =
 const DISMISS_MS = 8000
 
 // Bottom-left, opposite the update toast. A scan under way is shown where its
-// result lands (`Reading`); the toast says so only over an open editor, which
-// the scan is about to fill and must not pull out from under the user. A
-// failure is always a toast: by then the screen is back to what it was showing.
+// result lands (`Reading`); the toast says so only where that screen is not on
+// show (see `useReading`) — over an open editor, and over an entry open on the
+// phone. A failure is always a toast: by then the screen is back to what it
+// was showing.
 export default function Status() {
   const { t } = useTranslation()
   const reading = useReading()

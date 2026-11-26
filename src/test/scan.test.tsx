@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Main from '@/components/Main'
-import { useUi, useVault, startEntry, scanStarted, scanFinished } from '@/store'
+import {
+  useUi,
+  useVault,
+  startEntry,
+  setCurrentEntry,
+  scanStarted,
+  scanFinished
+} from '@/store'
 import {
   cleanFields,
   firstImage,
@@ -229,6 +236,21 @@ describe('a scan under way', () => {
 
     act(() => scanFinished())
     expect(screen.queryByTestId('scan-reading')).toBeNull()
+  })
+
+  it('says so in the corner while an entry covers the phone’s root', () => {
+    setLayout('compact')
+    seed()
+    seedApp({ scanSupported: true })
+    render(<Main />)
+    act(() => setCurrentEntry('l1'))
+
+    // A photo dropped on a narrow window with an entry open.
+    act(() => scanStarted())
+
+    expect(screen.queryByTestId('scan-reading')).toBeNull()
+    expect(screen.getByTestId('scan-status')).toBeInTheDocument()
+    act(() => scanFinished())
   })
 })
 
