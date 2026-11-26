@@ -180,6 +180,19 @@
     transform: none;
   }
 }
+/*
+ * The scanner's beam passing down a document being read (Scan/Reading): a
+ * layer the height of the page, its lit edge at the bottom, drawn from above
+ * the page to its foot.
+ */
+@keyframes scan {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
 /* A light band sweeping through text (see the `shimmer-text` utility). */
 @keyframes shimmer {
   from {
@@ -587,6 +600,7 @@
   --animate-step-back: step-back 240ms var(--ease-swift) both;
   --animate-rise: rise 300ms var(--ease-swift) both;
   --animate-unfold: unfold 300ms var(--ease-swift) both;
+  --animate-scan: scan 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
 /*

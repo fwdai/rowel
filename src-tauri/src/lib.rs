@@ -243,6 +243,10 @@ pub fn run() {
                     browser::server::start(app.handle());
                 }
             }
+            // The scanner's first recognition is its slow one; it is spent
+            // here, behind the lock screen, rather than on the user's first
+            // scan (see `scan::warm_up`).
+            std::thread::spawn(scan::warm_up);
             // Which workspace was open last. Read before the window exists, so
             // the lock screen the user lands on is that workspace's.
             let registry = workspace::Registry::load(&root);

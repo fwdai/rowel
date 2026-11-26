@@ -24,17 +24,21 @@ const show = (
   docType: DocType,
   shown = false,
   over: Record<string, string> = {},
-  editing = false
+  editing = false,
+  extra: Partial<Doc> = {}
 ) => {
   const keys = new Set<IdentityKey>(TEMPLATES[docType].map(row => row.key))
   const doc: Doc = {
     value: key => (keys.has(key) ? ({ ...FILLED, ...over }[key] ?? '') : ''),
     set: editing ? () => {} : undefined,
     shown,
-    toggle: () => {}
+    toggle: () => {},
+    ...extra
   }
   render(<Document docType={docType} doc={doc} />)
 }
+
+const PHOTO = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
 
 const face = () => screen.getByTestId('identity-face')
 
@@ -97,6 +101,28 @@ describe('the document face', () => {
     // The band is generated from the same values and must not undo the mask.
     expect(face().textContent).not.toContain('X48213097')
     expect(face().textContent).not.toContain('9103140447')
+  })
+
+  it('prints a silhouette where the document has no photograph', () => {
+    show('passport')
+    const frame = screen.getByTestId('identity-portrait')
+    expect(frame.querySelector('img')).toBeNull()
+    expect(frame.querySelector('svg')).not.toBeNull()
+  })
+
+  it("prints the holder's photograph where it has one", () => {
+    show('id_card', false, {}, false, { portrait: PHOTO })
+    const frame = screen.getByTestId('identity-portrait')
+    expect(frame.querySelector('img')).toHaveAttribute('src', PHOTO)
+    // Reading, the photograph is part of the document: nothing takes it off.
+    expect(screen.queryByTestId('remove-portrait')).toBeNull()
+  })
+
+  it('lets the photograph be taken off while editing', () => {
+    const removePortrait = vi.fn()
+    show('passport', true, {}, true, { portrait: PHOTO, removePortrait })
+    fireEvent.click(screen.getByTestId('remove-portrait'))
+    expect(removePortrait).toHaveBeenCalledOnce()
   })
 
   it('prints the number and its band once revealed', () => {

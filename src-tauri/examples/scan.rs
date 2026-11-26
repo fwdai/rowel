@@ -1,15 +1,19 @@
-//! Thin CLI over the image scanner, for checking the platform OCR backend
-//! against a real picture: `cargo run --example scan -- /path/to/photo.png`.
-//! Prints the recognized lines, then whatever the parsers made of them. Not
-//! shipped in the app.
+//! Thin CLI over the image scanner, for checking the platform backends against
+//! a real picture: `cargo run --example scan -- /path/to/photo.png`. Prints
+//! the recognized lines, then what a scan of the picture comes to. Not shipped
+//! in the app.
+//!
+//! The holder's photograph is printed as its size only; with a second path it
+//! is written there, as the data URI an entry would keep:
+//! `cargo run --example scan -- photo.png portrait.txt`.
 
 use std::path::Path;
 
-use rowel_lib::scan::{platform_ocr, scan_lines};
+use rowel_lib::scan::{platform_ocr, read, Image};
 
 fn main() {
     let Some(path) = std::env::args().nth(1) else {
-        eprintln!("usage: scan <image path>");
+        eprintln!("usage: scan <image path> [portrait output path]");
         std::process::exit(1);
     };
     let Some(ocr) = platform_ocr() else {
@@ -26,13 +30,19 @@ fn main() {
         println!("{line}");
     }
 
-    match scan_lines(&lines) {
-        Some(found) => {
-            println!("--- {}", found.kind);
-            for (key, value) in &found.fields {
-                println!("{key}: {value}");
+    let Some(found) = read(lines, Image::File(Path::new(&path))) else {
+        println!("--- nothing recognized");
+        return;
+    };
+    println!("--- {}", found.kind);
+    for (key, value) in &found.fields {
+        if key == "portrait" {
+            println!("{key}: {} bytes as a data URI", value.len());
+            if let Some(out) = std::env::args().nth(2) {
+                std::fs::write(&out, value).expect("the portrait could not be written");
             }
+        } else {
+            println!("{key}: {value}");
         }
-        None => println!("--- nothing recognized"),
     }
 }

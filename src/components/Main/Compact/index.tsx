@@ -1,12 +1,15 @@
 import { useVault, useUi, selectBatch } from '@/store'
 import { useVisualViewport, viewportStyle } from '@/hooks/useVisualViewport'
 import Attached from '../Generator/Attached'
+import Reading from '../Scan/Reading'
+import { useReading } from '../Scan/useReading'
 import Entry from './Entry'
 import Generator from './Generator'
 import Settings from './Settings'
 import Vault from './Vault'
 import TabBar from './TabBar'
 import Stack from './Stack'
+import { TAB_BAR_CLEARANCE } from './chrome'
 
 /**
  * The phone shell: a tab root, and at most one screen pushed over it, both
@@ -41,6 +44,7 @@ export default function Compact() {
   const generator = useUi(
     state => state.generator.open && !state.generator.apply && !state.generator.ssh
   )
+  const reading = useReading()
   const viewport = useVisualViewport()
   // A root is over the selection, so the bar it is left by has to stay up.
   const pushed = writing || (entry && !settings && !generator)
@@ -65,6 +69,17 @@ export default function Compact() {
           under={
             <>
               {settings ? <Settings /> : generator ? <Generator /> : <Vault />}
+              {/* A scan under way takes the screen its form will rise over.
+                  Laid over the root rather than in its place, so the list
+                  keeps its scroll, and under the tab bar, so the way out of
+                  a long read is still there. */}
+              {reading && (
+                <div
+                  className={`animate-fade absolute inset-0 grid place-items-center bg-screen px-8 pt-(--safe-top) ${TAB_BAR_CLEARANCE}`}
+                >
+                  <Reading />
+                </div>
+              )}
               {/* Pinned to the root's layer, so it goes where the root goes. */}
               <TabBar />
             </>

@@ -1,24 +1,58 @@
-//! Reading a dropped photo of a credit card or an identity document into the
-//! fields of an entry, so the user does not retype an embossed number.
+//! Reading a photo of a payment card or an identity document into the fields
+//! of an entry, so the user does not retype what is printed on it.
 //!
-//! Fully local: the OS text recognizer runs on-device, the image is only ever
-//! read from where the user already keeps it, and nothing here touches the
-//! network or writes a file. Recognized text holds the very numbers the vault
-//! exists to protect, so it is zeroized the moment it has been parsed.
+//! # The contract
 //!
-//! The parsers (`mrz`, `card`) are pure text-in/fields-out and carry the tests;
-//! the platform backends only turn an image into lines.
+//! This file is all the rest of the app knows about scanning: [`scan`] and
+//! [`scan_bytes`] take a picture and answer with a [`ScanResult`] — which
+//! kind of entry it is and that entry's fields, the holder's photograph among
+//! them — and [`is_supported`] says whether this build can scan at all.
+//!
+//! [`Scanner`] is the engine behind them and the one seam. Everything below
+//! it can be replaced — a different recognizer, a model that reads the whole
+//! picture — by another `Scanner`, and nothing outside this module moves.
+//!
+//! # The engine there is
+//!
+//! `local` is fully on-device: the image is only ever read from where the
+//! user already keeps it, and nothing touches the network or writes a file.
+//! It works in two halves.
+//!
+//! The platform half turns a picture into lines of text (`ocr_*`, `rows`)
+//! and finds the holder's face to cut the photograph around (`portrait*`),
+//! both with what the OS ships.
+//!
+//! The reading half is pure text-in/fields-out and carries the tests:
+//!
+//! - `mrz` — the machine-readable zone of a travel document, the one reading
+//!   with check digits and so the one believed first;
+//! - `document` — the printed face of any identity document: its type by its
+//!   title, its fields by their captions, its dates by their order;
+//! - `card` — a payment card, by its number.
+//!
+//! `words` is what they share: recognized text as the words print is matched
+//! and judged by.
+//!
+//! Recognized text holds the very numbers the vault exists to protect, so it
+//! is zeroized the moment it has been read.
 
 mod card;
+mod document;
+mod local;
 mod mrz;
 #[cfg(target_vendor = "apple")]
 mod ocr_apple;
 #[cfg(target_os = "windows")]
 mod ocr_windows;
 #[cfg(any(target_vendor = "apple", test))]
+mod portrait;
+#[cfg(target_vendor = "apple")]
+mod portrait_apple;
+#[cfg(any(target_vendor = "apple", test))]
 mod rows;
 #[cfg(test)]
 mod tests;
+mod words;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -28,9 +62,14 @@ use zeroize::Zeroize;
 
 use crate::error::{Error, Result};
 
+// The local engine's parts, for the example that checks them against a real
+// picture (`examples/scan.rs`) and for the backends beside this file.
+pub use local::{platform_ocr, read, Ocr};
+
 /// What a scan found. `kind` is `"card"` or `"identity"`; `fields` is keyed by
-/// the field names of the matching entry kind (see `mrz`/`card` for the exact
-/// sets), so the form can fill itself in without knowing how it was read.
+/// the field names of the matching entry kind, so the form can fill itself in
+/// without knowing how it was read. An identity's may include `portrait`,
+/// which is a field of the entry like the rest (`Entry::portrait`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanResult {
@@ -38,78 +77,53 @@ pub struct ScanResult {
     pub fields: BTreeMap<String, String>,
 }
 
-/// Text recognition over one image, in reading order (top to bottom) — the
-/// order the MRZ parser needs to see its lines in.
-pub trait Ocr {
-    /// The image at a local path.
-    fn recognize(&self, image_path: &Path) -> Result<Vec<String>>;
-
-    /// The image as its encoded bytes — a photo the phone's picker handed the
-    /// webview, which the backend has no path to. Only the phone reaches here,
-    /// and the phone is Apple's, so the other backends keep the default:
-    /// unsupported.
-    fn recognize_data(&self, _image: &[u8]) -> Result<Vec<String>> {
-        Err(Error::Unsupported(
-            "scanning a captured photo is not available on this platform".into(),
-        ))
-    }
+/// The picture a scan is handed: a file the user already keeps, or the bytes
+/// of a photo that is on no disk.
+#[derive(Clone, Copy)]
+pub enum Image<'a> {
+    File(&'a Path),
+    Bytes(&'a [u8]),
 }
 
-/// Apple's Vision framework (same API on macOS and iOS).
-#[cfg(target_vendor = "apple")]
-pub fn platform_ocr() -> Option<Box<dyn Ocr>> {
-    Some(Box::new(ocr_apple::VisionOcr))
-}
-
-/// Windows' `Windows.Media.Ocr`, which needs a language pack to be installed.
-#[cfg(target_os = "windows")]
-pub fn platform_ocr() -> Option<Box<dyn Ocr>> {
-    ocr_windows::WindowsOcr::new().map(|ocr| Box::new(ocr) as Box<dyn Ocr>)
-}
-
-/// Linux has no system text recognizer to call, and bundling an OCR engine is
-/// not worth the binary — the feature is simply absent there.
-#[cfg(not(any(target_vendor = "apple", target_os = "windows")))]
-pub fn platform_ocr() -> Option<Box<dyn Ocr>> {
-    None
-}
-
-/// Read whatever the recognized text holds.
+/// Something that reads a picture of a card or a document.
 ///
-/// The MRZ is tried first because a hit is unambiguous: its check digits have
-/// to agree, so the lines cannot be anything else. A card, by contrast, is
-/// recognized from a Luhn-valid digit run — and an identity document can carry
-/// one of those by chance.
-///
-/// An MRZ whose digits did not verify is still an MRZ: a worse photo of one,
-/// not a card. Its data line is a run of digits long enough to hold a
-/// Luhn-valid window by chance, so the card parser is not asked about it, and
-/// the user is asked for a better photo instead.
-pub fn scan_lines(lines: &[String]) -> Option<ScanResult> {
-    if let Some(fields) = mrz::parse(lines) {
-        return Some(ScanResult {
-            kind: "identity".into(),
-            fields,
-        });
-    }
-    if mrz::present(lines) {
-        return None;
-    }
-    card::parse(lines).map(|fields| ScanResult {
-        kind: "card".into(),
-        fields,
-    })
+/// The whole of what an engine owes the app: one picture in, and out of it
+/// the entry it describes — or `None` for a picture it makes nothing of. How
+/// it gets there is its own business.
+pub trait Scanner {
+    fn scan(&self, image: Image<'_>) -> Result<Option<ScanResult>>;
+
+    /// Get ready ahead of the first scan, for an engine with something to
+    /// get ready. Nothing by default.
+    fn warm_up(&self) {}
 }
 
-/// OCR the image at `path` and return the fields read out of it. Recognition is
-/// a heavy CPU job, so it runs off the UI thread.
+/// The engine this build scans with, where it has one.
+pub fn scanner() -> Option<Box<dyn Scanner>> {
+    local::scanner()
+}
+
+/// Have the engine ready before anybody scans (see [`Scanner::warm_up`]).
+/// May take as long as a first scan does, so it is for a thread of its own.
+pub fn warm_up() {
+    if let Some(scanner) = scanner() {
+        scanner.warm_up();
+    }
+}
+
+/// Whether this platform can scan at all, so the UI can leave the affordance
+/// out rather than offer a drop target that always fails.
+pub fn is_supported() -> bool {
+    scanner().is_some()
+}
+
+/// Scan the image at `path` and return the fields read out of it.
 ///
 /// `path` is what the frontend already has in hand — the drag-drop event's file
 /// path, or the one the dialog plugin returned. A file on disk is never taken
-/// as bytes: both backends load an image by URL/path, and the file is the
-/// user's own, so passing bytes would only add a copy of a card photo to
-/// memory without removing a read of the file. (`scan_bytes` is for the photo
-/// that is *not* on disk.)
+/// as bytes: it is the user's own, so passing bytes would only add a copy of
+/// a card photo to memory without removing a read of the file. (`scan_bytes`
+/// is for the photo that is *not* on disk.)
 pub async fn scan(path: String) -> Result<ScanResult> {
     // The path is the webview's word for a file on the user's disk, so it is
     // checked before anything opens it: only the image types the pickers offer
@@ -119,42 +133,37 @@ pub async fn scan(path: String) -> Result<ScanResult> {
     if !is_image(&file) {
         return Err(Error::Unrecognized);
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        let ocr = platform_ocr().ok_or_else(|| {
-            Error::Unsupported("scanning is not available on this platform".into())
-        })?;
-        let mut lines = ocr.recognize(&file)?;
-        let found = scan_lines(&lines);
-        // The recognized lines are the card number in the clear; the parsed
-        // result is all that may outlive this call.
-        lines.zeroize();
-        found.ok_or(Error::Unrecognized)
-    })
-    .await
-    .map_err(|e| Error::Other(e.to_string()))?
+    off_thread(move || engine()?.scan(Image::File(&file))).await
 }
 
-/// OCR a photo the webview holds as bytes — the one the phone's system picker
-/// handed its file input, which the backend has no path to — and return the
-/// fields read out of it. The same recognizer and parsers as `scan`,
-/// off the UI thread. The bytes are a card in the clear, so this buffer is
-/// zeroized with the lines once parsed — best effort, since it is one copy of
-/// several: the IPC body the command cloned it from, the `NSData` the backend
-/// decodes, and the webview's own buffers are dropped, not scrubbed.
+/// Scan a photo the webview holds as bytes — the one the phone's system picker
+/// handed its file input, which the backend has no path to. The same engine
+/// as `scan`. The bytes are a card in the clear, so this buffer is zeroized
+/// once read — best effort, since it is one copy of several: the IPC body the
+/// command cloned it from, whatever the engine decodes, and the webview's own
+/// buffers are dropped, not scrubbed.
 pub async fn scan_bytes(mut image: Vec<u8>) -> Result<ScanResult> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let ocr = platform_ocr().ok_or_else(|| {
-            Error::Unsupported("scanning is not available on this platform".into())
-        })?;
-        let recognized = ocr.recognize_data(&image);
+    off_thread(move || {
+        let found = engine().and_then(|engine| engine.scan(Image::Bytes(&image)));
         image.zeroize();
-        let mut lines = recognized?;
-        let found = scan_lines(&lines);
-        lines.zeroize();
-        found.ok_or(Error::Unrecognized)
+        found
     })
     .await
-    .map_err(|e| Error::Other(e.to_string()))?
+}
+
+fn engine() -> Result<Box<dyn Scanner>> {
+    scanner().ok_or_else(|| Error::Unsupported("scanning is not available on this platform".into()))
+}
+
+// Reading a picture is a heavy CPU job, so it runs off the UI thread — and
+// the engine is made there too, since nothing says one may cross threads.
+async fn off_thread(
+    read: impl FnOnce() -> Result<Option<ScanResult>> + Send + 'static,
+) -> Result<ScanResult> {
+    tauri::async_runtime::spawn_blocking(read)
+        .await
+        .map_err(|e| Error::Other(e.to_string()))??
+        .ok_or(Error::Unrecognized)
 }
 
 /// What the frontend calls a path may be a `file://` URL.
@@ -189,10 +198,4 @@ pub(crate) fn is_image(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
-}
-
-/// Whether this platform can scan at all, so the UI can leave the affordance
-/// out rather than offer a drop target that always fails.
-pub fn is_supported() -> bool {
-    platform_ocr().is_some()
 }

@@ -37,7 +37,7 @@ interface Props {
 export default function Holder({ doc, index, children }: Props) {
   return (
     <div className="mt-3 flex items-start gap-4">
-      <Portrait />
+      <Portrait src={doc.portrait} onRemove={doc.removePortrait} />
       <div className={FIELDS}>
         <DocCell
           doc={doc}

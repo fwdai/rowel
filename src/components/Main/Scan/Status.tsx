@@ -4,6 +4,7 @@ import type { TKey } from '@/i18n'
 import { useUi, dismissScan, type ScanError } from '@/store'
 import { TOAST } from '@/components/elements/tokens'
 import { ScanGlyph } from '../icons'
+import { useReading } from './useReading'
 
 const COPY: Record<ScanError, TKey> = {
   unreadable: 'Nothing recognized in that image.',
@@ -20,11 +21,15 @@ const HINT: TKey =
 // it is gone by the time the next photo is dropped.
 const DISMISS_MS = 8000
 
-// Bottom-left, opposite the update toast: recognition runs while the user keeps
-// working, so neither state may block anything or move the pane underneath.
+// Bottom-left, opposite the update toast. A scan under way is shown where its
+// result lands (`Reading`); the toast says so only where that screen is not on
+// show (see `useReading`) — over an open editor, and over an entry open on the
+// phone. A failure is always a toast: by then the screen is back to what it
+// was showing.
 export default function Status() {
   const { t } = useTranslation()
-  const busy = useUi(state => state.scanBusy)
+  const reading = useReading()
+  const busy = useUi(state => state.scanBusy) && !reading
   const error = useUi(state => state.scanError)
 
   useEffect(() => {

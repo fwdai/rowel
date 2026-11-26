@@ -73,6 +73,17 @@ pub struct Entry {
     /// Absent, the card wears its document type's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// The holder's photograph off an `identity` document, as a
+    /// `data:image/jpeg;base64,…` URI: the small crop a scan cuts out around
+    /// the face, which the document's face shows where the photo is printed.
+    /// It rides in the payload, where a file never does, because it is drawn
+    /// whenever the entry is, and it is small by construction — a save from
+    /// the webview is held to [`PORTRAIT_MAX_LEN`] (see
+    /// [`Entry::has_valid_portrait`]). `None` on every other kind and on a
+    /// document without one, so existing vault JSON, `.swftx` backups and
+    /// fixtures serialize byte-identically to before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portrait: Option<String>,
     /// SSH key fields (`ssh` entries). ed25519 only for now: `private_key` is an
     /// OpenSSH PEM block, `public_key` the single `ssh-ed25519 AAAA… comment`
     /// line and `fingerprint` its `SHA256:…` digest, derived once at save time so
@@ -169,6 +180,15 @@ pub struct Entry {
 /// How many replaced passwords a login keeps.
 pub const PASSWORD_HISTORY_CAP: usize = 10;
 
+/// What a portrait is: a JPEG, inline. The scanner writes this prefix and the
+/// face draws nothing that lacks it.
+pub const PORTRAIT_PREFIX: &str = "data:image/jpeg;base64,";
+
+/// The longest a portrait's URI may be. The scanner's 300×400 crop comes to a
+/// fraction of this; the cap is what keeps the payload — unsealed whole on
+/// every reveal — from carrying a file.
+pub const PORTRAIT_MAX_LEN: usize = 128 * 1024;
+
 /// One password a login no longer uses, and when it stopped (RFC3339).
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct PasswordHistoryItem {
@@ -214,6 +234,16 @@ impl fmt::Debug for Entry {
 }
 
 impl Entry {
+    /// Whether the portrait, if there is one, is what a portrait may be: an
+    /// inline JPEG no longer than [`PORTRAIT_MAX_LEN`]. Blank counts as none —
+    /// it is how the editor says the photo was removed.
+    pub fn has_valid_portrait(&self) -> bool {
+        match self.portrait.as_deref() {
+            None | Some("") => true,
+            Some(uri) => uri.starts_with(PORTRAIT_PREFIX) && uri.len() <= PORTRAIT_MAX_LEN,
+        }
+    }
+
     /// The entry as the webview may see it: the same row with every passkey's
     /// private key blanked.
     ///
@@ -872,6 +902,22 @@ mod tests {
         assert_eq!(out["birth_date"], "1815-12-10");
         assert!(out.get("issue_date").is_none());
         assert!(out.get("nationality").is_none());
+    }
+
+    #[test]
+    fn a_portrait_is_a_small_inline_jpeg_or_nothing() {
+        let with = |portrait: Option<String>| Entry {
+            portrait,
+            ..Default::default()
+        };
+        assert!(with(None).has_valid_portrait());
+        assert!(with(Some(String::new())).has_valid_portrait());
+        assert!(with(Some(format!("{PORTRAIT_PREFIX}/9j/4AAQ"))).has_valid_portrait());
+        // Anything else an `<img>` would load is not a portrait.
+        assert!(!with(Some("data:image/svg+xml;base64,PHN2Zz4=".into())).has_valid_portrait());
+        assert!(!with(Some("https://example.test/me.jpg".into())).has_valid_portrait());
+        let long = "A".repeat(PORTRAIT_MAX_LEN);
+        assert!(!with(Some(format!("{PORTRAIT_PREFIX}{long}"))).has_valid_portrait());
     }
 
     // A login has no identity fields, so its JSON is exactly what it always was.
