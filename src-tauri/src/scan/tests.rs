@@ -606,6 +606,31 @@ fn the_print_adds_the_issue_date_an_mrz_does_not_carry() {
 }
 
 #[test]
+fn a_short_name_beside_its_caption_is_a_name() {
+    let name = |lines: &[&str]| identity_of(lines).remove("name");
+    // The surname beside the caption, the given name under it.
+    assert_eq!(
+        name(&["IDENTITY CARD", "Name LEE", "JANE"]).as_deref(),
+        Some("JANE LEE")
+    );
+    assert_eq!(
+        name(&["IDENTITY CARD", "Name NG", "Date of birth 01.02.1990"]).as_deref(),
+        Some("NG")
+    );
+    // A part of the name under its own caption is never second-guessed.
+    assert_eq!(
+        name(&["IDENTITY CARD", "Surname LI", "WEI", "Given names ANN"]).as_deref(),
+        Some("ANN LI")
+    );
+    // Only where the name is whole without them are a few letters beside the
+    // caption a stray mark: the surname and the given names both follow.
+    assert_eq!(
+        name(&["AUFENTHALTSTITEL", "NAME TOS", "KHAN", "SAJED ALI"]).as_deref(),
+        Some("SAJED ALI KHAN")
+    );
+}
+
+#[test]
 fn a_captioned_birth_date_stands_however_soon_the_document_expires() {
     // A child's card: born ten years before it runs out, the date printed
     // under its caption.

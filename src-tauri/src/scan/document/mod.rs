@@ -100,44 +100,54 @@ fn name(print: &Print<'_>) -> Option<String> {
     match (of(Field::Given), of(Field::Surname)) {
         // Two captions over one line of print ("Surname  Given names" above
         // "ERIKSSON ANNA MARIA") both find the whole of it.
-        (Some(given), Some(surname)) if given.0 == surname.0 => Some(given.0),
-        (Some(given), Some(surname)) => Some(format!("{} {}", given.0, surname.0)),
-        (Some(part), None) | (None, Some(part)) => Some(part.0),
-        (None, None) => {
-            let caption = print.of(Field::Name).next()?;
-            let (first, below) = named(print, caption)?;
-            // Under a single "Name", a line of one word with another line of
-            // names under it is the surname over the given names.
-            let second = (below && !first.contains(' '))
-                .then(|| print.below(caption.line + 1))
-                .flatten()
-                .and_then(|line| name_in(line, true));
-            Some(match second {
-                Some(given) => format!("{given} {first}"),
-                None => first,
-            })
-        }
+        (Some(given), Some(surname)) if given == surname => Some(given),
+        (Some(given), Some(surname)) => Some(format!("{given} {surname}")),
+        (Some(part), None) | (None, Some(part)) => Some(part),
+        (None, None) => whole_name(print, print.of(Field::Name).next()?),
     }
 }
 
-/// A name caption's value, and whether it was found below the caption rather
-/// than beside it. Three letters or fewer beside a caption with a proper line
-/// of names under it is the caption's own debris, not a name.
-fn named(print: &Print<'_>, caption: &Caption) -> Option<(String, bool)> {
+/// The value of a caption for one part of the name: beside it, or else on the
+/// line below.
+fn named(print: &Print<'_>, caption: &Caption) -> Option<String> {
+    name_in(print.beside(caption), false).or_else(|| name_below(print, caption.line))
+}
+
+fn name_below(print: &Print<'_>, line: usize) -> Option<String> {
+    print.below(line).and_then(|line| name_in(line, true))
+}
+
+// The most letters a stray mark beside a caption runs to.
+const DEBRIS_LETTERS: usize = 3;
+
+/// The name under a single "Name" caption, which a document sets over up to
+/// two lines: the surname, then the given names.
+///
+/// It starts beside the caption where anything is, and on the line below
+/// otherwise. A few letters beside the caption are a name like any other —
+/// Li, Ng, Lee — unless two lines of names follow: then the name is whole
+/// without them, and they are a mark the recognizer picked up by the caption.
+fn whole_name(print: &Print<'_>, caption: &Caption) -> Option<String> {
     let beside = name_in(print.beside(caption), false);
-    let below = print
-        .below(caption.line)
-        .and_then(|line| name_in(line, true));
-    match (beside, below) {
+    let below = name_below(print, caption.line);
+    let further = || below.as_ref().and(name_below(print, caption.line + 1));
+    let (first, next) = match (beside, &below) {
         (Some(beside), Some(below))
-            if beside.chars().filter(|c| c.is_alphabetic()).count() <= 3 =>
+            if beside.chars().filter(|c| c.is_alphabetic()).count() <= DEBRIS_LETTERS
+                && further().is_some() =>
         {
-            Some((below, true))
+            (below.clone(), further())
         }
-        (Some(beside), _) => Some((beside, false)),
-        (None, Some(below)) => Some((below, true)),
-        (None, None) => None,
-    }
+        (Some(beside), _) => (beside, below),
+        (None, Some(below)) => (below.clone(), further()),
+        (None, None) => return None,
+    };
+    // One word with a line of names under it is the surname over the given
+    // names; more than one is the name already.
+    Some(match next {
+        Some(given) if !first.contains(' ') => format!("{given} {first}"),
+        _ => first,
+    })
 }
 
 /// The name in a stretch of text. Beside a caption, what is not a name is
