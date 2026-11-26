@@ -24,9 +24,18 @@ pub(super) struct Printed {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Form {
     /// Two figures and a year: which is the day is the document's convention.
-    Figures { first: u32, second: u32, year: i32 },
+    Figures { first: u32, second: u32, year: Year },
     /// The year first, or the month by name: nothing left to tell apart.
-    Plain { day: u32, month: u32, year: i32 },
+    Plain { day: u32, month: u32, year: Year },
+}
+
+/// A year as printed. Two digits leave the century open, and which it is
+/// depends on what the date is: an expiry may be years ahead, a birth cannot
+/// be. So it is kept as printed until whoever knows what the date is asks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Year {
+    Full(i32),
+    Short(i32),
 }
 
 /// Which of two figures a document puts first.
@@ -145,9 +154,12 @@ impl Printed {
     /// The day this is, on a document that writes its dates in `order` — or
     /// in the other order, where this one date leaves no choice. `None` for
     /// figures that are no day of any year.
+    ///
+    /// A year printed with two digits is read as late as it can be — right
+    /// for an expiry; see [`Printed::past`] for a date that cannot lie ahead.
     pub fn on(&self, order: Order) -> Option<NaiveDate> {
         match self.form {
-            Form::Plain { day, month, year } => NaiveDate::from_ymd_opt(year, month, day),
+            Form::Plain { day, month, year } => NaiveDate::from_ymd_opt(year.latest(), month, day),
             Form::Figures {
                 first,
                 second,
@@ -157,9 +169,21 @@ impl Printed {
                     Order::DayFirst => (first, second),
                     Order::MonthFirst => (second, first),
                 };
-                NaiveDate::from_ymd_opt(year, month, day)
-                    .or_else(|| NaiveDate::from_ymd_opt(year, day, month))
+                NaiveDate::from_ymd_opt(year.latest(), month, day)
+                    .or_else(|| NaiveDate::from_ymd_opt(year.latest(), day, month))
             }
+        }
+    }
+
+    /// The day this is when it cannot be ahead of `today` — a birth, an
+    /// issue. A two-digit year that would put it there is the last century's:
+    /// "30" on a birth date is 1930, whatever it is on an expiry.
+    pub fn past(&self, order: Order, today: NaiveDate) -> Option<NaiveDate> {
+        let date = self.on(order)?;
+        let (Form::Plain { year, .. } | Form::Figures { year, .. }) = self.form;
+        match year {
+            Year::Short(_) if date > today => date.with_year(date.year() - 100),
+            _ => Some(date),
         }
     }
 }
@@ -169,23 +193,35 @@ pub(super) fn iso(date: NaiveDate) -> String {
     date.format("%Y-%m-%d").to_string()
 }
 
-// Four digits are the year; two are one within reach of today: a document
-// still to expire runs out in this century, and anything further ahead than
-// one lasts was the last century's.
+// How far ahead a two-digit year may be read: a document still to expire
+// runs out in this century, and anything further ahead than one lasts was the
+// last century's.
 const FURTHEST_EXPIRY_YEARS: i32 = 20;
 
-fn year(text: &str) -> Option<i32> {
-    let year: i32 = text.parse().ok()?;
-    if text.len() == 4 {
-        return (1900..=2100).contains(&year).then_some(year);
+impl Year {
+    /// The latest year this can be.
+    fn latest(self) -> i32 {
+        match self {
+            Year::Full(year) => year,
+            Year::Short(year) => {
+                let now = chrono::Utc::now().year();
+                let this_century = now - now % 100 + year;
+                if this_century > now + FURTHEST_EXPIRY_YEARS {
+                    this_century - 100
+                } else {
+                    this_century
+                }
+            }
+        }
     }
-    let now = chrono::Utc::now().year();
-    let this_century = now - now % 100 + year;
-    Some(if this_century > now + FURTHEST_EXPIRY_YEARS {
-        this_century - 100
-    } else {
-        this_century
-    })
+}
+
+fn year(digits: &str) -> Option<Year> {
+    let year: i32 = digits.parse().ok()?;
+    match digits.len() {
+        4 => (1900..=2100).contains(&year).then_some(Year::Full(year)),
+        _ => Some(Year::Short(year)),
+    }
 }
 
 // A month by the first letters of its name, in the languages documents are
@@ -292,5 +328,21 @@ mod tests {
     fn two_digit_years_land_in_the_century_they_can_be_in() {
         assert_eq!(read("12 AUG 74", Order::DayFirst), ["1974-08-12"]);
         assert_eq!(read("01.01.10", Order::DayFirst), ["2010-01-01"]);
+    }
+
+    #[test]
+    fn a_two_digit_year_is_a_century_back_on_a_date_that_cannot_be_ahead() {
+        let today = chrono::Utc::now().date_naive();
+        let ahead = today.year() + 4;
+        let date = find(&format!("01/02/{:02}", ahead % 100))[0];
+        // As late as it can be, for an expiry; behind today, for a birth.
+        assert_eq!(date.on(Order::DayFirst).unwrap().year(), ahead);
+        assert_eq!(
+            date.past(Order::DayFirst, today).unwrap().year(),
+            ahead - 100
+        );
+        // Four digits say which century themselves.
+        let full = find(&format!("01/02/{ahead}"))[0];
+        assert_eq!(full.past(Order::DayFirst, today).unwrap().year(), ahead);
     }
 }

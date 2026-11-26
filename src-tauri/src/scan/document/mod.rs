@@ -216,15 +216,18 @@ const LONGEST_VALIDITY_YEARS: u32 = 16;
 
 impl Dated {
     fn read(print: &Print<'_>) -> Self {
+        let today = chrono::Utc::now().date_naive();
         let printed: Vec<Vec<dates::Printed>> =
             print.lines.iter().map(|line| dates::find(line)).collect();
-        let order = dates::order(printed.iter().flatten(), american(print.lines));
-        // Every date as (line, where it starts, the day it is).
-        let all: Vec<(usize, usize, NaiveDate)> = printed
+        let order = dates::order(printed.iter().flatten(), american(print));
+        // Every date as (line, where it starts, the day it is as an expiry,
+        // the day it is as a birth or an issue): a year printed with two
+        // digits is not the same year for both.
+        let all: Vec<(usize, usize, NaiveDate, NaiveDate)> = printed
             .iter()
             .enumerate()
             .flat_map(|(line, dates)| dates.iter().map(move |d| (line, d)))
-            .filter_map(|(line, d)| Some((line, d.start, d.on(order)?)))
+            .filter_map(|(line, d)| Some((line, d.start, d.on(order)?, d.past(order, today)?)))
             .collect();
         let mut taken: HashSet<(usize, usize)> = HashSet::new();
         let mut dated = Self::default();
@@ -234,7 +237,7 @@ impl Dated {
         // date on the line below known to be nobody else's.
         for below in [false, true] {
             for caption in &print.captions {
-                let found = all.iter().find(|(line, start, _)| {
+                let found = all.iter().find(|(line, start, ..)| {
                     !taken.contains(&(*line, *start))
                         && if below {
                             *line == caption.line + 1
@@ -242,13 +245,13 @@ impl Dated {
                             *line == caption.line && (caption.start..caption.end).contains(start)
                         }
                 });
-                let Some(&(line, start, date)) = found else {
+                let Some(&(line, start, ahead, past)) = found else {
                     continue;
                 };
-                let field = match caption.field {
-                    Field::Birth => &mut dated.birth,
-                    Field::Issue => &mut dated.issue,
-                    Field::Expiry => &mut dated.expiry,
+                let (field, date) = match caption.field {
+                    Field::Birth => (&mut dated.birth, past),
+                    Field::Issue => (&mut dated.issue, past),
+                    Field::Expiry => (&mut dated.expiry, ahead),
                     _ => continue,
                 };
                 if field.is_none() {
@@ -259,15 +262,12 @@ impl Dated {
             }
         }
 
-        let mut rest: Vec<NaiveDate> = all
+        let rest = all
             .iter()
-            .filter(|(line, start, _)| !taken.contains(&(*line, *start)))
-            .map(|(_, _, date)| *date)
-            .filter(|date| ![dated.birth, dated.issue, dated.expiry].contains(&Some(*date)))
+            .filter(|(line, start, ..)| !taken.contains(&(*line, *start)))
+            .map(|(_, _, ahead, past)| (*ahead, *past))
             .collect();
-        rest.sort();
-        rest.dedup();
-        dated.place(rest, chrono::Utc::now().date_naive());
+        dated.place(rest, today);
         // A birth date that was not read beside its own caption — taken from
         // the line below one, or by order — is checked against the expiry:
         // too close to it, with no issue date known, it is the issue date.
@@ -282,20 +282,32 @@ impl Dated {
     }
 
     /// Give the dates no caption claimed to the fields still empty, by what
-    /// order they have to come in: birth, then issue, then expiry.
-    fn place(&mut self, mut rest: Vec<NaiveDate>, today: NaiveDate) {
+    /// order they have to come in: birth, then issue, then expiry. Each is
+    /// handed over as the day it is as an expiry and the day it is otherwise.
+    fn place(&mut self, mut unclaimed: Vec<(NaiveDate, NaiveDate)>, today: NaiveDate) {
+        let known = [self.birth, self.issue, self.expiry];
+        unclaimed.retain(|(ahead, past)| {
+            !known.contains(&Some(*ahead)) && !known.contains(&Some(*past))
+        });
+        unclaimed.sort();
+        unclaimed.dedup();
         if self.expiry.is_none() {
-            if let Some(&last) = rest.last() {
+            if let Some(&(last, _)) = unclaimed.last() {
                 let known = self.birth.max(self.issue);
                 // The last date is the expiry when there is anything for it
                 // to be later than; a lone date is one only if still ahead.
                 if known.is_none_or(|k| last > k)
-                    && (rest.len() >= 2 || known.is_some() || last > today)
+                    && (unclaimed.len() >= 2 || known.is_some() || last > today)
                 {
-                    self.expiry = rest.pop();
+                    self.expiry = Some(last);
+                    unclaimed.pop();
                 }
             }
         }
+        // What is left is a birth or an issue, and neither is ahead of today.
+        let mut rest: Vec<NaiveDate> = unclaimed.into_iter().map(|(_, past)| past).collect();
+        rest.sort();
+        rest.dedup();
         if self.birth.is_none() {
             if let Some(&first) = rest.first() {
                 let is_birth = match (self.issue, self.expiry) {
@@ -330,10 +342,25 @@ fn outlived(date: NaiveDate, expiry: NaiveDate) -> bool {
         .is_some_and(|latest| latest <= expiry)
 }
 
+// How far down a document names who issued it: above its first caption, and
+// no further than this where it has none.
+const HEAD_LINES: usize = 3;
+
 /// Whether the document says it is one of the United States', where a date's
-/// month comes first.
-fn american(lines: &[String]) -> bool {
-    let keys: Vec<String> = lines.iter().flat_map(|line| words::keys(line)).collect();
+/// month comes first. Only its head is asked: further down, "USA" is as
+/// likely the holder's nationality or birthplace on some other country's
+/// document.
+fn american(print: &Print<'_>) -> bool {
+    let head = print
+        .captions
+        .first()
+        .map_or(HEAD_LINES, |caption| caption.line.clamp(1, HEAD_LINES));
+    let keys: Vec<String> = print
+        .lines
+        .iter()
+        .take(head)
+        .flat_map(|line| words::keys(line))
+        .collect();
     keys.iter().any(|key| key == "USA")
         || keys
             .windows(2)

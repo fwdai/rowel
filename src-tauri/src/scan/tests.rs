@@ -606,6 +606,54 @@ fn the_print_adds_the_issue_date_an_mrz_does_not_carry() {
 }
 
 #[test]
+fn a_two_digit_year_is_read_by_what_the_date_is() {
+    use chrono::Datelike;
+    // A year a few ahead of this one, printed in two digits: an expiry still
+    // to come, and a birth a century back.
+    let ahead = chrono::Utc::now().year() + 4;
+    let lines = [
+        "IDENTITY CARD".to_owned(),
+        format!("Date of birth 01/02/{:02}", ahead % 100),
+        format!("Date of expiry 03/04/{:02}", ahead % 100),
+    ];
+    let fields = scan_lines(&lines).unwrap().fields;
+    assert_eq!(fields["birth_date"], format!("{}-02-01", ahead - 100));
+    assert_eq!(fields["expiry_date"], format!("{ahead}-04-03"));
+}
+
+#[test]
+fn a_date_is_month_first_only_where_america_issued_the_document() {
+    // Figures that read either way, on a document that names the United
+    // States at its head.
+    assert_eq!(
+        fields_of(&["DRIVER LICENSE", "USA", "DOB 02/10/1980", "EXP 03/11/2030"]),
+        pairs(&[
+            ("birth_date", "1980-02-10"),
+            ("doc_type", "driver_license"),
+            ("expiry_date", "2030-03-11"),
+        ])
+    );
+    // The same country further down is the holder's, not the document's.
+    assert_eq!(
+        fields_of(&[
+            "AUFENTHALTSTITEL",
+            "Name MUSTER ERIKA",
+            "Staatsangehörigkeit USA",
+            "Geburtsdatum 10.02.1980",
+            "Ausstellungsdatum 04.05.2020",
+            "Gültig bis 11.03.2030",
+        ]),
+        pairs(&[
+            ("birth_date", "1980-02-10"),
+            ("doc_type", "residence_permit"),
+            ("expiry_date", "2030-03-11"),
+            ("issue_date", "2020-05-04"),
+            ("name", "MUSTER ERIKA"),
+        ])
+    );
+}
+
+#[test]
 fn knows_a_document_by_the_title_it_prints() {
     assert_eq!(
         type_of(&CALIFORNIA_LICENCE).as_deref(),
