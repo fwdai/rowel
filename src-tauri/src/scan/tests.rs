@@ -512,6 +512,7 @@ fn reads_a_licence_captioned_by_number() {
         fields_of(&CALIFORNIA_LICENCE),
         pairs(&[
             ("birth_date", "1957-11-26"),
+            ("country", "USA"),
             ("doc_type", "driver_license"),
             ("expiry_date", "2030-11-26"),
             ("issue_date", "2025-11-09"),
@@ -530,6 +531,7 @@ fn reads_values_printed_under_their_captions() {
             // Under no caption that could be read: placed by being the
             // earliest of the three.
             ("birth_date", "1984-02-21"),
+            ("country", "USA"),
             ("doc_type", "driver_license"),
             ("expiry_date", "2018-02-21"),
             ("issue_date", "2010-02-17"),
@@ -575,6 +577,7 @@ fn reads_a_passport_page_by_its_print_when_the_mrz_is_out_of_frame() {
         fields_of(&DUTCH_PASSPORT_PAGE),
         pairs(&[
             ("birth_date", "1965-03-10"),
+            ("country", "NLD"),
             ("doc_type", "passport"),
             ("expiry_date", "2024-03-09"),
             ("issue_date", "2014-03-09"),
@@ -628,6 +631,7 @@ fn reads_a_licence_that_abbreviates_its_name_captions() {
         fields_of(&CALIFORNIA_LICENCE_2019),
         pairs(&[
             ("birth_date", "1977-08-31"),
+            ("country", "USA"),
             ("doc_type", "driver_license"),
             ("expiry_date", "2014-08-31"),
             ("issue_date", "2009-08-31"),
@@ -733,6 +737,7 @@ fn a_date_is_month_first_only_where_america_issued_the_document() {
         fields_of(&["DRIVER LICENSE", "USA", "DOB 02/10/1980", "EXP 03/11/2030"]),
         pairs(&[
             ("birth_date", "1980-02-10"),
+            ("country", "USA"),
             ("doc_type", "driver_license"),
             ("expiry_date", "2030-03-11"),
         ])
@@ -755,6 +760,30 @@ fn a_date_is_month_first_only_where_america_issued_the_document() {
             ("name", "MUSTER ERIKA"),
         ])
     );
+}
+
+#[test]
+fn the_issuing_country_is_read_from_the_head_and_only_there() {
+    assert_eq!(identity_of(&CALIFORNIA_LICENCE_2019)["country"], "USA");
+    assert_eq!(
+        identity_of(&[
+            "BUNDESREPUBLIK DEUTSCHLAND",
+            "PERSONALAUSWEIS",
+            "Name MUSTERMANN"
+        ])["country"],
+        "DEU"
+    );
+    // A country named below the captions is the holder's, not the document's.
+    let permit = identity_of(&[
+        "AUFENTHALTSTITEL",
+        "Name MUSTER ERIKA",
+        "Staatsangehörigkeit USA",
+    ]);
+    assert!(!permit.contains_key("country"));
+    // And the MRZ's word on it stands.
+    let mut lines = vec!["UNITED STATES OF AMERICA", "PERMANENT RESIDENT"];
+    lines.extend(TD1);
+    assert_eq!(identity_of(&lines)["country"], "UTO");
 }
 
 #[test]

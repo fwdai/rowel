@@ -11,7 +11,7 @@
 //! recognizer was not reading, or none at all.
 
 use super::captions;
-use crate::scan::words::keys;
+use crate::scan::words::{keys, says};
 
 /// The titles documents print, by the type they name, in the order they are
 /// asked: a licence or a permit says so in words nothing else carries, an
@@ -135,16 +135,6 @@ pub fn printed(lines: &[String]) -> Option<&'static str> {
         .find(|(_, titles)| titles.iter().any(|title| says(&text, title)))
         .map(|(doc_type, _)| *doc_type)
         .or_else(|| numbered_like_a_licence(lines).then_some("driver_license"))
-}
-
-/// Whether the words of `title` stand together in `text`, in order. Whole
-/// words: "ID CARD" is not found in "VALID CARD". The text is the document's
-/// lines run together, so a title set over two lines still reads. The title
-/// goes through the same reduction the text did, so the two meet whatever
-/// that does to a letter.
-fn says(text: &[String], title: &str) -> bool {
-    let title = keys(title);
-    text.windows(title.len()).any(|window| window == title)
 }
 
 /// Whether the lines carry a driving licence's numbered fields.

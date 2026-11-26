@@ -17,6 +17,7 @@
 //! MRZ, when the picture has one, is read first and believed over this.
 
 mod captions;
+mod country;
 mod dates;
 mod doctype;
 
@@ -30,8 +31,8 @@ use captions::{Caption, Field};
 pub use doctype::printed as doc_type;
 
 /// The fields the document's print gives, keyed as an identity entry's are:
-/// `name`, `number`, `birth_date`, `issue_date`, `expiry_date` and `sex`,
-/// each present only when it was found. `doc_type` is what [`doc_type`] made
+/// `name`, `number`, `country`, `birth_date`, `issue_date`, `expiry_date` and
+/// `sex`, each present only when it was found. `doc_type` is what [`doc_type`] made
 /// of the same lines; a driving licence's fields are captioned by number as
 /// well as by word.
 pub fn fields(lines: &[String], doc_type: Option<&str>) -> BTreeMap<String, String> {
@@ -39,7 +40,9 @@ pub fn fields(lines: &[String], doc_type: Option<&str>) -> BTreeMap<String, Stri
         lines,
         captions: captions::find(lines, doc_type == Some("driver_license")),
     };
-    let dated = Dated::read(&print);
+    let country = country::issuer(print.head());
+    // Where a date's month comes first, and nowhere else.
+    let dated = Dated::read(&print, country == Some("USA"));
     // Without a caption, a number is guessed at only on a document that at
     // least said what it is.
     let number = print
@@ -48,6 +51,7 @@ pub fn fields(lines: &[String], doc_type: Option<&str>) -> BTreeMap<String, Stri
     [
         ("name", name(&print)),
         ("number", number),
+        ("country", country.map(str::to_owned)),
         ("sex", print.value(Field::Sex, sex_in)),
         ("birth_date", dated.birth.map(dates::iso)),
         ("issue_date", dated.issue.map(dates::iso)),
@@ -58,6 +62,9 @@ pub fn fields(lines: &[String], doc_type: Option<&str>) -> BTreeMap<String, Stri
     .collect()
 }
 
+// How far down a document's head runs where no caption ends it.
+const HEAD_LINES: usize = 3;
+
 /// A document's print: its lines and the captions found in them.
 struct Print<'a> {
     lines: &'a [String],
@@ -65,6 +72,17 @@ struct Print<'a> {
 }
 
 impl Print<'_> {
+    /// The document's head, where it says what it is and who issued it: the
+    /// lines above its first caption, and no more than [`HEAD_LINES`] of them
+    /// where it has none.
+    fn head(&self) -> &[String] {
+        let lines = self
+            .captions
+            .first()
+            .map_or(HEAD_LINES, |caption| caption.line.clamp(1, HEAD_LINES));
+        &self.lines[..lines.min(self.lines.len())]
+    }
+
     fn of(&self, field: Field) -> impl Iterator<Item = &Caption> {
         self.captions.iter().filter(move |c| c.field == field)
     }
@@ -225,11 +243,11 @@ struct Dated {
 const LONGEST_VALIDITY_YEARS: u32 = 16;
 
 impl Dated {
-    fn read(print: &Print<'_>) -> Self {
+    fn read(print: &Print<'_>, month_first: bool) -> Self {
         let today = chrono::Utc::now().date_naive();
         let printed: Vec<Vec<dates::Printed>> =
             print.lines.iter().map(|line| dates::find(line)).collect();
-        let order = dates::order(printed.iter().flatten(), american(print));
+        let order = dates::order(printed.iter().flatten(), month_first);
         // Every date as (line, where it starts, the day it is as an expiry,
         // the day it is as a birth or an issue): a year printed with two
         // digits is not the same year for both.
@@ -357,29 +375,4 @@ impl Dated {
 fn outlived(date: NaiveDate, expiry: NaiveDate) -> bool {
     date.checked_add_months(Months::new(12 * LONGEST_VALIDITY_YEARS))
         .is_some_and(|latest| latest <= expiry)
-}
-
-// How far down a document names who issued it: above its first caption, and
-// no further than this where it has none.
-const HEAD_LINES: usize = 3;
-
-/// Whether the document says it is one of the United States', where a date's
-/// month comes first. Only its head is asked: further down, "USA" is as
-/// likely the holder's nationality or birthplace on some other country's
-/// document.
-fn american(print: &Print<'_>) -> bool {
-    let head = print
-        .captions
-        .first()
-        .map_or(HEAD_LINES, |caption| caption.line.clamp(1, HEAD_LINES));
-    let keys: Vec<String> = print
-        .lines
-        .iter()
-        .take(head)
-        .flat_map(|line| words::keys(line))
-        .collect();
-    keys.iter().any(|key| key == "USA")
-        || keys
-            .windows(2)
-            .any(|pair| pair[0] == "UNITED" && pair[1] == "STATES")
 }

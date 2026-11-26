@@ -51,6 +51,16 @@ pub(super) fn keys(line: &str) -> Vec<String> {
     words(line).into_iter().map(|word| word.key).collect()
 }
 
+/// Whether the words of `phrase` stand together in `text`, in order — `text`
+/// being the keys of some print, its lines run together so that a phrase set
+/// over two lines still reads. Whole words: "ID CARD" is not found in "VALID
+/// CARD". The phrase goes through the same reduction the text did, so the two
+/// meet whatever that does to a letter.
+pub(super) fn says(text: &[String], phrase: &str) -> bool {
+    let phrase = keys(phrase);
+    text.windows(phrase.len()).any(|window| window == phrase)
+}
+
 /// A stretch of text as the words a value is judged by — is this a name, a
 /// number: split at spaces, with the punctuation around each taken off.
 pub(super) fn tokens(text: &str) -> impl Iterator<Item = &str> {
