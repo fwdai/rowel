@@ -52,9 +52,28 @@ type Reader = fn(&Captures<'_>) -> Option<Form>;
 /// The ways a date is printed, each with how its match is read. In the order
 /// they are asked: where two would claim the same stretch of a line, the
 /// first has it.
-static PATTERNS: LazyLock<[(Regex, Reader); 5]> = LazyLock::new(|| {
+///
+/// So every form with the year in full comes before any with it in two
+/// digits. Four digits are unmistakably a year; two are a guess, and a guess
+/// asked first takes what was never its own — the field number set against
+/// a date, "3.12.08.1964", read as the third of December 2008.
+static PATTERNS: LazyLock<Vec<(Regex, Reader)>> = LazyLock::new(|| {
+    const FULL: &str = r"(\d{4})\b";
+    // Two digits that end the run of figures they are in: followed by
+    // another mark and figure they are its middle, not a year.
+    const SHORT: &str = r"(\d{2})(?:$|[^\d./-]|[./-](?:$|\D))";
     let pattern = |pattern: &str, read: Reader| (Regex::new(pattern).unwrap(), read);
-    [
+    // 26.11.2030, 11/26/30
+    let in_figures = |year: &str| format!(r"\b(\d{{1,2}})[./-](\d{{1,2}})[./-]{year}");
+    // 12 AUG 1974, 12 AUG/AOUT 74, 3. März 2020: a second month name after a
+    // slash is the same month in the document's other language, and the one
+    // to go by when the first is in a language this does not know.
+    let by_name = |year: &str| {
+        format!(
+            r"\b(\d{{1,2}})[ .-]{{0,2}}(\p{{L}}{{3,11}})\.?(?:\s?/\s?(\p{{L}}{{3,11}})\.?)?[ .,-]{{0,2}}{year}"
+        )
+    };
+    vec![
         // 2030-11-26
         pattern(r"\b((?:19|20)\d{2})[./-](\d{1,2})[./-](\d{1,2})\b", |m| {
             Some(Form::Plain {
@@ -63,33 +82,30 @@ static PATTERNS: LazyLock<[(Regex, Reader); 5]> = LazyLock::new(|| {
                 day: figure(&m[3])?,
             })
         }),
-        // 26.11.2030, 11/26/30
-        pattern(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4}|\d{2})\b", figures),
+        pattern(&in_figures(FULL), figures),
         // 26 11 2030
         pattern(r"\b(\d{2}) (\d{2}) ((?:19|20)\d{2})\b", figures),
-        // 12 AUG 1974, 12 AUG/AOUT 74, 3. März 2020: a second month name after
-        // a slash is the same month in the document's other language, and the
-        // one to go by when the first is in a language this does not know.
-        pattern(
-            r"\b(\d{1,2})[ .-]{0,2}(\p{L}{3,9})\.?(?:\s?/\s?(\p{L}{3,9})\.?)?[ .,-]{0,2}(\d{4}|\d{2})\b",
-            |m| {
-                Some(Form::Plain {
-                    day: figure(&m[1])?,
-                    month: month(&m[2]).or_else(|| month(m.get(3)?.as_str()))?,
-                    year: year(&m[4])?,
-                })
-            },
-        ),
+        pattern(&by_name(FULL), named),
         // Aug 17, 1958
-        pattern(r"\b(\p{L}{3,9})\.? (\d{1,2}),? ((?:19|20)\d{2})\b", |m| {
+        pattern(r"\b(\p{L}{3,11})\.? (\d{1,2}),? ((?:19|20)\d{2})\b", |m| {
             Some(Form::Plain {
                 month: month(&m[1])?,
                 day: figure(&m[2])?,
                 year: year(&m[3])?,
             })
         }),
+        pattern(&in_figures(SHORT), figures),
+        pattern(&by_name(SHORT), named),
     ]
 });
+
+fn named(m: &Captures<'_>) -> Option<Form> {
+    Some(Form::Plain {
+        day: figure(&m[1])?,
+        month: month(&m[2]).or_else(|| month(m.get(3)?.as_str()))?,
+        year: year(&m[4])?,
+    })
+}
 
 fn figures(m: &Captures<'_>) -> Option<Form> {
     Some(Form::Figures {
@@ -109,11 +125,13 @@ pub(super) fn find(line: &str) -> Vec<Printed> {
     let mut found: Vec<Printed> = Vec::new();
     for (pattern, read) in PATTERNS.iter() {
         for m in pattern.captures_iter(line) {
-            let whole = m.get(0).unwrap();
             let Some(form) = read(&m) else { continue };
+            // From the first figure or letter to the last: a pattern may
+            // look at the mark after a date without that being part of it.
+            let parts = || m.iter().skip(1).flatten();
             let date = Printed {
-                start: whole.start(),
-                end: whole.end(),
+                start: parts().map(|part| part.start()).min().unwrap_or_default(),
+                end: parts().map(|part| part.end()).max().unwrap_or_default(),
                 form,
             };
             let real = date.on(Order::DayFirst).is_some() || date.on(Order::MonthFirst).is_some();
@@ -224,29 +242,99 @@ fn year(digits: &str) -> Option<Year> {
     }
 }
 
-// A month by the first letters of its name, in the languages documents are
-// commonly printed in. Four letters are asked first, for the one pair three
-// cannot tell apart: the French June and July.
-fn month(name: &str) -> Option<u32> {
-    let key: String = crate::scan::words::keys(name).concat();
-    let starts = |prefixes: &[&str]| prefixes.iter().any(|p| key.starts_with(p));
-    Some(match () {
-        () if starts(&["JUIN"]) => 6,
-        () if starts(&["JUIL"]) => 7,
-        () if starts(&["JAN", "ENE", "GEN", "STY"]) => 1,
-        () if starts(&["FEB", "FEV", "LUT"]) => 2,
-        () if starts(&["MAR", "MRZ", "MAA", "MRT"]) => 3,
-        () if starts(&["APR", "AVR", "ABR", "KWI"]) => 4,
-        () if starts(&["MAY", "MAI", "MAG", "MEI", "MAJ"]) => 5,
-        () if starts(&["JUN", "GIU", "CZE"]) => 6,
-        () if starts(&["JUL", "LUG", "LIP"]) => 7,
-        () if starts(&["AUG", "AOU", "AGO", "SIE"]) => 8,
-        () if starts(&["SEP", "SET", "WRZ"]) => 9,
-        () if starts(&["OCT", "OKT", "OTT", "OUT", "PAZ"]) => 10,
-        () if starts(&["NOV", "LIS"]) => 11,
-        () if starts(&["DEC", "DEZ", "DIC", "GRU"]) => 12,
-        () => return None,
-    })
+/// The months by name, January first, in the languages documents are
+/// commonly printed in — as `words` reduces them: capitals, no marks.
+const MONTHS: [&[&str]; 12] = [
+    &[
+        "JANUARY", "JANVIER", "JANUAR", "ENERO", "GENNAIO", "JANEIRO", "JANUARI", "STYCZEN",
+    ],
+    &[
+        "FEBRUARY",
+        "FEVRIER",
+        "FEBRUAR",
+        "FEBRERO",
+        "FEBBRAIO",
+        "FEVEREIRO",
+        "FEBRUARI",
+        "LUTY",
+    ],
+    &[
+        "MARCH", "MARS", "MARZ", "MARZO", "MARCO", "MAART", "MARZEC", "MARTS",
+    ],
+    &["APRIL", "AVRIL", "ABRIL", "APRILE", "KWIECIEN"],
+    &["MAY", "MAI", "MAYO", "MAGGIO", "MAIO", "MEI", "MAJ"],
+    &[
+        "JUNE", "JUIN", "JUNI", "JUNIO", "GIUGNO", "JUNHO", "CZERWIEC",
+    ],
+    &[
+        "JULY", "JUILLET", "JULI", "JULIO", "LUGLIO", "JULHO", "LIPIEC",
+    ],
+    &[
+        "AUGUST", "AOUT", "AGOSTO", "AUGUSTUS", "AUGUSTI", "SIERPIEN",
+    ],
+    &[
+        "SEPTEMBER",
+        "SEPTEMBRE",
+        "SEPTIEMBRE",
+        "SETTEMBRE",
+        "SETEMBRO",
+        "WRZESIEN",
+    ],
+    &[
+        "OCTOBER",
+        "OCTOBRE",
+        "OKTOBER",
+        "OCTUBRE",
+        "OTTOBRE",
+        "OUTUBRO",
+        "PAZDZIERNIK",
+    ],
+    &["NOVEMBER", "NOVEMBRE", "NOVIEMBRE", "NOVEMBRO", "LISTOPAD"],
+    &[
+        "DECEMBER",
+        "DECEMBRE",
+        "DEZEMBER",
+        "DICIEMBRE",
+        "DICEMBRE",
+        "DEZEMBRO",
+        "DESEMBER",
+        "GRUDZIEN",
+    ],
+];
+
+/// The abbreviations in print that are not a name's first three letters.
+const ABBREVIATIONS: [(&str, u32); 6] = [
+    ("JANV", 1),
+    ("FEVR", 2),
+    ("MRZ", 3),
+    ("MRT", 3),
+    ("JUIL", 7),
+    ("SEPT", 9),
+];
+
+/// The month a word names: a month's name in full, or its abbreviation — the
+/// name's first three letters, where no other month opens with the same
+/// three, or one of the few that print otherwise.
+///
+/// The whole word, not its opening: a word that merely starts like a month
+/// is somebody's name. Janice is not January, nor Maria March.
+fn month(word: &str) -> Option<u32> {
+    let key: String = crate::scan::words::keys(word).concat();
+    let numbered = || MONTHS.iter().zip(1u32..);
+    if let Some((_, month)) = numbered().find(|(names, _)| names.contains(&key.as_str())) {
+        return Some(month);
+    }
+    if let Some((_, month)) = ABBREVIATIONS.iter().find(|(short, _)| *short == key) {
+        return Some(*month);
+    }
+    if key.chars().count() != 3 {
+        return None;
+    }
+    let mut opening = numbered()
+        .filter(|(names, _)| names.iter().any(|name| name.starts_with(key.as_str())))
+        .map(|(_, month)| month);
+    let only = opening.next()?;
+    opening.next().is_none().then_some(only)
 }
 
 #[cfg(test)]
@@ -289,11 +377,42 @@ mod tests {
             "16 HGT 5'-06\" 19 HAIR 17 WGT 160 lb",
             "31.02.2020",
             "9. A, B, C",
+            // A word that opens like a month is a name.
+            "2 JANICE 68",
+            "12 MARIA 1964",
+            "5 OTTO 2020",
+            "7 ABRAHAM 99",
+            // Three letters two months share say neither.
+            "1 JUI 2020",
             // A field number and a date are not one longer date.
             "48. 23.03",
         ] {
             assert_eq!(read(line, Order::DayFirst), Vec::<String>::new(), "{line}");
         }
+    }
+
+    #[test]
+    fn a_month_is_its_whole_name_or_its_abbreviation() {
+        let day_first = |line| read(line, Order::DayFirst);
+        assert_eq!(day_first("3 OTT 2020"), ["2020-10-03"]);
+        assert_eq!(day_first("3 ottobre 2020"), ["2020-10-03"]);
+        assert_eq!(day_first("14 JUIL 2021"), ["2021-07-14"]);
+        assert_eq!(day_first("14 juillet 2021"), ["2021-07-14"]);
+        assert_eq!(day_first("1 SEPT 2019"), ["2019-09-01"]);
+        assert_eq!(day_first("9 września 2019"), Vec::<String>::new());
+        assert_eq!(day_first("9 WRZ 2019"), ["2019-09-09"]);
+        assert_eq!(day_first("11 Dezember 2022"), ["2022-12-11"]);
+    }
+
+    #[test]
+    fn a_year_in_full_is_read_before_a_year_in_two_digits() {
+        // Field 3 set against the date it captions.
+        assert_eq!(read("3.12.08.1964 BERLIN", Order::DayFirst), ["1964-08-12"]);
+        assert_eq!(read("4a.01.02.2015", Order::DayFirst), ["2015-02-01"]);
+        // The same in two digits: the year is what ends the run of figures.
+        assert_eq!(read("3.12.08.64", Order::DayFirst), ["1964-08-12"]);
+        assert_eq!(read("Born 12.08.64.", Order::DayFirst), ["1964-08-12"]);
+        assert_eq!(read("12 AUG 74, Utopia", Order::DayFirst), ["1974-08-12"]);
     }
 
     #[test]

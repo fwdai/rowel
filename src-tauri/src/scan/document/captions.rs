@@ -8,6 +8,7 @@
 //! value beside a caption *is* belongs to the reader (`super::fields`): a
 //! caption only says what kind of thing to look for and where.
 
+use super::dates;
 use crate::scan::words::{is_name_word, words, Word};
 
 /// What a caption captions.
@@ -403,7 +404,8 @@ fn worded(words: &[Word]) -> Option<(usize, Field)> {
 /// A field number is one or two digits, up to the high teens a licence runs
 /// to, and perhaps a letter: "2", "4a", "12". It stands apart — "2 JANICE",
 /// "2.GIVEN", not "2-12" or "5'-06" — and is no piece of a date
-/// ("23.08.2013"). In the middle of a line it is one only where the print
+/// ("23.08.2013"), though it may be set hard against the date it captions
+/// ("3.12.08.1964"). In the middle of a line it is one only where the print
 /// says so: a full stop after it, or the caption's own words.
 fn field_number<'a>(
     text: &str,
@@ -424,7 +426,17 @@ fn field_number<'a>(
     let mut after = text[word.end..].chars();
     let stopped = match after.next() {
         None | Some(' ') => false,
-        Some('.') if !after.next().is_some_and(|c| c.is_ascii_digit()) => true,
+        Some('.') => {
+            // A stop and then a figure is a decimal, or a date under way —
+            // unless what follows the stop is a whole date of its own, and
+            // this the number of the field it stands in.
+            let figure = after.next().is_some_and(|c| c.is_ascii_digit());
+            let dated = || dates::find(text).iter().any(|d| d.start == word.end + 1);
+            if figure && !dated() {
+                return None;
+            }
+            true
+        }
         _ => return None,
     };
     let before = text[..word.start].chars().next_back();
@@ -574,6 +586,23 @@ mod tests {
             ),
             []
         );
+    }
+
+    #[test]
+    fn a_field_number_may_stand_hard_against_its_date() {
+        assert_eq!(
+            found(
+                &["3.12.08.1964 BERLIN", "4a.01.02.2015", "4b.31.01.2030"],
+                true
+            ),
+            [
+                (Field::Birth, ".12.08.1964 BERLIN".into()),
+                (Field::Issue, ".01.02.2015".into()),
+                (Field::Expiry, ".31.01.2030".into()),
+            ]
+        );
+        // A date's own first figure is not one, nor a decimal's.
+        assert_eq!(found(&["12.08.1964", "1.75 m"], true), []);
     }
 
     #[test]

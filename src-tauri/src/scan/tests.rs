@@ -786,6 +786,85 @@ fn the_issuing_country_is_read_from_the_head_and_only_there() {
     assert_eq!(identity_of(&lines)["country"], "UTO");
 }
 
+// Review findings, each as the document that showed it.
+
+#[test]
+fn name_is_the_surname_on_a_document_that_captions_given_names_too() {
+    // German usage: "Name" beside "Vornamen" is the family name.
+    assert_eq!(
+        identity_of(&["PERSONALAUSWEIS", "Name MUSTERMANN", "Vornamen ERIKA"])["name"],
+        "ERIKA MUSTERMANN"
+    );
+    assert_eq!(
+        identity_of(&[
+            "IDENTITY CARD",
+            "Name",
+            "MUSTERMANN",
+            "Vornamen",
+            "ERIKA MARIA"
+        ])["name"],
+        "ERIKA MARIA MUSTERMANN"
+    );
+    // On its own it is still the whole name.
+    assert_eq!(
+        identity_of(&["IDENTITY CARD", "Name ERIKA MUSTERMANN"])["name"],
+        "ERIKA MUSTERMANN"
+    );
+}
+
+#[test]
+fn a_field_number_set_against_its_date_is_not_part_of_the_date() {
+    assert_eq!(
+        fields_of(&[
+            "FÜHRERSCHEIN",
+            "1. MUSTERMANN",
+            "2. ERIKA",
+            "3.12.08.1964 BERLIN",
+            "4a.01.02.2015",
+            "4b.31.01.2030",
+        ]),
+        pairs(&[
+            ("birth_date", "1964-08-12"),
+            ("doc_type", "driver_license"),
+            ("expiry_date", "2030-01-31"),
+            ("issue_date", "2015-02-01"),
+            ("name", "ERIKA MUSTERMANN"),
+        ])
+    );
+}
+
+#[test]
+fn a_name_is_not_a_month() {
+    // Field 2, a given name that opens like a month — or is spelled like
+    // one — and a stray figure after it, on a licence with its real dates.
+    for given in ["JANICE", "MARIA", "OTTO", "ABRAHAM", "GIULIA", "JAN"] {
+        let line = format!("2 {given} 68");
+        let fields = identity_of(&[
+            "DRIVER LICENSE",
+            "1 SAMPLE",
+            line.as_str(),
+            "4a ISS 11/09/2025",
+            "4b EXP 11/26/2030",
+        ]);
+        assert_eq!(fields["name"], format!("{given} SAMPLE"), "{given}");
+        assert!(!fields.contains_key("birth_date"), "{given}");
+    }
+}
+
+#[test]
+fn print_that_names_no_document_needs_a_field_read_to_be_one() {
+    use super::local::untitled;
+    // A street sign in a holiday photo: print, and nothing a document says.
+    assert!(untitled(&rows(&["MAIN STREET", "ONE WAY"])).is_none());
+    assert!(untitled(&[]).is_none());
+    // A document whose title was not read, known by what it captions.
+    let fields = untitled(&rows(&["Surname ERIKSSON", "Date of expiry 15.04.2032"])).unwrap();
+    assert_eq!(fields["name"], "ERIKSSON");
+    assert_eq!(fields["expiry_date"], "2032-04-15");
+    // A damaged MRZ is a photo to take again, not a document to guess at.
+    assert!(untitled(&rows(&["Surname ERIKSSON", "P<UTOERIKSSON<<ANNA<<<<<"])).is_none());
+}
+
 #[test]
 fn knows_a_document_by_the_title_it_prints() {
     assert_eq!(

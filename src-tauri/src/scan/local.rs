@@ -165,15 +165,26 @@ fn issued_between(lines: &[String], mrz: &BTreeMap<String, String>) -> Option<St
     (after_birth && before_expiry).then_some(issued)
 }
 
+/// What print that names no document still gives: the fields read off it,
+/// where any were. Print alone is not a document — a street sign beside a
+/// face is a holiday photo — so there has to be something a document says:
+/// a captioned name, a number, a date. Not where a damaged MRZ is in view:
+/// that picture is asked for again.
+pub(super) fn untitled(lines: &[String]) -> Option<BTreeMap<String, String>> {
+    if mrz::present(lines) {
+        return None;
+    }
+    Some(document::fields(lines, None)).filter(|fields| !fields.is_empty())
+}
+
 /// Everything one picture gives: what its text says, and the holder's
 /// photograph where it is an identity document.
 ///
-/// Text that names nothing is not the end of it. A picture with print on it
-/// and a face in it is an identity document whose title this did not know —
-/// one in a script the recognizer was not reading, or with none — so it opens
-/// as a document of no stated type, with its photograph and whatever its
-/// print still gives. Not where a damaged MRZ is in view: that picture is
-/// asked for again.
+/// Text that names nothing is not the end of it. A picture whose print reads
+/// as a document's ([`untitled`]) and has a face in it is an identity
+/// document whose title this did not know — one in a script the recognizer
+/// was not reading, or with none — so it opens as a document of no stated
+/// type, with its photograph and what its print gave.
 ///
 /// The lines are the card number in the clear, so they are taken whole and
 /// scrubbed as soon as they have been read — before the photograph is looked
@@ -181,8 +192,7 @@ fn issued_between(lines: &[String], mrz: &BTreeMap<String, String>) -> Option<St
 /// parsed result is all that outlives the text.
 pub fn read(mut lines: Vec<String>, image: Image<'_>) -> Option<ScanResult> {
     let named = scan_lines(&lines);
-    let unnamed = (named.is_none() && !lines.is_empty() && !mrz::present(&lines))
-        .then(|| document::fields(&lines, None));
+    let unnamed = named.is_none().then(|| untitled(&lines)).flatten();
     lines.zeroize();
 
     if let Some(mut found) = named {

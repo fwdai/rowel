@@ -113,9 +113,15 @@ impl Print<'_> {
 
 /// The holder's name, given names first — the way a person writes their own,
 /// and the way the MRZ reader hands it over.
+///
+/// What "Name" captions depends on what else the document captions. Beside a
+/// caption for the given names it is the family name ("Name" / "Vornamen");
+/// on its own it is the whole name.
 fn name(print: &Print<'_>) -> Option<String> {
     let of = |field: Field| print.of(field).find_map(|caption| named(print, caption));
-    match (of(Field::Given), of(Field::Surname)) {
+    let given = of(Field::Given);
+    let surname = of(Field::Surname).or_else(|| given.as_ref().and_then(|_| of(Field::Name)));
+    match (given, surname) {
         // Two captions over one line of print ("Surname  Given names" above
         // "ERIKSSON ANNA MARIA") both find the whole of it.
         (Some(given), Some(surname)) if given == surname => Some(given),
@@ -255,6 +261,15 @@ impl Dated {
             .iter()
             .enumerate()
             .flat_map(|(line, dates)| dates.iter().map(move |d| (line, d)))
+            // A date lies within one value. One that runs across a caption
+            // took the caption for part of itself: a licence's field number
+            // for a day ("2 JAN 68", field 2 and somebody called Jan).
+            .filter(|(line, d)| {
+                !print
+                    .captions
+                    .iter()
+                    .any(|c| c.line == *line && d.start < c.start && c.start <= d.end)
+            })
             .filter_map(|(line, d)| Some((line, d.start, d.on(order)?, d.past(order, today)?)))
             .collect();
         let mut taken: HashSet<(usize, usize)> = HashSet::new();
