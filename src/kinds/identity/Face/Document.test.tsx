@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { DOC_TYPES, TEMPLATES, type DocType, type IdentityKey } from '../templates'
 import type { Doc } from './DocCell'
@@ -187,6 +187,59 @@ describe('the document face', () => {
       show('passport')
       expect(screen.queryByTestId('identity-back')).toBeNull()
       expect(screen.queryByTestId('flip-face')).toBeNull()
+    })
+
+    describe('colour', () => {
+      const doc = (editing = false): Doc => ({
+        value: key => FILLED[key] ?? '',
+        set: editing ? () => {} : undefined,
+        shown: false,
+        toggle: () => {}
+      })
+
+      it('is its type’s own until one is picked', () => {
+        const worn = (docType: DocType) => {
+          show(docType)
+          const color = face().dataset.color
+          cleanup()
+          return color
+        }
+        expect(worn('driver_license')).toBe('rose')
+        expect(worn('id_card')).toBe('blue')
+        expect(worn('residence_permit')).toBe('green')
+      })
+
+      it('is the one the entry stores, on both sides', () => {
+        render(<Document docType="residence_permit" doc={doc()} color="blue" />)
+        expect(face()).toHaveAttribute('data-color', 'blue')
+        expect(back()).toHaveAttribute('data-color', 'blue')
+      })
+
+      it('falls back to the type’s own for a value that is no colour of ours', () => {
+        for (const stored of ['', 'chartreuse', '__proto__']) {
+          render(<Document docType="residence_permit" doc={doc()} color={stored} />)
+          expect(face()).toHaveAttribute('data-color', 'green')
+          cleanup()
+        }
+      })
+
+      it('is picked under the card, while it is being edited', () => {
+        const onColor = vi.fn()
+        render(<Document docType="id_card" doc={doc(true)} onColor={onColor} />)
+        // The type's own is the one lit before anything is picked.
+        expect(screen.getByTestId('card-color-blue')).toBeChecked()
+
+        fireEvent.click(screen.getByTestId('card-color-green'))
+        expect(onColor).toHaveBeenCalledWith('green')
+      })
+
+      it('offers no colours while the card is read, nor on a passport', () => {
+        show('id_card')
+        expect(screen.queryByRole('radiogroup')).toBeNull()
+        cleanup()
+        render(<Document docType="passport" doc={doc(true)} onColor={() => {}} />)
+        expect(screen.queryByRole('radiogroup')).toBeNull()
+      })
     })
 
     it('says how long it has, once', () => {

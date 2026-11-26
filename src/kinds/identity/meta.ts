@@ -20,6 +20,7 @@ export const defaults: EntryDraft = {
   authority: '',
   personal_number: '',
   categories: '',
+  color: '',
   note: ''
 }
 

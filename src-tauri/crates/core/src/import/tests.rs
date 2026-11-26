@@ -1862,6 +1862,7 @@ fn one_of_every_kind() -> Vec<ImportedEntry> {
             doc_authority: Some("HMPO".into()),
             doc_personal_number: Some("PN-42".into()),
             doc_categories: Some("AM, B".into()),
+            doc_color: Some("green".into()),
             ..shared()
         },
         ImportedEntry {

@@ -44,20 +44,22 @@ same tier a revealed password takes in a row.
 An ID document is drawn as the document it is (`kinds/identity/Face/layouts`),
 on the same paper. A passport is its data page — ID-3, the machine-readable
 band along the foot — and so is a document that is no particular card. A
-driving licence, an ID card and a residence permit are each a mock of the card
-itself at ID-1, the credit card's shape, and what tells them apart is what
-tells the real ones apart:
+driving licence, an ID card and a residence permit are one card at ID-1, the
+credit card's shape: one shell (`layouts/Card`), one masthead with the issuing
+state's plate, one holder block with the photograph at one size on its own
+opaque ground, the same cells and type. A document type brings three things
+of its own and nothing else:
 
-- **Security printing** (`Print`) — a wash of colour (rose for a licence, blue
-  for an ID card, green for a permit) over a fine-line ground. The ground is
-  texture, not artwork: it has no figure a real card would have to match.
-  Fixed colours, like the paper under them.
-- **The mark in the corner** — where a credit card wears its network's: a
-  licence's car, an ID card's national emblem as a hologram, a permit's
-  fingerprint. Small, in the stock's own ink.
-- **The card's own conventions** — the issuing state's plate (`Plate`), a
-  licence's fields under the numbers the licence standard gives them, a
-  permit's term drawn from issue to expiry (`Term`).
+- **Its colour** — a wash over a fine-line ground (`Print`; the ground is
+  texture, not artwork). Rose for a licence, blue for an ID card, green for a
+  permit by default; the user can pick another from the palette (`colors.ts`)
+  under the card while editing, to match the card in their hand. The entry
+  stores the palette key.
+- **Its mark** in the top-right corner, where a credit card wears its
+  network's: a car, the national emblem as a hologram, a fingerprint.
+- **Its arrangement** — which fields go where: a licence's under the numbers
+  the licence standard gives them, a permit's term drawn from issue to expiry
+  (`Term`).
 
 A card has a back and turns over to show it (`elements/Face/Flip`, any face
 can use it). What turns it is a small raised key on the card's right edge —

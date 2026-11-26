@@ -22,8 +22,6 @@ interface Props {
   doc: Doc
   /** The name's number on a driving licence (see `DocCell`). */
   index?: string
-  /** The photograph's share of the width, where a document gives it more. */
-  portrait?: string
   /**
    * The cells that follow the name. Editing, a cell is as wide as its box; the
    * sizes are about what each value runs to, so the flow stays the document's.
@@ -36,10 +34,10 @@ interface Props {
  * their name — the biggest thing a document prints about them — over whatever
  * else it says, in the flow.
  */
-export default function Holder({ doc, index, portrait, children }: Props) {
+export default function Holder({ doc, index, children }: Props) {
   return (
     <div className="mt-3 flex items-start gap-4">
-      <Portrait className={portrait} />
+      <Portrait />
       <div className={FIELDS}>
         <DocCell
           doc={doc}

@@ -1,9 +1,8 @@
-import Eye from '@/components/elements/Face/Eye'
 import { LABEL_TYPE } from '@/components/elements/tokens'
 import DocCell from '../DocCell'
+import Foot from '../Foot'
 import Holder from '../Holder'
 import MachineZone from '../MachineZone'
-import Status from '../Status'
 import TypeLabel from '../TypeLabel'
 import { placeOf } from '../place'
 import type { LayoutProps } from '.'
@@ -49,15 +48,7 @@ export default function Page({ docType, doc }: LayoutProps) {
           <DocCell doc={doc} name="personal_number" size={14} />
         </Holder>
 
-        {/* The number the document is known by, set large along the foot the
-            way a document prints it, with its validity in the margin. `mt-auto`
-            puts every bit of the document's spare height above this line, so the
-            number sits on the foot rather than floating under the fields. */}
-        <div className="mt-auto flex flex-none items-end gap-2.5 pt-3">
-          <DocCell doc={doc} name="number" wrap className="min-w-0 flex-1" />
-          <Status iso={doc.value('expiry_date')} />
-          <Eye shown={doc.shown} onToggle={doc.toggle} testid="reveal-number" className="mb-0.5" />
-        </div>
+        <Foot doc={doc} />
       </div>
 
       <MachineZone docType={docType} doc={doc} />

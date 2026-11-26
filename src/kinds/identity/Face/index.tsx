@@ -36,5 +36,12 @@ export default function Face() {
     toggle: () => setShown(!shown)
   }
 
-  return <Document docType={docType} doc={doc} />
+  return (
+    <Document
+      docType={docType}
+      doc={doc}
+      color={typeof entry.color === 'string' ? entry.color : undefined}
+      onColor={editing ? color => set('color', color) : undefined}
+    />
+  )
 }

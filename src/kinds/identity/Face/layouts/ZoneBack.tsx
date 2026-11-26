@@ -1,7 +1,7 @@
 import Eye from '@/components/elements/Face/Eye'
 import MachineZone from '../MachineZone'
 import type { BackProps } from '.'
-import Reverse, { Watermark } from './Reverse'
+import Reverse from './Reverse'
 
 /**
  * The back of a card that travels — an ID card, a residence permit: the card's
@@ -10,11 +10,11 @@ import Reverse, { Watermark } from './Reverse'
  * reads it. The eye is the front's: the zone repeats the numbers the front
  * masks, and stays masked with them.
  */
-export default function ZoneBack({ docType, doc, stock }: BackProps) {
+export default function ZoneBack({ docType, doc, watermark }: BackProps) {
   return (
     <Reverse docType={docType} doc={doc} band={<MachineZone docType={docType} doc={doc} card />}>
-      <Watermark stock={stock} doc={doc} className="mr-auto" />
-      <Eye shown={doc.shown} onToggle={doc.toggle} testid="reveal-band" />
+      {watermark}
+      <Eye shown={doc.shown} onToggle={doc.toggle} testid="reveal-band" className="ml-auto" />
     </Reverse>
   )
 }

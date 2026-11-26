@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { CAPTION } from '@/components/elements/Face/Cell'
 import { specOf, type IdentityKey } from '../../../templates'
 import type { BackProps } from '..'
-import Reverse, { Watermark } from '../Reverse'
+import Reverse from '../Reverse'
 import { INDEX } from './numbering'
 
 // The bars of the licence's barcode. Decoration, like the portrait's
@@ -25,7 +25,7 @@ const codes = (categories: string): string[] => categories.split(/[\s,;/|]+/).fi
  * are set under, with the card's mark large in the stock and the barcode along
  * the foot.
  */
-export default function LicenseBack({ docType, doc, stock }: BackProps) {
+export default function LicenseBack({ docType, doc, watermark }: BackProps) {
   const { t } = useTranslation()
   const held = codes(doc.value('categories'))
 
@@ -45,8 +45,7 @@ export default function LicenseBack({ docType, doc, stock }: BackProps) {
             {held.map((code, at) => (
               <li
                 key={at}
-                className="grid h-7 min-w-9 place-items-center rounded-[5px] border bg-white/60 px-2 text-base font-semibold uppercase tracking-[0.04em]"
-                style={{ borderColor: stock.line }}
+                className="grid h-7 min-w-9 place-items-center rounded-[5px] border border-(--card-line) bg-white/60 px-2 text-base font-semibold uppercase tracking-[0.04em]"
               >
                 {code}
               </li>
@@ -63,7 +62,7 @@ export default function LicenseBack({ docType, doc, stock }: BackProps) {
           ))}
         </ol>
       </div>
-      <Watermark stock={stock} doc={doc} />
+      {watermark}
     </Reverse>
   )
 }
