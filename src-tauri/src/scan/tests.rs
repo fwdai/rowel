@@ -606,6 +606,33 @@ fn the_print_adds_the_issue_date_an_mrz_does_not_carry() {
 }
 
 #[test]
+fn a_captioned_birth_date_stands_however_soon_the_document_expires() {
+    // A child's card: born ten years before it runs out, the date printed
+    // under its caption.
+    assert_eq!(
+        fields_of(&[
+            "IDENTITY CARD",
+            "Date of birth",
+            "01 JAN 2020",
+            "Date of expiry 01 JAN 2030",
+        ]),
+        pairs(&[
+            ("birth_date", "2020-01-01"),
+            ("doc_type", "id_card"),
+            ("expiry_date", "2030-01-01"),
+        ])
+    );
+    // Beside its caption, the same.
+    let beside = identity_of(&[
+        "IDENTITY CARD",
+        "Date of birth 01 JAN 2020",
+        "Date of expiry 01 JAN 2030",
+    ]);
+    assert_eq!(beside["birth_date"], "2020-01-01");
+    assert!(!beside.contains_key("issue_date"));
+}
+
+#[test]
 fn a_two_digit_year_is_read_by_what_the_date_is() {
     use chrono::Datelike;
     // A year a few ahead of this one, printed in two digits: an expiry still

@@ -231,7 +231,7 @@ impl Dated {
             .collect();
         let mut taken: HashSet<(usize, usize)> = HashSet::new();
         let mut dated = Self::default();
-        let mut born_beside = false;
+        let mut born_captioned = false;
 
         // A date beside its caption first, for every caption: only then is a
         // date on the line below known to be nobody else's.
@@ -257,7 +257,12 @@ impl Dated {
                 if field.is_none() {
                     *field = Some(date);
                     taken.insert((line, start));
-                    born_beside |= caption.field == Field::Birth && !below;
+                    // A date under a caption is that caption's when the
+                    // caption stands alone above it. Where something else is
+                    // printed beside the caption, that was its value — misread
+                    // — and the date below is only the next thing down.
+                    born_captioned |= caption.field == Field::Birth
+                        && (!below || words::tokens(print.beside(caption)).next().is_none());
                 }
             }
         }
@@ -268,10 +273,12 @@ impl Dated {
             .map(|(_, _, ahead, past)| (*ahead, *past))
             .collect();
         dated.place(rest, today);
-        // A birth date that was not read beside its own caption — taken from
-        // the line below one, or by order — is checked against the expiry:
-        // too close to it, with no issue date known, it is the issue date.
-        if !born_beside && dated.issue.is_none() {
+        // A birth date its caption did not vouch for — taken by order, or
+        // from under a caption that had something else beside it — is checked
+        // against the expiry: too close to it, with no issue date known, it is
+        // the issue date. One the document captioned stands whatever its
+        // distance: a child's card runs out well inside sixteen years.
+        if !born_captioned && dated.issue.is_none() {
             if let (Some(birth), Some(expiry)) = (dated.birth, dated.expiry) {
                 if !outlived(birth, expiry) {
                     dated.issue = dated.birth.take();
