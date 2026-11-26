@@ -8,7 +8,7 @@
 //! value beside a caption *is* belongs to the reader (`super::fields`): a
 //! caption only says what kind of thing to look for and where.
 
-use crate::scan::words::{words, Word};
+use crate::scan::words::{is_name_word, words, Word};
 
 /// What a caption captions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +48,6 @@ const CAPTIONS: &[(Field, &[&str])] = &[
             "SURNAME",
             "FAMILY NAME",
             "LAST NAME",
-            "LN",
             "NOM",
             "NOM DE FAMILLE",
             "NACHNAME",
@@ -76,7 +75,6 @@ const CAPTIONS: &[(Field, &[&str])] = &[
             "GIVEN NAME",
             "FIRST NAME",
             "FIRST NAMES",
-            "FN",
             "FORENAMES",
             "FORENAME",
             "PRENOMS",
@@ -278,8 +276,8 @@ pub(super) fn find(lines: &[String], numbered: bool) -> Vec<Caption> {
         let words = words(text);
         // Each caption as the words it spans, first and one past the last.
         let mut spans: Vec<(usize, usize, Field)> = Vec::new();
-        let run_in = words.first().and_then(|word| run_in(text, word));
-        let mut at = usize::from(run_in.is_some());
+        let abbreviated = words.first().and_then(|word| abbreviated(text, word));
+        let mut at = usize::from(abbreviated.is_some());
         while at < words.len() {
             let number = numbered.then(|| field_number(text, &words, at)).flatten();
             let caption = match number {
@@ -303,7 +301,7 @@ pub(super) fn find(lines: &[String], numbered: bool) -> Vec<Caption> {
             }
             at += len;
         }
-        if let Some(field) = run_in {
+        if let Some(field) = abbreviated {
             found.push(Caption {
                 line,
                 field,
@@ -328,12 +326,15 @@ pub(super) fn find(lines: &[String], numbered: bool) -> Vec<Caption> {
 // The length of a name caption a licence abbreviates: "LN", "FN".
 const ABBREVIATION: usize = 2;
 
-/// The name caption run into the word that opens a line, where there is one:
-/// "LNCARDHOLDER". A licence that captions the name `LN` and `FN` sets them so
-/// close to the value that a recognizer reads the two as one word. Only at
-/// the head of a line and only before capitals, and no word of its own opens
-/// with either pair of letters.
-fn run_in(text: &str, word: &Word) -> Option<Field> {
+/// The abbreviated name caption a line opens with, where it opens with one:
+/// "LN SAMPLE", or run into the name it captions, "LNCARDHOLDER" — a licence
+/// sets the two so close that a recognizer reads them as one word.
+///
+/// Only at the head of a line, which is where a licence prints them: further
+/// along, the same letters end an address ("123 MAIN LN"). And only in
+/// capitals, before nothing or before a name in capitals — no word of its own
+/// opens with either pair of letters.
+fn abbreviated(text: &str, word: &Word) -> Option<Field> {
     let printed = &text[word.start..word.end];
     let field = match printed.get(..ABBREVIATION)? {
         "LN" => Field::Surname,
@@ -341,7 +342,10 @@ fn run_in(text: &str, word: &Word) -> Option<Field> {
         _ => return None,
     };
     let name = &printed[ABBREVIATION..];
-    (name.len() >= 2 && name.chars().all(|c| c.is_ascii_uppercase())).then_some(field)
+    let run_in = is_name_word(name)
+        && !name.chars().any(char::is_lowercase)
+        && name.chars().filter(|c| c.is_alphabetic()).count() >= 2;
+    (name.is_empty() || run_in).then_some(field)
 }
 
 /// The field numbers the lines are set with, as printed: "1", "4A". What a
@@ -539,16 +543,37 @@ mod tests {
             ]
         );
         assert_eq!(
-            found(&["LNCARDHOLDER", "FNIMA", "LNSMITH-JONES SEX F"], false),
+            found(
+                &[
+                    "LNCARDHOLDER",
+                    "FNIMA",
+                    "LNSMITH-JONES SEX F",
+                    "LNO'BRIEN",
+                    "FNZOË"
+                ],
+                false
+            ),
             [
                 (Field::Surname, "CARDHOLDER".into()),
                 (Field::Given, "IMA".into()),
                 (Field::Surname, "SMITH-JONES".into()),
                 (Field::Sex, "F".into()),
+                (Field::Surname, "O'BRIEN".into()),
+                (Field::Given, "ZOË".into()),
             ]
         );
-        // Not in the middle of a line, and not before anything but a name.
-        assert_eq!(found(&["STREET FNORD", "FN12345", "Fnord"], false), []);
+    }
+
+    #[test]
+    fn an_abbreviated_caption_is_one_only_at_the_head_of_a_line() {
+        // A lane, a word that happens to open with the letters, a number.
+        assert_eq!(
+            found(
+                &["123 MAIN LN", "STREET FNORD", "FN12345", "Fnord", "Ln 5"],
+                false
+            ),
+            []
+        );
     }
 
     #[test]

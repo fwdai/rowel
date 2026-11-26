@@ -644,6 +644,20 @@ fn reads_a_licence_that_abbreviates_its_name_captions() {
 }
 
 #[test]
+fn an_address_that_ends_in_a_lane_is_not_the_surname() {
+    assert_eq!(
+        identity_of(&[
+            "IDENTITY CARD",
+            "Name JANE SMITH",
+            "ADDRESS",
+            "123 MAIN LN",
+            "BOSTON",
+        ])["name"],
+        "JANE SMITH"
+    );
+}
+
+#[test]
 fn a_short_name_beside_its_caption_is_a_name() {
     let name = |lines: &[&str]| identity_of(lines).remove("name");
     // The surname beside the caption, the given name under it.
