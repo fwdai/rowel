@@ -48,6 +48,7 @@ const CAPTIONS: &[(Field, &[&str])] = &[
             "SURNAME",
             "FAMILY NAME",
             "LAST NAME",
+            "LN",
             "NOM",
             "NOM DE FAMILLE",
             "NACHNAME",
@@ -75,6 +76,7 @@ const CAPTIONS: &[(Field, &[&str])] = &[
             "GIVEN NAME",
             "FIRST NAME",
             "FIRST NAMES",
+            "FN",
             "FORENAMES",
             "FORENAME",
             "PRENOMS",
@@ -276,7 +278,8 @@ pub(super) fn find(lines: &[String], numbered: bool) -> Vec<Caption> {
         let words = words(text);
         // Each caption as the words it spans, first and one past the last.
         let mut spans: Vec<(usize, usize, Field)> = Vec::new();
-        let mut at = 0;
+        let run_in = words.first().and_then(|word| run_in(text, word));
+        let mut at = usize::from(run_in.is_some());
         while at < words.len() {
             let number = numbered.then(|| field_number(text, &words, at)).flatten();
             let caption = match number {
@@ -300,6 +303,14 @@ pub(super) fn find(lines: &[String], numbered: bool) -> Vec<Caption> {
             }
             at += len;
         }
+        if let Some(field) = run_in {
+            found.push(Caption {
+                line,
+                field,
+                start: words[0].start + ABBREVIATION,
+                end: spans.first().map_or(text.len(), |next| words[next.0].start),
+            });
+        }
         for (index, (_, past, field)) in spans.iter().enumerate() {
             found.push(Caption {
                 line,
@@ -312,6 +323,25 @@ pub(super) fn find(lines: &[String], numbered: bool) -> Vec<Caption> {
         }
     }
     found
+}
+
+// The length of a name caption a licence abbreviates: "LN", "FN".
+const ABBREVIATION: usize = 2;
+
+/// The name caption run into the word that opens a line, where there is one:
+/// "LNCARDHOLDER". A licence that captions the name `LN` and `FN` sets them so
+/// close to the value that a recognizer reads the two as one word. Only at
+/// the head of a line and only before capitals, and no word of its own opens
+/// with either pair of letters.
+fn run_in(text: &str, word: &Word) -> Option<Field> {
+    let printed = &text[word.start..word.end];
+    let field = match printed.get(..ABBREVIATION)? {
+        "LN" => Field::Surname,
+        "FN" => Field::Given,
+        _ => return None,
+    };
+    let name = &printed[ABBREVIATION..];
+    (name.len() >= 2 && name.chars().all(|c| c.is_ascii_uppercase())).then_some(field)
 }
 
 /// The field numbers the lines are set with, as printed: "1", "4A". What a
@@ -497,6 +527,28 @@ mod tests {
                 (Field::Other, String::new()),
             ]
         );
+    }
+
+    #[test]
+    fn a_licence_abbreviates_the_name_captions_and_runs_them_into_the_name() {
+        assert_eq!(
+            found(&["LN SAMPLE", "FN SEIJI"], false),
+            [
+                (Field::Surname, "SAMPLE".into()),
+                (Field::Given, "SEIJI".into())
+            ]
+        );
+        assert_eq!(
+            found(&["LNCARDHOLDER", "FNIMA", "LNSMITH-JONES SEX F"], false),
+            [
+                (Field::Surname, "CARDHOLDER".into()),
+                (Field::Given, "IMA".into()),
+                (Field::Surname, "SMITH-JONES".into()),
+                (Field::Sex, "F".into()),
+            ]
+        );
+        // Not in the middle of a line, and not before anything but a name.
+        assert_eq!(found(&["STREET FNORD", "FN12345", "Fnord"], false), []);
     }
 
     #[test]

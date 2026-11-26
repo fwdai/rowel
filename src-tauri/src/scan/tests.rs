@@ -605,6 +605,44 @@ fn the_print_adds_the_issue_date_an_mrz_does_not_carry() {
     assert!(!identity_of(&lines).contains_key("issue_date"));
 }
 
+// The California design before 2025, as recognized: the name captioned `LN`
+// and `FN`, each run into the name after it.
+const CALIFORNIA_LICENCE_2019: [&str; 12] = [
+    "CaliforniaUSA DRIVER LICENSE",
+    "DL I1234568 CLASS C",
+    "EXP 08/31/2014 END NONE",
+    "LNCARDHOLDER",
+    "FNIMA",
+    "2570 24TH STREET",
+    "ANYTOWN, CA 95818",
+    "DOB 08/31/1977",
+    "RSTR-NONE 08311977",
+    "VETERAN",
+    "IMa Cordholda SEX F HGT 5'-05\" WGT 125 lb HAIR BRN EYES BRN ISS",
+    "DD 00/00/0000NNNAN/ANFD/YY 08/31/2009",
+];
+
+#[test]
+fn reads_a_licence_that_abbreviates_its_name_captions() {
+    assert_eq!(
+        fields_of(&CALIFORNIA_LICENCE_2019),
+        pairs(&[
+            ("birth_date", "1977-08-31"),
+            ("doc_type", "driver_license"),
+            ("expiry_date", "2014-08-31"),
+            ("issue_date", "2009-08-31"),
+            ("name", "IMA CARDHOLDER"),
+            ("number", "I1234568"),
+            ("sex", "F"),
+        ])
+    );
+    // The same captions set apart from the name.
+    assert_eq!(
+        identity_of(&["DRIVER LICENSE", "LN SAMPLE", "FN SEIJI"])["name"],
+        "SEIJI SAMPLE"
+    );
+}
+
 #[test]
 fn a_short_name_beside_its_caption_is_a_name() {
     let name = |lines: &[&str]| identity_of(lines).remove("name");
