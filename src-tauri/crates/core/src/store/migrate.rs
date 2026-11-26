@@ -41,6 +41,7 @@ pub fn build_record(entry: &Entry, payload: Vec<u8>) -> Result<Record> {
         username: derived_username(entry),
         doc_type: derived_doc_type(entry),
         doc_country: derived_doc_country(entry),
+        doc_color: derived_doc_color(entry),
     })
 }
 
@@ -150,6 +151,13 @@ pub fn derived_doc_country(entry: &Entry) -> Option<String> {
     let code = entry.country.as_deref()?.trim().to_ascii_uppercase();
     (entry.kind == "identity" && code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase()))
         .then_some(code)
+}
+
+/// The colour picked for an identity's card, when one was: the palette key as
+/// the payload holds it. Not a secret — it is the colour of a tile.
+pub fn derived_doc_color(entry: &Entry) -> Option<String> {
+    let color = entry.color.as_deref()?.trim();
+    (entry.kind == "identity" && !color.is_empty()).then(|| color.to_string())
 }
 
 /// Whether the entry holds any passkey — the plaintext flag a listing reads

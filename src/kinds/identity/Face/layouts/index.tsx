@@ -1,9 +1,9 @@
 import type { ComponentType, ReactNode } from 'react'
 import { FingerprintGlyph, LicenseGlyph } from '@/components/Main/icons'
-import type { DocType } from '../../templates'
+import { isDocType, type DocType } from '../../templates'
 import type { Doc } from '../DocCell'
 import Hologram from '../Hologram'
-import type { CardColor } from '../colors'
+import { cardColorOf, type CardColor } from '../colors'
 import IdCard from './IdCard'
 import License from './License'
 import LicenseBack from './License/Back'
@@ -92,4 +92,14 @@ export const LAYOUTS: Record<DocType, Layout> = {
     }
   },
   other: { format: ID_1, Face: Page }
+}
+
+/**
+ * The colour a document's card is in — the one stored for it, or its type's
+ * own — and undefined for a document that is no card. Both values are free
+ * text from a vault or a list row.
+ */
+export const cardColorFor = (docType: unknown, stored: unknown): CardColor | undefined => {
+  const own = isDocType(docType) ? LAYOUTS[docType].card?.color : undefined
+  return own && (cardColorOf(stored) ?? own)
 }

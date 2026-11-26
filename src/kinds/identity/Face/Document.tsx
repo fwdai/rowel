@@ -5,8 +5,8 @@ import type { DocType } from '../templates'
 import ColorSwatches from './ColorSwatches'
 import type { Doc } from './DocCell'
 import Frame from './Frame'
-import { cardColorOf, type CardColor } from './colors'
-import { LAYOUTS } from './layouts'
+import type { CardColor } from './colors'
+import { LAYOUTS, cardColorFor } from './layouts'
 import Card from './layouts/Card'
 
 interface Props {
@@ -53,7 +53,7 @@ export default function Document({ docType, doc, color, onColor }: Props) {
     )
 
   const editing = !!doc.set
-  const worn = cardColorOf(color) ?? card.color
+  const worn = cardColorFor(docType, color) ?? card.color
   const face = (testid: string, content: ReactNode, back?: boolean) => (
     <Frame ratio={format} docType={docType} color={worn} testid={testid}>
       <Card color={worn} mark={card.mark(MARK, doc)} back={back}>

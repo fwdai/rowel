@@ -147,6 +147,25 @@ describe('Entry list', () => {
     setFilterType(null)
   })
 
+  // A card's tile is the card's colour, so the list can be scanned by it: the
+  // one picked for it, its type's own when none was, and for a document that is
+  // no card (or a colour that is none of ours) nothing of the sort.
+  it('tints a card’s tile in the card’s colour', () => {
+    const identity = { type: 'identity' as const, urlHost: '' }
+    withEntries([
+      loginMeta({ id: 'c1', title: 'Licence', docType: 'driver_license', ...identity }),
+      loginMeta({ id: 'c2', title: 'Permit', docType: 'residence_permit', docColor: 'blue', ...identity }),
+      loginMeta({ id: 'c3', title: 'ID', docType: 'id_card', docColor: 'chartreuse', ...identity }),
+      loginMeta({ id: 'c4', title: 'Other', docType: 'other', docColor: 'blue', ...identity })
+    ])
+    setFilterType('identity')
+    render(<ListColumn />)
+
+    const tiles = screen.getAllByTestId('card-tile')
+    expect(tiles.map(tile => tile.dataset.color).sort()).toEqual(['blue', 'blue', 'rose'])
+    setFilterType(null)
+  })
+
   // A document type is free text from the vault or an import: one that is no
   // type of ours, even one that names something on every object, still draws.
   it('draws an identity whose document type is not one we know', () => {

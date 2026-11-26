@@ -76,6 +76,7 @@ fn rec(id: &str, payload: &[u8]) -> Record {
         username: None,
         doc_type: None,
         doc_country: None,
+        doc_color: None,
     }
 }
 
@@ -216,6 +217,7 @@ fn purge_empties_the_row_and_drops_it_from_the_trash() {
         username: Some("alice".into()),
         doc_type: Some("passport".into()),
         doc_country: Some("UKR".into()),
+        doc_color: Some("green".into()),
         ..stamped("1", b"sealed-payload", 1000)
     }]);
 
@@ -230,6 +232,7 @@ fn purge_empties_the_row_and_drops_it_from_the_trash() {
     assert_eq!(purged.title, "");
     assert_eq!(purged.username, None);
     assert_eq!((purged.doc_type, purged.doc_country), (None, None));
+    assert_eq!(purged.doc_color, None);
     assert!(purged.updated_at > 1000);
 }
 
@@ -492,6 +495,31 @@ fn build_record_stamps_an_identitys_document_type_and_country() {
     );
     assert_eq!(stamp(&identity_entry(None, "GB")), (some(""), None));
     assert_eq!(stamp(&sample_entry()), (None, None));
+}
+
+// Only a colour that was picked is stamped: a card left in its type's own has
+// none to keep, and no other kind has a card.
+#[test]
+fn build_record_stamps_the_colour_picked_for_a_card() {
+    let stamp = |value: serde_json::Value| {
+        let entry: Entry = serde_json::from_value(value).unwrap();
+        migrate::build_record(&entry, b"s".to_vec())
+            .unwrap()
+            .doc_color
+    };
+    let card = |color: &str| {
+        serde_json::json!({
+            "id": "i1", "type": "identity", "title": "Permit",
+            "doc_type": "residence_permit", "color": color
+        })
+    };
+
+    assert_eq!(stamp(card("green")), Some("green".to_string()));
+    assert_eq!(stamp(card("")), None);
+    assert_eq!(
+        stamp(serde_json::json!({"id": "l1", "type": "login", "title": "x", "color": "green"})),
+        None
+    );
 }
 
 // What counts as a variable line, and what does not: comments, blank lines,

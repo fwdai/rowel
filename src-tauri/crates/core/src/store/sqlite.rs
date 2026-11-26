@@ -228,6 +228,11 @@ fn migration_list() -> Vec<&'static str> {
          ALTER TABLE audit_rows RENAME TO audit;
          CREATE INDEX audit_ts ON audit(ts_ms);
          CREATE INDEX audit_chain ON audit(writer_id, seq);",
+        // The colour the user picked for an ID card, derived from the payload
+        // at save time so the list can tint the row without unsealing it. Not
+        // a secret, and NULL is simply the truth for a card left in its type's
+        // own colour, so there is nothing to backfill.
+        "ALTER TABLE entries ADD COLUMN doc_color TEXT;",
     ]
 }
 
@@ -255,8 +260,8 @@ impl ImageCache {
 }
 
 // New columns are appended last so pre-existing column indexes stay put.
-const COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, payload, card_brand, favorite, has_passkey, file_name, var_count, username, doc_type, doc_country";
-const META_COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, card_brand, favorite, has_passkey, file_name, var_count, username, doc_type, doc_country";
+const COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, payload, card_brand, favorite, has_passkey, file_name, var_count, username, doc_type, doc_country, doc_color";
+const META_COLS: &str = "id, kind, title, tags, url_host, created_at, updated_at, deleted_at, card_brand, favorite, has_passkey, file_name, var_count, username, doc_type, doc_country, doc_color";
 
 const ATT_META_COLS: &str = "id, entry_id, name, mime, size, created_at, updated_at, deleted_at";
 const ATT_COLS: &str = "id, entry_id, name, mime, size, created_at, updated_at, deleted_at, blob";
@@ -985,9 +990,10 @@ impl SqliteStore {
     /// existing vault. Keep in step with `migration_list`.
     #[cfg(test)]
     pub(crate) fn drop_favicons_for_test(&self) -> Result<()> {
-        let previous = schema_version() - 8;
+        let previous = schema_version() - 9;
         self.lock()?.execute_batch(&format!(
-            "DROP TABLE audit;
+            "ALTER TABLE entries DROP COLUMN doc_color;
+             DROP TABLE audit;
              DROP TABLE emblems;
              ALTER TABLE entries DROP COLUMN doc_type;
              ALTER TABLE entries DROP COLUMN doc_country;
@@ -1075,7 +1081,7 @@ fn upsert_on(conn: &Connection, rec: &Record) -> Result<()> {
     // written, so a save that drops the last passkey has to clear it.
     conn.execute(
         &format!(
-            "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+            "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
              ON CONFLICT(id) DO UPDATE SET
                kind=excluded.kind, title=excluded.title, tags=excluded.tags,
                url_host=excluded.url_host, updated_at=excluded.updated_at,
@@ -1083,7 +1089,7 @@ fn upsert_on(conn: &Connection, rec: &Record) -> Result<()> {
                card_brand=excluded.card_brand, has_passkey=excluded.has_passkey,
                file_name=excluded.file_name, var_count=excluded.var_count,
                username=excluded.username, doc_type=excluded.doc_type,
-               doc_country=excluded.doc_country"
+               doc_country=excluded.doc_country, doc_color=excluded.doc_color"
         ),
         params![
             rec.id,
@@ -1107,6 +1113,7 @@ fn upsert_on(conn: &Connection, rec: &Record) -> Result<()> {
             rec.username,
             rec.doc_type,
             rec.doc_country,
+            rec.doc_color,
         ],
     )?;
     Ok(())
@@ -1259,7 +1266,7 @@ impl VaultStore for SqliteStore {
              SET payload = x'', title = '', tags = '[]', url_host = '',
                  card_brand = NULL, favorite = 0, has_passkey = 0,
                  file_name = NULL, var_count = NULL, username = NULL,
-                 doc_type = NULL, doc_country = NULL,
+                 doc_type = NULL, doc_country = NULL, doc_color = NULL,
                  updated_at = ?1
              WHERE id = ?2 AND deleted_at IS NOT NULL",
             params![now, id],
@@ -1629,7 +1636,7 @@ fn row_to_attachment(row: &Row) -> rusqlite::Result<Attachment> {
 // sync-in paths (import, merge_records) need.
 fn verbatim_upsert() -> String {
     format!(
-        "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+        "INSERT INTO entries ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
          ON CONFLICT(id) DO UPDATE SET
            kind=excluded.kind, title=excluded.title, tags=excluded.tags,
            url_host=excluded.url_host, created_at=excluded.created_at,
@@ -1638,7 +1645,7 @@ fn verbatim_upsert() -> String {
            favorite=excluded.favorite, has_passkey=excluded.has_passkey,
            file_name=excluded.file_name, var_count=excluded.var_count,
            username=excluded.username, doc_type=excluded.doc_type,
-           doc_country=excluded.doc_country"
+           doc_country=excluded.doc_country, doc_color=excluded.doc_color"
     )
 }
 
@@ -1673,6 +1680,7 @@ fn exec_record(stmt: &mut Statement, r: &Record) -> rusqlite::Result<usize> {
         r.username,
         r.doc_type,
         r.doc_country,
+        r.doc_color,
     ])
 }
 
@@ -1695,6 +1703,7 @@ fn row_to_record(row: &Row) -> rusqlite::Result<Record> {
         username: row.get(14)?,
         doc_type: row.get(15)?,
         doc_country: row.get(16)?,
+        doc_color: row.get(17)?,
     })
 }
 
@@ -1770,6 +1779,7 @@ fn row_to_meta(row: &Row) -> rusqlite::Result<EntryMeta> {
         username: row.get(13)?,
         doc_type: row.get(14)?,
         doc_country: row.get(15)?,
+        doc_color: row.get(16)?,
     })
 }
 

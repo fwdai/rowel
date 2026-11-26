@@ -93,6 +93,11 @@ pub struct Record {
     /// a code. Both `None` on every other kind.
     pub doc_type: Option<String>,
     pub doc_country: Option<String>,
+    /// The colour the user picked for an identity's card, as its palette key,
+    /// derived from the payload at save time so the list can tint the row.
+    /// `None` when none was picked — the card wears its type's own — and on
+    /// every other kind.
+    pub doc_color: Option<String>,
 }
 
 /// A row's metadata without its payload (what listings need).
@@ -114,6 +119,7 @@ pub struct EntryMeta {
     pub username: Option<String>,
     pub doc_type: Option<String>,
     pub doc_country: Option<String>,
+    pub doc_color: Option<String>,
 }
 
 /// A file attached to an entry, without the file: what the entry's list of

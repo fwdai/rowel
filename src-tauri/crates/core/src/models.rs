@@ -538,6 +538,10 @@ pub struct EntryMetaDto {
     pub doc_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc_country: Option<String>,
+    // The card colour the user picked, as its palette key, so the list can
+    // tint the row; absent when the card wears its type's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_color: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     // Set only on the tombstones the Trash lists; absent for live entries.
@@ -566,6 +570,7 @@ impl From<&crate::store::EntryMeta> for EntryMetaDto {
             username: m.username.clone().filter(|u| !u.is_empty()),
             doc_type: m.doc_type.clone().filter(|t| !t.is_empty()),
             doc_country: m.doc_country.clone(),
+            doc_color: m.doc_color.clone(),
             created_at: iso(m.created_at),
             updated_at: iso(m.updated_at),
             deleted_at: m.deleted_at.and_then(iso),
@@ -1204,6 +1209,7 @@ mod tests {
             username: None,
             doc_type: None,
             doc_country: None,
+            doc_color: None,
         }
     }
 
@@ -1269,6 +1275,7 @@ mod tests {
             kind: "identity".into(),
             doc_type: Some("passport".into()),
             doc_country: Some("UKR".into()),
+            doc_color: None,
             ..meta(false)
         };
         let out = serde_json::to_value(EntryMetaDto::from(&passport)).unwrap();

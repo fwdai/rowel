@@ -79,6 +79,7 @@ pub fn record_hash(r: &Record) -> [u8; 32] {
     opt_field(&mut h, r.username.as_deref());
     opt_field(&mut h, r.doc_type.as_deref());
     opt_field(&mut h, r.doc_country.as_deref());
+    opt_field(&mut h, r.doc_color.as_deref());
     h.finalize().into()
 }
 
