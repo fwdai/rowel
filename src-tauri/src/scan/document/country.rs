@@ -13,9 +13,12 @@
 
 use crate::scan::words::{keys, says};
 
-/// The names a document prints for its issuer, by that issuer's code. Asked
-/// in this order, and the United States first: several of its states share a
-/// name with a country ("NEW MEXICO USA"), and the document says which it is.
+/// The names a document prints for its issuer, by that issuer's code. The
+/// longest name a head carries is its issuer's — one country's name is often
+/// the tail of another's ("REPUBLIC OF KOREA") — and between names as long,
+/// the earlier here. So the United States comes first: several of its states
+/// share a name with a country ("NEW MEXICO USA"), and the document says
+/// which it is.
 ///
 /// Left out on purpose: a name that is also an ordinary word or a state of
 /// another country ("ISLAND", "GEORGIA", "JERSEY").
@@ -70,6 +73,7 @@ const ISSUERS: &[(&str, &[&str])] = &[
     ("IND", &["REPUBLIC OF INDIA", "INDIA"]),
     ("JPN", &["JAPAN"]),
     ("KOR", &["REPUBLIC OF KOREA"]),
+    ("PRK", &["DEMOCRATIC PEOPLES REPUBLIC OF KOREA"]),
     ("CHN", &["PEOPLES REPUBLIC OF CHINA"]),
     ("SGP", &["REPUBLIC OF SINGAPORE", "SINGAPORE"]),
     ("ZAF", &["SOUTH AFRICA"]),
@@ -81,10 +85,16 @@ const ISSUERS: &[(&str, &[&str])] = &[
 /// ISO 3166-1 alpha-3 code.
 pub(super) fn issuer(head: &[String]) -> Option<&'static str> {
     let text: Vec<String> = head.iter().flat_map(|line| keys(&apart(line))).collect();
-    ISSUERS
-        .iter()
-        .find(|(_, names)| names.iter().any(|name| says(&text, name)))
-        .map(|(code, _)| *code)
+    let mut found: Option<(usize, &'static str)> = None;
+    for (code, names) in ISSUERS {
+        for name in names.iter().filter(|name| says(&text, name)) {
+            let words = name.split(' ').count();
+            if found.is_none_or(|(most, _)| words > most) {
+                found = Some((words, code));
+            }
+        }
+    }
+    found.map(|(_, code)| code)
 }
 
 /// A line with the words a recognizer ran together set apart again, where
@@ -127,6 +137,19 @@ mod tests {
         );
         assert_eq!(of(&["UNITED KINGDOM", "DRIVING LICENCE"]), Some("GBR"));
         assert_eq!(of(&["DRIVING LICENCE"]), None);
+    }
+
+    #[test]
+    fn a_name_inside_a_longer_one_is_the_longer_ones_country() {
+        assert_eq!(
+            of(&["DEMOCRATIC PEOPLE'S REPUBLIC OF KOREA", "PASSPORT"]),
+            Some("PRK")
+        );
+        assert_eq!(of(&["REPUBLIC OF KOREA", "PASSPORT"]), Some("KOR"));
+        assert_eq!(
+            of(&["UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND"]),
+            Some("GBR")
+        );
     }
 
     #[test]
