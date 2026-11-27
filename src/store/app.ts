@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { UnlockResult } from '@/api/types'
 import { appStatus, type AppStatus, type OsLockStatus } from '@/api/app'
 import { lock } from '@/api/auth'
-import { exchangeHeld } from '@/api/imports'
+import { exchangeHeld, type ExchangeHeld } from '@/api/imports'
 import type { Provider } from '@/api/provider'
 import type { RemotePack } from '@/api/setup'
 import { syncNow, syncProvider, type SyncStatus } from '@/api/sync'
@@ -131,11 +131,12 @@ export interface AppState {
   /**
    * The transfer another app handed over through the system, as Rust holds it:
    * which arrival, and whether Import has put it on screen yet. `null` when
-   * none is held. Rust is what knows; this is a copy, kept so that what routes
-   * to Import can read it, and refreshed wherever it can go stale
-   * (`syncExchange`).
+   * none is held. Rust is what knows, and says so whenever it changes; this is
+   * a copy, kept so that what routes to Import can read it (`setExchange`).
    */
   exchange: { arrival: number; shown: boolean } | null
+  /** The newest of Rust's tellings of that to have been applied. */
+  exchangeChange: number
   update: {
     // Version + release notes of a staged update awaiting restart (null = none).
     readyVersion: string | null
@@ -178,6 +179,7 @@ export const initialApp: AppState = {
   lockedAt: 0,
   openedFile: null,
   exchange: null,
+  exchangeChange: 0,
   update: { readyVersion: null, readyNotes: null, status: null }
 }
 
@@ -408,42 +410,35 @@ export const claimOpenedFile = (): string | null => {
 // --- another app's data, handed over through the system ----------------------------
 
 /**
- * What Rust holds now: told by `exchange:received`, or asked (`syncExchange`).
+ * What Rust holds now: announced (`exchange:held`), or asked (`syncExchange`).
+ * A telling older than one already applied is dropped — the answer to the
+ * launch's question can land after the arrival that followed it.
+ *
  * A transfer not known before is new, and is routed as an opened backup is,
  * though only Settings › Import takes it: it merges into an open vault, so an
  * unlocked one is sent there at once and a locked one gets there through
  * `enterMain`. One already known is left as it is, shown or not.
  */
-export const setExchange = (arrival: number | null) => heardExchange(++exchangeAsks, arrival)
-
-// What Rust holds is heard two ways, an event and the answer to a question,
-// and an answer can land after news that is newer than it: the launch's "none"
-// after the arrival that followed it. Each is numbered when it is asked (an
-// event is asked and answered at once), and one older than what has already
-// been applied is dropped.
-let exchangeAsks = 0
-let exchangeHeard = 0
-const heardExchange = (ask: number, arrival: number | null) => {
-  if (ask < exchangeHeard) return
-  exchangeHeard = ask
-  const known = useApp.getState().exchange
-  if (arrival === (known?.arrival ?? null)) return
-  useApp.setState({ exchange: arrival === null ? null : { arrival, shown: false } })
-  if (arrival !== null && useApp.getState().flow === 'main') openSettings('import')
+export const setExchange = ({ arrival, change }: ExchangeHeld) => {
+  const state = useApp.getState()
+  if (change <= state.exchangeChange) return
+  const known = state.exchange?.arrival ?? null
+  if (arrival === known) return useApp.setState({ exchangeChange: change })
+  useApp.setState({
+    exchangeChange: change,
+    exchange: arrival === null ? null : { arrival, shown: false }
+  })
+  if (arrival !== null && state.flow === 'main') openSettings('import')
 }
 
 /**
- * Ask Rust what it holds. Called wherever the copy here can have gone stale:
- * once the shell listens (an arrival before that was never announced), after
- * the session ends (which lets go of a transfer), and after a preview or an
- * import of one (which may have spent it).
+ * Ask Rust what it holds: once the shell listens, for a transfer that arrived
+ * before it did and was never heard announced.
  */
-export const syncExchange = () => {
-  const ask = ++exchangeAsks
-  return exchangeHeld()
-    .then(arrival => heardExchange(ask, arrival))
+export const syncExchange = () =>
+  exchangeHeld()
+    .then(setExchange)
     .catch(() => {})
-}
 
 /**
  * Import put the transfer on screen, so nothing else is sent there for it. It

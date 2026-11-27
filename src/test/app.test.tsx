@@ -88,7 +88,7 @@ describe('App', () => {
   // Rust holds it, and the shell learns one is waiting by asking.
   it('learns of a transfer the app was launched with', async () => {
     seedApp({ initialized: true })
-    exchangeBackend().hold(1)
+    exchangeBackend().arriveUnheard()
     render(<App />)
 
     await waitFor(() => expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false }))
@@ -133,7 +133,7 @@ describe('unlocking', () => {
   it('offers a transfer that waited behind the lock', async () => {
     seedApp({ initialized: true })
     mockCommand('unlock', () => ({ entries: [], syncConfigured: false }))
-    exchangeBackend().hold(1, 4)
+    exchangeBackend().arriveUnheard(4)
     render(<App />)
     await waitFor(() => expect(useApp.getState().exchange).not.toBeNull())
 

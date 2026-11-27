@@ -339,8 +339,9 @@ fn end(app: &AppHandle, announce: bool, applies: impl FnOnce(&Session) -> bool) 
         if !applies(&session) {
             return false;
         }
+        let offered = offered_to(&session);
         let sealed = seal_in(&mut session, &state.keyring);
-        let ended = (sealed.live || sealed.held).then(|| announce_ended(app, sealed.live));
+        let ended = (sealed.live || sealed.held).then(|| announce_ended(app, offered));
         (sealed, ended)
     };
     if let Some(count) = sealed.count {
@@ -392,9 +393,21 @@ pub fn continue_lease(
 
 /// Ends the session under the caller's guard; the caller finishes the [`Ended`].
 pub fn end_in(app: &AppHandle, session: &mut Session) -> Ended {
-    let live = session.is_live();
+    let offered = offered_to(session);
     session.clear();
-    announce_ended(app, live)
+    announce_ended(app, offered)
+}
+
+/// The transfer from another app that `session` was offered: the one held
+/// while it is open. Read before the session is ended, and named when it is
+/// let go of, so one that lands in between — with the vault already locked —
+/// is not taken with it. `None` with no session open: one that arrived over
+/// the lock screen is still waiting for the unlock (see `exchange`).
+fn offered_to(session: &Session) -> Option<crate::exchange::Arrival> {
+    session
+        .is_live()
+        .then(crate::exchange::held)
+        .and_then(|held| held.arrival)
 }
 
 /// `vault:locked` for an end not made by [`lock`]. Only under `begin_step`, so
@@ -468,17 +481,12 @@ fn announce_opened(app: &AppHandle) {
     }
 }
 
-// `live`: whether a session was open to end. Not every caller ends one: a lock
-// may seal only held keys, and a lockbox is chosen or deleted from the lock
-// screen too.
-fn announce_ended(app: &AppHandle, live: bool) -> Ended {
+// `offered`: what another app handed over to the session that ended
+// (`offered_to`). It goes with that session, however the session ends.
+fn announce_ended(app: &AppHandle, offered: Option<crate::exchange::Arrival>) -> Ended {
     app.state::<crate::grants::PathGrants>().session_ended();
-    // What another app handed over was offered to the open session and goes
-    // with it, however that session ends. With none open there was nothing it
-    // was offered to: one that arrived over the lock screen is still waiting
-    // for the unlock (`exchange`).
-    if live {
-        crate::exchange::clear();
+    if let Some(arrival) = offered {
+        crate::exchange::release(arrival);
     }
     crate::picked::wipe(app);
     crate::autolock::disarm(app);
@@ -887,14 +895,16 @@ mod lock_scope {
         assert!(at(&end, "announce_ended(app, ") < at(&end, "ended.finish(app)"));
 
         // A transfer from another app goes with the open session however it
-        // ends, and stays when none was open. One place lets go of it, and
-        // both ends tell that place whether a session was live, as it was
-        // before they ended it.
-        let told = body_of(source, "\nfn announce_ended(");
-        assert!(at(&told, "if live {") < at(&told, "crate::exchange::clear()"));
-        assert!(end.contains("announce_ended(app, sealed.live)"));
+        // ends, and stays when none was open. Both ends read which transfer
+        // that is while the session is still what it was, and one place lets
+        // go of that transfer and no other.
+        let offered = body_of(source, "\nfn offered_to(");
+        assert!(at(&offered, ".is_live()") < at(&offered, "crate::exchange::held"));
+        assert!(at(&end, "offered_to(&session)") < at(&end, "seal_in(&mut session"));
         let end_in = body_of(source, "\npub fn end_in(");
-        assert!(at(&end_in, "session.is_live()") < at(&end_in, "session.clear()"));
+        assert!(at(&end_in, "offered_to(session)") < at(&end_in, "session.clear()"));
+        let told = body_of(source, "\nfn announce_ended(");
+        assert!(told.contains("crate::exchange::release(arrival)"));
 
         let touch = body_of(include_str!("autolock.rs"), "pub fn touch(");
         assert!(at(&touch, "session.lock()") < at(&touch, "arm(app)"));

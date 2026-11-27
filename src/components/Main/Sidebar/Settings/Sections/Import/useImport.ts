@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  claimOpenedFile,
-  exchangeShown,
-  setEntries,
-  syncExchange,
-  useApp
-} from '@/store'
+import { claimOpenedFile, exchangeShown, setEntries, useApp } from '@/store'
 import { importSwftx } from '@/api/vault'
 import {
   importEntries,
@@ -46,15 +40,13 @@ const pickedBackup = (path: string): Picked => ({
 })
 
 // How a pick's rows are read, as a dry run or for real: a file is parsed under
-// its format, a transfer is read by its number from the backend that holds it
-// — and either read may spend it (an import, a failure told once), so the
-// store's copy of what is held is refreshed after. Null for a pick with no
-// rows to preview.
+// its format, a transfer is read by its number from the backend that holds
+// it. Null for a pick with no rows to preview.
 const reader = (picked: Picked): ((dryRun: boolean) => Promise<ImportReport>) | null =>
   picked.kind === 'format'
     ? dryRun => importEntries(picked.path, picked.format, dryRun)
     : picked.kind === 'exchange'
-      ? dryRun => importExchange(picked.arrival, dryRun).finally(syncExchange)
+      ? dryRun => importExchange(picked.arrival, dryRun)
       : null
 
 // One import flow for every tile: pick or drop a file, preview it (dry run),

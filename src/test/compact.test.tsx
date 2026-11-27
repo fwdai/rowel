@@ -24,7 +24,6 @@ import {
   openGenerator,
   setCurrentEntry,
   setEntries,
-  setExchange,
   setRemoteVaults,
   setSyncStatus,
   setView,
@@ -827,11 +826,10 @@ describe('compact shell', () => {
   // arrives, that ask lands on Import's pane with the preview under way.
   it('lands a transfer from another app on the Import pane', async () => {
     const backend = exchangeBackend()
-    backend.hold(1, 2)
     seed()
     render(<Main />)
 
-    act(() => setExchange(1))
+    act(() => void backend.arrive(2))
 
     expect(useUi.getState().settings).toBe(true)
     const result = await screen.findByTestId('import-result')
@@ -845,8 +843,7 @@ describe('compact shell', () => {
 
     // A newer one arrives while another pane is showing.
     await userEvent.click(screen.getByTestId('settings-nav-security'))
-    backend.hold(2, 5)
-    act(() => setExchange(2))
+    act(() => void backend.arrive(5))
     await waitFor(() =>
       expect(screen.getByTestId('import-result')).toHaveTextContent('Ready to import: 5')
     )

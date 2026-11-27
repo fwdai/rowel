@@ -87,17 +87,16 @@ export const subscribeToEvents = (): (() => void) => {
     on(EVENTS.vaultLocked, ({ epoch }) => {
       lockHeard(epoch)
       clearSession()
-      // The end of a session lets go of a transfer that was offered to it.
-      void syncExchange()
       void showLockScreen()
     }),
     // A backup double-clicked while the app is up. The one opened *with* the
     // app is collected separately, once this is listening (see `App.tsx`).
     on(EVENTS.fileOpened, payload => fileOpened(payload.path)),
-    // Another app's data handed over while the app is up, on a phone that can
-    // take it. One that launched the app got there before this listened, so it
-    // is asked after here, which a build that never receives one answers no.
-    on(EVENTS.exchangeReceived, ({ arrival }) => setExchange(arrival)).then(unlisten => {
+    // What Rust holds of another app's data, whenever that changes: a transfer
+    // handed over while the app is up, on a phone that can take one, or the
+    // held one imported or let go of. One that launched the app got there
+    // before this listened, so it is asked after here.
+    on(EVENTS.exchangeHeld, setExchange).then(unlisten => {
       void syncExchange()
       return unlisten
     }),

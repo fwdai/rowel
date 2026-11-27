@@ -133,16 +133,16 @@ pub async fn import_exchange(
     )
     .await?;
     if !dry_run {
-        crate::exchange::imported(arrival);
+        crate::exchange::release(arrival);
     }
     Ok(report)
 }
 
-/// The transfer from another app that is held, by its number, or `null`. The
-/// webview asks wherever its own idea of it may be stale: once it listens for
-/// `exchange:received`, after a lock, and after a preview or an import.
+/// The transfer from another app that is held, if one is. Asked once the
+/// webview listens for `exchange:held`, for what it was not there to hear;
+/// from then on every change is announced.
 #[tauri::command]
-pub fn exchange_held() -> Option<crate::exchange::Arrival> {
+pub fn exchange_held() -> crate::exchange::Held {
     crate::exchange::held()
 }
 

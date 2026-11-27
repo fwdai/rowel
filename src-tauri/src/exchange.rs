@@ -8,12 +8,13 @@
 //! never in the webview, until `commands::import::import_exchange` previews it
 //! and writes it into the vault.
 //!
-//! This module is the one place that knows what is held. Each arrival has a
-//! number; the webview is told the number (`exchange:received`), asks for it
-//! whenever it may have changed (`commands::import::exchange_held`), and names
-//! it in every preview and import — so what is imported is what was previewed,
-//! and a transfer that has been replaced or let go of is refused rather than
-//! answered with another one's rows.
+//! This module is the one place that knows what is held, and it says so every
+//! time that changes (`exchange:held`): an arrival, an import, a failure told,
+//! the end of a session. The webview keeps a copy and asks once, when it
+//! starts listening (`commands::import::exchange_held`). Each transfer has a
+//! number, which every preview and import names — so what is imported is what
+//! was previewed, and a transfer that has been replaced or let go of is
+//! refused rather than answered with another one's rows.
 //!
 //! A newer arrival replaces an older one. Otherwise a transfer is held until
 //! it is imported or until the open session it was offered to ends — a lock,
@@ -25,6 +26,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use serde::Serialize;
 use tauri::AppHandle;
 use zeroize::Zeroizing;
 
@@ -33,9 +35,19 @@ use crate::error::{Error, Result};
 /// As large as an export file may be (`commands::import`).
 const MAX_BYTES: usize = 25 * 1024 * 1024;
 
-/// Which transfer: the count of arrivals when it came, so never reused within
+/// Which transfer: the count of changes when it came, so never reused within
 /// a run of the app.
 pub type Arrival = u64;
+
+/// What is held, as the webview is told: which transfer, if any, and the
+/// count of changes that answer has been through. The count is what puts two
+/// tellings in order when they reach the webview out of it — an event sent
+/// from another thread, the answer to a question asked before the news.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Held {
+    pub arrival: Option<Arrival>,
+    pub change: u64,
+}
 
 /// What the native side delivered: the document, or why there is none.
 enum Delivered {
@@ -45,20 +57,45 @@ enum Delivered {
 
 struct Slot {
     held: Option<(Arrival, Delivered)>,
-    arrivals: Arrival,
+    changes: u64,
+}
+
+impl Slot {
+    fn told(&self) -> Held {
+        Held {
+            arrival: self.held.as_ref().map(|(arrival, _)| *arrival),
+            change: self.changes,
+        }
+    }
+
+    /// Put `held` in the slot, and say what the webview is to be told of it.
+    fn set(&mut self, held: Option<Delivered>) -> Held {
+        self.changes += 1;
+        self.held = held.map(|delivered| (self.changes, delivered));
+        self.told()
+    }
 }
 
 // Process-wide rather than in `AppState`: the native side calls in with no
 // handle, and on a launch may do so before the app has one.
 static SLOT: Mutex<Slot> = Mutex::new(Slot {
     held: None,
-    arrivals: 0,
+    changes: 0,
 });
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
-/// Let an arrival be announced. Before this, one is only parked.
+/// Let changes be announced. Before this, a transfer is only parked, and the
+/// webview learns of it by asking.
 pub fn init(app: &AppHandle) {
     let _ = APP.set(app.clone());
+}
+
+// Told outside the slot's lock, so in no particular order across threads:
+// `Held::change` is what orders it on the other side.
+fn announce(held: Held) {
+    if let Some(app) = APP.get() {
+        crate::events::exchange_held(app, held);
+    }
 }
 
 /// Park a document and announce it.
@@ -78,24 +115,13 @@ fn failed(reason: &str) {
 }
 
 fn hold(delivered: Delivered) {
-    let arrival = {
-        let mut slot = SLOT.lock().unwrap();
-        slot.arrivals += 1;
-        slot.held = Some((slot.arrivals, delivered));
-        slot.arrivals
-    };
-    if let Some(app) = APP.get() {
-        crate::events::exchange_received(app, arrival);
-    }
+    let held = SLOT.lock().unwrap().set(Some(delivered));
+    announce(held);
 }
 
-/// The transfer that is held, if one is.
-pub fn held() -> Option<Arrival> {
-    SLOT.lock()
-        .unwrap()
-        .held
-        .as_ref()
-        .map(|(arrival, _)| *arrival)
+/// What is held now.
+pub fn held() -> Held {
+    SLOT.lock().unwrap().told()
 }
 
 /// The document of `arrival`, which stays held: a preview reads it and the
@@ -104,34 +130,32 @@ pub fn held() -> Option<Arrival> {
 /// replaced, imported or let go of.
 pub fn document(arrival: Arrival) -> Result<Zeroizing<Vec<u8>>> {
     let mut slot = SLOT.lock().unwrap();
-    match slot.held.take() {
-        Some((held, Delivered::Document(document))) if held == arrival => {
-            let copy = document.clone();
-            slot.held = Some((held, Delivered::Document(document)));
-            Ok(copy)
+    match &slot.held {
+        Some((held, Delivered::Document(document))) if *held == arrival => Ok(document.clone()),
+        Some((held, Delivered::Failed(reason))) if *held == arrival => {
+            let reason = reason.clone();
+            let gone = slot.set(None);
+            drop(slot);
+            announce(gone);
+            Err(Error::Other(reason))
         }
-        Some((held, Delivered::Failed(reason))) if held == arrival => Err(Error::Other(reason)),
-        other => {
-            slot.held = other;
-            Err(Error::Other(
-                "that transfer is no longer waiting; export from the other app again".into(),
-            ))
-        }
+        _ => Err(Error::Other(
+            "that transfer is no longer waiting; export from the other app again".into(),
+        )),
     }
 }
 
-/// Let go of `arrival`, which was imported. Whatever arrived after it, while
-/// the import ran, is a different transfer and stays.
-pub fn imported(arrival: Arrival) {
-    let mut slot = SLOT.lock().unwrap();
-    if matches!(slot.held, Some((held, _)) if held == arrival) {
-        slot.held = None;
-    }
-}
-
-/// Forget whatever is held: the session it was offered to ended.
-pub fn clear() {
-    SLOT.lock().unwrap().held = None;
+/// Let go of `arrival`: it was imported, or the session it was offered to
+/// ended. Whatever arrived after it is a different transfer and stays.
+pub fn release(arrival: Arrival) {
+    let gone = {
+        let mut slot = SLOT.lock().unwrap();
+        if !matches!(slot.held, Some((held, _)) if held == arrival) {
+            return;
+        }
+        slot.set(None)
+    };
+    announce(gone);
 }
 
 /// Whether this device can receive a transfer at all: iOS 26 or later. Only
@@ -190,6 +214,10 @@ mod native {
 mod tests {
     use super::*;
 
+    fn arrival() -> Arrival {
+        held().arrival.unwrap()
+    }
+
     fn read(arrival: Arrival) -> Vec<u8> {
         document(arrival).unwrap().to_vec()
     }
@@ -197,49 +225,57 @@ mod tests {
     // The state is one per process, so the cases share a test rather than
     // race each other across threads.
     #[test]
-    fn a_transfer_is_held_by_number_until_its_import_or_a_lock() {
-        clear();
-        assert_eq!(held(), None);
+    fn a_transfer_is_held_by_number_until_it_is_released() {
+        if let Some(left) = held().arrival {
+            release(left);
+        }
+        let before = held();
+        assert_eq!(before.arrival, None);
 
         accept(b"{\"accounts\":[]}");
-        let first = held().unwrap();
-        // A preview and the import after it read the same document.
+        let first = arrival();
+        // Every change to what is held counts, so a telling of it can be put
+        // in order against any other.
+        assert!(held().change > before.change);
+        // A preview and the import after it read the same document, and
+        // reading changes nothing.
+        let unread = held();
         assert_eq!(read(first), b"{\"accounts\":[]}");
         assert_eq!(read(first), b"{\"accounts\":[]}");
-        imported(first);
-        assert_eq!(held(), None);
-        // Imported is gone: it cannot be written twice.
+        assert_eq!(held(), unread);
+        release(first);
+        assert_eq!(held().arrival, None);
+        assert!(held().change > unread.change);
+        // Released is gone: it cannot be written twice.
         assert!(document(first).is_err());
 
         failed("the user cancelled");
-        let cancelled = held().unwrap();
+        let cancelled = arrival();
         assert_ne!(cancelled, first);
         let Err(Error::Other(reason)) = document(cancelled) else {
             panic!("a failed transfer has no document");
         };
         assert_eq!(reason, "the user cancelled");
         // Told once.
-        assert_eq!(held(), None);
+        assert_eq!(held().arrival, None);
 
         // A newer arrival replaces an older one. The older is then refused
-        // rather than answered with the newer one's document, and its import
-        // finishing late lets go of nothing.
+        // rather than answered with the newer one's document, and letting go
+        // of it — its import finishing late, or the session it was offered to
+        // ending just as the newer one lands — takes nothing of the newer.
         accept(b"old");
-        let old = held().unwrap();
+        let old = arrival();
         accept(b"new");
-        let new = held().unwrap();
+        let new = arrival();
         assert!(document(old).is_err());
-        imported(old);
-        assert_eq!(held(), Some(new));
+        let untouched = held();
+        release(old);
+        assert_eq!(held(), untouched);
         assert_eq!(read(new), b"new");
-
-        // A lock lets go of whatever is there.
-        clear();
-        assert_eq!(held(), None);
-        assert!(document(new).is_err());
+        release(new);
 
         accept(&vec![0u8; MAX_BYTES + 1]);
-        assert!(document(held().unwrap()).is_err());
-        clear();
+        assert!(document(arrival()).is_err());
+        assert_eq!(held().arrival, None);
     }
 }

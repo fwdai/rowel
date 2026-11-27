@@ -15,7 +15,7 @@ pub const VAULT_LOCKED: &str = "vault:locked";
 pub const VAULT_MERGED: &str = "vault:merged";
 pub const SYNC_STATUS: &str = "sync:status";
 pub const IMPORT_PROGRESS: &str = "import:progress";
-pub const EXCHANGE_RECEIVED: &str = "exchange:received";
+pub const EXCHANGE_HELD: &str = "exchange:held";
 pub const SETUP_ACCOUNT_PENDING: &str = "setup:account:pending";
 pub const SETUP_ACCOUNT_PROBED: &str = "setup:account:probed";
 pub const SETUP_ACCOUNT_ERROR: &str = "setup:account:error";
@@ -120,16 +120,11 @@ pub fn import_progress(app: &AppHandle, done: usize, total: usize) {
     let _ = app.emit(IMPORT_PROGRESS, Progress { done, total });
 }
 
-/// Another password manager handed its credentials over (see
-/// `crate::exchange`). Says only which transfer is waiting: the credentials
-/// stay in the core.
-pub fn exchange_received(app: &AppHandle, arrival: crate::exchange::Arrival) {
-    let _ = app.emit(EXCHANGE_RECEIVED, Arrived { arrival });
-}
-
-#[derive(Serialize, Clone)]
-struct Arrived {
-    arrival: crate::exchange::Arrival,
+/// What another password manager handed over, and the core holds, changed
+/// (see `crate::exchange`): one arrived, or was imported or let go of. Says
+/// only which transfer is held now: the credentials stay in the core.
+pub fn exchange_held(app: &AppHandle, held: crate::exchange::Held) {
+    let _ = app.emit(EXCHANGE_HELD, held);
 }
 
 pub fn setup_account_pending(app: &AppHandle) {

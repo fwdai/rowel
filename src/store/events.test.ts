@@ -325,11 +325,11 @@ describe('nearby:status', () => {
   })
 })
 
-describe('exchange:received', () => {
+describe('exchange:held', () => {
   it('sends an unlocked vault to Settings › Import', () => {
     flowMain()
 
-    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
 
     expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
     expect(useUi.getState().settings).toBe(true)
@@ -337,7 +337,7 @@ describe('exchange:received', () => {
   })
 
   it('waits behind a lock, for the unlock that can import it', async () => {
-    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
 
     expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
     expect(useUi.getState().settings).toBe(false)
@@ -346,28 +346,59 @@ describe('exchange:received', () => {
     expect(useUi.getState().settingsSection).toBe('import')
   })
 
-  // The store's copy is of what the backend holds, so hearing of the same
-  // transfer again changes nothing: not whether it was shown, and not where
-  // the user is.
+  // The backend says what it holds every time that changes: an import, or the
+  // end of the session a transfer was offered to (a lock, another lockbox),
+  // lets go of it, and the copy here follows without anything having to ask.
+  it('forgets a transfer the backend let go of', () => {
+    flowMain()
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
+    exchangeShown(1)
+
+    handlerFor(EVENTS.exchangeHeld)({ arrival: null, change: 2 })
+
+    expect(useApp.getState().exchange).toBeNull()
+  })
+
+  // Hearing of the transfer it already knows changes nothing: not whether it
+  // was shown, and not where the user is. A newer one is offered.
   it('leaves a transfer it already knows as it is', () => {
     flowMain()
-    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
     exchangeShown(1)
     closeSettings()
 
-    setExchange(1)
+    setExchange({ arrival: 1, change: 2 })
 
     expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: true })
     expect(useUi.getState().settings).toBe(false)
 
-    // A newer one is a different transfer, and is offered.
-    setExchange(2)
-    expect(useApp.getState().exchange).toEqual({ arrival: 2, shown: false })
+    setExchange({ arrival: 3, change: 3 })
+    expect(useApp.getState().exchange).toEqual({ arrival: 3, shown: false })
     expect(useUi.getState().settings).toBe(true)
   })
 
+  // Tellings reach the webview out of order: an event sent from another
+  // thread, the answer to the launch's question after the arrival that
+  // followed it. Each says how many changes it has seen, and an older one
+  // never undoes a newer.
+  it('drops a telling older than one it has applied', async () => {
+    const launch = deferred<{ arrival: number | null; change: number }>()
+    mockCommand('exchange_held', () => launch.promise)
+    const asked = syncExchange()
+
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
+    launch.resolve({ arrival: null, change: 0 })
+    await asked
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
+
+    // Two events the wrong way round: the import's, then the arrival's.
+    handlerFor(EVENTS.exchangeHeld)({ arrival: null, change: 3 })
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 2, change: 2 })
+    expect(useApp.getState().exchange).toBeNull()
+  })
+
   it('asks once listening, for a transfer that arrived first', async () => {
-    mockCommand('exchange_held', () => 7)
+    mockCommand('exchange_held', () => ({ arrival: 7, change: 7 }))
     clearCalls('exchange_held')
 
     subscribeToEvents()
@@ -378,81 +409,11 @@ describe('exchange:received', () => {
     expect(calls('exchange_held')).toHaveLength(1)
   })
 
-  // The launch asks, and the answer can be slower than the arrival that
-  // follows it: "none" as of the question must not undo what was heard since.
-  it('drops an answer that newer news has overtaken', async () => {
-    const launch = deferred<number | null>()
-    mockCommand('exchange_held', () => launch.promise)
-    const asked = syncExchange()
-
-    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
-    launch.resolve(null)
-    await asked
-
-    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
-  })
-
-  // Two questions in flight are applied in the order they were asked, whichever
-  // answer lands first: the later question saw the later state.
-  it('lets the later of two questions have the last word', async () => {
-    const first = deferred<number | null>()
-    const second = deferred<number | null>()
-    mockCommand('exchange_held', () => first.promise)
-    const earlier = syncExchange()
-    mockCommand('exchange_held', () => second.promise)
-    const later = syncExchange()
-
-    second.resolve(2)
-    await later
-    first.resolve(null)
-    await earlier
-    expect(useApp.getState().exchange).toEqual({ arrival: 2, shown: false })
-
-    // And in the order asked, both are heard.
-    const third = deferred<number | null>()
-    const fourth = deferred<number | null>()
-    mockCommand('exchange_held', () => third.promise)
-    const a = syncExchange()
-    mockCommand('exchange_held', () => fourth.promise)
-    const b = syncExchange()
-    third.resolve(2)
-    await a
-    fourth.resolve(null)
-    await b
-    expect(useApp.getState().exchange).toBeNull()
-  })
-
   it('offers nothing where none is held', async () => {
     await vi.waitFor(() => expect(calls('exchange_held')).toHaveLength(1))
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(useApp.getState().exchange).toBeNull()
-  })
-
-  // A lock lets go of a transfer that was offered to the session it ended, in
-  // the backend. The store asks rather than assumes: one that arrived over the
-  // lock screen is still held.
-  it('asks again after a lock, which may have let go of it', async () => {
-    flowMain()
-    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
-    exchangeShown(1)
-    mockCommand('exchange_held', () => null)
-
-    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
-
-    await vi.waitFor(() => expect(useApp.getState().exchange).toBeNull())
-  })
-
-  it('keeps a transfer the lock did not let go of', async () => {
-    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
-    mockCommand('exchange_held', () => 1)
-    clearCalls('exchange_held')
-
-    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
-
-    await vi.waitFor(() => expect(calls('exchange_held')).toHaveLength(1))
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
   })
 })
 
