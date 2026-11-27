@@ -15,6 +15,9 @@ export interface ImportApp {
   brand?: Brand
   name: TKey
   hint: TKey
+  // The hint on a device this app can hand its data to directly, where the
+  // tile explains that instead of picking an export file (see `Tiles`).
+  exchangeHint?: TKey
   format: ImportFormat
   featured?: boolean
 }
@@ -26,6 +29,7 @@ export const APPS: ImportApp[] = [
     badge: 'AP',
     name: 'Apple Passwords',
     hint: 'iCloud Keychain, .csv export',
+    exchangeHint: 'Export from the Passwords app',
     format: 'apple',
     featured: true
   },

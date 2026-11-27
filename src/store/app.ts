@@ -127,6 +127,13 @@ export interface AppState {
    * screen that takes it (`claimOpenedFile`).
    */
   openedFile: string | null
+  /**
+   * Another app's data, handed over through the system (`exchange:received`)
+   * and held in Rust, waiting for Settings › Import as an opened file does.
+   * Only that it waits is known here; cleared by the screen that takes it
+   * (`claimExchange`).
+   */
+  exchangePending: boolean
   update: {
     // Version + release notes of a staged update awaiting restart (null = none).
     readyVersion: string | null
@@ -168,6 +175,7 @@ export const initialApp: AppState = {
   locks: 0,
   lockedAt: 0,
   openedFile: null,
+  exchangePending: false,
   update: { readyVersion: null, readyNotes: null, status: null }
 }
 
@@ -342,9 +350,11 @@ export const enterMain = async (result: UnlockResult): Promise<boolean> => {
   if (result.session < useApp.getState().lockedAt) return false
   setEntries(result.entries)
   flowMain()
-  // A backup the OS opened while the vault was locked (or before it existed)
-  // has waited for this: the only screen that can import it is now reachable.
-  if (useApp.getState().openedFile) openSettings('import')
+  // A backup the OS opened while the vault was locked (or before it existed),
+  // or another app's data handed over then, has waited for this: the only
+  // screen that can import it is now reachable.
+  const waiting = useApp.getState()
+  if (waiting.openedFile || waiting.exchangePending) openSettings('import')
   // Not on mobile, where focusing raises the on-screen keyboard.
   else if (!isMobile) focusSearch()
   // The unlock result carries whether this vault syncs; everything else about
@@ -393,6 +403,22 @@ export const claimOpenedFile = (): string | null => {
   if (path) useApp.setState({ openedFile: null })
   return path
 }
+
+// --- another app's data, handed over through the system ----------------------------
+
+/**
+ * Another password manager handed its data over, and Rust holds it. Routed as
+ * an opened backup is, but only Settings › Import takes it: it merges into an
+ * open vault, so an unlocked one is sent there at once and a locked one gets
+ * there through `enterMain`.
+ */
+export const exchangeReceived = () => {
+  useApp.setState({ exchangePending: true })
+  if (useApp.getState().flow === 'main') openSettings('import')
+}
+
+/** Import took the transfer, so it is not offered again. */
+export const claimExchange = () => useApp.setState({ exchangePending: false })
 
 // --- sync -----------------------------------------------------------------------
 

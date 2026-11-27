@@ -73,6 +73,14 @@ export interface EventPayloads {
    */
   'file:opened': { path: string }
   /**
+   * Another password manager handed its data to the app through the system
+   * (iOS 26's "Export Data to Another App"). No payload: Rust holds the data,
+   * and the import that reads it answers with a report only. One that arrived
+   * before the shell listened is asked after (`exchangePending` in
+   * `api/imports`); both end up in `store/app`'s `exchangeReceived`.
+   */
+  'exchange:received': void
+  /**
    * A client — a browser extension, or an agent — asks to be let in. `key` is
    * its identification public key, base64, for the consent dialog to show a
    * fingerprint of; `id` names this ask, and the answer goes back through
@@ -150,6 +158,7 @@ export const EVENTS: { [K in EventName as Camel<K>]: K } = {
   workspacesAdded: 'workspaces:added',
   workspacesRenamed: 'workspaces:renamed',
   fileOpened: 'file:opened',
+  exchangeReceived: 'exchange:received',
   browserAssociate: 'browser:associate',
   browserPasskey: 'browser:passkey',
   browserClients: 'browser:clients',

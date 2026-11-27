@@ -72,6 +72,18 @@ where
     })
 }
 
+/// A flag, however the producer wrote it; anything that is not a yes is a no.
+pub(crate) fn lenient_bool<'de, D>(d: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Bool(b) => b,
+        serde_json::Value::String(s) => s.trim().eq_ignore_ascii_case("true"),
+        _ => false,
+    })
+}
+
 /// A member a producer writes as `null` where a list belongs: read as empty.
 /// `#[serde(default)]` covers an absent member only; an explicit `null` would
 /// otherwise fail `from_slice` for the whole document.

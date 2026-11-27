@@ -10,6 +10,7 @@ import type { RemotePack } from '@/api/setup'
 import {
   auditDone,
   closeSettings,
+  exchangeReceived,
   fileOpened,
   flowMain,
   initialApp,
@@ -1437,6 +1438,18 @@ describe('Settings › vault audit', () => {
 })
 
 describe('Settings › import', () => {
+  // What `import_exchange` answers for three rows: a preview, or the write.
+  const exchanged = (dryRun: boolean) => ({
+    total: 3,
+    imported: dryRun ? 0 : 3,
+    skipped: 0,
+    duplicates: 0,
+    dryRun,
+    errors: [],
+    warnings: [],
+    entries: []
+  })
+
   it('imports a .swftx file with the source password', async () => {
     mockCommand('pick_file', () => '/tmp/other.swftx')
     mockCommand('import_swftx', () => 3)
@@ -1564,6 +1577,130 @@ describe('Settings › import', () => {
     act(() => lockSettings(false))
     expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
     expect(await screen.findByText('Rowel backup 2026-10-01.rowel')).toBeInTheDocument()
+  })
+
+  // Another password manager handed its data over while this vault is open:
+  // Settings opens on Import with a preview of it, from the backend that holds
+  // it. It came from the OS, so no tile is lit and there is no file to name.
+  it('previews what another app handed over, and imports it', async () => {
+    mockCommand('import_exchange', args => exchanged(args.dryRun === true))
+    flowMain()
+    render(<Settings />)
+
+    exchangeReceived()
+
+    expect(useUi.getState().settings).toBe(true)
+    expect(useUi.getState().settingsSection).toBe('import')
+    const result = await screen.findByTestId('import-result')
+    expect(result).toHaveTextContent('From another app')
+    await waitFor(() => expect(result).toHaveTextContent('Ready to import: 3'))
+    expect(calls('import_exchange')).toEqual([{ dryRun: true }])
+    expect(calls('import_entries')).toEqual([])
+    expect(useApp.getState().exchangePending).toBe(false)
+    for (const tile of screen.getAllByTestId(/^import-tile-/)) expect(tile).not.toHaveClass(PICKED)
+    // Nobody tapped anything, and on a phone the card is below the tiles.
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(result)
+
+    await userEvent.click(screen.getByTestId('import-commit'))
+
+    await waitFor(() => expect(result).toHaveTextContent('Imported 3'))
+    expect(calls('import_exchange')).toEqual([{ dryRun: true }, { dryRun: false }])
+    expect(screen.queryByTestId('import-commit')).not.toBeInTheDocument()
+    // Published like any other import.
+    await waitFor(() => expect(calls('sync_now')).toHaveLength(1))
+  })
+
+  // The transfer itself can fail (the other app sent nothing, the user backed
+  // out), and a lock drops one that was held: the backend says which.
+  it('says why when what another app handed over cannot be previewed', async () => {
+    mockCommand('import_exchange', () =>
+      Promise.reject({ kind: 'other', message: 'the transfer did not complete' })
+    )
+    flowMain()
+    render(<Settings />)
+
+    exchangeReceived()
+
+    expect(await screen.findByTestId('import-error')).toHaveTextContent(
+      'the transfer did not complete'
+    )
+    expect(screen.getByTestId('import-result')).toHaveTextContent('From another app')
+    expect(screen.queryByTestId('import-commit')).not.toBeInTheDocument()
+  })
+
+  // A page over Import steps aside for it, as it does for an opened file.
+  it('steps the restore page aside for what another app hands over', async () => {
+    mockCommand('import_exchange', args => exchanged(args.dryRun === true))
+    flowMain()
+    render(<Settings />)
+    fileOpened('/tmp/Rowel backup 2026-09-15.rowel')
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
+
+    act(() => exchangeReceived())
+
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(await screen.findByTestId('import-result')).toHaveTextContent('From another app')
+    expect(useApp.getState().exchangePending).toBe(false)
+  })
+
+  // On an iPhone that takes such a transfer there is no CSV to pick: Passwords
+  // hands its data over itself, starting from its own menu. The tile says so
+  // where a result would show, and still takes its export file from there.
+  it('explains the transfer on the Apple tile where the device takes one', async () => {
+    mockCommand('exchange_supported', () => true)
+    mockCommand('pick_file', () => '/tmp/Passwords.csv')
+    await open()
+    await go('import')
+
+    const tile = screen.getByTestId('import-tile-apple')
+    await waitFor(() => expect(tile).toHaveTextContent('Export from the Passwords app'))
+    await userEvent.click(tile)
+
+    expect(screen.getByTestId('import-exchange-guide')).toHaveTextContent(
+      'In the Passwords app, choose Export Data to Another App and pick Rowel. Rowel opens with a preview of what will be imported, passkeys included.'
+    )
+    expect(screen.getByTestId('import-result')).toHaveTextContent('Apple Passwords')
+    expect(tile).toHaveClass(PICKED)
+    expect(calls('pick_file')).toEqual([])
+    expect(calls('import_entries')).toEqual([])
+
+    const file = screen.getByTestId('import-exchange-file')
+    expect(file).toHaveTextContent('Import a .csv file instead')
+    await userEvent.click(file)
+
+    await waitFor(() =>
+      expect(calls('import_entries')).toEqual([
+        { path: '/tmp/Passwords.csv', format: 'apple', dryRun: true }
+      ])
+    )
+    expect(calls('pick_file')).toEqual([{ kind: 'import', label: 'Password exports' }])
+    expect(screen.queryByTestId('import-exchange-guide')).not.toBeInTheDocument()
+    expect(tile).toHaveClass(PICKED)
+  })
+
+  // Only the tile of the app that hands its data over changes.
+  it('leaves every other tile a file picker on such a device', async () => {
+    mockCommand('exchange_supported', () => true)
+    mockCommand('pick_file', () => '/tmp/bitwarden.json')
+    await open()
+    await go('import')
+    await waitFor(() =>
+      expect(screen.getByTestId('import-tile-apple')).toHaveTextContent(
+        'Export from the Passwords app'
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('import-tile-bitwarden'))
+
+    await waitFor(() =>
+      expect(calls('import_entries')).toContainEqual({
+        path: '/tmp/bitwarden.json',
+        format: 'bitwarden',
+        dryRun: true
+      })
+    )
+    expect(screen.queryByTestId('import-exchange-guide')).not.toBeInTheDocument()
   })
 
   // The backup card offers our own `.rowel` too, and takes it as the OS-opened
@@ -1705,6 +1842,9 @@ describe('Settings › import', () => {
     await open()
     await go('import')
 
+    expect(screen.getByTestId('import-tile-apple')).toHaveTextContent(
+      'iCloud Keychain, .csv export'
+    )
     await userEvent.click(screen.getByTestId('import-tile-apple'))
     await waitFor(() =>
       expect(calls('import_entries')).toContainEqual({
@@ -1713,6 +1853,8 @@ describe('Settings › import', () => {
         dryRun: true
       })
     )
+    expect(calls('pick_file')).toEqual([{ kind: 'import', label: 'Password exports' }])
+    expect(screen.queryByTestId('import-exchange-guide')).not.toBeInTheDocument()
     expect(screen.getByTestId('import-tile-apple')).toHaveClass(PICKED)
     const other = screen.getByTestId('import-tile-other')
     expect(other).not.toHaveClass(PICKED)

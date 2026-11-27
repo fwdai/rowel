@@ -23,6 +23,8 @@
 		9E61E9F83C2D04A1737197C3 /* Unlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF78BC9AE68001C82E277A1B /* Unlock.swift */; };
 		BAAE254D2339BFCEA0C692C2 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 6647F7ADF78A32F48D519D9D /* LaunchScreen.storyboard */; };
 		BF0A76B8E6F7ACCAEC4E7E90 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 318CF822B4E685B317B920E5 /* main.mm */; };
+		278A3A655F21E23B99586E76 /* CredentialExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77490106262E73ECD78A1A1A /* CredentialExchange.swift */; };
+		3DCEF44532EDD946F10CEA3E /* UserActivityTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BA4CBBE1C3A449EFA82FEDC /* UserActivityTap.swift */; };
 		BFDDFB742CCDA0C7FD2B4A73 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 91570566E86B52F6F36F5B3B /* Assets.xcassets */; };
 		D5718EB75A3E89204B945C81 /* LocalAuthentication.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 034C79AA96D3A5EE42A40E60 /* LocalAuthentication.framework */; };
 		D6357E220ED39FC7BC8D45F5 /* AuthenticationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 71AD19608DC287D12887856C /* AuthenticationServices.framework */; };
@@ -66,6 +68,9 @@
 		280B266DF6CB99EC4B5B0CE0 /* error.rs */ = {isa = PBXFileReference; path = error.rs; sourceTree = "<group>"; };
 		2BAAA92C0949C5E191FD8E27 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		318CF822B4E685B317B920E5 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		A7261EC022D06F2C2EA9DEAF /* CredentialExchange.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CredentialExchange.h; sourceTree = "<group>"; };
+		77490106262E73ECD78A1A1A /* CredentialExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialExchange.swift; sourceTree = "<group>"; };
+		1BA4CBBE1C3A449EFA82FEDC /* UserActivityTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserActivityTap.swift; sourceTree = "<group>"; };
 		33F4F705160C2BC01E1E860C /* rowel_autofillFFI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = rowel_autofillFFI.h; sourceTree = "<group>"; };
 		34C03E3A13EBC6D56DC86432 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
 		369A7B386AD08EF0BA349562 /* generator.rs */ = {isa = PBXFileReference; path = generator.rs; sourceTree = "<group>"; };
@@ -308,7 +313,10 @@
 		9DCC963F1AC0DBFA411A30D9 /* rowel */ = {
 			isa = PBXGroup;
 			children = (
+				A7261EC022D06F2C2EA9DEAF /* CredentialExchange.h */,
+				77490106262E73ECD78A1A1A /* CredentialExchange.swift */,
 				318CF822B4E685B317B920E5 /* main.mm */,
+				1BA4CBBE1C3A449EFA82FEDC /* UserActivityTap.swift */,
 				B166761E20AB134825D196D3 /* bindings */,
 			);
 			path = rowel;
@@ -588,6 +596,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				BF0A76B8E6F7ACCAEC4E7E90 /* main.mm in Sources */,
+				278A3A655F21E23B99586E76 /* CredentialExchange.swift in Sources */,
+				3DCEF44532EDD946F10CEA3E /* UserActivityTap.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -659,6 +669,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.mobile;
 				PRODUCT_NAME = "Rowel";
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = Sources/rowel/CredentialExchange.h;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 			};
@@ -722,6 +733,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = app.rowel.mobile;
 				PRODUCT_NAME = "Rowel";
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = Sources/rowel/CredentialExchange.h;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 			};

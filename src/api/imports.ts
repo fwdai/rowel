@@ -42,6 +42,27 @@ export const importEntries = (
 ): Promise<ImportReport> => call('import_entries', { path, format, dryRun })
 
 /**
+ * Whether this device can be handed another password manager's data by the
+ * system (iOS 26's "Export Data to Another App"). Nowhere else is it true.
+ */
+export const exchangeSupported = (): Promise<boolean> => call('exchange_supported')
+
+/**
+ * Whether such a transfer is waiting. Rust fetches and holds it, and says so
+ * as `exchange:received`; this is for one that arrived before the webview was
+ * listening. Asking takes nothing.
+ */
+export const exchangePending = (): Promise<boolean> => call('exchange_pending')
+
+/**
+ * `importEntries` for the transfer Rust holds: previewed on a dry run, written
+ * and let go of otherwise. Only the report ever reaches the webview. Rejects
+ * when nothing is held (a lock drops it) or the transfer itself failed.
+ */
+export const importExchange = (dryRun: boolean): Promise<ImportReport> =>
+  call('import_exchange', { dryRun })
+
+/**
  * Write the whole vault, in plaintext, to a file the user picks in the save
  * dialog. `password` must be the master password — the same proof the
  * encrypted `exportVault` asks for; a wrong one rejects `invalidPassword`.

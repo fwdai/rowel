@@ -32,11 +32,12 @@ export interface SubpageState extends SubpageNav {
  * OS opened, the palette), which knows nothing of what the shell holds. One
  * left behind that way is let go here.
  *
- * A page over Import steps aside for a file the OS opens meanwhile: Import is
- * the section that takes such a file, `openSettings('import')` moves nothing
- * when Import is already showing, and under a page the section does not claim
- * it: it is not there to (the wide shell), or leaves it waiting (the phone,
- * see `useImport`). While Settings is locked the page stays and the file
+ * A page over Import steps aside for a file the OS opens meanwhile, and for
+ * another app's data handed over then (`exchangePending`), which waits the
+ * same way: Import is the section that takes such a file,
+ * `openSettings('import')` moves nothing when Import is already showing, and
+ * under a page the section does not claim it: it is not there to (the wide
+ * shell), or leaves it waiting (the phone, see `useImport`). While Settings is locked the page stays and the file
  * waits, and the page steps aside once the lock is released.
  *
  * Under the section lock: while Settings may not be left (`settingsLocked`) a
@@ -50,8 +51,8 @@ export interface SubpageState extends SubpageNav {
 export function useSubpageState(section: Section | null): SubpageState {
   const [held, setHeld] = useState<Held | null>(null)
   const locked = useUi(state => state.settingsLocked)
-  const fileWaiting = useApp(state => state.openedFile !== null)
-  const yields = section === 'import' && fileWaiting && !locked
+  const waiting = useApp(state => state.openedFile !== null || state.exchangePending)
+  const yields = section === 'import' && waiting && !locked
   const subpage = held && held.section === section && !yields ? held.page : null
   if (held && !subpage) setHeld(null)
 

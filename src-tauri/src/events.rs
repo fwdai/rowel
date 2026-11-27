@@ -15,6 +15,7 @@ pub const VAULT_LOCKED: &str = "vault:locked";
 pub const VAULT_MERGED: &str = "vault:merged";
 pub const SYNC_STATUS: &str = "sync:status";
 pub const IMPORT_PROGRESS: &str = "import:progress";
+pub const EXCHANGE_RECEIVED: &str = "exchange:received";
 pub const SETUP_ACCOUNT_PENDING: &str = "setup:account:pending";
 pub const SETUP_ACCOUNT_PROBED: &str = "setup:account:probed";
 pub const SETUP_ACCOUNT_ERROR: &str = "setup:account:error";
@@ -117,6 +118,12 @@ pub fn os_lock_status(app: &AppHandle, status: crate::autolock::OsLockStatus) {
 
 pub fn import_progress(app: &AppHandle, done: usize, total: usize) {
     let _ = app.emit(IMPORT_PROGRESS, Progress { done, total });
+}
+
+/// Another password manager handed its credentials over (see
+/// `crate::exchange`). Says only that they are waiting: they stay in the core.
+pub fn exchange_received(app: &AppHandle) {
+    let _ = app.emit(EXCHANGE_RECEIVED, ());
 }
 
 pub fn setup_account_pending(app: &AppHandle) {

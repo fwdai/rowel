@@ -639,6 +639,43 @@ fn cxf_maps_every_credential_type_on_one_item() {
 
 // Nothing but passkeys: still a login, named after the credential since there
 // is no basic-auth to name it.
+// The shape Apple's Passwords hands over through credential exchange: the
+// star is the item's own member, and the dates are Unix seconds.
+#[test]
+fn cxf_reads_the_items_own_favorite_flag() {
+    let json = br#"{
+      "version": {"major": 1, "minor": 0},
+      "exporterRpId": "apple.com", "exporterDisplayName": "Apple Passwords", "timestamp": 1700000000,
+      "accounts": [{"id": "Bw", "username": "me", "email": "me@example.com", "collections": [], "items": [
+        {"id": "AQ", "creationAt": 1700000000, "modifiedAt": 1700000000, "title": "Starred", "favorite": true,
+         "scope": {"urls": ["https://a.example"], "androidApps": []}, "tags": [],
+         "credentials": [{"type": "basic-auth",
+            "username": {"fieldType": "string", "value": "me"},
+            "password": {"id": "cA", "fieldType": "concealed-string", "value": "pw"}}]},
+        {"id": "Ag", "title": "Plain", "favorite": false,
+         "credentials": [{"type": "note", "content": {"fieldType": "string", "value": "n"}}]},
+        {"id": "Aw", "title": "Odd", "favorite": "yes",
+         "credentials": [{"type": "note", "content": {"fieldType": "string", "value": "n"}}]}
+      ]}]}"#;
+    let r = parse(Format::Cxf, json);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let starred: Vec<(&str, bool)> = r
+        .entries
+        .iter()
+        .map(|e| (e.title.as_str(), e.favorite))
+        .collect();
+    // Anything that is not a plain yes reads as no rather than failing the file.
+    assert_eq!(
+        starred,
+        [("Starred", true), ("Plain", false), ("Odd", false)]
+    );
+    assert_eq!(r.entries[0].password.as_deref(), Some("pw"));
+    assert_eq!(
+        r.entries[0].created_at.as_deref(),
+        Some("2023-11-14T22:13:20+00:00")
+    );
+}
+
 #[test]
 fn cxf_passkey_only_item_becomes_a_passkey_only_login() {
     let json = br#"{"version":{"major":1,"minor":0},"accounts":[{"items":[

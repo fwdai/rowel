@@ -6,5 +6,13 @@
 	     biometrically. Required: LAContext raises without it. -->
 	<key>NSFaceIDUsageDescription</key>
 	<string>Rowel uses Face ID to unlock your vault.</string>
+	<!-- The activity the system launches the app with when another password
+	     manager exports to it (CredentialExchange.swift). The string is the
+	     SDK's ASCredentialExchangeActivity; Apple's documentation also
+	     spells it with a "Type" suffix, which nothing sends. -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>ASCredentialExchangeActivity</string>
+	</array>
 </dict>
 </plist>

@@ -469,6 +469,8 @@ fn announce_opened(app: &AppHandle) {
 
 fn announce_ended(app: &AppHandle) -> Ended {
     app.state::<crate::grants::PathGrants>().session_ended();
+    // What another app handed over was offered to this session (`exchange`).
+    crate::exchange::clear();
     crate::picked::wipe(app);
     crate::autolock::disarm(app);
     #[cfg(desktop)]

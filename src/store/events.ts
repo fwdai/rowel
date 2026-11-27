@@ -10,12 +10,14 @@ import {
   refreshApp,
   showLockScreen,
   fileOpened,
+  exchangeReceived,
   lockHeard,
   setOsLockStatus,
   setNearbyStatus,
   useApp
 } from './app'
 import { osLockStatus } from '@/api/app'
+import { exchangePending } from '@/api/imports'
 import { nearbyStatus } from '@/api/nearby'
 import { setEntries, loadArchive, runAudit } from './vault'
 import {
@@ -90,6 +92,17 @@ export const subscribeToEvents = (): (() => void) => {
     // A backup double-clicked while the app is up. The one opened *with* the
     // app is collected separately, once this is listening (see `App.tsx`).
     on(EVENTS.fileOpened, payload => fileOpened(payload.path)),
+    // Another app's data handed over while the app is up, on a phone that can
+    // take it. One that launched the app got there before this listened, so it
+    // is asked after here, which a build that never receives one answers no.
+    on(EVENTS.exchangeReceived, () => exchangeReceived()).then(unlisten => {
+      exchangePending()
+        .then(pending => {
+          if (pending) exchangeReceived()
+        })
+        .catch(() => {})
+      return unlisten
+    }),
     // An extension asking to be let in; the dialog in `Main` answers it.
     on(EVENTS.browserAssociate, askBrowser),
     // A page's passkey ceremony, through that extension; `Main` answers it too.

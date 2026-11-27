@@ -47,6 +47,8 @@ mod locale;
 // Desktop only for now; the commands answer `available: false` elsewhere.
 #[cfg(desktop)]
 mod nearby;
+// Credentials another password manager hands over through the system.
+mod exchange;
 // Backups the OS asks the app to open (the `.rowel`/`.swftx` file associations).
 mod opened;
 // OS screen lock, sleep and user-switch listeners.
@@ -201,6 +203,9 @@ pub fn run() {
         .setup(|app| {
             // Preferences first: the shell and the auto-lock both open on them.
             settings::boot(app.handle());
+            // From here on a transfer from another app is announced as well as
+            // parked (see `exchange`).
+            exchange::init(app.handle());
             // On the main thread, which the macOS observers deliver on.
             #[cfg(desktop)]
             oslock::watch(app.handle());
@@ -316,6 +321,9 @@ pub fn run() {
             commands::attachments::attachment_delete,
             commands::attachments::attachment_usage,
             commands::import::import_entries,
+            commands::import::import_exchange,
+            commands::import::exchange_pending,
+            commands::import::exchange_supported,
             commands::import::export_entries,
             commands::env::read_env_file,
             commands::generator::generate_password,

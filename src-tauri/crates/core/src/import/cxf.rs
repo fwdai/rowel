@@ -65,6 +65,8 @@ struct Item {
     urls: Vec<String>,
     #[serde(default)]
     tags: Vec<String>,
+    #[serde(default, deserialize_with = "super::lenient_bool")]
+    favorite: bool,
     #[serde(default)]
     credentials: Vec<Credential>,
 }
@@ -171,6 +173,7 @@ fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
         scope,
         urls,
         tags,
+        favorite,
         credentials,
     } = item;
     // `scope.urls` is where 1.0 keeps them; the loose `urls` is the old draft.
@@ -319,6 +322,9 @@ fn map_item(item: Item, row: usize, rowel: bool, result: &mut ImportResult) {
     // of the user's own.
     entry.created_at = created_at;
     entry.updated_at = modified_at.and_then(rfc3339);
+    // The format's own member for the star; a document of ours also says it
+    // under a label, read just below, and the two agree.
+    entry.favorite = favorite;
     super::export::set_labelled(&mut entry, |label| take_labelled(&mut ours, label));
     entry.extra.extend(ours.into_iter().chain(theirs));
     result.entries.push(entry);

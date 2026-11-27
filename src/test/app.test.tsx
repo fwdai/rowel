@@ -83,6 +83,17 @@ describe('App', () => {
     expect(useApp.getState().flow).toBe('auth')
   })
 
+  // The same for another app's data handed over before the shell listened:
+  // Rust holds it, and the shell learns one is waiting by asking.
+  it('learns of a transfer the app was launched with', async () => {
+    seedApp({ initialized: true })
+    mockCommand('exchange_pending', () => true)
+    render(<App />)
+
+    await waitFor(() => expect(useApp.getState().exchangePending).toBe(true))
+    expect(useApp.getState().flow).toBe('auth')
+  })
+
   it('stays on the lock screen when the probe keeps failing', async () => {
     useApp.setState({ status: null })
     mockCommand('app_status', () => Promise.reject({ kind: 'other', message: 'no backend' }))
@@ -114,6 +125,34 @@ describe('unlocking', () => {
 
     expect(useUi.getState().settingsSection).toBe('import')
     expect(useUi.getState().searchFocus).toBe(0)
+  })
+
+  // Another app's data that arrived over the lock screen: the unlock lands on
+  // Settings › Import, with the preview of it already asked for.
+  it('offers a transfer that waited behind the lock', async () => {
+    seedApp({ initialized: true })
+    mockCommand('unlock', () => ({ entries: [], syncConfigured: false }))
+    mockCommand('exchange_pending', () => true)
+    mockCommand('import_exchange', () => ({
+      total: 4,
+      imported: 0,
+      skipped: 0,
+      duplicates: 0,
+      dryRun: true,
+      errors: [],
+      warnings: [],
+      entries: []
+    }))
+    render(<App />)
+    await waitFor(() => expect(useApp.getState().exchangePending).toBe(true))
+
+    await userEvent.type(screen.getByPlaceholderText('Master Password'), 'hunter2{Enter}')
+
+    const result = await screen.findByTestId('import-result', {}, { timeout: 3000 })
+    expect(result).toHaveTextContent('From another app')
+    await waitFor(() => expect(result).toHaveTextContent('Ready to import: 4'))
+    expect(calls('import_exchange')).toEqual([{ dryRun: true }])
+    expect(useApp.getState().exchangePending).toBe(false)
   })
 
   it('leaves the search field alone on mobile', async () => {

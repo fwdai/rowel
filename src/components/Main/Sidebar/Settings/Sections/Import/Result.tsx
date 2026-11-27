@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Button from '@/components/elements/Button'
 import Field from '@/components/elements/Field'
@@ -9,26 +9,44 @@ import { CARD, META } from '@/components/elements/tokens'
 import Progress from './Progress'
 import RowErrors from './RowErrors'
 import RowelNotice from './RowelNotice'
+import ExchangeGuide from './ExchangeGuide'
 import type { useImport } from './useImport'
 
 const fileName = (path: string) => path.replace(/^.*[\\/]/, '')
 
-// The one card under the grid: what was picked, what it holds, and the button
-// that commits it.
+// The one card under the grid: what was picked (a file by its name, another
+// app's data by saying so), what it holds, and the button that commits it.
 export default function Result({ flow }: { flow: ReturnType<typeof useImport> }) {
   const { t } = useTranslation()
   const { picked, preview, result, count, running, error, progress } = flow
   const passwordId = useId()
   const [password, setPassword] = useState('')
 
+  // On a phone the card is a screen below the tiles, and what another app
+  // hands over arrives with nobody having tapped anything: the card is brought
+  // into view when it appears and again as it grows, or it would look as if
+  // nothing had happened.
+  const card = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    card.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [picked, preview, result, count, error])
+
   if (!picked) return null
 
   return (
-    <div className={`${CARD} mt-3 flex flex-col gap-3 p-4`} data-testid="import-result">
-      <div className={META}>{fileName(picked.path)}</div>
+    <div ref={card} className={`${CARD} mt-3 flex flex-col gap-3 p-4`} data-testid="import-result">
+      <div className={META}>
+        {picked.kind === 'exchange'
+          ? t('From another app')
+          : picked.kind === 'exchangeGuide'
+            ? t('Apple Passwords')
+            : fileName(picked.path)}
+      </div>
 
       {picked.kind === 'rowel' ? (
         <RowelNotice path={picked.path} />
+      ) : picked.kind === 'exchangeGuide' ? (
+        <ExchangeGuide onFile={() => void flow.chooseFile('apple')} />
       ) : picked.kind === 'swftx' ? (
         <div className="flex max-w-sm flex-col gap-3">
           <Field id={passwordId} label={t('Vault file password')}>

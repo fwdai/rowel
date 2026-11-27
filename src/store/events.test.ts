@@ -321,6 +321,45 @@ describe('nearby:status', () => {
   })
 })
 
+describe('exchange:received', () => {
+  it('sends an unlocked vault to Settings › Import', () => {
+    flowMain()
+
+    handlerFor(EVENTS.exchangeReceived)()
+
+    expect(useApp.getState().exchangePending).toBe(true)
+    expect(useUi.getState().settings).toBe(true)
+    expect(useUi.getState().settingsSection).toBe('import')
+  })
+
+  it('waits behind a lock, for the unlock that can import it', async () => {
+    handlerFor(EVENTS.exchangeReceived)()
+
+    expect(useApp.getState().exchangePending).toBe(true)
+    expect(useUi.getState().settings).toBe(false)
+
+    await enterMain({ entries: [], syncConfigured: false, session: 1 })
+    expect(useUi.getState().settingsSection).toBe('import')
+  })
+
+  it('asks once listening, for a transfer that arrived first', async () => {
+    mockCommand('exchange_pending', () => true)
+    clearCalls('exchange_pending')
+
+    subscribeToEvents()
+
+    await vi.waitFor(() => expect(useApp.getState().exchangePending).toBe(true))
+    expect(calls('exchange_pending')).toHaveLength(1)
+  })
+
+  it('offers nothing where none is waiting', async () => {
+    await vi.waitFor(() => expect(calls('exchange_pending')).toHaveLength(1))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(useApp.getState().exchangePending).toBe(false)
+  })
+})
+
 describe('vault:locked', () => {
   it('shows the Touch ID button when a key is enrolled, not a hardcoded false', async () => {
     gate(true)

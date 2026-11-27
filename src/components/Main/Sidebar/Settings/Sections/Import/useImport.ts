@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { claimOpenedFile, setEntries, useApp } from '@/store'
+import { claimExchange, claimOpenedFile, setEntries, useApp } from '@/store'
 import { importSwftx } from '@/api/vault'
-import { importEntries, type ImportFormat, type ImportReport } from '@/api/imports'
+import {
+  importEntries,
+  importExchange,
+  type ImportFormat,
+  type ImportReport
+} from '@/api/imports'
 import { syncNow } from '@/api/sync'
 import { pickImportFile, pickImportBackup } from '@/services/pickers'
 import { describeError, errorKind } from '@/api/errors'
@@ -15,10 +20,17 @@ import { useProgress } from './useProgress'
 // or a `.rowel` backup — which is a whole sealed database and restores a fresh
 // install rather than merging into this one, so it is only ever named here to
 // say so.
+//
+// Or no file at all: another app's data, handed over through the system and
+// held by the backend (`exchange`), and the Apple Passwords tile on a device
+// where that is how its data arrives, which has nothing to pick and can only
+// say how (`exchangeGuide`).
 export type Picked =
   | { kind: 'format'; format: ImportFormat; path: string }
   | { kind: 'swftx'; path: string }
   | { kind: 'rowel'; path: string }
+  | { kind: 'exchange' }
+  | { kind: 'exchangeGuide' }
 
 // A backup by its extension: ours is a `.rowel`, anything else the card or the
 // OS hands over is taken for a legacy `.swftx` and asked for its password.
@@ -26,6 +38,16 @@ const pickedBackup = (path: string): Picked => ({
   kind: isBackupFile(path) ? 'rowel' : 'swftx',
   path
 })
+
+// How a pick's rows are read, as a dry run or for real: a file is parsed under
+// its format, a transfer is already in the backend's hands. Null for a pick
+// with no rows to preview.
+const reader = (picked: Picked): ((dryRun: boolean) => Promise<ImportReport>) | null =>
+  picked.kind === 'format'
+    ? dryRun => importEntries(picked.path, picked.format, dryRun)
+    : picked.kind === 'exchange'
+      ? importExchange
+      : null
 
 // One import flow for every tile: pick or drop a file, preview it (dry run),
 // then commit. Preview and result both surface per-row errors.
@@ -45,10 +67,11 @@ export function useImport() {
     setCount(null)
     setError(null)
     // A backup cannot be inspected without its password, so it waits for
-    // input; a `.rowel` is not imported at all.
-    if (next.kind !== 'format') return
+    // input; a `.rowel` is not imported at all, and neither is a guide.
+    const read = reader(next)
+    if (!read) return
     setRunning(true)
-    importEntries(next.path, next.format, true)
+    read(true)
       .then(setPreview)
       .catch((e: unknown) => setError(describeError(e)))
       .finally(() => setRunning(false))
@@ -65,6 +88,15 @@ export function useImport() {
     claimOpenedFile()
     start(pickedBackup(opened))
   }, [opened, covered, start])
+
+  // Another app's data, held by the backend: taken the same way, and on the
+  // same terms.
+  const exchange = useApp(state => state.exchangePending)
+  useEffect(() => {
+    if (!exchange || covered) return
+    claimExchange()
+    start({ kind: 'exchange' })
+  }, [exchange, covered, start])
 
   const chooseFile = useCallback(
     (format: ImportFormat) =>
@@ -91,12 +123,16 @@ export function useImport() {
     [start]
   )
 
+  // The Apple Passwords tile where there is no export file to pick.
+  const explainExchange = useCallback(() => start({ kind: 'exchangeGuide' }), [start])
+
   const commit = () => {
-    if (picked?.kind !== 'format' || running) return
+    const read = picked && reader(picked)
+    if (!read || running) return
     setRunning(true)
     setError(null)
     reset()
-    importEntries(picked.path, picked.format, false)
+    read(false)
       .then(report => {
         setEntries(report.entries)
         setResult(report)
@@ -140,6 +176,7 @@ export function useImport() {
     chooseFile,
     chooseBackup,
     dropped,
+    explainExchange,
     commit,
     runBackup
   }

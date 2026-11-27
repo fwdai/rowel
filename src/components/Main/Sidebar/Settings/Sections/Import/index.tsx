@@ -10,7 +10,8 @@ type Pane = 'import' | 'export'
 export default function Import() {
   const { t } = useTranslation()
   // Held here rather than in the import pane, so a file the OS opened with the
-  // app is claimed (and a picked one kept) whichever pane is showing.
+  // app, or another app's data, is claimed (and a picked one kept) whichever
+  // pane is showing.
   const flow = useImport()
   const [pane, setPane] = useState<Pane>('import')
   // The pane slides in on a switch, not on arriving at the section.
@@ -21,8 +22,8 @@ export default function Import() {
     setSwitched(true)
   }
 
-  // A file picked while Export is showing can only be one the OS opened with
-  // the app: bring the pane that shows it forward.
+  // A pick made while Export is showing can only be a file the OS opened with
+  // the app or another app's data: bring the pane that shows it forward.
   const [seen, setSeen] = useState(flow.picked)
   if (flow.picked !== seen) {
     setSeen(flow.picked)
