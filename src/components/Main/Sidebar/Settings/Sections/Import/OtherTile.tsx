@@ -31,7 +31,7 @@ export default function OtherTile({ active, disabled, onFormat }: Props) {
       <Tile
         badge={<MoreGlyph size={16} />}
         name={current ? t(current.name) : t('Another app')}
-        hint={current ? t(current.hint) : t('Chrome / Safari, CXF or CSV')}
+        hint={current ? t(current.hint) : t('Chrome, Enpass, CXF or CSV')}
         active={current !== undefined}
         disabled={disabled}
         onClick={() => setOpen(!open)}

@@ -11,7 +11,7 @@ export interface ImportApp {
   key: string
   // Initials, worn where the app has no mark of its own (see `brand`).
   badge: string
-  // The app's own mark, drawn in its colour, in place of the initials.
+  // The app's own mark, in place of the initials.
   brand?: Brand
   name: TKey
   hint: TKey
@@ -20,6 +20,15 @@ export interface ImportApp {
 }
 
 export const APPS: ImportApp[] = [
+  {
+    key: 'apple',
+    brand: 'apple',
+    badge: 'AP',
+    name: 'Apple Passwords',
+    hint: 'iCloud Keychain, .csv export',
+    format: 'apple',
+    featured: true
+  },
   {
     key: '1password',
     brand: '1password',
@@ -36,15 +45,6 @@ export const APPS: ImportApp[] = [
     name: 'LastPass',
     hint: '.csv export',
     format: 'lastpass',
-    featured: true
-  },
-  {
-    key: 'enpass',
-    brand: 'enpass',
-    badge: 'EP',
-    name: 'Enpass',
-    hint: '.json export',
-    format: 'enpass',
     featured: true
   },
   {
@@ -66,6 +66,7 @@ export const APPS: ImportApp[] = [
     featured: true
   },
   { key: 'chrome', badge: 'CH', name: 'Chrome / Safari', hint: '.csv export', format: 'chrome' },
+  { key: 'enpass', badge: 'EP', name: 'Enpass', hint: '.json export', format: 'enpass' },
   {
     key: 'cxf',
     badge: 'CXF',
