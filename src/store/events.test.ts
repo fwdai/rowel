@@ -25,7 +25,11 @@ import {
   lockVault,
   setApp,
   enterMain,
-  switchWorkspace
+  switchWorkspace,
+  closeSettings,
+  exchangeShown,
+  setExchange,
+  syncExchange
 } from './index'
 
 const meta = (id: string): EntryMeta => ({
@@ -318,6 +322,98 @@ describe('nearby:status', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(useApp.getState().nearby).toBeNull()
+  })
+})
+
+describe('exchange:held', () => {
+  it('sends an unlocked vault to Settings › Import', () => {
+    flowMain()
+
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
+
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
+    expect(useUi.getState().settings).toBe(true)
+    expect(useUi.getState().settingsSection).toBe('import')
+  })
+
+  it('waits behind a lock, for the unlock that can import it', async () => {
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
+
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
+    expect(useUi.getState().settings).toBe(false)
+
+    await enterMain({ entries: [], syncConfigured: false, session: 1 })
+    expect(useUi.getState().settingsSection).toBe('import')
+  })
+
+  // The backend says what it holds every time that changes: an import, or the
+  // end of the session a transfer was offered to (a lock, another lockbox),
+  // lets go of it, and the copy here follows without anything having to ask.
+  it('forgets a transfer the backend let go of', () => {
+    flowMain()
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
+    exchangeShown(1)
+
+    handlerFor(EVENTS.exchangeHeld)({ arrival: null, change: 2 })
+
+    expect(useApp.getState().exchange).toBeNull()
+  })
+
+  // Hearing of the transfer it already knows changes nothing: not whether it
+  // was shown, and not where the user is. A newer one is offered.
+  it('leaves a transfer it already knows as it is', () => {
+    flowMain()
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
+    exchangeShown(1)
+    closeSettings()
+
+    setExchange({ arrival: 1, change: 2 })
+
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: true })
+    expect(useUi.getState().settings).toBe(false)
+
+    setExchange({ arrival: 3, change: 3 })
+    expect(useApp.getState().exchange).toEqual({ arrival: 3, shown: false })
+    expect(useUi.getState().settings).toBe(true)
+  })
+
+  // Tellings reach the webview out of order: an event sent from another
+  // thread, the answer to the launch's question after the arrival that
+  // followed it. Each says how many changes it has seen, and an older one
+  // never undoes a newer.
+  it('drops a telling older than one it has applied', async () => {
+    const launch = deferred<{ arrival: number | null; change: number }>()
+    mockCommand('exchange_held', () => launch.promise)
+    const asked = syncExchange()
+
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 1, change: 1 })
+    launch.resolve({ arrival: null, change: 0 })
+    await asked
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
+
+    // Two events the wrong way round: the import's, then the arrival's.
+    handlerFor(EVENTS.exchangeHeld)({ arrival: null, change: 3 })
+    handlerFor(EVENTS.exchangeHeld)({ arrival: 2, change: 2 })
+    expect(useApp.getState().exchange).toBeNull()
+  })
+
+  it('asks once listening, for a transfer that arrived first', async () => {
+    mockCommand('exchange_held', () => ({ arrival: 7, change: 7 }))
+    clearCalls('exchange_held')
+
+    subscribeToEvents()
+
+    await vi.waitFor(() =>
+      expect(useApp.getState().exchange).toEqual({ arrival: 7, shown: false })
+    )
+    expect(calls('exchange_held')).toHaveLength(1)
+  })
+
+  it('offers nothing where none is held', async () => {
+    await vi.waitFor(() => expect(calls('exchange_held')).toHaveLength(1))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(useApp.getState().exchange).toBeNull()
   })
 })
 

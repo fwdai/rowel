@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useBack } from '@/hooks/useBack'
-import { useUi, type Section } from '@/store'
+import { takeSettingsRequest, useUi, type Section } from '@/store'
 import {
   SectionNavProvider,
   SubpageProvider,
@@ -34,6 +34,12 @@ import Stack from '../Stack'
  * `SectionNavProvider`, so here it moves this local state rather than the
  * modal's — under the same lock.
  *
+ * One move does come from outside: a section asked for by name
+ * (`openSettings('import')`: the empty list's "Import from another app", a
+ * transfer Import must take). The store keeps that ask as `settingsRequest`
+ * — only ever set while the lock allows the move — and this screen goes there
+ * and takes it, so it is one push and not a place Settings is pinned to.
+ *
  * Android's Back is whichever nav row is on top: out of a sub-page first, then
  * out of the section, as the wide modal's Escape steps. It is offered here,
  * once, because this is where both pieces of state are held.
@@ -43,6 +49,17 @@ export default function Settings() {
   const locked = useUi(state => state.settingsLocked)
   // A sub-page is one more pane on top of the section's, held the same way.
   const nav = useSubpageState(section)
+  // A request pushes its section's pane, whether it opened this screen or
+  // found it up. One for the pane already showing moves nothing, as on the
+  // wide shell, and leaves its sub-page be.
+  const asked = useUi(state => state.settingsRequest)
+  useEffect(() => {
+    if (!asked) return
+    takeSettingsRequest()
+    if (asked === section) return
+    setSection(asked)
+    nav.drop()
+  }, [asked, section, nav])
   const go: SectionNav = (next, page) => {
     if (useUi.getState().settingsLocked) return
     setSection(next)

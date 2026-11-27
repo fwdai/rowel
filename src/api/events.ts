@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { OsLockStatus } from './app'
 import type { AgentGrantAsk, AssociateAsk, PasskeyAsk } from './browser'
+import type { ExchangeHeld } from './imports'
 import type { NearbyStatus } from './nearby'
 import type { OrgConnectStatus } from './org'
 import type { RemotePack } from './setup'
@@ -72,6 +73,16 @@ export interface EventPayloads {
    * while running both end up in `store/app`'s `fileOpened`.
    */
   'file:opened': { path: string }
+  /**
+   * What Rust holds of another password manager's data changed: a transfer
+   * arrived through the system (iOS 26's "Export Data to Another App"), or the
+   * one held was imported or let go of. Only which transfer is held now: the
+   * data stays in Rust, and the import that reads it answers with a report
+   * only. What was held before the shell listened is asked after
+   * (`exchangeHeld` in `api/imports`); both end up in `store/app`'s
+   * `setExchange`.
+   */
+  'exchange:held': ExchangeHeld
   /**
    * A client — a browser extension, or an agent — asks to be let in. `key` is
    * its identification public key, base64, for the consent dialog to show a
@@ -150,6 +161,7 @@ export const EVENTS: { [K in EventName as Camel<K>]: K } = {
   workspacesAdded: 'workspaces:added',
   workspacesRenamed: 'workspaces:renamed',
   fileOpened: 'file:opened',
+  exchangeHeld: 'exchange:held',
   browserAssociate: 'browser:associate',
   browserPasskey: 'browser:passkey',
   browserClients: 'browser:clients',

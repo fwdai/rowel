@@ -10,6 +10,7 @@ import type { RemotePack } from '@/api/setup'
 import {
   auditDone,
   closeSettings,
+  setExchange,
   fileOpened,
   flowMain,
   initialApp,
@@ -33,7 +34,8 @@ import { EVENTS } from '@/api/events'
 import { subscribeToEvents } from '@/store/events'
 import { emitEvent } from './events'
 import { appStatusDefault, calls, clearCalls, mockCommand, mockCommandOnce } from './ipc'
-import { loginMeta, seedApp, withEntries } from './utils'
+import { deferred, loginMeta, seedApp, withEntries } from './utils'
+import { exchangeBackend, exchangeReport } from './exchange'
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -1566,6 +1568,287 @@ describe('Settings › import', () => {
     expect(await screen.findByText('Rowel backup 2026-10-01.rowel')).toBeInTheDocument()
   })
 
+  // Another password manager handed its data over while this vault is open:
+  // Settings opens on Import with a preview of it, from the backend that holds
+  // it. It came from the OS, so no tile is lit and there is no file to name.
+  it('previews what another app handed over, and imports it', async () => {
+    const backend = exchangeBackend()
+    flowMain()
+    render(<Settings />)
+
+    act(() => void backend.arrive())
+
+    expect(useUi.getState().settings).toBe(true)
+    expect(useUi.getState().settingsSection).toBe('import')
+    const result = await screen.findByTestId('import-result')
+    expect(result).toHaveTextContent('From another app')
+    await waitFor(() => expect(result).toHaveTextContent('Ready to import: 3'))
+    // By its number: what is imported is what was previewed.
+    expect(calls('import_exchange')).toEqual([{ arrival: 1, dryRun: true }])
+    expect(calls('import_entries')).toEqual([])
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: true })
+    for (const tile of screen.getAllByTestId(/^import-tile-/)) expect(tile).not.toHaveClass(PICKED)
+    // Nobody tapped anything, and on a phone the card is below the tiles.
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(result)
+
+    await userEvent.click(screen.getByTestId('import-commit'))
+
+    await waitFor(() => expect(result).toHaveTextContent('Imported 3'))
+    expect(calls('import_exchange')).toEqual([
+      { arrival: 1, dryRun: true },
+      { arrival: 1, dryRun: false }
+    ])
+    expect(screen.queryByTestId('import-commit')).not.toBeInTheDocument()
+    // The backend let go of it, and the store heard.
+    await waitFor(() => expect(useApp.getState().exchange).toBeNull())
+    // Published like any other import.
+    await waitFor(() => expect(calls('sync_now')).toHaveLength(1))
+  })
+
+  // The transfer is the backend's until it is imported, and the store says so
+  // for as long: the preview goes with the section, but coming back to Import
+  // shows it again, and once it is imported there is nothing to show.
+  it('shows a transfer again when Import is left before importing it', async () => {
+    const backend = exchangeBackend()
+    flowMain()
+    render(<Settings />)
+
+    act(() => void backend.arrive())
+    await waitFor(() =>
+      expect(screen.getByTestId('import-result')).toHaveTextContent('Ready to import: 3')
+    )
+
+    await go('security')
+    expect(screen.queryByTestId('import-result')).not.toBeInTheDocument()
+    // Leaving is leaving: a transfer already shown sends nobody back.
+    expect(useUi.getState().settingsSection).toBe('security')
+    await go('import')
+
+    await waitFor(() =>
+      expect(screen.getByTestId('import-result')).toHaveTextContent('Ready to import: 3')
+    )
+    expect(calls('import_exchange')).toEqual([
+      { arrival: 1, dryRun: true },
+      { arrival: 1, dryRun: true }
+    ])
+
+    await userEvent.click(screen.getByTestId('import-commit'))
+    await waitFor(() => expect(screen.getByTestId('import-result')).toHaveTextContent('Imported 3'))
+    await waitFor(() => expect(useApp.getState().exchange).toBeNull())
+    await go('security')
+    await go('import')
+    expect(screen.queryByTestId('import-result')).not.toBeInTheDocument()
+  })
+
+  // The session the transfer was offered to ended (a lock, a switch to
+  // another lockbox): the backend let go of it and said so, and Import has
+  // nothing left to show for it.
+  it('offers nothing once the backend has let go of a transfer', async () => {
+    const backend = exchangeBackend()
+    flowMain()
+    render(<Settings />)
+    act(() => void backend.arrive())
+    await waitFor(() =>
+      expect(screen.getByTestId('import-result')).toHaveTextContent('Ready to import: 3')
+    )
+
+    act(() => backend.end())
+    expect(useApp.getState().exchange).toBeNull()
+    await go('security')
+    await go('import')
+
+    expect(screen.queryByTestId('import-result')).not.toBeInTheDocument()
+    expect(calls('import_exchange')).toHaveLength(1)
+  })
+
+  // A file the user picks after a transfer was shown keeps the card: the
+  // transfer is still held, and still there when Import is next opened, but it
+  // does not take the card back.
+  it('leaves the card to a file picked after a transfer was shown', async () => {
+    const backend = exchangeBackend()
+    mockCommand('pick_file', () => '/tmp/export.csv')
+    mockCommand('import_entries', () => exchangeReport(7, true))
+    flowMain()
+    render(<Settings />)
+    act(() => void backend.arrive())
+    await waitFor(() =>
+      expect(screen.getByTestId('import-result')).toHaveTextContent('Ready to import: 3')
+    )
+
+    await userEvent.click(screen.getByTestId('import-tile-lastpass'))
+
+    const result = screen.getByTestId('import-result')
+    await waitFor(() => expect(result).toHaveTextContent('Ready to import: 7'))
+    expect(result).toHaveTextContent('export.csv')
+    expect(calls('import_exchange')).toHaveLength(1)
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: true })
+  })
+
+  // One thing runs at a time. Nobody chooses when a transfer arrives, so one
+  // that lands while another is still being read stays in the store until the
+  // card is free: two answers never race to fill it, and the button imports
+  // the transfer whose rows it counts.
+  it('previews a second transfer only once the first has been read', async () => {
+    const answers: ReturnType<typeof deferred<unknown>>[] = []
+    mockCommand('import_exchange', () => {
+      const answer = deferred<unknown>()
+      answers.push(answer)
+      return answer.promise
+    })
+    flowMain()
+    render(<Settings />)
+
+    act(() => setExchange({ arrival: 1, change: 1 }))
+    await waitFor(() => expect(answers).toHaveLength(1))
+    act(() => setExchange({ arrival: 2, change: 2 }))
+    // Waiting its turn, in the store, not yet shown.
+    expect(calls('import_exchange')).toEqual([{ arrival: 1, dryRun: true }])
+    expect(useApp.getState().exchange).toEqual({ arrival: 2, shown: false })
+
+    // The backend no longer holds the first, and says so.
+    await act(async () =>
+      answers[0].reject({ kind: 'other', message: 'that transfer is no longer waiting' })
+    )
+    await waitFor(() => expect(answers).toHaveLength(2))
+    expect(calls('import_exchange')[1]).toEqual({ arrival: 2, dryRun: true })
+    await act(async () => answers[1].resolve(exchangeReport(5, true)))
+
+    const result = screen.getByTestId('import-result')
+    await waitFor(() => expect(result).toHaveTextContent('Ready to import: 5'))
+    expect(screen.queryByTestId('import-error')).not.toBeInTheDocument()
+    expect(useApp.getState().exchange).toEqual({ arrival: 2, shown: true })
+
+    await userEvent.click(screen.getByTestId('import-commit'))
+    await waitFor(() => expect(answers).toHaveLength(3))
+    expect(calls('import_exchange')[2]).toEqual({ arrival: 2, dryRun: false })
+  })
+
+  // The same for a backup the OS opens while an export is being read: it
+  // waits in the store, and takes the card when the card is free.
+  it('takes an opened backup only once the preview under way has landed', async () => {
+    const answer = deferred<unknown>()
+    mockCommand('pick_file', () => '/tmp/export.csv')
+    mockCommand('import_entries', () => answer.promise)
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-lastpass'))
+    await waitFor(() => expect(calls('import_entries')).toHaveLength(1))
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-01.rowel'))
+    expect(useApp.getState().openedFile).toBe('/tmp/Rowel backup 2026-10-01.rowel')
+    expect(screen.getByTestId('import-result')).toHaveTextContent('export.csv')
+    expect(screen.queryByTestId('import-rowel-notice')).not.toBeInTheDocument()
+
+    await act(async () => answer.resolve(exchangeReport(4, true)))
+
+    expect(await screen.findByTestId('import-rowel-notice')).toBeInTheDocument()
+    expect(useApp.getState().openedFile).toBeNull()
+    expect(screen.getByTestId('import-tile-lastpass')).toBeEnabled()
+  })
+
+  // The transfer itself can fail (the other app sent nothing, the user backed
+  // out): the backend says why, once, and then holds nothing.
+  it('says why when what another app handed over cannot be previewed', async () => {
+    mockCommand('import_exchange', () => {
+      // Told once, then forgotten, and the store hears that too.
+      setExchange({ arrival: null, change: 2 })
+      return Promise.reject({ kind: 'other', message: 'the transfer did not complete' })
+    })
+    flowMain()
+    render(<Settings />)
+
+    act(() => setExchange({ arrival: 1, change: 1 }))
+
+    expect(await screen.findByTestId('import-error')).toHaveTextContent(
+      'the transfer did not complete'
+    )
+    expect(screen.getByTestId('import-result')).toHaveTextContent('From another app')
+    expect(screen.queryByTestId('import-commit')).not.toBeInTheDocument()
+    await waitFor(() => expect(useApp.getState().exchange).toBeNull())
+  })
+
+  // A page over Import steps aside for it, as it does for an opened file —
+  // once, for a transfer not shown yet: with it on the card, a page can be
+  // opened over Import again.
+  it('steps the restore page aside for what another app hands over', async () => {
+    const backend = exchangeBackend()
+    flowMain()
+    render(<Settings />)
+    fileOpened('/tmp/Rowel backup 2026-09-15.rowel')
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
+
+    act(() => void backend.arrive())
+
+    expect(screen.getByRole('heading', { name: 'Import & export' })).toBeInTheDocument()
+    expect(await screen.findByTestId('import-result')).toHaveTextContent('From another app')
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: true })
+
+    // With the transfer on the card, Import can be covered again.
+    act(() => fileOpened('/tmp/Rowel backup 2026-10-01.rowel'))
+    await userEvent.click(await screen.findByTestId('import-rowel-restore'))
+    expect(screen.getByRole('heading', { name: 'Restore from a backup' })).toBeInTheDocument()
+  })
+
+  // On an iPhone that takes such a transfer there is no CSV to pick: Passwords
+  // hands its data over itself, starting from its own menu. The tile says so
+  // where a result would show, and still takes its export file from there.
+  it('explains the transfer on the Apple tile where the device takes one', async () => {
+    mockCommand('exchange_supported', () => true)
+    mockCommand('pick_file', () => '/tmp/Passwords.csv')
+    await open()
+    await go('import')
+
+    const tile = screen.getByTestId('import-tile-apple')
+    await waitFor(() => expect(tile).toHaveTextContent('Export from the Passwords app'))
+    await userEvent.click(tile)
+
+    expect(screen.getByTestId('import-exchange-guide')).toHaveTextContent(
+      'In the Passwords app, choose Export Data to Another App and pick Rowel. Rowel opens with a preview of what will be imported, passkeys included.'
+    )
+    expect(screen.getByTestId('import-result')).toHaveTextContent('Apple Passwords')
+    expect(tile).toHaveClass(PICKED)
+    expect(calls('pick_file')).toEqual([])
+    expect(calls('import_entries')).toEqual([])
+
+    const file = screen.getByTestId('import-exchange-file')
+    expect(file).toHaveTextContent('Import a .csv file instead')
+    await userEvent.click(file)
+
+    await waitFor(() =>
+      expect(calls('import_entries')).toEqual([
+        { path: '/tmp/Passwords.csv', format: 'apple', dryRun: true }
+      ])
+    )
+    expect(calls('pick_file')).toEqual([{ kind: 'import', label: 'Password exports' }])
+    expect(screen.queryByTestId('import-exchange-guide')).not.toBeInTheDocument()
+    expect(tile).toHaveClass(PICKED)
+  })
+
+  // Only the tile of the app that hands its data over changes.
+  it('leaves every other tile a file picker on such a device', async () => {
+    mockCommand('exchange_supported', () => true)
+    mockCommand('pick_file', () => '/tmp/bitwarden.json')
+    await open()
+    await go('import')
+    await waitFor(() =>
+      expect(screen.getByTestId('import-tile-apple')).toHaveTextContent(
+        'Export from the Passwords app'
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('import-tile-bitwarden'))
+
+    await waitFor(() =>
+      expect(calls('import_entries')).toContainEqual({
+        path: '/tmp/bitwarden.json',
+        format: 'bitwarden',
+        dryRun: true
+      })
+    )
+    expect(screen.queryByTestId('import-exchange-guide')).not.toBeInTheDocument()
+  })
+
   // The backup card offers our own `.rowel` too, and takes it as the OS-opened
   // one above: named and explained, never sent to the legacy importer.
   it('explains a .rowel picked on the backup card instead of importing it', async () => {
@@ -1705,6 +1988,9 @@ describe('Settings › import', () => {
     await open()
     await go('import')
 
+    expect(screen.getByTestId('import-tile-apple')).toHaveTextContent(
+      'iCloud Keychain, .csv export'
+    )
     await userEvent.click(screen.getByTestId('import-tile-apple'))
     await waitFor(() =>
       expect(calls('import_entries')).toContainEqual({
@@ -1713,6 +1999,8 @@ describe('Settings › import', () => {
         dryRun: true
       })
     )
+    expect(calls('pick_file')).toEqual([{ kind: 'import', label: 'Password exports' }])
+    expect(screen.queryByTestId('import-exchange-guide')).not.toBeInTheDocument()
     expect(screen.getByTestId('import-tile-apple')).toHaveClass(PICKED)
     const other = screen.getByTestId('import-tile-other')
     expect(other).not.toHaveClass(PICKED)

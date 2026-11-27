@@ -207,6 +207,15 @@ const DEFAULTS: Record<string, Handler> = {
     warnings: [],
     entries: []
   }),
+  // The desktop's answers: no other app can hand its data over, so none has,
+  // and an import of it finds nothing held. A spec about a transfer answers as
+  // an iPhone that received one would.
+  exchange_supported: () => false,
+  exchange_held: () => ({ arrival: null, change: 0 }),
+  import_exchange: reject({
+    kind: 'other',
+    message: 'that transfer is no longer waiting; export from the other app again'
+  }),
   export_entries: () => null,
   read_env_file: reject({ kind: 'fileNotText', message: 'the file is not text' }),
 

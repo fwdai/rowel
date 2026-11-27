@@ -25,7 +25,7 @@ use crate::storage;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
 
 // Bound the input: a foreign export should never be gigabytes or millions of rows.
-const MAX_BYTES: u64 = 25 * 1024 * 1024;
+pub(crate) const MAX_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
 
 /// What the import picker offers: the files the importers read. `Format`
@@ -84,9 +84,9 @@ struct Parsed {
 // vault. `format` is an explicit name or "auto" to detect by extension/content.
 // `path` has to be one the user chose as an export (see `chosen`).
 //
-// The read, the parse and the seal loop are one hop onto the blocking pool: a
-// 25 MB export is disk I/O followed by a CPU-bound pass over every row, and
-// neither belongs on the IPC thread or on an async worker.
+// The read, the parse and the seal loop are one hop onto the blocking pool (see
+// `import`): a 25 MB export is disk I/O followed by a CPU-bound pass over every
+// row, and neither belongs on the IPC thread or on an async worker.
 #[tauri::command]
 pub async fn import_entries(
     path: String,
@@ -96,32 +96,97 @@ pub async fn import_entries(
     state: State<'_, AppState>,
     grants: State<'_, PathGrants>,
 ) -> Result<ImportReport> {
-    // Taken before the file work, so a locked vault is turned away at once
-    // instead of after parsing. A preview writes nothing and so needs no cipher,
-    // but it still reads a path the webview named and reports what is in it —
-    // that is a read of the user's disk, and only an open vault may ask for one.
-    // The epoch comes with the cipher: the write below is only accepted by the
-    // session the cipher belongs to (see `Session::store_at`).
-    let (cipher, epoch) = match dry_run {
-        true => {
-            state.session.lock().unwrap().key()?;
-            (None, None)
-        }
-        false => {
-            let session = state.session.lock().unwrap();
-            (Some(session.payload_cipher()?), Some(session.epoch()))
-        }
-    };
+    let writer = writer(&state, dry_run)?;
     chosen(&grants, Path::new(&path), dry_run)?;
-
-    let emitter = app.clone();
-    let parsed = super::blocking(move || -> Result<Parsed> {
+    let load = move || -> Result<Source> {
         let (bytes, unpacked) = read_import_file(Path::new(&path))?;
         let name = Path::new(&path)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let fmt = resolve_format(&format, unpacked, &name, &bytes)?;
+        let format = resolve_format(&format, unpacked, &name, &bytes)?;
+        Ok((Zeroizing::new(bytes), format))
+    };
+    import(load, dry_run, writer, &app, &state).await
+}
+
+/// Preview, or write into the open vault, the transfer another password manager
+/// handed over through the system (see `crate::exchange`): the same pass as a
+/// file's, over a document that is already in memory and is always CXF.
+/// `arrival` is the transfer the webview was told of and previewed, so nothing
+/// else is ever written under its counts; writing it is what lets go of it.
+#[tauri::command]
+pub async fn import_exchange(
+    arrival: crate::exchange::Arrival,
+    dry_run: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ImportReport> {
+    let writer = writer(&state, dry_run)?;
+    let document = crate::exchange::document(arrival)?;
+    let report = import(
+        move || Ok((document, Format::Cxf)),
+        dry_run,
+        writer,
+        &app,
+        &state,
+    )
+    .await?;
+    if !dry_run {
+        crate::exchange::release(arrival);
+    }
+    Ok(report)
+}
+
+/// The transfer from another app that is held, if one is. Asked once the
+/// webview listens for `exchange:held`, for what it was not there to hear;
+/// from then on every change is announced.
+#[tauri::command]
+pub fn exchange_held() -> crate::exchange::Held {
+    crate::exchange::held()
+}
+
+/// Whether this device can be handed another app's credentials at all.
+#[tauri::command]
+pub fn exchange_supported() -> bool {
+    crate::exchange::supported()
+}
+
+// The bytes an import parses and the adapter that reads them.
+type Source = (Zeroizing<Vec<u8>>, Format);
+
+// What a real run seals and writes with; a preview has neither.
+type Writer = (Option<PayloadCipher>, Option<crate::session::Epoch>);
+
+// Taken before any work on the source, so a locked vault is turned away at
+// once instead of after parsing. A preview writes nothing and so needs no
+// cipher, but it still reports what is in a file the webview named or in what
+// another app sent — only an open vault may ask for that. The epoch comes with
+// the cipher: the write is only accepted by the session the cipher belongs to
+// (see `Session::store_at`).
+fn writer(state: &AppState, dry_run: bool) -> Result<Writer> {
+    let session = state.session.lock().unwrap();
+    Ok(match dry_run {
+        true => {
+            session.key()?;
+            (None, None)
+        }
+        false => (Some(session.payload_cipher()?), Some(session.epoch())),
+    })
+}
+
+// One import, whatever it reads: `load` produces the bytes and names their
+// format on the blocking pool, where the parse and the seal loop follow.
+async fn import(
+    load: impl FnOnce() -> Result<Source> + Send + 'static,
+    dry_run: bool,
+    (cipher, epoch): Writer,
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<ImportReport> {
+    let emitter = app.clone();
+    let parsed = super::blocking(move || -> Result<Parsed> {
+        let (bytes, fmt) = load()?;
 
         let parsed = fmt.importer().parse(&bytes);
         if parsed.entries.len() > MAX_ENTRIES {
@@ -199,7 +264,7 @@ pub async fn import_entries(
     // timestamps verbatim, which is what we want — `build_record` already
     // stamped every row when it was sealed above.
     store.import(&fresh).map_err(store_err)?;
-    crate::credential_identities::publish(&app);
+    crate::credential_identities::publish(app);
 
     Ok(ImportReport {
         total: parsed.total,

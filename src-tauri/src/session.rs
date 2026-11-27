@@ -455,6 +455,7 @@ fn seal(state: &AppState) -> Sealed {
 // its order. Memory only, and nothing here may take the session lock.
 fn announce_opened(app: &AppHandle) {
     app.state::<crate::grants::PathGrants>().session_opened();
+    crate::exchange::session_opened();
     crate::autolock::arm(app);
     // Android's temp files go with every session open and end (`picked`). On
     // open, what was picked or photographed before it has been read already.
@@ -469,6 +470,7 @@ fn announce_opened(app: &AppHandle) {
 
 fn announce_ended(app: &AppHandle) -> Ended {
     app.state::<crate::grants::PathGrants>().session_ended();
+    crate::exchange::session_ended();
     crate::picked::wipe(app);
     crate::autolock::disarm(app);
     #[cfg(desktop)]
@@ -870,6 +872,19 @@ mod lock_scope {
         }
         let end = body_of(source, "\nfn end(");
         assert!(at(&end, "announce_ended(app)") < at(&end, "ended.finish(app)"));
+
+        // What another app hands over is offered to the open session and goes
+        // with it. The exchange is told of every open and every end, in the
+        // two places all of them pass through, and works out the rest under
+        // its own lock: nothing here reads what it holds, so nothing can be
+        // read at one moment and acted on at another.
+        let opened = body_of(source, "\nfn announce_opened(");
+        assert!(opened.contains("crate::exchange::session_opened()"));
+        let ended = body_of(source, "\nfn announce_ended(");
+        assert!(ended.contains("crate::exchange::session_ended()"));
+        for signature in ["\nfn end(", "\npub fn end_in("] {
+            assert!(!body_of(source, signature).contains("exchange::"));
+        }
 
         let touch = body_of(include_str!("autolock.rs"), "pub fn touch(");
         assert!(at(&touch, "session.lock()") < at(&touch, "arm(app)"));

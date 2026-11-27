@@ -10,6 +10,8 @@ import {
   refreshApp,
   showLockScreen,
   fileOpened,
+  setExchange,
+  syncExchange,
   lockHeard,
   setOsLockStatus,
   setNearbyStatus,
@@ -90,6 +92,14 @@ export const subscribeToEvents = (): (() => void) => {
     // A backup double-clicked while the app is up. The one opened *with* the
     // app is collected separately, once this is listening (see `App.tsx`).
     on(EVENTS.fileOpened, payload => fileOpened(payload.path)),
+    // What Rust holds of another app's data, whenever that changes: a transfer
+    // handed over while the app is up, on a phone that can take one, or the
+    // held one imported or let go of. One that launched the app got there
+    // before this listened, so it is asked after here.
+    on(EVENTS.exchangeHeld, setExchange).then(unlisten => {
+      void syncExchange()
+      return unlisten
+    }),
     // An extension asking to be let in; the dialog in `Main` answers it.
     on(EVENTS.browserAssociate, askBrowser),
     // A page's passkey ceremony, through that extension; `Main` answers it too.

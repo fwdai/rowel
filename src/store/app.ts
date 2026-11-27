@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { UnlockResult } from '@/api/types'
 import { appStatus, type AppStatus, type OsLockStatus } from '@/api/app'
 import { lock } from '@/api/auth'
+import { exchangeHeld, type ExchangeHeld } from '@/api/imports'
 import type { Provider } from '@/api/provider'
 import type { RemotePack } from '@/api/setup'
 import { syncNow, syncProvider, type SyncStatus } from '@/api/sync'
@@ -127,6 +128,15 @@ export interface AppState {
    * screen that takes it (`claimOpenedFile`).
    */
   openedFile: string | null
+  /**
+   * The transfer another app handed over through the system, as Rust holds it:
+   * which arrival, and whether Import has put it on screen yet. `null` when
+   * none is held. Rust is what knows, and says so whenever it changes; this is
+   * a copy, kept so that what routes to Import can read it (`setExchange`).
+   */
+  exchange: { arrival: number; shown: boolean } | null
+  /** The newest of Rust's tellings of that to have been applied. */
+  exchangeChange: number
   update: {
     // Version + release notes of a staged update awaiting restart (null = none).
     readyVersion: string | null
@@ -168,6 +178,8 @@ export const initialApp: AppState = {
   locks: 0,
   lockedAt: 0,
   openedFile: null,
+  exchange: null,
+  exchangeChange: 0,
   update: { readyVersion: null, readyNotes: null, status: null }
 }
 
@@ -342,9 +354,10 @@ export const enterMain = async (result: UnlockResult): Promise<boolean> => {
   if (result.session < useApp.getState().lockedAt) return false
   setEntries(result.entries)
   flowMain()
-  // A backup the OS opened while the vault was locked (or before it existed)
-  // has waited for this: the only screen that can import it is now reachable.
-  if (useApp.getState().openedFile) openSettings('import')
+  // A backup the OS opened while the vault was locked (or before it existed),
+  // or another app's data handed over then, has waited for this: the only
+  // screen that can import it is now reachable.
+  if (importWaiting(useApp.getState())) openSettings('import')
   // Not on mobile, where focusing raises the on-screen keyboard.
   else if (!isMobile) focusSearch()
   // The unlock result carries whether this vault syncs; everything else about
@@ -393,6 +406,55 @@ export const claimOpenedFile = (): string | null => {
   if (path) useApp.setState({ openedFile: null })
   return path
 }
+
+// --- another app's data, handed over through the system ----------------------------
+
+/**
+ * What Rust holds now: announced (`exchange:held`), or asked (`syncExchange`).
+ * A telling older than one already applied is dropped — the answer to the
+ * launch's question can land after the arrival that followed it.
+ *
+ * A transfer not known before is new, and is routed as an opened backup is,
+ * though only Settings › Import takes it: it merges into an open vault, so an
+ * unlocked one is sent there at once and a locked one gets there through
+ * `enterMain`. One already known is left as it is, shown or not.
+ */
+export const setExchange = ({ arrival, change }: ExchangeHeld) => {
+  const state = useApp.getState()
+  if (change <= state.exchangeChange) return
+  const known = arrival === (state.exchange?.arrival ?? null)
+  useApp.setState({
+    exchangeChange: change,
+    ...(!known && { exchange: arrival === null ? null : { arrival, shown: false } })
+  })
+  if (!known && arrival !== null && state.flow === 'main') openSettings('import')
+}
+
+/**
+ * Ask Rust what it holds: once the shell listens, for a transfer that arrived
+ * before it did and was never heard announced.
+ */
+export const syncExchange = () =>
+  exchangeHeld()
+    .then(setExchange)
+    .catch(() => {})
+
+/**
+ * Import put the transfer on screen, so nothing else is sent there for it. It
+ * is still held, and still Import's to show whenever that section comes back.
+ */
+export const exchangeShown = (arrival: number) =>
+  useApp.setState(state =>
+    state.exchange?.arrival === arrival ? { exchange: { arrival, shown: true } } : {}
+  )
+
+/**
+ * Whether something is waiting for Settings › Import to take it: a backup the
+ * OS opened, or a transfer it has not shown yet. What decides that Import is
+ * where to go.
+ */
+export const importWaiting = (state: AppState) =>
+  state.openedFile !== null || (state.exchange !== null && !state.exchange.shown)
 
 // --- sync -----------------------------------------------------------------------
 

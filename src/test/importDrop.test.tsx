@@ -75,4 +75,33 @@ describe('a file dropped on Settings › Import', () => {
       })
     )
   })
+
+  // One thing runs at a time: while a preview or an import is under way the
+  // drop target is off, like the tiles, rather than taking a file it would
+  // then have to refuse.
+  it('takes no drop while an import is under way', async () => {
+    let answer: (report: unknown) => void = () => {}
+    mockCommand('import_entries', () => new Promise(resolve => (answer = resolve)))
+    await openImport()
+
+    await drop('/tmp/first.csv')
+    await waitFor(() => expect(calls('import_entries')).toHaveLength(1))
+    expect(screen.getByTestId('import-choose-file')).toBeDisabled()
+    await waitFor(() => expect(handlers).toHaveLength(0))
+
+    await act(async () =>
+      answer({
+        total: 1,
+        imported: 0,
+        skipped: 0,
+        duplicates: 0,
+        dryRun: true,
+        errors: [],
+        warnings: [],
+        entries: []
+      })
+    )
+    expect(await screen.findByTestId('import-commit')).toBeInTheDocument()
+    expect(screen.getByTestId('import-choose-file')).toBeEnabled()
+  })
 })

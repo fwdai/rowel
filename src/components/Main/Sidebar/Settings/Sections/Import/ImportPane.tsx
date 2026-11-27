@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { cx } from '@/utils/cx'
 import { LABEL } from '@/components/elements/tokens'
 import type { useImport } from './useImport'
+import { useExchangeSupported } from './useExchangeSupported'
 import DropZone from './DropZone'
 import Tiles from './Tiles'
 import BackupCard from './BackupCard'
@@ -12,20 +13,31 @@ import Result from './Result'
 // backup of our own.
 export default function ImportPane({ flow }: { flow: ReturnType<typeof useImport> }) {
   const { t } = useTranslation()
-  // Which tile lit: a `.rowel` has none, it came from the OS, not a tile.
+  const exchange = useExchangeSupported()
+  // Which tile lit: a `.rowel` and another app's data have none, they came
+  // from the OS, not a tile.
+  const { picked } = flow
   const active =
-    flow.picked === null || flow.picked.kind === 'rowel'
+    picked === null || picked.kind === 'rowel' || picked.kind === 'exchange'
       ? null
-      : flow.picked.kind === 'swftx'
+      : picked.kind === 'swftx'
         ? 'swftx'
-        : flow.picked.format
+        : picked.kind === 'exchangeGuide'
+          ? 'apple'
+          : picked.format
 
   return (
     <>
-      <DropZone onDrop={flow.dropped} />
+      <DropZone onDrop={flow.dropped} disabled={flow.running} />
       {/* The same rhythm as every other group: its label 8px over its cards. */}
       <div className={cx(LABEL, 'mt-7 mb-2')}>{t('Or start from an app')}</div>
-      <Tiles active={active} disabled={flow.running} onFormat={flow.chooseFile} />
+      <Tiles
+        active={active}
+        disabled={flow.running}
+        onFormat={flow.chooseFile}
+        exchange={exchange}
+        onExchange={flow.explainExchange}
+      />
       <div className="mt-3">
         <BackupCard
           active={active === 'swftx'}
