@@ -22,6 +22,12 @@
 //! and is never carried into another lockbox. One that arrives with the vault
 //! locked was offered to none, and waits for the unlock, through a choice of
 //! lockbox on the lock screen if need be.
+//!
+//! Which session a transfer belongs to is decided here, under this module's
+//! own lock, and not by looking at the session: the session says when one
+//! opens and when one ends (`session_opened`, `session_ended`), an arrival
+//! takes the same lock, and so each arrival is wholly before or wholly after
+//! each end. Nothing reads what is held at one moment to act on it at another.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -58,6 +64,8 @@ enum Delivered {
 struct Slot {
     held: Option<(Arrival, Delivered)>,
     changes: u64,
+    /// Whether a session is open: what is held has been offered to it.
+    offered: bool,
 }
 
 impl Slot {
@@ -81,6 +89,7 @@ impl Slot {
 static SLOT: Mutex<Slot> = Mutex::new(Slot {
     held: None,
     changes: 0,
+    offered: false,
 });
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
@@ -145,8 +154,28 @@ pub fn document(arrival: Arrival) -> Result<Zeroizing<Vec<u8>>> {
     }
 }
 
-/// Let go of `arrival`: it was imported, or the session it was offered to
-/// ended. Whatever arrived after it is a different transfer and stays.
+/// A session opened: what is held, and what arrives while it is open, is
+/// offered to it.
+pub fn session_opened() {
+    SLOT.lock().unwrap().offered = true;
+}
+
+/// A session ended, or the vault was sent to the lock screen with none open.
+/// What was offered to an open session goes with it; with none open nothing
+/// was offered, and a transfer that arrived over the lock screen stays.
+pub fn session_ended() {
+    let gone = {
+        let mut slot = SLOT.lock().unwrap();
+        if !std::mem::take(&mut slot.offered) || slot.held.is_none() {
+            return;
+        }
+        slot.set(None)
+    };
+    announce(gone);
+}
+
+/// Let go of `arrival`, which was imported. Whatever arrived after it, while
+/// the import ran, is a different transfer and stays.
 pub fn release(arrival: Arrival) {
     let gone = {
         let mut slot = SLOT.lock().unwrap();
@@ -222,13 +251,12 @@ mod tests {
         document(arrival).unwrap().to_vec()
     }
 
-    // The state is one per process, so the cases share a test rather than
-    // race each other across threads.
     #[test]
-    fn a_transfer_is_held_by_number_until_it_is_released() {
-        if let Some(left) = held().arrival {
-            release(left);
-        }
+    fn a_transfer_is_held_by_number_until_its_import() {
+        let _serial = SERIAL.lock().unwrap();
+        // Whatever an earlier test left: no session, nothing held.
+        session_opened();
+        session_ended();
         let before = held();
         assert_eq!(before.arrival, None);
 
@@ -260,9 +288,8 @@ mod tests {
         assert_eq!(held().arrival, None);
 
         // A newer arrival replaces an older one. The older is then refused
-        // rather than answered with the newer one's document, and letting go
-        // of it — its import finishing late, or the session it was offered to
-        // ending just as the newer one lands — takes nothing of the newer.
+        // rather than answered with the newer one's document, and its import
+        // finishing late takes nothing of the newer.
         accept(b"old");
         let old = arrival();
         accept(b"new");
@@ -277,5 +304,42 @@ mod tests {
         accept(&vec![0u8; MAX_BYTES + 1]);
         assert!(document(arrival()).is_err());
         assert_eq!(held().arrival, None);
+    }
+
+    // The two tests share the one slot, so they do not run side by side.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn a_transfer_goes_with_the_session_it_was_offered_to() {
+        let _serial = SERIAL.lock().unwrap();
+        session_opened();
+        session_ended();
+
+        // Over the lock screen: offered to no session. An end with none open
+        // (a lockbox chosen or deleted there) leaves it for the unlock.
+        accept(b"waiting");
+        let waiting = arrival();
+        session_ended();
+        assert_eq!(held().arrival, Some(waiting));
+
+        // The unlock offers it, and that session's end takes it — a lock, or
+        // the lockbox being left: it is not carried into another.
+        session_opened();
+        session_ended();
+        assert_eq!(held().arrival, None);
+
+        // One that arrives while a session is open is offered to it at once.
+        session_opened();
+        accept(b"live");
+        session_ended();
+        assert_eq!(held().arrival, None);
+
+        // And one that arrives after the end belongs to the next session, not
+        // the one just ended: a second end takes nothing.
+        accept(b"after");
+        let after = arrival();
+        session_ended();
+        assert_eq!(held().arrival, Some(after));
+        release(after);
     }
 }
