@@ -39,19 +39,14 @@ export default function Read({ entry, revealed, settling }: Props) {
           <Actions entry={entry} revealed={revealed} settling={settling} onDelete={remove} />
         </div>
       </div>
-      {/* The entry itself arrives as one piece when the pane changes to it.
-          The line above is the pane's frame — the same controls in the same
-          place for every entry — and stands still. */}
-      <div className="animate-arrive">
-        <Identity
-          entry={entry}
-          tile="h-7 w-7"
-          glyph={16}
-          className="mt-2 flex items-center gap-2.5"
-        />
+      <Identity
+        entry={entry}
+        tile="h-7 w-7"
+        glyph={16}
+        className="mt-2 flex items-center gap-2.5"
+      />
 
-        <Body entry={entry} revealed={revealed} error={error} />
-      </div>
+      <Body entry={entry} revealed={revealed} error={error} />
     </div>
   )
 }

@@ -1,5 +1,6 @@
+import { useRef } from 'react'
 import type { EntryMeta, EntryType } from '@/api/types'
-import { useHeld } from '@/hooks/useHeld'
+import { useSwapped } from '@/hooks/useSwapped'
 import Read from './Read'
 import Edit from './Edit'
 import RevealError from './RevealError'
@@ -19,15 +20,22 @@ interface Props {
 //
 // One instance serves every entry in turn, so that the pane can keep the entry
 // it was showing until the next one's secrets are in hand, and then change
-// once (`useHeld`): a header without its rows, or a copy button with nothing
-// to copy yet, is never drawn on the way.
+// once, the one dissolving into the other (`useSwapped`): a header without its
+// rows, or a copy button with nothing to copy yet, is never drawn on the way.
+// Reading and writing an entry are two faces of the same change.
 export default function Show({ entry, type, editing }: Props) {
   const { kindType, current, failed, retry } = useShown(entry, type)
   // A draft and a tombstone have no secrets to wait for: `reveal_entry` serves
   // neither. A tombstone never gets to the editor (`editEntry` refuses it), so
   // an editor is only ever seeded from a reveal that has landed.
   const ready = !entry || !!current || !!entry.deletedAt
-  const shown = useHeld({ entry, revealed: current, editing: !!editing }, ready)
+  const anchor = useRef<HTMLDivElement>(null)
+  const { shown, settling } = useSwapped(
+    { entry, revealed: current, editing: !!editing },
+    `${entry?.id ?? `new-${kindType}`}:${editing ? 'write' : 'read'}`,
+    ready,
+    anchor
+  )
 
   if (!kindType) return null
 
@@ -58,17 +66,17 @@ export default function Show({ entry, type, editing }: Props) {
         key={shown.entry.id}
         entry={shown.entry}
         revealed={shown.revealed}
-        settling={!ready}
+        settling={settling}
       />
     )
   }
 
   return (
     // No box of its own (`contents`): what it draws lays itself out in the
-    // pane. It is here to keep an entry that is on its way out from being
-    // pressed — the held entry only: a refusal takes its place, and its two
-    // buttons are the way on.
-    <div className="contents" inert={!ready && !refused}>
+    // pane. It is here to find the pane by, and to keep an entry that is on
+    // its way out from being pressed — the held entry only: a refusal takes
+    // its place, and its two buttons are the way on.
+    <div ref={anchor} className="contents" inert={settling && !refused}>
       {face()}
     </div>
   )

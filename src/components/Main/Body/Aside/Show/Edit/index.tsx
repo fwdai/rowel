@@ -53,20 +53,17 @@ export default function Edit({ type, revealed }: Props) {
           <Actions draft={draft} />
         </div>
 
-        {/* Arrives as one piece, as the read view does (see `Read`). */}
-        <div className="animate-arrive">
-          {/* 38px of indent under the message: the 28px tile plus the row's gap. */}
-          <Title
-            draft={draft}
-            kind={kind}
-            tile="h-7 w-7"
-            glyph={16}
-            className="mt-2 flex items-center gap-2.5"
-            message="pl-[38px]"
-          />
+        {/* 38px of indent under the message: the 28px tile plus the row's gap. */}
+        <Title
+          draft={draft}
+          kind={kind}
+          tile="h-7 w-7"
+          glyph={16}
+          className="mt-2 flex items-center gap-2.5"
+          message="pl-[38px]"
+        />
 
-          <Body draft={draft} type={type} revealed={revealed} />
-        </div>
+        <Body draft={draft} type={type} revealed={revealed} />
       </div>
     </div>
   )
