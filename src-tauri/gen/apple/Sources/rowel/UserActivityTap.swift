@@ -2,7 +2,8 @@ import Foundation
 import ObjectiveC
 
 /// Hands every `NSUserActivity` the app is launched or continued with to a
-/// handler, then lets the delegate that owns the callback carry on.
+/// handler, then lets the delegate that owns the callback carry on. The
+/// handler answers whether the activity was its to take.
 ///
 /// The app and scene delegates are tao's, written in Rust, and forward an
 /// activity only when it carries a web URL (a universal link). Anything else —
@@ -15,7 +16,7 @@ import ObjectiveC
 /// - `scene:willConnectToSession:options:`, the scene lifecycle, launched: the
 ///   activities are in the connection options and nowhere else.
 enum UserActivityTap {
-    typealias Handler = (_ activity: NSUserActivity, _ via: String) -> Void
+    typealias Handler = (_ activity: NSUserActivity, _ via: String) -> Bool
 
     /// Which of the three callbacks were wrapped (`replaced`: the delegate
     /// had one; `added`: it had none), by selector name.
@@ -44,8 +45,11 @@ enum UserActivityTap {
         let block: @convention(block) (
             AnyObject, UnsafeRawPointer?, NSUserActivity, UnsafeRawPointer?
         ) -> Bool = { receiver, application, activity, restoration in
-            handler(activity, name)
-            return original?(receiver, selector, application, activity, restoration) ?? false
+            // UIKit is told the activity was handled when either took it:
+            // tao answers no to everything but a universal link.
+            let taken = handler(activity, name)
+            let forwarded = original?(receiver, selector, application, activity, restoration) ?? false
+            return taken || forwarded
         }
         original = wrap(cls, selector, block, types: "B@:@@@").map {
             unsafeBitCast($0, to: Original.self)
@@ -62,7 +66,7 @@ enum UserActivityTap {
         var original: Original?
         let block: @convention(block) (AnyObject, UnsafeRawPointer?, NSUserActivity) -> Void = {
             receiver, scene, activity in
-            handler(activity, name)
+            _ = handler(activity, name)
             original?(receiver, selector, scene, activity)
         }
         original = wrap(cls, selector, block, types: "v@:@@").map {
@@ -88,7 +92,7 @@ enum UserActivityTap {
             // file needs no UIKit.
             let activities = options.value(forKey: "userActivities") as? Set<NSUserActivity> ?? []
             for activity in activities {
-                handler(activity, name)
+                _ = handler(activity, name)
             }
         }
         original = wrap(cls, selector, block, types: "v@:@@@").map {

@@ -37,17 +37,21 @@ enum CredentialExchangeProbe {
         }
     }
 
-    private static func received(_ activity: NSUserActivity, via: String) {
+    /// True for a credential exchange, whatever becomes of it: the activity
+    /// is this app's to answer for from the moment it is recognised.
+    private static func received(_ activity: NSUserActivity, via: String) -> Bool {
         let keys = (activity.userInfo ?? [:]).keys.map { "\($0)" }.sorted()
         note("activity \(activity.activityType) via \(via), userInfo keys \(keys)")
         guard exchangeTypes.contains(activity.activityType) || keys.contains("ASCredentialImportToken") else {
-            return
+            return false
         }
         guard #available(iOS 26.0, *) else {
-            return finish("Credential exchange needs iOS 26; this is \(UIDevice.current.systemVersion).")
+            finish("Credential exchange needs iOS 26; this is \(UIDevice.current.systemVersion).")
+            return true
         }
         guard let token = activity.userInfo?[ASCredentialImportToken] as? UUID else {
-            return finish("The activity carried no import token.")
+            finish("The activity carried no import token.")
+            return true
         }
         Task { @MainActor in
             do {
@@ -58,6 +62,7 @@ enum CredentialExchangeProbe {
                 finish("importCredentials failed: \(e.domain) \(e.code)\n\(e.localizedDescription)")
             }
         }
+        return true
     }
 
     /// The payload as the CXF JSON the Rust importer reads, reduced to what
