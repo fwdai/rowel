@@ -24,7 +24,7 @@ describe('Show chrome', () => {
     expect(screen.getAllByText(t(kindOf('login').label))).toHaveLength(1)
     expect(screen.queryByText('Type')).not.toBeInTheDocument()
     // The footer is labelled cells, not a sentence: a label over each stamp.
-    const footer = screen.getByTestId('entry-footer')
+    const footer = await screen.findByTestId('entry-footer')
     expect(footer).toHaveTextContent('Modified')
     expect(footer).toHaveTextContent('Created')
   })
@@ -118,7 +118,7 @@ describe('Edit mode in the pane', () => {
     render(<Aside />)
 
     expect(screen.queryByLabelText(/Filter by tag/)).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('add-tag-button'))
+    await userEvent.click(await screen.findByTestId('add-tag-button'))
 
     expect(useVault.getState().editing).toBe(true)
     expect(screen.getByTestId('tags-input')).toBeInTheDocument()

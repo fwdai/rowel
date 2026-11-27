@@ -31,33 +31,42 @@ interface Props {
 // footer's facts are laid out, and adds nothing of its own.
 export default function Body({ entry, revealed, error, Footer = DefaultFooter }: Props) {
   const Fields = kindOf(entry.type).Fields
+  // A tombstone has no reveal to wait for: its footer is all there is to show.
+  const ready = !!revealed || !!entry.deletedAt
 
   return (
     <>
-      {revealed && (
-        <div className="mt-5">
-          {/* No writer: every field in the set renders its read face. */}
-          <FieldsProvider value={{ entry: { ...revealed }, set: null, attempted: false }}>
-            <Fields />
-          </FieldsProvider>
-          {/* Keyed: each entry's files are its own, read when it opens. */}
-          {!entry.deletedAt && takesAttachments(entry.type) && (
-            <Attachments key={entry.id} entry={entry} />
+      {/* The rows and the footer arrive together, in one fade, once the reveal
+          lands. The footer needs no secrets to draw, but drawn ahead of the
+          rows it sits under the header for a frame and is shoved down by them. */}
+      {ready && (
+        <div className="animate-arrive">
+          {revealed && (
+            <div className="mt-5">
+              {/* No writer: every field in the set renders its read face. */}
+              <FieldsProvider value={{ entry: { ...revealed }, set: null, attempted: false }}>
+                <Fields />
+              </FieldsProvider>
+              {/* Keyed: each entry's files are its own, read when it opens. */}
+              {!entry.deletedAt && takesAttachments(entry.type) && (
+                <Attachments key={entry.id} entry={entry} />
+              )}
+            </div>
           )}
+
+          {/* Writing the tags does need the reveal: a save sends the whole
+              entry back, secrets included. */}
+          <Footer
+            tags={entry.tags}
+            onAdd={entry.deletedAt ? undefined : () => editEntry()}
+            onSave={revealed && !entry.deletedAt ? next => saveTags(revealed, next) : undefined}
+            subject={entry.title}
+            createdAt={entry.createdAt}
+            updatedAt={entry.updatedAt}
+            deletedAt={entry.deletedAt}
+          />
         </div>
       )}
-
-      {/* Tags are metadata, so the footer needs no reveal to render — only to
-          write: a save sends the whole entry back, secrets included. */}
-      <Footer
-        tags={entry.tags}
-        onAdd={entry.deletedAt ? undefined : () => editEntry()}
-        onSave={revealed && !entry.deletedAt ? next => saveTags(revealed, next) : undefined}
-        subject={entry.title}
-        createdAt={entry.createdAt}
-        updatedAt={entry.updatedAt}
-        deletedAt={entry.deletedAt}
-      />
 
       <DeleteError error={error} />
     </>

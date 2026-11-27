@@ -592,6 +592,16 @@
   --default-transition-timing-function: var(--ease-swift);
 
   --animate-fade: fade 160ms var(--ease-swift) both;
+  /*
+   * Content arriving in a place that is already on screen — an entry's rows
+   * under its header, the editor's rows in their stead. A fade with no
+   * movement, so stepping through a list quickly never makes the pane bob.
+   * Unlike the rest it does not fill forwards: a filling animation keeps its
+   * element a stacking context for good, and what arrives this way holds
+   * overlays of its own (a file's preview, a sheet) that must still cover the
+   * whole window once it has landed.
+   */
+  --animate-arrive: fade 160ms var(--ease-swift) backwards;
   --animate-pop: pop 160ms var(--ease-swift) both;
   --animate-drop: drop 140ms var(--ease-swift) both;
   --animate-sheet: sheet 160ms var(--ease-swift) both;
