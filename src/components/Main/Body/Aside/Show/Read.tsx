@@ -39,10 +39,10 @@ export default function Read({ entry, revealed, settling }: Props) {
           <Actions entry={entry} revealed={revealed} settling={settling} onDelete={remove} />
         </div>
       </div>
-      {/* The sheet that moves when the pane turns to another entry (see
-          `turn`). The line above is the pane's frame — the same controls in
-          the same place for every entry — and stands still. */}
-      <div data-stage>
+      {/* The entry itself arrives as one piece when the pane changes to it.
+          The line above is the pane's frame — the same controls in the same
+          place for every entry — and stands still. */}
+      <div className="animate-arrive">
         <Identity
           entry={entry}
           tile="h-7 w-7"

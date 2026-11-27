@@ -593,6 +593,15 @@
 
   --animate-fade: fade 160ms var(--ease-swift) both;
   --animate-pop: pop 160ms var(--ease-swift) both;
+  /*
+   * A whole view arriving in a pane that is already on screen (an entry in the
+   * detail pane): `pop`'s movement, on a slower and evener curve, so it is
+   * seen as an arrival rather than a cut. It does not fill, unlike the rest: a
+   * filling animation keeps its element a stacking context for good, and what
+   * arrives this way holds overlays of its own (a file's preview, a sheet)
+   * that must cover the whole window once it has landed.
+   */
+  --animate-arrive: pop 220ms ease-out;
   --animate-drop: drop 140ms var(--ease-swift) both;
   --animate-sheet: sheet 160ms var(--ease-swift) both;
   --animate-push: push 320ms var(--ease-swift) both;
