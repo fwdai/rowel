@@ -60,7 +60,12 @@ export default function Show({ entry, type, editing }: Props) {
   }
 
   return (
-    <div ref={anchor} className="contents" inert={settling && !refused}>
+    <div
+      ref={anchor}
+      data-testid="entry-pane"
+      className="contents"
+      inert={settling && !refused}
+    >
       {face()}
     </div>
   )

@@ -232,12 +232,20 @@ export async function expectTitles(expected: string[]): Promise<void> {
 /**
  * Click the list row with this title. Rows carry no per-entry testid, so they
  * are matched on their title text.
+ *
+ * The detail pane keeps the entry it was showing, inert, until the clicked
+ * one is decrypted; this returns once the pane has let go of it, so the next
+ * click lands on the entry that was asked for.
  */
 export async function openEntry(title: string): Promise<void> {
   await waitFor("entry-item");
   for (const row of await entryItems()) {
     if ((await row.$('[data-testid="entry-item-title"]').getText()) === title) {
       await row.click();
+      await $('[data-testid="entry-pane"][inert]').waitForExist({
+        reverse: true,
+        timeout: 15_000,
+      });
       return;
     }
   }
