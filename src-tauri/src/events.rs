@@ -121,9 +121,15 @@ pub fn import_progress(app: &AppHandle, done: usize, total: usize) {
 }
 
 /// Another password manager handed its credentials over (see
-/// `crate::exchange`). Says only that they are waiting: they stay in the core.
-pub fn exchange_received(app: &AppHandle) {
-    let _ = app.emit(EXCHANGE_RECEIVED, ());
+/// `crate::exchange`). Says only which transfer is waiting: the credentials
+/// stay in the core.
+pub fn exchange_received(app: &AppHandle, arrival: crate::exchange::Arrival) {
+    let _ = app.emit(EXCHANGE_RECEIVED, Arrived { arrival });
+}
+
+#[derive(Serialize, Clone)]
+struct Arrived {
+    arrival: crate::exchange::Arrival,
 }
 
 pub fn setup_account_pending(app: &AppHandle) {

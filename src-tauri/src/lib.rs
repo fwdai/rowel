@@ -322,7 +322,7 @@ pub fn run() {
             commands::attachments::attachment_usage,
             commands::import::import_entries,
             commands::import::import_exchange,
-            commands::import::exchange_pending,
+            commands::import::exchange_held,
             commands::import::exchange_supported,
             commands::import::export_entries,
             commands::env::read_env_file,

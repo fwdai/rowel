@@ -48,19 +48,23 @@ export const importEntries = (
 export const exchangeSupported = (): Promise<boolean> => call('exchange_supported')
 
 /**
- * Whether such a transfer is waiting. Rust fetches and holds it, and says so
- * as `exchange:received`; this is for one that arrived before the webview was
- * listening. Asking takes nothing.
+ * The transfer Rust holds, by its arrival number, or `null`. Rust is what
+ * knows: it fetches the data, keeps it, and lets go of it on an import or a
+ * lock. The webview's copy of this answer (`store/app`'s `exchange`) is asked
+ * for again wherever it may have gone stale. Asking takes nothing.
  */
-export const exchangePending = (): Promise<boolean> => call('exchange_pending')
+export const exchangeHeld = (): Promise<number | null> => call('exchange_held')
 
 /**
- * `importEntries` for the transfer Rust holds: previewed on a dry run, written
- * and let go of otherwise. Only the report ever reaches the webview. Rejects
- * when nothing is held (a lock drops it) or the transfer itself failed.
+ * `importEntries` for the transfer `arrival`: previewed on a dry run, written
+ * and let go of otherwise. Only the report ever reaches the webview. Naming
+ * the arrival is what ties an import to its preview: Rust rejects one it no
+ * longer holds (replaced by a newer transfer, imported, dropped by a lock)
+ * rather than answer with another's rows, and rejects with the reason when
+ * the transfer itself failed.
  */
-export const importExchange = (dryRun: boolean): Promise<ImportReport> =>
-  call('import_exchange', { dryRun })
+export const importExchange = (arrival: number, dryRun: boolean): Promise<ImportReport> =>
+  call('import_exchange', { arrival, dryRun })
 
 /**
  * Write the whole vault, in plaintext, to a file the user picks in the save

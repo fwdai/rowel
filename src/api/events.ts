@@ -74,12 +74,12 @@ export interface EventPayloads {
   'file:opened': { path: string }
   /**
    * Another password manager handed its data to the app through the system
-   * (iOS 26's "Export Data to Another App"). No payload: Rust holds the data,
-   * and the import that reads it answers with a report only. One that arrived
-   * before the shell listened is asked after (`exchangePending` in
-   * `api/imports`); both end up in `store/app`'s `exchangeReceived`.
+   * (iOS 26's "Export Data to Another App"). Only which arrival it is: Rust
+   * holds the data, and the import that reads it answers with a report only.
+   * One that arrived before the shell listened is asked after (`exchangeHeld`
+   * in `api/imports`); both end up in `store/app`'s `setExchange`.
    */
-  'exchange:received': void
+  'exchange:received': { arrival: number }
   /**
    * A client — a browser extension, or an agent — asks to be let in. `key` is
    * its identification public key, base64, for the consent dialog to show a

@@ -211,10 +211,10 @@ const DEFAULTS: Record<string, Handler> = {
   // and an import of it finds nothing held. A spec about a transfer answers as
   // an iPhone that received one would.
   exchange_supported: () => false,
-  exchange_pending: () => false,
+  exchange_held: () => null,
   import_exchange: reject({
     kind: 'other',
-    message: 'nothing is waiting to be imported; export from the other app again'
+    message: 'that transfer is no longer waiting; export from the other app again'
   }),
   export_entries: () => null,
   read_env_file: reject({ kind: 'fileNotText', message: 'the file is not text' }),

@@ -25,7 +25,10 @@ import {
   lockVault,
   setApp,
   enterMain,
-  switchWorkspace
+  switchWorkspace,
+  closeSettings,
+  exchangeShown,
+  setExchange
 } from './index'
 
 const meta = (id: string): EntryMeta => ({
@@ -325,38 +328,86 @@ describe('exchange:received', () => {
   it('sends an unlocked vault to Settings › Import', () => {
     flowMain()
 
-    handlerFor(EVENTS.exchangeReceived)()
+    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
 
-    expect(useApp.getState().exchangePending).toBe(true)
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
     expect(useUi.getState().settings).toBe(true)
     expect(useUi.getState().settingsSection).toBe('import')
   })
 
   it('waits behind a lock, for the unlock that can import it', async () => {
-    handlerFor(EVENTS.exchangeReceived)()
+    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
 
-    expect(useApp.getState().exchangePending).toBe(true)
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
     expect(useUi.getState().settings).toBe(false)
 
     await enterMain({ entries: [], syncConfigured: false, session: 1 })
     expect(useUi.getState().settingsSection).toBe('import')
   })
 
+  // The store's copy is of what the backend holds, so hearing of the same
+  // transfer again changes nothing: not whether it was shown, and not where
+  // the user is.
+  it('leaves a transfer it already knows as it is', () => {
+    flowMain()
+    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
+    exchangeShown(1)
+    closeSettings()
+
+    setExchange(1)
+
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: true })
+    expect(useUi.getState().settings).toBe(false)
+
+    // A newer one is a different transfer, and is offered.
+    setExchange(2)
+    expect(useApp.getState().exchange).toEqual({ arrival: 2, shown: false })
+    expect(useUi.getState().settings).toBe(true)
+  })
+
   it('asks once listening, for a transfer that arrived first', async () => {
-    mockCommand('exchange_pending', () => true)
-    clearCalls('exchange_pending')
+    mockCommand('exchange_held', () => 7)
+    clearCalls('exchange_held')
 
     subscribeToEvents()
 
-    await vi.waitFor(() => expect(useApp.getState().exchangePending).toBe(true))
-    expect(calls('exchange_pending')).toHaveLength(1)
+    await vi.waitFor(() =>
+      expect(useApp.getState().exchange).toEqual({ arrival: 7, shown: false })
+    )
+    expect(calls('exchange_held')).toHaveLength(1)
   })
 
-  it('offers nothing where none is waiting', async () => {
-    await vi.waitFor(() => expect(calls('exchange_pending')).toHaveLength(1))
+  it('offers nothing where none is held', async () => {
+    await vi.waitFor(() => expect(calls('exchange_held')).toHaveLength(1))
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(useApp.getState().exchangePending).toBe(false)
+    expect(useApp.getState().exchange).toBeNull()
+  })
+
+  // A lock lets go of a transfer that was offered to the session it ended, in
+  // the backend. The store asks rather than assumes: one that arrived over the
+  // lock screen is still held.
+  it('asks again after a lock, which may have let go of it', async () => {
+    flowMain()
+    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
+    exchangeShown(1)
+    mockCommand('exchange_held', () => null)
+
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
+
+    await vi.waitFor(() => expect(useApp.getState().exchange).toBeNull())
+  })
+
+  it('keeps a transfer the lock did not let go of', async () => {
+    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
+    mockCommand('exchange_held', () => 1)
+    clearCalls('exchange_held')
+
+    handlerFor(EVENTS.vaultLocked)({ epoch: 1 })
+
+    await vi.waitFor(() => expect(calls('exchange_held')).toHaveLength(1))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
   })
 })
 

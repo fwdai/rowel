@@ -70,6 +70,14 @@ export interface UiState {
    * opened file) is still waiting for that section to take it.
    */
   settingsPending: Section | null
+  /**
+   * A section asked for by name (`openSettings('import')`), until the phone's
+   * Settings has gone there. The wide modal needs nothing more than
+   * `settingsSection`, which the same ask sets; the phone's holds its own
+   * "root or pane" and reads that field never (see `Compact/Settings`), so
+   * this is how a move from outside it reaches it.
+   */
+  settingsRequest: Section | null
   addPicker: boolean
   /**
    * The kind whose second question the picker is on (which document an
@@ -164,6 +172,7 @@ export const initialUi: UiState = {
   settingsSection: 'language',
   settingsLocked: false,
   settingsPending: null,
+  settingsRequest: null,
   addPicker: false,
   addPickerKind: null,
   generator: GENERATOR_CLOSED,
@@ -286,22 +295,28 @@ export const isModalOpen = () => useDialogs.getState().open.size > 0
 export const openPalette = () => useUi.setState({ palette: true })
 export const closePalette = () => useUi.setState({ palette: false })
 
-// Without a section the modal reopens where it was left, so a deep link from
-// the palette is the only thing that moves it. Under the lock it opens but
-// moves nothing yet: the section asked for waits for `lockSettings(false)`.
+// Without a section the modal reopens where it was left, so a deep link (the
+// palette, a prompt in the list, something Import must take) is the only thing
+// that moves it. Under the lock it opens but moves nothing yet: the section
+// asked for waits for `lockSettings(false)`.
 export const openSettings = (section?: Section) =>
   useUi.setState(state => ({
     palette: false,
     settings: true,
     ...(state.settingsLocked
       ? { settingsPending: section ?? state.settingsPending }
-      : { settingsSection: section ?? state.settingsSection })
+      : {
+          settingsSection: section ?? state.settingsSection,
+          settingsRequest: section ?? state.settingsRequest
+        })
   }))
 // Both refuse while locked, and refuse *here* rather than in the shell: the X,
 // Escape, the backdrop, the rail tile and the palette all end up in these
 // three, and a lock that any of them could walk around is not one.
 export const closeSettings = () =>
-  useUi.setState(state => (state.settingsLocked ? {} : { settings: false }))
+  useUi.setState(state => (state.settingsLocked ? {} : { settings: false, settingsRequest: null }))
+/** The phone's Settings went where it was asked to, so it is not asked again. */
+export const takeSettingsRequest = () => useUi.setState({ settingsRequest: null })
 export const setSettingsSection = (section: Section) =>
   useUi.setState(state => (state.settingsLocked ? {} : { settingsSection: section }))
 /**
@@ -315,7 +330,8 @@ export const lockSettings = (locked: boolean) =>
       : {
           settingsLocked: false,
           settingsPending: null,
-          settingsSection: state.settingsPending ?? state.settingsSection
+          settingsSection: state.settingsPending ?? state.settingsSection,
+          settingsRequest: state.settingsPending ?? state.settingsRequest
         }
   )
 

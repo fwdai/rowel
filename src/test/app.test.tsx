@@ -6,6 +6,7 @@ import { enterMain, useApp, usePrefs, useUi } from '@/store'
 import { unlistens } from './events'
 import { appStatusDefault, calls, mockCommand } from './ipc'
 import { seedApp } from './utils'
+import { exchangeBackend } from './exchange'
 
 // Each `unlisten` the fake event bus handed out is a spy (see `test/events`).
 const isCalled = (fn: () => void) => vi.mocked(fn).mock.calls.length > 0
@@ -87,10 +88,10 @@ describe('App', () => {
   // Rust holds it, and the shell learns one is waiting by asking.
   it('learns of a transfer the app was launched with', async () => {
     seedApp({ initialized: true })
-    mockCommand('exchange_pending', () => true)
+    exchangeBackend().hold(1)
     render(<App />)
 
-    await waitFor(() => expect(useApp.getState().exchangePending).toBe(true))
+    await waitFor(() => expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false }))
     expect(useApp.getState().flow).toBe('auth')
   })
 
@@ -132,27 +133,17 @@ describe('unlocking', () => {
   it('offers a transfer that waited behind the lock', async () => {
     seedApp({ initialized: true })
     mockCommand('unlock', () => ({ entries: [], syncConfigured: false }))
-    mockCommand('exchange_pending', () => true)
-    mockCommand('import_exchange', () => ({
-      total: 4,
-      imported: 0,
-      skipped: 0,
-      duplicates: 0,
-      dryRun: true,
-      errors: [],
-      warnings: [],
-      entries: []
-    }))
+    exchangeBackend().hold(1, 4)
     render(<App />)
-    await waitFor(() => expect(useApp.getState().exchangePending).toBe(true))
+    await waitFor(() => expect(useApp.getState().exchange).not.toBeNull())
 
     await userEvent.type(screen.getByPlaceholderText('Master Password'), 'hunter2{Enter}')
 
     const result = await screen.findByTestId('import-result', {}, { timeout: 3000 })
     expect(result).toHaveTextContent('From another app')
     await waitFor(() => expect(result).toHaveTextContent('Ready to import: 4'))
-    expect(calls('import_exchange')).toEqual([{ dryRun: true }])
-    expect(useApp.getState().exchangePending).toBe(false)
+    expect(calls('import_exchange')).toEqual([{ arrival: 1, dryRun: true }])
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: true })
   })
 
   it('leaves the search field alone on mobile', async () => {

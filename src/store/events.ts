@@ -10,14 +10,14 @@ import {
   refreshApp,
   showLockScreen,
   fileOpened,
-  exchangeReceived,
+  setExchange,
+  syncExchange,
   lockHeard,
   setOsLockStatus,
   setNearbyStatus,
   useApp
 } from './app'
 import { osLockStatus } from '@/api/app'
-import { exchangePending } from '@/api/imports'
 import { nearbyStatus } from '@/api/nearby'
 import { setEntries, loadArchive, runAudit } from './vault'
 import {
@@ -87,6 +87,8 @@ export const subscribeToEvents = (): (() => void) => {
     on(EVENTS.vaultLocked, ({ epoch }) => {
       lockHeard(epoch)
       clearSession()
+      // A lock lets go of a transfer that was offered to the session it ended.
+      void syncExchange()
       void showLockScreen()
     }),
     // A backup double-clicked while the app is up. The one opened *with* the
@@ -95,12 +97,8 @@ export const subscribeToEvents = (): (() => void) => {
     // Another app's data handed over while the app is up, on a phone that can
     // take it. One that launched the app got there before this listened, so it
     // is asked after here, which a build that never receives one answers no.
-    on(EVENTS.exchangeReceived, () => exchangeReceived()).then(unlisten => {
-      exchangePending()
-        .then(pending => {
-          if (pending) exchangeReceived()
-        })
-        .catch(() => {})
+    on(EVENTS.exchangeReceived, ({ arrival }) => setExchange(arrival)).then(unlisten => {
+      void syncExchange()
       return unlisten
     }),
     // An extension asking to be let in; the dialog in `Main` answers it.

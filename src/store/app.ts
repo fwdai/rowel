@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { UnlockResult } from '@/api/types'
 import { appStatus, type AppStatus, type OsLockStatus } from '@/api/app'
 import { lock } from '@/api/auth'
+import { exchangeHeld } from '@/api/imports'
 import type { Provider } from '@/api/provider'
 import type { RemotePack } from '@/api/setup'
 import { syncNow, syncProvider, type SyncStatus } from '@/api/sync'
@@ -128,12 +129,13 @@ export interface AppState {
    */
   openedFile: string | null
   /**
-   * Another app's data, handed over through the system (`exchange:received`)
-   * and held in Rust, waiting for Settings › Import as an opened file does.
-   * Only that it waits is known here; cleared by the screen that takes it
-   * (`claimExchange`).
+   * The transfer another app handed over through the system, as Rust holds it:
+   * which arrival, and whether Import has put it on screen yet. `null` when
+   * none is held. Rust is what knows; this is a copy, kept so that what routes
+   * to Import can read it, and refreshed wherever it can go stale
+   * (`syncExchange`).
    */
-  exchangePending: boolean
+  exchange: { arrival: number; shown: boolean } | null
   update: {
     // Version + release notes of a staged update awaiting restart (null = none).
     readyVersion: string | null
@@ -175,7 +177,7 @@ export const initialApp: AppState = {
   locks: 0,
   lockedAt: 0,
   openedFile: null,
-  exchangePending: false,
+  exchange: null,
   update: { readyVersion: null, readyNotes: null, status: null }
 }
 
@@ -406,29 +408,46 @@ export const claimOpenedFile = (): string | null => {
 // --- another app's data, handed over through the system ----------------------------
 
 /**
- * Another password manager handed its data over, and Rust holds it. Routed as
- * an opened backup is, but only Settings › Import takes it: it merges into an
- * open vault, so an unlocked one is sent there at once and a locked one gets
- * there through `enterMain`.
+ * What Rust holds now: told by `exchange:received`, or asked (`syncExchange`).
+ * A transfer not known before is new, and is routed as an opened backup is,
+ * though only Settings › Import takes it: it merges into an open vault, so an
+ * unlocked one is sent there at once and a locked one gets there through
+ * `enterMain`. One already known is left as it is, shown or not.
  */
-export const exchangeReceived = () => {
-  useApp.setState({ exchangePending: true })
-  if (useApp.getState().flow === 'main') openSettings('import')
+export const setExchange = (arrival: number | null) => {
+  const known = useApp.getState().exchange
+  if (arrival === (known?.arrival ?? null)) return
+  useApp.setState({ exchange: arrival === null ? null : { arrival, shown: false } })
+  if (arrival !== null && useApp.getState().flow === 'main') openSettings('import')
 }
 
 /**
- * Import took the transfer, so nothing else is sent there for it. The backend
- * goes on holding it until it is imported, and Import asks after it whenever
- * it comes back on screen (see `useImport`).
+ * Ask Rust what it holds. Called wherever the copy here can have gone stale:
+ * once the shell listens (an arrival before that was never announced), after a
+ * lock (which lets go of a transfer), and after a preview or an import of one
+ * (which may have spent it).
  */
-export const claimExchange = () => useApp.setState({ exchangePending: false })
+export const syncExchange = () =>
+  exchangeHeld()
+    .then(setExchange)
+    .catch(() => {})
+
+/**
+ * Import put the transfer on screen, so nothing else is sent there for it. It
+ * is still held, and still Import's to show whenever that section comes back.
+ */
+export const exchangeShown = (arrival: number) =>
+  useApp.setState(state =>
+    state.exchange?.arrival === arrival ? { exchange: { arrival, shown: true } } : {}
+  )
 
 /**
  * Whether something is waiting for Settings › Import to take it: a backup the
- * OS opened, or another app's data. What decides that Import is where to go.
+ * OS opened, or a transfer it has not shown yet. What decides that Import is
+ * where to go.
  */
 export const importWaiting = (state: AppState) =>
-  state.openedFile !== null || state.exchangePending
+  state.openedFile !== null || (state.exchange !== null && !state.exchange.shown)
 
 // --- sync -----------------------------------------------------------------------
 

@@ -341,6 +341,13 @@ fn end(app: &AppHandle, announce: bool, applies: impl FnOnce(&Session) -> bool) 
         }
         let sealed = seal_in(&mut session, &state.keyring);
         let ended = (sealed.live || sealed.held).then(|| announce_ended(app));
+        // What another app handed over was offered to the session this lock
+        // ends, and goes with it. Only here: choosing or deleting a lockbox
+        // ends a session too (`end_in`), with none open when the vault is
+        // locked, and one still waiting for the unlock must survive that.
+        if sealed.live {
+            crate::exchange::clear();
+        }
         (sealed, ended)
     };
     if let Some(count) = sealed.count {
@@ -469,8 +476,6 @@ fn announce_opened(app: &AppHandle) {
 
 fn announce_ended(app: &AppHandle) -> Ended {
     app.state::<crate::grants::PathGrants>().session_ended();
-    // What another app handed over was offered to this session (`exchange`).
-    crate::exchange::clear();
     crate::picked::wipe(app);
     crate::autolock::disarm(app);
     #[cfg(desktop)]
@@ -872,6 +877,16 @@ mod lock_scope {
         }
         let end = body_of(source, "\nfn end(");
         assert!(at(&end, "announce_ended(app)") < at(&end, "ended.finish(app)"));
+
+        // A transfer from another app is let go of by a lock and by no other
+        // end of a session (see `end`).
+        assert!(end.contains("crate::exchange::clear()"));
+        for signature in ["\npub fn end_in(", "\nfn announce_ended("] {
+            assert!(
+                !body_of(source, signature).contains("exchange::"),
+                "{signature}: a transfer outlives an end that is not a lock"
+            );
+        }
 
         let touch = body_of(include_str!("autolock.rs"), "pub fn touch(");
         assert!(at(&touch, "session.lock()") < at(&touch, "arm(app)"));

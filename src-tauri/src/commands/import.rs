@@ -110,18 +110,20 @@ pub async fn import_entries(
     import(load, dry_run, writer, &app, &state).await
 }
 
-/// Preview, or write into the open vault, what another password manager handed
-/// over through the system (see `crate::exchange`): the same pass as a file's,
-/// over a document that is already in memory and is always CXF. Writing it is
-/// what lets go of it.
+/// Preview, or write into the open vault, the transfer another password manager
+/// handed over through the system (see `crate::exchange`): the same pass as a
+/// file's, over a document that is already in memory and is always CXF.
+/// `arrival` is the transfer the webview was told of and previewed, so nothing
+/// else is ever written under its counts; writing it is what lets go of it.
 #[tauri::command]
 pub async fn import_exchange(
+    arrival: crate::exchange::Arrival,
     dry_run: bool,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ImportReport> {
     let writer = writer(&state, dry_run)?;
-    let (arrival, document) = crate::exchange::document()?;
+    let document = crate::exchange::document(arrival)?;
     let report = import(
         move || Ok((document, Format::Cxf)),
         dry_run,
@@ -131,19 +133,17 @@ pub async fn import_exchange(
     )
     .await?;
     if !dry_run {
-        // This arrival and no other: one that landed while the write ran is
-        // still to be looked at.
         crate::exchange::imported(arrival);
     }
     Ok(report)
 }
 
-/// Whether a transfer from another app is waiting. Asked once the webview
-/// listens for `exchange:received`, for one that arrived before it did, and
-/// whenever Import comes on screen, for one that was previewed and left.
+/// The transfer from another app that is held, by its number, or `null`. The
+/// webview asks wherever its own idea of it may be stale: once it listens for
+/// `exchange:received`, after a lock, and after a preview or an import.
 #[tauri::command]
-pub fn exchange_pending() -> bool {
-    crate::exchange::pending()
+pub fn exchange_held() -> Option<crate::exchange::Arrival> {
+    crate::exchange::held()
 }
 
 /// Whether this device can be handed another app's credentials at all.

@@ -14,7 +14,6 @@ import {
   useVault,
   selectCurrent,
   editEntry,
-  exchangeReceived,
   fileOpened,
   focusSearch,
   initialApp,
@@ -25,6 +24,7 @@ import {
   openGenerator,
   setCurrentEntry,
   setEntries,
+  setExchange,
   setRemoteVaults,
   setSyncStatus,
   setView,
@@ -33,6 +33,7 @@ import {
 import { withEntries, loginEntry, loginMeta, seedApp } from './utils'
 import { setLayout } from './layout'
 import { calls, mockCommand } from './ipc'
+import { exchangeBackend } from './exchange'
 
 const seed = () =>
   withEntries([loginMeta({ id: 'l1', title: 'Google' }), loginMeta({ id: 'l2', title: 'Airbnb' })])
@@ -781,41 +782,76 @@ describe('compact shell', () => {
     expect(await screen.findByText('Rowel backup 2026-10-09.rowel')).toBeInTheDocument()
   })
 
-  // What another app hands over is Import's to take, and on the phone the
-  // store's section does not say which pane is pushed: the arrival pushes
-  // Import's itself, from wherever Settings was, and Back still leaves it.
-  it('pushes the Import pane for what another app hands over', async () => {
-    mockCommand('import_exchange', () => ({
-      total: 2,
-      imported: 0,
-      skipped: 0,
-      duplicates: 0,
-      dryRun: true,
-      errors: [],
-      warnings: [],
-      entries: []
-    }))
+  // A section asked for by name is a move from outside this screen, which
+  // holds its own "root or pane": it goes to that section's pane, once, from
+  // the root or from another pane, and Back still leaves it.
+  it('goes to a section it is asked for by name', async () => {
     seed()
     render(<Main />)
 
-    act(() => exchangeReceived())
+    act(() => openSettings('security'))
+    expect(screen.getByTestId('settings-pane')).toContainElement(
+      screen.getByTestId('settings-back')
+    )
+    expect(screen.getByTestId('settings-nav-security').closest('[inert]')).not.toBeNull()
+    expect(useUi.getState().settingsRequest).toBeNull()
+
+    await userEvent.click(screen.getByTestId('settings-back'))
+    expect(screen.getByTestId('settings-nav-security').closest('[inert]')).toBeNull()
+
+    // Asked while a pane is showing, and while a lock holds the screen: the
+    // ask waits for the lock, as on the wide shell.
+    await userEvent.click(screen.getByTestId('settings-nav-workspaces'))
+    act(() => lockSettings(true))
+    act(() => openSettings('import'))
+    expect(screen.queryByTestId('import-dropzone')).not.toBeInTheDocument()
+    act(() => lockSettings(false))
+    expect(await screen.findByTestId('import-dropzone')).toBeInTheDocument()
+  })
+
+  // Opened without a section, it is the tab root, wherever a request last led.
+  it('opens on the root when no section is asked for', async () => {
+    seed()
+    render(<Main />)
+
+    act(() => openSettings('security'))
+    await userEvent.click(screen.getByTestId('tab-items'))
+    expect(useUi.getState().settings).toBe(false)
+    act(() => openSettings())
+
+    expect(screen.queryByTestId('settings-pane')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-security').closest('[inert]')).toBeNull()
+  })
+
+  // What another app hands over is Import's to take: on the phone, where it
+  // arrives, that ask lands on Import's pane with the preview under way.
+  it('lands a transfer from another app on the Import pane', async () => {
+    const backend = exchangeBackend()
+    backend.hold(1, 2)
+    seed()
+    render(<Main />)
+
+    act(() => setExchange(1))
 
     expect(useUi.getState().settings).toBe(true)
     const result = await screen.findByTestId('import-result')
     expect(screen.getByTestId('settings-pane')).toContainElement(result)
     await waitFor(() => expect(result).toHaveTextContent('Ready to import: 2'))
-    expect(calls('import_exchange')).toEqual([{ dryRun: true }])
-    expect(useApp.getState().exchangePending).toBe(false)
+    expect(calls('import_exchange')).toEqual([{ arrival: 1, dryRun: true }])
 
+    // Back leaves it, and it is not pulled back: the transfer has been shown.
     await userEvent.click(screen.getByTestId('settings-back'))
     expect(screen.getByTestId('settings-nav-import').closest('[inert]')).toBeNull()
 
-    // From another pane, too.
+    // A newer one arrives while another pane is showing.
     await userEvent.click(screen.getByTestId('settings-nav-security'))
-    act(() => exchangeReceived())
-    await waitFor(() => expect(calls('import_exchange')).toHaveLength(2))
+    backend.hold(2, 5)
+    act(() => setExchange(2))
+    await waitFor(() =>
+      expect(screen.getByTestId('import-result')).toHaveTextContent('Ready to import: 5')
+    )
     expect(screen.getByTestId('settings-pane')).toContainElement(
-      await screen.findByTestId('import-result')
+      screen.getByTestId('import-result')
     )
   })
 
