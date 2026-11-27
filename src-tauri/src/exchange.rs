@@ -22,6 +22,7 @@
 //! locked was offered to none, and waits for the unlock, through a choice of
 //! lockbox on the lock screen if need be.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use tauri::AppHandle;
@@ -133,26 +134,28 @@ pub fn clear() {
     SLOT.lock().unwrap().held = None;
 }
 
-/// Whether this device can receive a transfer at all: iOS 26 or later.
+/// Whether this device can receive a transfer at all: iOS 26 or later. Only
+/// the native side can tell, and it says so as the app starts; nowhere else
+/// does anything say it.
+static SUPPORTED: AtomicBool = AtomicBool::new(false);
+
 pub fn supported() -> bool {
-    #[cfg(target_os = "ios")]
-    {
-        // SAFETY: a Swift function of no arguments that reads the OS version.
-        unsafe { native::rowel_credential_exchange_supported() }
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-        false
-    }
+    SUPPORTED.load(Ordering::Relaxed)
 }
 
-/// The two ends of `CredentialExchange.swift`.
+/// What `CredentialExchange.swift` calls. Every call across that boundary
+/// goes this way, Swift into Rust, and none the other: this crate is also
+/// linked on its own, as a dynamic library, before the app's Swift exists to
+/// link against, so a function of Swift's would be an undefined symbol there.
 #[cfg(target_os = "ios")]
 mod native {
     use std::ffi::{c_char, CStr};
+    use std::sync::atomic::Ordering;
 
-    extern "C" {
-        pub fn rowel_credential_exchange_supported() -> bool;
+    /// Said once, as the app starts, by a system that has credential exchange.
+    #[no_mangle]
+    pub extern "C" fn rowel_credential_exchange_available() {
+        super::SUPPORTED.store(true, Ordering::Relaxed);
     }
 
     /// The document of a transfer that succeeded. The bytes are copied; the

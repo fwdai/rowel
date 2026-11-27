@@ -13,6 +13,10 @@ import UIKit
 /// is kept here and nothing is written to disk.
 enum CredentialExchange {
     static func install() {
+        // Only this side can tell whether the system has the feature, and the
+        // core is told now, before anything can ask it.
+        guard #available(iOS 26.0, *) else { return }
+        rowel_credential_exchange_available()
         // Posted once tao's delegate has returned from launching: its class
         // and the scene delegate's exist by then, and no scene has connected.
         NotificationCenter.default.addObserver(
@@ -60,14 +64,4 @@ enum CredentialExchange {
 @_cdecl("rowel_credential_exchange_install")
 public func rowelCredentialExchangeInstall() {
     CredentialExchange.install()
-}
-
-/// Asked by the core: whether this device can be handed another app's
-/// credentials at all.
-@_cdecl("rowel_credential_exchange_supported")
-public func rowelCredentialExchangeSupported() -> Bool {
-    if #available(iOS 26.0, *) {
-        return true
-    }
-    return false
 }
