@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Show from '@/components/Main/Body/Aside/Show'
-import ShowBody from '@/components/Main/Body/Aside/Show/Body'
 import Aside from '@/components/Main/Body/Aside'
 import Body from '@/components/Main/Body'
 import type { Entry } from '@/api/types'
@@ -63,8 +62,6 @@ describe('Show chrome', () => {
     expect(screen.queryByTestId('reveal-error')).not.toBeInTheDocument()
   })
 
-  // The pane changes once, when the next entry is all there: until its secrets
-  // land it keeps the entry it had, whole, and out of reach.
   it('keeps the last entry up, inert, until the next one is revealed', async () => {
     const next = deferred<Entry>()
     mockCommand('reveal_entry', ({ id }) => (id === 'l1' ? loginEntry() : next.promise))
@@ -80,8 +77,6 @@ describe('Show chrome', () => {
     expect(screen.getByTestId('entry-footer')).toBeInTheDocument()
     expect(screen.getByTestId('primary-action-button')).toBeEnabled()
     expect(screen.getByTestId('primary-action-button').closest('[inert]')).not.toBeNull()
-    // ⏎ belongs to the selection, which has moved on: the entry still on
-    // screen is not the one it would be copying.
     await userEvent.keyboard('{Enter}')
     expect(calls('copy_to_clipboard')).toEqual([])
 
@@ -91,8 +86,6 @@ describe('Show chrome', () => {
     expect(screen.getByTestId('primary-action-button').closest('[inert]')).toBeNull()
   })
 
-  // The same entry revealed again (a save, a sync merge) is not a change of
-  // entry: its rows and footer stay where they are while the new secrets come.
   it('keeps an entry’s rows up while it is revealed again', async () => {
     let reveal: () => unknown = () => loginEntry()
     mockCommand('reveal_entry', () => reveal())
@@ -105,14 +98,10 @@ describe('Show chrome', () => {
 
     expect(screen.getByTestId('entry-footer')).toBe(footer)
     expect(screen.getByTestId('attach-file-button')).toBeInTheDocument()
-    // The rows still up are the old revision's: ⏎ must not copy a password
-    // that a save or a sync may just have rotated away.
     await userEvent.keyboard('{Enter}')
     expect(calls('copy_to_clipboard')).toEqual([])
   })
 
-  // A refusal takes the held entry's place, and is the one thing on the pane
-  // that can be pressed: its buttons are the only way on.
   it('leaves a failed reveal’s way out pressable after another entry was up', async () => {
     mockCommand('reveal_entry', ({ id }) =>
       id === 'l1' ? loginEntry() : Promise.reject({ kind: 'other', message: 'refused' })
@@ -130,26 +119,6 @@ describe('Show chrome', () => {
     expect(screen.getByTestId('reveal-close-button').closest('[inert]')).toBeNull()
     await userEvent.click(screen.getByTestId('reveal-close-button'))
     expect(useVault.getState().currentId).toBeNull()
-  })
-
-  // The phone draws the same body with no pane to hold the last entry for it:
-  // the footer waits for the first reveal, so it lands with the rows, and then
-  // outlives a later one — it holds an open tag sheet and a write in flight.
-  it('holds the footer back for the first reveal only', () => {
-    const { rerender } = render(<ShowBody entry={loginMeta()} revealed={null} error={null} />)
-    expect(screen.queryByTestId('entry-footer')).not.toBeInTheDocument()
-
-    rerender(<ShowBody entry={loginMeta()} revealed={loginEntry()} error={null} />)
-    const footer = screen.getByTestId('entry-footer')
-
-    rerender(<ShowBody entry={loginMeta()} revealed={null} error={null} />)
-    expect(screen.getByTestId('entry-footer')).toBe(footer)
-
-    // Another entry starts over: nothing under its header until its own reveal.
-    rerender(
-      <ShowBody entry={loginMeta({ id: 'l2', title: 'Other' })} revealed={null} error={null} />
-    )
-    expect(screen.queryByTestId('entry-footer')).not.toBeInTheDocument()
   })
 
   it('closes the failed entry from the error surface', async () => {

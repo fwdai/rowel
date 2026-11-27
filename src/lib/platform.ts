@@ -5,7 +5,6 @@
 export const isIOS = __TAURI_PLATFORM__ === 'ios'
 export const isAndroid = __TAURI_PLATFORM__ === 'android'
 export const isMobile = isIOS || isAndroid
-export const isLinux = __TAURI_PLATFORM__ === 'linux'
 
 // A PC — the one place the app's chords are held with Ctrl (`useShortcuts`
 // takes either modifier). A plain vite/vitest run bakes in `''`, which reads as

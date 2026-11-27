@@ -231,14 +231,6 @@
   }
 }
 
-/*
- * A surface changing what it shows (`utils/crossfade`): the region named
- * `swap` dissolves from its old picture into its new one. Only that region
- * takes part — the document itself is left out, so the rest of the window is
- * never frozen into a picture — and the layer the fade is drawn on lets the
- * pointer through. `html`, not `:root`: the first `:root` block of this file
- * is the palette, and `scripts/extension-theme.mjs` reads it as such.
- */
 html {
   view-transition-name: none;
 }

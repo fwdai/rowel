@@ -11,7 +11,6 @@ interface Props {
   entry: EntryMeta
   // The decrypted entry, or null while `revealEntry` is still in flight.
   revealed: Entry | null
-  /** The pane is holding this entry up for another: ⏎ must not copy from it. */
   settling?: boolean
   onDelete: () => void
 }

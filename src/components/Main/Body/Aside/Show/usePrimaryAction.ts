@@ -43,12 +43,6 @@ export interface PrimaryAction {
  *
  * The secret is read straight off the already-decrypted entry, so copying never
  * touches a row's on-screen reveal state.
- *
- * `live` is false while the desktop pane is holding this entry up for another
- * that is still being decrypted — the next selection, or this one again after
- * a save or a sync. What is on screen then is not what the key would be asked
- * for, or not its current secret, so the accelerator stands down. The button
- * needs no such care: the pane makes the held entry inert.
  */
 export function usePrimaryAction(
   entry: EntryMeta,

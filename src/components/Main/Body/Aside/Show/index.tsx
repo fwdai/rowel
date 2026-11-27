@@ -17,28 +17,18 @@ interface Props {
 // The detail pane's one entry surface. The decrypt lives in `useShown` rather
 // than in either mode, so entering and leaving edit doesn't re-fetch the
 // secrets and blank the rows on the way through.
-//
-// One instance serves every entry in turn, so that the pane can keep the entry
-// it was showing until the next one's secrets are in hand, and then change
-// once, the one dissolving into the other (`useSwapped`): a header without its
-// rows, or a copy button with nothing to copy yet, is never drawn on the way.
-// Reading and writing an entry are two faces of the same change.
 export default function Show({ entry, type, editing }: Props) {
   const { kindType, current, failed, retry } = useShown(entry, type)
-  // A draft and a tombstone have no secrets to wait for: `reveal_entry` serves
-  // neither. A tombstone never gets to the editor (`editEntry` refuses it), so
-  // an editor is only ever seeded from a reveal that has landed.
-  const ready = !entry || !!current || !!entry.deletedAt
   const anchor = useRef<HTMLDivElement>(null)
+  const ready = !entry || !!current || !!entry.deletedAt
   const { shown, settling } = useSwapped(
     { entry, revealed: current, editing: !!editing },
-    `${entry?.id ?? `new-${kindType}`}:${editing ? 'write' : 'read'}`,
+    `${entry?.id ?? `new-${kindType}`}:${!!editing}`,
     ready,
     anchor
   )
 
   if (!kindType) return null
-
   // A refused reveal is the same dead end in both faces: no rows to read and
   // no secrets to seed a draft from. Say so, and offer the way back.
   const refused = failed && !!entry
@@ -59,8 +49,6 @@ export default function Show({ entry, type, editing }: Props) {
         />
       )
     if (!shown.entry) return null
-    // Keyed per entry too, so the next one starts from a fresh surface rather
-    // than one still holding the last one's open menu and delete error.
     return (
       <Read
         key={shown.entry.id}
@@ -72,10 +60,6 @@ export default function Show({ entry, type, editing }: Props) {
   }
 
   return (
-    // No box of its own (`contents`): what it draws lays itself out in the
-    // pane. It is here to find the pane by, and to keep an entry that is on
-    // its way out from being pressed — the held entry only: a refusal takes
-    // its place, and its two buttons are the way on.
     <div ref={anchor} className="contents" inert={settling && !refused}>
       {face()}
     </div>

@@ -28,7 +28,6 @@ export default function Aside() {
     )
   // Distinct keys: a draft and an entry must never share a `Show` instance, or
   // the draft inherits the entry's in-flight reveal (and with it, its id).
-  // Entries do share one, so it can hold the last while the next is decrypted.
   if (draftType) return <Show key="draft" type={draftType} editing />
   if (batch) return <Summary />
   if (entry) return <Show key="entry" entry={entry} editing={editing} />

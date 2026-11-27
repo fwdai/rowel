@@ -81,35 +81,28 @@ export default function Attachments({ entry }: { entry: EntryMeta }) {
     // stand on the pane outside any card, and align because they share it.
     <div data-testid="attachments" className={EDGE_GUTTER}>
       {items.length > 0 && (
-        // The list is read after the rows above it are on screen, so it
-        // unfolds: what stands under it slides down instead of jumping. Clipped
-        // on the block axis only — the desktop's rows reach past the gutter.
-        <div className="grid animate-unfold">
-          <div className="min-h-0 overflow-y-clip">
-            <div className="mt-4" data-testid="attachments-section">
-              <span className={SECTION_LABEL_FLUSH}>{t('Attachments')}</span>
-              {/* A breath between the desktop's tiles; the phone's hairlines need none. */}
-              <div className="md:space-y-0.5">
-                {items.map(item => (
-                  <Row
-                    key={item.id}
-                    attachment={item}
-                    onOpen={() => setOpenId(item.id)}
-                    onSave={() => save(item.id)}
-                    onRemove={() => setRemoving(item)}
-                  />
-                ))}
-              </div>
-              {usage && usage.used > usage.limit * NEARLY_FULL && (
-                <p className={`mt-2 ${META}`} data-testid="attachments-usage">
-                  {t('{{used}} of {{limit}} used by attachments in this vault', {
-                    used: humanSize(usage.used),
-                    limit: humanSize(usage.limit)
-                  })}
-                </p>
-              )}
-            </div>
+        <div className="mt-4" data-testid="attachments-section">
+          <span className={SECTION_LABEL_FLUSH}>{t('Attachments')}</span>
+          {/* A breath between the desktop's tiles; the phone's hairlines need none. */}
+          <div className="md:space-y-0.5">
+            {items.map(item => (
+              <Row
+                key={item.id}
+                attachment={item}
+                onOpen={() => setOpenId(item.id)}
+                onSave={() => save(item.id)}
+                onRemove={() => setRemoving(item)}
+              />
+            ))}
           </div>
+          {usage && usage.used > usage.limit * NEARLY_FULL && (
+            <p className={`mt-2 ${META}`} data-testid="attachments-usage">
+              {t('{{used}} of {{limit}} used by attachments in this vault', {
+                used: humanSize(usage.used),
+                limit: humanSize(usage.limit)
+              })}
+            </p>
+          )}
         </div>
       )}
       <AttachButton
