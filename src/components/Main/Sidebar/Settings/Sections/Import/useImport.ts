@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
-import { claimExchange, claimOpenedFile, setEntries, useApp } from '@/store'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  claimExchange,
+  claimOpenedFile,
+  exchangeReceived,
+  setEntries,
+  useApp
+} from '@/store'
 import { importSwftx } from '@/api/vault'
 import {
+  exchangePending,
   importEntries,
   importExchange,
   type ImportFormat,
@@ -92,11 +99,25 @@ export function useImport() {
   // Another app's data, held by the backend: taken the same way, and on the
   // same terms.
   const exchange = useApp(state => state.exchangePending)
+  const taken = useRef(false)
   useEffect(() => {
     if (!exchange || covered) return
+    taken.current = true
     claimExchange()
     start({ kind: 'exchange' })
   }, [exchange, covered, start])
+
+  // The backend holds a transfer until it is imported, and this section's
+  // preview of one does not outlive the section: leave Import before importing
+  // and only the backend still knows. So it is asked whenever the section
+  // comes on screen, and one this visit has not already taken is offered again.
+  useEffect(() => {
+    exchangePending()
+      .then(held => {
+        if (held && !taken.current) exchangeReceived()
+      })
+      .catch(() => {})
+  }, [])
 
   const chooseFile = useCallback(
     (format: ImportFormat) =>

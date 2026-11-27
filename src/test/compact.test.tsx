@@ -14,6 +14,7 @@ import {
   useVault,
   selectCurrent,
   editEntry,
+  exchangeReceived,
   fileOpened,
   focusSearch,
   initialApp,
@@ -778,6 +779,44 @@ describe('compact shell', () => {
     act(() => fileOpened('/tmp/Rowel backup 2026-10-09.rowel'))
     expect(screen.queryByTestId('settings-subpage')).not.toBeInTheDocument()
     expect(await screen.findByText('Rowel backup 2026-10-09.rowel')).toBeInTheDocument()
+  })
+
+  // What another app hands over is Import's to take, and on the phone the
+  // store's section does not say which pane is pushed: the arrival pushes
+  // Import's itself, from wherever Settings was, and Back still leaves it.
+  it('pushes the Import pane for what another app hands over', async () => {
+    mockCommand('import_exchange', () => ({
+      total: 2,
+      imported: 0,
+      skipped: 0,
+      duplicates: 0,
+      dryRun: true,
+      errors: [],
+      warnings: [],
+      entries: []
+    }))
+    seed()
+    render(<Main />)
+
+    act(() => exchangeReceived())
+
+    expect(useUi.getState().settings).toBe(true)
+    const result = await screen.findByTestId('import-result')
+    expect(screen.getByTestId('settings-pane')).toContainElement(result)
+    await waitFor(() => expect(result).toHaveTextContent('Ready to import: 2'))
+    expect(calls('import_exchange')).toEqual([{ dryRun: true }])
+    expect(useApp.getState().exchangePending).toBe(false)
+
+    await userEvent.click(screen.getByTestId('settings-back'))
+    expect(screen.getByTestId('settings-nav-import').closest('[inert]')).toBeNull()
+
+    // From another pane, too.
+    await userEvent.click(screen.getByTestId('settings-nav-security'))
+    act(() => exchangeReceived())
+    await waitFor(() => expect(calls('import_exchange')).toHaveLength(2))
+    expect(screen.getByTestId('settings-pane')).toContainElement(
+      await screen.findByTestId('import-result')
+    )
   })
 
   // A pushed screen's title has the row to itself, so it is said in full

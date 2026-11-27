@@ -11,8 +11,10 @@
 //! The webview may not be listening when it arrives, and the vault may be
 //! locked. So the document is parked here as well as announced as
 //! `exchange:received`, and the frontend asks once it has subscribed
-//! (`commands::import::exchange_pending`). It does not outlive the session it
-//! was offered to: a lock drops it, and the user exports again.
+//! (`commands::import::exchange_pending`), and again whenever Import comes
+//! back on screen, so one that was previewed and left is offered again. It
+//! does not outlive the session it was offered to: a lock drops it, and the
+//! user exports again.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -24,15 +26,27 @@ use crate::error::{Error, Result};
 /// As large as an export file may be (`commands::import`).
 const MAX_BYTES: usize = 25 * 1024 * 1024;
 
+/// Which arrival a document is: an import lets go of the one it wrote, and a
+/// newer one that landed meanwhile stays held.
+pub type Arrival = u64;
+
 /// What the native side delivered: the document, or why there is none.
 enum Held {
-    Document(Zeroizing<Vec<u8>>),
+    Document(Arrival, Zeroizing<Vec<u8>>),
     Failed(String),
+}
+
+struct Slot {
+    held: Option<Held>,
+    arrivals: Arrival,
 }
 
 // Process-wide rather than in `AppState`: the native side calls in with no
 // handle, and on a launch may do so before the app has one.
-static HELD: Mutex<Option<Held>> = Mutex::new(None);
+static SLOT: Mutex<Slot> = Mutex::new(Slot {
+    held: None,
+    arrivals: 0,
+});
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
 /// Let an arrival be announced. Before this, one is only parked.
@@ -47,18 +61,24 @@ fn accept(document: &[u8]) {
     if document.len() > MAX_BYTES {
         return failed("the other app sent more than Rowel can import at once");
     }
-    hold(Held::Document(Zeroizing::new(document.to_vec())));
+    let document = Zeroizing::new(document.to_vec());
+    hold(|arrival| Held::Document(arrival, document));
 }
 
 /// Park the reason a transfer produced nothing, to be reported where the
 /// import would have been previewed.
 #[cfg_attr(not(any(target_os = "ios", test)), allow(dead_code))]
 fn failed(reason: &str) {
-    hold(Held::Failed(reason.to_owned()));
+    let reason = reason.to_owned();
+    hold(|_| Held::Failed(reason));
 }
 
-fn hold(held: Held) {
-    *HELD.lock().unwrap() = Some(held);
+fn hold(held: impl FnOnce(Arrival) -> Held) {
+    {
+        let mut slot = SLOT.lock().unwrap();
+        slot.arrivals += 1;
+        slot.held = Some(held(slot.arrivals));
+    }
     if let Some(app) = APP.get() {
         crate::events::exchange_received(app);
     }
@@ -66,18 +86,19 @@ fn hold(held: Held) {
 
 /// Whether a transfer is waiting to be looked at.
 pub fn pending() -> bool {
-    HELD.lock().unwrap().is_some()
+    SLOT.lock().unwrap().held.is_some()
 }
 
-/// The held document, which stays held: a preview reads it and the import
-/// that follows reads it again. A failure is reported once and forgotten.
-pub fn document() -> Result<Zeroizing<Vec<u8>>> {
-    let mut held = HELD.lock().unwrap();
-    match held.take() {
-        Some(Held::Document(document)) => {
+/// The held document and which arrival it is. It stays held: a preview reads
+/// it and the import that follows reads it again. A failure is reported once
+/// and forgotten.
+pub fn document() -> Result<(Arrival, Zeroizing<Vec<u8>>)> {
+    let mut slot = SLOT.lock().unwrap();
+    match slot.held.take() {
+        Some(Held::Document(arrival, document)) => {
             let copy = document.clone();
-            *held = Some(Held::Document(document));
-            Ok(copy)
+            slot.held = Some(Held::Document(arrival, document));
+            Ok((arrival, copy))
         }
         Some(Held::Failed(reason)) => Err(Error::Other(reason)),
         None => Err(Error::Other(
@@ -86,10 +107,18 @@ pub fn document() -> Result<Zeroizing<Vec<u8>>> {
     }
 }
 
-/// Forget what is held: it was imported, or the session it was offered to
-/// ended.
+/// Let go of `arrival`, which was imported. Whatever arrived after it, while
+/// the import ran, is a different transfer and stays.
+pub fn imported(arrival: Arrival) {
+    let mut slot = SLOT.lock().unwrap();
+    if matches!(slot.held, Some(Held::Document(held, _)) if held == arrival) {
+        slot.held = None;
+    }
+}
+
+/// Forget whatever is held: the session it was offered to ended.
 pub fn clear() {
-    *HELD.lock().unwrap() = None;
+    SLOT.lock().unwrap().held = None;
 }
 
 /// Whether this device can receive a transfer at all: iOS 26 or later.
@@ -146,10 +175,14 @@ mod native {
 mod tests {
     use super::*;
 
+    fn held() -> Vec<u8> {
+        document().unwrap().1.to_vec()
+    }
+
     // The state is one per process, so the cases share a test rather than
     // race each other across threads.
     #[test]
-    fn a_document_is_held_until_cleared_and_a_failure_is_told_once() {
+    fn a_document_is_held_until_its_import_and_a_failure_is_told_once() {
         clear();
         assert!(!pending());
         assert!(document().is_err());
@@ -157,9 +190,9 @@ mod tests {
         accept(b"{\"accounts\":[]}");
         assert!(pending());
         // A preview and the import after it read the same document.
-        assert_eq!(document().unwrap().as_slice(), b"{\"accounts\":[]}");
-        assert_eq!(document().unwrap().as_slice(), b"{\"accounts\":[]}");
-        clear();
+        assert_eq!(held(), b"{\"accounts\":[]}");
+        let (first, _) = document().unwrap();
+        imported(first);
         assert!(!pending());
 
         failed("the user cancelled");
@@ -170,10 +203,17 @@ mod tests {
         assert_eq!(reason, "the user cancelled");
         assert!(!pending());
 
-        // A newer arrival replaces an older one.
+        // A newer arrival replaces an older one, and outlives the import of
+        // the one it replaced: that import was reading its own copy.
         accept(b"old");
+        let (old, _) = document().unwrap();
         accept(b"new");
-        assert_eq!(document().unwrap().as_slice(), b"new");
+        imported(old);
+        assert_eq!(held(), b"new");
+
+        // A lock lets go of whatever is there.
+        clear();
+        assert!(!pending());
 
         accept(&vec![0u8; MAX_BYTES + 1]);
         assert!(document().is_err());

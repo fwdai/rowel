@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useBack } from '@/hooks/useBack'
-import { useUi, type Section } from '@/store'
+import { importWaiting, useApp, useUi, type Section } from '@/store'
 import {
   SectionNavProvider,
   SubpageProvider,
@@ -34,6 +34,12 @@ import Stack from '../Stack'
  * `SectionNavProvider`, so here it moves this local state rather than the
  * modal's — under the same lock.
  *
+ * One move does come from outside: what Import alone can take (another app's
+ * data handed over through the system) is sent to `openSettings('import')`,
+ * which on the wide shell names the section and here only shows this screen.
+ * So while something waits for Import, its pane is the one pushed — once the
+ * lock allows — and Import taking it is what ends the wait.
+ *
  * Android's Back is whichever nav row is on top: out of a sub-page first, then
  * out of the section, as the wide modal's Escape steps. It is offered here,
  * once, because this is where both pieces of state are held.
@@ -41,6 +47,8 @@ import Stack from '../Stack'
 export default function Settings() {
   const [section, setSection] = useState<Section | null>(null)
   const locked = useUi(state => state.settingsLocked)
+  const waiting = useApp(importWaiting)
+  if (waiting && !locked && section !== 'import') setSection('import')
   // A sub-page is one more pane on top of the section's, held the same way.
   const nav = useSubpageState(section)
   const go: SectionNav = (next, page) => {

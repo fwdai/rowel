@@ -1610,6 +1610,44 @@ describe('Settings › import', () => {
     await waitFor(() => expect(calls('sync_now')).toHaveLength(1))
   })
 
+  // The preview lives in the section, the transfer in the backend: leaving
+  // Import before importing loses the first and not the second, so coming back
+  // asks the backend and shows it again. Once imported there is nothing to ask
+  // for.
+  it('offers a transfer again when Import is left before importing it', async () => {
+    let held = true
+    mockCommand('exchange_pending', () => held)
+    mockCommand('import_exchange', args => {
+      if (args.dryRun !== true) held = false
+      return exchanged(args.dryRun === true)
+    })
+    flowMain()
+    render(<Settings />)
+
+    exchangeReceived()
+    await waitFor(() =>
+      expect(screen.getByTestId('import-result')).toHaveTextContent('Ready to import: 3')
+    )
+    // Taken once, though the section also asked the backend as it mounted.
+    expect(calls('import_exchange')).toEqual([{ dryRun: true }])
+
+    await go('security')
+    expect(screen.queryByTestId('import-result')).not.toBeInTheDocument()
+    await go('import')
+
+    await waitFor(() =>
+      expect(screen.getByTestId('import-result')).toHaveTextContent('Ready to import: 3')
+    )
+    expect(calls('import_exchange')).toEqual([{ dryRun: true }, { dryRun: true }])
+
+    await userEvent.click(screen.getByTestId('import-commit'))
+    await waitFor(() => expect(screen.getByTestId('import-result')).toHaveTextContent('Imported 3'))
+    await go('security')
+    await go('import')
+    await waitFor(() => expect(calls('exchange_pending').length).toBeGreaterThanOrEqual(3))
+    expect(screen.queryByTestId('import-result')).not.toBeInTheDocument()
+  })
+
   // The transfer itself can fail (the other app sent nothing, the user backed
   // out), and a lock drops one that was held: the backend says which.
   it('says why when what another app handed over cannot be previewed', async () => {

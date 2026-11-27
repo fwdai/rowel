@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useApp, useUi, type Section } from '@/store'
+import { importWaiting, useApp, useUi, type Section } from '@/store'
 import type { SubpageNav } from './sectionNav'
 import type { Subpage } from './subpages'
 
@@ -51,7 +51,7 @@ export interface SubpageState extends SubpageNav {
 export function useSubpageState(section: Section | null): SubpageState {
   const [held, setHeld] = useState<Held | null>(null)
   const locked = useUi(state => state.settingsLocked)
-  const waiting = useApp(state => state.openedFile !== null || state.exchangePending)
+  const waiting = useApp(importWaiting)
   const yields = section === 'import' && waiting && !locked
   const subpage = held && held.section === section && !yields ? held.page : null
   if (held && !subpage) setHeld(null)

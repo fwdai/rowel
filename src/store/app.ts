@@ -353,8 +353,7 @@ export const enterMain = async (result: UnlockResult): Promise<boolean> => {
   // A backup the OS opened while the vault was locked (or before it existed),
   // or another app's data handed over then, has waited for this: the only
   // screen that can import it is now reachable.
-  const waiting = useApp.getState()
-  if (waiting.openedFile || waiting.exchangePending) openSettings('import')
+  if (importWaiting(useApp.getState())) openSettings('import')
   // Not on mobile, where focusing raises the on-screen keyboard.
   else if (!isMobile) focusSearch()
   // The unlock result carries whether this vault syncs; everything else about
@@ -417,8 +416,19 @@ export const exchangeReceived = () => {
   if (useApp.getState().flow === 'main') openSettings('import')
 }
 
-/** Import took the transfer, so it is not offered again. */
+/**
+ * Import took the transfer, so nothing else is sent there for it. The backend
+ * goes on holding it until it is imported, and Import asks after it whenever
+ * it comes back on screen (see `useImport`).
+ */
 export const claimExchange = () => useApp.setState({ exchangePending: false })
+
+/**
+ * Whether something is waiting for Settings › Import to take it: a backup the
+ * OS opened, or another app's data. What decides that Import is where to go.
+ */
+export const importWaiting = (state: AppState) =>
+  state.openedFile !== null || state.exchangePending
 
 // --- sync -----------------------------------------------------------------------
 

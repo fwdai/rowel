@@ -121,7 +121,7 @@ pub async fn import_exchange(
     state: State<'_, AppState>,
 ) -> Result<ImportReport> {
     let writer = writer(&state, dry_run)?;
-    let document = crate::exchange::document()?;
+    let (arrival, document) = crate::exchange::document()?;
     let report = import(
         move || Ok((document, Format::Cxf)),
         dry_run,
@@ -131,13 +131,16 @@ pub async fn import_exchange(
     )
     .await?;
     if !dry_run {
-        crate::exchange::clear();
+        // This arrival and no other: one that landed while the write ran is
+        // still to be looked at.
+        crate::exchange::imported(arrival);
     }
     Ok(report)
 }
 
 /// Whether a transfer from another app is waiting. Asked once the webview
-/// listens for `exchange:received`, for one that arrived before it did.
+/// listens for `exchange:received`, for one that arrived before it did, and
+/// whenever Import comes on screen, for one that was previewed and left.
 #[tauri::command]
 pub fn exchange_pending() -> bool {
     crate::exchange::pending()
