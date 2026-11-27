@@ -53,17 +53,20 @@ export default function Edit({ type, revealed }: Props) {
           <Actions draft={draft} />
         </div>
 
-        {/* 38px of indent under the message: the 28px tile plus the row's gap. */}
-        <Title
-          draft={draft}
-          kind={kind}
-          tile="h-7 w-7"
-          glyph={16}
-          className="mt-2 flex items-center gap-2.5"
-          message="pl-[38px]"
-        />
+        {/* The editor's entrance, as the read view makes its own (see `Read`). */}
+        <div data-cascade>
+          {/* 38px of indent under the message: the 28px tile plus the row's gap. */}
+          <Title
+            draft={draft}
+            kind={kind}
+            tile="h-7 w-7"
+            glyph={16}
+            className="mt-2 flex items-center gap-2.5"
+            message="pl-[38px]"
+          />
 
-        <Body draft={draft} type={type} revealed={revealed} />
+          <Body draft={draft} type={type} revealed={revealed} />
+        </div>
       </div>
     </div>
   )

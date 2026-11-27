@@ -34,14 +34,19 @@ export default function Read({ entry, revealed }: Props) {
           <Actions entry={entry} revealed={revealed} onDelete={remove} />
         </div>
       </div>
-      <Identity
-        entry={entry}
-        tile="h-7 w-7"
-        glyph={16}
-        className="mt-2 flex items-center gap-2.5"
-      />
+      {/* What makes its entrance when the pane turns to this entry (see
+          `cascade`). The line above is the pane's frame — the same controls in
+          the same place for every entry — and stands still. */}
+      <div data-cascade>
+        <Identity
+          entry={entry}
+          tile="h-7 w-7"
+          glyph={16}
+          className="mt-2 flex items-center gap-2.5"
+        />
 
-      <Body entry={entry} revealed={revealed} error={error} />
+        <Body entry={entry} revealed={revealed} error={error} />
+      </div>
     </div>
   )
 }

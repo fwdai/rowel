@@ -20,9 +20,10 @@ interface Props {
 //
 // One instance serves every entry in turn, so that the pane can keep the entry
 // it was showing until the next one's secrets are in hand, and then change
-// once: the one dissolves into the other (`useSwapped`), and a header without
-// its rows, or a copy button with nothing to copy yet, is never drawn on the
-// way. Reading and writing an entry are two faces of the same change.
+// once (`useSwapped`): a header without its rows, or a copy button with
+// nothing to copy yet, is never drawn on the way. The entry that takes the
+// pane makes an entrance, and so does the editor: reading and writing an entry
+// are two faces of the same change.
 export default function Show({ entry, type, editing }: Props) {
   const { kindType, current, failed, retry } = useShown(entry, type)
   const anchor = useRef<HTMLDivElement>(null)
@@ -64,8 +65,8 @@ export default function Show({ entry, type, editing }: Props) {
 
   return (
     // No box of its own (`contents`): what it draws lays itself out in the
-    // pane. It is here to be found — the pane around it is what cross-fades —
-    // and to keep an entry that is on its way out from being pressed.
+    // pane. It is here to be found by the entrance, and to keep an entry that
+    // is on its way out from being pressed.
     <div ref={anchor} className="contents" inert={settling}>
       {face()}
     </div>
