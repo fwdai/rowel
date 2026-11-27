@@ -332,7 +332,7 @@ impl Format {
             "enpass" | "enpass_json" => Some(Format::Enpass),
             "1pux" | "onepux" => Some(Format::Onepux),
             "csv" | "generic" | "generic_csv" => Some(Format::GenericCsv),
-            "chrome" | "safari" | "browser" | "browser_csv" => Some(Format::BrowserCsv),
+            "chrome" | "safari" | "apple" | "browser" | "browser_csv" => Some(Format::BrowserCsv),
             "onepassword_csv" => Some(Format::OnepasswordCsv),
             "1password" | "onepassword" => Some(Format::Onepassword),
             "lastpass" | "lastpass_csv" => Some(Format::LastpassCsv),

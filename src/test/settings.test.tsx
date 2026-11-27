@@ -26,6 +26,7 @@ import {
   useUi
 } from '@/store'
 import DateField from '@/components/elements/fields/DateField'
+import { PICKED } from '@/components/elements/tokens'
 import { FieldsProvider } from '@/components/elements/fields/context'
 import Footer from '@/components/Main/Body/Aside/Show/Footer'
 import { EVENTS } from '@/api/events'
@@ -1608,7 +1609,7 @@ describe('Settings › import', () => {
   // Imported rows are published like any other edit, so another device has
   // them without waiting for the next change made here.
   it('syncs after an export is imported, and not after one that added nothing', async () => {
-    mockCommand('pick_file', () => '/tmp/enpass.json')
+    mockCommand('pick_file', () => '/tmp/bitwarden.json')
     let imported = 2
     mockCommand('import_entries', args => {
       const dryRun = args.dryRun === true
@@ -1626,12 +1627,12 @@ describe('Settings › import', () => {
     await open()
     await go('import')
 
-    await userEvent.click(screen.getByTestId('import-tile-enpass'))
+    await userEvent.click(screen.getByTestId('import-tile-bitwarden'))
     await userEvent.click(await screen.findByTestId('import-commit'))
     await waitFor(() => expect(calls('sync_now')).toHaveLength(1))
 
     imported = 0
-    await userEvent.click(screen.getByTestId('import-tile-enpass'))
+    await userEvent.click(screen.getByTestId('import-tile-bitwarden'))
     await userEvent.click(await screen.findByTestId('import-commit'))
     await waitFor(() => expect(calls('import_entries')).toHaveLength(4))
     expect(calls('sync_now')).toHaveLength(1)
@@ -1645,9 +1646,9 @@ describe('Settings › import', () => {
     await go('import')
     const tiles = screen.getAllByTestId(/^import-tile-/).map(el => el.dataset.testid)
     expect(tiles).toEqual([
+      'import-tile-apple',
       'import-tile-1password',
       'import-tile-lastpass',
-      'import-tile-enpass',
       'import-tile-bitwarden',
       'import-tile-keepass',
       'import-tile-other',
@@ -1656,7 +1657,7 @@ describe('Settings › import', () => {
 
     await userEvent.click(screen.getByTestId('import-tile-other'))
     const menu = screen.getByRole('menu')
-    for (const key of ['chrome', 'cxf', 'csv'])
+    for (const key of ['chrome', 'enpass', 'cxf', 'csv'])
       expect(within(menu).getByTestId(`import-tile-${key}`)).toBeInTheDocument()
   })
 
@@ -1682,6 +1683,7 @@ describe('Settings › import', () => {
     await open()
     await go('import')
 
+    await userEvent.click(screen.getByTestId('import-tile-other'))
     await userEvent.click(screen.getByTestId('import-tile-enpass'))
     const result = await screen.findByTestId('import-result')
     expect(result).toHaveTextContent('Ready to import: 1')
@@ -1696,12 +1698,35 @@ describe('Settings › import', () => {
   })
 
   // A tile is a file picker: the dry run names the format rather than
-  // sniffing it, and the tile stays lit as the source.
-  it('imports an Enpass export from its tile', async () => {
+  // sniffing it, and the tile stays lit as the source. Apple's export is the
+  // browser CSV, but under its own name, so its tile lights and not the sixth.
+  it('imports an Apple Passwords export from its tile', async () => {
+    mockCommand('pick_file', () => '/tmp/Passwords.csv')
+    await open()
+    await go('import')
+
+    await userEvent.click(screen.getByTestId('import-tile-apple'))
+    await waitFor(() =>
+      expect(calls('import_entries')).toContainEqual({
+        path: '/tmp/Passwords.csv',
+        format: 'apple',
+        dryRun: true
+      })
+    )
+    expect(screen.getByTestId('import-tile-apple')).toHaveClass(PICKED)
+    const other = screen.getByTestId('import-tile-other')
+    expect(other).not.toHaveClass(PICKED)
+    expect(other).toHaveTextContent('Another app')
+    expect(other).toHaveTextContent('Chrome, Enpass, CXF or CSV')
+  })
+
+  // An app behind the sixth tile is picked by name just the same.
+  it('imports an Enpass export from the other-apps menu', async () => {
     mockCommand('pick_file', () => '/tmp/enpass.json')
     await open()
     await go('import')
 
+    await userEvent.click(screen.getByTestId('import-tile-other'))
     await userEvent.click(screen.getByTestId('import-tile-enpass'))
     await waitFor(() =>
       expect(calls('import_entries')).toContainEqual({
@@ -1710,6 +1735,7 @@ describe('Settings › import', () => {
         dryRun: true
       })
     )
+    expect(screen.getByTestId('import-tile-other')).toHaveTextContent('Enpass')
   })
 
   // An app from the sixth tile's menu is picked the same way, and the tile

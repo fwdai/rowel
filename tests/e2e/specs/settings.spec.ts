@@ -137,9 +137,9 @@ describe("settings", () => {
     await section("import");
 
     for (const key of [
+      "apple",
       "1password",
       "lastpass",
-      "enpass",
       "bitwarden",
       "keepass",
       "other",
@@ -149,7 +149,7 @@ describe("settings", () => {
 
     // The rest are items of the sixth tile's menu, mounted only while it is open.
     await $('[data-testid="import-tile-other"]').click();
-    for (const key of ["chrome", "cxf", "csv"])
+    for (const key of ["chrome", "enpass", "cxf", "csv"])
       await expect($(`[data-testid="import-tile-${key}"]`)).toBeDisplayed();
     await browser.keys("Escape");
     await expect($('[data-testid="import-tile-chrome"]')).not.toExist();

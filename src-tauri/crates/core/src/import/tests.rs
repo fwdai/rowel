@@ -360,6 +360,13 @@ fn browser_csv_maps_safari_headers() {
     assert_eq!(e.otp.as_deref(), Some("SEED"));
 }
 
+// Apple's Passwords app writes the header above; its tile names it `apple`.
+#[test]
+fn from_name_resolves_apple_to_browser_csv() {
+    assert_eq!(Format::from_name("apple"), Some(Format::BrowserCsv));
+    assert_eq!(Format::from_name("Apple"), Some(Format::BrowserCsv));
+}
+
 #[test]
 fn lastpass_csv_splits_logins_and_secure_notes() {
     let csv = b"url,username,password,totp,extra,name,grouping,fav\n\

@@ -10,6 +10,7 @@ export type ImportFormat =
   | 'enpass'
   | 'csv'
   | 'chrome'
+  | 'apple'
   | 'lastpass'
   | 'keepass'
   | '1password'
