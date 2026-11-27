@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react'
+import { useState, type ComponentType } from 'react'
 import { editEntry, saveTags } from '@/store'
 import type { Entry, EntryMeta } from '@/api/types'
 import { FieldsProvider } from '@/components/elements/fields'
@@ -32,15 +32,21 @@ interface Props {
 export default function Body({ entry, revealed, error, Footer = DefaultFooter }: Props) {
   const Fields = kindOf(entry.type).Fields
   // A tombstone has no reveal to wait for: its footer is all there is to show.
-  const ready = !!revealed || !!entry.deletedAt
+  const landed = !!revealed || !!entry.deletedAt
+  // Latched per entry: the reveal is asked for again whenever the entry changes
+  // under the screen (a save, a sync merge), and the footer holds state that
+  // has to outlive that — the phone's tag sheet, and the write behind it.
+  const [arrivedId, setArrivedId] = useState<string | null>(null)
+  if (landed && arrivedId !== entry.id) setArrivedId(entry.id)
+  const ready = landed || arrivedId === entry.id
 
   return (
     <>
-      {/* The rows and the footer arrive together, in one fade, once the reveal
-          lands. The footer needs no secrets to draw, but drawn ahead of the
-          rows it sits under the header for a frame and is shoved down by them. */}
+      {/* The rows and the footer arrive together, once the reveal lands. The
+          footer needs no secrets to draw, but drawn ahead of the rows it sits
+          under the header for a frame and is shoved down by them. */}
       {ready && (
-        <div className="animate-arrive">
+        <>
           {revealed && (
             <div className="mt-5">
               {/* No writer: every field in the set renders its read face. */}
@@ -65,7 +71,7 @@ export default function Body({ entry, revealed, error, Footer = DefaultFooter }:
             updatedAt={entry.updatedAt}
             deletedAt={entry.deletedAt}
           />
-        </div>
+        </>
       )}
 
       <DeleteError error={error} />

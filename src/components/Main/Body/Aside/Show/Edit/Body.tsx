@@ -32,27 +32,23 @@ export default function Body({ draft, type, revealed, Footer = DefaultFooter }: 
 
   return (
     <>
-      {/* Arrives the way the read face's rows do, so going into the editor and
-          coming back out of it are the same change in both directions. */}
-      <div className="animate-arrive">
-        <div className="mt-5">
-          <FieldsProvider
-            value={{ entry: draft.model, set: draft.set, attempted: draft.attempted }}
-          >
-            <Fields />
-          </FieldsProvider>
-        </div>
-
-        {/* The read view's footer, with the tags open for editing. A new entry
-            has no dates yet, so its footer is the tags cell alone. */}
-        <Footer
-          tags={tags}
-          onTags={next => draft.set('tags', next)}
-          subject={draft.model.title}
-          createdAt={revealed?.createdAt}
-          updatedAt={revealed?.updatedAt}
-        />
+      <div className="mt-5">
+        <FieldsProvider
+          value={{ entry: draft.model, set: draft.set, attempted: draft.attempted }}
+        >
+          <Fields />
+        </FieldsProvider>
       </div>
+
+      {/* The read view's footer, with the tags open for editing. A new entry
+          has no dates yet, so its footer is the tags cell alone. */}
+      <Footer
+        tags={tags}
+        onTags={next => draft.set('tags', next)}
+        subject={draft.model.title}
+        createdAt={revealed?.createdAt}
+        updatedAt={revealed?.updatedAt}
+      />
 
       {draft.saveError && (
         <div

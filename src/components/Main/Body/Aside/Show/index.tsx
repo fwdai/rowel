@@ -1,4 +1,6 @@
+import { useRef } from 'react'
 import type { EntryMeta, EntryType } from '@/api/types'
+import { useSwapped } from '@/hooks/useSwapped'
 import Read from './Read'
 import Edit from './Edit'
 import RevealError from './RevealError'
@@ -15,26 +17,57 @@ interface Props {
 // The detail pane's one entry surface. The decrypt lives in `useShown` rather
 // than in either mode, so entering and leaving edit doesn't re-fetch the
 // secrets and blank the rows on the way through.
+//
+// One instance serves every entry in turn, so that the pane can keep the entry
+// it was showing until the next one's secrets are in hand, and then change
+// once: the one dissolves into the other (`useSwapped`), and a header without
+// its rows, or a copy button with nothing to copy yet, is never drawn on the
+// way. Reading and writing an entry are two faces of the same change.
 export default function Show({ entry, type, editing }: Props) {
-  const { kindType, current, held, failed, retry } = useShown(entry, type)
+  const { kindType, current, failed, retry } = useShown(entry, type)
+  const anchor = useRef<HTMLDivElement>(null)
+  // A draft and a tombstone have no secrets to wait for: `reveal_entry` serves
+  // neither. A tombstone never gets to the editor (`editEntry` refuses it), so
+  // an editor is only ever seeded from a reveal that has landed.
+  const ready = !entry || !!current || !!entry.deletedAt
+  const { shown, settling } = useSwapped(
+    { entry, revealed: current, editing: !!editing },
+    `${entry?.id ?? `new-${kindType}`}:${editing ? 'write' : 'read'}`,
+    ready,
+    anchor
+  )
 
   if (!kindType) return null
-  // A refused reveal is the same dead end in both faces: no rows to read and
-  // no secrets to seed a draft from. Say so, and offer the way back.
-  if (failed && entry) return <RevealError entry={entry} onRetry={retry} />
-  if (editing) {
-    // Hold the pane's frame until the secrets are in hand — a tombstone never
-    // gets here, so this always resolves. (`reveal_entry` refuses deleted rows;
-    // `editEntry` does too.)
-    if (held) return <div className="mx-auto min-h-[320px] w-full max-w-sheet" />
+
+  const face = () => {
+    // A refused reveal is the same dead end in both faces: no rows to read and
+    // no secrets to seed a draft from. Say so, and offer the way back.
+    if (failed && entry) return <RevealError entry={entry} onRetry={retry} />
+    if (!shown) return null
     // Keyed per entry: each editing session starts from a fresh draft. A new
     // entry has no id to key on, so it is keyed by its kind — choosing another
     // kind (the picker again, or a scan that recognized a different one) is a
     // different draft, not the same one with other rows on it.
-    return (
-      <Edit key={entry?.id ?? `new-${kindType}`} type={kindType} revealed={current} />
-    )
+    if (shown.editing)
+      return (
+        <Edit
+          key={shown.entry?.id ?? `new-${kindType}`}
+          type={shown.entry?.type ?? kindType}
+          revealed={shown.revealed}
+        />
+      )
+    if (!shown.entry) return null
+    // Keyed per entry too, so the next one starts from a fresh surface rather
+    // than one still holding the last one's open menu and delete error.
+    return <Read key={shown.entry.id} entry={shown.entry} revealed={shown.revealed} />
   }
-  if (!entry) return null
-  return <Read entry={entry} revealed={current} />
+
+  return (
+    // No box of its own (`contents`): what it draws lays itself out in the
+    // pane. It is here to be found — the pane around it is what cross-fades —
+    // and to keep an entry that is on its way out from being pressed.
+    <div ref={anchor} className="contents" inert={settling}>
+      {face()}
+    </div>
+  )
 }

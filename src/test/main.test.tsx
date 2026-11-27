@@ -35,7 +35,7 @@ describe('Main', () => {
     seed()
     render(<Main />)
     await userEvent.click(screen.getByText('Google'))
-    expect(screen.getByRole('heading', { name: 'Google' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Google' })).toBeInTheDocument()
     // email only appears in the details pane, not the list row
     expect(await screen.findByText('contact@example.com')).toBeInTheDocument()
   })

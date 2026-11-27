@@ -232,6 +232,29 @@
 }
 
 /*
+ * A surface changing what it shows (`utils/crossfade`): the region named
+ * `swap` dissolves from its old picture into its new one. Only that region
+ * takes part — the root is left out, so the rest of the window is never
+ * frozen into a picture — and the layer the fade is drawn on lets the pointer
+ * through, so nothing is unpressable while it runs.
+ *
+ * Short, and with no movement: it has to keep up with a held arrow key, and a
+ * slide would set the whole pane bobbing. The two pictures share one curve, so
+ * what they have in common adds up to itself at every instant and stands
+ * still while the rest changes.
+ */
+:root {
+  view-transition-name: none;
+}
+::view-transition {
+  pointer-events: none;
+}
+::view-transition-group(swap) {
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/*
  * App-wide base (replaces the old base.sass / typography.sass). Preflight
  * already handles the reset + border-box; this only sets the full-height shell,
  * the default type family/size, and the themed page ground.
@@ -592,16 +615,6 @@
   --default-transition-timing-function: var(--ease-swift);
 
   --animate-fade: fade 160ms var(--ease-swift) both;
-  /*
-   * Content arriving in a place that is already on screen — an entry's rows
-   * under its header, the editor's rows in their stead. A fade with no
-   * movement, so stepping through a list quickly never makes the pane bob.
-   * Unlike the rest it does not fill forwards: a filling animation keeps its
-   * element a stacking context for good, and what arrives this way holds
-   * overlays of its own (a file's preview, a sheet) that must still cover the
-   * whole window once it has landed.
-   */
-  --animate-arrive: fade 160ms var(--ease-swift) backwards;
   --animate-pop: pop 160ms var(--ease-swift) both;
   --animate-drop: drop 140ms var(--ease-swift) both;
   --animate-sheet: sheet 160ms var(--ease-swift) both;

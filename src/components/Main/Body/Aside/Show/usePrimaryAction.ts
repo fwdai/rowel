@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import type { Entry, EntryMeta } from '@/api/types'
 import type { TKey } from '@/i18n'
 import { kindOf } from '@/kinds'
-import { isModalOpen } from '@/store'
+import { isModalOpen, useVault } from '@/store'
 import { useCopied } from '@/hooks/useCopied'
 
 // Enter is the detail's accelerator for the primary action, but only as a bare
@@ -53,12 +53,16 @@ export function usePrimaryAction(entry: EntryMeta, revealed: Entry | null): Prim
     if (!secret) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (!isPlainEnter(e) || inInteractive(e.target) || isModalOpen()) return
+      // The desktop pane keeps an entry up while the next one is decrypted;
+      // for that moment the selection has moved on, and so has the key.
+      const selected = useVault.getState().currentId
+      if (selected && selected !== entry.id) return
       e.preventDefault()
       copy(secret)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [secret, copy])
+  }, [secret, copy, entry.id])
 
   return { label: kind.primaryActionLabel, secret, copied, copy: () => copy(secret) }
 }

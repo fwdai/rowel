@@ -287,7 +287,7 @@ describe('Show', () => {
   it('renders entry details', async () => {
     mockCommand('reveal_entry', () => loginEntry({ title: 'Google' }))
     render(<Show entry={loginMeta({ title: 'Google' })} />)
-    expect(screen.getByRole('heading', { name: 'Google' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Google' })).toBeInTheDocument()
     expect(await screen.findByText('me@example.com')).toBeInTheDocument()
   })
 
@@ -365,7 +365,7 @@ describe('Show', () => {
     mockCommand('reveal_entry', () => loginEntry())
     render(<Show entry={loginMeta()} />)
 
-    const trigger = screen.getByTestId('more-actions-button')
+    const trigger = await screen.findByTestId('more-actions-button')
     expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
 
@@ -392,7 +392,7 @@ describe('Show', () => {
     mockCommand('reveal_entry', () => loginEntry())
     render(<Show entry={loginMeta()} />)
 
-    await userEvent.click(screen.getByTestId('more-actions-button'))
+    await userEvent.click(await screen.findByTestId('more-actions-button'))
 
     // First press only arms the row.
     await userEvent.click(screen.getByText('Archive'))
