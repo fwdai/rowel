@@ -167,6 +167,11 @@ targets:
             ASCredentialProviderExtensionCapabilities:
               ProvidesPasswords: true
               ProvidesPasskeys: true
+              # iOS 26: lists the app as a destination when another password
+              # manager exports ("Export Data to Another App" in Passwords).
+              # 1.0 is the only Credential Exchange Format version there is.
+              SupportsCredentialExchange: true
+              SupportedCredentialExchangeVersions: ["1.0"]
     # The AutoFill credential provider entitlement, and the App Group the
     # vault's container and the key's keychain group are shared through.
     # Written from here by xcodegen, so a regeneration keeps them.
