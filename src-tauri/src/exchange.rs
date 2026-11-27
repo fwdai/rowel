@@ -16,9 +16,11 @@
 //! answered with another one's rows.
 //!
 //! A newer arrival replaces an older one. Otherwise a transfer is held until
-//! it is imported or until the lock that ends an open session: it does not
-//! outlive the session it was offered to. One that arrives with the vault
-//! locked waits for the unlock, through a change of lockbox if need be.
+//! it is imported or until the open session it was offered to ends — a lock,
+//! or that lockbox being left or deleted: it does not outlive that session,
+//! and is never carried into another lockbox. One that arrives with the vault
+//! locked was offered to none, and waits for the unlock, through a choice of
+//! lockbox on the lock screen if need be.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -126,7 +128,7 @@ pub fn imported(arrival: Arrival) {
     }
 }
 
-/// Forget whatever is held: a lock ended the session it was offered to.
+/// Forget whatever is held: the session it was offered to ended.
 pub fn clear() {
     SLOT.lock().unwrap().held = None;
 }

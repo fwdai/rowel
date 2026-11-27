@@ -28,7 +28,8 @@ import {
   switchWorkspace,
   closeSettings,
   exchangeShown,
-  setExchange
+  setExchange,
+  syncExchange
 } from './index'
 
 const meta = (id: string): EntryMeta => ({
@@ -375,6 +376,50 @@ describe('exchange:received', () => {
       expect(useApp.getState().exchange).toEqual({ arrival: 7, shown: false })
     )
     expect(calls('exchange_held')).toHaveLength(1)
+  })
+
+  // The launch asks, and the answer can be slower than the arrival that
+  // follows it: "none" as of the question must not undo what was heard since.
+  it('drops an answer that newer news has overtaken', async () => {
+    const launch = deferred<number | null>()
+    mockCommand('exchange_held', () => launch.promise)
+    const asked = syncExchange()
+
+    handlerFor(EVENTS.exchangeReceived)({ arrival: 1 })
+    launch.resolve(null)
+    await asked
+
+    expect(useApp.getState().exchange).toEqual({ arrival: 1, shown: false })
+  })
+
+  // Two questions in flight are applied in the order they were asked, whichever
+  // answer lands first: the later question saw the later state.
+  it('lets the later of two questions have the last word', async () => {
+    const first = deferred<number | null>()
+    const second = deferred<number | null>()
+    mockCommand('exchange_held', () => first.promise)
+    const earlier = syncExchange()
+    mockCommand('exchange_held', () => second.promise)
+    const later = syncExchange()
+
+    second.resolve(2)
+    await later
+    first.resolve(null)
+    await earlier
+    expect(useApp.getState().exchange).toEqual({ arrival: 2, shown: false })
+
+    // And in the order asked, both are heard.
+    const third = deferred<number | null>()
+    const fourth = deferred<number | null>()
+    mockCommand('exchange_held', () => third.promise)
+    const a = syncExchange()
+    mockCommand('exchange_held', () => fourth.promise)
+    const b = syncExchange()
+    third.resolve(2)
+    await a
+    fourth.resolve(null)
+    await b
+    expect(useApp.getState().exchange).toBeNull()
   })
 
   it('offers nothing where none is held', async () => {

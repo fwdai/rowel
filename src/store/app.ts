@@ -414,7 +414,18 @@ export const claimOpenedFile = (): string | null => {
  * unlocked one is sent there at once and a locked one gets there through
  * `enterMain`. One already known is left as it is, shown or not.
  */
-export const setExchange = (arrival: number | null) => {
+export const setExchange = (arrival: number | null) => heardExchange(++exchangeAsks, arrival)
+
+// What Rust holds is heard two ways, an event and the answer to a question,
+// and an answer can land after news that is newer than it: the launch's "none"
+// after the arrival that followed it. Each is numbered when it is asked (an
+// event is asked and answered at once), and one older than what has already
+// been applied is dropped.
+let exchangeAsks = 0
+let exchangeHeard = 0
+const heardExchange = (ask: number, arrival: number | null) => {
+  if (ask < exchangeHeard) return
+  exchangeHeard = ask
   const known = useApp.getState().exchange
   if (arrival === (known?.arrival ?? null)) return
   useApp.setState({ exchange: arrival === null ? null : { arrival, shown: false } })
@@ -423,14 +434,16 @@ export const setExchange = (arrival: number | null) => {
 
 /**
  * Ask Rust what it holds. Called wherever the copy here can have gone stale:
- * once the shell listens (an arrival before that was never announced), after a
- * lock (which lets go of a transfer), and after a preview or an import of one
- * (which may have spent it).
+ * once the shell listens (an arrival before that was never announced), after
+ * the session ends (which lets go of a transfer), and after a preview or an
+ * import of one (which may have spent it).
  */
-export const syncExchange = () =>
-  exchangeHeld()
-    .then(setExchange)
+export const syncExchange = () => {
+  const ask = ++exchangeAsks
+  return exchangeHeld()
+    .then(arrival => heardExchange(ask, arrival))
     .catch(() => {})
+}
 
 /**
  * Import put the transfer on screen, so nothing else is sent there for it. It

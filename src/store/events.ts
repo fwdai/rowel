@@ -87,7 +87,7 @@ export const subscribeToEvents = (): (() => void) => {
     on(EVENTS.vaultLocked, ({ epoch }) => {
       lockHeard(epoch)
       clearSession()
-      // A lock lets go of a transfer that was offered to the session it ended.
+      // The end of a session lets go of a transfer that was offered to it.
       void syncExchange()
       void showLockScreen()
     }),

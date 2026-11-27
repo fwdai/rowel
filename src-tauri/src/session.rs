@@ -340,14 +340,7 @@ fn end(app: &AppHandle, announce: bool, applies: impl FnOnce(&Session) -> bool) 
             return false;
         }
         let sealed = seal_in(&mut session, &state.keyring);
-        let ended = (sealed.live || sealed.held).then(|| announce_ended(app));
-        // What another app handed over was offered to the session this lock
-        // ends, and goes with it. Only here: choosing or deleting a lockbox
-        // ends a session too (`end_in`), with none open when the vault is
-        // locked, and one still waiting for the unlock must survive that.
-        if sealed.live {
-            crate::exchange::clear();
-        }
+        let ended = (sealed.live || sealed.held).then(|| announce_ended(app, sealed.live));
         (sealed, ended)
     };
     if let Some(count) = sealed.count {
@@ -399,8 +392,9 @@ pub fn continue_lease(
 
 /// Ends the session under the caller's guard; the caller finishes the [`Ended`].
 pub fn end_in(app: &AppHandle, session: &mut Session) -> Ended {
+    let live = session.is_live();
     session.clear();
-    announce_ended(app)
+    announce_ended(app, live)
 }
 
 /// `vault:locked` for an end not made by [`lock`]. Only under `begin_step`, so
@@ -474,8 +468,18 @@ fn announce_opened(app: &AppHandle) {
     }
 }
 
-fn announce_ended(app: &AppHandle) -> Ended {
+// `live`: whether a session was open to end. Not every caller ends one: a lock
+// may seal only held keys, and a lockbox is chosen or deleted from the lock
+// screen too.
+fn announce_ended(app: &AppHandle, live: bool) -> Ended {
     app.state::<crate::grants::PathGrants>().session_ended();
+    // What another app handed over was offered to the open session and goes
+    // with it, however that session ends. With none open there was nothing it
+    // was offered to: one that arrived over the lock screen is still waiting
+    // for the unlock (`exchange`).
+    if live {
+        crate::exchange::clear();
+    }
     crate::picked::wipe(app);
     crate::autolock::disarm(app);
     #[cfg(desktop)]
@@ -862,8 +866,12 @@ mod lock_scope {
                 "session.adopt(",
                 "announce_opened(app)",
             ),
-            ("\npub fn end_in(", "session.clear()", "announce_ended(app)"),
-            ("\nfn end(", "seal_in(&mut session", "announce_ended(app)"),
+            (
+                "\npub fn end_in(",
+                "session.clear()",
+                "announce_ended(app, ",
+            ),
+            ("\nfn end(", "seal_in(&mut session", "announce_ended(app, "),
         ] {
             let body = body_of(source, signature);
             assert!(
@@ -876,17 +884,17 @@ mod lock_scope {
             );
         }
         let end = body_of(source, "\nfn end(");
-        assert!(at(&end, "announce_ended(app)") < at(&end, "ended.finish(app)"));
+        assert!(at(&end, "announce_ended(app, ") < at(&end, "ended.finish(app)"));
 
-        // A transfer from another app is let go of by a lock and by no other
-        // end of a session (see `end`).
-        assert!(end.contains("crate::exchange::clear()"));
-        for signature in ["\npub fn end_in(", "\nfn announce_ended("] {
-            assert!(
-                !body_of(source, signature).contains("exchange::"),
-                "{signature}: a transfer outlives an end that is not a lock"
-            );
-        }
+        // A transfer from another app goes with the open session however it
+        // ends, and stays when none was open. One place lets go of it, and
+        // both ends tell that place whether a session was live, as it was
+        // before they ended it.
+        let told = body_of(source, "\nfn announce_ended(");
+        assert!(at(&told, "if live {") < at(&told, "crate::exchange::clear()"));
+        assert!(end.contains("announce_ended(app, sealed.live)"));
+        let end_in = body_of(source, "\npub fn end_in(");
+        assert!(at(&end_in, "session.is_live()") < at(&end_in, "session.clear()"));
 
         let touch = body_of(include_str!("autolock.rs"), "pub fn touch(");
         assert!(at(&touch, "session.lock()") < at(&touch, "arm(app)"));
