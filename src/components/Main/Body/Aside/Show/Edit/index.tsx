@@ -53,8 +53,8 @@ export default function Edit({ type, revealed }: Props) {
           <Actions draft={draft} />
         </div>
 
-        {/* The editor's entrance, as the read view makes its own (see `Read`). */}
-        <div data-cascade>
+        {/* The sheet that moves when the pane turns to the editor (see `Read`). */}
+        <div data-stage>
           {/* 38px of indent under the message: the 28px tile plus the row's gap. */}
           <Title
             draft={draft}

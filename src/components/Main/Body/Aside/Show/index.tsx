@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import type { EntryMeta, EntryType } from '@/api/types'
 import { useSwapped } from '@/hooks/useSwapped'
+import { useVisibleEntries } from '../../List/useVisibleEntries'
 import Read from './Read'
 import Edit from './Edit'
 import RevealError from './RevealError'
@@ -21,9 +22,10 @@ interface Props {
 // One instance serves every entry in turn, so that the pane can keep the entry
 // it was showing until the next one's secrets are in hand, and then change
 // once (`useSwapped`): a header without its rows, or a copy button with
-// nothing to copy yet, is never drawn on the way. The entry that takes the
-// pane makes an entrance, and so does the editor: reading and writing an entry
-// are two faces of the same change.
+// nothing to copy yet, is never drawn on the way. The pane turns the way the
+// selection moved — to the next row, the sheet comes up from below; to the
+// one before, down from above — and steps forward into the editor and back
+// out of it: reading and writing an entry are two faces of the same change.
 export default function Show({ entry, type, editing }: Props) {
   const { kindType, current, failed, retry } = useShown(entry, type)
   const anchor = useRef<HTMLDivElement>(null)
@@ -31,11 +33,16 @@ export default function Show({ entry, type, editing }: Props) {
   // neither. A tombstone never gets to the editor (`editEntry` refuses it), so
   // an editor is only ever seeded from a reveal that has landed.
   const ready = !entry || !!current || !!entry.deletedAt
+  // The entry's row in the list as it is drawn, which is what "next" and
+  // "before" mean to whoever is stepping through it.
+  const rows = useVisibleEntries()
+  const row = entry ? rows.findIndex(listed => listed.id === entry.id) : -1
   const { shown, settling } = useSwapped(
     { entry, revealed: current, editing: !!editing },
     `${entry?.id ?? `new-${kindType}`}:${editing ? 'write' : 'read'}`,
     ready,
-    anchor
+    anchor,
+    row === -1 ? undefined : row
   )
 
   if (!kindType) return null
@@ -74,7 +81,7 @@ export default function Show({ entry, type, editing }: Props) {
 
   return (
     // No box of its own (`contents`): what it draws lays itself out in the
-    // pane. It is here to be found by the entrance, and to keep an entry that
+    // pane. It is here to be found by the turn, and to keep an entry that
     // is on its way out from being pressed — the held entry only: a refusal
     // takes its place, and its two buttons are the way on.
     <div ref={anchor} className="contents" inert={settling && !refused}>

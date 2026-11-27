@@ -39,10 +39,10 @@ export default function Read({ entry, revealed, settling }: Props) {
           <Actions entry={entry} revealed={revealed} settling={settling} onDelete={remove} />
         </div>
       </div>
-      {/* What makes its entrance when the pane turns to this entry (see
-          `cascade`). The line above is the pane's frame — the same controls in
+      {/* The sheet that moves when the pane turns to another entry (see
+          `turn`). The line above is the pane's frame — the same controls in
           the same place for every entry — and stands still. */}
-      <div data-cascade>
+      <div data-stage>
         <Identity
           entry={entry}
           tile="h-7 w-7"
