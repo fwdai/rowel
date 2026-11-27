@@ -18,7 +18,7 @@ describe('the import lead, on a phone', () => {
   it('is one card that picks a file, and never says to drop one', async () => {
     const onDrop = vi.fn()
     mockCommand('pick_file', () => '/tmp/export.csv')
-    render(<DropZone onDrop={onDrop} />)
+    render(<DropZone onDrop={onDrop} disabled={false} />)
 
     expect(screen.queryByText('Drop an export file')).not.toBeInTheDocument()
     expect(screen.queryByTestId('import-choose-file')).not.toBeInTheDocument()

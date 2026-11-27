@@ -422,13 +422,12 @@ export const claimOpenedFile = (): string | null => {
 export const setExchange = ({ arrival, change }: ExchangeHeld) => {
   const state = useApp.getState()
   if (change <= state.exchangeChange) return
-  const known = state.exchange?.arrival ?? null
-  if (arrival === known) return useApp.setState({ exchangeChange: change })
+  const known = arrival === (state.exchange?.arrival ?? null)
   useApp.setState({
     exchangeChange: change,
-    exchange: arrival === null ? null : { arrival, shown: false }
+    ...(!known && { exchange: arrival === null ? null : { arrival, shown: false } })
   })
-  if (arrival !== null && state.flow === 'main') openSettings('import')
+  if (!known && arrival !== null && state.flow === 'main') openSettings('import')
 }
 
 /**

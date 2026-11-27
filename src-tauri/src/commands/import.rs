@@ -25,7 +25,7 @@ use crate::storage;
 use crate::store::{migrate, Record, SqliteStore, VaultStore};
 
 // Bound the input: a foreign export should never be gigabytes or millions of rows.
-const MAX_BYTES: u64 = 25 * 1024 * 1024;
+pub(crate) const MAX_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
 
 /// What the import picker offers: the files the importers read. `Format`

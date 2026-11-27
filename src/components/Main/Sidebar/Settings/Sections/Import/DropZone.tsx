@@ -10,6 +10,9 @@ import { UploadGlyph } from '../../../../icons'
 
 interface Props {
   onDrop: (path: string) => void
+  // While a preview or an import is under way: nothing new is taken, as with
+  // the tiles.
+  disabled: boolean
 }
 
 // The import section's lead: any export file, with the backend sniffing its
@@ -18,7 +21,7 @@ interface Props {
 // file onto a phone, so there the same card is simply the picker — a solid
 // card the whole of which is the tap, and no dashed outline promising a
 // gesture the platform has not got.
-export default function DropZone({ onDrop }: Props) {
+export default function DropZone({ onDrop, disabled }: Props) {
   const { t } = useTranslation()
   const [over, setOver] = useState(false)
 
@@ -29,7 +32,7 @@ export default function DropZone({ onDrop }: Props) {
       const [path] = payload.paths
       if (path) onDrop(path)
     } else setOver(true)
-  })
+  }, !disabled)
 
   const pick = () =>
     pickImportFile().then(path => {
@@ -55,6 +58,7 @@ export default function DropZone({ onDrop }: Props) {
       <button
         type="button"
         data-testid="import-dropzone"
+        disabled={disabled}
         onClick={() => void pick()}
         className={cx(CARD, 'flex w-full cursor-pointer flex-col items-center p-5 text-center active:bg-hover')}
       >
@@ -65,10 +69,12 @@ export default function DropZone({ onDrop }: Props) {
   return (
     <div
       data-testid="import-dropzone"
-      data-over={over || undefined}
+      data-over={(over && !disabled) || undefined}
       className={cx(
         'flex flex-col items-center rounded-xl border-[1.5px] border-dashed px-5 py-6 text-center transition-colors',
-        over ? 'border-accent-line bg-accent-soft' : 'border-line2 bg-field hover:border-accent-line'
+        over && !disabled
+          ? 'border-accent-line bg-accent-soft'
+          : 'border-line2 bg-field hover:border-accent-line'
       )}
     >
       {body}
@@ -76,6 +82,7 @@ export default function DropZone({ onDrop }: Props) {
         variant="pale"
         size="md"
         className="mt-4"
+        disabled={disabled}
         onClick={() => void pick()}
         testid="import-choose-file"
       >

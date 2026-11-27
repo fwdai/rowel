@@ -318,7 +318,9 @@ export const closeSettings = () =>
 /** The phone's Settings went where it was asked to, so it is not asked again. */
 export const takeSettingsRequest = () => useUi.setState({ settingsRequest: null })
 export const setSettingsSection = (section: Section) =>
-  useUi.setState(state => (state.settingsLocked ? {} : { settingsSection: section }))
+  useUi.setState(state =>
+    state.settingsLocked ? {} : { settingsSection: section, settingsRequest: null }
+  )
 /**
  * Hold Settings on its current section until `lockSettings(false)`, which
  * then goes to the section asked for meanwhile, if one was.

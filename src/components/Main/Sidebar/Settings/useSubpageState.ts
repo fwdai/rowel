@@ -33,7 +33,7 @@ export interface SubpageState extends SubpageNav {
  * left behind that way is let go here.
  *
  * A page over Import steps aside for a file the OS opens meanwhile, and for
- * another app's data handed over then (`exchangePending`), which waits the
+ * another app's transfer handed over then (`importWaiting`), which waits the
  * same way: Import is the section that takes such a file,
  * `openSettings('import')` moves nothing when Import is already showing, and
  * under a page the section does not claim it: it is not there to (the wide

@@ -36,10 +36,8 @@ use serde::Serialize;
 use tauri::AppHandle;
 use zeroize::Zeroizing;
 
+use crate::commands::import::MAX_BYTES;
 use crate::error::{Error, Result};
-
-/// As large as an export file may be (`commands::import`).
-const MAX_BYTES: usize = 25 * 1024 * 1024;
 
 /// Which transfer: the count of changes when it came, so never reused within
 /// a run of the app.
@@ -110,7 +108,8 @@ fn announce(held: Held) {
 /// Park a document and announce it.
 #[cfg_attr(not(any(target_os = "ios", test)), allow(dead_code))]
 fn accept(document: &[u8]) {
-    if document.len() > MAX_BYTES {
+    // As large as an export file may be.
+    if document.len() as u64 > MAX_BYTES {
         return failed("the other app sent more than Rowel can import at once");
     }
     hold(Delivered::Document(Zeroizing::new(document.to_vec())));
@@ -301,7 +300,7 @@ mod tests {
         assert_eq!(read(new), b"new");
         release(new);
 
-        accept(&vec![0u8; MAX_BYTES + 1]);
+        accept(&vec![0u8; MAX_BYTES as usize + 1]);
         assert!(document(arrival()).is_err());
         assert_eq!(held().arrival, None);
     }

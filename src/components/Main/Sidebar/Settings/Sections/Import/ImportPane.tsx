@@ -28,7 +28,7 @@ export default function ImportPane({ flow }: { flow: ReturnType<typeof useImport
 
   return (
     <>
-      <DropZone onDrop={flow.dropped} />
+      <DropZone onDrop={flow.dropped} disabled={flow.running} />
       {/* The same rhythm as every other group: its label 8px over its cards. */}
       <div className={cx(LABEL, 'mt-7 mb-2')}>{t('Or start from an app')}</div>
       <Tiles
