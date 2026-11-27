@@ -25,7 +25,7 @@ describe('the favorite toggle', () => {
     seed()
     render(<Show entry={plain} />)
 
-    await userEvent.click(screen.getByTestId('favorite-toggle'))
+    await userEvent.click(await screen.findByTestId('favorite-toggle'))
 
     expect(calls('set_favorite')).toContainEqual({ id: 'plain', favorite: true })
     await vi.waitFor(() =>
@@ -38,7 +38,7 @@ describe('the favorite toggle', () => {
     seed()
     render(<Show entry={starred} />)
 
-    await userEvent.click(screen.getByTestId('favorite-toggle'))
+    await userEvent.click(await screen.findByTestId('favorite-toggle'))
 
     expect(calls('set_favorite')).toContainEqual({ id: 'star', favorite: false })
   })
@@ -114,7 +114,7 @@ describe('the Favorites view', () => {
     setCurrentEntry('star')
     render(<Body />)
 
-    await userEvent.click(screen.getByTestId('favorite-toggle'))
+    await userEvent.click(await screen.findByTestId('favorite-toggle'))
 
     await vi.waitFor(() => expect(selectCurrent(useVault.getState())).toBeNull())
     expect(screen.getByTestId('empty-favorites')).toBeInTheDocument()

@@ -44,13 +44,17 @@ export interface PrimaryAction {
  * The secret is read straight off the already-decrypted entry, so copying never
  * touches a row's on-screen reveal state.
  */
-export function usePrimaryAction(entry: EntryMeta, revealed: Entry | null): PrimaryAction {
+export function usePrimaryAction(
+  entry: EntryMeta,
+  revealed: Entry | null,
+  live = true
+): PrimaryAction {
   const { copied, copy } = useCopied()
   const kind = kindOf(entry.type)
   const secret = revealed ? kind.primarySecret(revealed) : ''
 
   useEffect(() => {
-    if (!secret) return
+    if (!secret || !live) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (!isPlainEnter(e) || inInteractive(e.target) || isModalOpen()) return
       e.preventDefault()
@@ -58,7 +62,7 @@ export function usePrimaryAction(entry: EntryMeta, revealed: Entry | null): Prim
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [secret, copy])
+  }, [secret, live, copy])
 
   return { label: kind.primaryActionLabel, secret, copied, copy: () => copy(secret) }
 }

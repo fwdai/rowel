@@ -231,6 +231,17 @@
   }
 }
 
+html {
+  view-transition-name: none;
+}
+::view-transition {
+  pointer-events: none;
+}
+::view-transition-group(swap) {
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /*
  * App-wide base (replaces the old base.sass / typography.sass). Preflight
  * already handles the reset + border-box; this only sets the full-height shell,

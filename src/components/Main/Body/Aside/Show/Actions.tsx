@@ -11,6 +11,7 @@ interface Props {
   entry: EntryMeta
   // The decrypted entry, or null while `revealEntry` is still in flight.
   revealed: Entry | null
+  settling?: boolean
   onDelete: () => void
 }
 
@@ -18,9 +19,9 @@ interface Props {
 // and the per-type primary copy action — or, for a tombstone, Restore and the
 // last delete. The phone shell spreads the same two across its nav row and
 // bottom button.
-export default function Actions({ entry, revealed, onDelete }: Props) {
+export default function Actions({ entry, revealed, settling, onDelete }: Props) {
   const { t } = useTranslation()
-  const { label, secret, copied, copy } = usePrimaryAction(entry, revealed)
+  const { label, secret, copied, copy } = usePrimaryAction(entry, revealed, !settling)
 
   // A tombstone is read-only, so it swaps the whole cluster rather than greying
   // parts of it out: nothing here applies to a row that is already archived.

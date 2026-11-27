@@ -10,9 +10,10 @@ interface Props {
   entry: EntryMeta
   /** The decrypted entry, or null while `revealEntry` is still in flight. */
   revealed: Entry | null
+  settling?: boolean
 }
 
-export default function Read({ entry, revealed }: Props) {
+export default function Read({ entry, revealed, settling }: Props) {
   const { error, remove } = useDelete(entry.id)
 
   return (
@@ -31,7 +32,7 @@ export default function Read({ entry, revealed }: Props) {
         <div className="flex flex-none items-center gap-1.5">
           {/* A tombstone cannot be starred — Favorites lists live entries. */}
           {!entry.deletedAt && <Favorite entry={entry} />}
-          <Actions entry={entry} revealed={revealed} onDelete={remove} />
+          <Actions entry={entry} revealed={revealed} settling={settling} onDelete={remove} />
         </div>
       </div>
       <Identity

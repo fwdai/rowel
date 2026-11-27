@@ -1,14 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Show from '@/components/Main/Body/Aside/Show'
 import Aside from '@/components/Main/Body/Aside'
 import Body from '@/components/Main/Body'
+import type { Entry } from '@/api/types'
 import { setCurrentEntry, useUi, useVault } from '@/store'
 import { kindOf } from '@/kinds'
 import { t } from '@/i18n'
-import { withEntries, loginEntry, loginMeta } from './utils'
-import { mockCommand } from './ipc'
+import { withEntries, loginEntry, loginMeta, deferred } from './utils'
+import { calls, mockCommand } from './ipc'
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -21,10 +22,10 @@ describe('Show chrome', () => {
 
     // The eyebrow above the title is the only place the kind is named; the
     // "Type" ledger cell that repeated it is gone.
-    expect(screen.getAllByText(t(kindOf('login').label))).toHaveLength(1)
+    expect(await screen.findAllByText(t(kindOf('login').label))).toHaveLength(1)
     expect(screen.queryByText('Type')).not.toBeInTheDocument()
     // The footer is labelled cells, not a sentence: a label over each stamp.
-    const footer = screen.getByTestId('entry-footer')
+    const footer = await screen.findByTestId('entry-footer')
     expect(footer).toHaveTextContent('Modified')
     expect(footer).toHaveTextContent('Created')
   })
@@ -61,6 +62,65 @@ describe('Show chrome', () => {
     expect(screen.queryByTestId('reveal-error')).not.toBeInTheDocument()
   })
 
+  it('keeps the last entry up, inert, until the next one is revealed', async () => {
+    const next = deferred<Entry>()
+    mockCommand('reveal_entry', ({ id }) => (id === 'l1' ? loginEntry() : next.promise))
+    withEntries([loginMeta(), loginMeta({ id: 'l2', title: 'Other' })])
+    setCurrentEntry('l1')
+    const { rerender } = render(<Show entry={loginMeta()} />)
+    await screen.findByTestId('entry-footer')
+
+    setCurrentEntry('l2')
+    rerender(<Show entry={loginMeta({ id: 'l2', title: 'Other' })} />)
+
+    expect(screen.getByRole('heading', { name: 'Google' })).toBeInTheDocument()
+    expect(screen.getByTestId('entry-footer')).toBeInTheDocument()
+    expect(screen.getByTestId('primary-action-button')).toBeEnabled()
+    expect(screen.getByTestId('primary-action-button').closest('[inert]')).not.toBeNull()
+    await userEvent.keyboard('{Enter}')
+    expect(calls('copy_to_clipboard')).toEqual([])
+
+    next.resolve(loginEntry({ id: 'l2', title: 'Other' }))
+    expect(await screen.findByRole('heading', { name: 'Other' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Google' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('primary-action-button').closest('[inert]')).toBeNull()
+  })
+
+  it('keeps an entry’s rows up while it is revealed again', async () => {
+    let reveal: () => unknown = () => loginEntry()
+    mockCommand('reveal_entry', () => reveal())
+    const { rerender } = render(<Show entry={loginMeta()} />)
+    const footer = await screen.findByTestId('entry-footer')
+
+    reveal = () => new Promise(() => {})
+    rerender(<Show entry={loginMeta({ updatedAt: '2024-02-01T00:00:00.000Z' })} />)
+    await waitFor(() => expect(calls('reveal_entry')).toHaveLength(2))
+
+    expect(screen.getByTestId('entry-footer')).toBe(footer)
+    expect(screen.getByTestId('attach-file-button')).toBeInTheDocument()
+    await userEvent.keyboard('{Enter}')
+    expect(calls('copy_to_clipboard')).toEqual([])
+  })
+
+  it('leaves a failed reveal’s way out pressable after another entry was up', async () => {
+    mockCommand('reveal_entry', ({ id }) =>
+      id === 'l1' ? loginEntry() : Promise.reject({ kind: 'other', message: 'refused' })
+    )
+    withEntries([loginMeta(), loginMeta({ id: 'l2', title: 'Other' })])
+    setCurrentEntry('l1')
+    const { rerender } = render(<Show entry={loginMeta()} />)
+    await screen.findByTestId('entry-footer')
+
+    setCurrentEntry('l2')
+    rerender(<Show entry={loginMeta({ id: 'l2', title: 'Other' })} />)
+
+    const retry = await screen.findByTestId('reveal-retry-button')
+    expect(retry.closest('[inert]')).toBeNull()
+    expect(screen.getByTestId('reveal-close-button').closest('[inert]')).toBeNull()
+    await userEvent.click(screen.getByTestId('reveal-close-button'))
+    expect(useVault.getState().currentId).toBeNull()
+  })
+
   it('closes the failed entry from the error surface', async () => {
     mockCommand('reveal_entry', () => Promise.reject({ kind: 'other', message: 'refused' }))
     withEntries([loginMeta()])
@@ -92,7 +152,7 @@ describe('Edit mode in the pane', () => {
 
   // Edit lives under the header's one menu, not as a button of its own.
   const openEdit = async () => {
-    await userEvent.click(screen.getByTestId('more-actions-button'))
+    await userEvent.click(await screen.findByTestId('more-actions-button'))
     await userEvent.click(screen.getByTestId('edit-entry-button'))
   }
 
@@ -118,7 +178,7 @@ describe('Edit mode in the pane', () => {
     render(<Aside />)
 
     expect(screen.queryByLabelText(/Filter by tag/)).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('add-tag-button'))
+    await userEvent.click(await screen.findByTestId('add-tag-button'))
 
     expect(useVault.getState().editing).toBe(true)
     expect(screen.getByTestId('tags-input')).toBeInTheDocument()
