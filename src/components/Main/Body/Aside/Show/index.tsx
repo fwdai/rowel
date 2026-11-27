@@ -40,10 +40,12 @@ export default function Show({ entry, type, editing }: Props) {
 
   if (!kindType) return null
 
+  // A refused reveal is the same dead end in both faces: no rows to read and
+  // no secrets to seed a draft from. Say so, and offer the way back.
+  const refused = failed && !!entry
+
   const face = () => {
-    // A refused reveal is the same dead end in both faces: no rows to read and
-    // no secrets to seed a draft from. Say so, and offer the way back.
-    if (failed && entry) return <RevealError entry={entry} onRetry={retry} />
+    if (refused) return <RevealError entry={entry} onRetry={retry} />
     if (!shown) return null
     // Keyed per entry: each editing session starts from a fresh draft. A new
     // entry has no id to key on, so it is keyed by its kind — choosing another
@@ -60,14 +62,22 @@ export default function Show({ entry, type, editing }: Props) {
     if (!shown.entry) return null
     // Keyed per entry too, so the next one starts from a fresh surface rather
     // than one still holding the last one's open menu and delete error.
-    return <Read key={shown.entry.id} entry={shown.entry} revealed={shown.revealed} />
+    return (
+      <Read
+        key={shown.entry.id}
+        entry={shown.entry}
+        revealed={shown.revealed}
+        settling={settling}
+      />
+    )
   }
 
   return (
     // No box of its own (`contents`): what it draws lays itself out in the
     // pane. It is here to be found by the entrance, and to keep an entry that
-    // is on its way out from being pressed.
-    <div ref={anchor} className="contents" inert={settling}>
+    // is on its way out from being pressed — the held entry only: a refusal
+    // takes its place, and its two buttons are the way on.
+    <div ref={anchor} className="contents" inert={settling && !refused}>
       {face()}
     </div>
   )

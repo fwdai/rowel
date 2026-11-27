@@ -105,6 +105,31 @@ describe('Show chrome', () => {
 
     expect(screen.getByTestId('entry-footer')).toBe(footer)
     expect(screen.getByTestId('attach-file-button')).toBeInTheDocument()
+    // The rows still up are the old revision's: ⏎ must not copy a password
+    // that a save or a sync may just have rotated away.
+    await userEvent.keyboard('{Enter}')
+    expect(calls('copy_to_clipboard')).toEqual([])
+  })
+
+  // A refusal takes the held entry's place, and is the one thing on the pane
+  // that can be pressed: its buttons are the only way on.
+  it('leaves a failed reveal’s way out pressable after another entry was up', async () => {
+    mockCommand('reveal_entry', ({ id }) =>
+      id === 'l1' ? loginEntry() : Promise.reject({ kind: 'other', message: 'refused' })
+    )
+    withEntries([loginMeta(), loginMeta({ id: 'l2', title: 'Other' })])
+    setCurrentEntry('l1')
+    const { rerender } = render(<Show entry={loginMeta()} />)
+    await screen.findByTestId('entry-footer')
+
+    setCurrentEntry('l2')
+    rerender(<Show entry={loginMeta({ id: 'l2', title: 'Other' })} />)
+
+    const retry = await screen.findByTestId('reveal-retry-button')
+    expect(retry.closest('[inert]')).toBeNull()
+    expect(screen.getByTestId('reveal-close-button').closest('[inert]')).toBeNull()
+    await userEvent.click(screen.getByTestId('reveal-close-button'))
+    expect(useVault.getState().currentId).toBeNull()
   })
 
   // The phone draws the same body with no pane to hold the last entry for it:

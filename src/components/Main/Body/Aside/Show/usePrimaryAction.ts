@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import type { Entry, EntryMeta } from '@/api/types'
 import type { TKey } from '@/i18n'
 import { kindOf } from '@/kinds'
-import { isModalOpen, useVault } from '@/store'
+import { isModalOpen } from '@/store'
 import { useCopied } from '@/hooks/useCopied'
 
 // Enter is the detail's accelerator for the primary action, but only as a bare
@@ -43,26 +43,32 @@ export interface PrimaryAction {
  *
  * The secret is read straight off the already-decrypted entry, so copying never
  * touches a row's on-screen reveal state.
+ *
+ * `live` is false while the desktop pane is holding this entry up for another
+ * that is still being decrypted — the next selection, or this one again after
+ * a save or a sync. What is on screen then is not what the key would be asked
+ * for, or not its current secret, so the accelerator stands down. The button
+ * needs no such care: the pane makes the held entry inert.
  */
-export function usePrimaryAction(entry: EntryMeta, revealed: Entry | null): PrimaryAction {
+export function usePrimaryAction(
+  entry: EntryMeta,
+  revealed: Entry | null,
+  live = true
+): PrimaryAction {
   const { copied, copy } = useCopied()
   const kind = kindOf(entry.type)
   const secret = revealed ? kind.primarySecret(revealed) : ''
 
   useEffect(() => {
-    if (!secret) return
+    if (!secret || !live) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (!isPlainEnter(e) || inInteractive(e.target) || isModalOpen()) return
-      // The desktop pane keeps an entry up while the next one is decrypted;
-      // for that moment the selection has moved on, and so has the key.
-      const selected = useVault.getState().currentId
-      if (selected && selected !== entry.id) return
       e.preventDefault()
       copy(secret)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [secret, copy, entry.id])
+  }, [secret, live, copy])
 
   return { label: kind.primaryActionLabel, secret, copied, copy: () => copy(secret) }
 }
