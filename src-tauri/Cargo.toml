@@ -264,7 +264,7 @@ objc2-app-kit = { version = "0.3", features = [
 
 # logind's lock and sleep signals (`oslock::logind`); already in the graph.
 [target.'cfg(target_os = "linux")'.dependencies]
-zbus = "5"
+zbus = "6"
 
 [target.'cfg(target_os = "ios")'.dependencies]
 # UIPasteboard: the iOS clipboard write, with the local-only + expiry options
